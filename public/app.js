@@ -6,6 +6,7 @@
 let files = [];
 let currentFile = null;
 let currentFilePath = null;
+let searchTimeout = null;
 
 // DOM elements
 const fileTree = document.getElementById('file-tree');
@@ -16,11 +17,19 @@ const titleEl = document.getElementById('title');
 const statusEl = document.getElementById('status');
 const refreshBtn = document.getElementById('refresh-btn');
 const editBtn = document.getElementById('edit-btn');
+const sidebar = document.getElementById('sidebar');
+const mobileMenu = document.getElementById('mobile-menu');
+const closeSidebar = document.getElementById('close-sidebar');
+const searchInput = document.getElementById('search-input');
+const searchClear = document.getElementById('search-clear');
+const searchResults = document.getElementById('search-results');
 
 // Initialize
 async function init() {
   await loadFiles();
   setupEventSource();
+  setupMobileMenu();
+  setupSearch();
   
   refreshBtn.addEventListener('click', loadFiles);
   editBtn.addEventListener('click', openInEditor);
@@ -93,6 +102,7 @@ function renderFileTree() {
       const file = files.find(f => f.path === path);
       if (file) {
         await loadFile(file);
+        closeSidebarMobile();
       }
     });
   });
@@ -246,6 +256,139 @@ function openInEditor() {
     // This only works with a helper, so we just show the path
     alert(`Open in your editor:\n\n${currentFilePath}`);
   }
+}
+
+// Mobile menu handling
+function setupMobileMenu() {
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'sidebar-overlay';
+  overlay.id = 'sidebar-overlay';
+  document.body.appendChild(overlay);
+  
+  mobileMenu.addEventListener('click', () => {
+    sidebar.classList.add('open');
+    overlay.classList.add('show');
+  });
+  
+  closeSidebar.addEventListener('click', closeSidebarMobile);
+  overlay.addEventListener('click', closeSidebarMobile);
+}
+
+function closeSidebarMobile() {
+  sidebar.classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('show');
+}
+
+// Search functionality
+function setupSearch() {
+  searchInput.addEventListener('input', (e) => {
+    const query = e.target.value.trim();
+    
+    // Show/hide clear button
+    searchClear.classList.toggle('hidden', query.length === 0);
+    
+    // Debounce search
+    clearTimeout(searchTimeout);
+    
+    if (query.length < 2) {
+      searchResults.classList.add('hidden');
+      fileTree.classList.remove('hidden');
+      return;
+    }
+    
+    searchTimeout = setTimeout(() => performSearch(query), 200);
+  });
+  
+  searchClear.addEventListener('click', () => {
+    searchInput.value = '';
+    searchClear.classList.add('hidden');
+    searchResults.classList.add('hidden');
+    fileTree.classList.remove('hidden');
+    searchInput.focus();
+  });
+  
+  // Handle escape key
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      searchInput.value = '';
+      searchClear.classList.add('hidden');
+      searchResults.classList.add('hidden');
+      fileTree.classList.remove('hidden');
+    }
+  });
+}
+
+async function performSearch(query) {
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    
+    renderSearchResults(data.results, query);
+  } catch (e) {
+    console.error('Search error:', e);
+  }
+}
+
+function renderSearchResults(results, query) {
+  fileTree.classList.add('hidden');
+  searchResults.classList.remove('hidden');
+  
+  if (results.length === 0) {
+    searchResults.innerHTML = `<div class="no-results">No results for "${escapeHtml(query)}"</div>`;
+    return;
+  }
+  
+  const queryLower = query.toLowerCase();
+  
+  let html = '';
+  for (const result of results) {
+    const highlightedName = result.nameMatch 
+      ? highlightMatch(result.name, queryLower)
+      : escapeHtml(result.name);
+    
+    html += `
+      <div class="search-result" data-path="${result.path}">
+        <div class="search-result-title">${highlightedName}</div>
+        <div class="search-result-path">${result.directory}/${result.relativePath}</div>`;
+    
+    if (result.matches.length > 0) {
+      html += '<div class="search-result-matches">';
+      for (const match of result.matches) {
+        const highlightedText = highlightMatch(match.text, queryLower);
+        html += `<div class="search-match">L${match.line}: ${highlightedText}</div>`;
+      }
+      html += '</div>';
+    }
+    
+    html += '</div>';
+  }
+  
+  searchResults.innerHTML = html;
+  
+  // Add click handlers
+  document.querySelectorAll('.search-result').forEach(item => {
+    item.addEventListener('click', async () => {
+      const path = item.dataset.path;
+      const file = files.find(f => f.path === path);
+      if (file) {
+        await loadFile(file);
+        closeSidebarMobile();
+      }
+    });
+  });
+}
+
+function highlightMatch(text, query) {
+  const escaped = escapeHtml(text);
+  const index = escaped.toLowerCase().indexOf(query);
+  if (index === -1) return escaped;
+  
+  const before = escaped.substring(0, index);
+  const match = escaped.substring(index, index + query.length);
+  const after = escaped.substring(index + query.length);
+  
+  return `${before}<mark>${match}</mark>${after}`;
 }
 
 // Setup Server-Sent Events for live reload

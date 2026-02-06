@@ -175,6 +175,62 @@ app.patch('/api/file', (req, res) => {
   }
 });
 
+// API: Search files and content
+app.get('/api/search', (req, res) => {
+  const { q } = req.query;
+  
+  if (!q || q.length < 2) {
+    return res.json({ results: [] });
+  }
+  
+  const query = q.toLowerCase();
+  const results = [];
+  const files = getMarkdownFiles();
+  
+  for (const file of files) {
+    try {
+      const content = readFileSync(file.path, 'utf-8');
+      const lines = content.split('\n');
+      const matches = [];
+      
+      // Check filename match
+      const nameMatch = file.name.toLowerCase().includes(query);
+      
+      // Check content matches
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes(query)) {
+          matches.push({
+            line: i + 1,
+            text: lines[i].trim().substring(0, 150),
+          });
+          if (matches.length >= 3) break; // Limit matches per file
+        }
+      }
+      
+      if (nameMatch || matches.length > 0) {
+        results.push({
+          ...file,
+          nameMatch,
+          matches,
+        });
+      }
+      
+      if (results.length >= 20) break; // Limit total results
+    } catch (e) {
+      // Skip files that can't be read
+    }
+  }
+  
+  // Sort: name matches first, then by match count
+  results.sort((a, b) => {
+    if (a.nameMatch && !b.nameMatch) return -1;
+    if (!a.nameMatch && b.nameMatch) return 1;
+    return b.matches.length - a.matches.length;
+  });
+  
+  res.json({ results, query: q });
+});
+
 // API: Get config
 app.get('/api/config', (req, res) => {
   res.json({ directories: config.directories, title });
