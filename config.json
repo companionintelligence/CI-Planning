@@ -6,6 +6,7 @@
     "~/Desktop/chimera_computer",
     "~/Desktop/enchantmentengine_com"
   ],
+  "excludeDirs": ["archive", "coverage"],
   "port": 3847,
   "title": "AI TODO Dashboard"
 }
