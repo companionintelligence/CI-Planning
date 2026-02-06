@@ -1,0 +1,11 @@
+{
+  "directories": [
+    "~/Desktop/Planning",
+    "~/Desktop/ci_computer",
+    "~/Desktop/liambroza_com",
+    "~/Desktop/chimera_computer",
+    "~/Desktop/enchantmentengine_com"
+  ],
+  "port": 3847,
+  "title": "AI TODO Dashboard"
+}
