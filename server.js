@@ -26,6 +26,7 @@ function expandPath(p) {
 }
 
 const directories = config.directories.map(expandPath);
+const excludeDirs = new Set(config.excludeDirs || []);
 const port = config.port || 3847;
 const title = config.title || 'AI TODO Dashboard';
 
@@ -56,8 +57,9 @@ function scanDirectory(basePath, currentPath, dirName, files) {
     const entries = readdirSync(currentPath);
     
     for (const entry of entries) {
-      // Skip hidden files/dirs
+      // Skip hidden files/dirs and excluded directories
       if (entry.startsWith('.')) continue;
+      if (excludeDirs.has(entry)) continue;
       
       const fullPath = join(currentPath, entry);
       const stat = statSync(fullPath);
