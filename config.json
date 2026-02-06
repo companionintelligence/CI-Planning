@@ -1,7 +1,7 @@
 {
   "directories": [
-    "~/Desktop/Planning",
-    "~/Dropbox/Planning",
+    "~/Desktop/Planning/Personal",
+    "~/Desktop/Planning/Business",
     "~/Desktop/ci_computer",
     "~/Desktop/liambroza_com",
     "~/Desktop/chimera_computer",
@@ -9,5 +9,5 @@
   ],
   "excludeDirs": ["archive", "coverage"],
   "port": 3847,
-  "title": "AI TODO Dashboard"
+  "title": "Liam's Master Plan"
 }
