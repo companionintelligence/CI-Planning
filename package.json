@@ -1,0 +1,29 @@
+{
+  "name": "ai-todo-static",
+  "version": "1.0.0",
+  "description": "Static web app for viewing and checking off markdown todos",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "markdown",
+    "todo",
+    "checkbox",
+    "planning",
+    "static"
+  ],
+  "author": "Liam Broza <liam.broza@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mrhegemon/ai-todo-static.git"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "express": "^4.18.2",
+    "marked": "^12.0.0"
+  }
+}
