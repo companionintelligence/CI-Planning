@@ -18,12 +18,19 @@
     </header>
     
     <div class="layout">
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
           <h2>📁 Files</h2>
+          <button id="close-sidebar" class="mobile-only">✕</button>
         </div>
+        <div class="search-box">
+          <input type="text" id="search-input" placeholder="Search files & content..." />
+          <span id="search-clear" class="search-clear hidden">✕</span>
+        </div>
+        <div id="search-results" class="hidden"></div>
         <div id="file-tree"></div>
       </aside>
+      <button id="mobile-menu" class="mobile-only">☰</button>
       
       <main class="content">
         <div id="file-header" class="file-header hidden">
