@@ -1,5 +1,6 @@
 /**
  * AI TODO Dashboard - Frontend App
+ * Now with URL hash routing for deep linking
  */
 
 // State
@@ -30,9 +31,85 @@ async function init() {
   setupEventSource();
   setupMobileMenu();
   setupSearch();
+  setupHashRouting();
   
   refreshBtn.addEventListener('click', loadFiles);
   editBtn.addEventListener('click', openInEditor);
+  
+  // Handle initial hash
+  handleHashChange();
+}
+
+// Hash routing - parse and handle URL hash
+function setupHashRouting() {
+  window.addEventListener('hashchange', handleHashChange);
+}
+
+function handleHashChange() {
+  const hash = decodeURIComponent(window.location.hash.slice(1)); // Remove #
+  if (!hash) return;
+  
+  // Parse hash: file:path/to/file.md or file:path/to/file.md#heading-id
+  const [fileRef, headingId] = hash.split('#');
+  
+  if (fileRef.startsWith('file:')) {
+    const filePath = fileRef.slice(5); // Remove 'file:'
+    
+    // Find matching file
+    const file = files.find(f => 
+      f.path === filePath || 
+      f.relativePath === filePath ||
+      f.path.endsWith(filePath) ||
+      `${f.directory}/${f.relativePath}` === filePath
+    );
+    
+    if (file) {
+      loadFile(file, headingId);
+    } else {
+      console.warn('File not found:', filePath);
+    }
+  } else if (hash) {
+    // Just a heading ID - scroll to it
+    scrollToHeading(hash);
+  }
+}
+
+function updateHash(filePath, headingId = null) {
+  // Create shareable path (directory/relativePath)
+  const file = files.find(f => f.path === filePath);
+  if (!file) return;
+  
+  const shareablePath = `${file.directory}/${file.relativePath}`;
+  let newHash = `file:${shareablePath}`;
+  
+  if (headingId) {
+    newHash += `#${headingId}`;
+  }
+  
+  // Update URL without triggering hashchange
+  history.replaceState(null, '', `#${encodeURIComponent(newHash)}`);
+}
+
+function scrollToHeading(headingId) {
+  // Try to find heading by ID or by slugified text
+  const heading = document.getElementById(headingId) || 
+                  document.querySelector(`[data-heading-id="${headingId}"]`);
+  
+  if (heading) {
+    heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    heading.classList.add('highlight');
+    setTimeout(() => heading.classList.remove('highlight'), 2000);
+  }
+}
+
+// Slugify heading text for URL-safe IDs
+function slugify(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '') // Remove special chars (but keep emoji will be stripped)
+    .replace(/\s+/g, '-')      // Spaces to hyphens
+    .replace(/-+/g, '-')       // Multiple hyphens to single
+    .replace(/^-+|-+$/g, '');  // Trim hyphens
 }
 
 // Load file list
@@ -122,7 +199,7 @@ function getTodoBadge(todos) {
 }
 
 // Load a file
-async function loadFile(file) {
+async function loadFile(file, scrollToHeadingId = null) {
   try {
     markdownContent.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     
@@ -141,8 +218,16 @@ async function loadFile(file) {
       item.classList.toggle('active', item.dataset.path === file.path);
     });
     
+    // Update URL hash
+    updateHash(file.path, scrollToHeadingId);
+    
     // Render markdown with interactive checkboxes
     renderMarkdown(currentFile);
+    
+    // Scroll to heading if specified
+    if (scrollToHeadingId) {
+      setTimeout(() => scrollToHeading(scrollToHeadingId), 100);
+    }
     
   } catch (e) {
     markdownContent.innerHTML = `<div class="welcome"><h2>Error</h2><p>${e.message}</p></div>`;
@@ -150,7 +235,7 @@ async function loadFile(file) {
   }
 }
 
-// Render markdown with interactive checkboxes
+// Render markdown with interactive checkboxes and clickable headings
 function renderMarkdown(content) {
   const lines = content.split('\n');
   let html = '';
@@ -168,7 +253,7 @@ function renderMarkdown(content) {
       if (!inTodoList) {
         // Flush previous content
         if (todoBuffer.length > 0) {
-          html += marked.parse(todoBuffer.join('\n'));
+          html += parseMarkdownWithHeadings(todoBuffer.join('\n'));
           todoBuffer = [];
         }
         inTodoList = true;
@@ -195,7 +280,7 @@ function renderMarkdown(content) {
   
   // Flush remaining content
   if (todoBuffer.length > 0) {
-    html += marked.parse(todoBuffer.join('\n'));
+    html += parseMarkdownWithHeadings(todoBuffer.join('\n'));
   }
   
   markdownContent.innerHTML = html;
@@ -240,6 +325,58 @@ function renderMarkdown(content) {
       }
     });
   });
+  
+  // Add heading click handlers for copying link
+  document.querySelectorAll('.heading-anchor').forEach(anchor => {
+    anchor.addEventListener('click', (e) => {
+      e.preventDefault();
+      const headingId = anchor.dataset.headingId;
+      updateHash(currentFilePath, headingId);
+      
+      // Copy to clipboard
+      const url = window.location.href;
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('Link copied to clipboard!');
+      }).catch(() => {
+        showToast('Link updated in URL bar');
+      });
+    });
+  });
+}
+
+// Parse markdown and add IDs to headings
+function parseMarkdownWithHeadings(markdown) {
+  // First, use marked to parse
+  let html = marked.parse(markdown);
+  
+  // Then, add IDs and anchor links to headings
+  html = html.replace(/<(h[1-6])>([^<]+)<\/h[1-6]>/g, (match, tag, text) => {
+    const headingId = slugify(text);
+    return `<${tag} id="${headingId}" data-heading-id="${headingId}">
+      ${text}
+      <a class="heading-anchor" href="#${headingId}" data-heading-id="${headingId}" title="Copy link to section">🔗</a>
+    </${tag}>`;
+  });
+  
+  return html;
+}
+
+// Show toast notification
+function showToast(message) {
+  // Remove existing toast
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+  
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 2000);
 }
 
 // Escape HTML

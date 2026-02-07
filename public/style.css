@@ -659,3 +659,63 @@ header h1 {
 .hidden {
   display: none !important;
 }
+
+/* Heading anchors */
+.heading-anchor {
+  opacity: 0;
+  margin-left: 0.5rem;
+  font-size: 0.8em;
+  text-decoration: none;
+  transition: opacity 0.15s;
+  cursor: pointer;
+}
+
+h1:hover .heading-anchor,
+h2:hover .heading-anchor,
+h3:hover .heading-anchor,
+h4:hover .heading-anchor,
+h5:hover .heading-anchor,
+h6:hover .heading-anchor {
+  opacity: 0.5;
+}
+
+.heading-anchor:hover {
+  opacity: 1 !important;
+}
+
+/* Heading highlight when navigated to */
+h1.highlight,
+h2.highlight,
+h3.highlight,
+h4.highlight,
+h5.highlight,
+h6.highlight {
+  animation: headingHighlight 2s ease-out;
+}
+
+@keyframes headingHighlight {
+  0% { background: rgba(168, 85, 247, 0.3); }
+  100% { background: transparent; }
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: var(--accent);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  z-index: 1000;
+  opacity: 0;
+  transition: transform 0.3s, opacity 0.3s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.toast.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
