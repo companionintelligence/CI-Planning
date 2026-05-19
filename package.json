@@ -7,7 +7,14 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test test/*.test.js"
+    "start:ts": "node server/dist/index.js --host 0.0.0.0",
+    "dev:ts": "node_modules/.bin/tsx watch server/src/index.ts -- --host 0.0.0.0",
+    "build": "node_modules/.bin/tsc",
+    "typecheck": "node_modules/.bin/tsc --noEmit",
+    "mcp:ts": "node server/dist/mcp-stdio.js",
+    "test": "node_modules/.bin/vitest run",
+    "test:watch": "node_modules/.bin/vitest",
+    "test:legacy": "node --test test/*.test.js"
   },
   "keywords": [
     "markdown",
@@ -29,5 +36,13 @@
     "express": "^4.18.2",
     "gray-matter": "^4.0.3",
     "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.0",
+    "tsx": "^4.22.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6"
   }
 }
