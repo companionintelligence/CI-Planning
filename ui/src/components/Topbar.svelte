@@ -4,10 +4,11 @@
   let { onBriefing, onPalette } = $props();
 
   const views = [
-    { id: 'today',  label: 'Today' },
-    { id: 'todos',  label: 'Todos' },
-    { id: 'files',  label: 'Files' },
-    { id: 'search', label: 'Search' },
+    { id: 'today',    label: 'Today' },
+    { id: 'todos',    label: 'Todos' },
+    { id: 'files',    label: 'Files' },
+    { id: 'search',   label: 'Search' },
+    { id: 'settings', label: '⚙' },
   ];
 
   function setView(v) {
