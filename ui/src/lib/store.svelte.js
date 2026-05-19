@@ -17,6 +17,7 @@ class Store {
   todos = $state([]);
   stats = $state({ todos_open: 0, todos_done: 0, overdue: 0, due_today: 0, files: 0 });
   llm = $state({ available: false, models: [] });
+  activeFilePath = $state(null);
   filters = $state({ status: 'open', due: '', tag: '', q: '' });
   loading = $state(false);
   toast = $state({ msg: '', kind: 'info', visible: false });
@@ -64,6 +65,8 @@ class Store {
     return d.todos;
   }
   async reloadTodos() { this.todos = await this._fetchTodos(); }
+
+  openFile(path) { this.activeFilePath = path; }
 
   async toggle(todo, checked) {
     try {
