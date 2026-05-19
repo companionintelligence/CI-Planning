@@ -169,6 +169,25 @@ export function toggleTodoByHash(
   return { content: lines.join('\n'), line: realLine };
 }
 
+export function rewriteTodoByHash(
+  content: string,
+  hash: string,
+  filePath: string,
+  newText: string,
+): ToggleOutcome {
+  const parsed = parseFile(filePath, content);
+  const todo = parsed.todos.find(t => t.hash === hash);
+  if (!todo) return { error: 'todo not found by hash' };
+  const fmOffset = matterOffset(content);
+  const lines = content.split('\n');
+  const realLine = todo.line + fmOffset;
+  const orig = lines[realLine];
+  if (orig === undefined) return { error: 'line out of bounds' };
+  const newMark = todo.checked ? 'x' : ' ';
+  lines[realLine] = `${todo.indent}- [${newMark}] ${newText}`;
+  return { content: lines.join('\n'), line: realLine };
+}
+
 function matterOffset(content: string): number {
   if (!content.startsWith('---')) return 0;
   const end = content.indexOf('\n---', 3);

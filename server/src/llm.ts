@@ -136,6 +136,138 @@ export async function summarizeDay(
   return { text: res.response, model: chosen };
 }
 
+// ---- extract_todos_from_text ----
+
+const EXTRACT_SYSTEM = `You extract actionable todos from freeform text.
+Output ONLY valid JSON. Never invent todos not implied by the input.
+
+Schema: { "todos": [ { "text": "short action phrase", "heading": "section or null", "due": "YYYY-MM-DD or null", "tags": ["tag1"] } ] }
+
+Rules:
+- text must be imperative: "Do X" not "X should be done"
+- Strip filler words, keep substance
+- heading: infer from context (e.g., "Personal", "Work", "Admin")
+- due: only if a specific date/deadline is mentioned
+- tags: 1-2 lowercase topic tags when obvious`;
+
+interface ExtractedTodo {
+  text: string;
+  heading: string | null;
+  due: string | null;
+  tags: string[];
+}
+
+export interface ExtractResult {
+  todos: ExtractedTodo[];
+  model: string;
+  error?: string;
+}
+
+export async function extractTodosFromText(
+  text: string,
+  opts: { model?: string } = {},
+): Promise<ExtractResult> {
+  if (!(await ollamaAvailable())) throw new LLMUnavailable();
+  const models = await listModels();
+  const chosen = opts.model ?? pickModel(models);
+  const res = await generate({
+    model: chosen,
+    system: EXTRACT_SYSTEM,
+    prompt: `Extract todos from this text:\n\n${text.slice(0, 4000)}`,
+    format: 'json',
+  });
+  try {
+    const parsed = JSON.parse(res.response) as { todos?: ExtractedTodo[] };
+    return { todos: parsed.todos ?? [], model: chosen };
+  } catch {
+    return { todos: [], model: chosen, error: 'invalid JSON from model' };
+  }
+}
+
+// ---- project_rollup ----
+
+const ROLLUP_SYSTEM = `You produce a concise per-section rollup for a planning document.
+For each section, write 1-2 sentences: what's blocked, what's in progress, what's done.
+Highlight the most important open item per section. Output plain text, no JSON.`;
+
+export interface RollupResult {
+  text: string;
+  model: string;
+}
+
+export async function projectRollup(
+  todos: TodoRowDb[],
+  opts: { model?: string; title?: string } = {},
+): Promise<RollupResult> {
+  if (!(await ollamaAvailable())) throw new LLMUnavailable();
+  const models = await listModels();
+  const chosen = opts.model ?? pickModel(models);
+  const byHeading = new Map<string, typeof todos>();
+  for (const t of todos) {
+    const h = t.heading ?? '(top)';
+    if (!byHeading.has(h)) byHeading.set(h, []);
+    byHeading.get(h)!.push(t);
+  }
+  const sections = [...byHeading.entries()]
+    .map(([heading, ts]) =>
+      `## ${heading}\n` +
+      ts.slice(0, 20).map(t => `- [${t.checked ? 'x' : ' '}] ${t.plain_text}${t.due_date ? ` (due: ${t.due_date})` : ''}`).join('\n'),
+    )
+    .join('\n\n');
+
+  const res = await generate({
+    model: chosen,
+    system: ROLLUP_SYSTEM,
+    prompt: `${opts.title ? `File: ${opts.title}\n\n` : ''}${sections}`,
+  });
+  return { text: res.response, model: chosen };
+}
+
+// ---- propose_archive ----
+
+const ARCHIVE_SYSTEM = `You review open todos and identify candidates to archive.
+Archive = stale, completed by implication, superseded, or no longer relevant.
+Be conservative — mark "archive" only when confident.
+Output ONLY valid JSON.
+
+Schema: { "proposals": [ { "hash": "...", "reason": "short explanation" } ] }`;
+
+export interface ArchiveProposal {
+  hash: string;
+  reason: string;
+}
+
+export interface ArchiveResult {
+  proposals: ArchiveProposal[];
+  model: string;
+  error?: string;
+}
+
+export async function proposeArchive(
+  todos: TriageInput[],
+  opts: { model?: string } = {},
+): Promise<ArchiveResult> {
+  if (!(await ollamaAvailable())) throw new LLMUnavailable();
+  const models = await listModels();
+  const chosen = opts.model ?? pickModel(models);
+  const lines = todos
+    .slice(0, 100)
+    .map((t, i) => `${i + 1}. hash=${t.hash} heading=${t.heading ?? '-'} text=${t.plainText}`)
+    .join('\n');
+  const res = await generate({
+    model: chosen,
+    system: ARCHIVE_SYSTEM,
+    prompt: `Review these ${todos.length} open todos and identify archive candidates:\n${lines}`,
+    format: 'json',
+  });
+  try {
+    const parsed = JSON.parse(res.response) as { proposals?: ArchiveProposal[] };
+    return { proposals: parsed.proposals ?? [], model: chosen };
+  } catch {
+    return { proposals: [], model: chosen, error: 'invalid JSON from model' };
+  }
+}
+
 function pickModel(available: string[]): string {
   const order = [
     'qwen3.6:35b',

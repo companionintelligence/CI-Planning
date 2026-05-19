@@ -28,8 +28,12 @@ import {
   triageTodos,
   summarizeDay,
   listModels,
+  extractTodosFromText,
+  projectRollup,
+  proposeArchive,
   LLMUnavailable,
 } from './llm.js';
+import { rewriteTodoByHash } from './markdown.js';
 import type { TodoRowDb, TodoFilter } from './types.js';
 
 export interface HttpServerDeps {
@@ -261,6 +265,96 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     } catch (e) {
       if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
       res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/llm/extract', async (req: Request, res: Response) => {
+    try {
+      const body = req.body as { text?: string };
+      if (!body.text) return void res.status(400).json({ error: 'text required' });
+      const result = await extractTodosFromText(body.text);
+      res.json(result);
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/llm/rollup', async (req: Request, res: Response) => {
+    try {
+      const body = req.body as { path?: string; limit?: number };
+      const filter: TodoFilter = { limit: Math.min(Number(body.limit) || 200, 500) };
+      if (body.path) filter.file = check(body.path);
+      const todos = queryTodos(db, filter);
+      const fileTitle = body.path ? body.path.split('/').slice(-1)[0] : undefined;
+      const rollupOpts: { title?: string } = {}; if (fileTitle) rollupOpts.title = fileTitle; const result = await projectRollup(todos, rollupOpts);
+      res.json(result);
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post('/api/llm/archive', async (req: Request, res: Response) => {
+    try {
+      const body = req.body as { path?: string; limit?: number };
+      const filter: TodoFilter = { checked: 0, limit: Math.min(Number(body.limit) || 80, 150) };
+      if (body.path) filter.file = check(body.path);
+      const todos = queryTodos(db, filter).map(rowToTodo);
+      const result = await proposeArchive(todos.map(t => ({
+        hash: t.hash,
+        relativePath: t.file_path,
+        heading: t.heading ?? null,
+        plainText: t.plain_text,
+      })));
+      res.json(result);
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  // apply_suggestion: the ONLY write path for LLM-proposed mutations
+  app.post('/api/suggestion/apply', (req: Request, res: Response) => {
+    try {
+      const { hash, action, new_text, due, tag } = req.body as {
+        hash?: string;
+        action?: string;
+        new_text?: string;
+        due?: string;
+        tag?: string;
+      };
+      if (!hash || !action) return void res.status(400).json({ error: 'hash and action required' });
+      const row = getTodoByHash(db, hash);
+      if (!row) return void res.status(404).json({ error: `No todo with hash ${hash}` });
+      const safe = row.file_path;
+      const content = readFileSync(safe, 'utf-8');
+      let result;
+      if (action === 'archive' || action === 'mark_done') {
+        result = toggleTodoByHash(content, hash, safe, true);
+      } else if (action === 'rewrite' && new_text) {
+        result = rewriteTodoByHash(content, hash, safe, new_text);
+      } else if (action === 'add_tag' && tag) {
+        const row2 = queryTodos(db, { q: hash, limit: 1 });
+        const oldText = row.text;
+        result = rewriteTodoByHash(content, hash, safe, `${oldText} #${tag}`);
+      } else if (action === 'set_due' && due) {
+        const clean = row.text.replace(/\s*\(due:\s*\d{4}-\d{2}-\d{2}\)/i, '').trim();
+        result = rewriteTodoByHash(content, hash, safe, `${clean} (due: ${due})`);
+      } else {
+        return void res.status(400).json({ error: `Unknown action: ${action}` });
+      }
+      if ('error' in result) return void res.status(422).json({ error: result.error });
+      if (!result.noop) {
+        atomicWrite(safe, result.content);
+        const root = rootFor(safe);
+        if (root) indexFile(db, safe, root);
+        notifyClients('fileChange', { path: safe });
+      }
+      res.json({ ok: true, noop: !!result.noop, hash, sha256: sha256(result.content) });
+    } catch (e) {
+      const err = e as { code?: number; message?: string };
+      res.status(err.code ?? 500).json({ error: err.message });
     }
   });
 
