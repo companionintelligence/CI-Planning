@@ -4,5 +4,5 @@
   ],
   "excludeDirs": ["archive", "coverage", "planning_archive", "Liam_web_history", "websites", "test-consolidation", "contact_list"],
   "port": 3847,
-  "title": "Liam's Master Plan"
+  "title": "Companion Planning"
 }

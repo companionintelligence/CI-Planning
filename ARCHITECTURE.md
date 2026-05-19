@@ -227,7 +227,7 @@ hash, not the line.
 ## 5. Directory layout (target)
 
 ```
-ai-todo-static/             (or rename to e.g. "plan/")
+companion-planning/             (or rename to e.g. "plan/")
 ├── ARCHITECTURE.md         this file
 ├── PLANNING.md             phased roadmap
 ├── README.md
