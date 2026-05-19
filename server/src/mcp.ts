@@ -13,7 +13,16 @@ import type { TodoFilter } from './types.js';
 import { listFiles, queryTodos, searchFts, getTodoByHash, getStats } from './db.js';
 import { fullScan, indexFile } from './indexer.js';
 import { parseFile, toggleTodoByHash, appendUnderHeading, hashTodo, sha256 } from './markdown.js';
-import { ollamaAvailable, triageTodos, summarizeDay, LLMUnavailable } from './llm.js';
+import {
+  ollamaAvailable,
+  triageTodos,
+  summarizeDay,
+  extractTodosFromText,
+  projectRollup,
+  proposeArchive,
+  LLMUnavailable,
+} from './llm.js';
+import { rewriteTodoByHash } from './markdown.js';
 
 export interface McpServerDeps {
   db: Database.Database;
@@ -284,6 +293,118 @@ export function buildMcpServer({ db, directories, excludeDirs }: McpServerDeps):
     const t0 = Date.now();
     const stats = fullScan(db, directories, excludeDirs);
     return ok(`Re-scan complete in ${Date.now() - t0}ms: ${JSON.stringify(stats)}`, stats);
+  });
+
+  // ---------- extract_todos_from_text ----------
+  server.registerTool('extract_todos_from_text', {
+    title: 'Extract todos from freeform text using LLM',
+    description: 'Parses a block of prose or notes and returns structured todo items. Nothing is written — caller adds todos via add_todo.',
+    inputSchema: { text: z.string().max(8000) },
+  }, async ({ text }) => {
+    try {
+      const result = await extractTodosFromText(text);
+      const summary = result.todos.map((t, i) =>
+        `${i + 1}. ${t.text}${t.heading ? ` [${t.heading}]` : ''}${t.due ? ` due=${t.due}` : ''}`
+      ).join('\n');
+      return ok(`Extracted ${result.todos.length} todos:\n${summary}`, result);
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return mcpErr('Ollama is not reachable.');
+      return mcpErr((e as Error).message);
+    }
+  });
+
+  // ---------- project_rollup ----------
+  server.registerTool('project_rollup', {
+    title: 'Per-section narrative rollup of a file\'s todos',
+    description: 'Produces a 1-2 sentence summary per heading section. Useful for project status overviews.',
+    inputSchema: {
+      file: z.string().optional().describe('Limit rollup to one file'),
+      limit: z.number().int().positive().max(500).optional(),
+    },
+  }, async ({ file, limit = 200 }) => {
+    try {
+      const filter: TodoFilter = { limit };
+      if (file) filter.file = expandAndCheck(file);
+      const todos = queryTodos(db, filter);
+      const fileTitle = file ? file.split('/').slice(-1)[0] : undefined;
+      const rollupOpts: { title?: string } = {}; if (fileTitle) rollupOpts.title = fileTitle; const result = await projectRollup(todos, rollupOpts);
+      return ok(result.text, result);
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return mcpErr('Ollama is not reachable.');
+      return mcpErr((e as Error).message);
+    }
+  });
+
+  // ---------- propose_archive ----------
+  server.registerTool('propose_archive', {
+    title: 'Propose stale todos as archive candidates',
+    description: 'Returns todos that appear stale or no longer relevant. Nothing is written — use apply_suggestion or complete_todo to act.',
+    inputSchema: {
+      file: z.string().optional(),
+      limit: z.number().int().positive().max(150).optional(),
+    },
+  }, async ({ file, limit = 80 }) => {
+    try {
+      const filter: TodoFilter = { checked: 0, limit };
+      if (file) filter.file = expandAndCheck(file);
+      const todos = queryTodos(db, filter);
+      const result = await proposeArchive(todos.map(r => ({
+        hash: r.hash,
+        relativePath: r.file_path,
+        heading: r.heading,
+        plainText: r.plain_text,
+      })));
+      const summary = result.proposals.map(p => `${p.hash}  ${p.reason}`).join('\n');
+      return ok(`${result.proposals.length} archive proposals:\n${summary}`, result);
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return mcpErr('Ollama is not reachable.');
+      return mcpErr((e as Error).message);
+    }
+  });
+
+  // ---------- apply_suggestion ----------
+  server.registerTool('apply_suggestion', {
+    title: 'Apply a single LLM suggestion to a todo',
+    description: 'The only write path for LLM-proposed mutations. Supported actions: archive (mark done), rewrite (replace text), add_tag, set_due.',
+    inputSchema: {
+      hash: z.string().describe('Todo hash from list_todos / triage results'),
+      action: z.enum(['archive', 'mark_done', 'rewrite', 'add_tag', 'set_due']),
+      new_text: z.string().optional().describe('Required for rewrite'),
+      tag: z.string().optional().describe('Required for add_tag'),
+      due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Required for set_due'),
+    },
+  }, async ({ hash, action, new_text, tag, due }) => {
+    try {
+      const row = getTodoByHash(db, hash);
+      if (!row) return mcpErr(`No todo with hash ${hash}`);
+      const safe = row.file_path;
+      const content = readFileSync(safe, 'utf-8');
+
+      let result;
+      if (action === 'archive' || action === 'mark_done') {
+        result = toggleTodoByHash(content, hash, safe, true);
+      } else if (action === 'rewrite' && new_text) {
+        result = rewriteTodoByHash(content, hash, safe, new_text);
+      } else if (action === 'add_tag' && tag) {
+        result = rewriteTodoByHash(content, hash, safe, `${row.text} #${tag}`);
+      } else if (action === 'set_due' && due) {
+        const clean = row.text.replace(/\s*\(due:\s*\d{4}-\d{2}-\d{2}\)/i, '').trim();
+        result = rewriteTodoByHash(content, hash, safe, `${clean} (due: ${due})`);
+      } else {
+        return mcpErr(`Action "${action}" requires additional parameter (new_text/tag/due)`);
+      }
+
+      if ('error' in result) return mcpErr(result.error);
+      if (!result.noop) {
+        atomicWrite(safe, result.content);
+        const root = rootForPath(safe);
+        if (root) indexFile(db, safe, root);
+      }
+      return ok(
+        `${result.noop ? 'No change needed' : `Applied ${action}`} on ${hash} in ${basename(safe)}`,
+        { ok: true, noop: result.noop, hash },
+      );
+    } catch (e) { return mcpErr((e as Error).message); }
   });
 
   // ---------- llm_status ----------
