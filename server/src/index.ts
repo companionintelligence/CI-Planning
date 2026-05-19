@@ -47,7 +47,6 @@ app.use(express.json({ limit: '4mb' }));
 // Serve static assets: built UI from public/ (V1 PWA + V2 Svelte build at /v2/)
 const publicDir = join(__dirname, '..', '..', 'public');
 app.use(express.static(publicDir));
-app.get('/v2', (_req, res) => res.redirect('/v2/'));
 
 // SSE client registry
 const sseClients = new Set<Response>();

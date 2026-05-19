@@ -45,9 +45,6 @@ setMeta(db, 'last_full_scan_ms', String(Date.now()));
 const app = express();
 app.use(express.json({ limit: '4mb' }));
 app.use(express.static(join(__dirname, 'public')));
-// Svelte build lands in public/v2/ via `cd ui && npm run build`; this redirect
-// just lets the user type the bare `/v2` path.
-app.get('/v2', (req, res) => res.redirect('/v2/'));
 
 const clients = new Set();
 function notifyClients(event, data) {
