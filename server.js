@@ -1,5 +1,5 @@
 /**
- * AI-TODO-Static Server (v2)
+ * Companion Planning Server (v2)
  *
  * Markdown = source of truth. SQLite = derived index.
  * HTTP API + SSE live reload; MCP server in lib/mcp.js (separate entrypoint).
@@ -25,7 +25,7 @@ const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 const directories = (config.directories || []).map(p => resolve(expandPath(p)));
 const excludeDirs = new Set(config.excludeDirs || []);
 const port = config.port || 3847;
-const title = config.title || 'AI TODO Dashboard';
+const title = config.title || 'Companion Planning';
 
 const hostFlagIdx = process.argv.indexOf('--host');
 const host =
@@ -45,6 +45,9 @@ setMeta(db, 'last_full_scan_ms', String(Date.now()));
 const app = express();
 app.use(express.json({ limit: '4mb' }));
 app.use(express.static(join(__dirname, 'public')));
+// Svelte build lands in public/v2/ via `cd ui && npm run build`; this redirect
+// just lets the user type the bare `/v2` path.
+app.get('/v2', (req, res) => res.redirect('/v2/'));
 
 const clients = new Set();
 function notifyClients(event, data) {
@@ -330,7 +333,7 @@ watcher.on('add', onFsEvent('add'));
 watcher.on('unlink', onFsEvent('unlink'));
 
 app.listen(port, host, () => {
-  console.log(`\n🗒️  AI TODO Dashboard running at http://${host}:${port}\n`);
+  console.log(`\n🗒️  Companion Planning running at http://${host}:${port}\n`);
   console.log('Watching directories:');
   directories.forEach(dir => console.log(`  📁 ${dir}`));
   if (host === '0.0.0.0' || host === '::') {

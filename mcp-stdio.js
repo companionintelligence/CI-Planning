@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * MCP stdio entrypoint.
- * Usage in Claude Code: `claude mcp add liam-plan -- node /path/to/mcp-stdio.js`
+ * Usage in Claude Code: `claude mcp add companion-planning -- node /path/to/mcp-stdio.js`
  */
 import { readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
@@ -26,4 +26,4 @@ const server = buildMcpServer({ db, directories, excludeDirs });
 const transport = new StdioServerTransport();
 await server.connect(transport);
 // stderr only — stdout is the MCP transport
-process.stderr.write('liam-plan MCP server listening on stdio\n');
+process.stderr.write('companion-planning MCP server listening on stdio\n');

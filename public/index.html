@@ -2,55 +2,79 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover">
-  <meta name="theme-color" content="#111111">
-  <title>Liam's Master Plan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fafbfc" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Companion">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="description" content="Private, local-first, MCP-native personal todo app.">
+  <title>Companion Planning</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
   <link rel="stylesheet" href="style.css">
   <script src="vendor/marked.min.js"></script>
 </head>
-<body>
+<body data-theme="auto">
   <div class="app">
     <header class="topbar">
-      <h1 id="title">Liam's Master Plan</h1>
-      <nav class="views">
-        <button class="view-btn active" data-view="today">Today</button>
-        <button class="view-btn" data-view="todos">All Todos</button>
-        <button class="view-btn" data-view="files">Files</button>
-        <button class="view-btn" data-view="search">Search</button>
+      <a class="brand" href="#today" aria-label="Companion Planning">
+        <img src="/icons/icon-192.png" alt="" width="28" height="28" class="brand-logo">
+        <span class="brand-text">Companion <i>Planning</i></span>
+      </a>
+      <nav class="views" role="tablist">
+        <button class="view-btn active" data-view="today" role="tab">Today</button>
+        <button class="view-btn" data-view="todos" role="tab">Todos</button>
+        <button class="view-btn" data-view="files" role="tab">Files</button>
+        <button class="view-btn" data-view="search" role="tab">Search</button>
       </nav>
       <div class="topbar-actions">
-        <span id="stats-pill" class="stats-pill" title="open / overdue / due today"></span>
-        <button id="brief-btn" class="brief-btn" title="LLM daily briefing">🤖 Briefing</button>
-        <button id="refresh-btn" title="Refresh">🔄</button>
+        <span id="stats-pill" class="stats-pill" title="open / overdue / due today">—</span>
+        <button id="cmdk-btn" class="icon-btn" title="Command palette (⌘K)" aria-label="Command palette"><span>⌘K</span></button>
+        <button id="brief-btn" class="icon-btn primary" title="LLM daily briefing" aria-label="Briefing">🤖</button>
+        <button id="theme-btn" class="icon-btn" title="Theme" aria-label="Toggle theme">◐</button>
+        <button id="refresh-btn" class="icon-btn" title="Refresh" aria-label="Refresh">↻</button>
       </div>
     </header>
 
     <div class="layout">
-      <aside class="sidebar" id="sidebar">
+      <aside class="sidebar" id="sidebar" aria-label="Sidebar">
         <div class="sidebar-section" id="filters">
           <h3>Filters</h3>
-          <div class="filter-row">
-            <label><input type="radio" name="status" value="open" checked> Open</label>
-            <label><input type="radio" name="status" value="done"> Done</label>
-            <label><input type="radio" name="status" value="all"> All</label>
+          <div class="seg">
+            <label><input type="radio" name="status" value="open" checked><span>Open</span></label>
+            <label><input type="radio" name="status" value="done"><span>Done</span></label>
+            <label><input type="radio" name="status" value="all"><span>All</span></label>
           </div>
-          <div class="filter-row">
-            <label><input type="checkbox" id="filter-overdue"> Overdue</label>
-            <label><input type="checkbox" id="filter-today"> Due today</label>
-            <label><input type="checkbox" id="filter-week"> This week</label>
+          <div class="filter-chips">
+            <label class="chip"><input type="checkbox" id="filter-overdue"><span>Overdue</span></label>
+            <label class="chip"><input type="checkbox" id="filter-today"><span>Today</span></label>
+            <label class="chip"><input type="checkbox" id="filter-week"><span>This week</span></label>
           </div>
-          <input type="text" id="filter-tag" placeholder="Filter by #tag" />
-          <input type="text" id="filter-text" placeholder="Filter text…" />
+          <input type="text" id="filter-tag" placeholder="#tag" autocomplete="off">
+          <input type="text" id="filter-text" placeholder="Filter text…" autocomplete="off">
         </div>
 
         <div class="sidebar-section" id="files-section">
           <h3>Files</h3>
-          <input type="text" id="file-filter" placeholder="Filter files…" />
+          <input type="text" id="file-filter" placeholder="Filter files…" autocomplete="off">
           <div id="file-tree"></div>
+        </div>
+
+        <div class="sidebar-section" id="install-section" hidden>
+          <h3>Install</h3>
+          <button id="install-btn" class="btn-primary">Install as app</button>
+          <p class="muted small">Get a home-screen icon and fullscreen mode.</p>
         </div>
       </aside>
 
-      <button id="mobile-menu" class="mobile-only" aria-label="Open filters">☰</button>
+      <button id="mobile-menu" class="mobile-only fab" aria-label="Open sidebar">☰</button>
 
       <main class="content">
         <div id="view-today" class="view"></div>
@@ -59,41 +83,56 @@
           <div id="file-header" class="file-header hidden">
             <span id="current-file"></span>
             <span class="file-actions">
-              <button id="triage-btn" title="LLM triage this file">🧹 Triage</button>
-              <button id="edit-btn" title="Open in editor">📝 Edit</button>
+              <button id="triage-btn" class="btn-sm" title="LLM triage this file">🧹 Triage</button>
+              <button id="edit-btn" class="btn-sm" title="Open in editor">📝 Edit</button>
             </span>
           </div>
           <div id="markdown-content" class="markdown-body">
             <div class="welcome">
               <h2>Welcome</h2>
-              <p>Pick a file from the sidebar, or switch to <b>Today</b> or <b>All Todos</b> above.</p>
+              <p class="muted">Pick a file from the sidebar, or switch to <b>Today</b> or <b>Todos</b> above. Try <kbd>⌘</kbd><kbd>K</kbd>.</p>
             </div>
           </div>
         </div>
         <div id="view-search" class="view hidden">
-          <input type="text" id="search-input" placeholder="Search every note…" />
+          <input type="search" id="search-input" placeholder="Search every note…" autocomplete="off">
           <div id="search-results"></div>
         </div>
       </main>
     </div>
 
-    <div id="briefing-modal" class="modal hidden">
+    <!-- Briefing modal -->
+    <div id="briefing-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="briefing-title">
       <div class="modal-card">
-        <header><b>Daily briefing</b><button id="briefing-close">✕</button></header>
-        <div id="briefing-body">Generating…</div>
+        <header><b id="briefing-title">Daily briefing</b><button id="briefing-close" class="icon-btn" aria-label="Close">✕</button></header>
+        <div id="briefing-body"><p class="muted">Generating…</p></div>
       </div>
     </div>
 
-    <div id="triage-modal" class="modal hidden">
-      <div class="modal-card">
-        <header><b>Triage</b><span id="triage-subtitle"></span><button id="triage-close">✕</button></header>
-        <div id="triage-body">Running…</div>
+    <!-- Triage modal -->
+    <div id="triage-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="triage-title">
+      <div class="modal-card wide">
+        <header><b id="triage-title">Triage</b><span id="triage-subtitle" class="muted small"></span><button id="triage-close" class="icon-btn" aria-label="Close">✕</button></header>
+        <div id="triage-body"><p class="muted">Running…</p></div>
       </div>
     </div>
 
-    <div id="toast" class="toast hidden"></div>
+    <!-- Command palette -->
+    <div id="cmdk" class="cmdk hidden" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="cmdk-card">
+        <input id="cmdk-input" type="text" placeholder="Type a command, file, or todo…  (try /today, ?help)" autocomplete="off">
+        <div id="cmdk-list" role="listbox"></div>
+        <footer class="cmdk-foot">
+          <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+          <span><kbd>↵</kbd> select</span>
+          <span><kbd>esc</kbd> close</span>
+        </footer>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js" type="module"></script>
 </body>
 </html>

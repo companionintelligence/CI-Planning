@@ -185,7 +185,7 @@ These all work today against your real data:
 - HTTP: `POST /api/llm/summary` → prose briefing of overdue + due today + notable
 - MCP (stdio): 14 tools — `list_todos`, `add_todo`, `complete_todo`, `search`,
   `triage_inbox`, `summarize_day`, `rescan`, etc. Wired in via
-  `claude mcp add liam-plan -- node /Users/liam/devel/personal/ai-todo-static/.claude/worktrees/musing-austin-4dd678/mcp-stdio.js`
+  `claude mcp add companion-planning -- node /Users/liam/devel/personal/companion-planning/.claude/worktrees/musing-austin-4dd678/mcp-stdio.js`
 - Web UI: Today / All Todos / Files / Search views, all live-updating via SSE when
   you edit a markdown file in Obsidian/vim/iA Writer outside the app
 - Auto-backup: hourly git auto-commit ready to install via
