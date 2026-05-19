@@ -67,6 +67,20 @@ afterAll(() => {
   rmSync(ROOT, { recursive: true, force: true });
 });
 
+// ---- /api/health ----
+
+describe('GET /api/health', () => {
+  it('returns ok with version and counts', async () => {
+    const res = await request(app).get('/api/health');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('ok', true);
+    expect(res.body).toHaveProperty('version');
+    expect(typeof res.body.uptime_s).toBe('number');
+    expect(typeof res.body.files).toBe('number');
+    expect(typeof res.body.todos_total).toBe('number');
+  });
+});
+
 // ---- /api/config ----
 
 describe('GET /api/config', () => {

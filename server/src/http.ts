@@ -84,6 +84,17 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
   const check = (p: string) => expandAndCheck(p, directories);
   const rootFor = (p: string) => rootForPath(p, directories);
 
+  app.get('/api/health', (_req: Request, res: Response) => {
+    const stats = getStats(db);
+    res.json({
+      ok: true,
+      version: '3.0.0',
+      uptime_s: Math.floor(process.uptime()),
+      files: stats.files,
+      todos_total: stats.todos_total,
+    });
+  });
+
   app.get('/api/config', (_req: Request, res: Response) => {
     res.json({ directories: config['directories'], title, port });
   });
