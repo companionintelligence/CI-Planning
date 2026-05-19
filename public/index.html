@@ -2,51 +2,98 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI TODO Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <title>Liam's Master Plan</title>
   <link rel="stylesheet" href="style.css">
   <script src="vendor/marked.min.js"></script>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1 id="title">AI TODO Dashboard</h1>
-      <div class="header-actions">
+  <div class="app">
+    <header class="topbar">
+      <h1 id="title">Liam's Master Plan</h1>
+      <nav class="views">
+        <button class="view-btn active" data-view="today">Today</button>
+        <button class="view-btn" data-view="todos">All Todos</button>
+        <button class="view-btn" data-view="files">Files</button>
+        <button class="view-btn" data-view="search">Search</button>
+      </nav>
+      <div class="topbar-actions">
+        <span id="stats-pill" class="stats-pill" title="open / overdue / due today"></span>
+        <button id="brief-btn" class="brief-btn" title="LLM daily briefing">🤖 Briefing</button>
         <button id="refresh-btn" title="Refresh">🔄</button>
-        <span id="status"></span>
       </div>
     </header>
-    
+
     <div class="layout">
       <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-          <h2>📁 Files</h2>
-          <button id="close-sidebar" class="mobile-only">✕</button>
-        </div>
-        <div class="search-box">
-          <input type="text" id="search-input" placeholder="Search files & content..." />
-          <span id="search-clear" class="search-clear hidden">✕</span>
-        </div>
-        <div id="search-results" class="hidden"></div>
-        <div id="file-tree"></div>
-      </aside>
-      <button id="mobile-menu" class="mobile-only">☰</button>
-      
-      <main class="content">
-        <div id="file-header" class="file-header hidden">
-          <span id="current-file"></span>
-          <button id="edit-btn" title="Open in editor">📝 Edit</button>
-        </div>
-        <div id="markdown-content" class="markdown-body">
-          <div class="welcome">
-            <h2>Welcome to AI TODO Dashboard</h2>
-            <p>Select a markdown file from the sidebar to view and manage todos.</p>
+        <div class="sidebar-section" id="filters">
+          <h3>Filters</h3>
+          <div class="filter-row">
+            <label><input type="radio" name="status" value="open" checked> Open</label>
+            <label><input type="radio" name="status" value="done"> Done</label>
+            <label><input type="radio" name="status" value="all"> All</label>
           </div>
+          <div class="filter-row">
+            <label><input type="checkbox" id="filter-overdue"> Overdue</label>
+            <label><input type="checkbox" id="filter-today"> Due today</label>
+            <label><input type="checkbox" id="filter-week"> This week</label>
+          </div>
+          <input type="text" id="filter-tag" placeholder="Filter by #tag" />
+          <input type="text" id="filter-text" placeholder="Filter text…" />
+        </div>
+
+        <div class="sidebar-section" id="files-section">
+          <h3>Files</h3>
+          <input type="text" id="file-filter" placeholder="Filter files…" />
+          <div id="file-tree"></div>
+        </div>
+      </aside>
+
+      <button id="mobile-menu" class="mobile-only" aria-label="Open filters">☰</button>
+
+      <main class="content">
+        <div id="view-today" class="view"></div>
+        <div id="view-todos" class="view hidden"></div>
+        <div id="view-files" class="view hidden">
+          <div id="file-header" class="file-header hidden">
+            <span id="current-file"></span>
+            <span class="file-actions">
+              <button id="triage-btn" title="LLM triage this file">🧹 Triage</button>
+              <button id="edit-btn" title="Open in editor">📝 Edit</button>
+            </span>
+          </div>
+          <div id="markdown-content" class="markdown-body">
+            <div class="welcome">
+              <h2>Welcome</h2>
+              <p>Pick a file from the sidebar, or switch to <b>Today</b> or <b>All Todos</b> above.</p>
+            </div>
+          </div>
+        </div>
+        <div id="view-search" class="view hidden">
+          <input type="text" id="search-input" placeholder="Search every note…" />
+          <div id="search-results"></div>
         </div>
       </main>
     </div>
+
+    <div id="briefing-modal" class="modal hidden">
+      <div class="modal-card">
+        <header><b>Daily briefing</b><button id="briefing-close">✕</button></header>
+        <div id="briefing-body">Generating…</div>
+      </div>
+    </div>
+
+    <div id="triage-modal" class="modal hidden">
+      <div class="modal-card">
+        <header><b>Triage</b><span id="triage-subtitle"></span><button id="triage-close">✕</button></header>
+        <div id="triage-body">Running…</div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
   </div>
-  
+
   <script src="app.js"></script>
 </body>
 </html>
