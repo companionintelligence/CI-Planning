@@ -333,6 +333,28 @@ code { font-family: var(--font-mono); font-size: 0.93em; background: var(--panel
 }
 .group-overdue { color: var(--danger); border-left-color: var(--danger) !important; }
 .group-today { color: var(--warn); border-left-color: var(--warn) !important; }
+.group-week { color: var(--accent, var(--text)); border-left-color: var(--accent, var(--border-strong)) !important; }
+.overdue-month {
+  margin: 6px 0 10px;
+  padding-left: 6px;
+  border-left: 2px solid var(--border);
+}
+.overdue-month > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin: 8px 0 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.overdue-month[open] > summary { color: var(--text); }
+.overdue-month > summary::-webkit-details-marker { display: none; }
+.overdue-month > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 14px;
+  transition: transform 120ms var(--ease);
+}
+.overdue-month[open] > summary::before { transform: rotate(90deg); }
 .count {
   background: var(--panel-2);
   color: var(--muted);

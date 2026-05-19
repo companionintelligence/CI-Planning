@@ -234,25 +234,61 @@ async function refreshAll() {
 function renderToday() {
   const root = $('#view-today');
   const open = state.todos.filter(t => !t.checked);
-  const overdue = open.filter(t => t.due_date && t.due_date < todayStr());
-  const today = open.filter(t => t.due_date === todayStr());
+  const today = todayStr();
+  const weekEnd = addDaysStr(7);
+  const overdue = open.filter(t => t.due_date && t.due_date < today);
+  const due_today = open.filter(t => t.due_date === today);
+  const this_week = open.filter(t => t.due_date && t.due_date > today && t.due_date <= weekEnd);
   const noDue = open.filter(t => !t.due_date);
+
+  // Overdue buckets — when the list is long, group by month so it's scannable.
+  const OVERDUE_INLINE_LIMIT = 30;
+  let overdueHtml = '';
+  if (overdue.length) {
+    if (overdue.length <= OVERDUE_INLINE_LIMIT) {
+      overdueHtml = `<section class="todo-group">
+        <h3 class="group-overdue">Overdue <span class="count">${overdue.length}</span></h3>
+        <ul class="todo-list">${overdue.map(renderTodoLi).join('')}</ul>
+      </section>`;
+    } else {
+      const byMonth = new Map();
+      for (const t of overdue) {
+        const key = (t.due_date || '').slice(0, 7) || '????-??';
+        if (!byMonth.has(key)) byMonth.set(key, []);
+        byMonth.get(key).push(t);
+      }
+      const sorted = [...byMonth.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      overdueHtml = `<section class="todo-group">
+        <h3 class="group-overdue">Overdue <span class="count">${overdue.length}</span>
+          <span class="muted small">— grouped by month</span></h3>
+        ${sorted.map(([month, list]) => `
+          <details class="overdue-month" ${month === sorted[sorted.length - 1][0] ? 'open' : ''}>
+            <summary>${escape(month)} <span class="count">${list.length}</span></summary>
+            <ul class="todo-list">${list.map(renderTodoLi).join('')}</ul>
+          </details>`).join('')}
+      </section>`;
+    }
+  }
+
   const groups = [
-    ['Overdue', overdue, 'overdue'],
-    ['Due today', today, 'today'],
+    ['Due today', due_today, 'today'],
+    ['This week', this_week, 'week'],
     ['Open (no due date)', noDue.slice(0, 60), 'nodue'],
   ];
+
   root.innerHTML = `
     <section class="today-hero">
-      <h2>Today <span class="muted small">· ${todayStr()}</span></h2>
+      <h2>Today <span class="muted small">· ${today}</span></h2>
       <p class="muted">A quick scan of what matters. Press <kbd>⌘</kbd><kbd>K</kbd> for fast access.</p>
     </section>
+    ${overdueHtml}
     ${groups.map(([label, list, cls]) => list.length
       ? `<section class="todo-group">
            <h3 class="group-${cls}">${label} <span class="count">${list.length}</span></h3>
            <ul class="todo-list">${list.map(renderTodoLi).join('')}</ul>
          </section>`
       : '').join('')}
+    ${noDue.length > 60 ? `<p class="muted small">…and ${noDue.length - 60} more with no due date. Switch to <b>Todos</b> to see all.</p>` : ''}
     ${open.length === 0 ? `<div class="empty"><h3>Inbox zero.</h3><p class="muted">Nothing open. Take a walk.</p></div>` : ''}
   `;
   wireTodoCheckboxes(root);
@@ -679,7 +715,14 @@ function escape(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+// Local-time YYYY-MM-DD. `toISOString().slice(0,10)` returns the UTC date —
+// which is wrong in the evening for Pacific/Eastern users (it shows tomorrow).
+function todayStr() { return new Date().toLocaleDateString('en-CA'); }
+function addDaysStr(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString('en-CA');
+}
 function dueClass(d) { if (!d) return ''; const t = todayStr(); return d < t ? 'overdue' : d === t ? 'today' : ''; }
 function relForLink(p) { const f = state.filesIndex.get(p); return f ? `${f.directory}/${f.relativePath}` : p; }
 
