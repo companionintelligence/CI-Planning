@@ -1,294 +1,270 @@
 /**
  * AI-TODO-Static Server
- * 
- * Serves markdown files with interactive checkbox support
+ *
+ * Serves markdown files with interactive checkbox support.
  */
 
 import express from 'express';
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'fs';
-import { join, basename, dirname, relative, extname } from 'path';
+import { join, basename, dirname, relative, extname, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
-import { homedir } from 'os';
 import chokidar from 'chokidar';
+
+import { expandPath, isPathInRoots, countTodos, applyToggle } from './lib/util.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load config
 const configPath = join(__dirname, 'config.json');
 const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 
-// Expand ~ in paths
-function expandPath(p) {
-  if (p.startsWith('~/')) {
-    return join(homedir(), p.slice(2));
-  }
-  return p;
-}
-
-const directories = config.directories.map(expandPath);
+const directories = (config.directories || []).map(p => resolve(expandPath(p)));
 const excludeDirs = new Set(config.excludeDirs || []);
 const port = config.port || 3847;
 const title = config.title || 'AI TODO Dashboard';
 
-// Express app
+// Default to loopback. Pass --host 0.0.0.0 (or set HOST env) to expose.
+const hostFlagIdx = process.argv.indexOf('--host');
+const host =
+  hostFlagIdx !== -1 && process.argv[hostFlagIdx + 1]
+    ? process.argv[hostFlagIdx + 1]
+    : process.env.HOST || '127.0.0.1';
+
 const app = express();
 app.use(express.json());
 app.use(express.static(join(__dirname, 'public')));
 
-// SSE clients for live reload
 const clients = new Set();
 
-// Get all markdown files from configured directories
-function getMarkdownFiles() {
-  const files = [];
-  
-  for (const dir of directories) {
-    if (!existsSync(dir)) continue;
-    
-    const dirName = basename(dir);
-    scanDirectory(dir, dir, dirName, files);
-  }
-  
-  return files;
+// path -> { name, path, relativePath, directory, modified, mtimeMs, todos, content }
+const cache = new Map();
+
+function rootForPath(p) {
+  return directories.find(d => p === d || p.startsWith(d + sep));
 }
 
-function scanDirectory(basePath, currentPath, dirName, files) {
+function pathIsExcluded(p) {
+  return p.split(sep).some(part => excludeDirs.has(part));
+}
+
+function buildEntry(path) {
+  const root = rootForPath(path);
+  if (!root) return null;
+  if (pathIsExcluded(path)) return null;
+  let stat;
   try {
-    const entries = readdirSync(currentPath);
-    
-    for (const entry of entries) {
-      // Skip hidden files/dirs and excluded directories
-      if (entry.startsWith('.')) continue;
-      if (excludeDirs.has(entry)) continue;
-      
-      const fullPath = join(currentPath, entry);
-      const stat = statSync(fullPath);
-      
-      if (stat.isDirectory()) {
-        scanDirectory(basePath, fullPath, dirName, files);
-      } else if (extname(entry).toLowerCase() === '.md') {
-        const relativePath = relative(basePath, fullPath);
-        files.push({
-          name: entry,
-          path: fullPath,
-          relativePath,
-          directory: dirName,
-          modified: stat.mtime.toISOString(),
-        });
-      }
-    }
+    stat = statSync(path);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile()) return null;
+
+  let content;
+  try {
+    content = readFileSync(path, 'utf-8');
+  } catch {
+    return null;
+  }
+
+  return {
+    name: basename(path),
+    path,
+    relativePath: relative(root, path),
+    directory: basename(root),
+    modified: stat.mtime.toISOString(),
+    mtimeMs: stat.mtimeMs,
+    todos: countTodos(content),
+    content,
+  };
+}
+
+function refresh(path) {
+  const e = buildEntry(path);
+  if (e) cache.set(path, e);
+  else cache.delete(path);
+  return e;
+}
+
+function publicEntry(entry) {
+  const { content, mtimeMs, ...rest } = entry;
+  return rest;
+}
+
+function walk(dir) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
   } catch (e) {
-    console.warn(`Error scanning ${currentPath}:`, e.message);
+    console.warn(`Scan ${dir}: ${e.message}`);
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.startsWith('.')) continue;
+    if (excludeDirs.has(entry)) continue;
+    const full = join(dir, entry);
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) walk(full);
+    else if (extname(entry).toLowerCase() === '.md') refresh(full);
   }
 }
 
-// Count todos in a file
-function countTodos(content) {
-  const unchecked = (content.match(/- \[ \]/g) || []).length;
-  const checked = (content.match(/- \[x\]/gi) || []).length;
-  return { unchecked, checked, total: unchecked + checked };
+for (const dir of directories) {
+  if (existsSync(dir)) walk(dir);
 }
+console.log(`Initial scan: ${cache.size} markdown files`);
 
-// API: List all files
+// API: list files
 app.get('/api/files', (req, res) => {
-  const files = getMarkdownFiles();
-  
-  // Add todo counts
-  const filesWithCounts = files.map(file => {
-    try {
-      const content = readFileSync(file.path, 'utf-8');
-      const todos = countTodos(content);
-      return { ...file, todos };
-    } catch {
-      return { ...file, todos: { unchecked: 0, checked: 0, total: 0 } };
-    }
-  });
-  
-  // Sort by directory, then name
-  filesWithCounts.sort((a, b) => {
+  const files = Array.from(cache.values()).map(publicEntry);
+  files.sort((a, b) => {
     if (a.directory !== b.directory) return a.directory.localeCompare(b.directory);
     return a.name.localeCompare(b.name);
   });
-  
-  res.json({ files: filesWithCounts, title });
+  res.json({ files, title });
 });
 
-// API: Get file content
+// API: get file content
 app.get('/api/file', (req, res) => {
   const { path: filePath } = req.query;
-  
-  if (!filePath) {
-    return res.status(400).json({ error: 'Path required' });
-  }
-  
-  // Security: ensure path is within allowed directories
-  const expandedPath = expandPath(filePath);
-  const isAllowed = directories.some(dir => expandedPath.startsWith(dir));
-  
-  if (!isAllowed) {
+  if (!filePath) return res.status(400).json({ error: 'Path required' });
+
+  const expanded = expandPath(filePath);
+  if (!isPathInRoots(expanded, directories)) {
     return res.status(403).json({ error: 'Path not allowed' });
   }
-  
-  try {
-    const content = readFileSync(expandedPath, 'utf-8');
-    res.json({ content, path: expandedPath });
-  } catch (e) {
-    res.status(404).json({ error: 'File not found' });
-  }
+
+  const safe = resolve(expanded);
+  const entry = cache.get(safe) ?? refresh(safe);
+  if (!entry) return res.status(404).json({ error: 'File not found' });
+
+  res.json({ content: entry.content, path: safe });
 });
 
-// API: Toggle checkbox
+// API: toggle checkbox
 app.patch('/api/file', (req, res) => {
-  const { path: filePath, line, checked } = req.body;
-  
+  const { path: filePath, line, checked, expectedText } = req.body || {};
   if (!filePath || line === undefined) {
     return res.status(400).json({ error: 'Path and line required' });
   }
-  
-  const expandedPath = expandPath(filePath);
-  const isAllowed = directories.some(dir => expandedPath.startsWith(dir));
-  
-  if (!isAllowed) {
+
+  const expanded = expandPath(filePath);
+  if (!isPathInRoots(expanded, directories)) {
     return res.status(403).json({ error: 'Path not allowed' });
   }
-  
+  const safe = resolve(expanded);
+
+  let content;
   try {
-    const content = readFileSync(expandedPath, 'utf-8');
-    const lines = content.split('\n');
-    
-    if (line < 0 || line >= lines.length) {
-      return res.status(400).json({ error: 'Invalid line number' });
-    }
-    
-    const currentLine = lines[line];
-    
-    // Toggle checkbox
-    if (checked) {
-      lines[line] = currentLine.replace(/- \[ \]/, '- [x]');
-    } else {
-      lines[line] = currentLine.replace(/- \[x\]/i, '- [ ]');
-    }
-    
-    writeFileSync(expandedPath, lines.join('\n'), 'utf-8');
-    
-    res.json({ success: true, line: lines[line] });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    content = readFileSync(safe, 'utf-8');
+  } catch {
+    return res.status(404).json({ error: 'File not found' });
   }
+
+  const result = applyToggle(content, line, expectedText, !!checked);
+  if (result.error) return res.status(409).json({ error: result.error });
+
+  if (!result.noop) {
+    try {
+      writeFileSync(safe, result.content, 'utf-8');
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  refresh(safe);
+  res.json({ success: true, line: result.line, noop: !!result.noop });
 });
 
-// API: Search files and content
+// API: search
 app.get('/api/search', (req, res) => {
   const { q } = req.query;
-  
-  if (!q || q.length < 2) {
-    return res.json({ results: [] });
-  }
-  
-  const query = q.toLowerCase();
+  if (!q || q.length < 2) return res.json({ results: [] });
+
+  const query = String(q).toLowerCase();
   const results = [];
-  const files = getMarkdownFiles();
-  
-  for (const file of files) {
-    try {
-      const content = readFileSync(file.path, 'utf-8');
-      const lines = content.split('\n');
-      const matches = [];
-      
-      // Check filename match
-      const nameMatch = file.name.toLowerCase().includes(query);
-      
-      // Check content matches
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].toLowerCase().includes(query)) {
-          matches.push({
-            line: i + 1,
-            text: lines[i].trim().substring(0, 150),
-          });
-          if (matches.length >= 3) break; // Limit matches per file
-        }
+
+  for (const entry of cache.values()) {
+    const nameMatch = entry.name.toLowerCase().includes(query);
+    const matches = [];
+    const lines = entry.content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes(query)) {
+        matches.push({ line: i + 1, text: lines[i].trim().substring(0, 150) });
+        if (matches.length >= 3) break;
       }
-      
-      if (nameMatch || matches.length > 0) {
-        results.push({
-          ...file,
-          nameMatch,
-          matches,
-        });
-      }
-      
-      if (results.length >= 20) break; // Limit total results
-    } catch (e) {
-      // Skip files that can't be read
     }
+    if (nameMatch || matches.length > 0) {
+      results.push({ ...publicEntry(entry), nameMatch, matches });
+    }
+    if (results.length >= 20) break;
   }
-  
-  // Sort: name matches first, then by match count
+
   results.sort((a, b) => {
     if (a.nameMatch && !b.nameMatch) return -1;
     if (!a.nameMatch && b.nameMatch) return 1;
     return b.matches.length - a.matches.length;
   });
-  
+
   res.json({ results, query: q });
 });
 
-// API: Get config
+// API: config
 app.get('/api/config', (req, res) => {
   res.json({ directories: config.directories, title });
 });
 
-// SSE endpoint for live reload
+// SSE: live reload
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  
   clients.add(res);
-  
-  req.on('close', () => {
-    clients.delete(res);
-  });
+  req.on('close', () => clients.delete(res));
 });
 
-// Notify clients of changes
 function notifyClients(event, data) {
   const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const client of clients) {
-    client.write(message);
-  }
+  for (const client of clients) client.write(message);
 }
 
-// Watch for file changes
+// File watcher — drives cache invalidation and SSE.
 const watcher = chokidar.watch(directories, {
-  ignored: /(^|[\/\\])\../,
+  ignored: p => {
+    const parts = p.split(sep);
+    if (parts.some(part => part.startsWith('.'))) return true;
+    if (parts.some(part => excludeDirs.has(part))) return true;
+    return false;
+  },
   persistent: true,
   ignoreInitial: true,
 });
 
-watcher.on('change', (path) => {
-  if (path.endsWith('.md')) {
-    console.log(`File changed: ${path}`);
-    notifyClients('fileChange', { path });
-  }
+watcher.on('change', path => {
+  if (!path.endsWith('.md')) return;
+  refresh(path);
+  notifyClients('fileChange', { path });
+});
+watcher.on('add', path => {
+  if (!path.endsWith('.md')) return;
+  refresh(path);
+  notifyClients('fileAdd', { path });
+});
+watcher.on('unlink', path => {
+  if (!path.endsWith('.md')) return;
+  cache.delete(path);
+  notifyClients('fileRemove', { path });
 });
 
-watcher.on('add', (path) => {
-  if (path.endsWith('.md')) {
-    notifyClients('fileAdd', { path });
-  }
-});
-
-watcher.on('unlink', (path) => {
-  if (path.endsWith('.md')) {
-    notifyClients('fileRemove', { path });
-  }
-});
-
-// Start server
-app.listen(port, () => {
-  console.log(`\n🗒️  AI TODO Dashboard running at http://localhost:${port}\n`);
+app.listen(port, host, () => {
+  console.log(`\n🗒️  AI TODO Dashboard running at http://${host}:${port}\n`);
   console.log('Watching directories:');
   directories.forEach(dir => console.log(`  📁 ${dir}`));
+  if (host === '0.0.0.0' || host === '::') {
+    console.log('\n⚠️  Bound to all interfaces — exposed to your network.');
+  }
   console.log('');
 });

@@ -8,6 +8,7 @@ let files = [];
 let currentFile = null;
 let currentFilePath = null;
 let searchTimeout = null;
+let lastSelfWriteAt = 0; // suppress SSE reload after our own PATCH
 
 // DOM elements
 const fileTree = document.getElementById('file-tree');
@@ -241,19 +242,20 @@ function renderMarkdown(content) {
   let html = '';
   let inTodoList = false;
   let todoBuffer = [];
-  
+  const seenHeadings = new Map(); // dedupe heading IDs across the whole render
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    
+
     // Check for todo items
     const uncheckedMatch = line.match(/^(\s*)- \[ \] (.*)$/);
     const checkedMatch = line.match(/^(\s*)- \[x\] (.*)$/i);
-    
+
     if (uncheckedMatch || checkedMatch) {
       if (!inTodoList) {
         // Flush previous content
         if (todoBuffer.length > 0) {
-          html += parseMarkdownWithHeadings(todoBuffer.join('\n'));
+          html += parseMarkdownWithHeadings(todoBuffer.join('\n'), seenHeadings);
           todoBuffer = [];
         }
         inTodoList = true;
@@ -265,9 +267,10 @@ function renderMarkdown(content) {
       
       html += `
         <div class="todo-item" style="padding-left: ${indent * 10}px">
-          <div class="todo-checkbox ${isChecked ? 'checked' : ''}" 
-               data-line="${i}" 
-               data-checked="${isChecked}"></div>
+          <div class="todo-checkbox ${isChecked ? 'checked' : ''}"
+               data-line="${i}"
+               data-checked="${isChecked}"
+               data-text="${escapeAttr(text)}"></div>
           <span class="todo-text ${isChecked ? 'completed' : ''}">${escapeHtml(text)}</span>
         </div>`;
     } else {
@@ -280,7 +283,7 @@ function renderMarkdown(content) {
   
   // Flush remaining content
   if (todoBuffer.length > 0) {
-    html += parseMarkdownWithHeadings(todoBuffer.join('\n'));
+    html += parseMarkdownWithHeadings(todoBuffer.join('\n'), seenHeadings);
   }
   
   markdownContent.innerHTML = html;
@@ -289,15 +292,15 @@ function renderMarkdown(content) {
   document.querySelectorAll('.todo-checkbox').forEach(checkbox => {
     checkbox.addEventListener('click', async () => {
       const line = parseInt(checkbox.dataset.line);
+      const expectedText = checkbox.dataset.text || '';
       const wasChecked = checkbox.dataset.checked === 'true';
       const newChecked = !wasChecked;
-      
-      // Optimistic update
+
+      // Optimistic UI
       checkbox.classList.toggle('checked', newChecked);
       checkbox.dataset.checked = newChecked;
       checkbox.nextElementSibling.classList.toggle('completed', newChecked);
-      
-      // Send to server
+
       try {
         const res = await fetch('/api/file', {
           method: 'PATCH',
@@ -305,22 +308,37 @@ function renderMarkdown(content) {
           body: JSON.stringify({
             path: currentFilePath,
             line,
-            checked: newChecked
-          })
+            checked: newChecked,
+            expectedText,
+          }),
         });
-        
+
         if (!res.ok) {
-          throw new Error('Failed to update');
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
         }
-        
-        // Refresh file list to update badges
-        loadFiles();
-        
+
+        // Suppress the SSE-driven reload we're about to receive for our own write.
+        lastSelfWriteAt = Date.now();
+
+        // Update local badge counts and re-render the tree (no server round-trip).
+        const file = files.find(f => f.path === currentFilePath);
+        if (file && file.todos) {
+          if (newChecked) {
+            file.todos.unchecked = Math.max(0, file.todos.unchecked - 1);
+            file.todos.checked++;
+          } else {
+            file.todos.unchecked++;
+            file.todos.checked = Math.max(0, file.todos.checked - 1);
+          }
+          renderFileTree();
+        }
       } catch (e) {
         // Revert on error
         checkbox.classList.toggle('checked', wasChecked);
         checkbox.dataset.checked = wasChecked;
         checkbox.nextElementSibling.classList.toggle('completed', wasChecked);
+        showToast(`Could not update: ${e.message}`);
         console.error(e);
       }
     });
@@ -344,20 +362,22 @@ function renderMarkdown(content) {
   });
 }
 
-// Parse markdown and add IDs to headings
-function parseMarkdownWithHeadings(markdown) {
-  // First, use marked to parse
+// Parse markdown and add IDs to headings. `seen` is a Map<base-id, count> shared
+// across all chunks of a single document so duplicate headings get unique IDs.
+function parseMarkdownWithHeadings(markdown, seen) {
   let html = marked.parse(markdown);
-  
-  // Then, add IDs and anchor links to headings
+
   html = html.replace(/<(h[1-6])>([^<]+)<\/h[1-6]>/g, (match, tag, text) => {
-    const headingId = slugify(text);
+    const base = slugify(text);
+    const count = seen.get(base) || 0;
+    seen.set(base, count + 1);
+    const headingId = count === 0 ? base : `${base}-${count + 1}`;
     return `<${tag} id="${headingId}" data-heading-id="${headingId}">
       ${text}
       <a class="heading-anchor" href="#${headingId}" data-heading-id="${headingId}" title="Copy link to section">🔗</a>
     </${tag}>`;
   });
-  
+
   return html;
 }
 
@@ -384,6 +404,15 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Escape for use inside a double-quoted HTML attribute value
+function escapeAttr(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 // Open current file in default editor
@@ -534,14 +563,18 @@ function setupEventSource() {
   
   eventSource.addEventListener('fileChange', (e) => {
     const data = JSON.parse(e.data);
+
+    // Suppress reload for the change we just made ourselves (~1s window).
+    if (Date.now() - lastSelfWriteAt < 1000) return;
+
     console.log('File changed:', data.path);
-    
+
     // Reload if it's the current file
     if (data.path === currentFilePath) {
       const file = files.find(f => f.path === currentFilePath);
       if (file) loadFile(file);
     }
-    
+
     // Refresh file list
     loadFiles();
   });
