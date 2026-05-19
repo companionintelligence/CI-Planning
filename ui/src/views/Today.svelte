@@ -2,7 +2,8 @@
   import { store } from '../lib/store.svelte.js';
   import TodoItem from '../components/TodoItem.svelte';
   const groups = $derived(store.groupedToday());
-  function todayStr() { return new Date().toISOString().slice(0,10); }
+  // Local time, not UTC — see store.todayStr.
+  const todayStr = () => store.todayStr();
 </script>
 
 <section class="mb-6">
@@ -32,6 +33,17 @@
   </section>
 {/if}
 
+{#if groups.thisWeek.length}
+  <section class="mb-6">
+    <h3 class="text-[12px] uppercase tracking-wider font-semibold pl-2 mb-2 border-l-2 border-blue-500 text-blue-400">
+      This week <span class="bg-neutral-900 text-neutral-400 px-1.5 py-0.5 rounded-full text-[11px] ml-1">{groups.thisWeek.length}</span>
+    </h3>
+    <ul class="list-none p-0 m-0">
+      {#each groups.thisWeek as t (t.hash)}<TodoItem todo={t} />{/each}
+    </ul>
+  </section>
+{/if}
+
 {#if groups.nodue.length}
   <section class="mb-6">
     <h3 class="text-[12px] uppercase tracking-wider font-semibold pl-2 mb-2 border-l-2 border-neutral-700 text-neutral-400">
@@ -43,7 +55,7 @@
   </section>
 {/if}
 
-{#if !groups.overdue.length && !groups.today.length && !groups.nodue.length}
+{#if !groups.overdue.length && !groups.today.length && !groups.thisWeek.length && !groups.nodue.length}
   <div class="text-center py-16">
     <h3 class="text-xl">Inbox zero.</h3>
     <p class="text-neutral-500">Nothing open. Take a walk.</p>

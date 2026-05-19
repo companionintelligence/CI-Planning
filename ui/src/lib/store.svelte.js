@@ -2,7 +2,14 @@
 
 const API = '';  // proxied in dev, served from same origin in prod
 
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+// Local-time YYYY-MM-DD. `toISOString().slice(0,10)` returns the UTC date —
+// which is wrong in the evening for Pacific/Eastern users (shows tomorrow).
+function todayStr() { return new Date().toLocaleDateString('en-CA'); }
+function addDaysStr(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString('en-CA');
+}
 
 class Store {
   view = $state('today');
@@ -81,13 +88,16 @@ class Store {
 
   groupedToday() {
     const today = todayStr();
+    const weekEnd = addDaysStr(7);
     const open = this.todos.filter(t => !t.checked);
     return {
-      overdue: open.filter(t => t.due_date && t.due_date < today),
-      today:   open.filter(t => t.due_date === today),
-      nodue:   open.filter(t => !t.due_date).slice(0, 60),
+      overdue:  open.filter(t => t.due_date && t.due_date < today),
+      today:    open.filter(t => t.due_date === today),
+      thisWeek: open.filter(t => t.due_date && t.due_date > today && t.due_date <= weekEnd),
+      nodue:    open.filter(t => !t.due_date).slice(0, 60),
     };
   }
+  todayStr = todayStr;
 }
 
 export const store = new Store();

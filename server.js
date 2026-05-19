@@ -232,6 +232,18 @@ app.get('/api/search', (req, res) => {
   res.json({ results, query: q });
 });
 
+// Force a full rebuild of the index. Useful after editing config.excludeDirs
+// or when the file watcher missed something. The watcher handles ordinary edits.
+app.post('/api/rescan', (req, res) => {
+  const t0 = Date.now();
+  try {
+    const stats = fullScan(db, directories, [...excludeDirs]);
+    res.json({ ok: true, ms: Date.now() - t0, ...stats });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
 app.get('/api/stats', (req, res) => {
   const stats = db
     .prepare(
@@ -240,8 +252,8 @@ app.get('/api/stats', (req, res) => {
         (SELECT COUNT(*) FROM todos) AS todos_total,
         (SELECT COUNT(*) FROM todos WHERE checked=0) AS todos_open,
         (SELECT COUNT(*) FROM todos WHERE checked=1) AS todos_done,
-        (SELECT COUNT(*) FROM todos WHERE checked=0 AND due_date IS NOT NULL AND due_date < date('now')) AS overdue,
-        (SELECT COUNT(*) FROM todos WHERE checked=0 AND due_date = date('now')) AS due_today`
+        (SELECT COUNT(*) FROM todos WHERE checked=0 AND due_date IS NOT NULL AND due_date < date('now','localtime')) AS overdue,
+        (SELECT COUNT(*) FROM todos WHERE checked=0 AND due_date = date('now','localtime')) AS due_today`
     )
     .get();
   res.json(stats);

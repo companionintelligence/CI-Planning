@@ -14,7 +14,10 @@
     "test-consolidation",
     "contact_list",
     "node_modules",
-    ".git"
+    ".git",
+    ".playwright-mcp",
+    "HyperConstruct_Dropbox",
+    "LagunaLabs_Pre2022Archive"
   ],
   "port": 3847,
   "title": "Companion Planning"
