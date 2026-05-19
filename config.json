@@ -1,14 +1,21 @@
 {
   "directories": [
-    "~/Desktop/Planning/Personal",
-    "~/Desktop/Planning/Business",
-    "~/Desktop/Planning/Sales_Outreach",
-    "~/Desktop/ci_computer",
-    "~/Desktop/liambroza_com",
-    "~/Desktop/chimera_computer",
-    "~/Desktop/enchantmentengine_com"
+    "~/Documents/Liam_Plan"
   ],
-  "excludeDirs": ["archive", "coverage"],
+  "excludeDirs": [
+    "archive",
+    "_archive",
+    ".archive",
+    "archived",
+    "coverage",
+    "planning_archive",
+    "Liam_web_history",
+    "websites",
+    "test-consolidation",
+    "contact_list",
+    "node_modules",
+    ".git"
+  ],
   "port": 3847,
   "title": "Liam's Master Plan"
 }
