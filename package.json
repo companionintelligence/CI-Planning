@@ -14,7 +14,9 @@
     "mcp:ts": "node server/dist/mcp-stdio.js",
     "test": "node_modules/.bin/vitest run",
     "test:watch": "node_modules/.bin/vitest",
-    "test:legacy": "node --test test/*.test.js"
+    "test:legacy": "node --test test/*.test.js",
+    "test:e2e": "node_modules/.bin/playwright test",
+    "test:e2e:ui": "node_modules/.bin/playwright test --ui"
   },
   "keywords": [
     "markdown",
@@ -38,9 +40,12 @@
     "marked": "^12.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.0",
+    "@types/supertest": "^7.2.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.22.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6"

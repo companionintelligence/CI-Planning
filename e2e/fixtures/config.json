@@ -1,0 +1,6 @@
+{
+  "directories": ["./e2e/fixtures/notes"],
+  "excludeDirs": ["node_modules", ".git"],
+  "port": 3848,
+  "title": "E2E Test"
+}

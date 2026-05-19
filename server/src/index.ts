@@ -17,8 +17,8 @@ import { mountRoutes } from './http.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Resolve config relative to the repo root (two levels up from server/src/)
-const configPath = join(__dirname, '..', '..', 'config.json');
+// Resolve config: COMPANION_CONFIG env var overrides the default location
+const configPath = process.env['COMPANION_CONFIG'] ?? join(__dirname, '..', '..', 'config.json');
 const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
 
 const directories = ((config['directories'] as string[] | undefined) ?? []).map(p => resolve(expandPath(p)));
