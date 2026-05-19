@@ -7,7 +7,7 @@ document: current state, decisions, phases, risks.
 
 ## 1. Current state inventory
 
-Two variants of the prototype exist in this repo (see [memory note](../../../../../../.claude/projects/-Users-liam-devel-personal-ai-todo-static/memory/project_ai_todo_static_branches.md)
+Two variants of the prototype exist in this repo (see [memory note](../../../../../../.claude/projects/-Users-liam-devel-personal-companion-planning/memory/project_ai_todo_static_branches.md)
 if revisiting later):
 
 ### What works today (newer `companion/musing-austin-4dd678` branch)

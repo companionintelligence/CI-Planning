@@ -1,5 +1,5 @@
 {
-  "name": "ai-todo-static",
+  "name": "companion-planning",
   "version": "1.0.0",
   "description": "Static web app for viewing and checking off markdown todos",
   "main": "server.js",
@@ -19,7 +19,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mrhegemon/ai-todo-static.git"
+    "url": "https://github.com/mrhegemon/companion-planning.git"
   },
   "dependencies": {
     "chokidar": "^3.6.0",
