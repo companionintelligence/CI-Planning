@@ -1,4 +1,6 @@
-# AI-TODO-Static
+# Companion-Planning
+
+Private and confidential
 
 A simple static web app that renders markdown files with interactive checkboxes. View and check off todos from your planning documents in one beautiful interface.
 
