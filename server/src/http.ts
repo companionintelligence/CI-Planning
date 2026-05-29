@@ -672,6 +672,37 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     res.json(result);
   });
 
+  // Batch-ingest events fetched by an agent with calendar access (Google Cal MCP,
+  // hermes, Cowork). The pragmatic "connect my calendar" path — no OAuth in-server.
+  app.post('/api/calendar/events', (req: Request, res: Response) => {
+    if (!calendar) return void res.status(503).json({ error: 'calendar bridge not configured' });
+    const body = req.body as {
+      events?: Array<{ calendar_id?: string; event_id?: string; title?: string; start?: string | number; end?: string | number; todo_hash?: string }>;
+      prune_missing?: boolean;
+      window_start?: string; window_end?: string;
+    };
+    if (!Array.isArray(body.events)) return void res.status(400).json({ error: 'events[] required' });
+    const toMs = (v: string | number | undefined): number => {
+      if (typeof v === 'number') return v;
+      if (typeof v === 'string') { const t = Date.parse(v); return Number.isNaN(t) ? NaN : t; }
+      return NaN;
+    };
+    const events = body.events.map(e => ({
+      calendar_id: e.calendar_id ?? 'primary',
+      event_id: String(e.event_id ?? ''),
+      title: e.title ?? '(untitled)',
+      start_at: toMs(e.start),
+      end_at: toMs(e.end),
+      ...(e.todo_hash ? { todo_hash: e.todo_hash } : {}),
+    }));
+    const opts: { windowStartMs?: number; windowEndMs?: number; pruneMissing?: boolean } = {};
+    if (body.prune_missing) opts.pruneMissing = true;
+    if (body.window_start) opts.windowStartMs = Date.parse(body.window_start);
+    if (body.window_end) opts.windowEndMs = Date.parse(body.window_end);
+    const result = calendar.ingestEvents(events, opts);
+    res.json(result);
+  });
+
   app.post('/api/calendar/schedule', async (req: Request, res: Response) => {
     if (!calendar) return void res.status(503).json({ error: 'calendar bridge not configured' });
     const body = req.body as {

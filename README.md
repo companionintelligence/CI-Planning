@@ -8,6 +8,20 @@ single Node process; accessible from your phone over Tailscale as an installable
 > Markdown stays the source of truth. SQLite is a rebuildable derived index.
 > Local LLMs only — no cloud calls for your notes.
 
+## Screenshots
+
+| Today | Capacity |
+|---|---|
+| ![Today view](docs/screenshots/today.png) | ![Capacity view](docs/screenshots/capacity.png) |
+| Tasks grouped by urgency, each with estimate / schedule / edit actions | 3-week load bars from your real Google Calendar — green/amber/red |
+
+| Review queue | Todo editor |
+|---|---|
+| ![Review queue](docs/screenshots/review.png) | ![Todo editor](docs/screenshots/editor.png) |
+| LLM-extracted tasks awaiting accept/dismiss — nothing auto-writes | Create/edit with date+time pickers, presets, priority, estimate, tags |
+
+Regenerate with `node ops/scripts/screenshots.mjs` (server must be running).
+
 ## Why
 
 If you keep planning docs as markdown (Obsidian-style, Foam-style, or just folders
@@ -123,7 +137,8 @@ Todos are addressable by a **stable content hash** (sha256 of `path + heading + 
 | GET | `/api/lookahead?weeks=3` | Day-by-day capacity + tasks + events |
 | GET | `/api/capacity?start_date=&end_date=` | Capacity for a date range |
 | POST | `/api/task/estimate` | Set a durable `(est: Nm)` estimate |
-| POST | `/api/calendar/sync` | Pull calendar events into the index |
+| POST | `/api/calendar/events` | Batch-ingest events fetched by an agent (the "connect my calendar" path) |
+| POST | `/api/calendar/sync` | Pull calendar events via the bound provider |
 | POST | `/api/calendar/schedule` | Create a time block linked to a task |
 | GET | `/api/calendar/slots?duration_minutes=` | Find open slots |
 | GET / POST | `/api/suggestions`, `/api/suggestion/:id/accept\|dismiss` | Review queue |
@@ -189,6 +204,27 @@ Trigger any review by hand from **Settings → Summaries & routines**, or:
 ```bash
 curl -X POST http://127.0.0.1:3847/api/summary/weekly -d '{}' -H 'Content-Type: application/json'
 ```
+
+## Connecting Google Calendar
+
+The server stores **no Google credentials** — an agent that already has calendar
+access (Claude with the Calendar MCP, Claude Cowork, or hermes) pulls events and
+pushes a minimal batch into `POST /api/calendar/events`. Once ingested, the Capacity
+view and `lookahead` reflect your real committed hours, and `find_slot` schedules
+around real meetings. Full recipe in
+[`ops/scripts/sync-google-calendar.md`](ops/scripts/sync-google-calendar.md).
+
+```bash
+# An agent fetches events, then:
+curl -X POST http://127.0.0.1:3847/api/calendar/events -H 'Content-Type: application/json' -d '{
+  "events": [{ "calendar_id": "work", "event_id": "abc",
+               "title": "Standup", "start": "2026-05-29T09:00:00-07:00",
+               "end": "2026-05-29T09:30:00-07:00" }]
+}'
+```
+
+Ingest **timed** events only — all-day items (deadlines, holidays) would distort
+capacity and are better tracked as todos.
 
 ## Architecture
 
