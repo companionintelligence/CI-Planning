@@ -13,6 +13,7 @@ import { openDb } from './db.js';
 import { fullScan } from './indexer.js';
 import { buildMcpServer } from './mcp.js';
 import { CalendarBridge } from './calendar.js';
+import { setPreferredModel } from './llm.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,9 @@ const directories = ((config['directories'] as string[] | undefined) ?? []).map(
   resolve(expandPath(p)),
 );
 const excludeDirs = new Set<string>((config['excludeDirs'] as string[] | undefined) ?? []);
+
+const llmCfg = config['llm'] as { model?: string } | undefined;
+if (llmCfg?.model) setPreferredModel(llmCfg.model);
 
 const db = openDb();
 fullScan(db, directories, excludeDirs);

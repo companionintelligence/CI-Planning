@@ -15,7 +15,7 @@ import { openDb, setMeta, insertSuggestion } from './db.js';
 import { fullScan, indexFile } from './indexer.js';
 import { mountRoutes } from './http.js';
 import { CalendarBridge } from './calendar.js';
-import { extractTodosFromText, LLMUnavailable } from './llm.js';
+import { extractTodosFromText, LLMUnavailable, setPreferredModel } from './llm.js';
 import { buildMcpServer } from './mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { randomUUID } from 'crypto';
@@ -28,6 +28,10 @@ const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, u
 
 const directories = ((config['directories'] as string[] | undefined) ?? []).map(p => resolve(expandPath(p)));
 const excludeDirs = new Set<string>((config['excludeDirs'] as string[] | undefined) ?? []);
+
+// Optional pinned LLM model from config.json: { "llm": { "model": "qwen2.5:0.5b" } }
+const llmCfg = config['llm'] as { model?: string } | undefined;
+if (llmCfg?.model) setPreferredModel(llmCfg.model);
 const port = Number(config['port']) || 3847;
 const title = (config['title'] as string | undefined) ?? 'Companion Planning';
 
