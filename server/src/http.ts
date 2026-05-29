@@ -75,6 +75,25 @@ function rootForPath(p: string, directories: string[]): string | undefined {
   return directories.find(d => p === d || p.startsWith(d + sep));
 }
 
+/**
+ * Map an LLM-route error to an HTTP status. Ollama being unreachable OR returning
+ * an error (e.g. model missing, timeout) is an *upstream dependency* failure → 503,
+ * not a server bug (500). generate() throws `ollama <status>: …`; the client also
+ * surfaces fetch/timeout errors. Anything else is a genuine 500.
+ */
+function respondLlmError(res: Response, e: unknown): void {
+  const msg = (e as Error)?.message ?? 'llm error';
+  if (
+    e instanceof LLMUnavailable ||
+    /^ollama\b/i.test(msg) ||
+    /(fetch failed|ECONNREFUSED|ENOTFOUND|timeout|timed out|aborted|AbortError)/i.test(msg)
+  ) {
+    res.status(503).json({ error: msg });
+    return;
+  }
+  res.status(500).json({ error: msg });
+}
+
 function rowToTodo(r: TodoRowDb) {
   return {
     hash: r.hash,
@@ -328,8 +347,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       })));
       res.json({ ...result, todos: todos.length });
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -339,8 +357,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       const result = await summarizeDay(todos);
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -351,8 +368,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       const result = await extractTodosFromText(body.text);
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -366,8 +382,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       const rollupOpts: { title?: string } = {}; if (fileTitle) rollupOpts.title = fileTitle; const result = await projectRollup(todos, rollupOpts);
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -385,8 +400,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       })));
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -634,8 +648,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       }
       res.json({ inserted, suggestions: extracted.todos ?? [] });
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -669,6 +682,37 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     if (!calendar) return void res.status(503).json({ error: 'calendar bridge not configured' });
     const weeks = Math.min(Math.max(Number(req.body?.weeks) || 3, 1), 12);
     const result = await calendar.syncIncoming(weeks);
+    res.json(result);
+  });
+
+  // Batch-ingest events fetched by an agent with calendar access (Google Cal MCP,
+  // hermes, Cowork). The pragmatic "connect my calendar" path — no OAuth in-server.
+  app.post('/api/calendar/events', (req: Request, res: Response) => {
+    if (!calendar) return void res.status(503).json({ error: 'calendar bridge not configured' });
+    const body = req.body as {
+      events?: Array<{ calendar_id?: string; event_id?: string; title?: string; start?: string | number; end?: string | number; todo_hash?: string }>;
+      prune_missing?: boolean;
+      window_start?: string; window_end?: string;
+    };
+    if (!Array.isArray(body.events)) return void res.status(400).json({ error: 'events[] required' });
+    const toMs = (v: string | number | undefined): number => {
+      if (typeof v === 'number') return v;
+      if (typeof v === 'string') { const t = Date.parse(v); return Number.isNaN(t) ? NaN : t; }
+      return NaN;
+    };
+    const events = body.events.map(e => ({
+      calendar_id: e.calendar_id ?? 'primary',
+      event_id: String(e.event_id ?? ''),
+      title: e.title ?? '(untitled)',
+      start_at: toMs(e.start),
+      end_at: toMs(e.end),
+      ...(e.todo_hash ? { todo_hash: e.todo_hash } : {}),
+    }));
+    const opts: { windowStartMs?: number; windowEndMs?: number; pruneMissing?: boolean } = {};
+    if (body.prune_missing) opts.pruneMissing = true;
+    if (body.window_start) opts.windowStartMs = Date.parse(body.window_start);
+    if (body.window_end) opts.windowEndMs = Date.parse(body.window_end);
+    const result = calendar.ingestEvents(events, opts);
     res.json(result);
   });
 
