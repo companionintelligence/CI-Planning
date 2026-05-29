@@ -10,7 +10,24 @@ import type Database from 'better-sqlite3';
 
 import { expandPath, isPathInRoots, atomicWrite } from './util.js';
 import type { TodoFilter } from './types.js';
-import { listFiles, queryTodos, searchFts, getTodoByHash, getStats } from './db.js';
+import {
+  listFiles,
+  queryTodos,
+  searchFts,
+  getTodoByHash,
+  getStats,
+  logTaskEvent,
+  getTaskEvents,
+  dailyCapacity,
+  memorySet,
+  memoryGet,
+  memoryList,
+  insertSuggestion,
+  listSuggestions,
+  updateSuggestionStatus,
+  getSuggestion,
+  listCalendarLinksInRange,
+} from './db.js';
 import { fullScan, indexFile } from './indexer.js';
 import { parseFile, toggleTodoByHash, appendUnderHeading, hashTodo, sha256 } from './markdown.js';
 import {
@@ -415,6 +432,248 @@ export function buildMcpServer({ db, directories, excludeDirs }: McpServerDeps):
   }, async () => {
     const up = await ollamaAvailable();
     return ok(up ? 'Ollama is reachable.' : 'Ollama is not reachable.', { available: up });
+  });
+
+  // ============== V4 TOOLS ==============
+
+  // ---------- extract_from_source ----------
+  server.registerTool('extract_from_source', {
+    title: 'Extract actionable tasks from a markdown file (prose-aware)',
+    description: 'Runs LLM pass-2 extraction on a file. Returns suggested tasks for the Review queue; nothing is auto-applied.',
+    inputSchema: {
+      path: z.string().describe('Path to a markdown file inside a configured root'),
+    },
+  }, async ({ path: filePath }: { path: string }) => {
+    try {
+      const safe = expandAndCheck(filePath);
+      if (!existsSync(safe)) return mcpErr(`File not found: ${safe}`);
+      const content = readFileSync(safe, 'utf-8');
+      const extracted = await extractTodosFromText(content.slice(0, 8000));
+      let inserted = 0;
+      for (const t of extracted.todos ?? []) {
+        insertSuggestion(db, {
+          file_path: safe,
+          heading: t.heading ?? null,
+          text: t.text,
+          kind: 'suggested',
+          source_quote: null,
+          confidence: 0.7,
+          maybe_done_for_hash: null,
+          duplicate_of_hash: null,
+        });
+        inserted++;
+      }
+      return ok(`Extracted ${inserted} suggested task${inserted === 1 ? '' : 's'} from ${basename(safe)}`, {
+        inserted,
+        suggestions: extracted.todos ?? [],
+      });
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return mcpErr('Ollama not reachable');
+      return mcpErr((e as Error).message);
+    }
+  });
+
+  // ---------- list_suggestions ----------
+  server.registerTool('list_suggestions', {
+    title: 'List pending suggested tasks from the Review queue',
+    description: 'Returns Review queue items — suggested tasks, maybe-done flags, duplicates. Nothing is applied automatically.',
+    inputSchema: {
+      status: z.enum(['pending', 'accepted', 'dismissed']).optional().describe('Defaults to pending'),
+    },
+  }, async (args: { status?: 'pending' | 'accepted' | 'dismissed' | undefined }) => {
+    const status = args.status ?? 'pending';
+    const items = listSuggestions(db, status);
+    return ok(`${items.length} suggestion${items.length === 1 ? '' : 's'} ${status}`, { items });
+  });
+
+  // ---------- accept_suggestion ----------
+  server.registerTool('accept_suggestion', {
+    title: 'Accept a Review-queue suggestion — writes the task into its file',
+    description: 'For suggested tasks: appends under the inferred heading. For maybe_done: marks the existing todo done. For duplicates: closes the suggestion without changing files.',
+    inputSchema: {
+      id: z.number().describe('suggestion id from list_suggestions'),
+    },
+  }, async ({ id }: { id: number }) => {
+    try {
+      const s = getSuggestion(db, id);
+      if (!s) return mcpErr(`No suggestion ${id}`);
+      if (s.status !== 'pending') return mcpErr(`Suggestion ${id} already ${s.status}`);
+
+      if (s.kind === 'suggested') {
+        const content = existsSync(s.file_path) ? readFileSync(s.file_path, 'utf-8') : '';
+        const heading = s.heading ?? 'Inbox';
+        const line = `- [ ] ${s.text}`;
+        const updated = appendUnderHeading(content, heading, line);
+        atomicWrite(s.file_path, updated);
+        const root = rootForPath(s.file_path);
+        if (root) indexFile(db, s.file_path, root);
+        const hash = hashTodo(s.file_path, heading, s.text);
+        logTaskEvent(db, hash, 'created', 'agent:accept_suggestion', { suggestion_id: id });
+        updateSuggestionStatus(db, id, 'accepted');
+        return ok(`Accepted suggestion ${id} — added under ${heading}`, { ok: true, hash });
+      }
+
+      if (s.kind === 'maybe_done' && s.maybe_done_for_hash) {
+        const row = getTodoByHash(db, s.maybe_done_for_hash);
+        if (!row) return mcpErr('Target todo not found');
+        const content = readFileSync(row.file_path, 'utf-8');
+        const result = toggleTodoByHash(content, s.maybe_done_for_hash, row.file_path, true);
+        if ('error' in result) return mcpErr(result.error);
+        if (!result.noop) {
+          atomicWrite(row.file_path, result.content);
+          const root = rootForPath(row.file_path);
+          if (root) indexFile(db, row.file_path, root);
+        }
+        logTaskEvent(db, s.maybe_done_for_hash, 'completed', 'agent:accept_suggestion', { suggestion_id: id });
+        updateSuggestionStatus(db, id, 'accepted');
+        return ok(`Marked ${s.maybe_done_for_hash} done`, { ok: true, hash: s.maybe_done_for_hash });
+      }
+
+      if (s.kind === 'duplicate') {
+        // Just dismiss — there's no write needed
+        updateSuggestionStatus(db, id, 'accepted');
+        return ok('Duplicate suggestion closed (no file change)', { ok: true });
+      }
+
+      return mcpErr(`Unknown suggestion kind: ${s.kind}`);
+    } catch (e) { return mcpErr((e as Error).message); }
+  });
+
+  // ---------- dismiss_suggestion ----------
+  server.registerTool('dismiss_suggestion', {
+    title: 'Dismiss a Review-queue suggestion without writing files',
+    description: 'Removes the suggestion from the pending Review queue.',
+    inputSchema: {
+      id: z.number(),
+    },
+  }, async ({ id }: { id: number }) => {
+    const s = getSuggestion(db, id);
+    if (!s) return mcpErr(`No suggestion ${id}`);
+    updateSuggestionStatus(db, id, 'dismissed');
+    return ok(`Dismissed suggestion ${id}`, { ok: true });
+  });
+
+  // ---------- task_history ----------
+  server.registerTool('task_history', {
+    title: 'Audit trail for one task — when created, when toggled, when scheduled',
+    description: 'Returns task_events rows for the given todo hash in reverse-chronological order.',
+    inputSchema: {
+      hash: z.string(),
+    },
+  }, async ({ hash }: { hash: string }) => {
+    const events = getTaskEvents(db, hash);
+    return ok(`${events.length} event${events.length === 1 ? '' : 's'} for ${hash}`, { events });
+  });
+
+  // ---------- set_estimate ----------
+  server.registerTool('set_estimate', {
+    title: 'Set estimated minutes for a task',
+    description: 'Stores estimated_minutes on the todo row. Used by capacity calculations.',
+    inputSchema: {
+      hash: z.string(),
+      minutes: z.number().int().positive(),
+    },
+  }, ({ hash, minutes }: { hash: string; minutes: number }) => {
+    const row = getTodoByHash(db, hash);
+    if (!row) return mcpErr(`No todo with hash ${hash}`);
+    db.prepare(`UPDATE todos SET estimated_minutes=? WHERE hash=?`).run(minutes, hash);
+    logTaskEvent(db, hash, 'estimated', 'user', { minutes });
+    return ok(`Set ${minutes}m estimate on ${hash}`, { ok: true, minutes });
+  });
+
+  // ---------- capacity_report ----------
+  server.registerTool('capacity_report', {
+    title: 'Day-by-day capacity for a date range',
+    description: 'Returns committed minutes (from calendar_links), task counts due, and unscheduled-task counts.',
+    inputSchema: {
+      start_date: z.string().describe('YYYY-MM-DD'),
+      end_date: z.string().describe('YYYY-MM-DD'),
+      workday_minutes: z.number().int().positive().optional(),
+    },
+  }, (args: { start_date: string; end_date: string; workday_minutes?: number | undefined }) => {
+    const { start_date, end_date } = args;
+    const wm = args.workday_minutes ?? 480;
+    const days = dailyCapacity(db, start_date, end_date, wm).map(d => ({
+      ...d,
+      capacity_pct: Math.round((d.committed_minutes / wm) * 100),
+      workday_minutes: wm,
+    }));
+    return ok(`${days.length} days from ${start_date} to ${end_date}`, { days, workday_minutes: wm });
+  });
+
+  // ---------- lookahead ----------
+  server.registerTool('lookahead', {
+    title: 'Day-by-day capacity + tasks + events for the next N weeks',
+    description: 'Like capacity_report but starts today and runs N weeks ahead. Default 3 weeks.',
+    inputSchema: {
+      weeks: z.number().int().positive().max(12).optional(),
+      workday_minutes: z.number().int().positive().optional(),
+    },
+  }, (args: { weeks?: number | undefined; workday_minutes?: number | undefined }) => {
+    const wm = args.workday_minutes ?? 480;
+    const n = args.weeks ?? 3;
+    const startMs = Date.now();
+    const start = new Date(startMs);
+    const end = new Date(startMs + n * 7 * 86400000);
+    const s = start.toISOString().slice(0, 10);
+    const e = end.toISOString().slice(0, 10);
+    const days = dailyCapacity(db, s, e, wm).map(d => ({
+      ...d,
+      capacity_pct: Math.round((d.committed_minutes / wm) * 100),
+      over_capacity: d.committed_minutes > wm,
+      workday_minutes: wm,
+    }));
+    const overDays = days.filter(d => d.over_capacity).length;
+    return ok(`Lookahead ${n} weeks: ${overDays} over-capacity day${overDays === 1 ? '' : 's'}`, { days, weeks: n, workday_minutes: wm });
+  });
+
+  // ---------- list_calendar ----------
+  server.registerTool('list_calendar', {
+    title: 'Calendar links (events synced from Google Calendar) in a date range',
+    description: 'Returns calendar_links rows. Use sync_calendar (Phase 2) to refresh.',
+    inputSchema: {
+      start_date: z.string(),
+      end_date: z.string(),
+    },
+  }, ({ start_date, end_date }: { start_date: string; end_date: string }) => {
+    const startMs = new Date(start_date + 'T00:00:00').getTime();
+    const endMs = new Date(end_date + 'T23:59:59').getTime();
+    const links = listCalendarLinksInRange(db, startMs, endMs);
+    return ok(`${links.length} calendar link${links.length === 1 ? '' : 's'}`, { links });
+  });
+
+  // ---------- memory_set ----------
+  server.registerTool('memory_set', {
+    title: 'Store a persistent fact for the planning agent',
+    description: 'Use for facts that should survive across sessions: preferences, key relationships, contexts.',
+    inputSchema: {
+      key: z.string(),
+      value: z.string(),
+      source: z.string().optional(),
+    },
+  }, (args: { key: string; value: string; source?: string | undefined }) => {
+    memorySet(db, args.key, args.value, args.source);
+    return ok(`Stored memory ${args.key}`, { ok: true });
+  });
+
+  // ---------- memory_get ----------
+  server.registerTool('memory_get', {
+    title: 'Retrieve a persistent memory value',
+    description: 'Read what memory_set stored. Returns null if the key does not exist.',
+    inputSchema: { key: z.string() },
+  }, ({ key }: { key: string }) => {
+    const value = memoryGet(db, key);
+    return ok(value === null ? `(empty) ${key}` : `${key}: ${value}`, { key, value });
+  });
+
+  // ---------- memory_list ----------
+  server.registerTool('memory_list', {
+    title: 'List all persistent memory entries',
+    description: 'Returns all memory keys with values, most-recently-updated first.',
+    inputSchema: {},
+  }, () => {
+    const items = memoryList(db);
+    return ok(`${items.length} memory entries`, { items });
   });
 
   return server;
