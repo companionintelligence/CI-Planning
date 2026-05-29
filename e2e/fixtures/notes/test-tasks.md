@@ -3,7 +3,7 @@
 ## Inbox
 
 - [ ] Buy test groceries #grocery
-- [ ] Call the dentist
+- [ ] Schedule dental appointment
 
 ## Work
 

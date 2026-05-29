@@ -75,6 +75,25 @@ function rootForPath(p: string, directories: string[]): string | undefined {
   return directories.find(d => p === d || p.startsWith(d + sep));
 }
 
+/**
+ * Map an LLM-route error to an HTTP status. Ollama being unreachable OR returning
+ * an error (e.g. model missing, timeout) is an *upstream dependency* failure → 503,
+ * not a server bug (500). generate() throws `ollama <status>: …`; the client also
+ * surfaces fetch/timeout errors. Anything else is a genuine 500.
+ */
+function respondLlmError(res: Response, e: unknown): void {
+  const msg = (e as Error)?.message ?? 'llm error';
+  if (
+    e instanceof LLMUnavailable ||
+    /^ollama\b/i.test(msg) ||
+    /(fetch failed|ECONNREFUSED|ENOTFOUND|timeout|timed out|aborted|AbortError)/i.test(msg)
+  ) {
+    res.status(503).json({ error: msg });
+    return;
+  }
+  res.status(500).json({ error: msg });
+}
+
 function rowToTodo(r: TodoRowDb) {
   return {
     hash: r.hash,
@@ -328,8 +347,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       })));
       res.json({ ...result, todos: todos.length });
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -339,8 +357,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       const result = await summarizeDay(todos);
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -351,8 +368,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       const result = await extractTodosFromText(body.text);
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -366,8 +382,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       const rollupOpts: { title?: string } = {}; if (fileTitle) rollupOpts.title = fileTitle; const result = await projectRollup(todos, rollupOpts);
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -385,8 +400,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       })));
       res.json(result);
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
@@ -634,8 +648,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       }
       res.json({ inserted, suggestions: extracted.todos ?? [] });
     } catch (e) {
-      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
-      res.status(500).json({ error: (e as Error).message });
+      respondLlmError(res, e);
     }
   });
 
