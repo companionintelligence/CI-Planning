@@ -142,6 +142,58 @@ export class CalendarBridge {
   }
 
   /**
+   * Ingest a batch of events fetched elsewhere (e.g. by an agent that has
+   * Google Calendar MCP access). This is the pragmatic "connect my calendar"
+   * path: no OAuth in the server — an agent pulls events and pushes them here.
+   * Upserts into calendar_links and (optionally) soft-deletes vanished events
+   * within the covered window.
+   */
+  ingestEvents(
+    events: CalendarEvent[],
+    opts: { windowStartMs?: number; windowEndMs?: number; pruneMissing?: boolean } = {},
+  ): SyncResult {
+    try {
+      let newCount = 0;
+      let updatedCount = 0;
+      const seen = new Set<string>();
+      const now = Date.now();
+      const existsStmt = this.db.prepare(`SELECT 1 FROM calendar_links WHERE calendar_id=? AND event_id=?`);
+      for (const e of events) {
+        if (!e.event_id || !e.calendar_id || !Number.isFinite(e.start_at) || !Number.isFinite(e.end_at)) continue;
+        const key = `${e.calendar_id}:${e.event_id}`;
+        seen.add(key);
+        const existed = existsStmt.get(e.calendar_id, e.event_id) !== undefined;
+        upsertCalendarLink(this.db, {
+          todo_hash: e.todo_hash ?? '',
+          calendar_id: e.calendar_id,
+          event_id: e.event_id,
+          event_title: e.title || '(untitled)',
+          start_at: e.start_at,
+          end_at: e.end_at,
+          status: 'active',
+          synced_at: now,
+        });
+        if (existed) updatedCount++; else newCount++;
+      }
+      let removed = 0;
+      if (opts.pruneMissing && opts.windowStartMs != null && opts.windowEndMs != null) {
+        const existing = listCalendarLinksInRange(this.db, opts.windowStartMs, opts.windowEndMs);
+        for (const link of existing) {
+          const key = `${link.calendar_id}:${link.event_id}`;
+          // Never prune manually-scheduled task blocks
+          if (!seen.has(key) && link.calendar_id !== 'manual') {
+            deleteCalendarLinkByEvent(this.db, link.calendar_id, link.event_id);
+            removed++;
+          }
+        }
+      }
+      return { ok: true, new_events: newCount, updated_events: updatedCount, removed_events: removed };
+    } catch (e) {
+      return { ok: false, new_events: 0, updated_events: 0, removed_events: 0, error: (e as Error).message };
+    }
+  }
+
+  /**
    * Create a calendar block for a task. The provider creates the event;
    * a calendar_links row mirrors it. Logs to task_events.
    */

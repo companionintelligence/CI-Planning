@@ -1,48 +1,22 @@
 /**
- * Triage flow tests — mocks Ollama via page.route(), exercises the LLM
- * suggestion pipeline end-to-end without a real model running.
+ * LLM endpoint smoke tests. These assert the endpoints are wired and degrade
+ * gracefully — they do NOT require a working Ollama.
+ *
+ * Note: the *server* makes the Ollama fetch, so browser-level page.route() can't
+ * intercept it. Instead we assert the contract: 200 (model produced output) or
+ * 503 (Ollama unreachable / model errored / timed out). The server maps every
+ * LLM-layer failure to 503 (see respondLlmError in http.ts), so 500 here would
+ * mean a genuine bug, not a flaky model.
  */
 import { test, expect } from '@playwright/test';
 
-const MOCK_TRIAGE_RESPONSE = {
-  actions: [
-    {
-      hash: '__HASH__',
-      category: 'keep',
-      reason: 'Looks current',
-      duplicate_of: null,
-      suggested_text: null,
-      suggested_heading: null,
-    },
-  ],
-  model: 'mock',
-};
-
-test('POST /api/llm/triage returns structured actions (mocked Ollama)', async ({ page, request }) => {
-  // Mock the Ollama generate endpoint
-  await page.route('http://127.0.0.1:11434/**', async route => {
-    const url = route.request().url();
-    if (url.includes('/api/tags')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ models: [{ name: 'mock:latest' }] }),
-      });
-    } else if (url.includes('/api/generate')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ response: JSON.stringify(MOCK_TRIAGE_RESPONSE), done: true }),
-      });
-    } else {
-      await route.continue();
-    }
-  });
-
+test('POST /api/llm/triage returns structured actions or 503', async ({ request }) => {
   const res = await request.post('/api/llm/triage', { data: { limit: 5 } });
-  // Server tries to reach Ollama directly — if Ollama is unavailable we get 503
-  // If available (or mocked), we get 200. Either is valid here.
   expect([200, 503]).toContain(res.status());
+  if (res.status() === 200) {
+    const body = await res.json() as { actions?: unknown[] };
+    expect(body).toHaveProperty('actions');
+  }
 });
 
 test('GET /api/llm/status reflects Ollama availability', async ({ request }) => {
