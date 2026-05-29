@@ -48,6 +48,7 @@ import {
 import { rewriteTodoByHash } from './markdown.js';
 import type { TodoRowDb, TodoFilter } from './types.js';
 import type { CalendarBridge } from './calendar.js';
+import { generateSummary, reconcilePast, lastSummaries, readSummaryFile, type Period } from './summary.js';
 
 export interface HttpServerDeps {
   db: Database.Database;
@@ -712,6 +713,62 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
       max_results: Math.min(Number(req.query['max_results']) || 10, 50),
     });
     res.json({ slots, count: slots.length });
+  });
+
+  // ============== SUMMARIES & RECONCILE (scheduled routines hit these) ==============
+
+  const summaryRoot = (): string => directories[0] ?? process.cwd();
+
+  // Generate a daily/weekly/monthly summary. Schedulers POST here.
+  app.post('/api/summary/:period', async (req: Request, res: Response) => {
+    const period = req.params['period'] as Period;
+    if (period !== 'daily' && period !== 'weekly' && period !== 'monthly') {
+      return void res.status(400).json({ error: 'period must be daily|weekly|monthly' });
+    }
+    const body = (req.body ?? {}) as { date?: string; model?: string };
+    const anchor = body.date ?? new Date().toLocaleDateString('en-CA');
+    try {
+      const opts = body.model ? { model: body.model } : {};
+      const result = await generateSummary(db, summaryRoot(), period, anchor, opts);
+      const root = rootFor(result.filePath);
+      if (root) indexFile(db, result.filePath, root);
+      notifyClients('fileChange', { path: result.filePath });
+      res.json({
+        ok: true,
+        period,
+        key: result.window.key,
+        file: result.filePath,
+        model: result.model,
+        counts: result.data.counts,
+        text: result.text,
+      });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  // Reconcile past: close calendar links whose todo is done, count overdue.
+  app.post('/api/reconcile', (_req: Request, res: Response) => {
+    const result = reconcilePast(db);
+    res.json({ ok: true, ...result });
+  });
+
+  // Index of last-run summaries (for the UI "last run" stamp).
+  app.get('/api/summaries', (_req: Request, res: Response) => {
+    res.json({ last: lastSummaries(db) });
+  });
+
+  // Read a previously generated summary file by absolute path (sandboxed).
+  app.get('/api/summary/file', (req: Request, res: Response) => {
+    try {
+      const safe = check(req.query['path'] as string);
+      const content = readSummaryFile(safe);
+      if (content === null) return void res.status(404).json({ error: 'not found' });
+      res.json({ content, path: safe });
+    } catch (e) {
+      const err = e as { code?: number; message?: string };
+      res.status(err.code ?? 500).json({ error: err.message });
+    }
   });
 }
 

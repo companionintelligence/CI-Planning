@@ -287,3 +287,8 @@ function pickModel(available: string[]): string {
   }
   return available[0] ?? 'qwen2.5:0.5b';
 }
+
+/** Exported alias so other modules (summary.ts) can reuse model selection. */
+export function pickModelExport(available: string[]): string {
+  return pickModel(available);
+}

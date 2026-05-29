@@ -7,6 +7,13 @@
   let llm = $state(null);
   let rescanning = $state(false);
   let rescanResult = $state(null);
+  let lastSummaries = $state(null);
+  let summaryBusy = $state('');
+
+  async function loadSummaries() {
+    const r = await fetch('/api/summaries').then(r => r.json()).catch(() => null);
+    lastSummaries = r?.last ?? null;
+  }
 
   onMount(async () => {
     const [cfgRes, statsRes, llmRes] = await Promise.all([
@@ -17,6 +24,7 @@
     config = cfgRes;
     stats = statsRes;
     llm = llmRes;
+    loadSummaries();
   });
 
   async function rescan() {
@@ -30,6 +38,43 @@
     } finally {
       rescanning = false;
     }
+  }
+
+  async function runSummary(period) {
+    summaryBusy = period;
+    try {
+      const r = await fetch(`/api/summary/${period}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const d = await r.json();
+      if (d.ok) store.showToast(`${period} summary → ${d.file.split('/').slice(-1)[0]} (${d.counts.completed} done)`, 'success');
+      else store.showToast(d.error || 'Summary failed', 'error');
+      await loadSummaries();
+    } catch (e) {
+      store.showToast(e.message, 'error');
+    } finally {
+      summaryBusy = '';
+    }
+  }
+
+  async function reconcile() {
+    summaryBusy = 'reconcile';
+    try {
+      const r = await fetch('/api/reconcile', { method: 'POST' });
+      const d = await r.json();
+      store.showToast(`Closed ${d.events_completed} past blocks · ${d.overdue_now} overdue`, 'success');
+    } finally {
+      summaryBusy = '';
+    }
+  }
+
+  function fmtAgo(ms) {
+    if (!ms) return 'never';
+    const diff = Date.now() - ms;
+    const h = Math.floor(diff / 3600000);
+    if (h < 1) return 'just now';
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
   }
 </script>
 
@@ -88,6 +133,40 @@
     {:else}
       <p class="text-neutral-500 text-sm">Loading…</p>
     {/if}
+  </section>
+
+  <!-- Summaries & routines -->
+  <section class="rounded-xl bg-neutral-900 p-5 space-y-3">
+    <h2 class="text-sm font-medium text-neutral-400 uppercase tracking-wider">Summaries &amp; routines</h2>
+    <p class="text-xs text-neutral-500">
+      Generate a review now, or let the scheduled routines run them
+      (daily 21:00 · weekly Sun 19:00 · monthly 1st 08:00). Reviews are written to
+      <code class="text-neutral-400">Summaries/</code> and reconcile closes past calendar blocks.
+    </p>
+    <div class="grid grid-cols-3 gap-2">
+      {#each ['daily','weekly','monthly'] as p}
+        <button onclick={() => runSummary(p)} disabled={summaryBusy === p}
+                class="py-2 px-3 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-sm font-medium capitalize disabled:opacity-50">
+          {summaryBusy === p ? '…' : p}
+        </button>
+      {/each}
+    </div>
+    {#if lastSummaries}
+      <div class="space-y-1 text-xs text-neutral-400">
+        {#each ['daily','weekly','monthly'] as p}
+          <div class="flex justify-between">
+            <span class="capitalize">{p}</span>
+            <span class="text-neutral-500">
+              {lastSummaries[p] ? `${lastSummaries[p].key} · ${fmtAgo(lastSummaries[p].at)}` : 'never run'}
+            </span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <button onclick={reconcile} disabled={summaryBusy === 'reconcile'}
+            class="w-full mt-1 py-2 px-4 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-sm font-medium disabled:opacity-50">
+      {summaryBusy === 'reconcile' ? 'Reconciling…' : 'Reconcile past calendar blocks'}
+    </button>
   </section>
 
   <!-- LLM status -->
