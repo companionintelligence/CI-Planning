@@ -21,6 +21,10 @@ class Store {
   filters = $state({ status: 'open', due: '', tag: '', q: '' });
   loading = $state(false);
   toast = $state({ msg: '', kind: 'info', visible: false });
+  // V4
+  lookahead = $state({ days: [], weeks: 3, workday_minutes: 480 });
+  suggestions = $state([]);
+  calendar = $state({ available: false, provider: null });
 
   filesByPath = $derived.by(() => {
     const m = new Map();
@@ -87,6 +91,96 @@ class Store {
   async refreshStats() {
     const s = await fetch(`${API}/api/stats`).then(r => r.json()).catch(() => null);
     if (s) this.stats = s;
+  }
+
+  // ============ V4: lookahead + suggestions + estimates ============
+
+  async loadLookahead(weeks = 3, workdayMinutes = 480) {
+    const r = await fetch(`${API}/api/lookahead?weeks=${weeks}&workday_minutes=${workdayMinutes}`);
+    const d = await r.json();
+    this.lookahead = d;
+    return d;
+  }
+
+  async loadSuggestions(status = 'pending') {
+    const r = await fetch(`${API}/api/suggestions?status=${status}`);
+    const d = await r.json();
+    this.suggestions = d.items;
+    return d.items;
+  }
+
+  async acceptSuggestion(id) {
+    const r = await fetch(`${API}/api/suggestion/${id}/accept`, { method: 'POST' });
+    if (!r.ok) throw new Error(await r.text());
+    await this.loadSuggestions();
+    this.refresh();
+    this.showToast('Accepted', 'success');
+  }
+
+  async dismissSuggestion(id) {
+    const r = await fetch(`${API}/api/suggestion/${id}/dismiss`, { method: 'POST' });
+    if (!r.ok) throw new Error(await r.text());
+    await this.loadSuggestions();
+    this.showToast('Dismissed', 'info');
+  }
+
+  async setEstimate(hash, minutes) {
+    const r = await fetch(`${API}/api/task/estimate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hash, minutes }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    this.reloadTodos();
+    this.showToast(`${minutes}m estimate set`, 'success');
+  }
+
+  async extractFromFile(path) {
+    const r = await fetch(`${API}/api/extract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      this.showToast(d.error || 'Extract failed', 'error');
+      return null;
+    }
+    this.showToast(`Extracted ${d.inserted}`, 'success');
+    await this.loadSuggestions();
+    return d;
+  }
+
+  async loadCalendarStatus() {
+    const r = await fetch(`${API}/api/calendar/status`);
+    const d = await r.json();
+    this.calendar = d;
+    return d;
+  }
+
+  async findSlots(durationMinutes, startDate, endDate) {
+    const p = new URLSearchParams({ duration_minutes: String(durationMinutes) });
+    if (startDate) p.set('start_date', startDate);
+    if (endDate) p.set('end_date', endDate);
+    const r = await fetch(`${API}/api/calendar/slots?${p}`);
+    const d = await r.json();
+    return d.slots || [];
+  }
+
+  async scheduleTask(hash, date, startTime, durationMinutes, title) {
+    const body = { todo_hash: hash, date, start_time: startTime, duration_minutes: durationMinutes };
+    if (title) body.title = title;
+    const r = await fetch(`${API}/api/calendar/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'Schedule failed');
+    }
+    this.showToast(`Scheduled ${date} ${startTime}`, 'success');
+    return r.json();
   }
 
   groupedToday() {
