@@ -4,8 +4,11 @@
  */
 import { test, expect } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { join, resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
+// ESM: __dirname isn't defined (package.json has "type": "module")
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = resolve(join(__dirname, 'fixtures', 'notes'));
 const FIXTURE_FILE = join(FIXTURE_DIR, 'test-tasks.md');
 
