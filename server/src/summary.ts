@@ -191,8 +191,10 @@ Write the ${d.window.period} review.`;
 
 async function buildNarrative(d: SummaryData, model?: string): Promise<{ text: string; model: string | null }> {
   try {
+    // Daily review is frequent → light tier; weekly/monthly are deeper → heavy.
+    const tier = d.window.period === 'daily' ? 'light' : 'heavy';
     const gen: Parameters<typeof generateWithFallback>[0] = {
-      system: SUMMARY_SYSTEM, prompt: summaryPrompt(d), timeoutMs: 120_000,
+      system: SUMMARY_SYSTEM, prompt: summaryPrompt(d), timeoutMs: 180_000, tier,
     };
     if (model) gen.preferModel = model;
     const { response, model: used } = await generateWithFallback(gen);
