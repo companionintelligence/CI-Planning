@@ -23,6 +23,7 @@
     store.refresh();
     store.loadLookahead(3, 480);
     store.loadCalendarStatus();
+    if (store.notify.enabled) store.startReminders();
 
     // Live reload via SSE
     if (window.EventSource) {
