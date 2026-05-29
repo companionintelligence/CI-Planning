@@ -7,3 +7,6 @@ server/dist/
 .codex/
 .data/
 public/v2/
+test-results/
+playwright-report/
+playwright/.cache/
