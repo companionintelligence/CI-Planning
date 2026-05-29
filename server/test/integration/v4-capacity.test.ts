@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import express, { type Response } from 'express';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { openDb, upsertCalendarLink, insertSuggestion, logTaskEvent } from '../../src/db.js';
@@ -158,10 +158,18 @@ describe('POST /api/task/estimate', () => {
 
     const res = await request(app).post('/api/task/estimate').send({ hash: todo!.hash, minutes: 15 });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, minutes: 15 });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.minutes).toBe(15);
+    // Durable: rewriting the markdown line changes the content-hash
+    expect(res.body.hash).toBeTruthy();
+    expect(res.body.previous_hash).toBe(todo!.hash);
 
-    // History should have an 'estimated' event
-    const histRes = await request(app).get(`/api/task/${todo!.hash}/history`);
+    // The estimate is now persisted in the markdown file
+    const disk = readFileSync(join(ROOT, 'tasks.md'), 'utf-8');
+    expect(disk).toMatch(/Pay Delaware report.*\(est: 15m\)/);
+
+    // History should have an 'estimated' event under the NEW hash
+    const histRes = await request(app).get(`/api/task/${res.body.hash}/history`);
     expect(histRes.status).toBe(200);
     expect((histRes.body.events as Array<{ event_type: string }>).some(e => e.event_type === 'estimated')).toBe(true);
   });

@@ -82,9 +82,15 @@
               title="Set estimate">⏱ set</button>
     {/if}
 
-    <!-- Calendar link badge -->
+    <!-- Calendar link badge + actions -->
     {#if todo.calendar_event_id}
-      <span class="text-[11px] bg-green-500/15 text-green-300 border border-green-700/50 px-2 py-0.5 rounded-full">📅 scheduled</span>
+      <a href="https://calendar.google.com/calendar/u/0/r/search?q={encodeURIComponent(todo.plain_text)}"
+         target="_blank" rel="noopener"
+         class="text-[11px] bg-green-500/15 text-green-300 border border-green-700/50 px-2 py-0.5 rounded-full hover:bg-green-500/25"
+         title="Open in Google Calendar">📅 scheduled ↗</a>
+      <button onclick={findSlots} disabled={slotsLoading}
+              class="text-[11px] bg-neutral-800 text-neutral-400 border border-neutral-700 px-2 py-0.5 rounded-full hover:text-indigo-300"
+              title="Reschedule">↻</button>
     {/if}
 
     <!-- Schedule button (open) -->
@@ -94,6 +100,11 @@
         {slotsLoading ? '…' : '📅 schedule'}
       </button>
     {/if}
+
+    <!-- Edit button -->
+    <button onclick={() => store.openEditor('edit', todo)}
+            class="text-[11px] bg-neutral-800 text-neutral-400 border border-neutral-700 px-2 py-0.5 rounded-full hover:text-white"
+            title="Edit todo">✎</button>
 
     <span class="text-[11px] text-neutral-500 ml-auto">{fname(todo.file_path)}</span>
   </div>

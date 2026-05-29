@@ -33,6 +33,7 @@ import {
   appendUnderHeading,
   hashTodo,
   sha256,
+  composeTodoText,
 } from './markdown.js';
 import {
   ollamaAvailable,
@@ -88,6 +89,8 @@ function rowToTodo(r: TodoRowDb) {
     due_date: r.due_date,
     done_date: r.done_date,
     priority: r.priority,
+    estimated_minutes: r.estimated_minutes ?? null,
+    calendar_event_id: r.calendar_event_id ?? null,
   };
 }
 
@@ -186,21 +189,69 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
 
   app.post('/api/todo', (req: Request, res: Response) => {
     try {
-      const { path: filePath, heading, text, due, tags } = req.body as {
-        path?: string; heading?: string; text?: string; due?: string; tags?: string[];
+      const { path: filePath, heading, text, due, tags, priority, estimate_minutes } = req.body as {
+        path?: string; heading?: string; text?: string; due?: string;
+        tags?: string[]; priority?: 1 | 2 | 3 | null; estimate_minutes?: number | null;
       };
       if (!filePath || !text) return void res.status(400).json({ error: 'path and text required' });
       const safe = check(filePath);
       const content = existsSync(safe) ? readFileSync(safe, 'utf-8') : '';
-      let line = `- [ ] ${text}`;
-      if (Array.isArray(tags) && tags.length) line += ' ' + tags.map(t => `#${t}`).join(' ');
-      if (due) line += ` (due: ${due})`;
+      const composed = composeTodoText({
+        text,
+        tags: Array.isArray(tags) ? tags : [],
+        due: due ?? null,
+        priority: priority ?? null,
+        estimateMinutes: estimate_minutes ?? null,
+      });
+      const line = `- [ ] ${composed}`;
       const updated = appendUnderHeading(content, heading ?? 'Inbox', line);
       atomicWrite(safe, updated);
       const root = rootFor(safe);
       if (root) indexFile(db, safe, root);
+      const hash = hashTodo(safe, heading ?? 'Inbox', composed);
+      logTaskEvent(db, hash, 'created', 'user', { via: 'editor' });
       notifyClients('fileChange', { path: safe });
-      res.json({ success: true, hash: hashTodo(safe, heading ?? 'Inbox', line.replace(/^- \[ \] /, '')) });
+      res.json({ success: true, hash });
+    } catch (e) {
+      const err = e as { code?: number; message?: string };
+      res.status(err.code ?? 500).json({ error: err.message });
+    }
+  });
+
+  // Edit an existing todo by hash — full field rewrite of the markdown line.
+  // Note: rewriting the text changes the content-hash ID; the new hash is returned.
+  app.patch('/api/todo', (req: Request, res: Response) => {
+    try {
+      const { hash, text, due, tags, priority, estimate_minutes } = req.body as {
+        hash?: string; text?: string; due?: string | null;
+        tags?: string[]; priority?: 1 | 2 | 3 | null; estimate_minutes?: number | null;
+      };
+      if (!hash) return void res.status(400).json({ error: 'hash required' });
+      const row = getTodoByHash(db, hash);
+      if (!row) return void res.status(404).json({ error: `No todo with hash ${hash}` });
+      const safe = row.file_path;
+      const content = readFileSync(safe, 'utf-8');
+
+      // Merge: any field omitted keeps its current value
+      const currentTags = row.tags_json ? (JSON.parse(row.tags_json) as string[]) : [];
+      const composed = composeTodoText({
+        text: text ?? row.plain_text,
+        tags: tags ?? currentTags,
+        due: due === undefined ? row.due_date : due,
+        priority: priority === undefined ? (row.priority as 1 | 2 | 3 | null) : priority,
+        estimateMinutes: estimate_minutes === undefined ? row.estimated_minutes ?? null : estimate_minutes,
+      });
+      const result = rewriteTodoByHash(content, hash, safe, composed);
+      if ('error' in result) return void res.status(422).json({ error: result.error });
+      const newHash = hashTodo(safe, row.heading, composed);
+      if (!result.noop) {
+        atomicWrite(safe, result.content);
+        const root = rootFor(safe);
+        if (root) indexFile(db, safe, root);
+        logTaskEvent(db, newHash, 'rewritten', 'user', { from_hash: hash });
+        notifyClients('fileChange', { path: safe });
+      }
+      res.json({ ok: true, noop: !!result.noop, hash: newHash, previous_hash: hash, sha256: sha256(result.content) });
     } catch (e) {
       const err = e as { code?: number; message?: string };
       res.status(err.code ?? 500).json({ error: err.message });
@@ -443,6 +494,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
   });
 
   // ---- Set estimate ----
+  // Durable: writes `(est: Nm)` into the markdown line so it survives a reindex.
   app.post('/api/task/estimate', (req: Request, res: Response) => {
     const { hash, minutes } = req.body as { hash?: string; minutes?: number };
     if (!hash || typeof minutes !== 'number' || minutes <= 0) {
@@ -450,9 +502,30 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     }
     const row = getTodoByHash(db, hash);
     if (!row) return void res.status(404).json({ error: `No todo with hash ${hash}` });
-    db.prepare(`UPDATE todos SET estimated_minutes=? WHERE hash=?`).run(minutes, hash);
-    logTaskEvent(db, hash, 'estimated', 'user', { minutes });
-    res.json({ ok: true, minutes });
+    try {
+      const content = readFileSync(row.file_path, 'utf-8');
+      const currentTags = row.tags_json ? (JSON.parse(row.tags_json) as string[]) : [];
+      const composed = composeTodoText({
+        text: row.plain_text,
+        tags: currentTags,
+        due: row.due_date,
+        priority: row.priority as 1 | 2 | 3 | null,
+        estimateMinutes: minutes,
+      });
+      const result = rewriteTodoByHash(content, hash, row.file_path, composed);
+      const newHash = hashTodo(row.file_path, row.heading, composed);
+      if ('error' in result) return void res.status(422).json({ error: result.error });
+      if (!result.noop) {
+        atomicWrite(row.file_path, result.content);
+        const root = rootFor(row.file_path);
+        if (root) indexFile(db, row.file_path, root);
+        notifyClients('fileChange', { path: row.file_path });
+      }
+      logTaskEvent(db, newHash, 'estimated', 'user', { minutes });
+      res.json({ ok: true, minutes, hash: newHash, previous_hash: hash });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
   // ---- Calendar links ----

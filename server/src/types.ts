@@ -41,6 +41,7 @@ export interface ParsedTodo {
   due: ISODate | null;
   done: ISODate | null;
   priority: 1 | 2 | 3 | null;
+  estimateMinutes: number | null;
   hash: string;
 }
 
@@ -58,6 +59,7 @@ export interface TodoRow {
   due: ISODate | null;
   done: ISODate | null;
   priority: 1 | 2 | 3 | null;
+  estimateMinutes: number | null;
 }
 
 export interface TodoRowDb {
@@ -74,6 +76,10 @@ export interface TodoRowDb {
   due_date: ISODate | null;
   done_date: ISODate | null;
   priority: number | null;
+  estimated_minutes?: number | null;
+  calendar_event_id?: string | null;
+  status?: string | null;
+  source_type?: string | null;
 }
 
 export interface Todo {

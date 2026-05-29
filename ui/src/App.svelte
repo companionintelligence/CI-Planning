@@ -13,6 +13,7 @@
   import BriefingModal from './components/BriefingModal.svelte';
   import TriageModal from './components/TriageModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
+  import TodoEditor from './components/TodoEditor.svelte';
 
   let showBriefing = $state(false);
   let showPalette = $state(false);
@@ -42,9 +43,15 @@
 
     // Global keyboard shortcuts
     window.addEventListener('keydown', (e) => {
+      const typing = ['INPUT','TEXTAREA','SELECT'].includes(e.target?.tagName);
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         showPalette = !showPalette;
+      }
+      // "n" opens a new-todo editor (when not typing and no modal open)
+      if (e.key === 'n' && !typing && !store.editor.open && !showPalette && !showBriefing) {
+        e.preventDefault();
+        store.openEditor('create');
       }
       if (e.key === 'Escape') {
         showPalette = false;
@@ -86,7 +93,17 @@
   </main>
 
   <Toast />
+
+  <!-- Floating new-todo button -->
+  <button onclick={() => store.openEditor('create')}
+          class="fixed bottom-6 right-6 z-30 w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-2xl shadow-lg shadow-indigo-900/40 flex items-center justify-center transition-transform hover:scale-105"
+          style="bottom: max(24px, env(safe-area-inset-bottom));"
+          title="New todo (n)" aria-label="New todo">+</button>
 </div>
+
+{#if store.editor.open}
+  <TodoEditor mode={store.editor.mode} todo={store.editor.todo} onclose={() => store.closeEditor()} />
+{/if}
 
 {#if showBriefing}
   <BriefingModal onclose={() => showBriefing = false} />
