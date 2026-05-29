@@ -22,6 +22,7 @@
   "port": 3847,
   "title": "Companion Planning",
   "llm": {
-    "model": "nemotron3:33b"
+    "light": "gemma4:e4b",
+    "heavy": "nemotron3:33b"
   }
 }

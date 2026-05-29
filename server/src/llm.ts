@@ -49,7 +49,9 @@ export async function generate(opts: GenerateOptions): Promise<OllamaGenerateRes
     prompt,
     system,
     stream: false,
-    options: { temperature: 0.2, ...(options ?? {}) },
+    // num_predict default gives verbose/reasoning models room to finish — some
+    // (e.g. gemma4:e4b) return an empty response if the budget is too small.
+    options: { temperature: 0.2, num_predict: 1536, ...(options ?? {}) },
   };
   if (format) body['format'] = format;
 
@@ -68,11 +70,28 @@ export async function generate(opts: GenerateOptions): Promise<OllamaGenerateRes
 
 // ---- config-driven model preference + resilient generation ----
 
-let preferredModel: string | null = process.env['OLLAMA_MODEL'] ?? null;
+export type ModelTier = 'light' | 'heavy';
 
-/** Pin a preferred model (from config.json `llm.model`). null = auto-select. */
+// Two tiers: `light` for frequent/structured calls (triage, extract, daily
+// digest) and `heavy` for deep analysis (weekly/monthly review, project rollup).
+let lightModel: string | null = process.env['OLLAMA_MODEL'] ?? null;
+let heavyModel: string | null = null;
+
+/** Back-compat: pin a single model used for both tiers. */
 export function setPreferredModel(model: string | null): void {
-  preferredModel = model && model.trim() ? model.trim() : null;
+  const m = model && model.trim() ? model.trim() : null;
+  lightModel = m;
+  if (!heavyModel) heavyModel = m;
+}
+
+/** Pin per-tier models (from config.json `llm.light` / `llm.heavy`). */
+export function setModels(opts: { light?: string | null; heavy?: string | null }): void {
+  if (opts.light !== undefined) lightModel = opts.light && opts.light.trim() ? opts.light.trim() : null;
+  if (opts.heavy !== undefined) heavyModel = opts.heavy && opts.heavy.trim() ? opts.heavy.trim() : null;
+}
+
+export function modelForTier(tier: ModelTier): string | null {
+  return tier === 'heavy' ? (heavyModel ?? lightModel) : (lightModel ?? heavyModel);
 }
 
 /**
@@ -117,13 +136,15 @@ export async function generateWithFallback(opts: {
   options?: Record<string, unknown>;
   timeoutMs?: number;
   preferModel?: string;
+  tier?: ModelTier;
 }): Promise<{ response: string; model: string }> {
   if (!(await ollamaAvailable())) throw new LLMUnavailable();
   const available = await listModels();
   if (available.length === 0) throw new LLMUnavailable('no models installed');
 
+  const tierModel = modelForTier(opts.tier ?? 'light');
   const candidates: string[] = [];
-  for (const m of [opts.preferModel, preferredModel, ...orderModels(available)]) {
+  for (const m of [opts.preferModel, tierModel, ...orderModels(available)]) {
     if (m && available.includes(m) && !candidates.includes(m)) candidates.push(m);
     // also accept prefix matches for pinned names not exactly in the list
     else if (m && !candidates.includes(m)) {
@@ -132,14 +153,21 @@ export async function generateWithFallback(opts: {
     }
   }
 
+  // Heavy tier runs reasoning models that need room to "think" before they
+  // answer — a small budget makes them return empty. Give heavy more tokens
+  // and a longer timeout by default.
+  const heavy = opts.tier === 'heavy';
+  const defaultOptions = heavy ? { num_predict: 4096 } : {};
+  const defaultTimeout = heavy ? 300_000 : 120_000;
+
   let lastErr: Error | null = null;
   for (const model of candidates) {
     try {
       const genOpts: GenerateOptions = { model, prompt: opts.prompt };
       if (opts.system !== undefined) genOpts.system = opts.system;
       if (opts.format !== undefined) genOpts.format = opts.format;
-      if (opts.options !== undefined) genOpts.options = opts.options;
-      if (opts.timeoutMs !== undefined) genOpts.timeoutMs = opts.timeoutMs;
+      genOpts.options = { ...defaultOptions, ...(opts.options ?? {}) };
+      genOpts.timeoutMs = opts.timeoutMs ?? defaultTimeout;
       const res = await generate(genOpts);
       // Reasoning models can spend the whole budget in `thinking` and return an
       // empty `response`. Treat that as a miss and fall back to a model that
@@ -188,7 +216,7 @@ ${todos
 
 export async function triageTodos(todos: TriageInput[], opts: { model?: string } = {}): Promise<TriageResult> {
   const gen: Parameters<typeof generateWithFallback>[0] = {
-    system: TRIAGE_SYSTEM, prompt: triageUserPrompt(todos), format: 'json',
+    system: TRIAGE_SYSTEM, prompt: triageUserPrompt(todos), format: 'json', tier: 'light',
   };
   if (opts.model) gen.preferModel = opts.model;
   const { response, model } = await generateWithFallback(gen);
@@ -216,6 +244,7 @@ export async function summarizeDay(
   const gen: Parameters<typeof generateWithFallback>[0] = {
     system: SUMMARY_SYSTEM,
     prompt: `Today is ${today}. Here are the open todos:\n${lines}\n\nWrite the briefing.`,
+    tier: 'light',
   };
   if (opts.model) gen.preferModel = opts.model;
   const { response, model } = await generateWithFallback(gen);
@@ -257,6 +286,7 @@ export async function extractTodosFromText(
     system: EXTRACT_SYSTEM,
     prompt: `Extract todos from this text:\n\n${text.slice(0, 4000)}`,
     format: 'json',
+    tier: 'light',
   };
   if (opts.model) gen.preferModel = opts.model;
   const { response, model } = await generateWithFallback(gen);
@@ -299,6 +329,7 @@ export async function projectRollup(
   const gen: Parameters<typeof generateWithFallback>[0] = {
     system: ROLLUP_SYSTEM,
     prompt: `${opts.title ? `File: ${opts.title}\n\n` : ''}${sections}`,
+    tier: 'heavy',
   };
   if (opts.model) gen.preferModel = opts.model;
   const { response, model } = await generateWithFallback(gen);
@@ -337,6 +368,7 @@ export async function proposeArchive(
     system: ARCHIVE_SYSTEM,
     prompt: `Review these ${todos.length} open todos and identify archive candidates:\n${lines}`,
     format: 'json',
+    tier: 'light',
   };
   if (opts.model) gen.preferModel = opts.model;
   const { response, model } = await generateWithFallback(gen);
