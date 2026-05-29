@@ -42,6 +42,7 @@ import {
 import { rewriteTodoByHash } from './markdown.js';
 
 import type { CalendarBridge } from './calendar.js';
+import { generateSummary, reconcilePast, lastSummaries, type Period } from './summary.js';
 
 export interface McpServerDeps {
   db: Database.Database;
@@ -728,6 +729,48 @@ export function buildMcpServer({ db, directories, excludeDirs, calendar }: McpSe
     });
     if (!result.ok) return mcpErr(result.error ?? 'schedule failed');
     return ok(`Scheduled ${args.hash} on ${args.date} ${args.start_time} for ${args.duration_minutes}m`, result as unknown as Record<string, unknown>);
+  });
+
+  // ---------- generate_summary ----------
+  server.registerTool('generate_summary', {
+    title: 'Generate a daily/weekly/monthly review and write it to a Summaries file',
+    description: 'Queries completed/overdue/upcoming todos + calendar events for the period, writes an LLM-authored (or templated) review into <root>/Summaries/<Period>/<key>.md. Use for scheduled routines.',
+    inputSchema: {
+      period: z.enum(['daily', 'weekly', 'monthly']),
+      date: z.string().optional().describe('Anchor YYYY-MM-DD, defaults to today (local)'),
+      model: z.string().optional(),
+    },
+  }, async (args: { period: Period; date?: string | undefined; model?: string | undefined }) => {
+    const root = directories[0] ?? process.cwd();
+    const anchor = args.date ?? new Date().toLocaleDateString('en-CA');
+    const opts = args.model ? { model: args.model } : {};
+    const result = await generateSummary(db, root, args.period, anchor, opts);
+    const r = rootForPath(result.filePath);
+    if (r) indexFile(db, result.filePath, r);
+    return ok(
+      `${args.period} review for ${result.window.key} → ${basename(result.filePath)} (${result.data.counts.completed} done, ${result.data.counts.overdue} overdue)`,
+      { key: result.window.key, file: result.filePath, model: result.model, counts: result.data.counts, text: result.text },
+    );
+  });
+
+  // ---------- reconcile_past ----------
+  server.registerTool('reconcile_past', {
+    title: 'Close past calendar blocks whose task is done; report overdue count',
+    description: 'Marks calendar_links in the past as completed when their linked todo is checked. Returns counts. Safe to run on a schedule.',
+    inputSchema: {},
+  }, () => {
+    const result = reconcilePast(db);
+    return ok(`Closed ${result.events_completed} past blocks; ${result.overdue_now} overdue now`, result as unknown as Record<string, unknown>);
+  });
+
+  // ---------- last_summaries ----------
+  server.registerTool('last_summaries', {
+    title: 'When each period summary last ran',
+    description: 'Returns the last daily/weekly/monthly summary key, timestamp, and file.',
+    inputSchema: {},
+  }, () => {
+    const last = lastSummaries(db);
+    return ok('Last summary runs', { last } as unknown as Record<string, unknown>);
   });
 
   // ---------- find_slot ----------
