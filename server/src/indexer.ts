@@ -39,6 +39,7 @@ export function buildTodoRows(filePath: string, parsed: ReturnType<typeof parseF
     due: t.due,
     done: t.done,
     priority: t.priority,
+    estimateMinutes: t.estimateMinutes,
   }));
 }
 

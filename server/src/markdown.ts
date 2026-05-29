@@ -7,7 +7,15 @@ const HEADING_RE = /^(#{1,6})\s+(.+?)\s*$/;
 const TAG_RE = /(?:^|\s)#([a-zA-Z][\w/-]*)/g;
 const INLINE_DUE_RE = /\(due:\s*(\d{4}-\d{2}-\d{2})\)/i;
 const INLINE_DONE_RE = /\(done:\s*(\d{4}-\d{2}-\d{2})\)/i;
+const INLINE_EST_RE = /\(est:\s*(\d+)m\)/i;
 const INLINE_PRIORITY_RE = /(?:^|\s)(?:!{1,3}|\bp[1-3]\b)(?=\s|$)/i;
+
+export function parseEstimate(text: string): number | null {
+  const m = text.match(INLINE_EST_RE);
+  if (!m || !m[1]) return null;
+  const n = Number(m[1]);
+  return n > 0 ? n : null;
+}
 
 export function hashTodo(filePath: string, heading: string | null, text: string): string {
   return crypto
@@ -98,6 +106,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         for (const t of fmTags) tags.push(String(t).toLowerCase());
       }
       const priority = parsePriority(rawText);
+      const estimateMinutes = parseEstimate(rawText);
 
       todos.push({
         line: i,
@@ -107,7 +116,10 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         plainText: rawText
           .replace(INLINE_DUE_RE, '')
           .replace(INLINE_DONE_RE, '')
+          .replace(INLINE_EST_RE, '')
           .replace(TAG_RE, '')
+          .replace(INLINE_PRIORITY_RE, '')
+          .replace(/\s+/g, ' ')
           .trim(),
         heading,
         headingPath,
@@ -115,6 +127,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         due: due ?? null,
         done,
         priority,
+        estimateMinutes,
         hash: hashTodo(filePath, heading, rawText),
       });
     }
@@ -167,6 +180,44 @@ export function toggleTodoByHash(
 
   lines[realLine] = next;
   return { content: lines.join('\n'), line: realLine };
+}
+
+export interface TodoFields {
+  text: string;
+  tags?: string[];
+  due?: string | null;          // YYYY-MM-DD
+  priority?: 1 | 2 | 3 | null;
+  estimateMinutes?: number | null;
+}
+
+/**
+ * Build the canonical inline todo text (without the `- [ ] ` prefix) from
+ * structured fields. Order: priority, body, tags, estimate, due — matching how
+ * the parser strips them back out, so parse→compose round-trips cleanly.
+ */
+export function composeTodoText(f: TodoFields): string {
+  let body = f.text
+    .replace(INLINE_DUE_RE, '')
+    .replace(INLINE_EST_RE, '')
+    .replace(TAG_RE, '')
+    .replace(INLINE_PRIORITY_RE, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const parts: string[] = [];
+  if (f.priority === 1) parts.push('!!!');
+  else if (f.priority === 2) parts.push('!!');
+  else if (f.priority === 3) parts.push('!');
+  if (body) parts.push(body);
+  if (f.tags) {
+    for (const t of f.tags) {
+      const clean = t.replace(/^#/, '').trim();
+      if (clean) parts.push(`#${clean}`);
+    }
+  }
+  if (f.estimateMinutes && f.estimateMinutes > 0) parts.push(`(est: ${f.estimateMinutes}m)`);
+  if (f.due) parts.push(`(due: ${f.due})`);
+  return parts.join(' ');
 }
 
 export function rewriteTodoByHash(

@@ -25,6 +25,15 @@ class Store {
   lookahead = $state({ days: [], weeks: 3, workday_minutes: 480 });
   suggestions = $state([]);
   calendar = $state({ available: false, provider: null });
+  // V4.1: shared editor modal
+  editor = $state({ open: false, mode: 'create', todo: null });
+
+  openEditor(mode = 'create', todo = null) {
+    this.editor = { open: true, mode, todo };
+  }
+  closeEditor() {
+    this.editor = { open: false, mode: 'create', todo: null };
+  }
 
   filesByPath = $derived.by(() => {
     const m = new Map();
@@ -71,6 +80,42 @@ class Store {
   async reloadTodos() { this.todos = await this._fetchTodos(); }
 
   openFile(path) { this.activeFilePath = path; }
+
+  // ============ V4.1: create + edit todos ============
+
+  async createTodo({ path, heading, text, due, tags, priority, estimate_minutes }) {
+    const body = { path, text };
+    if (heading) body.heading = heading;
+    if (due) body.due = due;
+    if (tags && tags.length) body.tags = tags;
+    if (priority) body.priority = priority;
+    if (estimate_minutes) body.estimate_minutes = estimate_minutes;
+    const r = await fetch(`${API}/api/todo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'Create failed'); }
+    this.showToast('Todo created', 'success');
+    this.reloadTodos();
+    this.refreshStats();
+    this.refresh();
+    return r.json();
+  }
+
+  async editTodo(hash, fields) {
+    const body = { hash, ...fields };
+    const r = await fetch(`${API}/api/todo`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'Edit failed'); }
+    this.showToast('Todo updated', 'success');
+    this.reloadTodos();
+    this.refreshStats();
+    return r.json();
+  }
 
   async toggle(todo, checked) {
     try {

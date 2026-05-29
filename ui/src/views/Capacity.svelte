@@ -6,13 +6,38 @@
   let workdayMinutes = $state(480);
   let selectedDay = $state(null);
 
+  let syncing = $state(false);
+
   onMount(async () => {
     await store.loadLookahead(weeks, workdayMinutes);
+    await store.loadCalendarStatus();
   });
 
   async function refresh() {
     await store.loadLookahead(weeks, workdayMinutes);
     selectedDay = null;
+  }
+
+  async function syncCalendar() {
+    syncing = true;
+    try {
+      const r = await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weeks }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        store.showToast(`Synced ${d.new_events} new, ${d.updated_events} updated`, 'success');
+        await refresh();
+      } else {
+        store.showToast(d.error || 'Sync failed', 'error');
+      }
+    } catch (e) {
+      store.showToast(e.message, 'error');
+    } finally {
+      syncing = false;
+    }
   }
 
   function barColor(pct) {
@@ -61,10 +86,19 @@
 <div class="max-w-2xl mx-auto">
   <div class="flex items-end justify-between mb-1">
     <h1 class="text-2xl font-bold">Capacity</h1>
-    <button onclick={refresh}
-            class="text-xs text-neutral-400 hover:text-white bg-neutral-900 border border-neutral-800 rounded-lg px-2.5 py-1">
-      ↻ Refresh
-    </button>
+    <div class="flex items-center gap-2">
+      {#if store.calendar?.available}
+        <button onclick={syncCalendar} disabled={syncing}
+                class="text-xs text-indigo-300 hover:text-white bg-indigo-500/15 border border-indigo-700/50 rounded-lg px-2.5 py-1 disabled:opacity-50"
+                title="Pull calendar events ({store.calendar.provider})">
+          {syncing ? 'Syncing…' : '📅 Sync calendar'}
+        </button>
+      {/if}
+      <button onclick={refresh}
+              class="text-xs text-neutral-400 hover:text-white bg-neutral-900 border border-neutral-800 rounded-lg px-2.5 py-1">
+        ↻ Refresh
+      </button>
+    </div>
   </div>
   <p class="text-neutral-500 text-sm mb-4">
     Next {weeks} week{weeks === 1 ? '' : 's'} ·

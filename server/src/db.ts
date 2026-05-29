@@ -170,8 +170,8 @@ export function upsertFile(
 
     const insTodo = db.prepare(
       `INSERT OR REPLACE INTO todos
-       (hash, file_path, line, indent, text, plain_text, checked, heading, heading_path, tags_json, due_date, done_date, priority)
-       VALUES (@hash, @filePath, @line, @indent, @text, @plainText, @checked, @heading, @headingPath, @tagsJson, @due, @done, @priority)`,
+       (hash, file_path, line, indent, text, plain_text, checked, heading, heading_path, tags_json, due_date, done_date, priority, estimated_minutes)
+       VALUES (@hash, @filePath, @line, @indent, @text, @plainText, @checked, @heading, @headingPath, @tagsJson, @due, @done, @priority, @estimateMinutes)`,
     );
     for (const t of todos) insTodo.run(t as unknown as Record<string, unknown>);
 
