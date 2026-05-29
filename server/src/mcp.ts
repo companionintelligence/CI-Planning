@@ -41,10 +41,13 @@ import {
 } from './llm.js';
 import { rewriteTodoByHash } from './markdown.js';
 
+import type { CalendarBridge } from './calendar.js';
+
 export interface McpServerDeps {
   db: Database.Database;
   directories: string[];
   excludeDirs: Set<string>;
+  calendar?: CalendarBridge;
 }
 
 type McpResult = {
@@ -62,7 +65,7 @@ function mcpErr(message: string): McpResult {
   return { isError: true, content: [{ type: 'text', text: `Error: ${message}` }] };
 }
 
-export function buildMcpServer({ db, directories, excludeDirs }: McpServerDeps): McpServer {
+export function buildMcpServer({ db, directories, excludeDirs, calendar }: McpServerDeps): McpServer {
   const server = new McpServer({ name: 'companion-planning', version: '2.0.0' });
 
   function expandAndCheck(filePath: string): string {
@@ -674,6 +677,91 @@ export function buildMcpServer({ db, directories, excludeDirs }: McpServerDeps):
   }, () => {
     const items = memoryList(db);
     return ok(`${items.length} memory entries`, { items });
+  });
+
+  // ---------- sync_calendar ----------
+  server.registerTool('sync_calendar', {
+    title: 'Pull calendar events from the bound provider into calendar_links',
+    description: 'Default 3 weeks ahead. Updates committed-minutes for the capacity report.',
+    inputSchema: { weeks: z.number().int().positive().max(12).optional() },
+  }, async (args: { weeks?: number | undefined }) => {
+    if (!calendar) return mcpErr('Calendar bridge not configured');
+    const result = await calendar.syncIncoming(args.weeks ?? 3);
+    return ok(
+      result.ok
+        ? `Synced ${result.new_events} new, ${result.updated_events} updated, ${result.removed_events} removed`
+        : `Sync failed: ${result.error}`,
+      result as unknown as Record<string, unknown>,
+    );
+  });
+
+  // ---------- schedule_task ----------
+  server.registerTool('schedule_task', {
+    title: 'Create a calendar block linked to a task',
+    description: 'Creates a calendar event (via the bound provider) and stamps calendar_event_id on the todo.',
+    inputSchema: {
+      hash: z.string(),
+      date: z.string().describe('YYYY-MM-DD'),
+      start_time: z.string().describe('HH:MM (24h, local)'),
+      duration_minutes: z.number().int().positive(),
+      calendar_id: z.string().optional(),
+      title: z.string().optional(),
+    },
+  }, async (args: {
+    hash: string;
+    date: string;
+    start_time: string;
+    duration_minutes: number;
+    calendar_id?: string | undefined;
+    title?: string | undefined;
+  }) => {
+    if (!calendar) return mcpErr('Calendar bridge not configured');
+    const row = getTodoByHash(db, args.hash);
+    if (!row) return mcpErr(`No todo with hash ${args.hash}`);
+    const result = await calendar.scheduleTask({
+      todo_hash: args.hash,
+      date: args.date,
+      start_time: args.start_time,
+      duration_minutes: args.duration_minutes,
+      calendar_id: args.calendar_id ?? 'primary',
+      title: args.title ?? `[Task] ${row.plain_text.slice(0, 80)}`,
+    });
+    if (!result.ok) return mcpErr(result.error ?? 'schedule failed');
+    return ok(`Scheduled ${args.hash} on ${args.date} ${args.start_time} for ${args.duration_minutes}m`, result as unknown as Record<string, unknown>);
+  });
+
+  // ---------- find_slot ----------
+  server.registerTool('find_slot', {
+    title: 'Find open calendar slots that fit a given duration',
+    description: 'Considers busy time from calendar_links within a workday window. Returns slots sorted earliest first.',
+    inputSchema: {
+      duration_minutes: z.number().int().positive(),
+      start_date: z.string().optional().describe('YYYY-MM-DD, defaults to today'),
+      end_date: z.string().optional().describe('YYYY-MM-DD, defaults to +7 days'),
+      workday_start: z.string().optional().describe('HH:MM, default 09:00'),
+      workday_end: z.string().optional().describe('HH:MM, default 17:00'),
+      max_results: z.number().int().positive().max(50).optional(),
+    },
+  }, (args: {
+    duration_minutes: number;
+    start_date?: string | undefined;
+    end_date?: string | undefined;
+    workday_start?: string | undefined;
+    workday_end?: string | undefined;
+    max_results?: number | undefined;
+  }) => {
+    if (!calendar) return mcpErr('Calendar bridge not configured');
+    const today = new Date().toISOString().slice(0, 10);
+    const inSeven = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const slots = calendar.findSlots({
+      duration_minutes: args.duration_minutes,
+      start_date: args.start_date ?? today,
+      end_date: args.end_date ?? inSeven,
+      workday_start: args.workday_start ?? '09:00',
+      workday_end: args.workday_end ?? '17:00',
+      max_results: args.max_results ?? 10,
+    });
+    return ok(`${slots.length} slot${slots.length === 1 ? '' : 's'} found`, { slots });
   });
 
   return server;
