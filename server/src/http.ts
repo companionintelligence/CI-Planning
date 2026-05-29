@@ -759,6 +759,44 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     res.json({ slots, count: slots.length });
   });
 
+  // ============== REMINDERS (feeds the notification scheduler) ==============
+
+  // Current reminder state: overdue + due-today todos, and calendar events
+  // starting within `lead_minutes`. The client poller decides what to fire and
+  // dedupes; this endpoint is stateless.
+  app.get('/api/reminders', (req: Request, res: Response) => {
+    const lead = Math.min(Math.max(Number(req.query['lead_minutes']) || 30, 1), 1440);
+    const now = Date.now();
+    const today = new Date().toLocaleDateString('en-CA');
+
+    const dueToday = queryTodos(db, { checked: 0, due: 'today', limit: 100 }).map(t => ({
+      hash: t.hash, text: t.plain_text, due_date: t.due_date, file_path: t.file_path,
+    }));
+    const overdue = queryTodos(db, { checked: 0, due: 'overdue', limit: 100 }).map(t => ({
+      hash: t.hash, text: t.plain_text, due_date: t.due_date, file_path: t.file_path,
+    }));
+
+    // Calendar events starting between now and now+lead
+    const windowEnd = now + lead * 60_000;
+    const links = listCalendarLinksInRange(db, now, windowEnd).map(l => ({
+      event_id: l.event_id,
+      calendar_id: l.calendar_id,
+      title: l.event_title,
+      start_at: l.start_at,
+      minutes_until: Math.round((l.start_at - now) / 60_000),
+    }));
+
+    res.json({
+      now,
+      today,
+      lead_minutes: lead,
+      due_today: dueToday,
+      overdue: overdue.slice(0, 50),
+      overdue_total: overdue.length,
+      events_soon: links,
+    });
+  });
+
   // ============== SUMMARIES & RECONCILE (scheduled routines hit these) ==============
 
   const summaryRoot = (): string => directories[0] ?? process.cwd();

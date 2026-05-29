@@ -169,6 +169,40 @@
     </button>
   </section>
 
+  <!-- Notifications -->
+  <section class="rounded-xl bg-neutral-900 p-5 space-y-3">
+    <h2 class="text-sm font-medium text-neutral-400 uppercase tracking-wider">Reminders</h2>
+    <p class="text-xs text-neutral-500">
+      Get a heads-up before calendar events and a once-daily digest of what's due.
+      Requires opening the app over HTTPS (the Tailscale URL) and granting permission.
+    </p>
+    <div class="flex items-center justify-between">
+      <span class="text-sm">Notifications</span>
+      {#if store.notify.enabled}
+        <button onclick={() => store.disableNotifications()}
+                class="py-1.5 px-3 rounded-lg bg-green-500/15 border border-green-700 text-green-300 text-sm font-medium">
+          On — tap to disable
+        </button>
+      {:else}
+        <button onclick={() => store.enableNotifications()}
+                class="py-1.5 px-3 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-sm font-medium">
+          Enable
+        </button>
+      {/if}
+    </div>
+    {#if store.notify.permission === 'denied'}
+      <p class="text-xs text-rose-400">Blocked in browser settings — re-allow notifications for this site.</p>
+    {/if}
+    <div class="flex items-center justify-between">
+      <label for="lead" class="text-sm text-neutral-300">Lead time before events</label>
+      <select id="lead" value={store.notify.leadMinutes}
+              onchange={(e) => store.setReminderLead(Number(e.currentTarget.value))}
+              class="bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1 text-sm">
+        {#each [5,10,15,30,60] as m}<option value={m}>{m} min</option>{/each}
+      </select>
+    </div>
+  </section>
+
   <!-- LLM status -->
   <section class="rounded-xl bg-neutral-900 p-5 space-y-3">
     <h2 class="text-sm font-medium text-neutral-400 uppercase tracking-wider">Ollama</h2>

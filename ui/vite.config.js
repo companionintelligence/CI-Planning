@@ -17,17 +17,33 @@ export default defineConfig({
         theme_color: '#0f1115',
         background_color: '#0f1115',
         display: 'standalone',
+        orientation: 'portrait',
         scope: '/',
-        start_url: '/',
+        start_url: '/?source=pwa',
+        categories: ['productivity'],
         icons: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           { src: '/icons/icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
           { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
+        shortcuts: [
+          { name: 'Today', url: '/#today' },
+          { name: 'Capacity', url: '/#capacity' },
+          { name: 'Review', url: '/#review' },
+        ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
+        // Take control of open clients as soon as a new SW activates — this is
+        // what prevents the stale-shell problem (old nav after a deploy).
+        clientsClaim: true,
+        skipWaiting: true,
+        cleanupOutdatedCaches: true,
+        // Offline SPA routing: serve the cached app shell for navigations,
+        // except API/MCP/SSE which must hit the network.
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//, /^\/mcp/],
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname === '/api/file',
@@ -35,7 +51,12 @@ export default defineConfig({
             options: { cacheName: 'cp-files-v1', expiration: { maxEntries: 60, maxAgeSeconds: 86400 } },
           },
           {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/') && url.pathname !== '/api/events',
+            // Live endpoints must never be served stale.
+            urlPattern: ({ url }) => ['/api/events', '/api/reminders'].includes(url.pathname) || url.pathname.startsWith('/mcp'),
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
             handler: 'NetworkFirst',
             options: { cacheName: 'cp-api-v1', expiration: { maxEntries: 30, maxAgeSeconds: 3600 } },
           },

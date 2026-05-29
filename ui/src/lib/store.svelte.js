@@ -27,6 +27,14 @@ class Store {
   calendar = $state({ available: false, provider: null });
   // V4.1: shared editor modal
   editor = $state({ open: false, mode: 'create', todo: null });
+  // V4.1: reminder notifications
+  notify = $state({
+    enabled: localStorage.getItem('cp_notify_enabled') === 'true',
+    leadMinutes: Number(localStorage.getItem('cp_notify_lead') || 15),
+    permission: (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported',
+  });
+  _firedKeys = new Set();
+  _reminderTimer = null;
 
   openEditor(mode = 'create', todo = null) {
     this.editor = { open: true, mode, todo };
@@ -201,6 +209,80 @@ class Store {
     const d = await r.json();
     this.calendar = d;
     return d;
+  }
+
+  // ============ V4.1: reminder notifications ============
+
+  async enableNotifications() {
+    if (typeof Notification === 'undefined') {
+      this.showToast('Notifications not supported in this browser', 'error');
+      return false;
+    }
+    let perm = Notification.permission;
+    if (perm === 'default') perm = await Notification.requestPermission();
+    this.notify = { ...this.notify, permission: perm, enabled: perm === 'granted' };
+    localStorage.setItem('cp_notify_enabled', String(this.notify.enabled));
+    if (perm === 'granted') {
+      this.startReminders();
+      new Notification('Companion Planning', { body: 'Reminders are on. You’ll get a heads-up before events and a daily digest.' });
+      return true;
+    }
+    if (perm === 'denied') this.showToast('Notifications blocked — enable them in browser settings', 'error');
+    return false;
+  }
+
+  disableNotifications() {
+    this.notify = { ...this.notify, enabled: false };
+    localStorage.setItem('cp_notify_enabled', 'false');
+    this.stopReminders();
+  }
+
+  setReminderLead(minutes) {
+    this.notify = { ...this.notify, leadMinutes: minutes };
+    localStorage.setItem('cp_notify_lead', String(minutes));
+  }
+
+  startReminders() {
+    if (!this.notify.enabled || this.notify.permission !== 'granted') return;
+    this.stopReminders();
+    this._tickReminders();                                                  // immediate
+    this._reminderTimer = setInterval(() => this._tickReminders(), 60_000); // every minute
+  }
+
+  stopReminders() {
+    if (this._reminderTimer) { clearInterval(this._reminderTimer); this._reminderTimer = null; }
+  }
+
+  async _tickReminders() {
+    if (!this.notify.enabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      const r = await fetch(`${API}/api/reminders?lead_minutes=${this.notify.leadMinutes}`);
+      const d = await r.json();
+
+      // Event reminders: fire once per event as it enters the lead window
+      for (const ev of d.events_soon || []) {
+        const key = `ev:${ev.event_id}`;
+        if (this._firedKeys.has(key)) continue;
+        if (ev.minutes_until >= 0 && ev.minutes_until <= this.notify.leadMinutes) {
+          this._firedKeys.add(key);
+          new Notification(`📅 In ${ev.minutes_until}m: ${ev.title}`, {
+            body: 'Upcoming calendar event', tag: key,
+          });
+        }
+      }
+
+      // Daily digest: once per local day, summarize due-today + overdue (after 7am)
+      const digestKey = `digest:${d.today}`;
+      if (!this._firedKeys.has(digestKey) && (d.due_today?.length || d.overdue_total)) {
+        if (new Date().getHours() >= 7) {
+          this._firedKeys.add(digestKey);
+          const parts = [];
+          if (d.due_today?.length) parts.push(`${d.due_today.length} due today`);
+          if (d.overdue_total) parts.push(`${d.overdue_total} overdue`);
+          new Notification('🗒️ Today’s plan', { body: parts.join(' · '), tag: digestKey });
+        }
+      }
+    } catch { /* offline / server down — skip this tick */ }
   }
 
   async findSlots(durationMinutes, startDate, endDate) {
