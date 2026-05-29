@@ -14,6 +14,17 @@ import {
   getTodoByHash,
   getStats,
   setMeta,
+  logTaskEvent,
+  getTaskEvents,
+  dailyCapacity,
+  memorySet,
+  memoryGet,
+  memoryList,
+  insertSuggestion,
+  listSuggestions,
+  updateSuggestionStatus,
+  getSuggestion,
+  listCalendarLinksInRange,
 } from './db.js';
 import { indexFile, fullScan, type ScanStats } from './indexer.js';
 import {
@@ -387,6 +398,188 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     res.write('retry: 5000\n\n');
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
+  });
+
+  // ============== V4 ROUTES ==============
+
+  // ---- Lookahead: day-by-day capacity for next N weeks ----
+  app.get('/api/lookahead', (req: Request, res: Response) => {
+    const weeks = Math.min(Math.max(Number(req.query['weeks']) || 3, 1), 12);
+    const workdayMinutes = Number(req.query['workday_minutes']) || 480;
+    const now = Date.now();
+    const startD = new Date(now).toISOString().slice(0, 10);
+    const endD = new Date(now + weeks * 7 * 86400000).toISOString().slice(0, 10);
+    const days = dailyCapacity(db, startD, endD, workdayMinutes).map(d => ({
+      ...d,
+      capacity_pct: Math.round((d.committed_minutes / workdayMinutes) * 100),
+      over_capacity: d.committed_minutes > workdayMinutes,
+      workday_minutes: workdayMinutes,
+    }));
+    res.json({ days, weeks, workday_minutes: workdayMinutes });
+  });
+
+  // ---- Capacity report: day-by-day for an explicit date range ----
+  app.get('/api/capacity', (req: Request, res: Response) => {
+    const startDate = req.query['start_date'] as string;
+    const endDate = req.query['end_date'] as string;
+    const workdayMinutes = Number(req.query['workday_minutes']) || 480;
+    if (!startDate || !endDate) return void res.status(400).json({ error: 'start_date and end_date required (YYYY-MM-DD)' });
+    const days = dailyCapacity(db, startDate, endDate, workdayMinutes).map(d => ({
+      ...d,
+      capacity_pct: Math.round((d.committed_minutes / workdayMinutes) * 100),
+      over_capacity: d.committed_minutes > workdayMinutes,
+    }));
+    res.json({ days, workday_minutes: workdayMinutes });
+  });
+
+  // ---- Task history ----
+  app.get('/api/task/:hash/history', (req: Request, res: Response) => {
+    const hash = String(req.params['hash'] ?? '');
+    if (!hash) return void res.status(400).json({ error: 'hash required' });
+    const events = getTaskEvents(db, hash, 200);
+    res.json({ events, hash });
+  });
+
+  // ---- Set estimate ----
+  app.post('/api/task/estimate', (req: Request, res: Response) => {
+    const { hash, minutes } = req.body as { hash?: string; minutes?: number };
+    if (!hash || typeof minutes !== 'number' || minutes <= 0) {
+      return void res.status(400).json({ error: 'hash and positive minutes required' });
+    }
+    const row = getTodoByHash(db, hash);
+    if (!row) return void res.status(404).json({ error: `No todo with hash ${hash}` });
+    db.prepare(`UPDATE todos SET estimated_minutes=? WHERE hash=?`).run(minutes, hash);
+    logTaskEvent(db, hash, 'estimated', 'user', { minutes });
+    res.json({ ok: true, minutes });
+  });
+
+  // ---- Calendar links ----
+  app.get('/api/calendar', (req: Request, res: Response) => {
+    const startDate = req.query['start_date'] as string;
+    const endDate = req.query['end_date'] as string;
+    if (!startDate || !endDate) return void res.status(400).json({ error: 'start_date and end_date required (YYYY-MM-DD)' });
+    const startMs = new Date(startDate + 'T00:00:00').getTime();
+    const endMs = new Date(endDate + 'T23:59:59').getTime();
+    const links = listCalendarLinksInRange(db, startMs, endMs);
+    res.json({ links });
+  });
+
+  // ---- Review queue: list ----
+  app.get('/api/suggestions', (req: Request, res: Response) => {
+    const status = (req.query['status'] as string) || 'pending';
+    if (status !== 'pending' && status !== 'accepted' && status !== 'dismissed') {
+      return void res.status(400).json({ error: 'status must be pending|accepted|dismissed' });
+    }
+    const items = listSuggestions(db, status);
+    res.json({ items, count: items.length });
+  });
+
+  // ---- Review queue: accept ----
+  app.post('/api/suggestion/:id/accept', (req: Request, res: Response) => {
+    const id = Number(req.params['id']);
+    if (!id) return void res.status(400).json({ error: 'id required' });
+    const s = getSuggestion(db, id);
+    if (!s) return void res.status(404).json({ error: `No suggestion ${id}` });
+    if (s.status !== 'pending') return void res.status(409).json({ error: `Already ${s.status}` });
+
+    try {
+      if (s.kind === 'suggested') {
+        const content = existsSync(s.file_path) ? readFileSync(s.file_path, 'utf-8') : '';
+        const heading = s.heading ?? 'Inbox';
+        const line = `- [ ] ${s.text}`;
+        const updated = appendUnderHeading(content, heading, line);
+        atomicWrite(s.file_path, updated);
+        const root = rootFor(s.file_path);
+        if (root) indexFile(db, s.file_path, root);
+        const hash = hashTodo(s.file_path, heading, s.text);
+        logTaskEvent(db, hash, 'created', 'agent:accept_suggestion', { suggestion_id: id });
+        updateSuggestionStatus(db, id, 'accepted');
+        notifyClients('fileChange', { path: s.file_path });
+        return void res.json({ ok: true, hash });
+      }
+      if (s.kind === 'maybe_done' && s.maybe_done_for_hash) {
+        const row = getTodoByHash(db, s.maybe_done_for_hash);
+        if (!row) return void res.status(404).json({ error: 'Target todo not found' });
+        const content = readFileSync(row.file_path, 'utf-8');
+        const result = toggleTodoByHash(content, s.maybe_done_for_hash, row.file_path, true);
+        if ('error' in result) return void res.status(422).json({ error: result.error });
+        if (!result.noop) {
+          atomicWrite(row.file_path, result.content);
+          const root = rootFor(row.file_path);
+          if (root) indexFile(db, row.file_path, root);
+          notifyClients('fileChange', { path: row.file_path });
+        }
+        logTaskEvent(db, s.maybe_done_for_hash, 'completed', 'agent:accept_suggestion', { suggestion_id: id });
+        updateSuggestionStatus(db, id, 'accepted');
+        return void res.json({ ok: true, hash: s.maybe_done_for_hash });
+      }
+      if (s.kind === 'duplicate') {
+        updateSuggestionStatus(db, id, 'accepted');
+        return void res.json({ ok: true });
+      }
+      return void res.status(400).json({ error: `Unknown kind ${s.kind}` });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  // ---- Review queue: dismiss ----
+  app.post('/api/suggestion/:id/dismiss', (req: Request, res: Response) => {
+    const id = Number(req.params['id']);
+    if (!id) return void res.status(400).json({ error: 'id required' });
+    const s = getSuggestion(db, id);
+    if (!s) return void res.status(404).json({ error: `No suggestion ${id}` });
+    updateSuggestionStatus(db, id, 'dismissed');
+    res.json({ ok: true });
+  });
+
+  // ---- Extract from a source file (manual trigger) ----
+  app.post('/api/extract', async (req: Request, res: Response) => {
+    try {
+      const { path: filePath } = req.body as { path?: string };
+      if (!filePath) return void res.status(400).json({ error: 'path required' });
+      const safe = check(filePath);
+      if (!existsSync(safe)) return void res.status(404).json({ error: 'not found' });
+      const content = readFileSync(safe, 'utf-8');
+      const extracted = await extractTodosFromText(content.slice(0, 8000));
+      let inserted = 0;
+      for (const t of extracted.todos ?? []) {
+        insertSuggestion(db, {
+          file_path: safe,
+          heading: t.heading ?? null,
+          text: t.text,
+          kind: 'suggested',
+          source_quote: null,
+          confidence: 0.7,
+          maybe_done_for_hash: null,
+          duplicate_of_hash: null,
+        });
+        inserted++;
+      }
+      res.json({ inserted, suggestions: extracted.todos ?? [] });
+    } catch (e) {
+      if (e instanceof LLMUnavailable) return void res.status(503).json({ error: 'ollama not reachable' });
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  // ---- Memory ----
+  app.get('/api/memory', (_req: Request, res: Response) => {
+    res.json({ items: memoryList(db) });
+  });
+  app.get('/api/memory/:key', (req: Request, res: Response) => {
+    const key = String(req.params['key'] ?? '');
+    if (!key) return void res.status(400).json({ error: 'key required' });
+    const value = memoryGet(db, key);
+    res.json({ key, value });
+  });
+  app.put('/api/memory/:key', (req: Request, res: Response) => {
+    const key = String(req.params['key'] ?? '');
+    if (!key) return void res.status(400).json({ error: 'key required' });
+    const { value, source } = req.body as { value?: string; source?: string };
+    if (typeof value !== 'string') return void res.status(400).json({ error: 'value (string) required' });
+    memorySet(db, key, value, source);
+    res.json({ ok: true });
   });
 }
 
