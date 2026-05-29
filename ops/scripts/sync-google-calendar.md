@@ -40,14 +40,27 @@ better surfaced as todos.
 5. (optional) POST /api/reconcile  to close past blocks whose task is done
 ```
 
-## Scheduled sync
+## Scheduled sync (automated)
 
-Run this on the same cadence as the summary routines. Two options:
+A **Claude scheduled task** runs this recipe automatically every morning at 06:36
+local. It lives at `~/.claude/scheduled-tasks/companion-calendar-sync/SKILL.md`
+(taskId `companion-calendar-sync`) and:
 
-- **hermes cron** (it has Calendar + companion MCP): add a job that runs the recipe
-  above every morning — see `install-hermes-routines.sh`.
-- **launchd + a small agent step**: wrap the recipe in a script your agent runtime
-  can invoke; the templated summary routine already calls `/api/reconcile`.
+1. lists the user's calendars (skips Holidays),
+2. pulls the next 3 weeks of timed events from each,
+3. POSTs them to `/api/calendar/events` with `prune_missing: true` (so cancelled
+   events drop out),
+4. calls `/api/reconcile`,
+5. reports synced-count + over-capacity days.
+
+Manage it from the **Scheduled** sidebar (Run now to pre-approve calendar access).
+Scheduled tasks run while the Claude app is open; if it was closed when due, the
+task runs on next launch.
+
+Alternative drivers (if you prefer not to depend on the Claude app being open):
+- **hermes cron** — if hermes has the Google Calendar MCP, register the same
+  recipe via `hermes cron`.
+- **launchd + agent step** — wrap the recipe in a script your agent runtime invokes.
 
 ## Why not OAuth in the server?
 

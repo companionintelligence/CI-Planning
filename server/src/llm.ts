@@ -66,6 +66,86 @@ export async function generate(opts: GenerateOptions): Promise<OllamaGenerateRes
   return r.json() as Promise<OllamaGenerateResponse>;
 }
 
+// ---- config-driven model preference + resilient generation ----
+
+let preferredModel: string | null = process.env['OLLAMA_MODEL'] ?? null;
+
+/** Pin a preferred model (from config.json `llm.model`). null = auto-select. */
+export function setPreferredModel(model: string | null): void {
+  preferredModel = model && model.trim() ? model.trim() : null;
+}
+
+/** All available models, ordered by preference, with unknowns appended. */
+function orderModels(available: string[]): string[] {
+  const order = [
+    'qwen3.6:35b', 'nemotron3:33b', 'gemma4:31b',
+    'qwen2.5:7b-instruct', 'qwen2.5:7b', 'llama3.2:3b',
+    'qwen2.5:3b', 'phi4:mini', 'qwen2.5:1.5b', 'qwen2.5:0.5b',
+  ];
+  const ranked = available
+    .map(m => ({ m, i: order.findIndex(o => m === o || m.startsWith(o + ':') || m.startsWith(o)) }))
+    .sort((a, b) => (a.i < 0 ? 999 : a.i) - (b.i < 0 ? 999 : b.i))
+    .map(x => x.m);
+  return ranked;
+}
+
+const LOAD_FAILURE_RE = /unable to load model|ollama 5\d\d|model .* not found|no such model/i;
+
+/**
+ * Generate with model fallback. Tries the preferred/pinned model first, then
+ * every other available model in preference order, skipping any that fail to
+ * load. Returns the response plus the model that actually answered. Throws
+ * LLMUnavailable if Ollama is down, or the last error if every model failed.
+ *
+ * This is what makes the agentic tools robust: a corrupted 35B blob no longer
+ * breaks triage/summary/extract — they transparently fall back to a model that
+ * loads (e.g. qwen2.5:0.5b).
+ */
+export async function generateWithFallback(opts: {
+  system?: string;
+  prompt: string;
+  format?: string | Record<string, unknown>;
+  options?: Record<string, unknown>;
+  timeoutMs?: number;
+  preferModel?: string;
+}): Promise<{ response: string; model: string }> {
+  if (!(await ollamaAvailable())) throw new LLMUnavailable();
+  const available = await listModels();
+  if (available.length === 0) throw new LLMUnavailable('no models installed');
+
+  const candidates: string[] = [];
+  for (const m of [opts.preferModel, preferredModel, ...orderModels(available)]) {
+    if (m && available.includes(m) && !candidates.includes(m)) candidates.push(m);
+    // also accept prefix matches for pinned names not exactly in the list
+    else if (m && !candidates.includes(m)) {
+      const hit = available.find(a => a === m || a.startsWith(m + ':'));
+      if (hit && !candidates.includes(hit)) candidates.push(hit);
+    }
+  }
+
+  let lastErr: Error | null = null;
+  for (const model of candidates) {
+    try {
+      const genOpts: GenerateOptions = { model, prompt: opts.prompt };
+      if (opts.system !== undefined) genOpts.system = opts.system;
+      if (opts.format !== undefined) genOpts.format = opts.format;
+      if (opts.options !== undefined) genOpts.options = opts.options;
+      if (opts.timeoutMs !== undefined) genOpts.timeoutMs = opts.timeoutMs;
+      const res = await generate(genOpts);
+      return { response: res.response, model };
+    } catch (e) {
+      lastErr = e as Error;
+      // Load/availability failure → try the next model. Anything else → also try
+      // next (a model-specific timeout shouldn't abort the whole operation).
+      if (!LOAD_FAILURE_RE.test(lastErr.message)) {
+        // non-load error: still try next, but remember it
+      }
+      continue;
+    }
+  }
+  throw lastErr ?? new Error('all models failed');
+}
+
 const TRIAGE_SYSTEM = `You are a careful triage assistant for a personal markdown todo system.
 You will be given a list of open todos from one or more files. For each todo, output an
 action recommendation. Output ONLY valid JSON matching the schema, no extra text.
@@ -95,20 +175,16 @@ ${todos
   .join('\n')}`;
 
 export async function triageTodos(todos: TriageInput[], opts: { model?: string } = {}): Promise<TriageResult> {
-  if (!(await ollamaAvailable())) throw new LLMUnavailable();
-  const models = await listModels();
-  const chosen = opts.model ?? pickModel(models);
-  const res = await generate({
-    model: chosen,
-    system: TRIAGE_SYSTEM,
-    prompt: triageUserPrompt(todos),
-    format: 'json',
-  });
+  const gen: Parameters<typeof generateWithFallback>[0] = {
+    system: TRIAGE_SYSTEM, prompt: triageUserPrompt(todos), format: 'json',
+  };
+  if (opts.model) gen.preferModel = opts.model;
+  const { response, model } = await generateWithFallback(gen);
   try {
-    const parsed = JSON.parse(res.response) as { actions?: TriageResult['actions'] };
-    return { actions: parsed.actions ?? [], model: chosen };
+    const parsed = JSON.parse(response) as { actions?: TriageResult['actions'] };
+    return { actions: parsed.actions ?? [], model };
   } catch {
-    return { actions: [], raw: res.response, model: chosen, error: 'invalid JSON from model' };
+    return { actions: [], raw: response, model, error: 'invalid JSON from model' };
   }
 }
 
@@ -120,20 +196,18 @@ export async function summarizeDay(
   todos: TodoRowDb[],
   opts: { model?: string; date?: string } = {},
 ): Promise<SummaryResult> {
-  if (!(await ollamaAvailable())) throw new LLMUnavailable();
-  const models = await listModels();
-  const chosen = opts.model ?? pickModel(models);
   const today = opts.date ?? new Date().toISOString().slice(0, 10);
   const lines = todos
     .map(t => `- [${t.checked ? 'x' : ' '}] ${t.plain_text}  (file: ${t.file_path}; due: ${t.due_date ?? '-'})`)
     .slice(0, 200)
     .join('\n');
-  const res = await generate({
-    model: chosen,
+  const gen: Parameters<typeof generateWithFallback>[0] = {
     system: SUMMARY_SYSTEM,
     prompt: `Today is ${today}. Here are the open todos:\n${lines}\n\nWrite the briefing.`,
-  });
-  return { text: res.response, model: chosen };
+  };
+  if (opts.model) gen.preferModel = opts.model;
+  const { response, model } = await generateWithFallback(gen);
+  return { text: response, model };
 }
 
 // ---- extract_todos_from_text ----
@@ -167,20 +241,18 @@ export async function extractTodosFromText(
   text: string,
   opts: { model?: string } = {},
 ): Promise<ExtractResult> {
-  if (!(await ollamaAvailable())) throw new LLMUnavailable();
-  const models = await listModels();
-  const chosen = opts.model ?? pickModel(models);
-  const res = await generate({
-    model: chosen,
+  const gen: Parameters<typeof generateWithFallback>[0] = {
     system: EXTRACT_SYSTEM,
     prompt: `Extract todos from this text:\n\n${text.slice(0, 4000)}`,
     format: 'json',
-  });
+  };
+  if (opts.model) gen.preferModel = opts.model;
+  const { response, model } = await generateWithFallback(gen);
   try {
-    const parsed = JSON.parse(res.response) as { todos?: ExtractedTodo[] };
-    return { todos: parsed.todos ?? [], model: chosen };
+    const parsed = JSON.parse(response) as { todos?: ExtractedTodo[] };
+    return { todos: parsed.todos ?? [], model };
   } catch {
-    return { todos: [], model: chosen, error: 'invalid JSON from model' };
+    return { todos: [], model, error: 'invalid JSON from model' };
   }
 }
 
@@ -199,9 +271,6 @@ export async function projectRollup(
   todos: TodoRowDb[],
   opts: { model?: string; title?: string } = {},
 ): Promise<RollupResult> {
-  if (!(await ollamaAvailable())) throw new LLMUnavailable();
-  const models = await listModels();
-  const chosen = opts.model ?? pickModel(models);
   const byHeading = new Map<string, typeof todos>();
   for (const t of todos) {
     const h = t.heading ?? '(top)';
@@ -215,12 +284,13 @@ export async function projectRollup(
     )
     .join('\n\n');
 
-  const res = await generate({
-    model: chosen,
+  const gen: Parameters<typeof generateWithFallback>[0] = {
     system: ROLLUP_SYSTEM,
     prompt: `${opts.title ? `File: ${opts.title}\n\n` : ''}${sections}`,
-  });
-  return { text: res.response, model: chosen };
+  };
+  if (opts.model) gen.preferModel = opts.model;
+  const { response, model } = await generateWithFallback(gen);
+  return { text: response, model };
 }
 
 // ---- propose_archive ----
@@ -247,24 +317,22 @@ export async function proposeArchive(
   todos: TriageInput[],
   opts: { model?: string } = {},
 ): Promise<ArchiveResult> {
-  if (!(await ollamaAvailable())) throw new LLMUnavailable();
-  const models = await listModels();
-  const chosen = opts.model ?? pickModel(models);
   const lines = todos
     .slice(0, 100)
     .map((t, i) => `${i + 1}. hash=${t.hash} heading=${t.heading ?? '-'} text=${t.plainText}`)
     .join('\n');
-  const res = await generate({
-    model: chosen,
+  const gen: Parameters<typeof generateWithFallback>[0] = {
     system: ARCHIVE_SYSTEM,
     prompt: `Review these ${todos.length} open todos and identify archive candidates:\n${lines}`,
     format: 'json',
-  });
+  };
+  if (opts.model) gen.preferModel = opts.model;
+  const { response, model } = await generateWithFallback(gen);
   try {
-    const parsed = JSON.parse(res.response) as { proposals?: ArchiveProposal[] };
-    return { proposals: parsed.proposals ?? [], model: chosen };
+    const parsed = JSON.parse(response) as { proposals?: ArchiveProposal[] };
+    return { proposals: parsed.proposals ?? [], model };
   } catch {
-    return { proposals: [], model: chosen, error: 'invalid JSON from model' };
+    return { proposals: [], model, error: 'invalid JSON from model' };
   }
 }
 
