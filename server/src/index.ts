@@ -11,10 +11,14 @@ import { fileURLToPath } from 'url';
 import chokidar from 'chokidar';
 
 import { expandPath } from './util.js';
-import { openDb, setMeta } from './db.js';
+import { openDb, setMeta, insertSuggestion } from './db.js';
 import { fullScan, indexFile } from './indexer.js';
 import { mountRoutes } from './http.js';
 import { CalendarBridge } from './calendar.js';
+import { extractTodosFromText, LLMUnavailable } from './llm.js';
+import { buildMcpServer } from './mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { randomUUID } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +86,50 @@ const watcher = chokidar.watch(directories, {
   ignoreInitial: true,
 });
 
+// V4: optional auto-extract on file change
+const autoExtractCfg = (config['autoExtract'] as { enabled?: boolean; throttleMs?: number } | undefined) ?? {};
+const autoExtractEnabled = autoExtractCfg.enabled === true;
+const autoExtractThrottle = autoExtractCfg.throttleMs ?? 30_000;
+const extractTimers = new Map<string, NodeJS.Timeout>();
+
+async function maybeAutoExtract(path: string): Promise<void> {
+  if (!autoExtractEnabled) return;
+  // Skip very large files (>200KB) — too noisy
+  try {
+    const { readFileSync } = await import('fs');
+    const content = readFileSync(path, 'utf-8');
+    if (content.length > 200_000) return;
+    const extracted = await extractTodosFromText(content.slice(0, 8000));
+    for (const t of extracted.todos ?? []) {
+      insertSuggestion(db, {
+        file_path: path,
+        heading: t.heading ?? null,
+        text: t.text,
+        kind: 'suggested',
+        source_quote: null,
+        confidence: 0.7,
+        maybe_done_for_hash: null,
+        duplicate_of_hash: null,
+      });
+    }
+    if ((extracted.todos ?? []).length > 0) notifyClients('suggestionsUpdated', { path, count: extracted.todos.length });
+  } catch (e) {
+    if (!(e instanceof LLMUnavailable)) {
+      console.warn(`auto-extract failed for ${path}:`, (e as Error).message);
+    }
+  }
+}
+
+function scheduleExtract(path: string): void {
+  if (!autoExtractEnabled) return;
+  const existing = extractTimers.get(path);
+  if (existing) clearTimeout(existing);
+  extractTimers.set(path, setTimeout(() => {
+    extractTimers.delete(path);
+    void maybeAutoExtract(path);
+  }, autoExtractThrottle));
+}
+
 function onFsEvent(eventName: string) {
   return (path: string) => {
     if (!path.endsWith('.md')) return;
@@ -94,12 +142,41 @@ function onFsEvent(eventName: string) {
     } else {
       indexFile(db, path, root);
       notifyClients(eventName === 'add' ? 'fileAdd' : 'fileChange', { path });
+      scheduleExtract(path);
     }
   };
 }
 watcher.on('change', onFsEvent('change'));
 watcher.on('add', onFsEvent('add'));
 watcher.on('unlink', onFsEvent('unlink'));
+
+// ============== MCP over HTTP (StreamableHTTPServerTransport) ==============
+// Lets remote agents attach via `http://host:port/mcp` without SSH/stdio.
+// Uses stateful sessions (one MCP server per connection) so each agent gets
+// isolated tool call state.
+const mcpSessions = new Map<string, { transport: StreamableHTTPServerTransport; server: ReturnType<typeof buildMcpServer> }>();
+
+async function handleMcp(req: import('express').Request, res: import('express').Response): Promise<void> {
+  const sessionIdHeader = req.headers['mcp-session-id'];
+  const sessionId = Array.isArray(sessionIdHeader) ? sessionIdHeader[0] : sessionIdHeader;
+  let entry = sessionId ? mcpSessions.get(sessionId) : undefined;
+  if (!entry) {
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
+    const mcpServer = buildMcpServer({ db, directories, excludeDirs, calendar });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await mcpServer.connect(transport as any);
+    transport.onclose = () => {
+      if (transport.sessionId) mcpSessions.delete(transport.sessionId);
+    };
+    entry = { transport, server: mcpServer };
+    if (transport.sessionId) mcpSessions.set(transport.sessionId, entry);
+  }
+  await entry.transport.handleRequest(req, res, req.body);
+}
+
+app.post('/mcp', handleMcp);
+app.get('/mcp', handleMcp);
+app.delete('/mcp', handleMcp);
 
 app.listen(port, host, () => {
   console.log(`\n🗒️  Companion Planning running at http://${host}:${port}\n`);
