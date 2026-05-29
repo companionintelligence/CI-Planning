@@ -20,5 +20,8 @@
     "LagunaLabs_Pre2022Archive"
   ],
   "port": 3847,
-  "title": "Companion Planning"
+  "title": "Companion Planning",
+  "llm": {
+    "model": "nemotron3:33b"
+  }
 }

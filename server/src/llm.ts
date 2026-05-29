@@ -75,12 +75,21 @@ export function setPreferredModel(model: string | null): void {
   preferredModel = model && model.trim() ? model.trim() : null;
 }
 
-/** All available models, ordered by preference, with unknowns appended. */
+/**
+ * All available models, ordered by preference, with unknowns appended.
+ * Preference favors models that emit a clean final `response` for structured/
+ * concise tasks. Heavy reasoning models (qwen3.6:35b, gemma4:31b) burn large
+ * token budgets "thinking" and often return an empty response under a normal
+ * budget, so they rank below instruct models — the empty-response guard in
+ * generateWithFallback() will skip past them anyway.
+ */
 function orderModels(available: string[]): string[] {
   const order = [
-    'qwen3.6:35b', 'nemotron3:33b', 'gemma4:31b',
-    'qwen2.5:7b-instruct', 'qwen2.5:7b', 'llama3.2:3b',
-    'qwen2.5:3b', 'phi4:mini', 'qwen2.5:1.5b', 'qwen2.5:0.5b',
+    'nemotron3:33b',
+    'qwen2.5:7b-instruct', 'qwen2.5:7b',
+    'llama3.2:3b', 'qwen2.5:3b', 'phi4:mini', 'qwen2.5:1.5b',
+    'gemma4:31b', 'qwen3.6:35b',
+    'qwen2.5:0.5b',
   ];
   const ranked = available
     .map(m => ({ m, i: order.findIndex(o => m === o || m.startsWith(o + ':') || m.startsWith(o)) }))
@@ -132,14 +141,17 @@ export async function generateWithFallback(opts: {
       if (opts.options !== undefined) genOpts.options = opts.options;
       if (opts.timeoutMs !== undefined) genOpts.timeoutMs = opts.timeoutMs;
       const res = await generate(genOpts);
+      // Reasoning models can spend the whole budget in `thinking` and return an
+      // empty `response`. Treat that as a miss and fall back to a model that
+      // actually answers (e.g. an instruct model).
+      if (!res.response || !res.response.trim()) {
+        lastErr = new Error(`empty response from ${model}`);
+        continue;
+      }
       return { response: res.response, model };
     } catch (e) {
       lastErr = e as Error;
-      // Load/availability failure → try the next model. Anything else → also try
-      // next (a model-specific timeout shouldn't abort the whole operation).
-      if (!LOAD_FAILURE_RE.test(lastErr.message)) {
-        // non-load error: still try next, but remember it
-      }
+      // Load/availability/timeout failures → try the next candidate model.
       continue;
     }
   }
