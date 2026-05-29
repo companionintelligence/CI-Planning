@@ -14,6 +14,7 @@ import { expandPath } from './util.js';
 import { openDb, setMeta } from './db.js';
 import { fullScan, indexFile } from './indexer.js';
 import { mountRoutes } from './http.js';
+import { CalendarBridge } from './calendar.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -55,6 +56,8 @@ function notifyClients(event: string, data: unknown): void {
   for (const client of sseClients) client.write(message);
 }
 
+const calendar = new CalendarBridge(db);
+
 mountRoutes(app, {
   db,
   directories,
@@ -64,6 +67,7 @@ mountRoutes(app, {
   port,
   sseClients,
   notifyClients,
+  calendar,
 });
 
 // ---------------- Watcher ----------------

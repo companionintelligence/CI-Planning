@@ -12,6 +12,7 @@ import { expandPath } from './util.js';
 import { openDb } from './db.js';
 import { fullScan } from './indexer.js';
 import { buildMcpServer } from './mcp.js';
+import { CalendarBridge } from './calendar.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,8 @@ const excludeDirs = new Set<string>((config['excludeDirs'] as string[] | undefin
 const db = openDb();
 fullScan(db, directories, excludeDirs);
 
-const server = buildMcpServer({ db, directories, excludeDirs });
+const calendar = new CalendarBridge(db);
+const server = buildMcpServer({ db, directories, excludeDirs, calendar });
 const transport = new StdioServerTransport();
 await server.connect(transport);
 process.stderr.write('companion-planning MCP server listening on stdio\n');

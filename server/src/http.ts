@@ -46,6 +46,7 @@ import {
 } from './llm.js';
 import { rewriteTodoByHash } from './markdown.js';
 import type { TodoRowDb, TodoFilter } from './types.js';
+import type { CalendarBridge } from './calendar.js';
 
 export interface HttpServerDeps {
   db: Database.Database;
@@ -56,6 +57,7 @@ export interface HttpServerDeps {
   port: number;
   sseClients: Set<Response>;
   notifyClients: (event: string, data: unknown) => void;
+  calendar?: CalendarBridge;
 }
 
 function expandAndCheck(filePath: string, directories: string[]): string {
@@ -90,7 +92,7 @@ function rowToTodo(r: TodoRowDb) {
 }
 
 export function mountRoutes(app: Application, deps: HttpServerDeps): void {
-  const { db, directories, excludeDirs, config, title, port, sseClients, notifyClients } = deps;
+  const { db, directories, excludeDirs, config, title, port, sseClients, notifyClients, calendar } = deps;
 
   const check = (p: string) => expandAndCheck(p, directories);
   const rootFor = (p: string) => rootForPath(p, directories);
@@ -580,6 +582,63 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     if (typeof value !== 'string') return void res.status(400).json({ error: 'value (string) required' });
     memorySet(db, key, value, source);
     res.json({ ok: true });
+  });
+
+  // ============== CALENDAR BRIDGE ROUTES ==============
+
+  app.get('/api/calendar/status', (_req: Request, res: Response) => {
+    if (!calendar) return void res.json({ available: false, provider: null });
+    res.json({ available: true, provider: calendar.getProviderName() });
+  });
+
+  app.post('/api/calendar/sync', async (req: Request, res: Response) => {
+    if (!calendar) return void res.status(503).json({ error: 'calendar bridge not configured' });
+    const weeks = Math.min(Math.max(Number(req.body?.weeks) || 3, 1), 12);
+    const result = await calendar.syncIncoming(weeks);
+    res.json(result);
+  });
+
+  app.post('/api/calendar/schedule', async (req: Request, res: Response) => {
+    if (!calendar) return void res.status(503).json({ error: 'calendar bridge not configured' });
+    const body = req.body as {
+      todo_hash?: string;
+      date?: string;
+      start_time?: string;
+      duration_minutes?: number;
+      calendar_id?: string;
+      title?: string;
+    };
+    if (!body.todo_hash || !body.date || !body.start_time || !body.duration_minutes) {
+      return void res.status(400).json({ error: 'todo_hash, date, start_time, duration_minutes required' });
+    }
+    const row = getTodoByHash(db, body.todo_hash);
+    if (!row) return void res.status(404).json({ error: `No todo with hash ${body.todo_hash}` });
+    const result = await calendar.scheduleTask({
+      todo_hash: body.todo_hash,
+      date: body.date,
+      start_time: body.start_time,
+      duration_minutes: body.duration_minutes,
+      calendar_id: body.calendar_id ?? 'primary',
+      title: body.title ?? `[Task] ${row.plain_text.slice(0, 80)}`,
+    });
+    if (!result.ok) return void res.status(500).json(result);
+    res.json(result);
+  });
+
+  app.get('/api/calendar/slots', (req: Request, res: Response) => {
+    if (!calendar) return void res.status(503).json({ error: 'calendar bridge not configured' });
+    const durationMinutes = Number(req.query['duration_minutes']);
+    const startDate = (req.query['start_date'] as string | undefined) ?? new Date().toISOString().slice(0, 10);
+    const endDate = (req.query['end_date'] as string | undefined) ??
+      new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    if (!durationMinutes) return void res.status(400).json({ error: 'duration_minutes required' });
+    const slots = calendar.findSlots({
+      duration_minutes: durationMinutes,
+      start_date: startDate,
+      end_date: endDate,
+      max_results: Math.min(Number(req.query['max_results']) || 10, 50),
+    });
+    res.json({ slots, count: slots.length });
   });
 }
 
