@@ -101,7 +101,7 @@ export function mountRoutes(app: Application, deps: HttpServerDeps): void {
     const stats = getStats(db);
     res.json({
       ok: true,
-      version: '3.0.0',
+      version: '4.0.0',
       uptime_s: Math.floor(process.uptime()),
       files: stats.files,
       todos_total: stats.todos_total,
