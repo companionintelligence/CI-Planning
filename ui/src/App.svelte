@@ -7,6 +7,8 @@
   import Files from './views/Files.svelte';
   import Search from './views/Search.svelte';
   import Settings from './views/Settings.svelte';
+  import Capacity from './views/Capacity.svelte';
+  import Review from './views/Review.svelte';
   import Toast from './components/Toast.svelte';
   import BriefingModal from './components/BriefingModal.svelte';
   import TriageModal from './components/TriageModal.svelte';
@@ -18,6 +20,8 @@
 
   onMount(() => {
     store.refresh();
+    store.loadLookahead(3, 480);
+    store.loadCalendarStatus();
 
     // Live reload via SSE
     if (window.EventSource) {
@@ -31,7 +35,7 @@
     // Hash navigation
     const setFromHash = () => {
       const h = location.hash.slice(1);
-      if (['today', 'todos', 'files', 'search', 'settings'].includes(h)) store.view = h;
+      if (['today', 'todos', 'files', 'search', 'settings', 'capacity', 'review'].includes(h)) store.view = h;
     };
     window.addEventListener('hashchange', setFromHash);
     setFromHash();
@@ -72,6 +76,10 @@
       <Files onTriage={(path) => { triageFile = path; }} />
     {:else if store.view === 'search'}
       <Search />
+    {:else if store.view === 'capacity'}
+      <Capacity />
+    {:else if store.view === 'review'}
+      <Review />
     {:else if store.view === 'settings'}
       <Settings />
     {/if}

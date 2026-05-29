@@ -5,9 +5,11 @@
 
   const views = [
     { id: 'today',    label: 'Today' },
+    { id: 'capacity', label: 'Cap' },
+    { id: 'review',   label: 'Review' },
     { id: 'todos',    label: 'Todos' },
     { id: 'files',    label: 'Files' },
-    { id: 'search',   label: 'Search' },
+    { id: 'search',   label: '⌕' },
     { id: 'settings', label: '⚙' },
   ];
 
@@ -15,6 +17,12 @@
     store.view = v;
     history.replaceState(null, '', '#' + v);
   }
+
+  // Capacity warning: peek at lookahead for the next 7 days, count over-capacity
+  const overCapacity = $derived.by(() => {
+    const days = (store.lookahead?.days || []).slice(0, 7);
+    return days.filter(d => d.over_capacity).length;
+  });
 </script>
 
 <header class="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/70"
@@ -46,6 +54,13 @@
       <span class={store.stats.due_today ? 'text-amber-400 font-semibold' : ''}>{store.stats.due_today}</span>
       <span class="text-neutral-600 text-[10px]">today</span>
     </span>
+
+    {#if overCapacity > 0}
+      <button onclick={() => setView('capacity')}
+              class="h-7 px-2 rounded-full bg-amber-900/30 border border-amber-700/50 text-amber-300 text-[10px] font-semibold flex items-center gap-1 hover:bg-amber-800/40"
+              title="{overCapacity} days over capacity in the next 7"
+              aria-label="Capacity warning">⚠ {overCapacity}</button>
+    {/if}
 
     {#if store.llm?.available}
       <button onclick={onBriefing}
