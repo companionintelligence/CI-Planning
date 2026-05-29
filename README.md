@@ -22,13 +22,17 @@ HTTP and MCP APIs so the web UI and an agent share one data layer.
 
 ## What you get
 
-- **Four views**: Today / All Todos / Files / Search — with FTS5 search across every note
-- **Local LLM triage** via Ollama (qwen3.6:35b / gemma4:31b / nemotron3:33b — auto-detected)
-- **MCP server with 14 tools** for Claude / agents (`list_todos`, `add_todo`, `complete_todo`, `search`, `triage_inbox`, `summarize_day`, …)
-- **PWA** — installable on iPhone & Android home screens via Tailscale
-- **Atomic writes** with optimistic concurrency (sha256 guards) and content-hash todo IDs (no line-drift bugs)
-- **Hourly git auto-commit** of your markdown root via launchd
-- **Live reload** when you edit a file in Obsidian / vim / iA Writer — SSE pushes change to the web UI
+- **Seven views**: Today / Capacity / Review / Todos / Files / Search / Settings
+- **Full todo editor** — create & edit with native date/time pickers, due-date presets, priority, time estimates, tags, and one-click "schedule a calendar block"
+- **Capacity planning** — a 3-week lookahead with green/amber/red daily load bars; see over-committed days before you say yes to one more meeting
+- **Calendar bridge** — sync events in, schedule tasks to time blocks, find open slots, open events in Google Calendar (provider-agnostic; manual provider works out of the box)
+- **Review queue** — local LLM extracts tasks from *prose* (emails, meeting notes), not just checkboxes; nothing is written to disk until you accept it
+- **Scheduled summary routines** — daily/weekly/monthly reviews written to `Summaries/`, driven by launchd or hermes cron, with calendar reconciliation
+- **MCP server with ~38 tools** over **stdio _and_ HTTP** — attach Claude Code locally or any agent on your tailnet
+- **Local LLM** via Ollama (auto-detected; graceful template fallback when offline)
+- **PWA** — installable on iPhone & Android via Tailscale
+- **Atomic, hash-guarded writes**; estimates & metadata round-trip through markdown so a reindex never loses them
+- **Live reload** + hourly git auto-commit of your markdown root via launchd
 
 ## Quick start
 
@@ -41,23 +45,33 @@ npm install
 cp config.example.json config.json
 $EDITOR config.json
 
-# Start
-HOST=0.0.0.0 npm start
+# Build the TypeScript server + Svelte UI, then start
+npm run build
+npm run build --prefix ui
+HOST=0.0.0.0 npm run start:ts
 # Open http://localhost:3847 or http://<your-tailnet-ip>:3847
+```
+
+Or run the full installer — builds everything, registers the launchd services
+(server, hourly autocommit, daily/weekly/monthly summaries), and installs the
+pre-commit hook:
+
+```bash
+bash ops/scripts/install.sh
 ```
 
 Optional but recommended:
 
 ```bash
-# Local LLM for triage + briefing
+# Local LLM for triage, extraction, and LLM-authored summaries
 brew install ollama && ollama serve &
 ollama pull qwen2.5:7b-instruct   # ~4.7 GB, good baseline
 
-# Register as MCP server for Claude Code
-claude mcp add companion-planning -- node "$(pwd)/mcp-stdio.js"
+# Register as MCP server for Claude Code (stdio)
+claude mcp add companion-planning -- node "$(pwd)/server/dist/mcp-stdio.js"
 
-# Hourly auto-commit backup of your markdown directory
-bash ops/scripts/install-autocommit.sh
+# LLM-authored scheduled summaries via hermes (alternative to launchd)
+bash ops/scripts/install-hermes-routines.sh
 ```
 
 ## Configuration
@@ -82,7 +96,12 @@ These are optional — files without them still work, they just won't surface in
 | Due date | `- [ ] file taxes (due: 2026-04-15)` |
 | Tag | `- [ ] file taxes #tax #urgent` |
 | Priority | `- [ ] file taxes !!!` or `p1` |
+| Time estimate | `- [ ] file taxes (est: 45m)` |
 | Frontmatter | `due:`, `tags: [tax, urgent]`, `project: name` |
+
+The canonical line order (what the editor writes) is:
+`- [ ] !!! body #tags (est: Nm) (due: YYYY-MM-DD)`. Estimates live in the markdown,
+so a reindex never loses them.
 
 Todos are addressable by a **stable content hash** (sha256 of `path + heading + text`)
 — so an edit doesn't break agent references the way line numbers do.
@@ -91,63 +110,108 @@ Todos are addressable by a **stable content hash** (sha256 of `path + heading + 
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/api/health` | Version, uptime, counts |
 | GET | `/api/files` | List indexed files with todo counts |
-| GET | `/api/file?path=` | Read a file (returns content, sha256, parsed todos & headings) |
+| GET | `/api/file?path=` | Read a file (content, sha256, parsed todos & headings) |
 | PATCH | `/api/file` | Toggle a checkbox by `hash` |
 | PUT | `/api/file` | Replace file content with optimistic `expected_sha256` |
-| POST | `/api/todo` | Add a `- [ ]` line under a heading |
-| GET | `/api/todos?open=true&due=today&tag=fundraising` | Filtered query |
+| POST | `/api/todo` | Create a todo (text, due, tags, priority, estimate) |
+| PATCH | `/api/todo` | Edit a todo by `hash` (merges omitted fields) |
+| GET | `/api/todos?open=true&due=today&tag=…` | Filtered query |
 | GET | `/api/search?q=` | BM25-ranked FTS5 search |
 | GET | `/api/stats` | Aggregate counts |
-| POST | `/api/llm/triage` | LLM triage of open todos; returns suggestions |
-| POST | `/api/llm/summary` | LLM daily briefing |
-| GET | `/api/llm/status` | Is Ollama reachable? Which models? |
+| GET | `/api/lookahead?weeks=3` | Day-by-day capacity + tasks + events |
+| GET | `/api/capacity?start_date=&end_date=` | Capacity for a date range |
+| POST | `/api/task/estimate` | Set a durable `(est: Nm)` estimate |
+| POST | `/api/calendar/sync` | Pull calendar events into the index |
+| POST | `/api/calendar/schedule` | Create a time block linked to a task |
+| GET | `/api/calendar/slots?duration_minutes=` | Find open slots |
+| GET / POST | `/api/suggestions`, `/api/suggestion/:id/accept\|dismiss` | Review queue |
+| POST | `/api/extract` | LLM-extract tasks from a file → Review queue |
+| POST | `/api/summary/{daily\|weekly\|monthly}` | Generate a period review |
+| POST | `/api/reconcile` | Close past calendar blocks whose task is done |
+| GET / PUT | `/api/memory[/:key]` | Persistent agent memory |
+| POST / GET / DELETE | `/mcp` | MCP-over-HTTP (Streamable transport) |
 | GET | `/api/events` | SSE stream of file-change events |
 
 ## MCP tool surface
 
-14 tools, all running over stdio for Claude Code:
+~38 tools over **stdio and HTTP**. Highlights: `list_todos`, `add_todo`,
+`complete_todo`, `search`, `triage_inbox`, `summarize_day`, `extract_from_source`,
+`accept_suggestion`, `lookahead`, `capacity_report`, `schedule_task`, `find_slot`,
+`sync_calendar`, `generate_summary`, `reconcile_past`, `task_history`, `set_estimate`,
+`memory_get` / `memory_set`.
 
-`list_files`, `read_file`, `write_file`, `append_section`, `list_todos`, `add_todo`,
-`complete_todo`, `uncomplete_todo`, `search`, `stats`, `triage_inbox`, `summarize_day`,
-`rescan`, `llm_status`.
-
-Add to Claude Code:
+Attach Claude Code over stdio:
 
 ```bash
-claude mcp add companion-planning -- node /path/to/mcp-stdio.js
+claude mcp add companion-planning -- node /path/to/server/dist/mcp-stdio.js
+```
+
+Attach any agent on your tailnet over HTTP (no SSH needed):
+
+```json
+{ "mcpServers": { "companion-planning": { "url": "http://100.x.x.x:3847/mcp" } } }
 ```
 
 ## Security model
 
-- **Trust boundary: Tailscale.** No per-request auth in v2; the server is reachable
-  only via your tailnet (or `127.0.0.1` if you don't pass `--host 0.0.0.0`).
+- **Trust boundary: Tailscale.** No per-request auth; the server (and MCP-over-HTTP at
+  `/mcp`) is reachable only via your tailnet (or `127.0.0.1` without `--host 0.0.0.0`).
 - **Path sandbox**: every read and write is checked against the configured roots
-  (`isPathInRoots` in `lib/util.js`).
+  (`isPathInRoots` in `server/src/util.ts`).
+- **No LLM auto-writes**: extraction, triage, and summaries return plans; only an
+  explicit accept/apply touches a file.
 - **Atomic writes**: write to `<file>.tmp.<pid>.<ts>` then `rename()`.
 - **Concurrency guard**: `PUT /api/file` requires `expected_sha256`; toggles use
   content-hash todo IDs that survive reflows.
 - **LLM input stays local**: prompts include note content; Ollama runs on-device.
 
+## Scheduled routines
+
+Daily / weekly / monthly reviews are generated by an **external scheduler** hitting
+idempotent endpoints — so the trigger and the logic are decoupled. Each review is
+LLM-authored when Ollama is up, and falls back to a deterministic template otherwise,
+so a 9pm cron never fails. Output lands in `Summaries/{Daily,Weekly,Monthly}/` and is
+re-indexed automatically; `reconcile` closes past calendar blocks whose task is done.
+
+Two interchangeable drivers (pick one — `install.sh` wires the launchd one):
+
+- **launchd** (default, robust, local): `ops/launchd/com.companion-planning.summary.*`
+  run `ops/scripts/summary.sh` on a `StartCalendarInterval` (daily 21:00, weekly
+  Sun 19:00, monthly 1st 08:00).
+- **hermes cron** (LLM-authored, agentic): `ops/scripts/install-hermes-routines.sh`
+  registers the companion MCP with the hermes agent daemon and creates cron jobs that
+  call `generate_summary` + `reconcile_past` as a full agent turn.
+
+Trigger any review by hand from **Settings → Summaries & routines**, or:
+
+```bash
+curl -X POST http://127.0.0.1:3847/api/summary/weekly -d '{}' -H 'Content-Type: application/json'
+```
+
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) and [PLANNING.md](PLANNING.md) on the
-[planning branch](https://github.com/mrhegemon/companion-planning/tree/companion/happy-mcnulty-4c28e9)
-for the full design.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full V4.1 design (data model, calendar
+bridge, ingestion, scheduled-routine layer, agent attachment, security).
 
 Stack:
-- Node 22 + Express + chokidar
+- Node 22 + Express + chokidar, **strict TypeScript** (ESM, NodeNext)
 - better-sqlite3 (WAL mode, FTS5)
-- @modelcontextprotocol/sdk (stdio transport)
+- @modelcontextprotocol/sdk (stdio **and** Streamable HTTP transports)
 - gray-matter for frontmatter parsing
-- marked (vendored) for rendering
-- Ollama HTTP client (zero-dep)
-- Vanilla JS frontend (Stage-1 PWA); Svelte 5 rewrite in `ui/` (Stage 2)
+- Ollama HTTP client (zero-dep, graceful-degradation)
+- Svelte 5 + Vite + Tailwind v4 PWA (single UI at `/`)
+- Provider-agnostic calendar bridge (manual provider default; Google adapter pluggable)
 
 ## Tests
 
+99 unit + integration tests (Vitest) and Playwright E2E. Ollama and Google Calendar
+are stubbed, so CI needs neither.
+
 ```bash
-npm test
+npm test          # unit + integration
+npm run test:e2e  # Playwright
 ```
 
 ## License
