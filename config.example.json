@@ -3,6 +3,14 @@
     "~/Desktop/Planning",
     "~/Desktop/ci_computer"
   ],
+  "excludeDirs": ["archive", "_archive", "node_modules", ".git"],
   "port": 3847,
-  "title": "Companion Planning"
+  "title": "Companion Planning",
+  "llm": {
+    "model": "qwen2.5:7b-instruct"
+  },
+  "autoExtract": {
+    "enabled": false,
+    "throttleMs": 30000
+  }
 }

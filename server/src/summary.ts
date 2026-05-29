@@ -14,7 +14,7 @@ import { join } from 'path';
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { atomicWrite } from './util.js';
 import { setMeta } from './db.js';
-import { ollamaAvailable, generate, listModels, pickModelExport } from './llm.js';
+import { generateWithFallback } from './llm.js';
 
 export type Period = 'daily' | 'weekly' | 'monthly';
 
@@ -190,17 +190,17 @@ Write the ${d.window.period} review.`;
 }
 
 async function buildNarrative(d: SummaryData, model?: string): Promise<{ text: string; model: string | null }> {
-  if (!(await ollamaAvailable())) {
-    return { text: deterministicNarrative(d), model: null };
-  }
   try {
-    const models = await listModels();
-    const chosen = model ?? pickModelExport(models);
-    const res = await generate({ model: chosen, system: SUMMARY_SYSTEM, prompt: summaryPrompt(d), timeoutMs: 120_000 });
-    const prose = res.response.trim();
-    // Append the structured lists under the prose for reference
-    return { text: `${prose}\n\n---\n\n${deterministicNarrative(d)}`, model: chosen };
+    const gen: Parameters<typeof generateWithFallback>[0] = {
+      system: SUMMARY_SYSTEM, prompt: summaryPrompt(d), timeoutMs: 120_000,
+    };
+    if (model) gen.preferModel = model;
+    const { response, model: used } = await generateWithFallback(gen);
+    const prose = response.trim();
+    // Prose first, then the structured lists for reference.
+    return { text: `${prose}\n\n---\n\n${deterministicNarrative(d)}`, model: used };
   } catch {
+    // Ollama down or every model failed → deterministic template.
     return { text: deterministicNarrative(d), model: null };
   }
 }
