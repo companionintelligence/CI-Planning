@@ -3,7 +3,7 @@
  * skips models that fail to load and lands on one that works.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { generateWithFallback, setPreferredModel } from '../../src/llm.js';
+import { generateWithFallback, setPreferredModel, setModels } from '../../src/llm.js';
 
 const HOST = 'http://127.0.0.1:11434';
 const realFetch = globalThis.fetch;
@@ -22,8 +22,8 @@ function mockOllama(handler: (url: string, body: any) => { status: number; json:
   }) as typeof fetch;
 }
 
-beforeEach(() => setPreferredModel(null));
-afterEach(() => { globalThis.fetch = realFetch; setPreferredModel(null); });
+beforeEach(() => setModels({ light: null, heavy: null }));
+afterEach(() => { globalThis.fetch = realFetch; setModels({ light: null, heavy: null }); });
 
 describe('generateWithFallback', () => {
   it('falls back past models that fail to load', async () => {
@@ -66,5 +66,23 @@ describe('generateWithFallback', () => {
       return { status: 404, json: {} };
     });
     await expect(generateWithFallback({ prompt: 'hi' })).rejects.toThrow();
+  });
+
+  it('routes by tier: light → light model, heavy → heavy model first', async () => {
+    // Make both pinned models available + answer
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (u.endsWith('/api/tags')) {
+        return new Response(JSON.stringify({ models: [{ name: 'gemma4:e4b' }, { name: 'nemotron3:33b' }, { name: 'qwen2.5:0.5b' }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ response: `from ${body.model}` }), { status: 200 });
+    }) as typeof fetch;
+
+    setModels({ light: 'gemma4:e4b', heavy: 'nemotron3:33b' });
+    const light = await generateWithFallback({ prompt: 'x', tier: 'light' });
+    const heavy = await generateWithFallback({ prompt: 'x', tier: 'heavy' });
+    expect(light.model).toBe('gemma4:e4b');
+    expect(heavy.model).toBe('nemotron3:33b');
   });
 });

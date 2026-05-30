@@ -20,5 +20,9 @@
     "LagunaLabs_Pre2022Archive"
   ],
   "port": 3847,
-  "title": "Companion Planning"
+  "title": "Companion Planning",
+  "llm": {
+    "light": "gemma4:e4b",
+    "heavy": "nemotron3:33b"
+  }
 }

@@ -15,7 +15,7 @@ import { openDb, setMeta, insertSuggestion } from './db.js';
 import { fullScan, indexFile } from './indexer.js';
 import { mountRoutes } from './http.js';
 import { CalendarBridge } from './calendar.js';
-import { extractTodosFromText, LLMUnavailable, setPreferredModel } from './llm.js';
+import { extractTodosFromText, LLMUnavailable, setPreferredModel, setModels } from './llm.js';
 import { buildMcpServer } from './mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { randomUUID } from 'crypto';
@@ -29,9 +29,14 @@ const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, u
 const directories = ((config['directories'] as string[] | undefined) ?? []).map(p => resolve(expandPath(p)));
 const excludeDirs = new Set<string>((config['excludeDirs'] as string[] | undefined) ?? []);
 
-// Optional pinned LLM model from config.json: { "llm": { "model": "qwen2.5:0.5b" } }
-const llmCfg = config['llm'] as { model?: string } | undefined;
+// Pinned LLM models from config.json. Two tiers:
+//   { "llm": { "light": "gemma4:e4b", "heavy": "nemotron3:33b" } }
+// Back-compat: { "llm": { "model": "…" } } pins both tiers.
+const llmCfg = config['llm'] as { model?: string; light?: string; heavy?: string } | undefined;
 if (llmCfg?.model) setPreferredModel(llmCfg.model);
+if (llmCfg?.light || llmCfg?.heavy) {
+  setModels({ ...(llmCfg.light ? { light: llmCfg.light } : {}), ...(llmCfg.heavy ? { heavy: llmCfg.heavy } : {}) });
+}
 const port = Number(config['port']) || 3847;
 const title = (config['title'] as string | undefined) ?? 'Companion Planning';
 

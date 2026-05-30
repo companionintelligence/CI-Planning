@@ -7,7 +7,8 @@
   "port": 3847,
   "title": "Companion Planning",
   "llm": {
-    "model": "qwen2.5:7b-instruct"
+    "light": "gemma4:e4b",
+    "heavy": "nemotron3:33b"
   },
   "autoExtract": {
     "enabled": false,
