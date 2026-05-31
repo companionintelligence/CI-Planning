@@ -3,9 +3,15 @@ node_modules/
 *.log
 dist/
 server/public/
+server/dist/
 *.db
 *.db-shm
 *.db-wal
 .env
 config.local.json
 *.plist
+.codex/
+.data/
+test-results/
+playwright-report/
+playwright/.cache/

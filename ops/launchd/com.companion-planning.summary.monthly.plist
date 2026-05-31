@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.companion-planning.summary.monthly</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>REPO_PATH/ops/scripts/summary.sh</string>
+    <string>monthly</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>REPO_PATH</string>
+
+  <!-- 1st of each month at 08:00 local; summarizes the prior month's tail.
+       (launchd has no "last day of month"; running on the 1st and anchoring
+        on the prior period is the robust approach.) -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key><integer>1</integer>
+    <key>Hour</key><integer>8</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>REPO_PATH/logs/summary.monthly.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPO_PATH/logs/summary.monthly.error.log</string>
+</dict>
+</plist>
