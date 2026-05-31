@@ -1,8 +1,0 @@
-{
-  "directories": [
-    "~/Documents/Owner_Plan"
-  ],
-  "excludeDirs": ["archive", "coverage", "planning_archive", "Liam_web_history", "websites", "test-consolidation", "contact_list"],
-  "port": 3847,
-  "title": "Companion Planning"
-}
