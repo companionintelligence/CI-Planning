@@ -8,14 +8,14 @@ export function tagsRouter() {
   // GET /api/tags
   router.get('/api/tags', async (ctx) => {
     const rows = sqlite
-      .prepare<{ id: number; name: string; count: number }, []>(
+      .prepare(
         `SELECT tags.id, tags.name, COUNT(task_tags.task_id) as count
          FROM tags
          LEFT JOIN task_tags ON tags.id = task_tags.tag_id
          GROUP BY tags.id
          ORDER BY count DESC, tags.name`
       )
-      .all();
+      .all() as { id: number; name: string; count: number }[];
     ctx.body = { tags: rows };
   });
 

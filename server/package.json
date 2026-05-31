@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "seed": "tsx src/scripts/seed-test-data.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },
@@ -25,8 +29,10 @@
     "@types/koa-bodyparser": "^4.3.12",
     "@types/koa-static": "^4.0.4",
     "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
     "drizzle-kit": "^0.30.4",
     "tsx": "^4.19.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.8"
   }
 }

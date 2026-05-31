@@ -1,8 +1,9 @@
 import Router from '@koa/router';
-import { eq, and, like, sql, asc, desc, lte } from 'drizzle-orm';
+import { eq, and, like, asc, lte } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { tasks, tags, taskTags } from '../db/schema.js';
+import { tasks, taskTags } from '../db/schema.js';
 import { broadcast } from './sse.js';
+import { toApi } from '../lib/serialize.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -25,19 +26,17 @@ export function tasksRouter() {
       ? await rows.where(and(...conditions)).orderBy(asc(tasks.priority), asc(tasks.dueAt))
       : await rows.orderBy(asc(tasks.priority), asc(tasks.dueAt));
 
-    // Attach tags
+    // Attach tags and serialize to snake_case
     const withTags = result.map((t) => {
       const tagRows = sqlite
-        .prepare<{ name: string }, { task_id: number }>(
-          'SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id'
-        )
-        .all({ task_id: t.id });
-      return { ...t, tags: tagRows.map((r) => r.name) };
+        .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
+        .all({ task_id: t.id }) as { name: string }[];
+      return { ...toApi(t), tags: tagRows.map((r) => r.name) };
     });
 
     // Filter by tag after attachment (simple approach for v1)
     const filtered = tag
-      ? withTags.filter((t) => t.tags.includes(tag))
+      ? withTags.filter((t) => (t.tags as string[]).includes(tag))
       : withTags;
 
     ctx.body = { tasks: filtered };
@@ -48,10 +47,13 @@ export function tasksRouter() {
     const body = ctx.request.body as {
       title: string;
       description?: string;
+      notes?: string;
       due_at?: string;
+      task_time?: string;
       estimated_minutes?: number;
       priority?: number;
       owner_id?: number;
+      parent_id?: number;
       tags?: string[];
     };
 
@@ -66,46 +68,87 @@ export function tasksRouter() {
       .values({
         title: body.title.trim(),
         description: body.description,
+        notes: body.notes,
         dueAt: body.due_at,
+        taskTime: body.task_time,
         estimatedMinutes: body.estimated_minutes,
         priority: body.priority ?? 3,
+        parentId: body.parent_id,
         ownerId: body.owner_id ?? 1,
       })
       .returning();
 
     if (body.tags?.length) await attachTags(task.id, body.tags);
 
-    broadcast('task:created', task);
+    const out = { ...toApi(task), tags: body.tags ?? [] };
+    broadcast('task:created', out);
     ctx.status = 201;
-    ctx.body = { task };
+    ctx.body = { task: out };
+  });
+
+  // GET /api/tasks/:id/subtasks
+  router.get('/api/tasks/:id/subtasks', async (ctx) => {
+    const parentId = Number(ctx.params.id);
+    const result = await db.select().from(tasks).where(eq(tasks.parentId, parentId)).orderBy(asc(tasks.priority));
+    const withTags = result.map((t) => {
+      const tagRows = sqlite
+        .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
+        .all({ task_id: t.id }) as { name: string }[];
+      return { ...toApi(t), tags: tagRows.map((r) => r.name) };
+    });
+    ctx.body = { subtasks: withTags };
   });
 
   // PATCH /api/tasks/:id
   router.patch('/api/tasks/:id', async (ctx) => {
     const id = Number(ctx.params.id);
-    const body = ctx.request.body as Partial<typeof tasks.$inferInsert & { tags: string[]; completed: boolean }>;
+    // Accept both snake_case (client/API convention) and camelCase (drizzle) field names.
+    const body = (ctx.request.body ?? {}) as {
+      title?: string;
+      description?: string | null;
+      notes?: string | null;
+      due_at?: string | null;
+      dueAt?: string | null;
+      task_time?: string | null;
+      estimated_minutes?: number | null;
+      estimatedMinutes?: number | null;
+      priority?: number;
+      status?: string;
+      completed?: boolean;
+      completed_at?: string | null;
+      parent_id?: number | null;
+      tags?: string[];
+    };
 
     const update: Partial<typeof tasks.$inferInsert> = {};
-    if (body.title !== undefined)              update.title = body.title;
-    if (body.description !== undefined)        update.description = body.description;
-    if (body.due_at !== undefined)             update.dueAt = (body as any).due_at;
-    if (body.dueAt !== undefined)              update.dueAt = body.dueAt;
-    if (body.estimated_minutes !== undefined)  update.estimatedMinutes = (body as any).estimated_minutes;
-    if (body.estimatedMinutes !== undefined)   update.estimatedMinutes = body.estimatedMinutes;
-    if (body.priority !== undefined)           update.priority = body.priority;
-    if (body.status !== undefined)             update.status = body.status;
-    if (body.completed)                        { update.status = 'done'; update.completedAt = new Date().toISOString(); }
+    if (body.title !== undefined)             update.title = body.title;
+    if (body.description !== undefined)       update.description = body.description;
+    if (body.notes !== undefined)             update.notes = body.notes;
+    if (body.due_at !== undefined)            update.dueAt = body.due_at;
+    if (body.dueAt !== undefined)             update.dueAt = body.dueAt;
+    if (body.task_time !== undefined)         update.taskTime = body.task_time;
+    if (body.estimated_minutes !== undefined) update.estimatedMinutes = body.estimated_minutes;
+    if (body.estimatedMinutes !== undefined)  update.estimatedMinutes = body.estimatedMinutes;
+    if (body.priority !== undefined)          update.priority = body.priority;
+    if (body.status !== undefined)            update.status = body.status;
+    if (body.completed_at !== undefined)      update.completedAt = body.completed_at;
+    if (body.parent_id !== undefined)         update.parentId = body.parent_id;
+    if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
 
     const [task] = await db.update(tasks).set(update).where(eq(tasks.id, id)).returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
-    if (Array.isArray((body as any).tags)) {
+    if (Array.isArray(body.tags)) {
       sqlite.prepare('DELETE FROM task_tags WHERE task_id = ?').run(id);
-      await attachTags(id, (body as any).tags);
+      await attachTags(id, body.tags);
     }
 
-    broadcast('task:updated', task);
-    ctx.body = { task };
+    const currentTags = (sqlite
+      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
+      .all({ task_id: id }) as { name: string }[]).map((r) => r.name);
+    const out = { ...toApi(task), tags: currentTags };
+    broadcast('task:updated', out);
+    ctx.body = { task: out };
   });
 
   // DELETE /api/tasks/:id  (soft delete)
@@ -117,8 +160,9 @@ export function tasksRouter() {
       .where(eq(tasks.id, id))
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    broadcast('task:updated', task);
-    ctx.body = { task };
+    const out = { ...toApi(task), tags: [] as string[] };
+    broadcast('task:updated', out);
+    ctx.body = { task: out };
   });
 
   return router;
@@ -127,7 +171,7 @@ export function tasksRouter() {
 async function attachTags(taskId: number, names: string[]) {
   for (const rawName of names) {
     const name = rawName.toLowerCase().replace(/\s+/g, '-').slice(0, 32);
-    const existing = sqlite.prepare<{ id: number }, { name: string }>('SELECT id FROM tags WHERE name = @name').get({ name });
+    const existing = sqlite.prepare('SELECT id FROM tags WHERE name = @name').get({ name }) as { id: number } | undefined;
     let tagId: number;
     if (existing) {
       tagId = existing.id;

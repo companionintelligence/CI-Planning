@@ -1,5 +1,5 @@
 import { createSignal, createResource } from 'solid-js';
-import { api, type Task, type Block, type Possible, type Tag, type Prefs } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ export const [possibles, { refetch: refetchPossibles }] = createResource(() =>
   api.possibles.list().then((r) => r.possibles)
 );
 
-on('possible:promoted', () => { refetchPossibles(); refetchTasks(); });
+on('possible:promoted',  () => { refetchPossibles(); refetchTasks(); });
 on('possible:dismissed', () => refetchPossibles());
 
 // ── Tags ─────────────────────────────────────────────────────────────────────
@@ -52,3 +52,24 @@ export const [jobs, { refetch: refetchJobs }] = createResource(() =>
 );
 
 on('job:run', () => refetchJobs());
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+export type ToastKind = 'default' | 'success' | 'error';
+export interface Toast { id: number; message: string; kind: ToastKind; }
+
+const [_toasts, setToasts] = createSignal<Toast[]>([]);
+export const toasts = _toasts;
+
+let _tid = 0;
+export function showToast(message: string, kind: ToastKind = 'default', durationMs = 3000) {
+  const id = ++_tid;
+  setToasts((prev) => [...prev, { id, message, kind }]);
+  setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), durationMs);
+}
+
+// ── Task form modal ───────────────────────────────────────────────────────────
+export const [taskModal, setTaskModal] = createSignal<{
+  open: boolean;
+  editTask?: import('../lib/api.js').Task;
+  parentId?: number;
+}>({ open: false });
