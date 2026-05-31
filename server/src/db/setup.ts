@@ -15,10 +15,13 @@ export function runSetup(db: Database) {
       id                 INTEGER PRIMARY KEY AUTOINCREMENT,
       title              TEXT NOT NULL,
       description        TEXT,
+      notes              TEXT,
       due_at             TEXT,
+      task_time          TEXT,
       estimated_minutes  INTEGER,
       priority           INTEGER DEFAULT 3,
       status             TEXT DEFAULT 'open',
+      parent_id          INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
       owner_id           INTEGER REFERENCES owners(id),
       source_kind        TEXT DEFAULT 'manual',
       source_ref         TEXT,
@@ -110,7 +113,18 @@ export function runSetup(db: Database) {
     );
   `);
 
+  migrateColumns(db);
   seedDefaults(db);
+}
+
+/** Idempotent column migrations for existing databases. */
+function migrateColumns(db: Database) {
+  const addCol = (table: string, col: string, def: string) => {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch { /* already exists */ }
+  };
+  addCol('tasks', 'notes', 'TEXT');
+  addCol('tasks', 'task_time', 'TEXT');
+  addCol('tasks', 'parent_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
 }
 
 function seedDefaults(db: Database) {

@@ -1,0 +1,185 @@
+import { createSignal, createEffect, Show } from 'solid-js';
+import { X, Plus, AlignLeft, Clock, Calendar, Tag, Flag, Timer } from 'lucide-solid';
+import { api, type Task, type TaskInput } from '../lib/api.js';
+import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
+
+interface Props {
+  editTask?: Task;
+  parentId?: number;
+  onClose: () => void;
+}
+
+const priorityLabels = ['', 'Urgent', 'High', 'Normal', 'Low', 'Someday'];
+const priorityColors = ['', 'text-red-400', 'text-orange-400', 'text-yellow-400', 'text-blue-400', 'text-slate-400'];
+
+export function TaskForm(props: Props) {
+  const isEdit = () => !!props.editTask;
+
+  const [title, setTitle] = createSignal('');
+  const [notes, setNotes] = createSignal('');
+  const [dueAt, setDueAt] = createSignal('');
+  const [taskTime, setTaskTime] = createSignal('');
+  const [estimatedMinutes, setEstimatedMinutes] = createSignal('');
+  const [priority, setPriority] = createSignal(3);
+  const [tagsInput, setTagsInput] = createSignal('');
+  const [saving, setSaving] = createSignal(false);
+  const [expanded, setExpanded] = createSignal(false);
+
+  // Populate from editTask
+  createEffect(() => {
+    const t = props.editTask;
+    if (!t) return;
+    setTitle(t.title);
+    setNotes(t.notes ?? t.description ?? '');
+    setDueAt(t.due_at ? t.due_at.slice(0, 10) : '');
+    setTaskTime(t.task_time ?? '');
+    setEstimatedMinutes(t.estimated_minutes ? String(t.estimated_minutes) : '');
+    setPriority(t.priority ?? 3);
+    setTagsInput(t.tags.join(', '));
+    setExpanded(true);
+  });
+
+  async function submit(e: Event) {
+    e.preventDefault();
+    if (!title().trim()) return;
+    setSaving(true);
+    try {
+      const body: TaskInput = {
+        title: title().trim(),
+        notes: notes().trim() || undefined,
+        due_at: dueAt() || undefined,
+        task_time: taskTime() || undefined,
+        estimated_minutes: estimatedMinutes() ? Number(estimatedMinutes()) : undefined,
+        priority: priority(),
+        parent_id: props.parentId,
+        tags: tagsInput() ? tagsInput().split(',').map(t => t.trim()).filter(Boolean) : [],
+      };
+      if (isEdit()) {
+        await api.tasks.update(props.editTask!.id, body);
+        showToast('Task updated', 'success');
+      } else {
+        await api.tasks.create(body);
+        showToast('Task created', 'success');
+      }
+      refetchTasks();
+      props.onClose();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && props.onClose()}>
+      <div class="modal">
+        {/* Header */}
+        <div class="flex items-center justify-between px-5 pt-5 pb-3 border-b border-surface-700/60">
+          <h2 class="text-base font-semibold text-slate-100">
+            {props.parentId ? 'Add Subtask' : isEdit() ? 'Edit Task' : 'New Task'}
+          </h2>
+          <button onClick={props.onClose} class="btn-icon"><X size={16} /></button>
+        </div>
+
+        <form onSubmit={submit} class="p-5 flex flex-col gap-4">
+          {/* Title */}
+          <input
+            autofocus
+            class="input-lg font-medium"
+            placeholder="Task title…"
+            value={title()}
+            onInput={(e) => setTitle(e.currentTarget.value)}
+          />
+
+          {/* Priority selector */}
+          <div class="flex gap-2">
+            {[1,2,3,4,5].map(p => (
+              <button
+                type="button"
+                onClick={() => setPriority(p)}
+                class={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-100
+                  ${priority() === p
+                    ? 'bg-surface-600 border-surface-500 ' + priorityColors[p]
+                    : 'border-surface-600 text-slate-500 hover:border-surface-500 hover:text-slate-400'}`}
+              >
+                <Flag size={11} class="inline mr-1 opacity-80" />P{p}
+              </button>
+            ))}
+          </div>
+
+          {/* Expand toggle */}
+          <Show when={!expanded()}>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              class="btn-ghost text-xs self-start -mt-1 text-slate-500"
+            >
+              <Plus size={13} /> More options
+            </button>
+          </Show>
+
+          {/* Expanded fields */}
+          <Show when={expanded()}>
+            <div class="flex gap-3">
+              <label class="flex flex-col gap-1.5 flex-1">
+                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                  <Calendar size={11} /> Due date
+                </span>
+                <input type="date" class="input" value={dueAt()} onInput={(e) => setDueAt(e.currentTarget.value)} />
+              </label>
+              <label class="flex flex-col gap-1.5 flex-1">
+                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                  <Clock size={11} /> Task time
+                </span>
+                <input type="time" class="input" value={taskTime()} onInput={(e) => setTaskTime(e.currentTarget.value)} />
+              </label>
+              <label class="flex flex-col gap-1.5 w-28">
+                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                  <Timer size={11} /> Est. min
+                </span>
+                <input
+                  type="number" min={5} step={5} class="input"
+                  placeholder="30"
+                  value={estimatedMinutes()}
+                  onInput={(e) => setEstimatedMinutes(e.currentTarget.value)}
+                />
+              </label>
+            </div>
+
+            <label class="flex flex-col gap-1.5">
+              <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                <AlignLeft size={11} /> Notes
+              </span>
+              <textarea
+                class="textarea min-h-[72px]"
+                placeholder="Any notes or context…"
+                value={notes()}
+                onInput={(e) => setNotes(e.currentTarget.value)}
+              />
+            </label>
+
+            <label class="flex flex-col gap-1.5">
+              <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                <Tag size={11} /> Tags (comma-separated)
+              </span>
+              <input
+                class="input"
+                placeholder="work, eng, urgent"
+                value={tagsInput()}
+                onInput={(e) => setTagsInput(e.currentTarget.value)}
+              />
+            </label>
+          </Show>
+
+          {/* Actions */}
+          <div class="flex gap-2 pt-1">
+            <button type="submit" disabled={saving() || !title().trim()} class="btn-primary flex-1">
+              {saving() ? 'Saving…' : isEdit() ? 'Update Task' : 'Create Task'}
+            </button>
+            <button type="button" onClick={props.onClose} class="btn-secondary">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

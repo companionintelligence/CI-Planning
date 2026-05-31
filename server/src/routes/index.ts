@@ -6,6 +6,8 @@ import { tagsRouter } from './tags.js';
 import { jobsRouter } from './jobs.js';
 import { prefsRouter } from './prefs.js';
 import { scheduleRouter } from './schedule.js';
+import { summaryRouter } from './summary.js';
+import { llmRouter } from './llm.js';
 import { sseRouter } from './sse.js';
 
 export function mountRoutes(app: Koa) {
@@ -18,6 +20,8 @@ export function mountRoutes(app: Koa) {
     jobsRouter(),
     prefsRouter(),
     scheduleRouter(),
+    summaryRouter(),
+    llmRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

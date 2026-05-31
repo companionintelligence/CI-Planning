@@ -9,6 +9,7 @@ export interface Config {
   ollamaUrl: string;
   ollamaSmallModel: string;
   ollamaMediumModel: string;
+  ollamaEmbedModel: string;
   staticDir: string;
 }
 
@@ -23,7 +24,9 @@ export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
   dbPath: process.env.DB_PATH ?? join(dataDir, 'companion.db'),
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
-  ollamaSmallModel: process.env.OLLAMA_SMALL ?? 'qwen2.5:3b',
-  ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'mistral:7b',
+  // Defaults match models installed on the host. Override via env for other rigs.
+  ollamaSmallModel: process.env.OLLAMA_SMALL ?? 'qwen2.5:0.5b',
+  ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'gemma4:e4b',
+  ollamaEmbedModel: process.env.OLLAMA_EMBED ?? 'nomic-embed-text',
   staticDir: join(packageRoot, 'public'),
 };

@@ -10,11 +10,14 @@ export const owners = sqliteTable('owners', {
 export const tasks = sqliteTable('tasks', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   title: text('title').notNull(),
-  description: text('description'),
-  dueAt: text('due_at'),
+  description: text('description'),        // short summary / legacy
+  notes: text('notes'),                    // rich freeform notes
+  dueAt: text('due_at'),                   // ISO datetime
+  taskTime: text('task_time'),             // HH:MM time-of-day if the task has a fixed start time
   estimatedMinutes: integer('estimated_minutes'),
-  priority: integer('priority').default(3),        // 1 highest, 5 lowest
-  status: text('status').default('open'),           // open | scheduled | in_progress | done | cancelled | deferred
+  priority: integer('priority').default(3), // 1 highest, 5 lowest
+  status: text('status').default('open'),   // open | scheduled | in_progress | done | cancelled | deferred
+  parentId: integer('parent_id'),          // null = top-level task; set = subtask
   ownerId: integer('owner_id').references(() => owners.id),
   sourceKind: text('source_kind').default('manual'), // manual | agent | gmail | gcal
   sourceRef: text('source_ref'),

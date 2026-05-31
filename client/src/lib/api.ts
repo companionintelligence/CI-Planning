@@ -6,42 +6,70 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error ?? res.statusText);
+  }
   return res.json() as Promise<T>;
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export interface Task {
-  id: number; title: string; description?: string; due_at?: string;
-  estimated_minutes?: number; priority: number; status: string;
-  owner_id: number; source_kind: string; created_at: string;
-  completed_at?: string; tags: string[];
+  id: number;
+  title: string;
+  description?: string;
+  notes?: string;
+  due_at?: string;
+  task_time?: string;
+  estimated_minutes?: number;
+  priority: number;
+  status: string;
+  parent_id?: number;
+  owner_id: number;
+  source_kind: string;
+  created_at: string;
+  completed_at?: string;
+  tags: string[];
+}
+
+export interface TaskInput {
+  title: string;
+  description?: string;
+  notes?: string;
+  due_at?: string;
+  task_time?: string;
+  estimated_minutes?: number;
+  priority?: number;
+  parent_id?: number;
+  owner_id?: number;
+  tags?: string[];
 }
 
 export const api = {
   tasks: {
     list: (params?: Record<string, string>) => {
-      const q = params ? '?' + new URLSearchParams(params).toString() : '';
+      const q = params && Object.keys(params).filter(k => params[k]).length
+        ? '?' + new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v]) => v))).toString()
+        : '';
       return request<{ tasks: Task[] }>('GET', `/tasks${q}`);
     },
-    create: (body: Partial<Task> & { title: string }) =>
-      request<{ task: Task }>('POST', '/tasks', body),
-    update: (id: number, body: Partial<Task & { tags: string[]; completed: boolean }>) =>
+    create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
+    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string }>) =>
       request<{ task: Task }>('PATCH', `/tasks/${id}`, body),
     delete: (id: number) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
+    subtasks: (id: number) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
   },
 
   blocks: {
     list: (from?: string, to?: string) => {
       const q = new URLSearchParams();
       if (from) q.set('from', from);
-      if (to) q.set('to', to);
+      if (to)   q.set('to', to);
       return request<{ blocks: Block[] }>('GET', `/blocks?${q}`);
     },
     create: (body: Partial<Block> & { title: string; start_at: string; end_at: string }) =>
       request<{ block: Block }>('POST', '/blocks', body),
-    update: (id: number, body: Partial<Block>) =>
-      request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
+    update: (id: number, body: Partial<Block>) => request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
     delete: (id: number) => request<{ ok: boolean }>('DELETE', `/blocks/${id}`),
   },
 
@@ -69,8 +97,18 @@ export const api = {
     run: (id: number) => request<{ ok: boolean; message: string }>('POST', `/jobs/${id}/run`, {}),
   },
 
-  schedule: {
-    run: (date?: string) => request<unknown>('POST', '/schedule/run', { date }),
+  schedule: { run: (date?: string) => request<unknown>('POST', '/schedule/run', { date }) },
+
+  summary: {
+    get: (date?: string) => {
+      const q = date ? `?date=${date}` : '';
+      return request<DaySummary>('GET', `/summary${q}`);
+    },
+  },
+
+  llm: {
+    status: () => request<LLMStatus>('GET', '/llm/status'),
+    integrations: () => request<Integrations>('GET', '/integrations'),
   },
 };
 
@@ -100,4 +138,19 @@ export interface Job {
   id: number; name: string; kind: string; cron: string; enabled: boolean;
   last_run_at?: string; last_started?: string; last_status?: string;
   items_created?: number;
+}
+
+export interface DaySummary {
+  date: string; prose: string; llm: boolean;
+  stats: { overdue: number; dueToday: number; open: number; blocks: number };
+}
+
+export interface LLMStatus {
+  available: boolean; url: string; models: string[];
+  smallModel: string; mediumModel: string; embedModel: string;
+}
+
+export interface Integrations {
+  ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string };
+  google: { mode: string };
 }

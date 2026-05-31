@@ -3,6 +3,7 @@ import { eq, and, gte, lte } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { timeBlocks } from '../db/schema.js';
 import { broadcast } from './sse.js';
+import { toApi, toApiList } from '../lib/serialize.js';
 
 export function blocksRouter() {
   const router = new Router();
@@ -19,7 +20,7 @@ export function blocksRouter() {
       ? await db.select().from(timeBlocks).where(and(...conditions))
       : await db.select().from(timeBlocks);
 
-    ctx.body = { blocks: rows };
+    ctx.body = { blocks: toApiList(rows) };
   });
 
   // POST /api/blocks
@@ -53,9 +54,10 @@ export function blocksRouter() {
       })
       .returning();
 
-    broadcast('block:created', block);
+    const out = toApi(block);
+    broadcast('block:created', out);
     ctx.status = 201;
-    ctx.body = { block };
+    ctx.body = { block: out };
   });
 
   // PATCH /api/blocks/:id
@@ -81,8 +83,9 @@ export function blocksRouter() {
     const [block] = await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
-    broadcast('block:updated', block);
-    ctx.body = { block };
+    const out = toApi(block);
+    broadcast('block:updated', out);
+    ctx.body = { block: out };
   });
 
   // DELETE /api/blocks/:id

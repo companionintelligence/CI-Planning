@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { possibleTasks, tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
+import { toApi, toApiList } from '../lib/serialize.js';
 
 export function possiblesRouter() {
   const router = new Router();
@@ -14,7 +15,7 @@ export function possiblesRouter() {
       .select()
       .from(possibleTasks)
       .where(eq(possibleTasks.status, status));
-    ctx.body = { possibles: rows };
+    ctx.body = { possibles: toApiList(rows) };
   });
 
   // POST /api/possible-tasks/:id/promote
@@ -47,9 +48,10 @@ export function possiblesRouter() {
       .set({ status: 'promoted', promotedTaskId: task.id })
       .where(eq(possibleTasks.id, id));
 
-    broadcast('possible:promoted', { id, task });
+    const out = toApi(task);
+    broadcast('possible:promoted', { id, task: out });
     ctx.status = 201;
-    ctx.body = { task };
+    ctx.body = { task: out };
   });
 
   // POST /api/possible-tasks/:id/dismiss
