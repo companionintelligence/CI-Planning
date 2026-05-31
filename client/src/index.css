@@ -8,11 +8,11 @@
   body { min-height: 100vh; }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
-  ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+  ::-webkit-scrollbar-thumb { background: #1a3040; border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: #244859; }
   .page-enter { animation: pageIn 140ms ease both; }
   @keyframes pageIn {
-    from { opacity: 0; transform: translateY(6px); }
+    from { opacity: 0; transform: translateY(5px); }
     to   { opacity: 1; transform: translateY(0); }
   }
 }
@@ -21,15 +21,20 @@
 
   /* ── Buttons ─────────────────────────────────────────────────── */
   .btn {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
-           transition-all duration-150 focus-visible:outline-none focus-visible:ring-2
-           focus-visible:ring-accent active:scale-95 select-none cursor-pointer;
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium
+           tracking-wide transition-all duration-150
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
+           active:scale-95 select-none cursor-pointer;
   }
+  /* CI-style mint CTA — matches "Get Your Core" button */
   .btn-primary {
-    @apply btn bg-accent text-white shadow-sm;
+    @apply btn text-surface-950;
+    background: linear-gradient(135deg, #58ebbf, #409b9b);
+    font-family: 'Source Code Pro', monospace;
   }
   .btn-secondary {
-    @apply btn bg-surface-700 text-slate-200 border border-surface-600;
+    @apply btn text-ci-1 border border-accent;
+    background: transparent;
   }
   .btn-ghost {
     @apply btn text-slate-400;
@@ -43,45 +48,50 @@
 
   /* ── Cards ───────────────────────────────────────────────────── */
   .card {
-    @apply bg-surface-800 border border-surface-700 rounded-xl p-4;
+    @apply bg-surface-800 border border-surface-700 rounded-2xl p-4;
   }
 
   /* ── Inputs ──────────────────────────────────────────────────── */
   .input {
-    @apply bg-surface-700 border border-surface-600 rounded-lg px-3 py-1.5 text-sm
+    @apply bg-surface-700 border border-surface-600 rounded-xl px-3 py-1.5 text-sm
            text-slate-100 placeholder-slate-500
            focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent
            transition-colors duration-150 w-full;
+    font-family: 'Source Code Pro', monospace;
   }
   .input-lg { @apply input py-2.5 text-base; }
   .textarea  { @apply input resize-none; }
 
   /* ── Badges ──────────────────────────────────────────────────── */
-  .badge         { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium; }
+  .badge         { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium tracking-wide; }
   .badge-neutral { @apply badge bg-surface-700 text-slate-400; }
-  .badge-accent  { @apply badge bg-violet-900/40 text-violet-400; }
-  .badge-green   { @apply badge bg-green-900/40 text-green-400; }
+  .badge-accent  { @apply badge bg-accent/20 text-accent-light; }
+  .badge-green   { @apply badge text-ci-3; background: rgba(88,235,191,.12); }
   .badge-yellow  { @apply badge bg-yellow-900/40 text-yellow-400; }
   .badge-red     { @apply badge bg-red-900/40 text-red-400; }
-  .badge-blue    { @apply badge bg-blue-900/40 text-blue-400; }
+  .badge-blue    { @apply badge bg-ci-6/30 text-ci-2; }
 
   /* ── Priority dots ────────────────────────────────────────────── */
   .priority-dot { @apply w-2 h-2 rounded-full flex-shrink-0; }
-  .p1 { @apply bg-red-500; }
-  .p2 { @apply bg-orange-400; }
-  .p3 { @apply bg-yellow-400; }
-  .p4 { @apply bg-blue-400; }
-  .p5 { @apply bg-slate-500; }
+  .p1 { background: #ef4444; }
+  .p2 { background: #f97316; }
+  .p3 { background: #58ebbf; }
+  .p4 { background: #409b9b; }
+  .p5 { background: #244859; }
 
   /* ── Toast ───────────────────────────────────────────────────── */
   .toast {
     @apply fixed bottom-4 right-4 z-50 flex items-center gap-2.5
-           px-4 py-3 rounded-xl text-sm font-medium shadow-xl
-           border border-surface-600 text-slate-100 bg-surface-800;
+           px-4 py-3 rounded-2xl text-sm font-medium shadow-xl
+           border text-slate-100;
+    background: rgba(15,30,46,.97);
+    border-color: #1a3040;
+    backdrop-filter: blur(12px);
     animation: toastIn 200ms ease both;
+    font-family: 'Source Code Pro', monospace;
   }
-  .toast-success { @apply toast border-green-900/60 bg-green-950/90; }
-  .toast-error   { @apply toast border-red-900/60 bg-red-950/90; }
+  .toast-success { @apply toast; border-color: rgba(88,235,191,.3); background: rgba(11,30,24,.97); color: #58ebbf; }
+  .toast-error   { @apply toast; border-color: rgba(239,68,68,.3); background: rgba(30,11,11,.97); }
   @keyframes toastIn {
     from { opacity: 0; transform: translateY(8px) scale(0.95); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -89,8 +99,9 @@
 
   /* ── Modal ───────────────────────────────────────────────────── */
   .modal-backdrop {
-    @apply fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/60;
-    backdrop-filter: blur(4px);
+    @apply fixed inset-0 z-40 flex items-center justify-center p-4;
+    background: rgba(0,0,0,.7);
+    backdrop-filter: blur(6px);
     animation: fadeIn 150ms ease both;
   }
   .modal {
@@ -106,38 +117,60 @@
   /* ── FAB ─────────────────────────────────────────────────────── */
   .fab {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
-           px-4 py-3 bg-accent text-white font-semibold rounded-2xl
-           transition-all duration-150 active:scale-95 select-none cursor-pointer
-           hover:scale-105 hover:-translate-y-0.5;
-    box-shadow: 0 8px 24px rgba(110,64,201,.35);
+           px-5 py-3 text-surface-950 font-semibold rounded-full
+           transition-all duration-150 active:scale-95 select-none cursor-pointer;
+    background: linear-gradient(135deg, #58ebbf, #409b9b);
+    box-shadow: 0 8px 24px rgba(88,235,191,.25);
+    font-family: 'Source Code Pro', monospace;
+    letter-spacing: .03em;
   }
 
   /* ── Nav ─────────────────────────────────────────────────────── */
   .nav-item {
-    @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium
-           text-slate-400 hover:text-slate-100 hover:bg-surface-700/60
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium
+           text-slate-500 hover:text-ci-1 hover:bg-surface-700
            transition-all duration-100 cursor-pointer select-none;
+    letter-spacing: .02em;
   }
-  .nav-item-active { @apply text-slate-100 bg-surface-700; }
+  .nav-item-active {
+    @apply text-ci-3 bg-surface-700;
+    text-shadow: 0 0 12px rgba(88,235,191,.4);
+  }
 
-  /* ── Misc ────────────────────────────────────────────────────── */
+  /* ── Labels ──────────────────────────────────────────────────── */
   .section-label {
-    @apply text-[10px] font-semibold tracking-[0.12em] uppercase text-slate-500 mb-2 px-1;
+    @apply text-[10px] font-semibold tracking-[0.15em] uppercase mb-2 px-1;
+    color: #409b9b;
+    font-family: 'Source Code Pro', monospace;
   }
+
+  /* ── Checkbox ────────────────────────────────────────────────── */
   .checkbox {
-    @apply w-4 h-4 rounded border-2 border-surface-500 flex items-center justify-center
-           flex-shrink-0 transition-all duration-200 cursor-pointer hover:border-accent;
+    @apply w-4 h-4 rounded-md border-2 flex items-center justify-center
+           flex-shrink-0 transition-all duration-200 cursor-pointer;
+    border-color: #244859;
   }
-  .checkbox-checked { @apply bg-accent border-accent; }
+  .checkbox-checked {
+    background: linear-gradient(135deg, #58ebbf, #409b9b);
+    border-color: #58ebbf;
+  }
 }
 
-/* Hover overrides outside @layer so they aren't subject to @apply nesting rules */
-.btn-primary:hover  { background-color: #7c50d9; }
-.btn-secondary:hover { background-color: #252d3a; border-color: #30394a; }
-.btn-ghost:hover    { color: #f1f5f9; background-color: rgba(28,35,48,.6); }
-.btn-icon:hover     { color: #f1f5f9; background-color: rgba(28,35,48,.6); }
+/* ── Hover overrides (outside @layer to avoid @apply nesting limit) ── */
+.btn-primary:hover  { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 4px 16px rgba(88,235,191,.3); }
+.btn-secondary:hover { background: rgba(64,155,155,.1); border-color: #58ebbf; color: #82ffe1; }
+.btn-ghost:hover    { color: #ABD4D8; background-color: rgba(21,38,55,.6); }
+.btn-icon:hover     { color: #ABD4D8; background-color: rgba(21,38,55,.6); }
 .btn-danger:hover   { background-color: rgba(127,29,29,.3); color: #fca5a5; }
-.card-hover:hover   { border-color: #30394a; box-shadow: 0 4px 16px rgba(0,0,0,.3); transform: translateY(-1px); }
-.fab:hover          { background-color: #7c50d9; box-shadow: 0 12px 28px rgba(110,64,201,.45); }
-.p1 { box-shadow: 0 0 4px rgba(239,68,68,.4); }
-.p2 { box-shadow: 0 0 4px rgba(249,115,22,.35); }
+.card-hover:hover   { border-color: #244859; box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
+.fab:hover          { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 12px 32px rgba(88,235,191,.4); transform: scale(1.03) translateY(-1px); }
+.checkbox:hover     { border-color: #409b9b; }
+.nav-item-active    { border-left: 2px solid #58ebbf; }
+
+/* CI glow effect on focused inputs */
+.input:focus { box-shadow: 0 0 0 2px rgba(88,235,191,.25); }
+
+/* Priority dot glows */
+.p1 { box-shadow: 0 0 5px rgba(239,68,68,.5); }
+.p2 { box-shadow: 0 0 5px rgba(249,115,22,.4); }
+.p3 { box-shadow: 0 0 5px rgba(88,235,191,.4); }

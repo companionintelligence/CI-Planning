@@ -19,9 +19,9 @@ function Shell(props: { children?: any }) {
       <Nav />
       <main class="flex-1 flex flex-col overflow-hidden relative">
         {/* Top bar */}
-        <div class="flex-shrink-0 h-11 border-b border-surface-700/40 flex items-center px-6 gap-3">
+        <div class="flex-shrink-0 h-11 border-b border-surface-700/40 flex items-center px-6 gap-3 bg-surface-900/50">
           <div class="flex-1" />
-          <span class="text-xs text-slate-600 font-mono">
+          <span class="text-xs font-mono" style={{ color: '#244859' }}>
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
         </div>

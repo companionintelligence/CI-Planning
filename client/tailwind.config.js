@@ -3,31 +3,47 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   darkMode: 'class',
   safelist: [
-    // Ensure all custom surface + accent utilities are always generated
-    // so @apply in index.css can reference them even in dev/JIT mode.
-    { pattern: /^(bg|text|border|ring|shadow|fill|stroke|outline)-(surface|accent)/ },
-    { pattern: /^focus(-visible)?:(ring|border|outline)-(surface|accent)/ },
-    { pattern: /^hover:(bg|text|border)-(surface|accent)/ },
+    { pattern: /^(bg|text|border|ring|shadow|fill|stroke|outline)-(surface|ci|accent)/ },
+    { pattern: /^(hover|focus-visible):(bg|text|border|ring)-(surface|ci|accent)/ },
   ],
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+        // CI uses Source Code Pro as primary + Abel for headings
+        sans:    ['"Source Code Pro"', 'ui-monospace', 'monospace'],
+        heading: ['Abel', '"Source Code Pro"', 'sans-serif'],
+        mono:    ['"Source Code Pro"', 'ui-monospace', 'monospace'],
       },
       colors: {
-        surface: {
-          950: '#070a0f',
-          900: '#0d1117',
-          800: '#13181f',
-          700: '#1c2330',
-          600: '#252d3a',
-          500: '#30394a',
+        // CI exact palette (from CSS variables)
+        ci: {
+          1:  '#ABD4D8',  // light teal
+          2:  '#85c3b4',  // medium teal-green
+          3:  '#58ebbf',  // bright mint — primary CTA
+          4:  '#409b9b',  // medium teal — interactive accent
+          5:  '#2c676d',  // dark teal
+          6:  '#1d5f6e',  // deep teal-blue
+          7:  '#0f717a',  // deep teal
+          8:  '#079d99',  // vivid teal
+          9:  '#82ffe1',  // neon mint — glow
+          10: '#244859',  // dark navy-teal surface
+          11: '#172e39',  // darkest hero bg
         },
+        // App surfaces — teal-navy instead of blue-gray
+        surface: {
+          950: '#070d11',
+          900: '#0a1520',
+          800: '#0f1e2e',
+          700: '#152637',
+          600: '#1a3040',
+          500: '#1f3a4a',
+        },
+        // Accent maps to CI teal
         accent: {
-          DEFAULT: '#6e40c9',
-          hi: '#7c50d9',
-          light: '#a78bfa',
+          DEFAULT: '#409b9b',  // c4 — borders, rings, badges
+          hi:      '#58ebbf',  // c3 — CTA buttons
+          light:   '#ABD4D8',  // c1 — text accent
+          glow:    '#82ffe1',  // c9 — neon highlight
         },
       },
       keyframes: {
@@ -39,13 +55,19 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%':       { opacity: '0.4' },
         },
+        glow: {
+          '0%, 100%': { 'box-shadow': '0 0 8px rgba(88,235,191,.3)' },
+          '50%':       { 'box-shadow': '0 0 20px rgba(88,235,191,.6)' },
+        },
       },
       animation: {
         'slide-down': 'slideDown 150ms ease both',
-        'pulse2': 'pulse2 1.5s ease-in-out infinite',
+        'pulse2':     'pulse2 1.5s ease-in-out infinite',
+        'glow':       'glow 2s ease-in-out infinite',
       },
       boxShadow: {
-        'glow-accent': '0 0 16px -4px rgba(110, 64, 201, 0.4)',
+        'glow-ci':    '0 0 20px -4px rgba(88,235,191,.35)',
+        'glow-ci-lg': '0 0 32px -4px rgba(88,235,191,.5)',
       },
     },
   },

@@ -74,8 +74,8 @@ export function TaskForm(props: Props) {
     <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && props.onClose()}>
       <div class="modal">
         {/* Header */}
-        <div class="flex items-center justify-between px-5 pt-5 pb-3 border-b border-surface-700/60">
-          <h2 class="text-base font-semibold text-slate-100">
+        <div class="flex items-center justify-between px-5 pt-5 pb-3 border-b border-surface-700/40">
+          <h2 class="font-heading text-lg tracking-wide" style={{ color: '#ABD4D8' }}>
             {props.parentId ? 'Add Subtask' : isEdit() ? 'Edit Task' : 'New Task'}
           </h2>
           <button onClick={props.onClose} class="btn-icon"><X size={16} /></button>
@@ -91,18 +91,24 @@ export function TaskForm(props: Props) {
             onInput={(e) => setTitle(e.currentTarget.value)}
           />
 
-          {/* Priority selector */}
-          <div class="flex gap-2">
+          {/* Priority selector — CI teal gradient for selected */}
+          <div class="flex gap-1.5">
             {[1,2,3,4,5].map(p => (
               <button
                 type="button"
                 onClick={() => setPriority(p)}
-                class={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-100
-                  ${priority() === p
-                    ? 'bg-surface-600 border-surface-500 ' + priorityColors[p]
-                    : 'border-surface-600 text-slate-500 hover:border-surface-500 hover:text-slate-400'}`}
+                class="flex-1 py-1.5 rounded-full text-xs font-medium tracking-wide transition-all duration-100 border"
+                style={priority() === p ? {
+                  background: 'linear-gradient(135deg,#58ebbf,#409b9b)',
+                  color: '#070d11',
+                  'border-color': '#58ebbf',
+                } : {
+                  background: 'transparent',
+                  color: '#244859',
+                  'border-color': '#1a3040',
+                }}
               >
-                <Flag size={11} class="inline mr-1 opacity-80" />P{p}
+                P{p}
               </button>
             ))}
           </div>
