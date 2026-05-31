@@ -1,0 +1,78 @@
+import { For, createSignal, Show } from 'solid-js';
+import { Play, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-solid';
+import { jobs, refetchJobs, showToast } from '../stores/index.js';
+import { api } from '../lib/api.js';
+
+function fmtDate(iso?: string) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function statusIcon(s?: string) {
+  if (s === 'done')    return <CheckCircle2 size={13} class="text-green-400" />;
+  if (s === 'error')   return <XCircle      size={13} class="text-red-400" />;
+  if (s === 'running') return <RefreshCw    size={13} class="text-yellow-400 animate-spin" />;
+  return <Clock size={13} class="text-slate-500" />;
+}
+
+export function Jobs() {
+  const [triggering, setTriggering] = createSignal<number | null>(null);
+
+  async function trigger(id: number) {
+    setTriggering(id);
+    try {
+      const r = await api.jobs.run(id);
+      showToast(r.message, 'default');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setTriggering(null);
+      setTimeout(refetchJobs, 1500);
+    }
+  }
+
+  return (
+    <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
+      <h1 class="text-2xl font-bold text-slate-100 mb-5">Scheduled Jobs</h1>
+
+      <div class="flex flex-col gap-3">
+        <For each={jobs()}>
+          {(job) => (
+            <div class="card flex items-center gap-4">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-sm font-semibold text-slate-200">{job.name}</span>
+                  <span class={job.enabled ? 'badge-green' : 'badge-neutral'}>
+                    {job.enabled ? 'active' : 'disabled'}
+                  </span>
+                  <Show when={job.last_status}>
+                    <span class="flex items-center gap-1 text-xs text-slate-400">
+                      {statusIcon(job.last_status)} {job.last_status}
+                    </span>
+                  </Show>
+                </div>
+                <div class="flex gap-4 mt-1 text-xs text-slate-500 flex-wrap">
+                  <span class="font-mono bg-surface-700 px-1.5 py-0.5 rounded text-[11px]">{job.cron}</span>
+                  <span>Last run: {fmtDate(job.last_started)}</span>
+                  <Show when={job.items_created}>
+                    <span class="text-green-500">+{job.items_created} items</span>
+                  </Show>
+                </div>
+              </div>
+              <button
+                onClick={() => trigger(job.id)}
+                disabled={triggering() === job.id}
+                class="btn-secondary text-xs gap-1.5 flex-shrink-0"
+              >
+                <Show when={triggering() === job.id} fallback={<Play size={12} />}>
+                  <RefreshCw size={12} class="animate-spin" />
+                </Show>
+                {triggering() === job.id ? 'Running…' : 'Run now'}
+              </button>
+            </div>
+          )}
+        </For>
+      </div>
+    </div>
+  );
+}

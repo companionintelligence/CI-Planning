@@ -1,0 +1,194 @@
+[
+  {
+    "id": "email-001",
+    "from": "Jordan Blake <jordan.blake@example.com>",
+    "subject": "Q3 LP report + wire confirmation",
+    "body": "Hi Liam, two things before Friday: please send the Q3 LP report to the distribution list, and confirm the capital call wire for the Northwind Capital follow-on went out. Also can you book a 30-min sync for next Tuesday to review the follow-on terms?",
+    "receivedAt": "2026-05-26T15:12:00.000Z",
+    "labels": ["1. Investment Ops", "1. Investment Ops/Northwind Capital"]
+  },
+  {
+    "id": "email-002",
+    "from": "Cedar Systems <ops@cedarsystems.example.com>",
+    "subject": "Client onboarding blockers",
+    "body": "We're blocked on two items for the Cedar Systems onboarding: we need the signed MSA back from your legal team, and we need you to provision the staging environment. Target go-live is June 5. Can you also send over the API credentials doc?",
+    "receivedAt": "2026-05-27T09:40:00.000Z",
+    "labels": ["2. Clients/Cedar Systems"]
+  },
+  {
+    "id": "email-003",
+    "from": "Counsel <counsel@lawpartners.example.com>",
+    "subject": "NDA + SAFE review",
+    "body": "Liam — I've redlined the mutual NDA with Framework. Please review my comments and sign by Thursday. Separately, the SAFE for the new angel needs your signature and the updated cap table. Let me know if you want to hop on a call.",
+    "receivedAt": "2026-05-27T18:05:00.000Z",
+    "labels": ["4. Biz/Legal"]
+  },
+  {
+    "id": "email-004",
+    "from": "Partnerships <partnerships@orchardlabs.example.com>",
+    "subject": "Re: the hardware partner bundle + demo hardware",
+    "body": "Great chatting today. Next steps on our side: you'll send the joint one-pager draft, and we'll ship the demo units. Can you also intro me to your hardware lead? Would love to lock the co-marketing timeline before end of month.",
+    "receivedAt": "2026-05-25T22:30:00.000Z",
+    "labels": ["3. Strategic Partners/AMD", "3. Strategic Partners/the hardware partner"]
+  },
+  {
+    "id": "email-005",
+    "from": "Accelerator <submissions@accelerator.example.org>",
+    "subject": "Application deadline reminder",
+    "body": "Reminder: your the accelerator application is due June 2 at 11:59pm PT. You still need to upload the pitch deck and the 90-second founder video. Don't forget to add two customer references.",
+    "receivedAt": "2026-05-28T16:00:00.000Z",
+    "labels": ["5. Pitch Events & Submissions"]
+  },
+  {
+    "id": "email-006",
+    "from": "Riley @ Platform <riley@example.com>",
+    "subject": "Open-source collab",
+    "body": "Hey! Following up on the Platform team collaboration. Could you draft a short scope doc for the shared MCP connector work? And we should schedule a working session with both engineering teams sometime next week. I'll need your availability.",
+    "receivedAt": "2026-05-28T11:20:00.000Z",
+    "labels": ["3. Strategic Partners/Platform team"]
+  },
+  {
+    "id": "email-007",
+    "from": "Accounting <accounting@bookkeeping.example.com>",
+    "subject": "Receipts for May",
+    "body": "Tax season prep: please categorize the May credit card transactions in the shared sheet, and send me the receipts for the two AWS invoices and the conference travel. Deadline is end of next week.",
+    "receivedAt": "2026-05-29T14:00:00.000Z",
+    "labels": ["4. Biz"]
+  },
+  {
+    "id": "email-008",
+    "from": "Vendor Partner <partners@vendor.example.com>",
+    "subject": "Co-marketing assets",
+    "body": "To move the Framework partnership forward we need: your logo in SVG, a 50-word company blurb, and approval on the landing page copy. Can you get those over by Wednesday so we can publish?",
+    "receivedAt": "2026-05-26T08:15:00.000Z",
+    "labels": ["3. Strategic Partners/Framework"]
+  },
+  {
+    "id": "email-009",
+    "from": "Mentor <mentor@example.org>",
+    "subject": "Dad's birthday",
+    "body": "Don't forget your father's birthday is Saturday! Please call him, and it would be lovely if you could order the cake from the usual bakery and pick up a card. Maybe book a dinner reservation for the three of us?",
+    "receivedAt": "2026-05-29T19:30:00.000Z",
+    "labels": []
+  },
+  {
+    "id": "email-010",
+    "from": "Bluepeak <hello@bluepeak.example.com>",
+    "subject": "Pilot kickoff",
+    "body": "Excited for the Bluepeak pilot. Action items from our call: you'll send the data schema, set up a shared Slack channel, and confirm the pilot success metrics. We'd like to kick off Monday.",
+    "receivedAt": "2026-05-27T13:45:00.000Z",
+    "labels": ["3. Strategic Partners/Bluepeak"]
+  },
+  {
+    "id": "email-011",
+    "from": "Monitoring <noreply@monitoring.example.io>",
+    "subject": "[RESOLVED] CPU spike on prod-1",
+    "body": "This is an automated notification. The CPU spike on prod-1 has auto-resolved. No action required. System is nominal.",
+    "receivedAt": "2026-05-29T03:12:00.000Z",
+    "labels": []
+  },
+  {
+    "id": "email-012",
+    "from": "Docs Bot <noreply@docsplatform.example.com>",
+    "subject": "The Weekly Tech Digest",
+    "body": "This week in tech: AI model releases, antitrust news, and the state of the chip market. Read more on the site. Unsubscribe anytime.",
+    "receivedAt": "2026-05-28T06:00:00.000Z",
+    "labels": ["Podcasts"]
+  },
+  {
+    "id": "email-013",
+    "from": "Northwind Capital <ir@northwindcapital.example.com>",
+    "subject": "Follow-on docs",
+    "body": "For the follow-on to close we need your countersignature on the term sheet and the updated financial model. Can you also prepare a short memo summarizing the round for the IC? We'd like everything by Friday.",
+    "receivedAt": "2026-05-28T20:10:00.000Z",
+    "labels": ["1. Investment Ops/follow-on", "1. Investment Ops/Northwind Capital"]
+  },
+  {
+    "id": "email-014",
+    "from": "Lumen API <team@lumenapi.example.com>",
+    "subject": "Integration spec questions",
+    "body": "Two open questions on the Lumen API integration: should we use webhooks or polling, and what's the rate limit? Could you write up the integration spec and review our draft API contract this week?",
+    "receivedAt": "2026-05-27T17:25:00.000Z",
+    "labels": ["3. Strategic Partners/Lumen API"]
+  },
+  {
+    "id": "email-015",
+    "from": "Recruiter <talent@hiringpartners.example.com>",
+    "subject": "Pipeline hygiene",
+    "body": "Monthly reminder to update the CRM: please log notes from your last three partner calls, update the deal stages for Cedar Systems and Bluepeak, and forecast next quarter's close dates. The board wants the report by month end.",
+    "receivedAt": "2026-05-29T10:00:00.000Z",
+    "labels": ["2. Sales Ops"]
+  },
+  {
+    "id": "email-016",
+    "from": "Conference Team <speakers@devconference.example.org>",
+    "subject": "Speaker confirmation",
+    "body": "Thanks for agreeing to speak at the conference! Please confirm your session title and abstract, upload your headshot and bio, and let us know your A/V requirements. We also need your travel dates to book your hotel.",
+    "receivedAt": "2026-05-26T12:00:00.000Z",
+    "labels": ["5. Pitch Events & Submissions"]
+  },
+  {
+    "id": "email-017",
+    "from": "Hosting <billing@hostingprovider.example.com>",
+    "subject": "Lease renewal",
+    "body": "Your office lease is up for renewal on June 30. Please review the renewal terms attached and let us know your decision by June 15. If you'd like to change to a smaller suite, schedule a tour.",
+    "receivedAt": "2026-05-25T15:00:00.000Z",
+    "labels": ["4. Biz"]
+  },
+  {
+    "id": "email-018",
+    "from": "Dental Clinic <front.desk@dentalclinic.example.com>",
+    "subject": "Annual physical due",
+    "body": "Our records show you're due for your annual physical. Please call to schedule, and complete the intake form online before your visit. Fasting bloodwork is recommended.",
+    "receivedAt": "2026-05-28T08:30:00.000Z",
+    "labels": []
+  },
+  {
+    "id": "email-019",
+    "from": "Community List <hello@localmakers.example.org>",
+    "subject": "Contract renewal + invoice",
+    "body": "Heads up — your annual services contract renews next month. Please approve the renewal SOW and process the outstanding invoice (#4471). Also, can you provide updated billing contact info?",
+    "receivedAt": "2026-05-27T21:00:00.000Z",
+    "labels": ["3. Strategic Partners/Services"]
+  },
+  {
+    "id": "email-020",
+    "from": "Insurance <service@insureco.example.com>",
+    "subject": "Your order has shipped",
+    "body": "Your recent order has shipped and will arrive Thursday. No action needed. Track your package in the app.",
+    "receivedAt": "2026-05-29T05:00:00.000Z",
+    "labels": []
+  },
+  {
+    "id": "email-021",
+    "from": "Riverstone Ops <ops@riverstone.example.com>",
+    "subject": "Annual meeting logistics",
+    "body": "Planning the LP annual meeting. We need you to: finalize the agenda, confirm the venue booking, prepare the portfolio performance slides, and send calendar invites to all LPs. Target date is June 20.",
+    "receivedAt": "2026-05-28T14:30:00.000Z",
+    "labels": ["1. Investment Ops"]
+  },
+  {
+    "id": "email-022",
+    "from": "Hardware Partner <bd@hardwarepartner.example.com>",
+    "subject": "Hardware bundle pricing",
+    "body": "To finalize the bundle we need you to approve the BOM, sign off on the retail pricing, and review the packaging mockups. Can we also get a quote approval for the first production run of 500 units?",
+    "receivedAt": "2026-05-26T19:45:00.000Z",
+    "labels": ["3. Strategic Partners/the hardware partner"]
+  },
+  {
+    "id": "email-023",
+    "from": "Grants Office <grants@fundingbody.example.org>",
+    "subject": "SBIR Phase I submission",
+    "body": "Your SBIR Phase I proposal window closes June 10. Outstanding items: complete the technical narrative, submit the budget justification, register in SAM.gov, and obtain the letters of support from two partners.",
+    "receivedAt": "2026-05-29T16:20:00.000Z",
+    "labels": ["5. Pitch Events & Submissions"]
+  },
+  {
+    "id": "email-024",
+    "from": "Bank Alerts <alerts@bank.example.com>",
+    "subject": "Statement ready",
+    "body": "Your monthly statement is ready to view. This is an automated message; no action is required.",
+    "receivedAt": "2026-05-28T07:00:00.000Z",
+    "labels": []
+  }
+]

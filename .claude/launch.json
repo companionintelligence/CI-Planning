@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "All (server + client)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev"],
+      "port": 5173
+    },
+    {
+      "name": "Koa API server",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "server", "dev"],
+      "port": 3848
+    },
+    {
+      "name": "Vite client dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "client", "dev"],
+      "port": 5173
+    }
+  ]
+}
