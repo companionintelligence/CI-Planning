@@ -1,0 +1,32 @@
+{
+  "name": "server",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "koa": "^2.15.3",
+    "@koa/router": "^12.0.1",
+    "@koa/cors": "^5.0.0",
+    "koa-bodyparser": "^4.4.1",
+    "koa-static": "^5.0.0",
+    "better-sqlite3": "^11.10.0",
+    "drizzle-orm": "^0.38.4",
+    "croner": "^8.1.2"
+  },
+  "devDependencies": {
+    "@types/koa": "^2.15.0",
+    "@types/koa__router": "^12.0.4",
+    "@types/koa-bodyparser": "^4.3.12",
+    "@types/koa-static": "^4.0.4",
+    "@types/better-sqlite3": "^7.6.12",
+    "drizzle-kit": "^0.30.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}

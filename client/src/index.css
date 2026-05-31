@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  :root { color-scheme: dark; }
+  body { min-height: 100vh; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium
+           transition-colors focus:outline-none focus:ring-2 focus:ring-accent-500;
+  }
+  .btn-primary   { @apply btn bg-accent-600 text-white hover:bg-accent-500; }
+  .btn-ghost     { @apply btn text-slate-300 hover:bg-surface-700 hover:text-slate-100; }
+  .btn-danger    { @apply btn text-red-400 hover:bg-red-900/30; }
+
+  .card          { @apply bg-surface-800 border border-surface-600 rounded-lg p-4; }
+  .input         { @apply bg-surface-700 border border-surface-600 rounded-md px-3 py-1.5 text-sm
+                          text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2
+                          focus:ring-accent-500 w-full; }
+  .badge         { @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium; }
+
+  .priority-dot  { @apply w-2 h-2 rounded-full flex-shrink-0; }
+  .p1 { @apply bg-red-500; }
+  .p2 { @apply bg-orange-400; }
+  .p3 { @apply bg-yellow-400; }
+  .p4 { @apply bg-blue-400; }
+  .p5 { @apply bg-slate-500; }
+}
