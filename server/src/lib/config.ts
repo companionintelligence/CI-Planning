@@ -13,16 +13,20 @@ export interface Config {
   staticDir: string;
 }
 
-const dataDir = join(homedir(), 'Library', 'Application Support', 'CompanionPlanning');
-mkdirSync(dataDir, { recursive: true });
+// Default data dir (used only when DB_PATH is not set, e.g. local dev on macOS).
+const defaultDataDir = join(homedir(), 'Library', 'Application Support', 'CompanionPlanning');
 
 // Resolve relative to this file: server/src/lib/config.ts → server/public
 const _dir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(_dir, '..', '..'); // server/src/lib → server/src → server
 
+const dbPath = process.env.DB_PATH ?? join(defaultDataDir, 'companion.db');
+// Ensure the directory containing the DB exists (better-sqlite3 won't create it).
+mkdirSync(dirname(dbPath), { recursive: true });
+
 export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
-  dbPath: process.env.DB_PATH ?? join(dataDir, 'companion.db'),
+  dbPath,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
   // Defaults match models installed on the host. Override via env for other rigs.
   ollamaSmallModel: process.env.OLLAMA_SMALL ?? 'qwen2.5:0.5b',
