@@ -30,4 +30,6 @@ RUN mkdir -p /data
 EXPOSE 3848
 
 WORKDIR /app/server
-CMD ["pnpm", "start"]
+# Exec tsx directly (not via pnpm) so node is PID 1 and receives SIGTERM —
+# otherwise docker stop kills pnpm before the server can shut down gracefully.
+CMD ["node_modules/.bin/tsx", "src/index.ts"]

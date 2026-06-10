@@ -4,7 +4,10 @@ import { blocks, blockRange, setBlockRange, refetchBlocks } from '../stores/inde
 import { BlockCard } from '../components/BlockCard.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
+import { localISODate } from '../lib/dates.js';
 
+// Date-string arithmetic below pivots on noon UTC, which is timezone-safe;
+// only "what day is it right now" must use the user's local timezone.
 function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
 function addDays(dateStr: string, n: number) {
   const d = new Date(dateStr + 'T12:00:00Z');
@@ -13,7 +16,7 @@ function addDays(dateStr: string, n: number) {
 }
 
 export function Calendar() {
-  const [selectedDate, setSelectedDate] = createSignal(isoDate(new Date()));
+  const [selectedDate, setSelectedDate] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
 
   function selectDate(d: string) {
@@ -35,7 +38,7 @@ export function Calendar() {
   }
 
   const weekDays = () => {
-    const today = isoDate(new Date());
+    const today = localISODate();
     const d = new Date(today + 'T12:00:00Z');
     const dow = d.getUTCDay();
     const monday = addDays(today, -(dow === 0 ? 6 : dow - 1));
