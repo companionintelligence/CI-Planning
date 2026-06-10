@@ -1,6 +1,7 @@
 import { createSignal, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
 import { on } from '../lib/sse.js';
+import { localISODate } from '../lib/dates.js';
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export const [taskFilter, setTaskFilter] = createSignal<Record<string, string>>({});
@@ -14,7 +15,7 @@ on('task:updated', () => refetchTasks());
 
 // ── Blocks ───────────────────────────────────────────────────────────────────
 function todayRange() {
-  const d = new Date().toISOString().slice(0, 10);
+  const d = localISODate();
   return { from: `${d}T00:00:00.000Z`, to: `${d}T23:59:59.000Z` };
 }
 
