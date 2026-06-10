@@ -1,0 +1,12 @@
+{
+  "name": "Companion Planning",
+  "short_name": "Planning",
+  "description": "Private, local-first todo & planning with optional local-LLM triage.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070d11",
+  "theme_color": "#070d11",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -5,6 +5,7 @@ import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
+import { localISODate } from '../lib/dates.js';
 
 export interface JobOutcome {
   itemsCreated: number;
@@ -46,7 +47,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'auto_schedule': {
-      const date = new Date().toISOString().slice(0, 10);
+      const date = localISODate();
       const r = await runScheduler(date);
       return {
         itemsCreated: r.blocksCreated,

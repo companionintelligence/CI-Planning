@@ -2,13 +2,14 @@ import { createResource, Show, For, createSignal } from 'solid-js';
 import { Zap, Sparkles, Clock, TrendingUp, AlertCircle } from 'lucide-solid';
 import { tasks, blocks, refetchTasks, refetchBlocks, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
+import { localISODate } from '../lib/dates.js';
 import { TaskCard } from '../components/TaskCard.js';
 import { BlockCard } from '../components/BlockCard.js';
 
 export function Today() {
   const [runningSchedule, setRunningSchedule] = createSignal(false);
   const [summary] = createResource(
-    () => new Date().toISOString().slice(0, 10),
+    () => localISODate(),
     (date) => api.summary.get(date)
   );
 
