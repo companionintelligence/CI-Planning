@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
+import { startTestServer, resetDb, api, type TestServer, ollamaAvailable } from './helpers.js';
 
 describe('tasks / blocks / tags / possibles API', () => {
   let server: TestServer;
@@ -109,5 +109,20 @@ describe('tasks / blocks / tags / possibles API', () => {
     expect(res.body.date).toBe('2026-06-01');
     expect(typeof res.body.prose).toBe('string');
     expect(res.body.prose.length).toBeGreaterThan(0);
+  });
+
+  it('extracts tasks from text via POST /api/possible-tasks/extract', async () => {
+    if (!(await ollamaAvailable())) return;
+    const res = await api(server.url, '/api/possible-tasks/extract', {
+      method: 'POST',
+      json: { text: 'Draft email to Liam Broza about the schedule.' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.possiblesCreated).toBeGreaterThanOrEqual(1);
+
+    const pending = await api(server.url, '/api/possible-tasks');
+    expect(pending.body.possibles.length).toBeGreaterThanOrEqual(1);
+    expect(pending.body.possibles[0].raw_title).toContain('Draft email');
   });
 });
