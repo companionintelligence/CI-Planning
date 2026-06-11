@@ -11,6 +11,8 @@ import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
+import { Balance }  from './views/Balance.js';
+import { PrioritiesWizard } from './views/PrioritiesWizard.js';
 import { CommandBar } from './components/CommandBar.js';
 import { taskModal, setTaskModal, activeTimer, pauseTimer, resumeTimer, stopTimer } from './stores/index.js';
 
@@ -38,6 +40,8 @@ function Shell(props: { children?: any }) {
     if (p === '/tags') return 'tags';
     if (p === '/jobs') return 'jobs';
     if (p === '/settings') return 'settings';
+    if (p === '/balance') return 'balance';
+    if (p === '/priorities-wizard') return 'priorities-wizard';
     return '';
   };
 
@@ -134,6 +138,8 @@ export function App() {
     <Router root={Shell}>
       <Route path="/"         component={Today} />
       <Route path="/calendar" component={Calendar} />
+      <Route path="/balance"  component={Balance} />
+      <Route path="/priorities-wizard" component={PrioritiesWizard} />
       <Route path="/inbox"    component={Inbox} />
       <Route path="/tasks"    component={AllTasks} />
       <Route path="/tags"     component={Tags} />

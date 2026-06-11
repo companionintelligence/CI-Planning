@@ -31,6 +31,7 @@ export interface Task {
   created_at: string;
   completed_at?: string;
   tags: string[];
+  category?: string;
 }
 
 export interface TaskInput {
@@ -45,6 +46,7 @@ export interface TaskInput {
   parent_id?: number;
   owner_id?: number;
   tags?: string[];
+  category?: string;
 }
 
 export const api = {
@@ -60,6 +62,11 @@ export const api = {
       request<{ task: Task }>('PATCH', `/tasks/${id}`, body),
     delete: (id: number) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
     subtasks: (id: number) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
+  },
+
+  priorities: {
+    list: () => request<{ priorities: Priority[] }>('GET', '/priorities'),
+    save: (priorities: Priority[]) => request<{ priorities: Priority[] }>('POST', '/priorities', { priorities }),
   },
 
   blocks: {
@@ -139,7 +146,7 @@ export interface Block {
 export interface Possible {
   id: number; raw_title: string; raw_summary?: string; proposed_due_at?: string;
   proposed_priority?: number; source_kind?: string; confidence?: number;
-  status: string; created_at: string;
+  status: string; created_at: string; category?: string;
 }
 
 export interface Tag { id: number; name: string; count: number; }
@@ -183,4 +190,12 @@ export interface LLMStatus {
 export interface Integrations {
   ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string };
   google: { mode: string };
+}
+
+export interface Priority {
+  id?: number;
+  category: string;
+  satisfaction: number;
+  importance: number;
+  target_hours_per_week: number;
 }

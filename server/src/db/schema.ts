@@ -24,6 +24,7 @@ export const tasks = sqliteTable('tasks', {
   sourceRef: text('source_ref'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   completedAt: text('completed_at'),
+  category: text('category'),              // health | career | relationships | growth | leisure | finance | general
 });
 
 export const habits = sqliteTable('habits', {
@@ -51,6 +52,15 @@ export const possibleTasks = sqliteTable('possible_tasks', {
   status: text('status').default('pending'),         // pending | promoted | dismissed | duplicate
   promotedTaskId: integer('promoted_task_id').references(() => tasks.id),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  category: text('category'),              // health | career | relationships | growth | leisure | finance | general
+});
+
+export const lifePriorities = sqliteTable('life_priorities', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  category: text('category').notNull().unique(),   // health | career | relationships | growth | leisure | finance
+  satisfaction: integer('satisfaction').notNull().default(5),
+  importance: integer('importance').notNull().default(5),
+  targetHoursPerWeek: integer('target_hours_per_week').notNull().default(0),
 });
 
 export const timeBlocks = sqliteTable('time_blocks', {

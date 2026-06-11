@@ -96,6 +96,18 @@ async function run() {
     await page.waitForTimeout(1000);
     await capture('settings_view');
 
+    // 6.1 Balance view
+    console.log('[6.1/7] Navigating to Balance view...');
+    await page.goto(`${targetUrl}/balance`);
+    await page.waitForTimeout(1000);
+    await capture('balance_view');
+
+    // 6.2 Priorities Wizard view
+    console.log('[6.2/7] Navigating to Priorities Wizard view...');
+    await page.goto(`${targetUrl}/priorities-wizard`);
+    await page.waitForTimeout(1000);
+    await capture('priorities_wizard_view');
+
     // 7. Toggle theme
     console.log('[7/7] Testing Light/Dark Mode theme toggles...');
     // Look for the theme toggle button in the navbar (has Moon/Sun icon & "Mode")

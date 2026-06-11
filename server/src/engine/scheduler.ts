@@ -99,18 +99,76 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     prefs.minBreakMinutes ?? 10
   );
 
+  // Load weekly targets and actuals for balancing
+  const { start: weekStart, end: weekEnd } = getWeekRange(date);
+  
+  let weeklyTimeBlocks: { start_at: string; end_at: string; category: string }[] = [];
+  try {
+    weeklyTimeBlocks = sqlite.prepare(`
+      SELECT tb.start_at, tb.end_at, t.category
+      FROM time_blocks tb
+      JOIN tasks t ON tb.task_id = t.id
+      WHERE tb.start_at >= ? AND tb.start_at <= ? AND tb.status != 'skipped'
+    `).all(weekStart, weekEnd) as { start_at: string; end_at: string; category: string }[];
+  } catch (e) {
+    // If table or columns don't exist yet in the query context
+    weeklyTimeBlocks = [];
+  }
+
+  const actualCategoryHours: Record<string, number> = {};
+  for (const block of weeklyTimeBlocks) {
+    if (!block.category) continue;
+    const durationMs = new Date(block.end_at).getTime() - new Date(block.start_at).getTime();
+    const durationHours = durationMs / 3600_000;
+    actualCategoryHours[block.category] = (actualCategoryHours[block.category] || 0) + durationHours;
+  }
+
+  let prioritiesList: { category: string; target: number }[] = [];
+  try {
+    prioritiesList = sqlite.prepare(`
+      SELECT category, target_hours_per_week as target
+      FROM life_priorities
+    `).all() as { category: string; target: number }[];
+  } catch (e) {
+    prioritiesList = [];
+  }
+
+  const categoryDeficits: Record<string, number> = {};
+  for (const p of prioritiesList) {
+    const actual = actualCategoryHours[p.category] || 0;
+    const deficit = Math.max(0, p.target - actual);
+    categoryDeficits[p.category] = deficit;
+  }
+
+  const getEffectiveScore = (task: typeof tasks.$inferSelect) => {
+    const category = task.category || 'general';
+    const deficit = categoryDeficits[category] || 0;
+    const boost = deficit * 0.2; // 5 hours deficit = 1 priority step boost
+    return (task.priority ?? 3) - boost;
+  };
+
   // Load backlog (open tasks without a completed block for this day)
   const backlog = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.status, 'open')))
-    .orderBy(asc(tasks.priority), asc(tasks.dueAt));
+    .where(and(eq(tasks.status, 'open')));
+
+  const sortedBacklog = [...backlog].sort((a, b) => {
+    const scoreA = getEffectiveScore(a);
+    const scoreB = getEffectiveScore(b);
+    if (scoreA !== scoreB) {
+      return scoreA - scoreB;
+    }
+    const dueA = a.dueAt ? new Date(a.dueAt).getTime() : Infinity;
+    const dueB = b.dueAt ? new Date(b.dueAt).getTime() : Infinity;
+    return dueA - dueB;
+  });
 
   let gapIdx = 0;
   const unscheduled: number[] = [];
   const maxFocus = (prefs.maxFocusBlockMinutes ?? 90) * 60_000;
 
-  for (const task of backlog) {
+  for (const task of sortedBacklog) {
     const needed = (task.estimatedMinutes ?? 30) * 60_000;
 
     // Find a gap that fits
@@ -172,4 +230,27 @@ function buildGaps(
 
   if (cursor < dayEnd) gaps.push({ start: cursor, end: dayEnd });
   return gaps;
+}
+
+function getWeekRange(dateStr: string) {
+  const parts = dateStr.split('-');
+  const y = Number(parts[0]);
+  const m = Number(parts[1]) - 1;
+  const d = Number(parts[2]);
+  
+  const dateObj = new Date(Date.UTC(y, m, d));
+  const day = dateObj.getUTCDay(); // 0 = Sunday, 1 = Monday
+  const diff = dateObj.getUTCDate() - day + (day === 0 ? -6 : 1); // Start week on Monday
+  
+  const monday = new Date(Date.UTC(y, m, diff));
+  monday.setUTCHours(0, 0, 0, 0);
+  
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  sunday.setUTCHours(23, 59, 59, 999);
+  
+  return {
+    start: monday.toISOString(),
+    end: sunday.toISOString(),
+  };
 }

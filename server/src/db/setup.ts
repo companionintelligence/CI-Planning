@@ -125,6 +125,14 @@ export function runSetup(db: Database) {
       items_updated INTEGER DEFAULT 0,
       log           TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS life_priorities (
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      category               TEXT NOT NULL UNIQUE,
+      satisfaction           INTEGER DEFAULT 5,
+      importance             INTEGER DEFAULT 5,
+      target_hours_per_week  INTEGER DEFAULT 0
+    );
   `);
 
   migrateColumns(db);
@@ -140,13 +148,19 @@ function migrateColumns(db: Database) {
   addCol('tasks', 'task_time', 'TEXT');
   addCol('tasks', 'parent_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
   addCol('tasks', 'actual_minutes', 'INTEGER');
+  addCol('tasks', 'category', 'TEXT');
+  addCol('possible_tasks', 'category', 'TEXT');
   addCol('scheduling_prefs', 'google_sync_enabled', 'INTEGER DEFAULT 0');
   addCol('scheduling_prefs', 'google_calendar_id', "TEXT DEFAULT 'primary'");
 }
 
 function seedDefaults(db: Database) {
   const existing = db.prepare('SELECT id FROM owners WHERE id = 1').get();
-  if (existing) return;
+  if (existing) {
+    // If owner exists, we might still need to seed life_priorities if it's empty
+    seedLifePriorities(db);
+    return;
+  }
 
   db.prepare('INSERT INTO owners (id, name, email) VALUES (1, ?, ?)').run('Liam', 'liam.broza@gmail.com');
   db.prepare('INSERT INTO scheduling_prefs (owner_id) VALUES (1)').run();
@@ -160,4 +174,21 @@ function seedDefaults(db: Database) {
   ];
   const insert = db.prepare('INSERT OR IGNORE INTO scheduled_jobs (name, kind, cron) VALUES (?, ?, ?)');
   for (const j of jobs) insert.run(j.name, j.kind, j.cron);
+
+  seedLifePriorities(db);
+}
+
+function seedLifePriorities(db: Database) {
+  try {
+    const prioCount = db.prepare('SELECT COUNT(*) as cnt FROM life_priorities').get() as { cnt: number };
+    if (prioCount && prioCount.cnt === 0) {
+      const defaultPriorities = ['health', 'career', 'relationships', 'growth', 'leisure', 'finance'];
+      const insertPrio = db.prepare('INSERT INTO life_priorities (category, satisfaction, importance, target_hours_per_week) VALUES (?, 5, 5, 10)');
+      for (const p of defaultPriorities) {
+        insertPrio.run(p);
+      }
+    }
+  } catch (err) {
+    console.error('Error seeding life priorities:', err);
+  }
 }

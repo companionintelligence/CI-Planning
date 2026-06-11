@@ -46,6 +46,11 @@ export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
   api.prefs.get().then((r) => r.prefs)
 );
 
+// ── Priorities ────────────────────────────────────────────────────────────────
+export const [priorities, { refetch: refetchPriorities }] = createResource(() =>
+  api.priorities.list().then((r) => r.priorities)
+);
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 export const [jobs, { refetch: refetchJobs }] = createResource(() =>
   api.jobs.list().then((r) => r.jobs)

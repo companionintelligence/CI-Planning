@@ -22,6 +22,7 @@ export function TaskForm(props: Props) {
   const [estimatedMinutes, setEstimatedMinutes] = createSignal('');
   const [priority, setPriority] = createSignal(3);
   const [tagsInput, setTagsInput] = createSignal('');
+  const [category, setCategory] = createSignal('');
   const [saving, setSaving] = createSignal(false);
   const [expanded, setExpanded] = createSignal(false);
 
@@ -36,6 +37,7 @@ export function TaskForm(props: Props) {
       setEstimatedMinutes(t.estimated_minutes ? String(t.estimated_minutes) : '');
       setPriority(t.priority ?? 3);
       setTagsInput(t.tags.join(', '));
+      setCategory(t.category ?? '');
       setExpanded(true);
     } else {
       const modal = taskModal();
@@ -43,6 +45,15 @@ export function TaskForm(props: Props) {
       if (modal.defaultTaskTime) {
         setTaskTime(modal.defaultTaskTime);
         setExpanded(true);
+      }
+      
+      const prefilled = sessionStorage.getItem('prefilled_category');
+      if (prefilled) {
+        setCategory(prefilled);
+        sessionStorage.removeItem('prefilled_category');
+        setExpanded(true);
+      } else {
+        setCategory('');
       }
     }
   });
@@ -61,6 +72,7 @@ export function TaskForm(props: Props) {
         priority: priority(),
         parent_id: props.parentId,
         tags: tagsInput() ? tagsInput().split(',').map(t => t.trim()).filter(Boolean) : [],
+        category: category() || undefined,
       };
       if (isEdit()) {
         await api.tasks.update(props.editTask!.id, body);
@@ -170,6 +182,25 @@ export function TaskForm(props: Props) {
                 value={notes()}
                 onInput={(e) => setNotes(e.currentTarget.value)}
               />
+            </label>
+
+            <label class="flex flex-col gap-1.5">
+              <span class="flex items-center gap-1.5 text-xs text-ci-1/60">
+                <Flag size={11} /> Life Priority Category
+              </span>
+              <select
+                class="input cursor-pointer"
+                value={category()}
+                onChange={(e) => setCategory(e.currentTarget.value)}
+              >
+                <option value="">General / Uncategorized</option>
+                <option value="health">Health</option>
+                <option value="career">Career</option>
+                <option value="relationships">Relationships</option>
+                <option value="growth">Personal Growth</option>
+                <option value="leisure">Leisure</option>
+                <option value="finance">Finance</option>
+              </select>
             </label>
 
             <label class="flex flex-col gap-1.5">

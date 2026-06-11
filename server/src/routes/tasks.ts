@@ -56,6 +56,7 @@ export function tasksRouter() {
       owner_id?: number;
       parent_id?: number;
       tags?: string[];
+      category?: string;
     };
 
     if (!body.title?.trim()) {
@@ -76,6 +77,7 @@ export function tasksRouter() {
         priority: body.priority ?? 3,
         parentId: body.parent_id,
         ownerId: body.owner_id ?? 1,
+        category: body.category,
       })
       .returning();
 
@@ -121,6 +123,7 @@ export function tasksRouter() {
       completed_at?: string | null;
       parent_id?: number | null;
       tags?: string[];
+      category?: string | null;
     };
 
     const update: Partial<typeof tasks.$inferInsert> = {};
@@ -138,6 +141,7 @@ export function tasksRouter() {
     if (body.status !== undefined)            update.status = body.status;
     if (body.completed_at !== undefined)      update.completedAt = body.completed_at;
     if (body.parent_id !== undefined)         update.parentId = body.parent_id;
+    if (body.category !== undefined)          update.category = body.category;
     if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
 
     const [task] = await db.update(tasks).set(update).where(eq(tasks.id, id)).returning();
