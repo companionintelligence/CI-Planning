@@ -14,25 +14,25 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "koa": "^2.15.3",
-    "@koa/router": "^12.0.1",
     "@koa/cors": "^5.0.0",
+    "@koa/router": "^15.6.0",
+    "better-sqlite3": "^12.10.0",
+    "croner": "^10.0.1",
+    "drizzle-orm": "^0.45.2",
+    "koa": "^3.2.1",
     "koa-bodyparser": "^4.4.1",
-    "koa-static": "^5.0.0",
-    "better-sqlite3": "^11.10.0",
-    "drizzle-orm": "^0.38.4",
-    "croner": "^8.1.2"
+    "koa-static": "^5.0.0"
   },
   "devDependencies": {
-    "@types/koa": "^2.15.0",
-    "@types/koa__router": "^12.0.4",
-    "@types/koa-bodyparser": "^4.3.12",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/koa": "^3.0.3",
+    "@types/koa-bodyparser": "^4.3.13",
     "@types/koa-static": "^4.0.4",
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.10.0",
-    "drizzle-kit": "^0.30.4",
-    "tsx": "^4.19.2",
-    "typescript": "^5.8.3",
-    "vitest": "^2.1.8"
+    "@types/koa__router": "^12.0.5",
+    "@types/node": "^25.9.2",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }

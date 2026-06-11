@@ -3,7 +3,7 @@
 # server (via tsx) which serves the built PWA + /api on the Hub internalPort (3848).
 # Published as ghcr.io/companionintelligence/ci-planning.
 
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 # better-sqlite3 is a native module — needs a build toolchain at install time.
 RUN apt-get update \

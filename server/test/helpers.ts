@@ -2,7 +2,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { buildApp } from '../src/app.js';
 import { sqlite } from '../src/db/index.js';
-import { isAvailable } from '../src/mcp/ollama.js';
+import { status } from '../src/mcp/ollama.js';
 
 export interface TestServer {
   url: string;
@@ -52,8 +52,16 @@ export async function api<T = any>(
 }
 
 let _ollamaUp: boolean | null = null;
-/** Cached Ollama availability so LLM-dependent tests can skip when it's down. */
+/** Cached Ollama readiness so LLM-dependent tests can skip when service/models are unavailable. */
 export async function ollamaAvailable(): Promise<boolean> {
-  if (_ollamaUp === null) _ollamaUp = await isAvailable();
+  if (_ollamaUp === null) {
+    const s = await status();
+    const models = new Set(s.models);
+    _ollamaUp =
+      s.available &&
+      models.has(s.smallModel) &&
+      models.has(s.mediumModel) &&
+      models.has(s.embedModel);
+  }
   return _ollamaUp;
 }
