@@ -3,6 +3,6 @@
   "private": true,
   "description": "Self-contained Playwright harness that screenshots the running container. Isolated from the app's own deps.",
   "devDependencies": {
-    "@playwright/test": "^1.48.0"
+    "@playwright/test": "^1.60.0"
   }
 }

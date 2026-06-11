@@ -1,6 +1,6 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
+@reference "tailwindcss";
 
 @layer base {
   * { box-sizing: border-box; }
@@ -20,7 +20,12 @@
 @layer components {
 
   /* ── Buttons ─────────────────────────────────────────────────── */
-  .btn {
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .btn-danger,
+  .btn-icon {
     @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium
            tracking-wide transition-all duration-150
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
@@ -28,22 +33,22 @@
   }
   /* CI-style mint CTA — matches "Get Your Core" button */
   .btn-primary {
-    @apply btn text-surface-950;
+    @apply text-surface-950;
     background: linear-gradient(135deg, #58ebbf, #409b9b);
     font-family: 'Source Code Pro', monospace;
   }
   .btn-secondary {
-    @apply btn text-ci-1 border border-accent;
+    @apply text-ci-1 border border-accent;
     background: transparent;
   }
   .btn-ghost {
-    @apply btn text-slate-400;
+    @apply text-slate-400;
   }
   .btn-danger {
-    @apply btn text-red-400;
+    @apply text-red-400;
   }
   .btn-icon {
-    @apply btn text-slate-400 p-1.5 rounded-md;
+    @apply text-slate-400 p-1.5 rounded-md;
   }
 
   /* ── Cards ───────────────────────────────────────────────────── */
@@ -52,24 +57,34 @@
   }
 
   /* ── Inputs ──────────────────────────────────────────────────── */
-  .input {
+  .input,
+  .input-lg,
+  .textarea {
     @apply bg-surface-700 border border-surface-600 rounded-xl px-3 py-1.5 text-sm
            text-slate-100 placeholder-slate-500
            focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent
            transition-colors duration-150 w-full;
     font-family: 'Source Code Pro', monospace;
   }
-  .input-lg { @apply input py-2.5 text-base; }
-  .textarea  { @apply input resize-none; }
+  .input-lg { @apply py-2.5 text-base; }
+  .textarea  { @apply resize-none; }
 
   /* ── Badges ──────────────────────────────────────────────────── */
-  .badge         { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium tracking-wide; }
-  .badge-neutral { @apply badge bg-surface-700 text-slate-400; }
-  .badge-accent  { @apply badge bg-accent/20 text-accent-light; }
-  .badge-green   { @apply badge text-ci-3; background: rgba(88,235,191,.12); }
-  .badge-yellow  { @apply badge bg-yellow-900/40 text-yellow-400; }
-  .badge-red     { @apply badge bg-red-900/40 text-red-400; }
-  .badge-blue    { @apply badge bg-ci-6/30 text-ci-2; }
+  .badge,
+  .badge-neutral,
+  .badge-accent,
+  .badge-green,
+  .badge-yellow,
+  .badge-red,
+  .badge-blue {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium tracking-wide;
+  }
+  .badge-neutral { @apply bg-surface-700 text-slate-400; }
+  .badge-accent  { @apply bg-accent/20 text-accent-light; }
+  .badge-green   { @apply text-ci-3; background: rgba(88,235,191,.12); }
+  .badge-yellow  { @apply bg-yellow-900/40 text-yellow-400; }
+  .badge-red     { @apply bg-red-900/40 text-red-400; }
+  .badge-blue    { @apply bg-ci-6/30 text-ci-2; }
 
   /* ── Priority dots ────────────────────────────────────────────── */
   .priority-dot { @apply w-2 h-2 rounded-full flex-shrink-0; }
@@ -80,7 +95,9 @@
   .p5 { background: #244859; }
 
   /* ── Toast ───────────────────────────────────────────────────── */
-  .toast {
+  .toast,
+  .toast-success,
+  .toast-error {
     @apply fixed bottom-4 right-4 z-50 flex items-center gap-2.5
            px-4 py-3 rounded-2xl text-sm font-medium shadow-xl
            border text-slate-100;
@@ -90,8 +107,8 @@
     animation: toastIn 200ms ease both;
     font-family: 'Source Code Pro', monospace;
   }
-  .toast-success { @apply toast; border-color: rgba(88,235,191,.3); background: rgba(11,30,24,.97); color: #58ebbf; }
-  .toast-error   { @apply toast; border-color: rgba(239,68,68,.3); background: rgba(30,11,11,.97); }
+  .toast-success { border-color: rgba(88,235,191,.3); background: rgba(11,30,24,.97); color: #58ebbf; }
+  .toast-error   { border-color: rgba(239,68,68,.3); background: rgba(30,11,11,.97); }
   @keyframes toastIn {
     from { opacity: 0; transform: translateY(8px) scale(0.95); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
