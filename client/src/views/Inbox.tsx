@@ -1,5 +1,5 @@
 import { Show, For, createSignal, onMount, onCleanup } from 'solid-js';
-import { InboxIcon, ThumbsUp, ThumbsDown } from 'lucide-solid';
+import { InboxIcon, ThumbsUp, ThumbsDown, ExternalLink } from 'lucide-solid';
 import { possibles, refetchPossibles, refetchTasks, showToast } from '../stores/index.js';
 import { api, type Possible } from '../lib/api.js';
 
@@ -55,6 +55,17 @@ function PossibleCard(props: { possible: Possible; onAction: () => void }) {
               <span class={`font-mono text-xs ${confColor(props.possible.confidence)}`}>
                 {((props.possible.confidence ?? 0) * 100).toFixed(0)}% confident
               </span>
+            </Show>
+            <Show when={props.possible.source_kind === 'gmail' && props.possible.source_ref}>
+              <a
+                href={`https://mail.google.com/mail/u/0/#search/${props.possible.source_ref!.split('#')[0]}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-xs text-accent-light hover:text-accent hover:underline flex items-center gap-1 ml-1"
+              >
+                <ExternalLink size={11} />
+                <span>Open Email</span>
+              </a>
             </Show>
           </div>
         </div>

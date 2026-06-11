@@ -1,9 +1,10 @@
 import Router from '@koa/router';
 import { eq, and, gte, lte } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { timeBlocks } from '../db/schema.js';
+import { timeBlocks, tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
+import { syncBlockToGoogle } from '../lib/gcal-sync.js';
 
 export function blocksRouter() {
   const router = new Router();
@@ -54,7 +55,10 @@ export function blocksRouter() {
       })
       .returning();
 
-    const out = toApi(block);
+    await syncBlockToGoogle(block, 'create');
+    const [syncedBlock] = await db.select().from(timeBlocks).where(eq(timeBlocks.id, block.id));
+
+    const out = toApi(syncedBlock || block);
     broadcast('block:created', out);
     ctx.status = 201;
     ctx.body = { block: out };
@@ -83,7 +87,45 @@ export function blocksRouter() {
     const [block] = await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
-    const out = toApi(block);
+    // If block is linked to a task, update the task representation
+    if (block.taskId) {
+      const taskUpdate: Partial<typeof tasks.$inferInsert> = {};
+      if (update.title !== undefined) taskUpdate.title = update.title;
+      
+      // Update dueAt and taskTime from block startAt
+      if (block.startAt) {
+        taskUpdate.dueAt = block.startAt.slice(0, 10);
+        const d = new Date(block.startAt);
+        taskUpdate.taskTime = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+      }
+      
+      // Update estimatedMinutes from startAt and endAt duration
+      if (block.startAt && block.endAt) {
+        const diffMs = new Date(block.endAt).getTime() - new Date(block.startAt).getTime();
+        taskUpdate.estimatedMinutes = Math.max(5, Math.round(diffMs / 60_000));
+      }
+
+      // Sync status from block.status
+      if (update.status === 'completed') {
+        taskUpdate.status = 'done';
+        taskUpdate.completedAt = new Date().toISOString();
+      } else if (update.status === 'skipped') {
+        taskUpdate.status = 'open'; // return task back to backlog
+      }
+
+      if (Object.keys(taskUpdate).length > 0) {
+        await db.update(tasks).set(taskUpdate).where(eq(tasks.id, block.taskId));
+        const [updatedTask] = await db.select().from(tasks).where(eq(tasks.id, block.taskId));
+        if (updatedTask) {
+          broadcast('task:updated', toApi(updatedTask));
+        }
+      }
+    }
+
+    await syncBlockToGoogle(block, 'update');
+    const [syncedBlock] = await db.select().from(timeBlocks).where(eq(timeBlocks.id, id));
+
+    const out = toApi(syncedBlock || block);
     broadcast('block:updated', out);
     ctx.body = { block: out };
   });
@@ -93,6 +135,17 @@ export function blocksRouter() {
     const id = Number(ctx.params.id);
     const [block] = await db.delete(timeBlocks).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    
+    // If block is linked to a task, return the task status to open
+    if (block.taskId) {
+      await db.update(tasks).set({ status: 'open' }).where(eq(tasks.id, block.taskId));
+      const [updatedTask] = await db.select().from(tasks).where(eq(tasks.id, block.taskId));
+      if (updatedTask) {
+        broadcast('task:updated', toApi(updatedTask));
+      }
+    }
+
+    await syncBlockToGoogle(block, 'delete');
     broadcast('block:deleted', { id });
     ctx.body = { ok: true };
   });

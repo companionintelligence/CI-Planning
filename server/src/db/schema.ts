@@ -15,6 +15,7 @@ export const tasks = sqliteTable('tasks', {
   dueAt: text('due_at'),                   // ISO datetime
   taskTime: text('task_time'),             // HH:MM time-of-day if the task has a fixed start time
   estimatedMinutes: integer('estimated_minutes'),
+  actualMinutes: integer('actual_minutes'),
   priority: integer('priority').default(3), // 1 highest, 5 lowest
   status: text('status').default('open'),   // open | scheduled | in_progress | done | cancelled | deferred
   parentId: integer('parent_id'),          // null = top-level task; set = subtask
@@ -23,6 +24,17 @@ export const tasks = sqliteTable('tasks', {
   sourceRef: text('source_ref'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   completedAt: text('completed_at'),
+});
+
+export const habits = sqliteTable('habits', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: integer('owner_id').references(() => owners.id),
+  title: text('title').notNull(),
+  durationMinutes: integer('duration_minutes').notNull(),
+  startTimeEarliest: text('start_time_earliest').notNull(), // e.g. "11:30"
+  startTimeLatest: text('start_time_latest').notNull(),   // e.g. "13:30"
+  daysOfWeek: text('days_of_week').default('1,2,3,4,5'),   // comma-separated days (0=Sunday, 1=Monday, etc.)
+  enabled: integer('enabled', { mode: 'boolean' }).default(true),
 });
 
 export const possibleTasks = sqliteTable('possible_tasks', {
@@ -66,6 +78,8 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   minBreakMinutes: integer('min_break_minutes').default(10),
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
   planningMode: text('planning_mode').default('ritual'), // auto | ritual
+  googleSyncEnabled: integer('google_sync_enabled', { mode: 'boolean' }).default(false),
+  googleCalendarId: text('google_calendar_id').default('primary'),
 });
 
 export const tags = sqliteTable('tags', {

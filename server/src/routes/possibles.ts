@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { possibleTasks, tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
+import { ingestText } from '../agents/ingest.js';
 
 export function possiblesRouter() {
   const router = new Router();
@@ -16,6 +17,20 @@ export function possiblesRouter() {
       .from(possibleTasks)
       .where(eq(possibleTasks.status, status));
     ctx.body = { possibles: toApiList(rows) };
+  });
+
+  // POST /api/possible-tasks/extract
+  router.post('/api/possible-tasks/extract', async (ctx) => {
+    const { text } = ctx.request.body as { text: string };
+    if (!text || !text.trim()) {
+      ctx.status = 400;
+      ctx.body = { error: 'text is required' };
+      return;
+    }
+    const ref = `notes-${Date.now()}`;
+    const result = await ingestText(text, ref);
+    broadcast('possible:created', {}); // notify clients to refetch review queue
+    ctx.body = { ok: true, ...result };
   });
 
   // POST /api/possible-tasks/:id/promote

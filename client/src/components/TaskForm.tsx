@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show } from 'solid-js';
 import { X, Plus, AlignLeft, Clock, Calendar, Tag, Flag, Timer } from 'lucide-solid';
 import { api, type Task, type TaskInput } from '../lib/api.js';
-import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
+import { refetchTasks, showToast, setTaskModal, taskModal } from '../stores/index.js';
 
 interface Props {
   editTask?: Task;
@@ -25,18 +25,26 @@ export function TaskForm(props: Props) {
   const [saving, setSaving] = createSignal(false);
   const [expanded, setExpanded] = createSignal(false);
 
-  // Populate from editTask
+  // Populate from editTask or defaults
   createEffect(() => {
     const t = props.editTask;
-    if (!t) return;
-    setTitle(t.title);
-    setNotes(t.notes ?? t.description ?? '');
-    setDueAt(t.due_at ? t.due_at.slice(0, 10) : '');
-    setTaskTime(t.task_time ?? '');
-    setEstimatedMinutes(t.estimated_minutes ? String(t.estimated_minutes) : '');
-    setPriority(t.priority ?? 3);
-    setTagsInput(t.tags.join(', '));
-    setExpanded(true);
+    if (t) {
+      setTitle(t.title);
+      setNotes(t.notes ?? t.description ?? '');
+      setDueAt(t.due_at ? t.due_at.slice(0, 10) : '');
+      setTaskTime(t.task_time ?? '');
+      setEstimatedMinutes(t.estimated_minutes ? String(t.estimated_minutes) : '');
+      setPriority(t.priority ?? 3);
+      setTagsInput(t.tags.join(', '));
+      setExpanded(true);
+    } else {
+      const modal = taskModal();
+      if (modal.defaultDueAt) setDueAt(modal.defaultDueAt);
+      if (modal.defaultTaskTime) {
+        setTaskTime(modal.defaultTaskTime);
+        setExpanded(true);
+      }
+    }
   });
 
   async function submit(e: Event) {

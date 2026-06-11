@@ -373,6 +373,33 @@ flowchart TD
     Next --> Night[Nightly grooming + re-plan tomorrow]
     Night --> Open
 ```
+
+### 10.1 Detailed User Flow Matrix
+
+The application supports four primary user flows that correspond to execution, capturing, planning, and automation:
+
+- **Flow A: Mindful Planning & Time Blocking (Sunsama style)**:
+  1. The user logs in and starts in **Ritual Mode** (or opens `/calendar`).
+  2. The left column lists the task backlog. The user filters tasks by priority or tag.
+  3. The user drags tasks from the backlog sidebar onto the right calendar grid, scheduling them into hourly blocks (e.g. gym, deep work, project meetings).
+  4. The user clicks scheduled blocks to adjust them.
+- **Flow B: Autonomous AI Assisting & Conflict Reflow (Motion style)**:
+  1. The user enables **Auto Mode**.
+  2. AI agents ingest calendar meetings and emails. Gmail ingestion proposes new actions into the `/inbox` (Review Queue).
+  3. The user opens `/inbox` and accepts (`P` promote) or dismisses (`D` dismiss) proposals.
+  4. At night, the `auto_schedule` job runs the scheduling engine to place open tasks into remaining gaps automatically.
+  5. The user opens `/` (Today) and sees their day pre-planned. If a meeting overruns or runs long, the user triggers "Schedule Day" (or the server does so reactively), shifting the remaining tasks down.
+- **Flow C: Action & Execution with Time Tracking (Super Productivity style)**:
+  1. The user opens `/` (Today) to see the active agenda.
+  2. The user hovers over the active block or task card and clicks the **Play** button to start the Pomodoro time tracker.
+  3. A sticky bar appears at the bottom. As the user works, the timer ticks.
+  4. When done or paused, the user clicks **Stop** to log the actual elapsed minutes directly to `actual_minutes` in SQLite.
+- **Flow D: Rapid Shorthand Capture (Akiflow style)**:
+  1. The user presses `Cmd+K` anywhere in the app to open the global Command Bar modal.
+  2. The user types a fast thought like: `submit Q3 financial report #work p1 est:60`.
+  3. The shorthand parser decodes this into a task titled "submit Q3 financial report" with priority 1, tag "work", and estimated minutes 60.
+  4. Pressing Enter calls the creation API, immediately inserting it into the backlog.
+
 ---
 ## 11. Task & Block Lifecycle
 ```mermaid
@@ -396,21 +423,29 @@ stateDiagram-v2
 ```
 ---
 ## 12. MCP Integration
+
+### 12.1 Outbound Client Integrations
+Companion Planning acts as an MCP client connecting to external MCP servers to ingest data:
 | Server | Use | Auth |
 |---|---|---|
 | Gmail MCP | List recent messages, fetch bodies, label processed. | OAuth, token in Keychain. |
 | Google Calendar MCP | Read events (rolling window); **optional** write-back of task blocks (v2 flag). | OAuth. |
 | Ollama (HTTP) | Local generation + embeddings. | none (localhost). |
 Credentials live in macOS Keychain (or libsecret), never in a committed `.env`. Lock Ollama to `127.0.0.1` and firewall port 11434.
+
+### 12.2 Embedded MCP Server (Inbound Agent Access)
+The application hosts an embedded MCP server, allowing major agentic harnesses (Claude Desktop, Cursor, Hermes, OpenClaw, etc.) to securely read and write tasks, propose tasks to the Review queue, and run auto-scheduling routines.
+- **Transports Supported**: Stdio (CLI mode via `pnpm mcp`) and Server-Sent Events (SSE) (web/remote client mode via `/api/mcp`).
+- **Exposed Tools**: `list_tasks`, `create_task`, `update_task`, `propose_task` (Review Queue helper), `get_day_summary`, `run_auto_schedule`.
 ---
 ## 13. Frontend (SolidJS) — Views & Components
 ### 13.1 Views (routes)
 | Route | View | Purpose |
 |---|---|---|
-| `/` | **Today** | Single-screen focus; today's blocks + open tasks + AI briefing card. Auto-schedule button. |
-| `/calendar` | **Calendar** | Week strip with day selector; block list per selected day. Schedule-day button. |
-| `/inbox` | **Inbox** | `possible_tasks` cards with promote/dismiss. Keyboard shortcuts: `P` promote, `D` dismiss. Badge count in nav. |
-| `/tasks` | **All Tasks** | Filterable task table (status, tag, search). Inline subtask expansion. |
+| `/` | **Today** | Single-screen focus; today's blocks + open tasks + AI briefing card. Time tracking triggers and ticking status bar. |
+| `/calendar` | **Calendar (Planner)** | Split-view Workspace: Left sidebar task backlog search/filter; Right absolute hourly calendar grid (workday bounds). Drag & Drop scheduling from backlog to grid. |
+| `/inbox` | **Inbox** | `possible_tasks` cards with promote/dismiss review queue. Badge count in nav. |
+| `/tasks` | **All Tasks** | Filterable task table (status, tag, search). Inline subtask expansion and inline Markdown editor. |
 | `/tags` | **Tags** | Weighted tag cloud + bar chart; click to filter tasks. |
 | `/jobs` | **Jobs** | Scheduled job list with run status, manual trigger, latest log. |
 | `/settings` | **Settings** | Planning mode (auto/ritual), work hours, block prefs, Ollama + Google MCP integration status. |
@@ -419,15 +454,29 @@ Credentials live in macOS Keychain (or libsecret), never in a committed `.env`. 
 | Component | Purpose |
 |---|---|
 | `Nav` | Sidebar navigation with CI logo, nav links, inbox badge count. |
-| `TaskCard` | Task display with priority dot, subtask toggle, status actions, tag badges. |
+| `TaskCard` | Task display with priority dot, subtask toggle, status actions, tag badges, Play/Stop timer button, actual vs estimated minutes display, and drag handler. |
 | `BlockCard` | Time block card with kind indicator, time range, status controls. |
-| `TaskForm` | Modal for creating/editing tasks (title, notes, due date, time, priority, tags, parent). |
+| `TaskForm` | Modal for creating/editing tasks (title, notes, due date, time, priority, tags, parent) prefilled with drop details. |
+| `CommandBar` | Global modal Command Palette (`Cmd+K`) displaying search matching, arrow selection navigation, and syntax shorthand parser. |
 | `Toast` | Toast notification container with success/error variants. |
 
 ### 13.3 State management
 SolidJS `createSignal` + `createResource` in a central `stores/index.ts`. Resources auto-fetch tasks, blocks, possibles, prefs. SSE via `lib/sse.ts` triggers refetches on server events.
 
-Design language: dark-only, teal-navy surfaces, mint-gradient CTAs; Source Code Pro body + Abel headings; geometric priority dots with glow; CI brand tokens throughout. SSE drives live updates.
+Design language: light & dark mode support, teal-navy surfaces, mint-gradient CTAs; Source Code Pro body + Abel headings; geometric priority dots with glow; CI brand tokens throughout. SSE drives live updates.
+
+### 13.4 Interface Mockups
+
+#### Desktop Split-View Planner
+The desktop view combines the filterable backlog sidebar and the hourly Day Grid overlay in a responsive split layout:
+
+![Split-View Workspace UI Mockup](/Users/liam/.gemini/antigravity-ide/brain/72e4c663-ff8e-4521-99b6-3d4af366eb2a/desktop_planner_view_1781164435870.png)
+
+#### Mobile Focus Layout
+On mobile/tablet screens, the sidebar collapses into a slide-out drawer or toggles via nav. The view renders as a single-column scrollable Day Grid showing:
+1. Pinned daily agenda blocks.
+2. Floating Pomodoro Time Tracker pinned to the bottom.
+3. Rapid shorthand capture bar (or a FAB) to quickly capture tasks on the move.
 ---
 ## 14. Tagging System
 Many-to-many over `tasks`/`possible_tasks`. Names normalized on insert (lowercase, hyphenated, ≤32 chars). Tags survive promotion (`possible_task_tags` → `task_tags`). Agents may *suggest* tags but only surface them in the queue above a confidence threshold. Batching and day-theming key off tags.
@@ -524,3 +573,19 @@ Defined as `@layer components` in `index.css`:
 - **Text glow:** `text-shadow: 0 0 12px rgba(88,235,191,.4)` on active nav items.
 - **Press feedback:** `active:scale-95` on all interactive elements.
 - **Glassmorphism:** `backdrop-filter: blur()` on modal backdrop and toasts.
+
+---
+
+## 21. Navigation Audit & User Flow Matrix
+
+Every view in the navigation sidebar corresponds to a distinct phase of the user's planning, execution, and automation lifecycle:
+
+| View Path | View Name | Primary Function | Supported User Flow | How it Informs User Flow |
+|---|---|---|---|---|
+| `/` | Today | Execution Dashboard | Flow C (Execution & Tracking) | Displays today's agenda; acts as the start/stop visual console for time tracking session logs. |
+| `/calendar` | Calendar | Workspace Planner | Flow A (Mindful Scheduling) | Backlog sidebar next to day grid lets the user physically structure their day using drag-and-drop or slot clicks. |
+| `/inbox` | Inbox | Triage Review | Flow B (Autonomous Triage) | Protects active todo backlog by forcing user confirmation on Gmail/GCal anomalies. |
+| `/tasks` | Tasks | Backlog Grooming | Flow A (Mindful Planning) | Structured database list for notes cleanup, tag management, and nesting tasks before time-blocking. |
+| `/tags` | Tags | Organization | Flow A & D (Categorization) | Taxonomical overview to gauge where time is spent and jump-filter tasks by label. |
+| `/jobs` | Jobs | Control Room | Flow B (Automation) | Monitors background AI schedulers, mail sweeps, and ingestion health logs. |
+| `/settings` | Settings | Core Config | Flow A & B (Preferences) | Restricts scheduler work windows, defaults, and planning mode (auto/ritual). |

@@ -22,6 +22,7 @@ export interface Task {
   due_at?: string;
   task_time?: string;
   estimated_minutes?: number;
+  actual_minutes?: number;
   priority: number;
   status: string;
   parent_id?: number;
@@ -39,6 +40,7 @@ export interface TaskInput {
   due_at?: string;
   task_time?: string;
   estimated_minutes?: number;
+  actual_minutes?: number;
   priority?: number;
   parent_id?: number;
   owner_id?: number;
@@ -54,7 +56,7 @@ export const api = {
       return request<{ tasks: Task[] }>('GET', `/tasks${q}`);
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
-    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string }>) =>
+    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string | null }>) =>
       request<{ task: Task }>('PATCH', `/tasks/${id}`, body),
     delete: (id: number) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
     subtasks: (id: number) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
@@ -80,6 +82,8 @@ export const api = {
       request<{ task: Task }>('POST', `/possible-tasks/${id}/promote`, overrides ?? {}),
     dismiss: (id: number) =>
       request<{ ok: boolean }>('POST', `/possible-tasks/${id}/dismiss`, {}),
+    extract: (text: string) =>
+      request<{ ok: boolean; itemsCreated: number; itemsUpdated: number; log: string }>('POST', '/possible-tasks/extract', { text }),
   },
 
   tags: {
@@ -95,9 +99,22 @@ export const api = {
   jobs: {
     list: () => request<{ jobs: Job[] }>('GET', '/jobs'),
     run: (id: number) => request<{ ok: boolean; message: string }>('POST', `/jobs/${id}/run`, {}),
+    update: (id: number, body: Partial<{ cron: string; enabled: boolean; config: any }>) =>
+      request<{ ok: boolean; job: Job }>('PATCH', `/jobs/${id}`, body),
   },
 
-  schedule: { run: (date?: string) => request<unknown>('POST', '/schedule/run', { date }) },
+  habits: {
+    list: () => request<{ habits: Habit[] }>('GET', '/habits'),
+    create: (body: Partial<Habit> & { title: string; duration_minutes: number; start_time_earliest: string; start_time_latest: string }) =>
+      request<{ habit: Habit }>('POST', '/habits', body),
+    update: (id: number, body: Partial<Habit>) => request<{ habit: Habit }>('PATCH', `/habits/${id}`, body),
+    delete: (id: number) => request<{ ok: boolean }>('DELETE', `/habits/${id}`),
+  },
+
+  schedule: {
+    run: (date?: string) => request<unknown>('POST', '/schedule/run', { date }),
+    clear: (date?: string) => request<{ ok: boolean; cleared: number }>('POST', '/schedule/clear', { date }),
+  },
 
   summary: {
     get: (date?: string) => {
@@ -127,6 +144,17 @@ export interface Possible {
 
 export interface Tag { id: number; name: string; count: number; }
 
+export interface Habit {
+  id: number;
+  owner_id: number;
+  title: string;
+  duration_minutes: number;
+  start_time_earliest: string;
+  start_time_latest: string;
+  days_of_week: string;
+  enabled: boolean;
+}
+
 export interface Prefs {
   id: number; owner_id: number; workday_start: string; workday_end: string;
   deep_work_windows?: { start: string; end: string }[];
@@ -138,6 +166,8 @@ export interface Job {
   id: number; name: string; kind: string; cron: string; enabled: boolean;
   last_run_at?: string; last_started?: string; last_status?: string;
   items_created?: number;
+  items_updated?: number;
+  config?: any;
 }
 
 export interface DaySummary {

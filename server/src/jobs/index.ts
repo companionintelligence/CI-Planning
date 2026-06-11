@@ -96,13 +96,26 @@ export async function runJob(kind: string): Promise<void> {
   logger.info(`Job ${kind} ${status}`, { ...outcome });
 }
 
+const activeCrons: Cron[] = [];
+
 export function startCronJobs() {
+  // Stop and clear any previously registered crons
+  for (const c of activeCrons) {
+    try {
+      c.stop();
+    } catch (err) {
+      logger.error('Failed to stop cron instance', { err: (err as Error).message });
+    }
+  }
+  activeCrons.length = 0;
+
   const jobs = sqlite
     .prepare('SELECT id, kind, cron FROM scheduled_jobs WHERE enabled = 1')
     .all() as { id: number; kind: string; cron: string }[];
 
   for (const job of jobs) {
-    new Cron(job.cron, () => runJob(job.kind));
+    const c = new Cron(job.cron, () => runJob(job.kind));
+    activeCrons.push(c);
     logger.info(`Cron registered: ${job.kind} [${job.cron}]`);
   }
 }

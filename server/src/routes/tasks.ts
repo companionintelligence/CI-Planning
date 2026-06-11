@@ -1,9 +1,10 @@
 import Router from '@koa/router';
 import { eq, and, like, asc, lte } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { tasks, taskTags } from '../db/schema.js';
+import { tasks, taskTags, timeBlocks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi } from '../lib/serialize.js';
+import { syncBlockToGoogle } from '../lib/gcal-sync.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -112,6 +113,8 @@ export function tasksRouter() {
       task_time?: string | null;
       estimated_minutes?: number | null;
       estimatedMinutes?: number | null;
+      actual_minutes?: number | null;
+      actualMinutes?: number | null;
       priority?: number;
       status?: string;
       completed?: boolean;
@@ -129,6 +132,8 @@ export function tasksRouter() {
     if (body.task_time !== undefined)         update.taskTime = body.task_time;
     if (body.estimated_minutes !== undefined) update.estimatedMinutes = body.estimated_minutes;
     if (body.estimatedMinutes !== undefined)  update.estimatedMinutes = body.estimatedMinutes;
+    if (body.actual_minutes !== undefined)    update.actualMinutes = body.actual_minutes;
+    if (body.actualMinutes !== undefined)     update.actualMinutes = body.actualMinutes;
     if (body.priority !== undefined)          update.priority = body.priority;
     if (body.status !== undefined)            update.status = body.status;
     if (body.completed_at !== undefined)      update.completedAt = body.completed_at;
@@ -137,6 +142,44 @@ export function tasksRouter() {
 
     const [task] = await db.update(tasks).set(update).where(eq(tasks.id, id)).returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    // Synchronize updates to the corresponding time block if it exists
+    const [block] = await db.select().from(timeBlocks).where(eq(timeBlocks.taskId, id));
+    if (block) {
+      const blockUpdate: Partial<typeof timeBlocks.$inferInsert> = {};
+      if (update.title !== undefined) blockUpdate.title = update.title;
+      
+      // If task status was marked done, mark the block completed
+      if (update.status === 'done' || body.completed) {
+        blockUpdate.status = 'completed';
+      }
+
+      // If dueAt, taskTime, or estimatedMinutes changed, recalculate block boundaries
+      if (update.dueAt !== undefined || update.taskTime !== undefined || update.estimatedMinutes !== undefined) {
+        const datePart = task.dueAt ? task.dueAt.slice(0, 10) : new Date(block.startAt).toISOString().slice(0, 10);
+        let timePart = task.taskTime ?? '';
+        if (!timePart || timePart.length !== 5) {
+          const d = new Date(block.startAt);
+          timePart = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+        }
+        
+        const estMins = task.estimatedMinutes ?? 30;
+        const startIso = `${datePart}T${timePart}:00.000Z`;
+        const startDate = new Date(startIso);
+        const endDate = new Date(startDate.getTime() + estMins * 60 * 1000);
+        
+        blockUpdate.startAt = startIso;
+        blockUpdate.endAt = endDate.toISOString();
+      }
+
+      if (Object.keys(blockUpdate).length > 0) {
+        const [updatedBlock] = await db.update(timeBlocks).set(blockUpdate).where(eq(timeBlocks.id, block.id)).returning();
+        if (updatedBlock) {
+          await syncBlockToGoogle(updatedBlock, 'update');
+          broadcast('block:updated', toApi(updatedBlock));
+        }
+      }
+    }
 
     if (Array.isArray(body.tags)) {
       sqlite.prepare('DELETE FROM task_tags WHERE task_id = ?').run(id);
@@ -160,6 +203,15 @@ export function tasksRouter() {
       .where(eq(tasks.id, id))
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    // Also delete any associated block!
+    const [block] = await db.select().from(timeBlocks).where(eq(timeBlocks.taskId, id));
+    if (block) {
+      await db.delete(timeBlocks).where(eq(timeBlocks.id, block.id));
+      await syncBlockToGoogle(block, 'delete');
+      broadcast('block:deleted', { id: block.id });
+    }
+
     const out = { ...toApi(task), tags: [] as string[] };
     broadcast('task:updated', out);
     ctx.body = { task: out };

@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1781162483987,
+      "tag": "0000_parched_flatman",
+      "breakpoints": true
+    }
+  ]
+}

@@ -19,6 +19,7 @@ export function runSetup(db: Database) {
       due_at             TEXT,
       task_time          TEXT,
       estimated_minutes  INTEGER,
+      actual_minutes     INTEGER,
       priority           INTEGER DEFAULT 3,
       status             TEXT DEFAULT 'open',
       parent_id          INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
@@ -27,6 +28,17 @@ export function runSetup(db: Database) {
       source_ref         TEXT,
       created_at         TEXT DEFAULT CURRENT_TIMESTAMP,
       completed_at       TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS habits (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id            INTEGER REFERENCES owners(id),
+      title               TEXT NOT NULL,
+      duration_minutes    INTEGER NOT NULL,
+      start_time_earliest TEXT NOT NULL,
+      start_time_latest   TEXT NOT NULL,
+      days_of_week        TEXT DEFAULT '1,2,3,4,5',
+      enabled             INTEGER DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS possible_tasks (
@@ -70,7 +82,9 @@ export function runSetup(db: Database) {
       max_focus_block_minutes  INTEGER DEFAULT 90,
       min_break_minutes        INTEGER DEFAULT 10,
       day_theme                TEXT,
-      planning_mode            TEXT DEFAULT 'ritual'
+      planning_mode            TEXT DEFAULT 'ritual',
+      google_sync_enabled      INTEGER DEFAULT 0,
+      google_calendar_id       TEXT DEFAULT 'primary'
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -125,6 +139,9 @@ function migrateColumns(db: Database) {
   addCol('tasks', 'notes', 'TEXT');
   addCol('tasks', 'task_time', 'TEXT');
   addCol('tasks', 'parent_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
+  addCol('tasks', 'actual_minutes', 'INTEGER');
+  addCol('scheduling_prefs', 'google_sync_enabled', 'INTEGER DEFAULT 0');
+  addCol('scheduling_prefs', 'google_calendar_id', "TEXT DEFAULT 'primary'");
 }
 
 function seedDefaults(db: Database) {

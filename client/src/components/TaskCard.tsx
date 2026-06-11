@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2 } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Play, Square, CalendarDays } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
+import { refetchTasks, showToast, setTaskModal, activeTimer, startTimer, stopTimer, scheduleTaskNextGap } from '../stores/index.js';
 import { renderMarkdown } from '../lib/markdown.js';
 
 const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
@@ -16,6 +16,7 @@ const statusClass: Record<string, string> = {
 interface Props {
   task: Task;
   depth?: number;
+  scheduleDate?: string;
 }
 
 export function TaskCard(props: Props) {
@@ -79,16 +80,34 @@ export function TaskCard(props: Props) {
     );
   };
 
-  const est = () => props.task.estimated_minutes
-    ? <span class="text-xs font-mono text-ci-1/50">{props.task.estimated_minutes}m</span>
-    : null;
+  const timeDisplay = () => {
+    const est = props.task.estimated_minutes;
+    const act = props.task.actual_minutes;
+    if (!est && !act) return null;
+    return (
+      <span class="text-xs font-mono text-ci-1/50 flex items-center gap-1 select-none">
+        {act ? <span class="text-accent-light font-semibold">{act}m</span> : null}
+        {act && est ? <span>/</span> : null}
+        {est ? <span>{est}m</span> : null}
+      </span>
+    );
+  };
 
   return (
     <div class={depth() > 0 ? 'pl-6 relative' : ''}>
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
-        class={`card group flex gap-3 ${props.task.status === 'done' ? 'opacity-40' : ''}`}
+        draggable={props.task.status === 'open'}
+        onDragStart={(e) => {
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', JSON.stringify({ taskId: props.task.id, title: props.task.title, estimatedMinutes: props.task.estimated_minutes || 30 }));
+          }
+        }}
+        class={`card group flex gap-3 relative overflow-hidden transition-all duration-200 border-l-2
+          ${props.task.status === 'done' ? 'opacity-40 border-l-surface-600' : 'border-l-transparent hover:border-l-accent-light'}
+          ${activeTimer()?.taskId === props.task.id ? 'bg-surface-900/80 border-l-accent shadow-lg shadow-accent/5' : ''}`}
         style={{ 'margin-bottom': '6px' }}
       >
         {/* Checkbox */}
@@ -112,7 +131,7 @@ export function TaskCard(props: Props) {
               {props.task.title}
             </span>
             {dueLabel()}
-            {est()}
+            {timeDisplay()}
           </div>
 
           <Show when={props.task.notes || props.task.description}>
@@ -163,8 +182,45 @@ export function TaskCard(props: Props) {
           </Show>
         </div>
 
-        {/* Actions (visible on hover) */}
-        <div class="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity duration-100 flex-shrink-0">
+        {/* Actions (visible on hover or when active timer is running) */}
+        <div class={`flex items-center gap-0.5 transition-opacity duration-100 flex-shrink-0
+          ${activeTimer()?.taskId === props.task.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        >
+          <Show when={props.task.status === 'open'}>
+            <Show when={activeTimer()?.taskId === props.task.id} fallback={
+              <button
+                onClick={() => startTimer(props.task.id, props.task.title)}
+                class="btn-icon text-accent-light hover:text-accent"
+                title="Start Timer"
+              >
+                <Play size={13} />
+              </button>
+            }>
+              <button
+                onClick={stopTimer}
+                class="btn-icon text-red-400 hover:text-red-300 animate-pulse2"
+                title="Stop Timer"
+              >
+                <Square size={13} fill="currentColor" />
+              </button>
+            </Show>
+          </Show>
+          <Show when={props.scheduleDate && props.task.status === 'open'}>
+            <button
+              onClick={async () => {
+                try {
+                  await scheduleTaskNextGap(props.task.id, props.task.title, props.task.estimated_minutes || 30, props.scheduleDate!);
+                  showToast('Task scheduled successfully', 'success');
+                } catch (err) {
+                  showToast((err as Error).message, 'error');
+                }
+              }}
+              class="btn-icon text-accent-hi hover:text-accent font-semibold"
+              title={`Schedule on ${props.scheduleDate}`}
+            >
+              <CalendarDays size={13} />
+            </button>
+          </Show>
           <button onClick={toggleSubs} class="btn-icon" title="Subtasks">
             <Show when={showSubs()} fallback={<ChevronRight size={13} />}>
               <ChevronDown size={13} />

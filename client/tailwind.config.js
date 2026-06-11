@@ -17,33 +17,33 @@ export default {
       colors: {
         // CI exact palette (from CSS variables)
         ci: {
-          1:  '#ABD4D8',  // light teal
-          2:  '#85c3b4',  // medium teal-green
-          3:  '#58ebbf',  // bright mint — primary CTA
-          4:  '#409b9b',  // medium teal — interactive accent
-          5:  '#2c676d',  // dark teal
-          6:  '#1d5f6e',  // deep teal-blue
-          7:  '#0f717a',  // deep teal
-          8:  '#079d99',  // vivid teal
-          9:  '#82ffe1',  // neon mint — glow
-          10: '#244859',  // dark navy-teal surface
-          11: '#172e39',  // darkest hero bg
+          1:  'var(--ci-1)',
+          2:  'var(--ci-2)',
+          3:  'var(--ci-3)',
+          4:  'var(--ci-4)',
+          5:  'var(--ci-5)',
+          6:  'var(--ci-6)',
+          7:  'var(--ci-7)',
+          8:  'var(--ci-8)',
+          9:  'var(--ci-9)',
+          10: 'var(--ci-10)',
+          11: 'var(--ci-11)',
         },
         // App surfaces — teal-navy instead of blue-gray
         surface: {
-          950: '#070d11',
-          900: '#0a1520',
-          800: '#0f1e2e',
-          700: '#152637',
-          600: '#1a3040',
-          500: '#1f3a4a',
+          950: 'var(--bg-950)',
+          900: 'var(--bg-900)',
+          800: 'var(--bg-800)',
+          700: 'var(--bg-700)',
+          600: 'var(--bg-600)',
+          500: 'var(--bg-500)',
         },
         // Accent maps to CI teal
         accent: {
-          DEFAULT: '#409b9b',  // c4 — borders, rings, badges
-          hi:      '#58ebbf',  // c3 — CTA buttons
-          light:   '#ABD4D8',  // c1 — text accent
-          glow:    '#82ffe1',  // c9 — neon highlight
+          DEFAULT: 'var(--accent)',
+          hi:      'var(--accent-hi)',
+          light:   'var(--accent-light)',
+          glow:    'var(--accent-glow)',
         },
       },
       keyframes: {

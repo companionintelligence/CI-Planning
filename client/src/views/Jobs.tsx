@@ -1,7 +1,8 @@
 import { For, createSignal, Show } from 'solid-js';
-import { Play, CheckCircle2, XCircle, Clock, RefreshCw } from 'lucide-solid';
+import { Play, CheckCircle2, XCircle, Clock, RefreshCw, Pencil } from 'lucide-solid';
 import { jobs, refetchJobs, showToast } from '../stores/index.js';
-import { api } from '../lib/api.js';
+import { api, type Job } from '../lib/api.js';
+import { EditJobModal } from '../components/EditJobModal.js';
 
 function fmtDate(iso?: string) {
   if (!iso) return '—';
@@ -17,6 +18,7 @@ function statusIcon(s?: string) {
 
 export function Jobs() {
   const [triggering, setTriggering] = createSignal<number | null>(null);
+  const [editingJob, setEditingJob] = createSignal<Job | null>(null);
 
   async function trigger(id: number) {
     setTriggering(id);
@@ -59,20 +61,40 @@ export function Jobs() {
                   </Show>
                 </div>
               </div>
-              <button
-                onClick={() => trigger(job.id)}
-                disabled={triggering() === job.id}
-                class="btn-secondary text-xs gap-1.5 flex-shrink-0"
-              >
-                <Show when={triggering() === job.id} fallback={<Play size={12} />}>
-                  <RefreshCw size={12} class="animate-spin" />
-                </Show>
-                {triggering() === job.id ? 'Running…' : 'Run now'}
-              </button>
+              
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => setEditingJob(job)}
+                  class="btn-icon text-ci-1/60 hover:text-ci-1 hover:bg-surface-700/50"
+                  title="Edit Job Schedule"
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  onClick={() => trigger(job.id)}
+                  disabled={triggering() === job.id}
+                  class="btn-secondary text-xs gap-1.5"
+                >
+                  <Show when={triggering() === job.id} fallback={<Play size={12} />}>
+                    <RefreshCw size={12} class="animate-spin" />
+                  </Show>
+                  {triggering() === job.id ? 'Running…' : 'Run now'}
+                </button>
+              </div>
             </div>
           )}
         </For>
       </div>
+
+      <Show when={editingJob()}>
+        {(job) => (
+          <EditJobModal
+            job={job()}
+            onClose={() => setEditingJob(null)}
+            onSave={refetchJobs}
+          />
+        )}
+      </Show>
     </div>
   );
 }

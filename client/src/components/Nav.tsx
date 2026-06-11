@@ -1,8 +1,8 @@
 import { A } from '@solidjs/router';
-import { Show } from 'solid-js';
+import { Show, createSignal } from 'solid-js';
 import {
   CalendarDays, CheckSquare, Inbox, Tag, Settings, Activity,
-  Sun,
+  Sun, Moon,
 } from 'lucide-solid';
 import { possibles } from '../stores/index.js';
 
@@ -78,6 +78,42 @@ export function Nav() {
           </Show>
         </A>
       ))}
+
+      {/* Theme Toggler at bottom of nav */}
+      <div class="mt-auto pt-4 border-t border-surface-700/30">
+        <button
+          onClick={toggleTheme}
+          class="nav-item justify-start text-ci-1/60 hover:text-ci-1 hover:bg-surface-700 w-full"
+        >
+          <Show when={theme() === 'dark'} fallback={
+            <>
+              <Moon size={15} class="flex-shrink-0" />
+              <span>Dark Mode</span>
+            </>
+          }>
+            <>
+              <Sun size={15} class="flex-shrink-0" />
+              <span>Light Mode</span>
+            </>
+          </Show>
+        </button>
+      </div>
     </nav>
   );
 }
+
+const [theme, setTheme] = createSignal(localStorage.getItem('theme') || 'dark');
+
+function toggleTheme() {
+  const next = theme() === 'dark' ? 'light' : 'dark';
+  setTheme(next);
+  localStorage.setItem('theme', next);
+  if (next === 'light') {
+    document.documentElement.classList.add('light');
+    document.documentElement.classList.remove('dark');
+  } else {
+    document.documentElement.classList.add('dark');
+    document.documentElement.classList.remove('light');
+  }
+}
+

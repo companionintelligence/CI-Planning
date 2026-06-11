@@ -1,0 +1,22 @@
+{
+  "name": "Companion Planning",
+  "short_name": "Companion",
+  "description": "Private local-first planning and AI time-blocking",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070d11",
+  "theme_color": "#070d11",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}

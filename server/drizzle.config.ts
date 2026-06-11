@@ -1,9 +1,12 @@
 import { defineConfig } from 'drizzle-kit';
-import { config } from './src/lib/config.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+const dbPath = process.env.DB_PATH ?? join(homedir(), 'Library', 'Application Support', 'CompanionPlanning', 'companion.db');
 
 export default defineConfig({
   schema: './src/db/schema.ts',
   out: './drizzle',
   dialect: 'sqlite',
-  dbCredentials: { url: config.dbPath },
+  dbCredentials: { url: dbPath },
 });
