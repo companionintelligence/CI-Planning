@@ -2,6 +2,7 @@ import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2 } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
 import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
+import { renderMarkdown } from '../lib/markdown.js';
 
 const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
 const statusClass: Record<string, string> = {
@@ -22,6 +23,20 @@ export function TaskCard(props: Props) {
   const p = () => Math.min(Math.max(props.task.priority, 1), 5);
   const [showSubs, setShowSubs] = createSignal(false);
   const [subsFetched, setSubsFetched] = createSignal(false);
+  const [isNotesExpanded, setIsNotesExpanded] = createSignal(false);
+  const [isEditingNotes, setIsEditingNotes] = createSignal(false);
+  const [notesText, setNotesText] = createSignal(props.task.notes ?? props.task.description ?? '');
+
+  async function saveNotes() {
+    try {
+      await api.tasks.update(props.task.id, { notes: notesText() });
+      showToast('Notes updated', 'success');
+      setIsEditingNotes(false);
+      refetchTasks();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
 
   const [subtasks, { refetch: refetchSubs }] = createResource(
     () => (showSubs() && subsFetched() ? props.task.id : null),
@@ -101,9 +116,42 @@ export function TaskCard(props: Props) {
           </div>
 
           <Show when={props.task.notes || props.task.description}>
-            <p class="text-xs text-ci-1/60 mt-1 ml-4 line-clamp-2">
-              {props.task.notes ?? props.task.description}
-            </p>
+            <Show when={isNotesExpanded()} fallback={
+              <p 
+                class="text-xs text-ci-1/60 mt-1 ml-4 line-clamp-2 cursor-pointer hover:text-ci-1/80 transition-colors duration-150 select-none"
+                onClick={() => setIsNotesExpanded(true)}
+                title="Click to view full notes"
+              >
+                {props.task.notes ?? props.task.description}
+              </p>
+            }>
+              <Show when={isEditingNotes()} fallback={
+                <div class="mt-2 ml-4">
+                  <div 
+                    class="text-xs text-ci-1/80 leading-relaxed border-l-2 border-surface-700/50 pl-3 py-0.5 space-y-1.5"
+                    innerHTML={renderMarkdown(props.task.notes ?? props.task.description ?? '')}
+                  />
+                  <div class="mt-2 flex gap-3 text-[11px]">
+                    <button class="text-accent-light hover:underline font-semibold" onClick={() => setIsEditingNotes(true)}>Edit notes</button>
+                    <button class="text-ci-1/50 hover:text-ci-1 hover:underline" onClick={() => setIsNotesExpanded(false)}>Collapse</button>
+                  </div>
+                </div>
+              }>
+                <div class="mt-2 ml-4 flex flex-col gap-2">
+                  <textarea
+                    class="textarea text-xs font-mono w-full min-h-[120px] bg-surface-900 border-surface-700"
+                    value={notesText()}
+                    onInput={(e) => setNotesText(e.currentTarget.value)}
+                    placeholder="Markdown notes..."
+                    autofocus
+                  />
+                  <div class="flex gap-2 justify-end">
+                    <button class="btn-primary py-1 px-3 text-xs" onClick={saveNotes}>Save</button>
+                    <button class="btn-secondary py-1 px-3 text-xs" onClick={() => { setIsEditingNotes(false); setNotesText(props.task.notes ?? props.task.description ?? ''); }}>Cancel</button>
+                  </div>
+                </div>
+              </Show>
+            </Show>
           </Show>
 
           <Show when={props.task.tags.length > 0}>

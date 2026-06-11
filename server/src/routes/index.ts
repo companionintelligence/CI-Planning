@@ -9,6 +9,8 @@ import { scheduleRouter } from './schedule.js';
 import { summaryRouter } from './summary.js';
 import { llmRouter } from './llm.js';
 import { sseRouter } from './sse.js';
+import { mcpRouter } from './mcp.js';
+import { calendarRouter } from './calendar.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -22,6 +24,8 @@ export function mountRoutes(app: Koa) {
     scheduleRouter(),
     summaryRouter(),
     llmRouter(),
+    mcpRouter(),
+    calendarRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

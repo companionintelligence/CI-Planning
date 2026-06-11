@@ -6,6 +6,7 @@
     "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter client dev\"",
     "build": "pnpm --filter client build",
     "start": "pnpm build && pnpm --filter server start",
+    "mcp": "pnpm --filter server mcp",
     "typecheck": "pnpm --filter server typecheck",
     "test": "pnpm --filter server test",
     "seed": "pnpm --filter server seed",
