@@ -6,6 +6,10 @@
   * { box-sizing: border-box; }
   :root { color-scheme: dark; }
   body { min-height: 100vh; }
+  h1 {
+    font-family: 'Abel', 'Source Code Pro', sans-serif;
+    @apply tracking-wide text-ci-1;
+  }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #1a3040; border-radius: 2px; }
@@ -37,24 +41,24 @@
     background: transparent;
   }
   .btn-ghost {
-    @apply btn text-slate-400;
+    @apply btn text-ci-1/80;
   }
   .btn-danger {
     @apply btn text-red-400;
   }
   .btn-icon {
-    @apply btn text-slate-400 p-1.5 rounded-md;
+    @apply btn text-ci-1/80 p-1.5 rounded-md;
   }
 
   /* ── Cards ───────────────────────────────────────────────────── */
   .card {
-    @apply bg-surface-800 border border-surface-700 rounded-2xl p-4;
+    @apply bg-surface-800 border border-surface-700 rounded-2xl p-4 transition-all duration-200 ease-out;
   }
 
   /* ── Inputs ──────────────────────────────────────────────────── */
   .input {
     @apply bg-surface-700 border border-surface-600 rounded-xl px-3 py-1.5 text-sm
-           text-slate-100 placeholder-slate-500
+           text-ci-1 placeholder-ci-1/30
            focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent
            transition-colors duration-150 w-full;
     font-family: 'Source Code Pro', monospace;
@@ -64,7 +68,7 @@
 
   /* ── Badges ──────────────────────────────────────────────────── */
   .badge         { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium tracking-wide; }
-  .badge-neutral { @apply badge bg-surface-700 text-slate-400; }
+  .badge-neutral { @apply badge bg-surface-700 text-ci-1/70; }
   .badge-accent  { @apply badge bg-accent/20 text-accent-light; }
   .badge-green   { @apply badge text-ci-3; background: rgba(88,235,191,.12); }
   .badge-yellow  { @apply badge bg-yellow-900/40 text-yellow-400; }
@@ -83,7 +87,7 @@
   .toast {
     @apply fixed bottom-4 right-4 z-50 flex items-center gap-2.5
            px-4 py-3 rounded-2xl text-sm font-medium shadow-xl
-           border text-slate-100;
+           border text-ci-1;
     background: rgba(15,30,46,.97);
     border-color: #1a3040;
     backdrop-filter: blur(12px);
@@ -128,8 +132,8 @@
   /* ── Nav ─────────────────────────────────────────────────────── */
   .nav-item {
     @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium
-           text-slate-500 hover:text-ci-1 hover:bg-surface-700
-           transition-all duration-100 cursor-pointer select-none;
+           text-ci-1/60 hover:text-ci-1 hover:bg-surface-700
+           transition-all duration-150 cursor-pointer select-none;
     letter-spacing: .02em;
   }
   .nav-item-active {
@@ -159,13 +163,22 @@
 /* ── Hover overrides (outside @layer to avoid @apply nesting limit) ── */
 .btn-primary:hover  { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 4px 16px rgba(88,235,191,.3); }
 .btn-secondary:hover { background: rgba(64,155,155,.1); border-color: #58ebbf; color: #82ffe1; }
-.btn-ghost:hover    { color: #ABD4D8; background-color: rgba(21,38,55,.6); }
-.btn-icon:hover     { color: #ABD4D8; background-color: rgba(21,38,55,.6); }
+.btn-ghost:hover    { color: #82ffe1; background-color: rgba(21,38,55,.6); }
+.btn-icon:hover     { color: #82ffe1; background-color: rgba(21,38,55,.6); }
 .btn-danger:hover   { background-color: rgba(127,29,29,.3); color: #fca5a5; }
-.card-hover:hover   { border-color: #244859; box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
+.card-hover:hover   { border-color: #409b9b; box-shadow: 0 4px 20px rgba(88,235,191,.15); transform: translateY(-2px); }
 .fab:hover          { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 12px 32px rgba(88,235,191,.4); transform: scale(1.03) translateY(-1px); }
 .checkbox:hover     { border-color: #409b9b; }
 .nav-item-active    { border-left: 2px solid #58ebbf; }
+
+/* Scroll reveal utility class */
+.scroll-reveal {
+  animation: scrollReveal 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes scrollReveal {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 /* CI glow effect on focused inputs */
 .input:focus { box-shadow: 0 0 0 2px rgba(88,235,191,.25); }

@@ -4,7 +4,7 @@ import { possibles, refetchPossibles, refetchTasks, showToast } from '../stores/
 import { api, type Possible } from '../lib/api.js';
 
 const confColor = (c?: number) =>
-  !c ? 'text-slate-500' : c >= 0.8 ? 'text-green-400' : c >= 0.5 ? 'text-yellow-400' : 'text-orange-400';
+  !c ? 'text-ci-1/60' : c >= 0.8 ? 'text-green-400' : c >= 0.5 ? 'text-yellow-400' : 'text-orange-400';
 
 function PossibleCard(props: { possible: Possible; onAction: () => void }) {
   const [loading, setLoading] = createSignal<'promote' | 'dismiss' | null>(null);
@@ -35,21 +35,21 @@ function PossibleCard(props: { possible: Possible; onAction: () => void }) {
     <div class="card hover:border-surface-600 transition-colors">
       <div class="flex items-start gap-4">
         <div class="flex-1 min-w-0">
-          <div class="text-sm font-medium text-slate-200 leading-snug">{props.possible.raw_title}</div>
+          <div class="text-sm font-medium text-ci-1 leading-snug">{props.possible.raw_title}</div>
           <Show when={props.possible.raw_summary}>
-            <p class="text-xs text-slate-500 mt-1 line-clamp-2">{props.possible.raw_summary}</p>
+            <p class="text-xs text-ci-1/60 mt-1 line-clamp-2">{props.possible.raw_summary}</p>
           </Show>
           <div class="flex flex-wrap gap-2 mt-2 items-center">
             <Show when={props.possible.source_kind}>
               <span class="badge-neutral capitalize">{props.possible.source_kind}</span>
             </Show>
             <Show when={props.possible.proposed_due_at}>
-              <span class="text-xs text-slate-500">
+              <span class="text-xs text-ci-1/60">
                 Due {new Date(props.possible.proposed_due_at!).toLocaleDateString()}
               </span>
             </Show>
             <Show when={props.possible.proposed_priority}>
-              <span class="text-xs text-slate-500">P{props.possible.proposed_priority}</span>
+              <span class="text-xs text-ci-1/60">P{props.possible.proposed_priority}</span>
             </Show>
             <Show when={props.possible.confidence !== undefined}>
               <span class={`font-mono text-xs ${confColor(props.possible.confidence)}`}>
@@ -108,8 +108,8 @@ export function Inbox() {
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
       <div class="flex items-center justify-between mb-5">
         <div>
-          <h1 class="text-2xl font-bold text-slate-100">Inbox</h1>
-          <p class="text-slate-500 text-sm mt-0.5">AI-proposed tasks — <kbd class="badge-neutral">P</kbd> promote · <kbd class="badge-neutral">D</kbd> dismiss</p>
+          <h1 class="text-2xl font-heading font-bold text-ci-1 tracking-wide">Inbox</h1>
+          <p class="text-ci-1/60 text-sm mt-0.5">AI-proposed tasks — <kbd class="badge-neutral">P</kbd> promote · <kbd class="badge-neutral">D</kbd> dismiss</p>
         </div>
         <Show when={pending().length > 0}>
           <span class="badge-accent text-sm px-3 py-1">{pending().length} pending</span>
@@ -117,10 +117,10 @@ export function Inbox() {
       </div>
 
       <Show when={pending().length > 0} fallback={
-        <div class="card text-center py-16 flex flex-col items-center gap-3">
-          <InboxIcon size={36} class="text-slate-600" />
-          <div class="text-slate-400 font-medium">Inbox zero</div>
-          <p class="text-xs text-slate-600 max-w-xs">
+        <div class="card text-center py-16 flex flex-col items-center gap-3 scroll-reveal">
+          <InboxIcon size={36} class="text-ci-1/40" />
+          <div class="text-ci-1/80 font-medium">Inbox zero</div>
+          <p class="text-xs text-ci-1/50 max-w-xs">
             Suggestions appear here after the Gmail/Calendar ingestion jobs run.
           </p>
         </div>

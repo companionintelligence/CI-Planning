@@ -10,7 +10,7 @@ interface Props {
 }
 
 const priorityLabels = ['', 'Urgent', 'High', 'Normal', 'Low', 'Someday'];
-const priorityColors = ['', 'text-red-400', 'text-orange-400', 'text-yellow-400', 'text-blue-400', 'text-slate-400'];
+const priorityColors = ['', 'text-red-400', 'text-orange-400', 'text-yellow-400', 'text-blue-400', 'text-ci-1/60'];
 
 export function TaskForm(props: Props) {
   const isEdit = () => !!props.editTask;
@@ -118,7 +118,7 @@ export function TaskForm(props: Props) {
             <button
               type="button"
               onClick={() => setExpanded(true)}
-              class="btn-ghost text-xs self-start -mt-1 text-slate-500"
+              class="btn-ghost text-xs self-start -mt-1 text-ci-1/60"
             >
               <Plus size={13} /> More options
             </button>
@@ -128,19 +128,19 @@ export function TaskForm(props: Props) {
           <Show when={expanded()}>
             <div class="flex gap-3">
               <label class="flex flex-col gap-1.5 flex-1">
-                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                <span class="flex items-center gap-1.5 text-xs text-ci-1/60">
                   <Calendar size={11} /> Due date
                 </span>
                 <input type="date" class="input" value={dueAt()} onInput={(e) => setDueAt(e.currentTarget.value)} />
               </label>
               <label class="flex flex-col gap-1.5 flex-1">
-                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                <span class="flex items-center gap-1.5 text-xs text-ci-1/60">
                   <Clock size={11} /> Task time
                 </span>
                 <input type="time" class="input" value={taskTime()} onInput={(e) => setTaskTime(e.currentTarget.value)} />
               </label>
               <label class="flex flex-col gap-1.5 w-28">
-                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                <span class="flex items-center gap-1.5 text-xs text-ci-1/60">
                   <Timer size={11} /> Est. min
                 </span>
                 <input
@@ -153,7 +153,7 @@ export function TaskForm(props: Props) {
             </div>
 
             <label class="flex flex-col gap-1.5">
-              <span class="flex items-center gap-1.5 text-xs text-slate-500">
+              <span class="flex items-center gap-1.5 text-xs text-ci-1/60">
                 <AlignLeft size={11} /> Notes
               </span>
               <textarea
@@ -165,7 +165,7 @@ export function TaskForm(props: Props) {
             </label>
 
             <label class="flex flex-col gap-1.5">
-              <span class="flex items-center gap-1.5 text-xs text-slate-500">
+              <span class="flex items-center gap-1.5 text-xs text-ci-1/60">
                 <Tag size={11} /> Tags (comma-separated)
               </span>
               <input

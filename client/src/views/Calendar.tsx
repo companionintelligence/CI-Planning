@@ -50,7 +50,7 @@ export function Calendar() {
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
       <div class="flex items-center justify-between mb-5">
-        <h1 class="text-2xl font-bold text-slate-100">Calendar</h1>
+        <h1 class="text-2xl font-heading font-bold text-ci-1 tracking-wide">Calendar</h1>
         <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
           <Zap size={14} />
           {runningSchedule() ? 'Scheduling…' : 'Schedule Day'}
@@ -75,7 +75,7 @@ export function Calendar() {
                       ? 'bg-accent text-white shadow-sm shadow-accent/20'
                       : isToday
                         ? 'text-accent-light font-semibold hover:bg-surface-700'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-surface-700'}`}
+                        : 'text-ci-1/60 hover:text-ci-1 hover:bg-surface-700'}`}
                 >
                   {label}
                 </button>
@@ -88,7 +88,7 @@ export function Calendar() {
 
       {/* Block list */}
       <Show when={dayBlocks().length > 0} fallback={
-        <div class="card text-center text-slate-500 py-12 text-sm">
+        <div class="card text-center text-ci-1/60 py-12 text-sm scroll-reveal">
           No blocks on {new Date(selectedDate() + 'T12:00:00Z')
             .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.
         </div>

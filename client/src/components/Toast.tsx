@@ -15,7 +15,7 @@ export function ToastContainer() {
           >
             {t.kind === 'success' ? <CheckCircle size={15} class="text-green-400 flex-shrink-0" /> :
              t.kind === 'error'   ? <XCircle     size={15} class="text-red-400 flex-shrink-0"   /> :
-                                    <Info        size={15} class="text-slate-400 flex-shrink-0" />}
+                                    <Info        size={15} class="text-ci-1/60 flex-shrink-0" />}
             {t.message}
           </div>
         )}

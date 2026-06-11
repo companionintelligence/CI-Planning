@@ -5,10 +5,10 @@ import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
 
 const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
 const statusClass: Record<string, string> = {
-  open:      'text-slate-200',
-  done:      'text-slate-500 line-through',
+  open:      'text-ci-1',
+  done:      'text-ci-1/40 line-through',
   scheduled: 'text-blue-300',
-  cancelled: 'text-slate-600 line-through',
+  cancelled: 'text-ci-1/30 line-through',
   deferred:  'text-yellow-500',
 };
 
@@ -57,15 +57,15 @@ export function TaskCard(props: Props) {
     const d = new Date(props.task.due_at);
     const isOverdue = d < new Date() && props.task.status !== 'done';
     return (
-      <span class={`font-mono text-xs ${isOverdue ? 'text-red-400' : 'text-slate-500'}`}>
+      <span class={`font-mono text-xs ${isOverdue ? 'text-red-400' : 'text-ci-1/60'}`}>
         {d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-        {props.task.task_time && <span class="ml-1 text-slate-600">{props.task.task_time}</span>}
+        {props.task.task_time && <span class="ml-1 text-ci-1/40">{props.task.task_time}</span>}
       </span>
     );
   };
 
   const est = () => props.task.estimated_minutes
-    ? <span class="text-xs font-mono text-slate-600">{props.task.estimated_minutes}m</span>
+    ? <span class="text-xs font-mono text-ci-1/50">{props.task.estimated_minutes}m</span>
     : null;
 
   return (
@@ -93,7 +93,7 @@ export function TaskCard(props: Props) {
         <div class="flex-1 min-w-0">
           <div class="flex items-start gap-2">
             <span class={`priority-dot mt-[5px] ${priorityDot[p()]}`} />
-            <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
+            <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-ci-1'}`}>
               {props.task.title}
             </span>
             {dueLabel()}
@@ -101,7 +101,7 @@ export function TaskCard(props: Props) {
           </div>
 
           <Show when={props.task.notes || props.task.description}>
-            <p class="text-xs text-slate-500 mt-1 ml-4 line-clamp-2">
+            <p class="text-xs text-ci-1/60 mt-1 ml-4 line-clamp-2">
               {props.task.notes ?? props.task.description}
             </p>
           </Show>
@@ -146,13 +146,13 @@ export function TaskCard(props: Props) {
       <Show when={showSubs()}>
         <div class="animate-slide-down">
           <Show when={subtasks.loading}>
-            <div class="pl-6 py-2 text-xs text-slate-500 animate-pulse2">Loading subtasks…</div>
+            <div class="pl-6 py-2 text-xs text-ci-1/60 animate-pulse2">Loading subtasks…</div>
           </Show>
           <For each={subtasks()}>
             {(sub) => <TaskCard task={sub} depth={(depth()) + 1} />}
           </For>
           <Show when={(subtasks()?.length ?? 0) === 0 && !subtasks.loading}>
-            <div class="pl-6 py-1.5 text-xs text-slate-600 italic">No subtasks yet</div>
+            <div class="pl-6 py-1.5 text-xs text-ci-1/40 italic">No subtasks yet</div>
           </Show>
         </div>
       </Show>

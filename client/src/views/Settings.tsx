@@ -39,7 +39,7 @@ export function Settings() {
 
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-2xl mx-auto w-full">
-      <h1 class="text-2xl font-bold text-slate-100 mb-6">Settings</h1>
+      <h1 class="text-2xl font-heading font-bold text-ci-1 tracking-wide mb-6">Settings</h1>
 
       <form onSubmit={save} class="flex flex-col gap-5">
         {/* Planning mode */}
@@ -59,8 +59,8 @@ export function Settings() {
                   onChange={() => setField('planning_mode', mode)}
                 />
                 <span class="text-2xl">{mode === 'auto' ? '⚡' : '🌅'}</span>
-                <span class="text-sm font-semibold text-slate-200 capitalize">{mode}</span>
-                <span class="text-xs text-slate-500 text-center leading-snug">
+                <span class="text-sm font-semibold text-ci-1 capitalize">{mode}</span>
+                <span class="text-xs text-ci-1/60 text-center leading-snug">
                   {mode === 'auto' ? 'AI plans your day automatically' : 'Guided morning ritual'}
                 </span>
               </label>
@@ -73,12 +73,12 @@ export function Settings() {
           <div class="section-label mb-3">Work Hours</div>
           <div class="flex gap-4">
             <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">Start</span>
+              <span class="text-xs text-ci-1/60">Start</span>
               <input type="time" class="input" value={form().workday_start}
                 onInput={e => setField('workday_start', e.currentTarget.value)} />
             </label>
             <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">End</span>
+              <span class="text-xs text-ci-1/60">End</span>
               <input type="time" class="input" value={form().workday_end}
                 onInput={e => setField('workday_end', e.currentTarget.value)} />
             </label>
@@ -90,13 +90,13 @@ export function Settings() {
           <div class="section-label mb-3">Block Settings</div>
           <div class="flex gap-4">
             <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">Max focus block (minutes)</span>
+              <span class="text-xs text-ci-1/60">Max focus block (minutes)</span>
               <input type="number" class="input" min={15} max={240} step={15}
                 value={form().max_focus_block_minutes}
                 onInput={e => setField('max_focus_block_minutes', Number(e.currentTarget.value))} />
             </label>
             <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">Min break (minutes)</span>
+              <span class="text-xs text-ci-1/60">Min break (minutes)</span>
               <input type="number" class="input" min={0} max={60} step={5}
                 value={form().min_break_minutes}
                 onInput={e => setField('min_break_minutes', Number(e.currentTarget.value))} />
@@ -107,19 +107,19 @@ export function Settings() {
         {/* Integrations */}
         <section class="card">
           <div class="section-label mb-3">Integrations</div>
-          <Show when={integrations()} fallback={<div class="text-xs text-slate-500 animate-pulse2">Checking…</div>}>
+          <Show when={integrations()} fallback={<div class="text-xs text-ci-1/60 animate-pulse2">Checking…</div>}>
             {(i) => (
               <div class="flex flex-col gap-3">
                 <div class="flex items-center gap-3">
                   <Cpu size={16} class={i().ollama.available ? 'text-green-400' : 'text-red-400'} />
                   <div class="flex-1">
-                    <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
+                    <div class="text-sm text-ci-1 font-medium flex items-center gap-2">
                       Ollama
                       {i().ollama.available
                         ? <CheckCircle2 size={13} class="text-green-400" />
                         : <XCircle size={13} class="text-red-400" />}
                     </div>
-                    <div class="text-xs text-slate-500 mt-0.5">
+                    <div class="text-xs text-ci-1/60 mt-0.5">
                       {i().ollama.available
                         ? `${i().ollama.models.length} models · small: ${i().ollama.smallModel} · medium: ${i().ollama.mediumModel}`
                         : 'Unavailable — start Ollama on localhost:11434'}
@@ -129,8 +129,8 @@ export function Settings() {
                 <div class="flex items-center gap-3">
                   <Globe size={16} class="text-blue-400" />
                   <div class="flex-1">
-                    <div class="text-sm text-slate-200 font-medium">Google MCP</div>
-                    <div class="text-xs text-slate-500 mt-0.5 capitalize">
+                    <div class="text-sm text-ci-1 font-medium">Google MCP</div>
+                    <div class="text-xs text-ci-1/60 mt-0.5 capitalize">
                       Mode: {i().google.mode} · Gmail + Google Calendar
                     </div>
                   </div>

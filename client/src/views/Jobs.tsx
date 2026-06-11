@@ -12,7 +12,7 @@ function statusIcon(s?: string) {
   if (s === 'done')    return <CheckCircle2 size={13} class="text-green-400" />;
   if (s === 'error')   return <XCircle      size={13} class="text-red-400" />;
   if (s === 'running') return <RefreshCw    size={13} class="text-yellow-400 animate-spin" />;
-  return <Clock size={13} class="text-slate-500" />;
+  return <Clock size={13} class="text-ci-1/50" />;
 }
 
 export function Jobs() {
@@ -33,7 +33,7 @@ export function Jobs() {
 
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
-      <h1 class="text-2xl font-bold text-slate-100 mb-5">Scheduled Jobs</h1>
+      <h1 class="text-2xl font-heading font-bold text-ci-1 tracking-wide mb-5">Scheduled Jobs</h1>
 
       <div class="flex flex-col gap-3">
         <For each={jobs()}>
@@ -41,17 +41,17 @@ export function Jobs() {
             <div class="card flex items-center gap-4">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <span class="text-sm font-semibold text-slate-200">{job.name}</span>
+                  <span class="text-sm font-semibold text-ci-1">{job.name}</span>
                   <span class={job.enabled ? 'badge-green' : 'badge-neutral'}>
                     {job.enabled ? 'active' : 'disabled'}
                   </span>
                   <Show when={job.last_status}>
-                    <span class="flex items-center gap-1 text-xs text-slate-400">
+                    <span class="flex items-center gap-1 text-xs text-ci-1/60">
                       {statusIcon(job.last_status)} {job.last_status}
                     </span>
                   </Show>
                 </div>
-                <div class="flex gap-4 mt-1 text-xs text-slate-500 flex-wrap">
+                <div class="flex gap-4 mt-1 text-xs text-ci-1/50 flex-wrap">
                   <span class="font-mono bg-surface-700 px-1.5 py-0.5 rounded text-[11px]">{job.cron}</span>
                   <span>Last run: {fmtDate(job.last_started)}</span>
                   <Show when={job.items_created}>

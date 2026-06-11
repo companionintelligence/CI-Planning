@@ -15,8 +15,8 @@ export function AllTasks() {
       {/* Header */}
       <div class="flex items-center justify-between mb-5">
         <div>
-          <h1 class="text-2xl font-bold text-slate-100">Tasks</h1>
-          <p class="text-slate-500 text-sm mt-0.5">{activeTaskCount()} open</p>
+          <h1 class="text-2xl font-heading font-bold text-ci-1 tracking-wide">Tasks</h1>
+          <p class="text-ci-1/60 text-sm mt-0.5">{activeTaskCount()} open</p>
         </div>
         <button onClick={() => setShowFilters(v => !v)} class="btn-secondary gap-2">
           <SlidersHorizontal size={14} /> Filters
@@ -27,7 +27,7 @@ export function AllTasks() {
       <Show when={showFilters()}>
         <div class="card mb-4 flex gap-2 flex-wrap animate-slide-down">
           <div class="flex-1 min-w-36 relative">
-            <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+            <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-ci-1/50 pointer-events-none" />
             <input
               class="input pl-8"
               placeholder="Search…"
@@ -64,7 +64,7 @@ export function AllTasks() {
       {/* Task list */}
       <div class="flex flex-col gap-2">
         <Show when={(tasks() ?? []).filter(t => !t.parent_id).length > 0} fallback={
-          <div class="card text-center text-slate-500 py-12 text-sm">No tasks found.</div>
+          <div class="card text-center text-ci-1/60 py-12 text-sm scroll-reveal">No tasks found.</div>
         }>
           <For each={(tasks() ?? []).filter(t => !t.parent_id)}>
             {(task) => <TaskCard task={task} />}

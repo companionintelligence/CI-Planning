@@ -1,4 +1,4 @@
-import { Route, Router } from '@solidjs/router';
+import { Route, Router, useLocation } from '@solidjs/router';
 import { Show } from 'solid-js';
 import { Plus } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
@@ -14,12 +14,31 @@ import { Jobs }     from './views/Jobs.js';
 import { taskModal, setTaskModal } from './stores/index.js';
 
 function Shell(props: { children?: any }) {
+  const location = useLocation();
+
+  const viewName = () => {
+    const p = location.pathname;
+    if (p === '/') return 'today';
+    if (p === '/calendar') return 'calendar';
+    if (p === '/inbox') return 'inbox';
+    if (p === '/tasks') return 'tasks';
+    if (p === '/tags') return 'tags';
+    if (p === '/jobs') return 'jobs';
+    if (p === '/settings') return 'settings';
+    return '';
+  };
+
   return (
     <div class="flex h-screen overflow-hidden bg-surface-950">
       <Nav />
       <main class="flex-1 flex flex-col overflow-hidden relative">
         {/* Top bar */}
         <div class="flex-shrink-0 h-11 border-b border-surface-700/40 flex items-center px-6 gap-3 bg-surface-900/50">
+          <div class="text-xs font-mono tracking-wider flex items-center gap-1.5 select-none">
+            <span style={{ color: '#244859' }}>companion</span>
+            <span style={{ color: '#1a3040' }}>/</span>
+            <span class="text-ci-1 font-heading font-semibold">{viewName()}</span>
+          </div>
           <div class="flex-1" />
           <span class="text-xs font-mono" style={{ color: '#244859' }}>
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}

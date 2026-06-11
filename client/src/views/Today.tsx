@@ -44,8 +44,8 @@ export function Today() {
       {/* Header */}
       <div class="flex items-start justify-between mb-6">
         <div>
-          <h1 class="text-2xl font-bold text-slate-100">Today</h1>
-          <p class="text-slate-500 text-sm mt-0.5">{today}</p>
+          <h1 class="text-2xl font-heading font-bold text-ci-1 tracking-wide">Today</h1>
+          <p class="text-ci-1/60 text-sm mt-0.5">{today}</p>
         </div>
         <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
           <Zap size={14} />
@@ -56,13 +56,13 @@ export function Today() {
       {/* AI Summary card */}
       <Show when={summary()}>
         {(s) => (
-          <div class="card mb-6 border-accent/20 bg-accent/5">
+          <div class="card mb-6 border-accent/20 bg-accent/5 scroll-reveal">
             <div class="flex items-center gap-2 mb-2">
               <Sparkles size={14} class="text-accent-light" />
               <span class="text-xs font-semibold text-accent-light uppercase tracking-wide">
                 {s().llm ? 'AI Briefing' : 'Day Overview'}
               </span>
-              <div class="ml-auto flex gap-3 text-xs text-slate-500">
+              <div class="ml-auto flex gap-3 text-xs text-ci-1/60">
                 <Show when={s().stats.overdue > 0}>
                   <span class="text-red-400 flex items-center gap-1">
                     <AlertCircle size={11} /> {s().stats.overdue} overdue
@@ -76,7 +76,7 @@ export function Today() {
                 </span>
               </div>
             </div>
-            <p class="text-sm text-slate-300 leading-relaxed">{s().prose}</p>
+            <p class="text-sm text-ci-1 leading-relaxed">{s().prose}</p>
           </div>
         )}
       </Show>
@@ -86,8 +86,8 @@ export function Today() {
         <section>
           <div class="section-label">Next Up</div>
           <Show when={upcomingBlocks().length > 0} fallback={
-            <div class="card text-center text-slate-500 py-8 text-sm">
-              No blocks scheduled — hit <strong class="text-slate-300">Auto-schedule</strong>
+            <div class="card text-center text-ci-1/60 py-8 text-sm scroll-reveal">
+              No blocks scheduled — hit <strong class="text-ci-1">Auto-schedule</strong>
             </div>
           }>
             <div class="flex flex-col gap-2">
@@ -102,7 +102,7 @@ export function Today() {
         <section>
           <div class="section-label">Open Tasks</div>
           <Show when={openTasks().length > 0} fallback={
-            <div class="card text-center text-slate-500 py-8 text-sm">
+            <div class="card text-center text-ci-1/60 py-8 text-sm scroll-reveal">
               All clear — no open tasks
             </div>
           }>

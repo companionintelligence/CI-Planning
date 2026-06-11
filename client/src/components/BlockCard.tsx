@@ -51,21 +51,21 @@ export function BlockCard(props: Props) {
     >
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 flex-wrap">
-          <span class="font-mono text-xs text-slate-500 flex-shrink-0">
+          <span class="font-mono text-xs text-ci-1/60 flex-shrink-0">
             {fmtTime(props.block.start_at)}–{fmtTime(props.block.end_at)}
           </span>
           <span class={`badge capitalize ${kindBadgeClass[props.block.block_kind] ?? 'badge-neutral'}`}>
             {props.block.block_kind}
           </span>
           <Show when={props.block.is_locked}>
-            <Lock size={10} class="text-slate-500" />
+            <Lock size={10} class="text-ci-1/60" />
           </Show>
           <Show when={props.block.status === 'overrun'}>
             <span class="badge-yellow"><AlertTriangle size={10} /> overrun</span>
           </Show>
-          <span class="text-xs text-slate-600 ml-auto">{durationMins()}m</span>
+          <span class="text-xs text-ci-1/50 ml-auto">{durationMins()}m</span>
         </div>
-        <div class={`text-sm mt-1 ${done() ? 'text-slate-500' : 'text-slate-200'}`}>
+        <div class={`text-sm mt-1 ${done() ? 'text-ci-1/40' : 'text-ci-1'}`}>
           {props.block.title}
         </div>
       </div>

@@ -30,11 +30,11 @@ export function Tags() {
 
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
-      <h1 class="text-2xl font-bold text-slate-100 mb-5">Tags</h1>
+      <h1 class="text-2xl font-heading font-bold text-ci-1 tracking-wide mb-5">Tags</h1>
 
       <form onSubmit={addTag} class="flex gap-2 mb-8">
         <div class="relative flex-1">
-          <Hash size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+          <Hash size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-ci-1/50 pointer-events-none" />
           <input
             class="input pl-8"
             placeholder="New tag…"
@@ -46,7 +46,7 @@ export function Tags() {
       </form>
 
       <Show when={(tags() ?? []).length > 0} fallback={
-        <div class="card text-center text-slate-500 py-12 text-sm">No tags yet.</div>
+        <div class="card text-center text-ci-1/60 py-12 text-sm scroll-reveal">No tags yet.</div>
       }>
         {/* Word cloud */}
         <div class="flex flex-wrap gap-3 items-center leading-loose mb-8">
@@ -83,7 +83,7 @@ export function Tags() {
                       style={{ width: `${(tag.count / maxCount()) * 100}%` }}
                     />
                   </div>
-                  <span class="text-slate-500 text-xs font-mono w-6 text-right">{tag.count}</span>
+                  <span class="text-ci-1/50 text-xs font-mono w-6 text-right">{tag.count}</span>
                 </div>
               )}
             </For>

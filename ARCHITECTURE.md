@@ -1,8 +1,8 @@
 # Companion Planning — Architecture Plan
-**Status:** Draft v0.2
+**Status:** v0.3 — updated 2026-06-10
 **Owner:** Liam
 **Goal:** Rebuild Companion Planning from scratch on a clean codebase with a sleek modern UI — the best private, local-first life-planning + calendar-management tool, with first-class AI block scheduling.
-> **Changes since v0.1:** Added competitive landscape + positioning, a block-scheduling strategy and engine, `time_blocks` / `scheduling_prefs` schema, the auto-scheduler in the automation pipeline, a Calendar/Timeline frontend view, and seven mermaid diagrams (ER, system, user flow, ingestion sequence, lifecycle, scheduler, roadmap).
+> **Changes since v0.2:** Updated to reflect implementation reality. Corrected tech stack (SolidJS fonts are Source Code Pro + Abel, not Inter + Geist Mono; styling is raw Tailwind CSS, not Kobalte/shadcn-solid). Updated ER diagram with new fields (`notes`, `task_time`, `parent_id` on tasks; `planning_mode` on scheduling_prefs). Documented actual frontend views and component inventory. Added Design System section (§20). Updated roadmap with completion status. Marked resolved open questions.
 ---
 ## 1. Project Overview
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop/desktop, is reachable from any device over Tailscale, stores everything in local SQLite, and uses local LLMs (Ollama) to continuously **ingest, groom, prioritize, and time-block** todos sourced from manual entry, Gmail, and Google Calendar.
@@ -118,8 +118,9 @@ graph TB
 | Layer | Choice | Notes |
 |---|---|---|
 | Frontend | **SolidJS** + Vite | Fine-grained reactivity, small bundle. |
-| Styling | Tailwind + Kobalte / shadcn-solid | Matches CI's minimal, dark-first design. |
-| Calendar UI | custom grid or `@fullcalendar` (Solid wrapper) | Day/week timeline for blocks. |
+| Styling | Tailwind CSS 3 (raw utility classes + custom @layer components) | Dark-only CI brand theme; no component library. |
+| Calendar UI | Custom week-strip + block list | Day timeline grid planned for v2. |
+| Fonts | Source Code Pro + Abel (Google Fonts) | Monospace-first brand; Abel for display headings. |
 | Backend | **Koa.js** (Node 20+) | Minimal async middleware. |
 | DB | **SQLite** via `better-sqlite3` | WAL mode, embedded, zero-ops. |
 | ORM/Migrations | **Drizzle ORM** | Typed schema, SQLite-native. |
@@ -154,10 +155,13 @@ erDiagram
         int id PK
         string title
         text description
+        text notes
         timestamp due_at
+        string task_time
         int estimated_minutes
         int priority "1..5"
         string status
+        int parent_id "FK self-ref"
         int owner_id FK
         string source_kind
         string source_ref
@@ -200,6 +204,7 @@ erDiagram
         int max_focus_block_minutes
         int min_break_minutes
         json day_theme
+        string planning_mode "auto | ritual"
     }
     TAGS {
         int id PK
@@ -398,16 +403,31 @@ stateDiagram-v2
 | Ollama (HTTP) | Local generation + embeddings. | none (localhost). |
 Credentials live in macOS Keychain (or libsecret), never in a committed `.env`. Lock Ollama to `127.0.0.1` and firewall port 11434.
 ---
-## 13. Frontend (SolidJS) — Views
-1. **Today** — single-screen focus; today's blocks + next-up. Auto-mode shows a pre-planned day.
-2. **Calendar / Timeline** — day/week grid of `time_blocks`; drag/resize/lock; meetings shown read-only.
-3. **Inbox / Review** — `possible_tasks` cards; keyboard `P` promote, `D` dismiss, `M` merge.
-4. **All Tasks** — filterable table (status, owner, tag, due).
-5. **Tags** — weighted tag cloud; click to filter.
-6. **Ritual** — optional guided morning planning sequence.
-7. **Jobs** — schedule status, run logs, manual triggers.
-8. **Settings** — scheduling prefs, day themes, MCP connections, model choices, planning mode.
-Design language: modern, minimal, dark-first; Inter / Geist Mono; geometric priority markers consistent with *Date My Day*'s instroke system. SSE drives live updates.
+## 13. Frontend (SolidJS) — Views & Components
+### 13.1 Views (routes)
+| Route | View | Purpose |
+|---|---|---|
+| `/` | **Today** | Single-screen focus; today's blocks + open tasks + AI briefing card. Auto-schedule button. |
+| `/calendar` | **Calendar** | Week strip with day selector; block list per selected day. Schedule-day button. |
+| `/inbox` | **Inbox** | `possible_tasks` cards with promote/dismiss. Keyboard shortcuts: `P` promote, `D` dismiss. Badge count in nav. |
+| `/tasks` | **All Tasks** | Filterable task table (status, tag, search). Inline subtask expansion. |
+| `/tags` | **Tags** | Weighted tag cloud + bar chart; click to filter tasks. |
+| `/jobs` | **Jobs** | Scheduled job list with run status, manual trigger, latest log. |
+| `/settings` | **Settings** | Planning mode (auto/ritual), work hours, block prefs, Ollama + Google MCP integration status. |
+
+### 13.2 Components
+| Component | Purpose |
+|---|---|
+| `Nav` | Sidebar navigation with CI logo, nav links, inbox badge count. |
+| `TaskCard` | Task display with priority dot, subtask toggle, status actions, tag badges. |
+| `BlockCard` | Time block card with kind indicator, time range, status controls. |
+| `TaskForm` | Modal for creating/editing tasks (title, notes, due date, time, priority, tags, parent). |
+| `Toast` | Toast notification container with success/error variants. |
+
+### 13.3 State management
+SolidJS `createSignal` + `createResource` in a central `stores/index.ts`. Resources auto-fetch tasks, blocks, possibles, prefs. SSE via `lib/sse.ts` triggers refetches on server events.
+
+Design language: dark-only, teal-navy surfaces, mint-gradient CTAs; Source Code Pro body + Abel headings; geometric priority dots with glow; CI brand tokens throughout. SSE drives live updates.
 ---
 ## 14. Tagging System
 Many-to-many over `tasks`/`possible_tasks`. Names normalized on insert (lowercase, hyphenated, ≤32 chars). Tags survive promotion (`possible_task_tags` → `task_tags`). Agents may *suggest* tags but only surface them in the queue above a confidence threshold. Batching and day-theming key off tags.
@@ -428,7 +448,7 @@ Many-to-many over `tasks`/`possible_tasks`. Names normalized on insert (lowercas
 ## 17. Open Questions
 1. **Date My Day integration.** Shared SQLite file, a read API CP exposes, or fully independent? *Recommendation:* CP exposes a read API; Date My Day consumes blocks/tasks and owns reflection. **(Needs your call before scaffolding.)**
 2. **Calendar write-back.** Mirror auto-blocks into Google Calendar, or keep CP-internal? Read-only v1; write-back behind a v2 flag.
-3. **Scheduler intelligence split.** How much to deterministic engine vs LLM? Start ~80/20 deterministic; measure.
+3. **Scheduler intelligence split.** **Resolved.** ~95% deterministic; LLM refine pass designed but not yet wired.
 4. **Embeddings model** for dedupe — which Ollama embedding model, and similarity threshold for "duplicate"?
 5. **Multi-owner.** Schema supports it; v1 stays single-user (Liam).
 ---
@@ -439,21 +459,21 @@ gantt
     dateFormat YYYY-MM-DD
     axisFormat %b %d
     section Phase 0 · Skeleton
-    Scaffold Koa+Solid+Tailwind   :p0a, 2026-06-02, 3d
-    Drizzle schema + migrations    :p0b, after p0a, 2d
+    Scaffold Koa+Solid+Tailwind   :done, p0a, 2026-06-02, 3d
+    Drizzle schema + migrations    :done, p0b, after p0a, 2d
     section Phase 1 · Manual Todos
-    Task/owner/tag CRUD + UI       :p1a, after p0b, 5d
-    Today / All Tasks / Tags views :p1b, after p1a, 2d
-    Tailscale access from iPhone   :p1c, after p1b, 1d
+    Task/owner/tag CRUD + UI       :done, p1a, after p0b, 5d
+    Today / All Tasks / Tags views :done, p1b, after p1a, 2d
+    Tailscale access from iPhone   :done, p1c, after p1b, 1d
     section Phase 2 · Ingestion
-    Gmail + GCal MCP clients       :p2a, after p1c, 4d
-    possible_tasks + review queue  :p2b, after p2a, 3d
+    Gmail + GCal MCP clients       :active, p2a, after p1c, 4d
+    possible_tasks + review queue  :done, p2b, after p2a, 3d
     section Phase 3 · Grooming
-    Embedding dedupe (sqlite-vec)  :p3a, after p2b, 3d
-    Nightly grooming agent         :p3b, after p3a, 3d
+    Embedding dedupe (sqlite-vec)  :done, p3a, after p2b, 3d
+    Nightly grooming agent         :active, p3b, after p3a, 3d
     section Phase 4 · Block Scheduling
-    time_blocks + Calendar view    :p4a, after p3b, 4d
-    Deterministic scheduler engine :p4b, after p4a, 4d
+    time_blocks + Calendar view    :done, p4a, after p3b, 4d
+    Deterministic scheduler engine :done, p4b, after p4a, 4d
     Reactive reflow + LLM refine   :p4c, after p4b, 3d
     section Phase 5 · Polish
     PWA + SSE + shortcuts          :p5a, after p4c, 3d
@@ -470,3 +490,37 @@ gantt
 - Working name: **Companion Planning** (replaces the previous codebase).
 - New clean repo under the `companion-intelligence` org; archive or repurpose `ai-todo-static` as the static dashboard front.
 - Tagline candidates: *"Your inbox becomes your plan, privately."* / *"Own your day. Literally."*
+
+---
+## 20. Design System — CI Brand
+The frontend implements the CI (Companion Intelligence) brand language: a dark-only, teal-navy palette with neon-mint accents.
+
+### 20.1 Color tokens (Tailwind)
+| Token | Hex | Usage |
+|---|---|---|
+| `ci-3` | `#58ebbf` | **Primary CTA** — button gradients, checked states, FAB |
+| `ci-4` | `#409b9b` | **Interactive accent** — borders, rings, badges, section labels |
+| `ci-1` | `#ABD4D8` | **Text accent** — light teal for emphasis |
+| `ci-9` | `#82ffe1` | **Neon glow** — hover highlights, active nav text-shadow |
+| `ci-10` | `#244859` | **Dark navy-teal** — checkbox borders, muted UI |
+| `surface-950` | `#070d11` | Page background |
+| `surface-900` | `#0a1520` | Nav/top bar background |
+| `surface-800` | `#0f1e2e` | Card/modal background |
+| `surface-700` | `#152637` | Input background, hover states |
+| `surface-600` | `#1a3040` | Input borders, scrollbar thumb |
+
+### 20.2 Typography
+- **Body / UI:** Source Code Pro 400–600 (monospace-first brand)
+- **Headings:** Abel 400 with `tracking-wide` (geometric display)
+- Both loaded via Google Fonts in `index.html`.
+
+### 20.3 Component classes
+Defined as `@layer components` in `index.css`:
+`btn`, `btn-primary`, `btn-secondary`, `btn-ghost`, `btn-danger`, `btn-icon`, `card`, `input`, `input-lg`, `textarea`, `badge-*` (neutral, accent, green, yellow, red, blue), `priority-dot` (p1–p5), `toast`, `modal`, `fab`, `nav-item`, `section-label`, `checkbox`.
+
+### 20.4 Signature effects
+- **Mint gradient:** `linear-gradient(135deg, #58ebbf, #409b9b)` on primary buttons, FAB, checked checkbox.
+- **CI glow:** `box-shadow: 0 0 20px -4px rgba(88,235,191,.35)` on hover cards, active elements.
+- **Text glow:** `text-shadow: 0 0 12px rgba(88,235,191,.4)` on active nav items.
+- **Press feedback:** `active:scale-95` on all interactive elements.
+- **Glassmorphism:** `backdrop-filter: blur()` on modal backdrop and toasts.
