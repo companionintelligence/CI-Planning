@@ -2,14 +2,43 @@
 
 A **private, local-first** personal todo and planning app. Tasks, time blocks,
 tags, and an automation pipeline live in a single SQLite file on your machine;
-an optional local LLM (Ollama) adds AI briefings, email/calendar triage, and
-auto-scheduling. No cloud calls — your plans never leave your node.
+an optional local LLM (Ollama) adds AI briefings, extraction, grooming, and
+auto-scheduling.
+
+Companion Planning is currently in **v0.2 active development**. The core app is
+fully local and usable today; Google ingestion currently defaults to fixture
+data unless explicitly switched to `GOOGLE_MODE=live` (live mode contract exists
+but still falls back to fixtures until MCP wiring is finished).
 
 - **Server**: Koa + TypeScript (`server/`), SQLite via better-sqlite3 + Drizzle, cron jobs via croner
 - **Client**: SolidJS + Tailwind PWA (`client/`), built by Vite into `server/public/`
 - **One process, one port**: the server serves both the API and the UI on **3848**
 
 Full v0.2 design: [ARCHITECTURE.md](ARCHITECTURE.md)
+
+## Current implementation status (2026-06)
+
+Implemented now:
+
+- Koa + TypeScript backend serving both API and built client on port 3848
+- SQLite schema and setup for tasks, subtasks, time blocks, tags, possible tasks,
+  scheduling preferences, and job runs
+- Seven SolidJS views: Today, Calendar, Inbox, Tasks, Tags, Jobs, Settings
+- Full task CRUD with tags, notes, priorities, due date/time, and subtasks
+- Deterministic auto-scheduler (`/api/schedule/run`) that respects work hours,
+  locked blocks/meetings, and break preferences
+- Automated jobs via Croner: Gmail ingest, Calendar ingest, possible-task
+  promotion, nightly grooming/dedupe, and auto-schedule
+- Ollama-backed extraction/summarization with deterministic fallback summaries if
+  Ollama is unavailable
+- SSE events for real-time UI updates across open clients
+
+Still in progress / intentionally partial:
+
+- Google `live` mode ingestion is scaffolded but not yet connected to real MCP
+  OAuth sessions (currently fixture-backed)
+- No auth layer yet (expected deployment model is private network/Tailscale)
+- Some roadmap items in `PLANNING.md` and `liam-plan.md` remain design-phase
 
 ## Screenshots
 
@@ -58,13 +87,18 @@ Hub mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automaticall
 | `OLLAMA_MEDIUM` | `gemma4:e4b` | Better model for briefings |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
-| `GOOGLE_MODE` | `fixture` | `fixture` (committed sample data) or `live` |
+| `GOOGLE_MODE` | `fixture` | `fixture` (committed sample data) or `live` (currently placeholder path; falls back to fixtures) |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
 **Persistence**: everything lives in the single SQLite file at `DB_PATH`. Mount a
 volume at `/data` (as above) and your tasks survive container recreation.
 
 ## Local development
+
+Runtime requirements:
+
+- Node.js `>=26 <27`
+- pnpm `>=11 <12`
 
 ```bash
 corepack enable
@@ -82,7 +116,7 @@ pnpm build && pnpm --filter server start
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/tasks?status=&tag=&q=&priority=&due_before=` | List/filter tasks (with tags) |
+| GET | `/api/tasks?status=&tag=&q=&priority=&due_before=&owner_id=` | List/filter tasks (with tags) |
 | POST | `/api/tasks` | Create a task (`title` required) |
 | PATCH | `/api/tasks/:id` | Update fields; `{"completed": true}` marks done |
 | DELETE | `/api/tasks/:id` | Soft delete (status → `cancelled`) |
