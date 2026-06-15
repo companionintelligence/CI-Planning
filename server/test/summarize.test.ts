@@ -74,4 +74,18 @@ describe('summarize agent', () => {
     // …but refresh forces a regeneration.
     expect((await summarizeDay(TODAY, { refresh: true })).cached).toBe(false);
   });
+
+  it('produces actionable focus items (overdue → due-today → priority)', async () => {
+    insertTask('File taxes', '2026-05-20T12:00:00.000Z', 1); // overdue
+    insertTask('Send report', `${TODAY}T15:00:00.000Z`, 2);  // due today
+    insertTask('Clean inbox', null, 3);                       // backlog
+
+    const s = await summarizeDay(TODAY, { refresh: true });
+
+    expect(s.focus.length).toBeGreaterThanOrEqual(2);
+    expect(s.focus[0].title).toBe('File taxes');
+    expect(s.focus[0].reason).toMatch(/Overdue/);
+    expect(s.focus.some((f) => f.reason === 'Due today')).toBe(true);
+    expect(s.focus.length).toBeLessThanOrEqual(3); // capped at three
+  });
 });

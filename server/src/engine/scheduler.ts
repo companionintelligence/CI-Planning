@@ -4,6 +4,7 @@ import { tasks, timeBlocks, schedulingPrefs } from '../db/schema.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+import { orderForToday } from '../agents/plan.js';
 
 export interface ScheduleResult {
   date: string;
@@ -120,7 +121,12 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
   // Build free windows AFTER pinning so the packer avoids pinned appointments too.
   const gaps = buildGaps(dayStartMs, dayEndMs, fixed, breakMs);
 
-  for (const task of candidates.filter((t) => !isPinned(t))) {
+  // Optional AI pass (planning_mode === 'auto'): reorder the flexible work most-
+  // important-first. Placement below stays deterministic, so plans are still
+  // reproducible; orderForToday returns the input unchanged when AI is off/down.
+  const flexible = await orderForToday(candidates.filter((t) => !isPinned(t)), prefs);
+
+  for (const task of flexible) {
     const estimateMs = (task.estimatedMinutes ?? 30) * MS_PER_MIN;
     const sessions = splitIntoSessions(estimateMs, maxFocusMs); // 180m/90cap -> [90,90]
     const total = sessions.length;
