@@ -1,10 +1,13 @@
 import type { Database } from 'better-sqlite3';
-import { serverTimezone } from '../lib/tz.js';
 
-export function runSetup(db: Database) {
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+export const id = '0001_baseline';
 
+/**
+ * The full current schema, emitted with IF NOT EXISTS so it's a no-op on an
+ * existing 0.2 database (which already has these tables) and a clean create on a
+ * fresh one. Column-level additions made over time live in 0002_columns.
+ */
+export function up(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS owners (
       id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,43 +131,4 @@ export function runSetup(db: Database) {
       log           TEXT
     );
   `);
-
-  migrateColumns(db);
-  seedDefaults(db);
-}
-
-/** Idempotent column migrations for existing databases. */
-function migrateColumns(db: Database) {
-  const addCol = (table: string, col: string, def: string) => {
-    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); } catch { /* already exists */ }
-  };
-  addCol('tasks', 'notes', 'TEXT');
-  addCol('tasks', 'task_time', 'TEXT');
-  addCol('tasks', 'parent_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
-  addCol('scheduling_prefs', 'timezone', 'TEXT');
-  addCol('scheduling_prefs', 'planning_horizon_days', 'INTEGER DEFAULT 7');
-  addCol('daily_summaries', 'focus', "TEXT NOT NULL DEFAULT '[]'");
-  // Backfill a sensible default for rows predating the column so the scheduler
-  // never has to guess a zone (workday hours are wall-clock in this zone).
-  db.prepare(
-    `UPDATE scheduling_prefs SET timezone = ? WHERE timezone IS NULL OR timezone = ''`
-  ).run(serverTimezone());
-}
-
-function seedDefaults(db: Database) {
-  const existing = db.prepare('SELECT id FROM owners WHERE id = 1').get();
-  if (existing) return;
-
-  db.prepare('INSERT INTO owners (id, name, email) VALUES (1, ?, ?)').run('Liam', 'REDACTED-DEV-EMAIL@example.invalid');
-  db.prepare('INSERT INTO scheduling_prefs (owner_id, timezone) VALUES (1, ?)').run(serverTimezone());
-
-  const jobs = [
-    { name: 'ingest_gmail',       kind: 'ingest_gmail',       cron: '*/30 * * * *' },
-    { name: 'ingest_gcal',        kind: 'ingest_gcal',        cron: '*/30 * * * *' },
-    { name: 'promote_possibles',  kind: 'promote_possibles',  cron: '0 2 * * *' },
-    { name: 'nightly_grooming',   kind: 'nightly_grooming',   cron: '0 2 * * *' },
-    { name: 'auto_schedule',      kind: 'auto_schedule',      cron: '0 3 * * *' },
-  ];
-  const insert = db.prepare('INSERT OR IGNORE INTO scheduled_jobs (name, kind, cron) VALUES (?, ?, ?)');
-  for (const j of jobs) insert.run(j.name, j.kind, j.cron);
 }
