@@ -6,6 +6,7 @@ import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/gro
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { localISODate } from '../lib/dates.js';
+import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
 
 export interface JobOutcome {
   itemsCreated: number;
@@ -70,7 +71,7 @@ export async function runJob(kind: string): Promise<void> {
     )
     .get(startedAt, kind) as { id: number } | undefined;
 
-  broadcast('job:started', { kind, startedAt });
+  broadcast(currentOwnerId(), 'job:started', { kind, startedAt });
 
   let status = 'done';
   let outcome: JobOutcome = { itemsCreated: 0, itemsUpdated: 0, log: '' };
@@ -93,7 +94,7 @@ export async function runJob(kind: string): Promise<void> {
   }
   sqlite.prepare('UPDATE scheduled_jobs SET last_run_at = ? WHERE kind = ?').run(finishedAt, kind);
 
-  broadcast('job:run', { kind, status, ...outcome, finishedAt });
+  broadcast(currentOwnerId(), 'job:run', { kind, status, ...outcome, finishedAt });
   logger.info(`Job ${kind} ${status}`, { ...outcome });
 }
 
@@ -103,7 +104,8 @@ export function startCronJobs() {
     .all() as { id: number; kind: string; cron: string }[];
 
   for (const job of jobs) {
-    new Cron(job.cron, () => runJob(job.kind));
+    // Cron has no request context — bind the system owner for the job body.
+    new Cron(job.cron, () => runWithOwner(SYSTEM_OWNER, () => runJob(job.kind)));
     logger.info(`Cron registered: ${job.kind} [${job.cron}]`);
   }
 }
