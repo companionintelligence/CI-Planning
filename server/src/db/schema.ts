@@ -18,8 +18,16 @@ export const tasks = sqliteTable('tasks', {
   taskTime: text('task_time'),             // HH:MM time-of-day if the task has a fixed start time
   estimatedMinutes: integer('estimated_minutes'),
   priority: integer('priority').default(3), // 1 highest, 5 lowest
-  status: text('status').default('open'),   // open | scheduled | in_progress | done | cancelled | deferred
+  status: text('status').default('open'),   // open | scheduled | in_progress | done | cancelled | deferred | recurring | skipped | missed
   parentId: integer('parent_id'),          // null = top-level task; set = subtask
+  // --- Recurrence (Phase E). Template: recurrenceRule set, recurrenceParentId null.
+  //     Instance: recurrenceParentId -> template, occurrenceDate set. ---
+  recurrenceRule: text('recurrence_rule'),                 // RFC-5545 RRULE string; null = one-off
+  recurrenceParentId: integer('recurrence_parent_id'),     // -> tasks.id of the template (instances only)
+  recurrenceDtstart: text('recurrence_dtstart'),           // UTC ISO anchor of the series
+  recurrenceExdates: text('recurrence_exdates', { mode: 'json' }).$type<string[]>(), // skipped local YYYY-MM-DD
+  occurrenceDate: text('occurrence_date'),                 // local YYYY-MM-DD of this instance
+  isHabit: integer('is_habit', { mode: 'boolean' }).default(false),
   ownerId: integer('owner_id').references(() => owners.id),
   sourceKind: text('source_kind').default('manual'), // manual | agent | gmail | gcal
   sourceRef: text('source_ref'),
