@@ -5,6 +5,7 @@ import serve from 'koa-static';
 import { existsSync, readFileSync } from 'node:fs';
 import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
+import { runWithOwner, SYSTEM_OWNER } from './lib/context.js';
 import { mountRoutes } from './routes/index.js';
 
 /** Build the Koa app (routes + middleware) without listening or starting cron. */
@@ -23,6 +24,10 @@ export function buildApp(): Koa {
 
   app.use(cors({ origin: '*' }));
   app.use(bodyParser());
+
+  // Resolve the request owner and bind it for the handler chain. Single-owner
+  // for now; Phase I swaps SYSTEM_OWNER for a verified-token resolver here.
+  app.use((_ctx, next) => runWithOwner(SYSTEM_OWNER, () => next()));
 
   mountRoutes(app);
 
