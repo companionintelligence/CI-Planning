@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, primaryKey } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const owners = sqliteTable('owners', {
@@ -12,7 +12,9 @@ export const tasks = sqliteTable('tasks', {
   title: text('title').notNull(),
   description: text('description'),        // short summary / legacy
   notes: text('notes'),                    // rich freeform notes
-  dueAt: text('due_at'),                   // ISO datetime
+  dueAt: text('due_at'),                   // ISO datetime — hard deadline
+  scheduledFor: text('scheduled_for'),     // local YYYY-MM-DD — intent to work it, not a deadline
+  deferUntil: text('defer_until'),         // UTC ISO — hidden from the today-set until then
   taskTime: text('task_time'),             // HH:MM time-of-day if the task has a fixed start time
   estimatedMinutes: integer('estimated_minutes'),
   priority: integer('priority').default(3), // 1 highest, 5 lowest
@@ -24,6 +26,17 @@ export const tasks = sqliteTable('tasks', {
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   completedAt: text('completed_at'),
 });
+
+// Dependency edges: task_id is blocked until depends_on_id is done.
+export const taskDependencies = sqliteTable(
+  'task_dependencies',
+  {
+    taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    dependsOnId: integer('depends_on_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.taskId, t.dependsOnId] }) })
+);
 
 export const possibleTasks = sqliteTable('possible_tasks', {
   id: integer('id').primaryKey({ autoIncrement: true }),
