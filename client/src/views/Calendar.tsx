@@ -1,107 +1,147 @@
-import { createSignal, Show, For } from 'solid-js';
+import { createSignal, createMemo, createEffect, For } from 'solid-js';
 import { ChevronLeft, ChevronRight, Zap } from 'lucide-solid';
-import { blocks, blockRange, setBlockRange, refetchBlocks } from '../stores/index.js';
-import { BlockCard } from '../components/BlockCard.js';
+import { blocks, setBlockRange } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
-import { localISODate, dayRangeUTC } from '../lib/dates.js';
+import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
+import { minutesIntoDay } from '../lib/grid.js';
+import { CalendarGrid } from '../components/CalendarGrid.js';
+import type { Block } from '../lib/api.js';
 
-// Date-string arithmetic below pivots on noon UTC, which is timezone-safe;
-// only "what day is it right now" must use the user's local timezone.
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
-function addDays(dateStr: string, n: number) {
-  const d = new Date(dateStr + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() + n);
-  return isoDate(d);
-}
+type ViewMode = 'day' | 'week' | 'month';
 
 export function Calendar() {
-  const [selectedDate, setSelectedDate] = createSignal(localISODate());
+  const [view, setView] = createSignal<ViewMode>('week');
+  const [anchor, setAnchor] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
 
-  function selectDate(d: string) {
-    setSelectedDate(d);
-    setBlockRange(dayRangeUTC(d));
+  // The local days the current view spans (drives both the grid and the fetch).
+  const visibleDays = createMemo<string[]>(() => {
+    switch (view()) {
+      case 'day':   return [anchor()];
+      case 'week':  return weekDaysOf(anchor());
+      case 'month': return monthGridOf(anchor());
+    }
+  });
+
+  // Widen the fetched range to cover exactly the visible window (tz-correct, owner-scoped
+  // server-side). The `blocks` resource + SSE refetch in stores/index.ts are reused unchanged.
+  createEffect(() => {
+    const days = visibleDays();
+    setBlockRange(rangeUTC(days[0], days[days.length - 1]));
+  });
+
+  // Group fetched blocks by the *local* day they start in, so each column shows
+  // its own blocks. Uses minutesIntoDay (real elapsed ms) against the anchor day
+  // to find the owning local date — no wall-clock string slicing.
+  const blocksByDay = createMemo<Record<string, Block[]>>(() => {
+    const map: Record<string, Block[]> = {};
+    const days = visibleDays();
+    if (!days.length) return map;
+    const list = blocks() ?? [];
+    for (const b of list) {
+      // Find the visible day whose local midnight..midnight window contains the start.
+      // minutesIntoDay against days[0] gives offset from the first column's midnight;
+      // dividing by 1440 yields the day index even across DST (real elapsed minutes).
+      const offsetMin = minutesIntoDay(b.start_at, days[0]);
+      const idx = Math.floor(offsetMin / (24 * 60));
+      const day = idx >= 0 && idx < days.length ? days[idx] : null;
+      if (day) (map[day] ??= []).push(b);
+    }
+    return map;
+  });
+
+  function shift(n: number) {
+    const step = view() === 'day' ? 1 : view() === 'week' ? 7 : 0;
+    if (view() === 'month') {
+      // Jump to the same day-of-month in the prev/next month via a noon-UTC pivot.
+      const [y, m, d] = anchor().split('-').map(Number);
+      const nm = m - 1 + n;
+      const ny = y + Math.floor(nm / 12);
+      const month = ((nm % 12) + 12) % 12;
+      setAnchor(`${ny}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    } else {
+      setAnchor(addDays(anchor(), n * step));
+    }
   }
 
-  const dayBlocks = () =>
-    (blocks() ?? []).sort((a, b) => a.start_at.localeCompare(b.start_at));
+  function goToday() { setAnchor(localISODate()); }
 
   async function runSchedule() {
     setRunningSchedule(true);
     try {
-      await api.schedule.run(selectedDate());
+      await api.schedule.run(anchor());
       showToast('Day scheduled', 'success');
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally { setRunningSchedule(false); }
   }
 
-  const weekDays = () => {
-    const today = localISODate();
-    const d = new Date(today + 'T12:00:00Z');
-    const dow = d.getUTCDay();
-    const monday = addDays(today, -(dow === 0 ? 6 : dow - 1));
-    return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
-  };
+  const rangeLabel = createMemo(() => {
+    const days = visibleDays();
+    if (view() === 'day') {
+      return new Date(days[0] + 'T12:00:00Z').toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      });
+    }
+    if (view() === 'month') {
+      const mid = days[Math.floor(days.length / 2)];
+      return new Date(mid + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+    // Week: "Jun 15 – 21, 2026" when within one month, else "Jun 29 – Jul 5, 2026".
+    const a = new Date(days[0] + 'T12:00:00Z');
+    const b = new Date(days[days.length - 1] + 'T12:00:00Z');
+    const year = b.getUTCFullYear();
+    const aStr = a.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const sameMonth = a.getUTCMonth() === b.getUTCMonth();
+    const bStr = b.toLocaleDateString('en-US', sameMonth
+      ? { day: 'numeric' }
+      : { month: 'short', day: 'numeric' });
+    return `${aStr} – ${bStr}, ${year}`;
+  });
 
-  function shiftWeek(n: number) {
-    const cur = selectedDate();
-    selectDate(addDays(cur, n * 7));
-  }
+  const views: ViewMode[] = ['day', 'week', 'month'];
 
   return (
-    <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
-      <div class="flex items-center justify-between mb-5">
+    <div class="flex-1 overflow-hidden flex flex-col p-6 page-enter w-full">
+      <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <h1 class="text-2xl font-bold text-slate-100">Calendar</h1>
-        <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
-          <Zap size={14} />
-          {runningSchedule() ? 'Scheduling…' : 'Schedule Day'}
-        </button>
-      </div>
-
-      {/* Week strip */}
-      <div class="flex items-center gap-2 mb-5">
-        <button onClick={() => shiftWeek(-1)} class="btn-icon"><ChevronLeft size={15} /></button>
-        <div class="flex flex-1 gap-1 bg-surface-800 rounded-xl p-1 border border-surface-700/60">
-          <For each={weekDays()}>
-            {(d) => {
-              const label = new Date(d + 'T12:00:00Z')
-                .toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
-              const isToday = d === isoDate(new Date());
-              const isSelected = () => d === selectedDate();
-              return (
+        <div class="flex items-center gap-2">
+          {/* View switcher */}
+          <div class="flex bg-surface-800 rounded-lg p-0.5 border border-surface-700/60">
+            <For each={views}>
+              {(v) => (
                 <button
-                  onClick={() => selectDate(d)}
-                  class={`flex-1 py-2 rounded-lg text-xs font-medium transition-all duration-100 text-center
-                    ${isSelected()
-                      ? 'bg-accent text-white shadow-sm shadow-accent/20'
-                      : isToday
-                        ? 'text-accent-light font-semibold hover:bg-surface-700'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-surface-700'}`}
+                  onClick={() => setView(v)}
+                  class="px-3 py-1 rounded-md text-xs font-medium capitalize transition-colors"
+                  classList={{
+                    'bg-accent text-white': view() === v,
+                    'text-slate-400 hover:text-slate-200': view() !== v,
+                  }}
                 >
-                  {label}
+                  {v}
                 </button>
-              );
-            }}
-          </For>
+              )}
+            </For>
+          </div>
+          <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
+            <Zap size={14} />
+            {runningSchedule() ? 'Scheduling…' : 'Schedule Day'}
+          </button>
         </div>
-        <button onClick={() => shiftWeek(1)} class="btn-icon"><ChevronRight size={15} /></button>
       </div>
 
-      {/* Block list */}
-      <Show when={dayBlocks().length > 0} fallback={
-        <div class="card text-center text-slate-500 py-12 text-sm">
-          No blocks on {new Date(selectedDate() + 'T12:00:00Z')
-            .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.
-        </div>
-      }>
-        <div class="flex flex-col gap-2">
-          <For each={dayBlocks()}>
-            {(b) => <BlockCard block={b} onUpdated={refetchBlocks} />}
-          </For>
-        </div>
-      </Show>
+      {/* Range navigation */}
+      <div class="flex items-center gap-3 mb-4">
+        <button onClick={() => shift(-1)} class="btn-icon"><ChevronLeft size={15} /></button>
+        <button onClick={() => shift(1)} class="btn-icon"><ChevronRight size={15} /></button>
+        <button onClick={goToday} class="btn-ghost text-xs">Today</button>
+        <span class="text-sm font-medium text-slate-300">{rangeLabel()}</span>
+      </div>
+
+      <div class="flex-1 overflow-hidden min-h-0">
+        <CalendarGrid view={view()} days={visibleDays()} blocksByDay={blocksByDay} />
+      </div>
     </div>
   );
 }
