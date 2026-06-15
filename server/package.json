@@ -23,7 +23,8 @@
     "drizzle-orm": "^0.45.2",
     "koa": "^3.2.1",
     "koa-bodyparser": "^4.4.1",
-    "koa-static": "^5.0.0"
+    "koa-static": "^5.0.0",
+    "rrule": "^2.8.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
