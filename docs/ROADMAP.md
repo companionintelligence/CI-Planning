@@ -1,8 +1,10 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-**Status:** Phase A (scheduler correctness, today-set + rolling horizon, briefing cache) **shipped**. Everything below is re-ordered so user-visible capability lands *before* the security/sync epic.
+**Status:** Phase A **complete** (scheduler correctness, today-set + rolling horizon, fixed-time pins, cached briefing). **B0 in progress.** Everything below is re-ordered so user-visible capability lands *before* the security/sync epic.
 
-> **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). The companion implementation spec for the next phase is [B0-migration-runner.md](B0-migration-runner.md).
+> **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). The companion implementation spec for the in-progress phase is [B0-migration-runner.md](B0-migration-runner.md); each later phase has its own `docs/<id>-*.md` spec.
+
+> **Deferred from Phase A — AI-assisted ordering.** The optional `planning_mode = 'auto'` LLM task-ordering pass is **deferred**, not shipped: ordering tasks well needs signals Phase A doesn't have yet (per-task actuals from **D**, history from **E**). It is revisited inside **G — Rituals** once those land. Phase A's scheduler is fully deterministic; the dead `planning_mode` toggle is wired up in **G**, not before.
 
 ## What changed from v1
 - **Value-first sequencing.** The features that make it "best-in-class" (task semantics, time tracking, recurrence, calendar grid, rituals, notifications) no longer wait on auth. They need a data-model foundation, not identity.
@@ -30,20 +32,21 @@
 | D6 *(new)* | Contract coupling | Depend on a **published, versioned** CI auth contract (JWKS + documented claims), not reverse-engineered internals | new guardrail |
 
 ## Phase map (resequenced)
-| Track | Phase | Was (v1) | Depends on | Effort |
-|---|---|---|---|---|
-| 0 Foundation | **B0** Migrations + owner scoping (no auth) | half of B | A (done) | **S** |
-| 1 Features | **C** Rich task semantics | C | B0 | M |
-| | **D** Time tracking & timers | D | B0 | S–M |
-| | **E** Recurring & habits | E | B0, C | M |
-| | **F** Calendar grid (2-D, drag/resize, overlays) | F | B0 | L |
-| | **G** Rituals & reflection (wire `planning_mode`) | J | C, D, E | M |
-| | **H** Notifications + service worker / Web Push | I | B0 (D/G for content) | M |
-| 2 Resilience | **R** Backups, restore, export/import | *(missing)* | B0 | S–M |
-| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | other half of B + G-infra | B0, R | L |
-| | **J** Two-way calendar sync | G | I, F | L |
-| | **K** Auto-defense (continuous re-plan) | H | A, F, J | M |
-| | **L** Multi-device sync & offline writes | K | B0, I, H | L |
+| Track | Phase | Was (v1) | Depends on | Effort | Status |
+|---|---|---|---|---|---|
+| — | **A** Scheduler correctness + today-set + cached briefing | A | — | — | ✅ done (AI ordering deferred → G) |
+| 0 Foundation | **B0** Migrations + owner scoping (no auth) | half of B | A | **S** | 🔧 in progress |
+| 1 Features | **C** Rich task semantics | C | B0 | M | 📋 spec'd |
+| | **D** Time tracking & timers | D | B0 | S–M | 📋 spec'd |
+| | **E** Recurring & habits | E | B0, C | M | 📋 spec'd |
+| | **F** Calendar grid (2-D, drag/resize, overlays) | F | B0 | L | 📋 spec'd |
+| | **G** Rituals & reflection (wire `planning_mode`, AI ordering) | J | C, D, E | M | 📋 spec'd |
+| | **H** Notifications + service worker / Web Push | I | B0 (D/G for content) | M | 📋 spec'd |
+| 2 Resilience | **R** Backups, restore, export/import | *(new)* | B0 | S–M | 📋 spec'd |
+| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | other half of B + G-infra | B0, R | L | 📋 spec'd |
+| | **J** Two-way calendar sync | G | I, F | L | 📋 spec'd |
+| | **K** Auto-defense (continuous re-plan) | H | A, F, J | M | 📋 spec'd |
+| | **L** Multi-device sync & offline writes | K | B0, I, H | L | 📋 spec'd |
 
 **Parallelizable after B0:** C, D, F, and H-infra (service worker) can run concurrently; E follows C; G follows C/D/E.
 
@@ -108,9 +111,9 @@
 - **Tests:** drag emits one tz-correct PATCH; resize below min clamps; locked/meeting blocks reject drag; overlays accurate + combinable; **no tz drift** between grid position and stored UTC.
 - **Acceptance:** day/week/month consistent; drag/resize persists across reload; no tz drift; locked/meeting blocks immovable.
 
-### G — Rituals & reflection (wire the dead `planning_mode`)
-**Goal:** make `planning_mode` behaviorally real; daily-plan, shutdown, weekly review.
-- **Engine/API:** `ritual` = guided daily plan + evening shutdown; `auto` = silent auto-schedule (the AI-ordering path). Weekly review aggregates planned-vs-done, estimate-vs-actual (D), habit streaks (E).
+### G — Rituals & reflection (wire the dead `planning_mode`; home of the deferred AI ordering)
+**Goal:** make `planning_mode` behaviorally real; daily-plan, shutdown, weekly review. This is where the **AI-ordering deferred from Phase A** lands — by now D (actuals) and E (history) give the model real signal to order on.
+- **Engine/API:** `ritual` = guided daily plan + evening shutdown; `auto` = silent auto-schedule with the **AI-ordering pass** (deterministic placement, LLM orders only; falls back to the deterministic ranking when Ollama is down). Weekly review aggregates planned-vs-done, estimate-vs-actual (D), habit streaks (E).
 - **Client:** daily-plan + shutdown flows; weekly-review screen.
 - **Tests:** `auto` vs `ritual` now diverge observably; weekly-review numbers reconcile exactly with raw entries/completions; daily-plan carries unfinished items via Phase-A rollover.
 - **Acceptance:** toggling planning mode is observably different (no longer dead); review metrics match source data exactly.
