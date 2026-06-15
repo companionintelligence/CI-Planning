@@ -1,4 +1,5 @@
-import { and, eq, asc, or, isNull, lt } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
+import type { InferSelectModel } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { tasks, timeBlocks, schedulingPrefs } from '../db/schema.js';
 import { broadcast } from '../routes/sse.js';
@@ -8,13 +9,16 @@ import { orderForToday } from '../agents/plan.js';
 import { currentOwnerId } from '../lib/context.js';
 import { blockedTaskIds } from './deps.js';
 
+type Task = InferSelectModel<typeof tasks>;
+
 export interface ScheduleResult {
   date: string;
   blocksCreated: number;
   blocksRemoved: number;
   tasksScheduled: number;     // every focus session placed
   partiallyScheduled: number; // some sessions placed, capacity ran out
-  unscheduled: number;        // nothing fit
+  unscheduled: number;        // selected for today but nothing fit
+  deferred: number;           // ready work left in the backlog for a future day
 }
 
 /** A free window in the day, with a moving cursor as blocks are packed in. */
@@ -27,6 +31,8 @@ interface Gap {
 const MS_PER_MIN = 60_000;
 // Don't carve a focus block shorter than this — sub-quarter-hour slivers aren't useful.
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
+// Cap how many tasks the optional LLM ordering pass sees, to bound the prompt.
+const AI_ORDER_LIMIT = 30;
 
 export async function runScheduler(date: string): Promise<ScheduleResult> {
   logger.info('scheduler.run', { date });
@@ -38,6 +44,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     tasksScheduled: 0,
     partiallyScheduled: 0,
     unscheduled: 0,
+    deferred: 0,
   };
 
   const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, currentOwnerId()));
@@ -80,32 +87,31 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
   let tasksScheduled = 0;
   let partiallyScheduled = 0;
   let unscheduled = 0;
+  let deferred = 0;
 
   // The "today set": open tasks that are undated, overdue, or due within the
   // planning horizon. Tasks due further out aren't pulled into today and don't
   // inflate the unscheduled count (most urgent first; nulls sort first in ASC).
-  const horizonDays = prefs.planningHorizonDays ?? 7;
+  const horizonDays = Math.max(1, prefs.planningHorizonDays ?? 7);
   const [hy, hm, hd] = date.split('-').map(Number);
   const horizonDate = new Date(Date.UTC(hy, hm - 1, hd + horizonDays)).toISOString().slice(0, 10);
   const horizonEndISO = utcDayBounds(horizonDate, tz).end;
 
-  // A task enters today's set if it's undated, at/over its hard deadline, or
-  // explicitly scheduled for this date. Then drop blocked (incomplete blocker)
-  // and still-deferred tasks — they aren't ready, so they're not "unscheduled".
+  // Drop blocked (incomplete blocker) and still-deferred tasks first — they
+  // aren't ready, so they are not "unscheduled" or "deferred".
   const blockedIds = blockedTaskIds();
   const rows = await db
     .select()
     .from(tasks)
-    .where(
-      and(
-        eq(tasks.status, 'open'),
-        or(isNull(tasks.dueAt), lt(tasks.dueAt, horizonEndISO), eq(tasks.scheduledFor, date))
-      )
-    )
+    .where(eq(tasks.status, 'open'))
     .orderBy(asc(tasks.priority), asc(tasks.scheduledFor), asc(tasks.dueAt), asc(tasks.id));
-  const candidates = rows.filter(
+  const ready = rows.filter(
     (t) => !blockedIds.has(t.id) && !(t.deferUntil && t.deferUntil >= dayHiISO)
   );
+  const candidates = ready.filter(
+    (t) => !t.dueAt || t.dueAt < horizonEndISO || t.scheduledFor === date
+  );
+  deferred += ready.length - candidates.length;
 
   // A task with a fixed time-of-day that is due on this local day is pinned at
   // that time (an appointment); flexible work is packed around it.
@@ -138,9 +144,22 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
   // Optional AI pass (planning_mode === 'auto'): reorder the flexible work most-
   // important-first. Placement below stays deterministic, so plans are still
   // reproducible; orderForToday returns the input unchanged when AI is off/down.
-  const flexible = await orderForToday(candidates.filter((t) => !isPinned(t)), prefs);
+  const rankedFlexible = candidates.filter((t) => !isPinned(t));
+  const orderedHead = await orderForToday(rankedFlexible.slice(0, AI_ORDER_LIMIT), prefs);
+  const flexible = [...orderedHead, ...rankedFlexible.slice(AI_ORDER_LIMIT)] as Task[];
 
+  // Only pull as much flexible work into today as the visible capacity can hold;
+  // the rest rolls over instead of being reported as scheduling failures.
+  let capacityMs = gaps.reduce((sum, g) => sum + (g.end - g.cursor), 0);
+  const todaySet: Task[] = [];
   for (const task of flexible) {
+    if (capacityMs <= 0) break;
+    todaySet.push(task);
+    capacityMs -= (task.estimatedMinutes ?? 30) * MS_PER_MIN;
+  }
+  deferred += flexible.length - todaySet.length;
+
+  for (const task of todaySet) {
     const estimateMs = (task.estimatedMinutes ?? 30) * MS_PER_MIN;
     const sessions = splitIntoSessions(estimateMs, maxFocusMs); // 180m/90cap -> [90,90]
     const total = sessions.length;
@@ -179,6 +198,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     tasksScheduled,
     partiallyScheduled,
     unscheduled,
+    deferred,
   };
 
   broadcast(currentOwnerId(), 'schedule:done', result);
