@@ -25,6 +25,7 @@ export async function startTestServer(): Promise<TestServer> {
 /** Clear task-related tables; keep owner / prefs / scheduled_jobs seeded by setup. */
 export function resetDb(): void {
   sqlite.exec(`
+    DELETE FROM task_dependencies;
     DELETE FROM task_tags;
     DELETE FROM possible_task_tags;
     DELETE FROM time_blocks;

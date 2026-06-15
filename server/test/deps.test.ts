@@ -1,0 +1,81 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { sqlite } from '../src/db/index.js';
+import {
+  addDependency,
+  setDependencies,
+  getDependencies,
+  blockedTaskIds,
+  DependencyCycleError,
+} from '../src/engine/deps.js';
+import { resetDb, startTestServer, api } from './helpers.js';
+
+function addTask(title: string): number {
+  return (
+    sqlite.prepare("INSERT INTO tasks (title, owner_id, status) VALUES (?, 1, 'open') RETURNING id").get(title) as {
+      id: number;
+    }
+  ).id;
+}
+
+describe('task dependencies', () => {
+  beforeEach(() => resetDb());
+
+  it('rejects self-edges and cycles', () => {
+    const a = addTask('A');
+    const b = addTask('B');
+    const c = addTask('C');
+
+    expect(() => addDependency(a, a)).toThrow(DependencyCycleError);
+
+    addDependency(a, b); // A depends on B
+    addDependency(b, c); // B depends on C
+    expect(() => addDependency(c, a)).toThrow(DependencyCycleError); // would close A→B→C→A
+    expect(getDependencies(a)).toEqual([b]);
+  });
+
+  it('blockedTaskIds reflects only incomplete blockers', () => {
+    const a = addTask('A');
+    const b = addTask('B');
+    addDependency(a, b);
+
+    expect(blockedTaskIds().has(a)).toBe(true);
+    sqlite.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(b);
+    expect(blockedTaskIds().has(a)).toBe(false);
+  });
+
+  it('cascade-deletes edges when a task is hard-deleted', () => {
+    const a = addTask('A');
+    const b = addTask('B');
+    addDependency(a, b);
+
+    sqlite.prepare('DELETE FROM tasks WHERE id = ?').run(b);
+    expect(getDependencies(a)).toEqual([]);
+  });
+
+  it('setDependencies replaces the full blocker set', () => {
+    const a = addTask('A');
+    const b = addTask('B');
+    const c = addTask('C');
+    setDependencies(a, [b, c]);
+    expect(getDependencies(a).sort()).toEqual([b, c].sort());
+    setDependencies(a, [b]);
+    expect(getDependencies(a)).toEqual([b]);
+  });
+
+  it('returns 409 when a PATCH would create a cycle', async () => {
+    const srv = await startTestServer();
+    try {
+      const a = (await api<{ task: { id: number } }>(srv.url, '/api/tasks', { method: 'POST', json: { title: 'A' } })).body.task.id;
+      const b = (await api<{ task: { id: number } }>(srv.url, '/api/tasks', { method: 'POST', json: { title: 'B' } })).body.task.id;
+
+      const ok = await api(srv.url, `/api/tasks/${a}`, { method: 'PATCH', json: { depends_on: [b] } });
+      expect(ok.status).toBe(200);
+
+      const res = await api<{ error: string }>(srv.url, `/api/tasks/${b}`, { method: 'PATCH', json: { depends_on: [a] } });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('dependency cycle');
+    } finally {
+      await srv.close();
+    }
+  });
+});
