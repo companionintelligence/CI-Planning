@@ -1,6 +1,7 @@
 import { sqlite } from '../db/index.js';
 import { generate } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
+import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 
 interface TaskRow {
   id: number;
@@ -33,9 +34,13 @@ export interface DaySummary {
 }
 
 function gather(date: string) {
-  const dayEnd = `${date}T23:59:59.999Z`;
-
-  const dayStart = `${date}T00:00:00.000Z`;
+  // "Today" is the user's local calendar day, not the UTC day — so overdue/
+  // due-today/blocks line up with what the scheduler placed.
+  const tzRow = sqlite
+    .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = 1')
+    .get() as { timezone: string | null } | undefined;
+  const tz = tzRow?.timezone || serverTimezone();
+  const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
 
   const overdue = sqlite
     .prepare(
@@ -48,7 +53,7 @@ function gather(date: string) {
   const dueToday = sqlite
     .prepare(
       `SELECT id, title, priority, due_at, status, estimated_minutes FROM tasks
-       WHERE status IN ('open','scheduled') AND due_at >= ? AND due_at <= ?
+       WHERE status IN ('open','scheduled') AND due_at >= ? AND due_at < ?
        ORDER BY priority ASC LIMIT 25`
     )
     .all(dayStart, dayEnd) as TaskRow[];
@@ -63,7 +68,7 @@ function gather(date: string) {
   const blocks = sqlite
     .prepare(
       `SELECT title, block_kind, start_at, end_at, status FROM time_blocks
-       WHERE start_at >= ? AND start_at <= ? ORDER BY start_at ASC`
+       WHERE start_at >= ? AND start_at < ? ORDER BY start_at ASC`
     )
     .all(dayStart, dayEnd) as BlockRow[];
 

@@ -4,7 +4,7 @@ import { blocks, blockRange, setBlockRange, refetchBlocks } from '../stores/inde
 import { BlockCard } from '../components/BlockCard.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
-import { localISODate } from '../lib/dates.js';
+import { localISODate, dayRangeUTC } from '../lib/dates.js';
 
 // Date-string arithmetic below pivots on noon UTC, which is timezone-safe;
 // only "what day is it right now" must use the user's local timezone.
@@ -21,7 +21,7 @@ export function Calendar() {
 
   function selectDate(d: string) {
     setSelectedDate(d);
-    setBlockRange({ from: `${d}T00:00:00.000Z`, to: `${d}T23:59:59.000Z` });
+    setBlockRange(dayRangeUTC(d));
   }
 
   const dayBlocks = () =>

@@ -66,6 +66,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   minBreakMinutes: integer('min_break_minutes').default(10),
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
   planningMode: text('planning_mode').default('ritual'), // auto | ritual
+  timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
 });
 
 export const tags = sqliteTable('tags', {
