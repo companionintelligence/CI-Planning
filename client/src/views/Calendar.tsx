@@ -1,6 +1,14 @@
-import { createSignal, createMemo, createEffect, For } from 'solid-js';
-import { ChevronLeft, ChevronRight, Zap } from 'lucide-solid';
-import { blocks, setBlockRange } from '../stores/index.js';
+import { createSignal, createMemo, createEffect, For, Show } from 'solid-js';
+import { ChevronLeft, ChevronRight, Zap, Filter, X } from 'lucide-solid';
+import {
+  visibleBlocks,
+  setBlockRange,
+  tags,
+  overlayTags,
+  setOverlayTags,
+  overlayPrio,
+  setOverlayPrio,
+} from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
@@ -38,7 +46,7 @@ export function Calendar() {
     const map: Record<string, Block[]> = {};
     const days = visibleDays();
     if (!days.length) return map;
-    const list = blocks() ?? [];
+    const list = visibleBlocks(); // overlay-filtered + optimistic-override applied
     for (const b of list) {
       // Find the visible day whose local midnight..midnight window contains the start.
       // minutesIntoDay against days[0] gives offset from the first column's midnight;
@@ -102,6 +110,25 @@ export function Calendar() {
 
   const views: ViewMode[] = ['day', 'week', 'month'];
 
+  // ── Overlay filter (tag AND priority, combinable) ────────────────────────────
+  const [showFilters, setShowFilters] = createSignal(false);
+  const activeFilters = createMemo(() => overlayTags().length + overlayPrio().length);
+
+  function toggleTag(name: string) {
+    setOverlayTags((prev) =>
+      prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name],
+    );
+  }
+  function togglePrio(p: number) {
+    setOverlayPrio((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p],
+    );
+  }
+  function clearOverlay() {
+    setOverlayTags([]);
+    setOverlayPrio([]);
+  }
+
   return (
     <div class="flex-1 overflow-hidden flex flex-col p-6 page-enter w-full">
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
@@ -137,7 +164,66 @@ export function Calendar() {
         <button onClick={() => shift(1)} class="btn-icon"><ChevronRight size={15} /></button>
         <button onClick={goToday} class="btn-ghost text-xs">Today</button>
         <span class="text-sm font-medium text-slate-300">{rangeLabel()}</span>
+        <button
+          onClick={() => setShowFilters((s) => !s)}
+          class="btn-ghost text-xs gap-1 ml-auto"
+          classList={{ 'text-accent-light': activeFilters() > 0 }}
+        >
+          <Filter size={13} />
+          Overlays
+          <Show when={activeFilters() > 0}>
+            <span class="badge-accent">{activeFilters()}</span>
+          </Show>
+        </button>
       </div>
+
+      {/* Overlay filter panel: tag chips + 1–5 priority row, AND-combined. */}
+      <Show when={showFilters()}>
+        <div class="mb-4 p-3 rounded-lg border border-surface-700/60 bg-surface-800 flex flex-col gap-3">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[10px] uppercase tracking-wide text-slate-500 w-14">Tags</span>
+            <For each={tags() ?? []}>
+              {(t) => (
+                <button
+                  onClick={() => toggleTag(t.name)}
+                  class="px-2 py-0.5 rounded-full text-xs border transition-colors"
+                  classList={{
+                    'bg-accent text-white border-accent': overlayTags().includes(t.name),
+                    'border-surface-700 text-slate-400 hover:text-slate-200': !overlayTags().includes(t.name),
+                  }}
+                >
+                  {t.name}
+                </button>
+              )}
+            </For>
+            <Show when={!(tags() ?? []).length}>
+              <span class="text-xs text-slate-600">No tags yet</span>
+            </Show>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[10px] uppercase tracking-wide text-slate-500 w-14">Priority</span>
+            <For each={[1, 2, 3, 4, 5]}>
+              {(p) => (
+                <button
+                  onClick={() => togglePrio(p)}
+                  class="w-7 h-7 rounded-md text-xs font-mono border transition-colors"
+                  classList={{
+                    'bg-accent text-white border-accent': overlayPrio().includes(p),
+                    'border-surface-700 text-slate-400 hover:text-slate-200': !overlayPrio().includes(p),
+                  }}
+                >
+                  P{p}
+                </button>
+              )}
+            </For>
+            <Show when={activeFilters() > 0}>
+              <button onClick={clearOverlay} class="btn-ghost text-xs gap-1 ml-2">
+                <X size={12} /> Clear
+              </button>
+            </Show>
+          </div>
+        </div>
+      </Show>
 
       <div class="flex-1 overflow-hidden min-h-0">
         <CalendarGrid view={view()} days={visibleDays()} blocksByDay={blocksByDay} />

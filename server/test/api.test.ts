@@ -60,6 +60,44 @@ describe('tasks / blocks / tags / possibles API', () => {
     expect(patched.body.block.status).toBe('completed');
   });
 
+  it('drag/resize persists exact start/end instants via one PATCH (no tz drift)', async () => {
+    // The grid PATCHes the instants `instantFor` produced; the server must echo
+    // them byte-identically (no re-formatting that could introduce drift).
+    const block = await api(server.url, '/api/blocks', {
+      method: 'POST',
+      json: { title: 'Move me', start_at: '2026-06-01T16:00:00.000Z', end_at: '2026-06-01T17:00:00.000Z' },
+    });
+    const id = block.body.block.id;
+    // A +1h drag.
+    const moved = await api(server.url, `/api/blocks/${id}`, {
+      method: 'PATCH',
+      json: { start_at: '2026-06-01T17:00:00.000Z', end_at: '2026-06-01T18:00:00.000Z' },
+    });
+    expect(moved.body.block.start_at).toBe('2026-06-01T17:00:00.000Z');
+    expect(moved.body.block.end_at).toBe('2026-06-01T18:00:00.000Z');
+    // Round-trips through GET unchanged.
+    const got = await api(server.url, '/api/blocks?from=2026-06-01T00:00:00.000Z&to=2026-06-01T23:59:59.999Z');
+    const row = got.body.blocks.find((b: any) => b.id === id);
+    expect(row.start_at).toBe('2026-06-01T17:00:00.000Z');
+    expect(row.end_at).toBe('2026-06-01T18:00:00.000Z');
+  });
+
+  it('all_day is in the create/PATCH allow-list and round-trips', async () => {
+    const created = await api(server.url, '/api/blocks', {
+      method: 'POST',
+      json: { title: 'Conference', start_at: '2026-06-02T07:00:00.000Z', end_at: '2026-06-03T06:59:59.999Z', all_day: true },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.block.all_day).toBe(true);
+
+    // PATCH toggles it back off.
+    const patched = await api(server.url, `/api/blocks/${created.body.block.id}`, {
+      method: 'PATCH',
+      json: { all_day: false },
+    });
+    expect(patched.body.block.all_day).toBe(false);
+  });
+
   it('aggregates tag counts', async () => {
     await api(server.url, '/api/tasks', { method: 'POST', json: { title: 'T1', tags: ['alpha'] } });
     await api(server.url, '/api/tasks', { method: 'POST', json: { title: 'T2', tags: ['alpha', 'beta'] } });

@@ -134,6 +134,7 @@ export const api = {
 export interface Block {
   id: number; task_id?: number; title: string; block_kind: string;
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
+  all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
 }
 

@@ -33,6 +33,7 @@ export function blocksRouter() {
       start_at: string;
       end_at: string;
       is_locked?: boolean;
+      all_day?: boolean;
     };
 
     if (!body.title || !body.start_at || !body.end_at) {
@@ -50,6 +51,7 @@ export function blocksRouter() {
         startAt: body.start_at,
         endAt: body.end_at,
         isLocked: body.is_locked ?? false,
+        allDay: body.all_day ?? false,
         isAuto: false,
         sourceKind: 'manual',
       })
@@ -71,6 +73,7 @@ export function blocksRouter() {
       is_locked: boolean;
       status: string;
       block_kind: string;
+      all_day: boolean;
     }>;
 
     const update: Partial<typeof timeBlocks.$inferInsert> = {};
@@ -80,6 +83,7 @@ export function blocksRouter() {
     if (body.is_locked  !== undefined) update.isLocked   = body.is_locked;
     if (body.status     !== undefined) update.status     = body.status;
     if (body.block_kind !== undefined) update.blockKind  = body.block_kind;
+    if (body.all_day    !== undefined) update.allDay     = body.all_day;
 
     const [block] = await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
