@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
 import { orderForToday } from '../agents/plan.js';
 import { currentOwnerId } from '../lib/context.js';
+import { blockedTaskIds } from './deps.js';
 
 export interface ScheduleResult {
   date: string;
@@ -88,11 +89,23 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
   const horizonDate = new Date(Date.UTC(hy, hm - 1, hd + horizonDays)).toISOString().slice(0, 10);
   const horizonEndISO = utcDayBounds(horizonDate, tz).end;
 
-  const candidates = await db
+  // A task enters today's set if it's undated, at/over its hard deadline, or
+  // explicitly scheduled for this date. Then drop blocked (incomplete blocker)
+  // and still-deferred tasks — they aren't ready, so they're not "unscheduled".
+  const blockedIds = blockedTaskIds();
+  const rows = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.status, 'open'), or(isNull(tasks.dueAt), lt(tasks.dueAt, horizonEndISO))))
-    .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id));
+    .where(
+      and(
+        eq(tasks.status, 'open'),
+        or(isNull(tasks.dueAt), lt(tasks.dueAt, horizonEndISO), eq(tasks.scheduledFor, date))
+      )
+    )
+    .orderBy(asc(tasks.priority), asc(tasks.scheduledFor), asc(tasks.dueAt), asc(tasks.id));
+  const candidates = rows.filter(
+    (t) => !blockedIds.has(t.id) && !(t.deferUntil && t.deferUntil >= dayHiISO)
+  );
 
   // A task with a fixed time-of-day that is due on this local day is pinned at
   // that time (an appointment); flexible work is packed around it.

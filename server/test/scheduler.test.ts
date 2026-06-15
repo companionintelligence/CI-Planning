@@ -1,7 +1,33 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { runScheduler } from '../src/engine/scheduler.js';
+import { addDependency } from '../src/engine/deps.js';
 import { resetDb } from './helpers.js';
+
+function insertTask(opts: {
+  title: string;
+  estimate?: number;
+  priority?: number;
+  dueAt?: string | null;
+  scheduledFor?: string | null;
+  deferUntil?: string | null;
+}): number {
+  return (
+    sqlite
+      .prepare(
+        `INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes, due_at, scheduled_for, defer_until)
+         VALUES (?, ?, 1, 'open', ?, ?, ?, ?) RETURNING id`
+      )
+      .get(
+        opts.title,
+        opts.priority ?? 3,
+        opts.estimate ?? 60,
+        opts.dueAt ?? null,
+        opts.scheduledFor ?? null,
+        opts.deferUntil ?? null
+      ) as { id: number }
+  ).id;
+}
 
 const DATE = '2026-06-15'; // a PDT (UTC-7) day
 
@@ -139,5 +165,46 @@ describe('scheduler', () => {
     expect(titles).not.toContain('Far future');
     // Far-future task isn't a candidate, so it doesn't inflate "unscheduled".
     expect(r.unscheduled).toBe(0);
+  });
+
+  it('does not schedule a task with an incomplete blocker, then schedules it once done', async () => {
+    setPrefs({});
+    const blocker = insertTask({ title: 'Blocker' });
+    const blocked = insertTask({ title: 'Blocked' });
+    addDependency(blocked, blocker); // Blocked depends on Blocker (open)
+
+    const r1 = await runScheduler(DATE);
+    let titles = taskBlocks().map((b) => b.title);
+    expect(titles).toContain('Blocker');
+    expect(titles).not.toContain('Blocked');
+    expect(r1.unscheduled).toBe(0); // blocked task isn't "ready", so not counted
+
+    sqlite.prepare("UPDATE tasks SET status = 'done' WHERE id = ?").run(blocker);
+    await runScheduler(DATE);
+    titles = taskBlocks().map((b) => b.title);
+    expect(titles).toContain('Blocked'); // unblocked now
+  });
+
+  it('hides a task until its defer_until passes', async () => {
+    setPrefs({});
+    insertTask({ title: 'Deferred', deferUntil: '2026-12-01T00:00:00.000Z' }); // after the day
+    insertTask({ title: 'Ready', deferUntil: '2026-01-01T00:00:00.000Z' }); // already passed
+
+    await runScheduler(DATE);
+    const titles = taskBlocks().map((b) => b.title);
+    expect(titles).toContain('Ready');
+    expect(titles).not.toContain('Deferred');
+  });
+
+  it('pulls a far-deadline task into today only when scheduled_for is today', async () => {
+    setPrefs({});
+    // Both have a far-future hard deadline (beyond horizon); only scheduled_for differs.
+    insertTask({ title: 'Intended today', dueAt: '2026-09-01T00:00:00.000Z', scheduledFor: DATE });
+    insertTask({ title: 'Intended later', dueAt: '2026-09-01T00:00:00.000Z', scheduledFor: '2026-07-01' });
+
+    await runScheduler(DATE);
+    const titles = taskBlocks().map((b) => b.title);
+    expect(titles).toContain('Intended today');
+    expect(titles).not.toContain('Intended later');
   });
 });

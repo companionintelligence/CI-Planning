@@ -1,7 +1,7 @@
-import { createSignal, createEffect, Show } from 'solid-js';
-import { X, Plus, AlignLeft, Clock, Calendar, Tag, Flag, Timer } from 'lucide-solid';
+import { createSignal, createEffect, Show, For } from 'solid-js';
+import { X, Plus, AlignLeft, Clock, Calendar, Tag, Flag, Timer, Link2, CalendarClock } from 'lucide-solid';
 import { api, type Task, type TaskInput } from '../lib/api.js';
-import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
+import { refetchTasks, showToast, setTaskModal, tasks } from '../stores/index.js';
 
 interface Props {
   editTask?: Task;
@@ -22,8 +22,14 @@ export function TaskForm(props: Props) {
   const [estimatedMinutes, setEstimatedMinutes] = createSignal('');
   const [priority, setPriority] = createSignal(3);
   const [tagsInput, setTagsInput] = createSignal('');
+  const [deferUntil, setDeferUntil] = createSignal('');
+  const [dependsOn, setDependsOn] = createSignal<number[]>([]);
   const [saving, setSaving] = createSignal(false);
   const [expanded, setExpanded] = createSignal(false);
+
+  // Open tasks (excluding this one) are eligible blockers.
+  const candidateTasks = () =>
+    (tasks() ?? []).filter((t) => t.status === 'open' && t.id !== props.editTask?.id);
 
   // Populate from editTask
   createEffect(() => {
@@ -36,6 +42,8 @@ export function TaskForm(props: Props) {
     setEstimatedMinutes(t.estimated_minutes ? String(t.estimated_minutes) : '');
     setPriority(t.priority ?? 3);
     setTagsInput(t.tags.join(', '));
+    setDeferUntil(t.defer_until ? t.defer_until.slice(0, 10) : '');
+    setDependsOn(t.depends_on ?? []);
     setExpanded(true);
   });
 
@@ -53,6 +61,8 @@ export function TaskForm(props: Props) {
         priority: priority(),
         parent_id: props.parentId,
         tags: tagsInput() ? tagsInput().split(',').map(t => t.trim()).filter(Boolean) : [],
+        defer_until: deferUntil() ? new Date(deferUntil() + 'T00:00:00').toISOString() : undefined,
+        depends_on: dependsOn(),
       };
       if (isEdit()) {
         await api.tasks.update(props.editTask!.id, body);
@@ -151,6 +161,34 @@ export function TaskForm(props: Props) {
                 />
               </label>
             </div>
+
+            <div class="flex gap-3">
+              <label class="flex flex-col gap-1.5 flex-1">
+                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                  <CalendarClock size={11} /> Defer until
+                </span>
+                <input type="date" class="input" value={deferUntil()} onInput={(e) => setDeferUntil(e.currentTarget.value)} />
+              </label>
+            </div>
+
+            <Show when={candidateTasks().length > 0}>
+              <label class="flex flex-col gap-1.5">
+                <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                  <Link2 size={11} /> Depends on (won't schedule until these are done)
+                </span>
+                <select
+                  multiple
+                  class="input min-h-[72px]"
+                  onChange={(e) =>
+                    setDependsOn(Array.from(e.currentTarget.selectedOptions).map((o) => Number(o.value)))
+                  }
+                >
+                  <For each={candidateTasks()}>
+                    {(t) => <option value={t.id} selected={dependsOn().includes(t.id)}>{t.title}</option>}
+                  </For>
+                </select>
+              </label>
+            </Show>
 
             <label class="flex flex-col gap-1.5">
               <span class="flex items-center gap-1.5 text-xs text-slate-500">

@@ -2,6 +2,7 @@ import { createSignal, Show, For } from 'solid-js';
 import { SlidersHorizontal, Search } from 'lucide-solid';
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks } from '../stores/index.js';
 import { TaskCard } from '../components/TaskCard.js';
+import { QuickAdd } from '../components/QuickAdd.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -22,6 +23,9 @@ export function AllTasks() {
           <SlidersHorizontal size={14} /> Filters
         </button>
       </div>
+
+      {/* Natural-language quick add */}
+      <QuickAdd />
 
       {/* Filters */}
       <Show when={showFilters()}>
