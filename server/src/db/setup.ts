@@ -81,6 +81,7 @@ export function runSetup(db: Database) {
       date        TEXT NOT NULL,
       prose       TEXT NOT NULL,
       stats       TEXT NOT NULL,
+      focus       TEXT NOT NULL DEFAULT '[]',
       llm         INTEGER NOT NULL DEFAULT 0,
       inputs_hash TEXT NOT NULL,
       created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -142,6 +143,7 @@ function migrateColumns(db: Database) {
   addCol('tasks', 'parent_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
   addCol('scheduling_prefs', 'timezone', 'TEXT');
   addCol('scheduling_prefs', 'planning_horizon_days', 'INTEGER DEFAULT 7');
+  addCol('daily_summaries', 'focus', "TEXT NOT NULL DEFAULT '[]'");
   // Backfill a sensible default for rows predating the column so the scheduler
   // never has to guess a zone (workday hours are wall-clock in this zone).
   db.prepare(
