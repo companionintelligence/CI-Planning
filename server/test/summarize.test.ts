@@ -52,4 +52,43 @@ describe('summarize agent', () => {
     const summary = await summarizeDay(TODAY);
     expect(summary.stats.blocks).toBe(1);
   });
+
+  it('surfaces actionable focus items, most urgent first', async () => {
+    insertTask('File the overdue taxes', '2026-05-20T12:00:00.000Z', 1);
+    insertTask('Send the report due today', `${TODAY}T15:00:00.000Z`, 2);
+
+    const summary = await summarizeDay(TODAY);
+
+    expect(summary.focus.length).toBeGreaterThanOrEqual(2);
+    expect(summary.focus[0].title).toBe('File the overdue taxes');
+    expect(summary.focus[0].reason).toMatch(/overdue/i);
+    expect(summary.focus.some((f) => f.reason === 'Due today')).toBe(true);
+    // Every focus item points at a real task id.
+    for (const f of summary.focus) expect(f.taskId).toBeGreaterThan(0);
+  });
+
+  it('caches the briefing per day and only regenerates on demand', async () => {
+    insertTask('Something to brief about', null, 2);
+    await summarizeDay(TODAY); // populates the cache
+
+    // Tamper with the stored prose; a cache hit must return the tampered value.
+    sqlite.prepare(`UPDATE daily_summaries SET prose = 'CACHED MARKER' WHERE date = ?`).run(TODAY);
+    const hit = await summarizeDay(TODAY);
+    expect(hit.prose).toBe('CACHED MARKER');
+
+    // refresh bypasses the cache and rewrites it.
+    const fresh = await summarizeDay(TODAY, { refresh: true });
+    expect(fresh.prose).not.toBe('CACHED MARKER');
+    const after = await summarizeDay(TODAY);
+    expect(after.prose).not.toBe('CACHED MARKER');
+  });
+
+  it('invalidates the cache when the day\'s tasks change', async () => {
+    await summarizeDay(TODAY);
+    sqlite.prepare(`UPDATE daily_summaries SET prose = 'STALE' WHERE date = ?`).run(TODAY);
+
+    insertTask('A new task changes the inputs', null, 1); // hash no longer matches
+    const summary = await summarizeDay(TODAY);
+    expect(summary.prose).not.toBe('STALE');
+  });
 });

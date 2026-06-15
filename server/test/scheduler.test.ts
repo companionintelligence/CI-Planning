@@ -5,20 +5,24 @@ import { resetDb } from './helpers.js';
 
 const DATE = '2026-06-15'; // a PDT (UTC-7) day
 
-function setPrefs(p: { start?: string; end?: string; tz?: string; maxFocus?: number; brk?: number }) {
+function setPrefs(p: { start?: string; end?: string; tz?: string; maxFocus?: number; brk?: number; horizon?: number }) {
   sqlite
     .prepare(
       `UPDATE scheduling_prefs
-       SET workday_start = ?, workday_end = ?, timezone = ?, max_focus_block_minutes = ?, min_break_minutes = ?
+       SET workday_start = ?, workday_end = ?, timezone = ?, max_focus_block_minutes = ?, min_break_minutes = ?,
+           planning_horizon_days = ?, planning_mode = 'ritual'
        WHERE owner_id = 1`
     )
-    .run(p.start ?? '09:00', p.end ?? '18:00', p.tz ?? 'America/Los_Angeles', p.maxFocus ?? 90, p.brk ?? 10);
+    .run(p.start ?? '09:00', p.end ?? '18:00', p.tz ?? 'America/Los_Angeles', p.maxFocus ?? 90, p.brk ?? 10, p.horizon ?? 3);
 }
 
-function addTask(title: string, estimate: number, priority: number) {
+function addTask(title: string, estimate: number, priority: number, dueAt: string | null = null, taskTime: string | null = null) {
   sqlite
-    .prepare(`INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes) VALUES (?, ?, 1, 'open', ?)`)
-    .run(title, priority, estimate);
+    .prepare(
+      `INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes, due_at, task_time)
+       VALUES (?, ?, 1, 'open', ?, ?, ?)`
+    )
+    .run(title, priority, estimate, dueAt, taskTime);
 }
 
 interface BlockRow { title: string; start_at: string; end_at: string }
@@ -87,5 +91,46 @@ describe('scheduler', () => {
       const e = Date.parse(b.end_at);
       expect(s >= meetingEnd || e <= meetingStart).toBe(true);
     }
+  });
+
+  it('defers dated tasks beyond the planning horizon (rolls them over)', async () => {
+    setPrefs({ horizon: 3 });
+    addTask('Due soon', 60, 3, '2026-06-16T12:00:00.000Z'); // within 3-day horizon
+    addTask('Due far off', 60, 3, '2026-07-01T12:00:00.000Z'); // well beyond it
+
+    const r = await runScheduler(DATE);
+    const titles = taskBlocks().map((b) => b.title);
+
+    expect(titles).toContain('Due soon');
+    expect(titles).not.toContain('Due far off');
+    expect(r.deferred).toBe(1);
+  });
+
+  it('bounds the today-set to capacity and rolls the rest over', async () => {
+    // 09:00–11:00 PDT = 120 min of capacity; five 60-min tasks can't all fit.
+    setPrefs({ start: '09:00', end: '11:00', maxFocus: 90, brk: 10 });
+    for (let i = 1; i <= 5; i++) addTask(`Task ${i}`, 60, i);
+
+    const r = await runScheduler(DATE);
+
+    // Only the two most important fit the day; the other three roll over (not
+    // reported as "unscheduled" failures).
+    expect(taskBlocks().length).toBe(2);
+    expect(r.deferred).toBe(3);
+  });
+
+  it('pins a fixed-time task at its local time and packs the rest around it', async () => {
+    setPrefs({ start: '09:00', end: '18:00' });
+    addTask('Daily standup', 30, 1, null, '14:00'); // pinned
+    addTask('Flexible work', 60, 2);
+
+    await runScheduler(DATE);
+    const blocks = taskBlocks();
+    const standup = blocks.find((b) => b.title === 'Daily standup');
+    const flexible = blocks.find((b) => b.title === 'Flexible work');
+
+    expect(standup?.start_at).toBe('2026-06-15T21:00:00.000Z'); // 14:00 PDT
+    expect(flexible).toBeTruthy();
+    expect(flexible!.start_at).toBe('2026-06-15T16:00:00.000Z'); // packs from 09:00 PDT
   });
 });

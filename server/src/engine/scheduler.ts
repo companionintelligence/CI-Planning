@@ -1,9 +1,13 @@
-import { and, eq, asc } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { tasks, timeBlocks, schedulingPrefs } from '../db/schema.js';
+import type { InferSelectModel } from 'drizzle-orm';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+import { orderForToday } from '../agents/plan.js';
+
+type Task = InferSelectModel<typeof tasks>;
 
 export interface ScheduleResult {
   date: string;
@@ -11,7 +15,8 @@ export interface ScheduleResult {
   blocksRemoved: number;
   tasksScheduled: number;     // every focus session placed
   partiallyScheduled: number; // some sessions placed, capacity ran out
-  unscheduled: number;        // nothing fit
+  unscheduled: number;        // selected for today but nothing fit
+  deferred: number;           // left in the backlog for a future day (rolling horizon)
 }
 
 /** A free window in the day, with a moving cursor as blocks are packed in. */
@@ -24,6 +29,8 @@ interface Gap {
 const MS_PER_MIN = 60_000;
 // Don't carve a focus block shorter than this — sub-quarter-hour slivers aren't useful.
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
+// Cap how many tasks the (optional) LLM ordering pass sees, to bound the prompt.
+const AI_ORDER_LIMIT = 30;
 
 export async function runScheduler(date: string): Promise<ScheduleResult> {
   logger.info('scheduler.run', { date });
@@ -35,6 +42,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     tasksScheduled: 0,
     partiallyScheduled: 0,
     unscheduled: 0,
+    deferred: 0,
   };
 
   const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, 1));
@@ -73,21 +81,71 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
       .all(dayEndISO, dayStartISO) as { start_at: string; end_at: string }[]
   ).map((r) => ({ start: new Date(r.start_at).getTime(), end: new Date(r.end_at).getTime() }));
 
-  const gaps = buildGaps(dayStartMs, dayEndMs, fixed, breakMs);
-
-  // Backlog, most urgent first. (Nulls sort first in SQLite ASC — undated before dated.)
-  const backlog = await db
+  // ── Selection: build the "today set", roll the rest over ──────────────────────
+  const openTasks = (await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.status, 'open')))
-    .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id));
+    .where(eq(tasks.status, 'open'))
+    .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id))) as Task[];
+
+  // A dated task is only eligible if its deadline is within the horizon; undated
+  // tasks are always eligible as backlog fill. Far-future dated tasks roll over.
+  const horizonDays = Math.max(1, prefs.planningHorizonDays ?? 3);
+  const horizonCutoffISO = utcDayBounds(addLocalDays(date, horizonDays - 1), tz).end;
+  const eligible = openTasks.filter((t) => !t.dueAt || t.dueAt < horizonCutoffISO);
+  let deferred = openTasks.length - eligible.length;
+
+  // Most urgent first: overdue, then priority, then deadline, then id (stable).
+  const overdue = (t: Task) => (t.dueAt && t.dueAt < dayLoISO ? 0 : 1);
+  const ranked = [...eligible].sort(
+    (a, b) =>
+      overdue(a) - overdue(b) ||
+      (a.priority ?? 3) - (b.priority ?? 3) ||
+      (a.dueAt ?? '9999').localeCompare(b.dueAt ?? '9999') ||
+      a.id - b.id
+  );
+
+  // Optional AI pass (planning_mode === 'auto'): let the model reorder the head of
+  // the list. Placement stays deterministic; falls back to `ranked` if it can't.
+  const ordered = await orderForToday(ranked.slice(0, AI_ORDER_LIMIT), prefs).then((head) => [
+    ...head,
+    ...ranked.slice(AI_ORDER_LIMIT),
+  ]);
+
+  // Fixed-time tasks (a pinned start time-of-day) are appointments: place them
+  // first at their local time and let everything else pack around them.
+  const pinned = ordered.filter((t) => !!t.taskTime);
+  const flexible = ordered.filter((t) => !t.taskTime);
 
   let blocksCreated = 0;
   let tasksScheduled = 0;
   let partiallyScheduled = 0;
   let unscheduled = 0;
 
-  for (const task of backlog) {
+  for (const task of pinned) {
+    const startMs = new Date(zonedWallTimeToUTC(date, normalizeTime(task.taskTime!), tz)).getTime();
+    const endMs = startMs + (task.estimatedMinutes ?? 30) * MS_PER_MIN;
+    await insertBlock(task, task.title, startMs, endMs);
+    fixed.push({ start: startMs, end: endMs }); // carve it out of the day for the packer
+    blocksCreated++;
+    tasksScheduled++;
+  }
+
+  const gaps = buildGaps(dayStartMs, dayEndMs, fixed, breakMs);
+
+  // Capacity-bound the flexible set: take tasks in order until their estimates
+  // fill the day. The rest roll over instead of being force-fit and reported as
+  // "unscheduled".
+  let capacityMs = gaps.reduce((sum, g) => sum + (g.end - g.cursor), 0);
+  const todaySet: Task[] = [];
+  for (const t of flexible) {
+    if (capacityMs <= 0) break;
+    todaySet.push(t);
+    capacityMs -= (t.estimatedMinutes ?? 30) * MS_PER_MIN;
+  }
+  deferred += flexible.length - todaySet.length;
+
+  for (const task of todaySet) {
     const estimateMs = (task.estimatedMinutes ?? 30) * MS_PER_MIN;
     const sessions = splitIntoSessions(estimateMs, maxFocusMs); // 180m/90cap -> [90,90]
     const total = sessions.length;
@@ -98,17 +156,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
       if (!pick) break; // no room for this (or any later) session
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      await db.insert(timeBlocks).values({
-        taskId: task.id,
-        title: total > 1 ? `${task.title} (${placed + 1}/${total})` : task.title,
-        blockKind: 'task',
-        startAt: new Date(startMs).toISOString(),
-        endAt: new Date(endMs).toISOString(),
-        isAuto: true,
-        isLocked: false,
-        sourceKind: 'agent',
-        status: 'planned',
-      });
+      await insertBlock(task, total > 1 ? `${task.title} (${placed + 1}/${total})` : task.title, startMs, endMs);
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placed++;
@@ -126,11 +174,39 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     tasksScheduled,
     partiallyScheduled,
     unscheduled,
+    deferred,
   };
 
   broadcast('schedule:done', result);
   logger.info('scheduler.done', result);
   return result;
+}
+
+async function insertBlock(task: Task, title: string, startMs: number, endMs: number): Promise<void> {
+  await db.insert(timeBlocks).values({
+    taskId: task.id,
+    title,
+    blockKind: 'task',
+    startAt: new Date(startMs).toISOString(),
+    endAt: new Date(endMs).toISOString(),
+    isAuto: true,
+    isLocked: false,
+    sourceKind: 'agent',
+    status: 'planned',
+  });
+}
+
+/** "9:5" / "9:05" → "09:05"; tolerate sloppy stored times. */
+function normalizeTime(t: string): string {
+  const [h, m] = t.split(':');
+  return `${String(Number(h)).padStart(2, '0')}:${String(Number(m ?? 0)).padStart(2, '0')}`;
+}
+
+/** Add `n` calendar days to a YYYY-MM-DD string (UTC-noon pivot is DST-safe). */
+function addLocalDays(date: string, n: number): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 /** Split a duration into focus-sized sessions; the final session may be shorter. */
@@ -146,32 +222,20 @@ function splitIntoSessions(totalMs: number, maxFocusMs: number): number[] {
 }
 
 /**
- * Choose where a session of `wantMs` goes. Prefers a gap that fits it fully
- * (best-fit: least leftover, to reduce fragmentation); otherwise falls back to
- * the largest remaining gap and truncates the session to fit. Scans *all* gaps,
- * so smaller tasks backfill holes a bigger task skipped.
+ * Choose where a session of `wantMs` goes: the *earliest* gap that fits it fully
+ * (first-fit by time, so the day stays front-loaded); otherwise the earliest gap
+ * that can hold a usable partial session. Gaps are in chronological order, and
+ * every task scans from the start — so a smaller task still backfills an early
+ * hole a bigger task had to skip.
  */
 function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } | null {
-  let fit: Gap | null = null;
-  let fitLeftover = Infinity;
-  let largest: Gap | null = null;
-  let largestFree = 0;
-
+  for (const g of gaps) {
+    if (g.end - g.cursor >= wantMs) return { gap: g, len: wantMs };
+  }
   for (const g of gaps) {
     const free = g.end - g.cursor;
-    if (free <= 0) continue;
-    if (free >= wantMs && free - wantMs < fitLeftover) {
-      fit = g;
-      fitLeftover = free - wantMs;
-    }
-    if (free > largestFree) {
-      largest = g;
-      largestFree = free;
-    }
+    if (free >= MIN_SESSION_MS) return { gap: g, len: free };
   }
-
-  if (fit) return { gap: fit, len: wantMs };
-  if (largest && largestFree >= MIN_SESSION_MS) return { gap: largest, len: largestFree };
   return null;
 }
 

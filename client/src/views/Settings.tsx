@@ -14,7 +14,7 @@ export function Settings() {
   const [form, setForm] = createSignal({
     workday_start: '09:00', workday_end: '18:00',
     max_focus_block_minutes: 90, min_break_minutes: 10,
-    planning_mode: 'ritual', timezone: BROWSER_TZ,
+    planning_mode: 'ritual', timezone: BROWSER_TZ, planning_horizon_days: 3,
   });
 
   createEffect(() => {
@@ -27,6 +27,7 @@ export function Settings() {
       min_break_minutes:       p.min_break_minutes ?? 10,
       planning_mode:           p.planning_mode ?? 'ritual',
       timezone:                p.timezone ?? BROWSER_TZ,
+      planning_horizon_days:   p.planning_horizon_days ?? 3,
     });
   });
 
@@ -117,6 +118,12 @@ export function Settings() {
                 onInput={e => setField('min_break_minutes', Number(e.currentTarget.value))} />
             </label>
           </div>
+          <label class="flex flex-col gap-1.5 mt-4">
+            <span class="text-xs text-slate-500">Planning horizon (days) — how far ahead a dated task can be pulled into today</span>
+            <input type="number" class="input" min={1} max={30} step={1}
+              value={form().planning_horizon_days}
+              onInput={e => setField('planning_horizon_days', Number(e.currentTarget.value))} />
+          </label>
         </section>
 
         {/* Integrations */}

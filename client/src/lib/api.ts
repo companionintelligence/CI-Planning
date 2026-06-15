@@ -132,7 +132,7 @@ export interface Prefs {
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
   day_theme?: Record<string, string>; planning_mode: string;
-  timezone?: string;
+  timezone?: string; planning_horizon_days?: number;
 }
 
 export interface Job {
@@ -141,9 +141,11 @@ export interface Job {
   items_created?: number;
 }
 
+export interface FocusItem { taskId: number; title: string; reason: string }
 export interface DaySummary {
   date: string; prose: string; llm: boolean;
   stats: { overdue: number; dueToday: number; open: number; blocks: number };
+  focus: FocusItem[];
 }
 
 export interface LLMStatus {

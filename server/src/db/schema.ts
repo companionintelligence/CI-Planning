@@ -67,6 +67,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
   planningMode: text('planning_mode').default('ritual'), // auto | ritual
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
+  planningHorizonDays: integer('planning_horizon_days').default(3), // how far ahead a dated task can be pulled into "today"
 });
 
 export const tags = sqliteTable('tags', {

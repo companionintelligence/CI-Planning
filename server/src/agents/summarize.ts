@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { sqlite } from '../db/index.js';
 import { generate } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
@@ -20,6 +21,12 @@ interface BlockRow {
   status: string;
 }
 
+export interface FocusItem {
+  taskId: number;
+  title: string;
+  reason: string;
+}
+
 export interface DaySummary {
   date: string;
   prose: string;
@@ -29,6 +36,8 @@ export interface DaySummary {
     open: number;
     blocks: number;
   };
+  /** Up to three concrete things to act on — the briefing made clickable. */
+  focus: FocusItem[];
   /** True when the prose came from the LLM; false when it's the deterministic fallback. */
   llm: boolean;
 }
@@ -108,11 +117,47 @@ Open backlog (top items):
 ${fmt(g.open)}`;
 }
 
+/** Up to three concrete things to act on, most urgent first. */
+function buildFocus(g: ReturnType<typeof gather>): FocusItem[] {
+  const out: FocusItem[] = [];
+  const seen = new Set<number>();
+  const add = (t: TaskRow, reason: string) => {
+    if (out.length >= 3 || seen.has(t.id)) return;
+    seen.add(t.id);
+    out.push({ taskId: t.id, title: t.title, reason });
+  };
+  for (const t of g.overdue) add(t, t.due_at ? `Overdue since ${t.due_at.slice(0, 10)}` : 'Overdue');
+  for (const t of g.dueToday) add(t, 'Due today');
+  for (const t of g.open) add(t, `Priority P${t.priority}`);
+  return out;
+}
+
+/** Fingerprint of everything the briefing depends on, so the cache self-invalidates. */
+function inputsHash(g: ReturnType<typeof gather>): string {
+  const payload = JSON.stringify({
+    o: g.overdue.map((t) => [t.id, t.status, t.due_at]),
+    d: g.dueToday.map((t) => [t.id, t.status, t.due_at, t.priority]),
+    p: g.open.map((t) => [t.id, t.priority, t.status]),
+    b: g.blocks.map((b) => [b.title, b.start_at, b.end_at, b.status]),
+  });
+  return createHash('sha1').update(payload).digest('hex');
+}
+
+interface CacheRow {
+  prose: string;
+  stats: string;
+  focus: string;
+  llm: number;
+  inputs_hash: string;
+}
+
 /**
- * Produce a prose day briefing. Uses Ollama when available; otherwise returns a
- * deterministic fallback so the endpoint never hard-fails.
+ * Produce a prose day briefing with actionable focus items. Uses Ollama when
+ * available; otherwise returns a deterministic fallback so the endpoint never
+ * hard-fails. Result is cached per day and only regenerated when the day's tasks
+ * or blocks change (or `refresh` is set) — the LLM call is ~12s, so this matters.
  */
-export async function summarizeDay(date: string): Promise<DaySummary> {
+export async function summarizeDay(date: string, opts: { refresh?: boolean } = {}): Promise<DaySummary> {
   const g = gather(date);
   const stats = {
     overdue: g.overdue.length,
@@ -120,14 +165,40 @@ export async function summarizeDay(date: string): Promise<DaySummary> {
     open: g.open.length,
     blocks: g.blocks.length,
   };
+  const focus = buildFocus(g);
+  const hash = inputsHash(g);
 
+  if (!opts.refresh) {
+    const cached = sqlite
+      .prepare('SELECT prose, stats, focus, llm, inputs_hash FROM daily_summaries WHERE owner_id = 1 AND date = ?')
+      .get(date) as CacheRow | undefined;
+    if (cached && cached.inputs_hash === hash) {
+      return { date, prose: cached.prose, stats: JSON.parse(cached.stats), focus: JSON.parse(cached.focus), llm: !!cached.llm };
+    }
+  }
+
+  let prose: string;
+  let llm: boolean;
   try {
-    const prose = await generate(buildPrompt(date, g), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
-    const trimmed = prose.trim();
-    if (!trimmed) throw new Error('empty summary');
-    return { date, prose: trimmed, stats, llm: true };
+    const out = await generate(buildPrompt(date, g), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
+    prose = out.trim();
+    if (!prose) throw new Error('empty summary');
+    llm = true;
   } catch (err) {
     logger.warn('summarizeDay fell back to deterministic prose', { date, err: (err as Error).message });
-    return { date, prose: fallbackProse(date, g), stats, llm: false };
+    prose = fallbackProse(date, g);
+    llm = false;
   }
+
+  sqlite
+    .prepare(
+      `INSERT INTO daily_summaries (owner_id, date, prose, stats, focus, llm, inputs_hash, created_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(owner_id, date) DO UPDATE SET
+         prose = excluded.prose, stats = excluded.stats, focus = excluded.focus,
+         llm = excluded.llm, inputs_hash = excluded.inputs_hash, created_at = excluded.created_at`
+    )
+    .run(date, prose, JSON.stringify(stats), JSON.stringify(focus), llm ? 1 : 0, hash);
+
+  return { date, prose, stats, focus, llm };
 }
