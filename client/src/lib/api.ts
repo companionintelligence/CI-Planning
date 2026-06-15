@@ -132,6 +132,7 @@ export interface Prefs {
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
   day_theme?: Record<string, string>; planning_mode: string;
+  timezone?: string;
 }
 
 export interface Job {
