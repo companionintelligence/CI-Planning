@@ -1,6 +1,6 @@
 import { createResource, Show, For, createSignal } from 'solid-js';
 import { Zap, Sparkles, Clock, TrendingUp, AlertCircle } from 'lucide-solid';
-import { tasks, blocks, refetchTasks, refetchBlocks, showToast } from '../stores/index.js';
+import { tasks, blocks, refetchTasks, refetchBlocks, showToast, setTaskModal } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import { TaskCard } from '../components/TaskCard.js';
@@ -25,6 +25,12 @@ export function Today() {
 
   const openTasks = () =>
     (tasks() ?? []).filter(t => t.status === 'open' && !t.parent_id).slice(0, 6);
+
+  function openFocus(taskId: number) {
+    const t = (tasks() ?? []).find((x) => x.id === taskId);
+    if (t) setTaskModal({ open: true, editTask: t });
+    else showToast('Open it from the Tasks list', 'default');
+  }
 
   async function runSchedule() {
     setRunningSchedule(true);
@@ -78,6 +84,21 @@ export function Today() {
               </div>
             </div>
             <p class="text-sm text-slate-300 leading-relaxed">{s().prose}</p>
+            <Show when={s().focus?.length}>
+              <div class="flex flex-wrap gap-2 mt-3">
+                <For each={s().focus}>
+                  {(f) => (
+                    <button
+                      class="text-xs px-2.5 py-1 rounded-full border border-surface-600 hover:border-accent text-slate-300 transition-colors"
+                      title={f.reason}
+                      onClick={() => openFocus(f.taskId)}
+                    >
+                      {f.title} <span class="text-slate-500">· {f.reason}</span>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
           </div>
         )}
       </Show>
