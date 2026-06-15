@@ -1,4 +1,4 @@
-import { and, eq, asc } from 'drizzle-orm';
+import { and, eq, asc, or, isNull, lt } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { tasks, timeBlocks, schedulingPrefs } from '../db/schema.js';
 import { broadcast } from '../routes/sse.js';
@@ -73,21 +73,54 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
       .all(dayEndISO, dayStartISO) as { start_at: string; end_at: string }[]
   ).map((r) => ({ start: new Date(r.start_at).getTime(), end: new Date(r.end_at).getTime() }));
 
-  const gaps = buildGaps(dayStartMs, dayEndMs, fixed, breakMs);
-
-  // Backlog, most urgent first. (Nulls sort first in SQLite ASC — undated before dated.)
-  const backlog = await db
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.status, 'open')))
-    .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id));
-
   let blocksCreated = 0;
   let tasksScheduled = 0;
   let partiallyScheduled = 0;
   let unscheduled = 0;
 
-  for (const task of backlog) {
+  // The "today set": open tasks that are undated, overdue, or due within the
+  // planning horizon. Tasks due further out aren't pulled into today and don't
+  // inflate the unscheduled count (most urgent first; nulls sort first in ASC).
+  const horizonDays = prefs.planningHorizonDays ?? 7;
+  const [hy, hm, hd] = date.split('-').map(Number);
+  const horizonDate = new Date(Date.UTC(hy, hm - 1, hd + horizonDays)).toISOString().slice(0, 10);
+  const horizonEndISO = utcDayBounds(horizonDate, tz).end;
+
+  const candidates = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.status, 'open'), or(isNull(tasks.dueAt), lt(tasks.dueAt, horizonEndISO))))
+    .orderBy(asc(tasks.priority), asc(tasks.dueAt), asc(tasks.id));
+
+  // A task with a fixed time-of-day that is due on this local day is pinned at
+  // that time (an appointment); flexible work is packed around it.
+  const isPinned = (t: (typeof candidates)[number]) =>
+    !!t.taskTime && !!t.dueAt && t.dueAt >= dayLoISO && t.dueAt < dayHiISO;
+
+  for (const t of candidates.filter(isPinned)) {
+    const startISO = zonedWallTimeToUTC(date, (t.taskTime as string).slice(0, 5), tz);
+    const startMs = new Date(startISO).getTime();
+    const endMs = startMs + (t.estimatedMinutes ?? 30) * MS_PER_MIN;
+    await db.insert(timeBlocks).values({
+      taskId: t.id,
+      title: t.title,
+      blockKind: 'task',
+      startAt: startISO,
+      endAt: new Date(endMs).toISOString(),
+      isAuto: true,
+      isLocked: false,
+      sourceKind: 'agent',
+      status: 'planned',
+    });
+    fixed.push({ start: startMs, end: endMs }); // flexible work schedules around the pin
+    blocksCreated++;
+    tasksScheduled++;
+  }
+
+  // Build free windows AFTER pinning so the packer avoids pinned appointments too.
+  const gaps = buildGaps(dayStartMs, dayEndMs, fixed, breakMs);
+
+  for (const task of candidates.filter((t) => !isPinned(t))) {
     const estimateMs = (task.estimatedMinutes ?? 30) * MS_PER_MIN;
     const sessions = splitIntoSessions(estimateMs, maxFocusMs); // 180m/90cap -> [90,90]
     const total = sessions.length;

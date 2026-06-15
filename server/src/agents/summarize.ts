@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { sqlite } from '../db/index.js';
 import { generate } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
@@ -31,6 +32,8 @@ export interface DaySummary {
   };
   /** True when the prose came from the LLM; false when it's the deterministic fallback. */
   llm: boolean;
+  /** True when served from the daily_summaries cache (no regeneration this call). */
+  cached?: boolean;
 }
 
 function gather(date: string) {
@@ -108,11 +111,20 @@ Open backlog (top items):
 ${fmt(g.open)}`;
 }
 
+/** Fingerprint of the inputs that feed a briefing; changes invalidate the cache. */
+function inputsHash(date: string, g: ReturnType<typeof gather>): string {
+  return createHash('sha256').update(JSON.stringify({ date, g })).digest('hex');
+}
+
 /**
  * Produce a prose day briefing. Uses Ollama when available; otherwise returns a
  * deterministic fallback so the endpoint never hard-fails.
+ *
+ * Result is cached per (owner, date) keyed by an inputs fingerprint, so repeated
+ * loads don't pay the ~12s LLM cost. The cache is bypassed with `refresh: true`
+ * and self-invalidates when the day's tasks/blocks change.
  */
-export async function summarizeDay(date: string): Promise<DaySummary> {
+export async function summarizeDay(date: string, opts: { refresh?: boolean } = {}): Promise<DaySummary> {
   const g = gather(date);
   const stats = {
     overdue: g.overdue.length,
@@ -120,14 +132,39 @@ export async function summarizeDay(date: string): Promise<DaySummary> {
     open: g.open.length,
     blocks: g.blocks.length,
   };
+  const hash = inputsHash(date, g);
 
+  if (!opts.refresh) {
+    const row = sqlite
+      .prepare('SELECT prose, stats, llm, inputs_hash FROM daily_summaries WHERE owner_id = 1 AND date = ?')
+      .get(date) as { prose: string; stats: string; llm: number; inputs_hash: string } | undefined;
+    if (row && row.inputs_hash === hash) {
+      return { date, prose: row.prose, stats: JSON.parse(row.stats), llm: !!row.llm, cached: true };
+    }
+  }
+
+  let prose: string;
+  let llm: boolean;
   try {
-    const prose = await generate(buildPrompt(date, g), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
-    const trimmed = prose.trim();
-    if (!trimmed) throw new Error('empty summary');
-    return { date, prose: trimmed, stats, llm: true };
+    const out = await generate(buildPrompt(date, g), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
+    prose = out.trim();
+    if (!prose) throw new Error('empty summary');
+    llm = true;
   } catch (err) {
     logger.warn('summarizeDay fell back to deterministic prose', { date, err: (err as Error).message });
-    return { date, prose: fallbackProse(date, g), stats, llm: false };
+    prose = fallbackProse(date, g);
+    llm = false;
   }
+
+  sqlite
+    .prepare(
+      `INSERT INTO daily_summaries (owner_id, date, prose, stats, llm, inputs_hash, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(owner_id, date) DO UPDATE SET
+         prose = excluded.prose, stats = excluded.stats, llm = excluded.llm,
+         inputs_hash = excluded.inputs_hash, updated_at = CURRENT_TIMESTAMP`
+    )
+    .run(date, prose, JSON.stringify(stats), llm ? 1 : 0, hash);
+
+  return { date, prose, stats, llm, cached: false };
 }
