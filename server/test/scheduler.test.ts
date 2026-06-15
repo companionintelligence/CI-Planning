@@ -31,14 +31,22 @@ function insertTask(opts: {
 
 const DATE = '2026-06-15'; // a PDT (UTC-7) day
 
-function setPrefs(p: { start?: string; end?: string; tz?: string; maxFocus?: number; brk?: number }) {
+function setPrefs(p: { start?: string; end?: string; tz?: string; maxFocus?: number; brk?: number; horizon?: number }) {
   sqlite
     .prepare(
       `UPDATE scheduling_prefs
-       SET workday_start = ?, workday_end = ?, timezone = ?, max_focus_block_minutes = ?, min_break_minutes = ?
+       SET workday_start = ?, workday_end = ?, timezone = ?, max_focus_block_minutes = ?, min_break_minutes = ?,
+           planning_horizon_days = ?
        WHERE owner_id = 1`
     )
-    .run(p.start ?? '09:00', p.end ?? '18:00', p.tz ?? 'America/Los_Angeles', p.maxFocus ?? 90, p.brk ?? 10);
+    .run(
+      p.start ?? '09:00',
+      p.end ?? '18:00',
+      p.tz ?? 'America/Los_Angeles',
+      p.maxFocus ?? 90,
+      p.brk ?? 10,
+      p.horizon ?? 7
+    );
 }
 
 function addTask(title: string, estimate: number, priority: number) {
@@ -154,16 +162,30 @@ describe('scheduler', () => {
   });
 
   it('excludes tasks beyond the planning horizon from the day (today set)', async () => {
-    setPrefs({ start: '09:00', end: '18:00' }); // default horizon = 7 days
+    setPrefs({ start: '09:00', end: '18:00', horizon: 3 });
+    addDatedTask('Due soon', 60, 3, '2026-06-16T12:00:00.000Z'); // within 3-day horizon
     addDatedTask('Far future', 60, 1, '2026-07-30T12:00:00.000Z'); // ~45 days out, urgent
     addTask('Soon', 60, 3); // undated → always a candidate
 
     const r = await runScheduler(DATE);
     const titles = taskBlocks().map((b) => b.title);
 
+    expect(titles).toContain('Due soon');
     expect(titles).toContain('Soon');
     expect(titles).not.toContain('Far future');
     // Far-future task isn't a candidate, so it doesn't inflate "unscheduled".
+    expect(r.unscheduled).toBe(0);
+    expect(r.deferred).toBe(1);
+  });
+
+  it('bounds the today-set to capacity and rolls the rest over', async () => {
+    setPrefs({ start: '09:00', end: '11:00', maxFocus: 90, brk: 10 });
+    for (let i = 1; i <= 5; i++) addTask(`Task ${i}`, 60, i);
+
+    const r = await runScheduler(DATE);
+
+    expect(taskBlocks()).toHaveLength(2);
+    expect(r.deferred).toBe(3);
     expect(r.unscheduled).toBe(0);
   });
 
