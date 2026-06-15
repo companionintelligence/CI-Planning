@@ -24,6 +24,33 @@ describe('migration runner', () => {
     expect(db.prepare('SELECT id FROM owners WHERE id = 1').get()).toBeTruthy();
     expect(count(db, 'scheduled_jobs')).toBeGreaterThan(0);
     expect(cols(db, 'daily_summaries')).toContain('focus');
+    // 0010: all_day column on time_blocks (Phase F PR-3).
+    expect(cols(db, 'time_blocks')).toContain('all_day');
+    db.close();
+  });
+
+  it('0010 adds all_day to time_blocks, default 0, and is idempotent', () => {
+    const db = fresh();
+    runMigrations(db);
+    // Inserting a block without all_day defaults to 0 (false).
+    db.prepare(
+      `INSERT INTO time_blocks (title, start_at, end_at) VALUES ('B', '2026-06-15T16:00:00Z', '2026-06-15T17:00:00Z')`,
+    ).run();
+    const row = db.prepare('SELECT all_day FROM time_blocks LIMIT 1').get() as { all_day: number };
+    expect(row.all_day).toBe(0);
+    // Re-running the whole runner is a no-op (the add-column guard holds).
+    expect(runMigrations(db).applied).toEqual([]);
+    expect(cols(db, 'time_blocks').filter((c) => c === 'all_day').length).toBe(1); // not duplicated
+    db.close();
+  });
+
+  it('0010 is a no-op when the column already exists (pre-grown DB)', () => {
+    const db = fresh();
+    runMigrations(db);
+    // Simulate a DB that already has the column (e.g. a future baseline) and rerun.
+    const before = cols(db, 'time_blocks');
+    expect(runMigrations(db).applied).toEqual([]);
+    expect(cols(db, 'time_blocks')).toEqual(before);
     db.close();
   });
 

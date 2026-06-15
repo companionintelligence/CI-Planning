@@ -72,6 +72,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   endAt: text('end_at').notNull(),
   isLocked: integer('is_locked', { mode: 'boolean' }).default(false),
   isAuto: integer('is_auto', { mode: 'boolean' }).default(true),
+  allDay: integer('all_day', { mode: 'boolean' }).default(false), // all-day events: header lane, off the minute axis (0010)
   sourceKind: text('source_kind').default('manual'),
   sourceRef: text('source_ref'),
   status: text('status').default('planned'),         // planned | completed | skipped | overrun
