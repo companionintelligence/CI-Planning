@@ -7,6 +7,15 @@ import {
   minutesIntoDay,
   yOf,
 } from '../lib/grid.js';
+import {
+  HANDLE_PX,
+  type GestureMode,
+  isImmovable,
+  resolveGesture,
+  commitDrag,
+} from '../lib/drag.js';
+import { showToast } from '../stores/index.js';
+import { isAllDay, isTimed } from '../lib/overlay.js';
 import { localISODate, addDays } from '../lib/dates.js';
 
 // ── Palette (mirrors BlockCard's CI teal kinds) ───────────────────────────────
@@ -40,6 +49,7 @@ interface Placed {
  */
 export function layoutBlocks(blocks: Block[], dayStr: string): Placed[] {
   const items = blocks
+    .filter(isTimed) // all-day blocks live in the header lane, off the minute axis
     .map((block) => {
       const top = minutesIntoDay(block.start_at, dayStr);
       const end = minutesIntoDay(block.end_at, dayStr);
@@ -107,23 +117,72 @@ function NowLine(props: { day: string }) {
   );
 }
 
-// ── Block chip (time-axis positioned) ─────────────────────────────────────────
+// ── Block chip (time-axis positioned, draggable + resizable) ──────────────────
 function BlockChip(props: { placed: Placed; day: string }) {
   const b = () => props.placed.block;
   const color = () => kindColor[b().block_kind] ?? '#152637';
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
-  const heightPx = () => Math.max(yOf(props.placed.height), MIN_CHIP_PX);
+  const locked = () => isImmovable(b());
+
+  // Live gesture state: a pixel delta + the edge(s) being dragged. Only the local
+  // chip moves during the gesture; the single PATCH fires on pointer-up.
+  const [drag, setDrag] = createSignal<{ mode: GestureMode; dy: number } | null>(null);
+
+  // Base extent (minutes) with the in-flight gesture applied — visual only.
+  const liveTop = () => {
+    const g = drag();
+    if (!g) return props.placed.top;
+    const dMin = g.dy / PX_PER_MIN;
+    if (g.mode === 'move' || g.mode === 'resize-top') return props.placed.top + dMin;
+    return props.placed.top;
+  };
+  const liveHeight = () => {
+    const g = drag();
+    if (!g) return props.placed.height;
+    const dMin = g.dy / PX_PER_MIN;
+    if (g.mode === 'move') return props.placed.height;
+    if (g.mode === 'resize-top') return props.placed.height - dMin;
+    return props.placed.height + dMin; // resize-bottom
+  };
+  const heightPx = () => Math.max(yOf(liveHeight()), MIN_CHIP_PX);
+
+  function startGesture(mode: GestureMode, e: PointerEvent) {
+    if (locked()) return; // locked / meeting: no gesture, no PATCH
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture?.(e.pointerId);
+
+    const onMove = (ev: PointerEvent) => setDrag({ mode, dy: ev.clientY - startY });
+    const onUp = (ev: PointerEvent) => {
+      target.releasePointerCapture?.(ev.pointerId);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      const dy = ev.clientY - startY;
+      setDrag(null);
+      // Resolve through the pure gesture math and emit exactly one PATCH.
+      const resolved = resolveGesture(b(), props.day, mode, dy);
+      void commitDrag(b(), resolved, { onError: (m) => showToast(m, 'error') });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    setDrag({ mode, dy: 0 });
+  }
 
   return (
     <div
-      class="absolute rounded-md px-1.5 py-0.5 overflow-hidden text-[11px] leading-tight border transition-colors"
+      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none"
       classList={{
         'opacity-40': done(),
         'ring-1 ring-amber-400/70': conflict(),
+        'cursor-grab': !locked(),
+        'cursor-default': locked(),
+        'z-10 cursor-grabbing shadow-lg': !!drag(),
       }}
       style={{
-        top: `${yOf(props.placed.top)}px`,
+        top: `${yOf(liveTop())}px`,
         height: `${heightPx()}px`,
         left: `${(props.placed.col / props.placed.cols) * 100}%`,
         width: `calc(${100 / props.placed.cols}% - 2px)`,
@@ -132,14 +191,52 @@ function BlockChip(props: { placed: Placed; day: string }) {
         'border-left-width': '3px',
       }}
       title={`${b().title} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}`}
+      onPointerDown={[ (e: PointerEvent) => startGesture('move', e) ][0]}
     >
-      <div class="flex items-center gap-1 font-medium text-slate-100 truncate">
-        <Show when={b().is_locked}><Lock size={9} class="text-slate-400 flex-shrink-0" /></Show>
-        <span class="truncate">{b().title}</span>
-      </div>
-      <Show when={heightPx() >= 30}>
-        <div class="text-slate-400 truncate">{fmtTime(b().start_at)}</div>
+      {/* Top resize handle */}
+      <Show when={!locked()}>
+        <div
+          class="absolute top-0 left-0 right-0 cursor-ns-resize z-10"
+          style={{ height: `${HANDLE_PX}px` }}
+          onPointerDown={(e) => startGesture('resize-top', e)}
+        />
       </Show>
+      <div class="px-1.5 py-0.5">
+        <div class="flex items-center gap-1 font-medium text-slate-100 truncate">
+          <Show when={b().is_locked}><Lock size={9} class="text-slate-400 flex-shrink-0" /></Show>
+          <span class="truncate">{b().title}</span>
+        </div>
+        <Show when={heightPx() >= 30}>
+          <div class="text-slate-400 truncate">{fmtTime(b().start_at)}</div>
+        </Show>
+      </div>
+      {/* Bottom resize handle */}
+      <Show when={!locked()}>
+        <div
+          class="absolute bottom-0 left-0 right-0 cursor-ns-resize z-10"
+          style={{ height: `${HANDLE_PX}px` }}
+          onPointerDown={(e) => startGesture('resize-bottom', e)}
+        />
+      </Show>
+    </div>
+  );
+}
+
+// ── All-day chip (pinned header lane; not on the minute axis) ──────────────────
+function AllDayChip(props: { block: Block }) {
+  const color = () => kindColor[props.block.block_kind] ?? '#152637';
+  const done = () => ['completed', 'skipped'].includes(props.block.status);
+  return (
+    <div
+      class="rounded px-1.5 py-0.5 text-[10px] leading-tight truncate border-l-2"
+      classList={{ 'opacity-40': done() }}
+      style={{
+        'background-color': `${color()}26`,
+        'border-left-color': color(),
+      }}
+      title={props.block.title}
+    >
+      <span class="text-slate-200">{props.block.title}</span>
     </div>
   );
 }
@@ -217,6 +314,29 @@ export function CalendarGrid(props: Props) {
           )}
         </For>
       </div>
+
+      {/* All-day lane: pinned above the minute axis. Only shown when any visible
+          day has all-day blocks, so a column without the migration (no all_day)
+          simply renders nothing here. */}
+      <Show when={props.days.some((d) => (props.blocksByDay()[d] ?? []).some(isAllDay))}>
+        <div
+          class="grid sticky top-[3.25rem] z-20 bg-surface-800/95 backdrop-blur border-b border-surface-700"
+          style={{ 'grid-template-columns': `3.5rem repeat(${props.days.length}, 1fr)` }}
+        >
+          <div class="flex items-start justify-end pr-1.5 pt-1 text-[9px] uppercase tracking-wide text-slate-500">
+            all-day
+          </div>
+          <For each={props.days}>
+            {(day) => (
+              <div class="border-l border-surface-700/60 p-1 flex flex-col gap-0.5 min-h-[1.75rem]">
+                <For each={(props.blocksByDay()[day] ?? []).filter(isAllDay)}>
+                  {(b) => <AllDayChip block={b} />}
+                </For>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
 
       {/* Time grid */}
       <div
