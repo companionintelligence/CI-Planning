@@ -20,6 +20,8 @@ export interface Task {
   description?: string;
   notes?: string;
   due_at?: string;
+  scheduled_for?: string;
+  defer_until?: string;
   task_time?: string;
   estimated_minutes?: number;
   priority: number;
@@ -30,6 +32,8 @@ export interface Task {
   created_at: string;
   completed_at?: string;
   tags: string[];
+  depends_on?: number[];
+  blocked?: boolean;
 }
 
 export interface TaskInput {
@@ -37,12 +41,25 @@ export interface TaskInput {
   description?: string;
   notes?: string;
   due_at?: string;
+  scheduled_for?: string;
+  defer_until?: string;
   task_time?: string;
   estimated_minutes?: number;
   priority?: number;
   parent_id?: number;
   owner_id?: number;
   tags?: string[];
+  depends_on?: number[];
+}
+
+export interface ParsedQuick {
+  title: string;
+  dueAt?: string;
+  scheduledFor?: string;
+  taskTime?: string;
+  tags: string[];
+  estimatedMinutes?: number;
+  priority?: number;
 }
 
 export const api = {
@@ -54,6 +71,7 @@ export const api = {
       return request<{ tasks: Task[] }>('GET', `/tasks${q}`);
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
+    quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
     update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string }>) =>
       request<{ task: Task }>('PATCH', `/tasks/${id}`, body),
     delete: (id: number) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
