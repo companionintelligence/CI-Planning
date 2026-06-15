@@ -15,7 +15,8 @@
     "test": "pnpm --filter server test",
     "seed": "pnpm --filter server seed",
     "db:generate": "pnpm --filter server db:generate",
-    "db:migrate": "pnpm --filter server db:migrate"
+    "db:migrate": "pnpm --filter server db:migrate",
+    "migrate": "pnpm --filter server migrate"
   },
   "devDependencies": {
     "concurrently": "^10.0.3"
