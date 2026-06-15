@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "migrate": "tsx src/scripts/migrate.ts"
   },
   "dependencies": {
     "@koa/cors": "^5.0.0",
