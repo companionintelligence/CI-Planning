@@ -1,6 +1,7 @@
 import { sqlite } from '../db/index.js';
 import { embed } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
+import { currentOwnerId } from '../lib/context.js';
 
 export interface PromoteResult {
   promoted: number;
@@ -49,7 +50,7 @@ export function promotePossibles(opts: { threshold?: number } = {}): PromoteResu
           p.raw_summary,
           p.proposed_due_at,
           p.proposed_priority ?? 3,
-          p.proposed_owner_id ?? 1,
+          p.proposed_owner_id ?? currentOwnerId(),
           p.source_kind ?? 'agent',
           p.source_ref
         ) as { id: number };
