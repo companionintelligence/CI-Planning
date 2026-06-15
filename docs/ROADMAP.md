@@ -15,6 +15,7 @@ Status: design-approved, **not started**. Phase A (scheduler correctness) is in 
 | D1 | Auth model | **Single-owner now, owner-scoped data model** so multi-tenant is a later flip |
 | D2 | Two-way sync | **Native OAuth connectors in a `connectors/` module + encrypted token store**; agent-bridge stays as fallback |
 | D3 | Multi-device sync | **Op-log + last-writer-wins (LWW)**; CRDT rejected, revisit only on real multi-writer conflicts |
+| D4 | Auth deployment mode | **SSO-first resource server + standalone mirror** (build both) |
 
 ## "ci-server standard" auth — what we are matching
 The canonical CI server (`~/devel/ci/CI-Server`, `@ci/ci-server`, NestJS + TypeORM + Apollo) defines the auth standard. Companion Planning is **Koa + Drizzle + better-sqlite3**, so we match the **contract and security semantics, not the framework**.
@@ -23,7 +24,7 @@ Two deployment modes:
 - **Hub / SSO mode (primary):** Planning is an **SSO resource server** — shares the same HS256 `AUTH_JWT_SECRET`, validates CI-Server-issued Bearer tokens, and delegates OAuth to CI-Server's `connections`/`CloudOAuthProxyService`. One identity + one token store on the appliance.
 - **Standalone mode (public Docker image):** Planning runs a faithful local mirror of the contract (own `authenticate` endpoints, sessions, API keys, signup codes, connectors).
 
-**Recommended: build both, SSO-first.** Open sub-decision: SSO-first + standalone (recommended) vs standalone-only.
+**Decided (D4): build both, SSO-first + standalone mirror.** SSO is the primary path on a Hub/Core Server; the standalone mirror covers the public Docker image.
 
 ### Best practices verified in CI-Server (adopt as-is)
 Source files under `CI-Server/backend/apps/api/src`:
