@@ -28,6 +28,7 @@ export function resetDb(): void {
     DELETE FROM task_dependencies;
     DELETE FROM task_tags;
     DELETE FROM possible_task_tags;
+    DELETE FROM time_entries;
     DELETE FROM time_blocks;
     DELETE FROM possible_tasks;
     DELETE FROM tasks;
