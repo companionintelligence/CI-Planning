@@ -141,9 +141,11 @@ export interface Job {
   items_created?: number;
 }
 
+export interface FocusItem { taskId: number; title: string; reason: string }
 export interface DaySummary {
   date: string; prose: string; llm: boolean;
   stats: { overdue: number; dueToday: number; open: number; blocks: number };
+  focus: FocusItem[];
 }
 
 export interface LLMStatus {

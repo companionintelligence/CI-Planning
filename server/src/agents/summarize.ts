@@ -21,6 +21,13 @@ interface BlockRow {
   status: string;
 }
 
+/** A concrete, clickable thing to act on — the briefing made actionable. */
+export interface FocusItem {
+  taskId: number;
+  title: string;
+  reason: string;
+}
+
 export interface DaySummary {
   date: string;
   prose: string;
@@ -30,6 +37,8 @@ export interface DaySummary {
     open: number;
     blocks: number;
   };
+  /** Up to three concrete things to act on, most urgent first. */
+  focus: FocusItem[];
   /** True when the prose came from the LLM; false when it's the deterministic fallback. */
   llm: boolean;
   /** True when served from the daily_summaries cache (no regeneration this call). */
@@ -111,6 +120,21 @@ Open backlog (top items):
 ${fmt(g.open)}`;
 }
 
+/** Up to three concrete things to act on, most urgent first (deterministic). */
+function buildFocus(g: ReturnType<typeof gather>): FocusItem[] {
+  const out: FocusItem[] = [];
+  const seen = new Set<number>();
+  const add = (t: TaskRow, reason: string) => {
+    if (out.length >= 3 || seen.has(t.id)) return;
+    seen.add(t.id);
+    out.push({ taskId: t.id, title: t.title, reason });
+  };
+  for (const t of g.overdue) add(t, t.due_at ? `Overdue since ${t.due_at.slice(0, 10)}` : 'Overdue');
+  for (const t of g.dueToday) add(t, 'Due today');
+  for (const t of g.open) add(t, `Priority P${t.priority}`);
+  return out;
+}
+
 /** Fingerprint of the inputs that feed a briefing; changes invalidate the cache. */
 function inputsHash(date: string, g: ReturnType<typeof gather>): string {
   return createHash('sha256').update(JSON.stringify({ date, g })).digest('hex');
@@ -132,14 +156,24 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     open: g.open.length,
     blocks: g.blocks.length,
   };
+  const focus = buildFocus(g);
   const hash = inputsHash(date, g);
 
   if (!opts.refresh) {
     const row = sqlite
-      .prepare('SELECT prose, stats, llm, inputs_hash FROM daily_summaries WHERE owner_id = 1 AND date = ?')
-      .get(date) as { prose: string; stats: string; llm: number; inputs_hash: string } | undefined;
+      .prepare('SELECT prose, stats, focus, llm, inputs_hash FROM daily_summaries WHERE owner_id = 1 AND date = ?')
+      .get(date) as
+      | { prose: string; stats: string; focus: string; llm: number; inputs_hash: string }
+      | undefined;
     if (row && row.inputs_hash === hash) {
-      return { date, prose: row.prose, stats: JSON.parse(row.stats), llm: !!row.llm, cached: true };
+      return {
+        date,
+        prose: row.prose,
+        stats: JSON.parse(row.stats),
+        focus: JSON.parse(row.focus),
+        llm: !!row.llm,
+        cached: true,
+      };
     }
   }
 
@@ -158,13 +192,13 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
 
   sqlite
     .prepare(
-      `INSERT INTO daily_summaries (owner_id, date, prose, stats, llm, inputs_hash, updated_at)
-       VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `INSERT INTO daily_summaries (owner_id, date, prose, stats, focus, llm, inputs_hash, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(owner_id, date) DO UPDATE SET
-         prose = excluded.prose, stats = excluded.stats, llm = excluded.llm,
-         inputs_hash = excluded.inputs_hash, updated_at = CURRENT_TIMESTAMP`
+         prose = excluded.prose, stats = excluded.stats, focus = excluded.focus,
+         llm = excluded.llm, inputs_hash = excluded.inputs_hash, updated_at = CURRENT_TIMESTAMP`
     )
-    .run(date, prose, JSON.stringify(stats), llm ? 1 : 0, hash);
+    .run(date, prose, JSON.stringify(stats), JSON.stringify(focus), llm ? 1 : 0, hash);
 
-  return { date, prose, stats, llm, cached: false };
+  return { date, prose, stats, focus, llm, cached: false };
 }
