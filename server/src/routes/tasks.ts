@@ -5,6 +5,9 @@ import { tasks, taskTags } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
+import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError } from '../engine/deps.js';
+import { parseQuick } from '../engine/quickadd.js';
+import { enrichQuick } from '../agents/quickadd.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -27,12 +30,18 @@ export function tasksRouter() {
       ? await rows.where(and(...conditions)).orderBy(asc(tasks.priority), asc(tasks.dueAt))
       : await rows.orderBy(asc(tasks.priority), asc(tasks.dueAt));
 
-    // Attach tags and serialize to snake_case
+    // Attach tags + dependency info, serialize to snake_case
+    const blocked = blockedTaskIds();
     const withTags = result.map((t) => {
       const tagRows = sqlite
         .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
         .all({ task_id: t.id }) as { name: string }[];
-      return { ...toApi(t), tags: tagRows.map((r) => r.name) };
+      return {
+        ...toApi(t),
+        tags: tagRows.map((r) => r.name),
+        depends_on: getDependencies(t.id),
+        blocked: blocked.has(t.id),
+      };
     });
 
     // Filter by tag after attachment (simple approach for v1)
@@ -50,12 +59,15 @@ export function tasksRouter() {
       description?: string;
       notes?: string;
       due_at?: string;
+      scheduled_for?: string;
+      defer_until?: string;
       task_time?: string;
       estimated_minutes?: number;
       priority?: number;
       owner_id?: number;
       parent_id?: number;
       tags?: string[];
+      depends_on?: number[];
     };
 
     if (!body.title?.trim()) {
@@ -71,6 +83,8 @@ export function tasksRouter() {
         description: body.description,
         notes: body.notes,
         dueAt: body.due_at,
+        scheduledFor: body.scheduled_for,
+        deferUntil: body.defer_until,
         taskTime: body.task_time,
         estimatedMinutes: body.estimated_minutes,
         priority: body.priority ?? 3,
@@ -80,11 +94,57 @@ export function tasksRouter() {
       .returning();
 
     if (body.tags?.length) await attachTags(task.id, body.tags);
+    if (Array.isArray(body.depends_on) && !applyDependencies(ctx, task.id, body.depends_on)) return;
 
-    const out = { ...toApi(task), tags: body.tags ?? [] };
+    const out = {
+      ...toApi(task),
+      tags: body.tags ?? [],
+      depends_on: getDependencies(task.id),
+      blocked: blockedTaskIds().has(task.id),
+    };
     broadcast(currentOwnerId(), 'task:created', out);
     ctx.status = 201;
     ctx.body = { task: out };
+  });
+
+  // POST /api/tasks/quick — natural-language quick add (deterministic + optional AI)
+  router.post('/api/tasks/quick', async (ctx) => {
+    const text = (ctx.request.body as { text?: string })?.text?.trim();
+    if (!text) {
+      ctx.status = 400;
+      ctx.body = { error: 'text is required' };
+      return;
+    }
+
+    const parsed = parseQuick(text); // deterministic, always succeeds
+    let enriched = parsed;
+    let llm = false;
+    try {
+      enriched = await enrichQuick(text, parsed); // Ollama overlay; never overrides parsed fields
+      llm = true;
+    } catch {
+      /* OllamaUnavailable / bad JSON → keep the deterministic parse */
+    }
+
+    const [task] = await db
+      .insert(tasks)
+      .values({
+        title: enriched.title,
+        dueAt: enriched.dueAt,
+        scheduledFor: enriched.scheduledFor,
+        taskTime: enriched.taskTime,
+        estimatedMinutes: enriched.estimatedMinutes,
+        priority: enriched.priority ?? 3,
+        ownerId: currentOwnerId(),
+      })
+      .returning();
+
+    if (enriched.tags.length) await attachTags(task.id, enriched.tags);
+
+    const out = { ...toApi(task), tags: enriched.tags, depends_on: [] as number[], blocked: false, llm };
+    broadcast(currentOwnerId(), 'task:created', out);
+    ctx.status = 201;
+    ctx.body = { task: out, parsed: enriched, llm };
   });
 
   // GET /api/tasks/:id/subtasks
@@ -110,6 +170,8 @@ export function tasksRouter() {
       notes?: string | null;
       due_at?: string | null;
       dueAt?: string | null;
+      scheduled_for?: string | null;
+      defer_until?: string | null;
       task_time?: string | null;
       estimated_minutes?: number | null;
       estimatedMinutes?: number | null;
@@ -119,6 +181,7 @@ export function tasksRouter() {
       completed_at?: string | null;
       parent_id?: number | null;
       tags?: string[];
+      depends_on?: number[];
     };
 
     const update: Partial<typeof tasks.$inferInsert> = {};
@@ -127,6 +190,8 @@ export function tasksRouter() {
     if (body.notes !== undefined)             update.notes = body.notes;
     if (body.due_at !== undefined)            update.dueAt = body.due_at;
     if (body.dueAt !== undefined)             update.dueAt = body.dueAt;
+    if (body.scheduled_for !== undefined)     update.scheduledFor = body.scheduled_for;
+    if (body.defer_until !== undefined)       update.deferUntil = body.defer_until;
     if (body.task_time !== undefined)         update.taskTime = body.task_time;
     if (body.estimated_minutes !== undefined) update.estimatedMinutes = body.estimated_minutes;
     if (body.estimatedMinutes !== undefined)  update.estimatedMinutes = body.estimatedMinutes;
@@ -136,7 +201,11 @@ export function tasksRouter() {
     if (body.parent_id !== undefined)         update.parentId = body.parent_id;
     if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
 
-    const [task] = await db.update(tasks).set(update).where(eq(tasks.id, id)).returning();
+    // Only issue an UPDATE when there are column changes; a tags/depends-only
+    // PATCH still resolves the task (drizzle rejects an empty .set()).
+    const [task] = Object.keys(update).length
+      ? await db.update(tasks).set(update).where(eq(tasks.id, id)).returning()
+      : await db.select().from(tasks).where(eq(tasks.id, id));
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     if (Array.isArray(body.tags)) {
@@ -144,10 +213,17 @@ export function tasksRouter() {
       await attachTags(id, body.tags);
     }
 
+    if (Array.isArray(body.depends_on) && !applyDependencies(ctx, id, body.depends_on)) return;
+
     const currentTags = (sqlite
       .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
       .all({ task_id: id }) as { name: string }[]).map((r) => r.name);
-    const out = { ...toApi(task), tags: currentTags };
+    const out = {
+      ...toApi(task),
+      tags: currentTags,
+      depends_on: getDependencies(id),
+      blocked: blockedTaskIds().has(id),
+    };
     broadcast(currentOwnerId(), 'task:updated', out);
     ctx.body = { task: out };
   });
@@ -167,6 +243,21 @@ export function tasksRouter() {
   });
 
   return router;
+}
+
+/** Replace a task's blockers; on a cycle, respond 409 and return false. */
+function applyDependencies(ctx: { status: number; body: unknown }, taskId: number, dependsOn: number[]): boolean {
+  try {
+    setDependencies(taskId, dependsOn);
+    return true;
+  } catch (err) {
+    if (err instanceof DependencyCycleError) {
+      ctx.status = 409;
+      ctx.body = { error: 'dependency cycle', detail: err.message };
+      return false;
+    }
+    throw err;
+  }
 }
 
 async function attachTags(taskId: number, names: string[]) {

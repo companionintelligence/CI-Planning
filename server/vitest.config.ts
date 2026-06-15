@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // Each test run gets an isolated SQLite file so we never touch the real DB.
-const testDbPath = join(tmpdir(), 'companion-planning-test.db');
+// Keyed by pid so concurrent runs (e.g. parallel worktrees) never share one DB.
+const testDbPath = join(tmpdir(), `companion-planning-test-${process.pid}.db`);
 
 export default defineConfig({
   test: {
