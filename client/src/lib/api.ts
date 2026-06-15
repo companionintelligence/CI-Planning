@@ -72,7 +72,7 @@ export const api = {
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
-    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string }>) =>
+    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string | null }>) =>
       request<{ task: Task }>('PATCH', `/tasks/${id}`, body),
     delete: (id: number) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
     subtasks: (id: number) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
