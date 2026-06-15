@@ -32,6 +32,7 @@ export function resetDb(): void {
     DELETE FROM tasks;
     DELETE FROM tags;
     DELETE FROM job_runs;
+    DELETE FROM daily_summaries;
   `);
 }
 

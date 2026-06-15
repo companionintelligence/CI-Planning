@@ -72,7 +72,20 @@ export function runSetup(db: Database) {
       min_break_minutes        INTEGER DEFAULT 10,
       day_theme                TEXT,
       planning_mode            TEXT DEFAULT 'ritual',
-      timezone                 TEXT
+      timezone                 TEXT,
+      planning_horizon_days    INTEGER DEFAULT 7
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_summaries (
+      owner_id    INTEGER NOT NULL DEFAULT 1 REFERENCES owners(id),
+      date        TEXT NOT NULL,
+      prose       TEXT NOT NULL,
+      stats       TEXT NOT NULL,
+      llm         INTEGER NOT NULL DEFAULT 0,
+      inputs_hash TEXT NOT NULL,
+      created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (owner_id, date)
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -128,6 +141,7 @@ function migrateColumns(db: Database) {
   addCol('tasks', 'task_time', 'TEXT');
   addCol('tasks', 'parent_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
   addCol('scheduling_prefs', 'timezone', 'TEXT');
+  addCol('scheduling_prefs', 'planning_horizon_days', 'INTEGER DEFAULT 7');
   // Backfill a sensible default for rows predating the column so the scheduler
   // never has to guess a zone (workday hours are wall-clock in this zone).
   db.prepare(

@@ -21,6 +21,21 @@ function addTask(title: string, estimate: number, priority: number) {
     .run(title, priority, estimate);
 }
 
+function addDatedTask(
+  title: string,
+  estimate: number,
+  priority: number,
+  dueAt: string,
+  taskTime: string | null = null
+) {
+  sqlite
+    .prepare(
+      `INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes, due_at, task_time)
+       VALUES (?, ?, 1, 'open', ?, ?, ?)`
+    )
+    .run(title, priority, estimate, dueAt, taskTime);
+}
+
 interface BlockRow { title: string; start_at: string; end_at: string }
 function taskBlocks(): BlockRow[] {
   return sqlite
@@ -87,5 +102,42 @@ describe('scheduler', () => {
       const e = Date.parse(b.end_at);
       expect(s >= meetingEnd || e <= meetingStart).toBe(true);
     }
+  });
+
+  it('pins a task with a fixed time-of-day due that day and schedules around it', async () => {
+    setPrefs({ start: '09:00', end: '18:00' });
+    // Due on 2026-06-15 (PDT) at 13:00 local; 13:00 PDT == 20:00 UTC.
+    addDatedTask('Dentist', 60, 2, '2026-06-15T12:00:00.000Z', '13:00');
+    addTask('Flex work', 120, 1);
+
+    await runScheduler(DATE);
+    const blocks = taskBlocks();
+
+    const pin = blocks.find((b) => b.title === 'Dentist');
+    expect(pin).toBeTruthy();
+    expect(pin!.start_at).toBe('2026-06-15T20:00:00.000Z');
+
+    // Flexible work never overlaps the pinned appointment.
+    const ps = Date.parse('2026-06-15T20:00:00.000Z');
+    const pe = Date.parse('2026-06-15T21:00:00.000Z');
+    for (const b of blocks.filter((b) => b.title !== 'Dentist')) {
+      const s = Date.parse(b.start_at);
+      const e = Date.parse(b.end_at);
+      expect(s >= pe || e <= ps).toBe(true);
+    }
+  });
+
+  it('excludes tasks beyond the planning horizon from the day (today set)', async () => {
+    setPrefs({ start: '09:00', end: '18:00' }); // default horizon = 7 days
+    addDatedTask('Far future', 60, 1, '2026-07-30T12:00:00.000Z'); // ~45 days out, urgent
+    addTask('Soon', 60, 3); // undated → always a candidate
+
+    const r = await runScheduler(DATE);
+    const titles = taskBlocks().map((b) => b.title);
+
+    expect(titles).toContain('Soon');
+    expect(titles).not.toContain('Far future');
+    // Far-future task isn't a candidate, so it doesn't inflate "unscheduled".
+    expect(r.unscheduled).toBe(0);
   });
 });

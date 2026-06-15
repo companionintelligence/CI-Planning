@@ -52,4 +52,26 @@ describe('summarize agent', () => {
     const summary = await summarizeDay(TODAY);
     expect(summary.stats.blocks).toBe(1);
   });
+
+  it('caches the briefing until inputs change or refresh is forced', async () => {
+    insertTask('Task A', null, 2);
+
+    const first = await summarizeDay(TODAY);
+    expect(first.cached).toBeFalsy(); // generated
+
+    const second = await summarizeDay(TODAY);
+    expect(second.cached).toBe(true); // served from cache
+    expect(second.prose).toBe(first.prose);
+
+    // Changing the day's inputs invalidates the cache (hash changes).
+    insertTask('Task B', null, 2);
+    const third = await summarizeDay(TODAY);
+    expect(third.cached).toBe(false);
+    expect(third.stats.open).toBe(2);
+
+    // Unchanged inputs serve cache again…
+    expect((await summarizeDay(TODAY)).cached).toBe(true);
+    // …but refresh forces a regeneration.
+    expect((await summarizeDay(TODAY, { refresh: true })).cached).toBe(false);
+  });
 });
