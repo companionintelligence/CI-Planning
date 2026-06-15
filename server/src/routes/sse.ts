@@ -1,21 +1,11 @@
 import Router from '@koa/router';
 import { PassThrough } from 'node:stream';
-import { currentOwnerId } from '../lib/context.js';
 
-const clients = new Map<PassThrough, number>(); // stream -> ownerId
+const clients = new Set<PassThrough>();
 
-/** Register an SSE client for an owner. Returns an unregister function. */
-export function registerClient(stream: PassThrough, ownerId: number): () => void {
-  clients.set(stream, ownerId);
-  return () => {
-    clients.delete(stream);
-  };
-}
-
-/** Send an event only to the streams belonging to `ownerId`. */
-export function broadcast(ownerId: number, event: string, data: unknown): void {
+export function broadcast(event: string, data: unknown) {
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const [c, owner] of clients) if (owner === ownerId) c.write(msg);
+  for (const c of clients) c.write(msg);
 }
 
 export function sseRouter() {
@@ -32,14 +22,13 @@ export function sseRouter() {
     ctx.status = 200;
     ctx.body = stream;
 
-    // Capture the owner at connect time; this stream only receives their events.
-    const unregister = registerClient(stream, currentOwnerId());
+    clients.add(stream);
     stream.write(':ok\n\n');
 
     const heartbeat = setInterval(() => stream.write(':heartbeat\n\n'), 25_000);
     ctx.req.on('close', () => {
       clearInterval(heartbeat);
-      unregister();
+      clients.delete(stream);
     });
   });
 

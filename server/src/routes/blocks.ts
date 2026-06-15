@@ -4,7 +4,6 @@ import { db } from '../db/index.js';
 import { timeBlocks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
-import { currentOwnerId } from '../lib/context.js';
 
 export function blocksRouter() {
   const router = new Router();
@@ -56,7 +55,7 @@ export function blocksRouter() {
       .returning();
 
     const out = toApi(block);
-    broadcast(currentOwnerId(), 'block:created', out);
+    broadcast('block:created', out);
     ctx.status = 201;
     ctx.body = { block: out };
   });
@@ -85,7 +84,7 @@ export function blocksRouter() {
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const out = toApi(block);
-    broadcast(currentOwnerId(), 'block:updated', out);
+    broadcast('block:updated', out);
     ctx.body = { block: out };
   });
 
@@ -94,7 +93,7 @@ export function blocksRouter() {
     const id = Number(ctx.params.id);
     const [block] = await db.delete(timeBlocks).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    broadcast(currentOwnerId(), 'block:deleted', { id });
+    broadcast('block:deleted', { id });
     ctx.body = { ok: true };
   });
 

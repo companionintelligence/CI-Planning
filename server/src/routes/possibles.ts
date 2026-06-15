@@ -4,7 +4,6 @@ import { db } from '../db/index.js';
 import { possibleTasks, tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
-import { currentOwnerId } from '../lib/context.js';
 
 export function possiblesRouter() {
   const router = new Router();
@@ -38,7 +37,7 @@ export function possiblesRouter() {
         description: possible.rawSummary ?? undefined,
         dueAt: overrides.due_at ?? possible.proposedDueAt ?? undefined,
         priority: overrides.priority ?? possible.proposedPriority ?? 3,
-        ownerId: possible.proposedOwnerId ?? currentOwnerId(),
+        ownerId: possible.proposedOwnerId ?? 1,
         sourceKind: possible.sourceKind ?? 'agent',
         sourceRef: possible.sourceRef ?? undefined,
       })
@@ -50,7 +49,7 @@ export function possiblesRouter() {
       .where(eq(possibleTasks.id, id));
 
     const out = toApi(task);
-    broadcast(currentOwnerId(), 'possible:promoted', { id, task: out });
+    broadcast('possible:promoted', { id, task: out });
     ctx.status = 201;
     ctx.body = { task: out };
   });
@@ -64,7 +63,7 @@ export function possiblesRouter() {
       .where(eq(possibleTasks.id, id))
       .returning();
     if (!possible) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    broadcast(currentOwnerId(), 'possible:dismissed', { id });
+    broadcast('possible:dismissed', { id });
     ctx.body = { ok: true };
   });
 

@@ -3,7 +3,6 @@ import { sqlite } from '../db/index.js';
 import { generate } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
-import { currentOwnerId } from '../lib/context.js';
 
 interface TaskRow {
   id: number;
@@ -50,8 +49,8 @@ function gather(date: string) {
   // "Today" is the user's local calendar day, not the UTC day — so overdue/
   // due-today/blocks line up with what the scheduler placed.
   const tzRow = sqlite
-    .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-    .get(currentOwnerId()) as { timezone: string | null } | undefined;
+    .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = 1')
+    .get() as { timezone: string | null } | undefined;
   const tz = tzRow?.timezone || serverTimezone();
   const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
 
@@ -162,8 +161,8 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
 
   if (!opts.refresh) {
     const row = sqlite
-      .prepare('SELECT prose, stats, focus, llm, inputs_hash FROM daily_summaries WHERE owner_id = ? AND date = ?')
-      .get(currentOwnerId(), date) as
+      .prepare('SELECT prose, stats, focus, llm, inputs_hash FROM daily_summaries WHERE owner_id = 1 AND date = ?')
+      .get(date) as
       | { prose: string; stats: string; focus: string; llm: number; inputs_hash: string }
       | undefined;
     if (row && row.inputs_hash === hash) {
@@ -194,12 +193,12 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
   sqlite
     .prepare(
       `INSERT INTO daily_summaries (owner_id, date, prose, stats, focus, llm, inputs_hash, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(owner_id, date) DO UPDATE SET
          prose = excluded.prose, stats = excluded.stats, focus = excluded.focus,
          llm = excluded.llm, inputs_hash = excluded.inputs_hash, updated_at = CURRENT_TIMESTAMP`
     )
-    .run(currentOwnerId(), date, prose, JSON.stringify(stats), JSON.stringify(focus), llm ? 1 : 0, hash);
+    .run(date, prose, JSON.stringify(stats), JSON.stringify(focus), llm ? 1 : 0, hash);
 
   return { date, prose, stats, focus, llm, cached: false };
 }

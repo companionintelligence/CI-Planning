@@ -3,14 +3,13 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { schedulingPrefs } from '../db/schema.js';
 import { toApi, fromApi } from '../lib/serialize.js';
-import { currentOwnerId } from '../lib/context.js';
 
 export function prefsRouter() {
   const router = new Router();
 
   // GET /api/prefs
   router.get('/api/prefs', async (ctx) => {
-    const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, currentOwnerId()));
+    const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, 1));
     ctx.body = { prefs: prefs ? toApi(prefs) : null };
   });
 
@@ -22,7 +21,7 @@ export function prefsRouter() {
     const [prefs] = await db
       .update(schedulingPrefs)
       .set(update)
-      .where(eq(schedulingPrefs.ownerId, currentOwnerId()))
+      .where(eq(schedulingPrefs.ownerId, 1))
       .returning();
     ctx.body = { prefs: prefs ? toApi(prefs) : null };
   });

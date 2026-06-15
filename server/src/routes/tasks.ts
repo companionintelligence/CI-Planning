@@ -4,7 +4,6 @@ import { db, sqlite } from '../db/index.js';
 import { tasks, taskTags } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi } from '../lib/serialize.js';
-import { currentOwnerId } from '../lib/context.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -75,14 +74,14 @@ export function tasksRouter() {
         estimatedMinutes: body.estimated_minutes,
         priority: body.priority ?? 3,
         parentId: body.parent_id,
-        ownerId: body.owner_id ?? currentOwnerId(),
+        ownerId: body.owner_id ?? 1,
       })
       .returning();
 
     if (body.tags?.length) await attachTags(task.id, body.tags);
 
     const out = { ...toApi(task), tags: body.tags ?? [] };
-    broadcast(currentOwnerId(), 'task:created', out);
+    broadcast('task:created', out);
     ctx.status = 201;
     ctx.body = { task: out };
   });
@@ -148,7 +147,7 @@ export function tasksRouter() {
       .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
       .all({ task_id: id }) as { name: string }[]).map((r) => r.name);
     const out = { ...toApi(task), tags: currentTags };
-    broadcast(currentOwnerId(), 'task:updated', out);
+    broadcast('task:updated', out);
     ctx.body = { task: out };
   });
 
@@ -162,7 +161,7 @@ export function tasksRouter() {
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const out = { ...toApi(task), tags: [] as string[] };
-    broadcast(currentOwnerId(), 'task:updated', out);
+    broadcast('task:updated', out);
     ctx.body = { task: out };
   });
 

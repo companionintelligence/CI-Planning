@@ -5,7 +5,6 @@ import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
 import { orderForToday } from '../agents/plan.js';
-import { currentOwnerId } from '../lib/context.js';
 
 export interface ScheduleResult {
   date: string;
@@ -39,7 +38,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     unscheduled: 0,
   };
 
-  const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, currentOwnerId()));
+  const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, 1));
   if (!prefs) return empty;
 
   // Workday hours are wall-clock in the user's zone; convert to real UTC instants.
@@ -168,7 +167,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     unscheduled,
   };
 
-  broadcast(currentOwnerId(), 'schedule:done', result);
+  broadcast('schedule:done', result);
   logger.info('scheduler.done', result);
   return result;
 }
