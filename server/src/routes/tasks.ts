@@ -6,6 +6,8 @@ import { broadcast } from './sse.js';
 import { toApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError } from '../engine/deps.js';
+import { parseQuick } from '../engine/quickadd.js';
+import { enrichQuick } from '../agents/quickadd.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -103,6 +105,46 @@ export function tasksRouter() {
     broadcast(currentOwnerId(), 'task:created', out);
     ctx.status = 201;
     ctx.body = { task: out };
+  });
+
+  // POST /api/tasks/quick — natural-language quick add (deterministic + optional AI)
+  router.post('/api/tasks/quick', async (ctx) => {
+    const text = (ctx.request.body as { text?: string })?.text?.trim();
+    if (!text) {
+      ctx.status = 400;
+      ctx.body = { error: 'text is required' };
+      return;
+    }
+
+    const parsed = parseQuick(text); // deterministic, always succeeds
+    let enriched = parsed;
+    let llm = false;
+    try {
+      enriched = await enrichQuick(text, parsed); // Ollama overlay; never overrides parsed fields
+      llm = true;
+    } catch {
+      /* OllamaUnavailable / bad JSON → keep the deterministic parse */
+    }
+
+    const [task] = await db
+      .insert(tasks)
+      .values({
+        title: enriched.title,
+        dueAt: enriched.dueAt,
+        scheduledFor: enriched.scheduledFor,
+        taskTime: enriched.taskTime,
+        estimatedMinutes: enriched.estimatedMinutes,
+        priority: enriched.priority ?? 3,
+        ownerId: currentOwnerId(),
+      })
+      .returning();
+
+    if (enriched.tags.length) await attachTags(task.id, enriched.tags);
+
+    const out = { ...toApi(task), tags: enriched.tags, depends_on: [] as number[], blocked: false, llm };
+    broadcast(currentOwnerId(), 'task:created', out);
+    ctx.status = 201;
+    ctx.body = { task: out, parsed: enriched, llm };
   });
 
   // GET /api/tasks/:id/subtasks
