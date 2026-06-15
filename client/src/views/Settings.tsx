@@ -1,13 +1,20 @@
-import { createSignal, createEffect, Show, createResource } from 'solid-js';
+import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle } from 'lucide-solid';
 import { prefs, refetchPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
+
+const BROWSER_TZ = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
+})();
+const ALL_TIMEZONES: string[] = (() => {
+  try { return (Intl as any).supportedValuesOf?.('timeZone') ?? [BROWSER_TZ]; } catch { return [BROWSER_TZ]; }
+})();
 
 export function Settings() {
   const [form, setForm] = createSignal({
     workday_start: '09:00', workday_end: '18:00',
     max_focus_block_minutes: 90, min_break_minutes: 10,
-    planning_mode: 'ritual',
+    planning_mode: 'ritual', timezone: BROWSER_TZ,
   });
 
   createEffect(() => {
@@ -19,6 +26,7 @@ export function Settings() {
       max_focus_block_minutes: p.max_focus_block_minutes ?? 90,
       min_break_minutes:       p.min_break_minutes ?? 10,
       planning_mode:           p.planning_mode ?? 'ritual',
+      timezone:                p.timezone ?? BROWSER_TZ,
     });
   });
 
@@ -83,6 +91,13 @@ export function Settings() {
                 onInput={e => setField('workday_end', e.currentTarget.value)} />
             </label>
           </div>
+          <label class="flex flex-col gap-1.5 mt-4">
+            <span class="text-xs text-slate-500">Timezone — work hours are wall-clock here</span>
+            <select class="input" value={form().timezone}
+              onChange={e => setField('timezone', e.currentTarget.value)}>
+              <For each={ALL_TIMEZONES}>{(tz) => <option value={tz}>{tz}</option>}</For>
+            </select>
+          </label>
         </section>
 
         {/* Block settings */}

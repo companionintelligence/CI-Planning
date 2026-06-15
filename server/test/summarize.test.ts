@@ -12,7 +12,12 @@ function insertTask(title: string, dueAt: string | null, priority = 3, status = 
 }
 
 describe('summarize agent', () => {
-  beforeEach(() => resetDb());
+  beforeEach(() => {
+    resetDb();
+    // Pin the zone so the day window matches the UTC wall-clock fixtures below,
+    // independent of the host's timezone. (TZ correctness is covered in tz.test.ts.)
+    sqlite.exec(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = 1`);
+  });
 
   it('produces prose + accurate stats (works with or without LLM)', async () => {
     insertTask('Overdue: file taxes', '2026-05-20T12:00:00.000Z', 1);

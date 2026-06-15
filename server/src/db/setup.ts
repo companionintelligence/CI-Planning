@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3';
+import { serverTimezone } from '../lib/tz.js';
 
 export function runSetup(db: Database) {
   db.pragma('journal_mode = WAL');
@@ -70,7 +71,8 @@ export function runSetup(db: Database) {
       max_focus_block_minutes  INTEGER DEFAULT 90,
       min_break_minutes        INTEGER DEFAULT 10,
       day_theme                TEXT,
-      planning_mode            TEXT DEFAULT 'ritual'
+      planning_mode            TEXT DEFAULT 'ritual',
+      timezone                 TEXT
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -125,6 +127,12 @@ function migrateColumns(db: Database) {
   addCol('tasks', 'notes', 'TEXT');
   addCol('tasks', 'task_time', 'TEXT');
   addCol('tasks', 'parent_id', 'INTEGER REFERENCES tasks(id) ON DELETE CASCADE');
+  addCol('scheduling_prefs', 'timezone', 'TEXT');
+  // Backfill a sensible default for rows predating the column so the scheduler
+  // never has to guess a zone (workday hours are wall-clock in this zone).
+  db.prepare(
+    `UPDATE scheduling_prefs SET timezone = ? WHERE timezone IS NULL OR timezone = ''`
+  ).run(serverTimezone());
 }
 
 function seedDefaults(db: Database) {
@@ -132,7 +140,7 @@ function seedDefaults(db: Database) {
   if (existing) return;
 
   db.prepare('INSERT INTO owners (id, name, email) VALUES (1, ?, ?)').run('Liam', 'REDACTED-DEV-EMAIL@example.invalid');
-  db.prepare('INSERT INTO scheduling_prefs (owner_id) VALUES (1)').run();
+  db.prepare('INSERT INTO scheduling_prefs (owner_id, timezone) VALUES (1, ?)').run(serverTimezone());
 
   const jobs = [
     { name: 'ingest_gmail',       kind: 'ingest_gmail',       cron: '*/30 * * * *' },
