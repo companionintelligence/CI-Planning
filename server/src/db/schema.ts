@@ -17,6 +17,7 @@ export const tasks = sqliteTable('tasks', {
   deferUntil: text('defer_until'),         // UTC ISO — hidden from the today-set until then
   taskTime: text('task_time'),             // HH:MM time-of-day if the task has a fixed start time
   estimatedMinutes: integer('estimated_minutes'),
+  actualMinutes: integer('actual_minutes').notNull().default(0), // aggregate of finished time_entries
   priority: integer('priority').default(3), // 1 highest, 5 lowest
   status: text('status').default('open'),   // open | scheduled | in_progress | done | cancelled | deferred
   parentId: integer('parent_id'),          // null = top-level task; set = subtask
@@ -66,6 +67,19 @@ export const timeBlocks = sqliteTable('time_blocks', {
   sourceKind: text('source_kind').default('manual'),
   sourceRef: text('source_ref'),
   status: text('status').default('planned'),         // planned | completed | skipped | overrun
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Persisted real work per task. The single ended_at IS NULL row per owner is
+// the running-timer state (guarded by a partial unique index). UTC ISO text.
+export const timeEntries = sqliteTable('time_entries', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+  ownerId: integer('owner_id').references(() => owners.id).notNull(),
+  blockId: integer('block_id').references(() => timeBlocks.id, { onDelete: 'set null' }), // if started from a block
+  startedAt: text('started_at').notNull(),           // UTC ISO
+  endedAt: text('ended_at'),                          // UTC ISO; NULL = running
+  source: text('source').default('timer'),           // timer | manual | block
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 

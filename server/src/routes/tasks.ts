@@ -8,6 +8,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError } from '../engine/deps.js';
 import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
+import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -240,6 +241,41 @@ export function tasksRouter() {
     const out = { ...toApi(task), tags: [] as string[] };
     broadcast(currentOwnerId(), 'task:updated', out);
     ctx.body = { task: out };
+  });
+
+  // POST /api/tasks/:id/timer/start — start a timer (optionally linked to a block).
+  // Stops any running timer first (one per owner); broadcasts the superseded
+  // entry's stop, then the new start. 201 with the new entry.
+  router.post('/api/tasks/:id/timer/start', async (ctx) => {
+    const taskId = Number(ctx.params.id);
+    const blockId = (ctx.request.body as { block_id?: number } | undefined)?.block_id;
+    const { entry, stopped } = startTimer(taskId, blockId);
+    const owner = currentOwnerId();
+    if (stopped) broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
+    broadcast(owner, 'timer:started', entry);
+    ctx.status = 201;
+    ctx.body = { entry };
+  });
+
+  // POST /api/tasks/:id/timer/stop — stop the (single) running timer. 409 when
+  // none is running (deterministic, safe for a double-click). :id is ignored —
+  // there is only ever one running entry per owner.
+  router.post('/api/tasks/:id/timer/stop', async (ctx) => {
+    const res = stopTimer();
+    if (!res) {
+      ctx.status = 409;
+      ctx.body = { error: 'no running timer' };
+      return;
+    }
+    const owner = currentOwnerId();
+    broadcast(owner, 'timer:stopped', res.entry);
+    broadcast(owner, 'task:updated', { id: res.taskId, actual_minutes: res.actualMinutes });
+    ctx.body = { entry: res.entry, actual_minutes: res.actualMinutes };
+  });
+
+  // GET /api/timer — the current running entry (for reload/restart recovery), or null.
+  router.get('/api/timer', async (ctx) => {
+    ctx.body = { entry: getRunning(currentOwnerId()) ?? null };
   });
 
   return router;
