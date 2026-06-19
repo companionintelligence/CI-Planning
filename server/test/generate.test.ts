@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
-import { serverTimezone, utcDayBounds } from '../src/lib/tz.js';
+import { utcDayBounds } from '../src/lib/tz.js';
 import { instanceStartUTC } from '../src/engine/recurrence.js';
 import { generateRecurrences } from '../src/engine/recurrence-generate.js';
 import { resetDb } from './helpers.js';
@@ -16,7 +16,10 @@ import { resetDb } from './helpers.js';
  */
 
 const OWNER = SYSTEM_OWNER;
-const TZ = serverTimezone(); // matches the seeded owner-1 prefs timezone
+// Pin a concrete, non-UTC zone so the test is hermetic. resetDb() keeps
+// scheduling_prefs, and sibling test files mutate owner-1's timezone (DST cases),
+// so we set it explicitly in beforeEach rather than assuming serverTimezone().
+const TZ = 'America/Los_Angeles';
 
 interface TemplateOpts {
   rule?: string;
@@ -80,7 +83,12 @@ const instanceOn = (tpl: number, day: string): InstanceRow | undefined =>
 const statusOf = (id: number) =>
   (sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(id) as { status: string }).status;
 
-beforeEach(() => resetDb());
+beforeEach(() => {
+  resetDb();
+  // Pin owner-1's planning zone so the generator and the assertions below agree
+  // regardless of what other test files left in scheduling_prefs.
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = ? WHERE owner_id = ?`).run(TZ, OWNER);
+});
 
 describe('generateRecurrences — bounded horizon', () => {
   it('materializes exactly the occurrences in [today, today+horizon], no further', () => {
