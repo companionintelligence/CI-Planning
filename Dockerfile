@@ -9,7 +9,9 @@ FROM node:26-bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-RUN corepack enable
+# Node 26 no longer bundles corepack, so install it before enabling the pnpm
+# shim (which honors the pinned packageManager: pnpm@x.y.z in package.json).
+RUN npm install -g corepack@latest && corepack enable
 
 WORKDIR /app
 
