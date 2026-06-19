@@ -17,6 +17,12 @@ still falls back to fixtures until MCP wiring is finished).
 
 Full v0.2 design: [ARCHITECTURE.md](ARCHITECTURE.md)
 
+**Source of truth for docs:** this README and [ARCHITECTURE.md](ARCHITECTURE.md)
+describe the running app; [docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative
+plan, with one spec per phase under [docs/](docs/). SQLite is the single source of
+truth for data (no markdown-on-disk model — that was an earlier, abandoned
+incarnation).
+
 ## See it in action
 
 From an empty day to a planned one: capture a task, pick a priority, and let the
@@ -120,7 +126,9 @@ it to back up, delete it to start over.
 - Google `live` mode is scaffolded but not yet connected to real MCP OAuth sessions
   (currently fixture-backed)
 - No auth layer yet — the expected deployment model is a private network / Tailscale
-- Some roadmap items in [PLANNING.md](PLANNING.md) and `owner-plan.md` remain design-phase
+- Later phases (rituals, notifications, auth, two-way sync, backups) in
+  [docs/ROADMAP.md](docs/ROADMAP.md) remain design-phase; the daily-ingestion
+  product plan lives in [docs/ingestion-plan.md](docs/ingestion-plan.md)
 
 ## Run with Docker (CI Hub)
 
