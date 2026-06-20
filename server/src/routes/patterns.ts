@@ -251,6 +251,9 @@ export function patternsRouter() {
       | { id: number }
       | undefined;
     if (!p) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    // Ritual-local fast tasks are owned by the pattern — delete them with it. Shared
+    // real tasks are untouched (only the membership rows cascade).
+    sqlite.prepare(`DELETE FROM tasks WHERE is_fast_task = 1 AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`).run(id);
     sqlite.prepare(`DELETE FROM patterns WHERE id = ?`).run(id); // pattern_tasks cascade; tasks untouched
     broadcast(currentOwnerId(), 'pattern:deleted', { id });
     ctx.body = { ok: true };
@@ -281,6 +284,52 @@ export function patternsRouter() {
     sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, Number(ctx.params.taskId));
     broadcast(currentOwnerId(), 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     ctx.body = { pattern_id: patternId, task_ids: taskIdsOf(patternId) };
+  });
+
+  // ── Fast tasks (ritual-local, hidden from the global task list) ──────────────
+  // A fast task is created *inside* a pattern: a lightweight `tasks` row flagged
+  // `is_fast_task`, linked only to this pattern. Its estimate is predicted from the
+  // pattern type's default (overridable via the dial / `estimated_minutes`).
+  router.post('/api/patterns/:id/fast-tasks', async (ctx) => {
+    const patternId = Number(ctx.params.id);
+    const owner = currentOwnerId();
+    const pattern = sqlite.prepare(`SELECT id, type_id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, owner) as
+      | { id: number; type_id: number | null }
+      | undefined;
+    if (!pattern) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const body = (ctx.request.body ?? {}) as { title?: string; estimated_minutes?: number };
+    if (!body.title?.trim()) { ctx.status = 422; ctx.body = { error: 'title is required' }; return; }
+    const typeDefault = pattern.type_id != null
+      ? (sqlite.prepare(`SELECT default_est_minutes AS m FROM pattern_types WHERE id = ?`).get(pattern.type_id) as { m: number | null } | undefined)?.m ?? null
+      : null;
+    const est = body.estimated_minutes ?? typeDefault ?? 15;
+    const task = sqlite
+      .prepare(
+        `INSERT INTO tasks (title, estimated_minutes, is_fast_task, owner_id, status, priority, source_kind)
+         VALUES (?, ?, 1, ?, 'open', 3, 'manual') RETURNING id, title, estimated_minutes`
+      )
+      .get(body.title.trim(), est, owner) as { id: number; title: string; estimated_minutes: number };
+    const pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM pattern_tasks WHERE pattern_id = ?`).get(patternId) as { m: number }).m + 1;
+    sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(patternId, task.id, pos);
+    broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
+    ctx.status = 201;
+    ctx.body = { task: { id: task.id, title: task.title, estimated_minutes: task.estimated_minutes, is_fast_task: true } };
+  });
+
+  router.delete('/api/patterns/:id/fast-tasks/:taskId', async (ctx) => {
+    const patternId = Number(ctx.params.id);
+    const taskId = Number(ctx.params.taskId);
+    const owner = currentOwnerId();
+    if (!sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, owner)) {
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+    // Delete the underlying task only when it's genuinely a fast task (membership
+    // cascades). A shared real task just loses its membership.
+    const isFast = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ? AND is_fast_task = 1`).get(taskId, owner);
+    if (isFast) sqlite.prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId);
+    else sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, taskId);
+    broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
+    ctx.body = { ok: true };
   });
 
   return router;
