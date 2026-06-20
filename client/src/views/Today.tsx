@@ -8,6 +8,7 @@ import { Planner } from '../components/Planner.js';
 import { ConceptLane } from '../components/ConceptLane.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { PlannerDrawer } from '../components/PlannerDrawer.js';
+import { MissedReview } from '../components/MissedReview.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
@@ -102,6 +103,9 @@ export function Today() {
           <Bar icon={ListTodo}    value={open()}    max={open()} label="open"    tone="foreground" />
         </div>
       </div>
+
+      {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
+      <MissedReview />
 
       {/* PLANNER */}
       <Planner />
