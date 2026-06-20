@@ -227,6 +227,7 @@ export interface Block {
   block_type?: 'plan' | 'concept' | null;
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
   duration_minutes?: number | null; // concept duration (no start/end semantics)
+  note?: string | null; // optional saved note on a Plan/Concept container (0021)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
@@ -301,6 +302,7 @@ export interface Prefs {
   // Plan/Concept Time-Block config (0018). Plan horizon = planning_horizon_days.
   plan_allday_always?: boolean; plan_daylong_for_promoted?: boolean; plan_autofill_gaps?: boolean;
   concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;
+  concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
   // Ollama model overrides (null/'' = use env default).

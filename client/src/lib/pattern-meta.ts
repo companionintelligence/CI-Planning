@@ -46,3 +46,20 @@ export type ShapeOption = (typeof SHAPE_OPTIONS)[number];
 export function colorVar(token: string | null | undefined): string {
   return token ? `var(--${token})` : 'var(--primary)';
 }
+
+/** A canonical Concept tag: a name (used as title + tag) + a default estimate. */
+export interface ConceptTag { name: string; minutes: number }
+
+/** Fallback canonical Concept-Tag list (mirrors migration 0021) — used until the
+ * owner's `scheduling_prefs.concept_tags` is loaded/edited. */
+export const DEFAULT_CONCEPT_TAGS: readonly ConceptTag[] = [
+  { name: 'Work', minutes: 240 },
+  { name: 'Relax', minutes: 60 },
+  { name: 'Family-Time', minutes: 120 },
+  { name: 'Me-Time', minutes: 60 },
+  { name: 'Socialize', minutes: 120 },
+  { name: 'House-work', minutes: 60 },
+  { name: 'Yard-work', minutes: 90 },
+  { name: 'Exercise', minutes: 45 },
+  { name: 'Meal-prep', minutes: 45 },
+];
