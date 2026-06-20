@@ -110,7 +110,13 @@ export const api = {
     create: (body: Partial<Block> & { title: string; start_at: string; end_at: string }) =>
       request<{ block: Block }>('POST', '/blocks', body),
     update: (id: number, body: Partial<Block>) => request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
-    delete: (id: number) => request<{ ok: boolean }>('DELETE', `/blocks/${id}`),
+    // children:'delete' also removes a Plan's member task blocks; default keeps them (FK SET NULL).
+    delete: (id: number, opts?: { children?: 'delete' }) =>
+      request<{ ok: boolean }>('DELETE', `/blocks/${id}${opts?.children === 'delete' ? '?children=delete' : ''}`),
+    // Shift a Plan + all its members by one minute delta, atomically (PR-C). `id` may
+    // be the Plan or any member; returns the whole moved group.
+    moveGroup: (id: number, delta_minutes: number) =>
+      request<{ blocks: Block[] }>('POST', `/blocks/${id}/move-group`, { delta_minutes }),
     // Concepts have no real time — fetch them all (owner-scoped) for the horizon lane.
     listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?block_type=concept'),
     // Promote a Concept into a scheduled Plan at the chosen start (end ⇐ duration).
@@ -228,6 +234,7 @@ export interface Block {
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)
+  parent_block_id?: number | null; // the containing Plan for a member task block (PR-C / 0023)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;

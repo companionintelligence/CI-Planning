@@ -1,6 +1,6 @@
 import Router from '@koa/router';
-import { eq, and, gte, lte } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { eq, and, gte, lte, inArray } from 'drizzle-orm';
+import { db, sqlite } from '../db/index.js';
 import { timeBlocks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
@@ -92,6 +92,7 @@ export function blocksRouter() {
       duration_minutes: number | null;
       note: string | null;
       all_day: boolean;
+      parent_block_id: number | null;
     }>;
 
     const update: Partial<typeof timeBlocks.$inferInsert> = {};
@@ -106,6 +107,8 @@ export function blocksRouter() {
     if (body.goal_start_date !== undefined) update.goalStartDate   = body.goal_start_date;
     if (body.duration_minutes!== undefined) update.durationMinutes = body.duration_minutes;
     if (body.all_day         !== undefined) update.allDay          = body.all_day;
+    // Attach to / detach from a Plan (PR-C): a number attaches, null detaches.
+    if (body.parent_block_id !== undefined) update.parentBlockId   = body.parent_block_id;
 
     const [block] = await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
@@ -113,6 +116,43 @@ export function blocksRouter() {
     const out = toApi(block);
     broadcast(currentOwnerId(), 'block:updated', out);
     ctx.body = { block: out };
+  });
+
+  // POST /api/blocks/:id/move-group { delta_minutes } — shift a Plan + all its
+  // members by one minute delta, atomically (PR-C). `:id` may be the Plan
+  // (block_kind='timeblock') OR any member; the group is resolved the same way.
+  //
+  // The shift is pure elapsed-ms math on each UTC instant (delta_minutes·60000ms),
+  // so it is tz/DST-correct and matches the client's `instantFor` delta exactly —
+  // relative offsets are preserved and delta 0 is a byte-identical no-op.
+  router.post('/api/blocks/:id/move-group', async (ctx) => {
+    const id = Number(ctx.params.id);
+    const body = (ctx.request.body ?? {}) as { delta_minutes?: number };
+    const delta = Math.round(Number(body.delta_minutes ?? 0));
+
+    const anchor = sqlite
+      .prepare(`SELECT id, block_kind, parent_block_id FROM time_blocks WHERE id = ?`)
+      .get(id) as { id: number; block_kind: string; parent_block_id: number | null } | undefined;
+    if (!anchor) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    // The group's parent: the container itself, the member's parent, or (a loose
+    // block) itself alone.
+    const parentId = anchor.block_kind === 'timeblock' ? anchor.id : anchor.parent_block_id ?? anchor.id;
+    const members = sqlite
+      .prepare(`SELECT id, start_at, end_at FROM time_blocks WHERE id = ? OR parent_block_id = ?`)
+      .all(parentId, parentId) as { id: number; start_at: string; end_at: string }[];
+
+    const deltaMs = delta * 60_000;
+    const shift = (iso: string) => new Date(Date.parse(iso) + deltaMs).toISOString();
+    const upd = sqlite.prepare(`UPDATE time_blocks SET start_at = ?, end_at = ? WHERE id = ?`);
+    sqlite.transaction(() => {
+      for (const m of members) upd.run(shift(m.start_at), shift(m.end_at), m.id);
+    })();
+
+    const ids = members.map((m) => m.id);
+    const rows = ids.length ? await db.select().from(timeBlocks).where(inArray(timeBlocks.id, ids)) : [];
+    broadcast(currentOwnerId(), 'block:updated', { moved_group: parentId, count: ids.length });
+    ctx.body = { blocks: toApiList(rows) };
   });
 
   // POST /api/blocks/:id/promote — turn a Concept into a scheduled Plan.
@@ -136,9 +176,15 @@ export function blocksRouter() {
     ctx.body = { block: out };
   });
 
-  // DELETE /api/blocks/:id
+  // DELETE /api/blocks/:id[?children=delete]
+  // Default: deleting a Plan detaches its members (FK ON DELETE SET NULL) — they
+  // survive as loose task blocks. `?children=delete` removes the members too
+  // (PR-C: the "remove tasks" choice in the delete-Plan confirm dialog).
   router.delete('/api/blocks/:id', async (ctx) => {
     const id = Number(ctx.params.id);
+    if ((ctx.query.children as string) === 'delete') {
+      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(id);
+    }
     const [block] = await db.delete(timeBlocks).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'block:deleted', { id });

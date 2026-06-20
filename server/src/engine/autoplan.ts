@@ -138,9 +138,12 @@ export function placeFlightPlan(owner: number = currentOwnerId(), opts: { date?:
   const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
   const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
+  // When placing into a Plan (blockId given), every task block we create is a
+  // formal member of that Plan (parent_block_id) so it moves with the group (PR-C).
+  const parentBlockId = opts.blockId ?? null;
   const ins = sqlite.prepare(
-    `INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-     VALUES (?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned')`
+    `INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
+     VALUES (?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?)`
   );
   let blocksCreated = 0;
   let placed = 0;
@@ -153,7 +156,7 @@ export function placeFlightPlan(owner: number = currentOwnerId(), opts: { date?:
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString());
+      ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), parentBlockId);
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedSessions++;
