@@ -1,5 +1,5 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2 } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
 import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
 
@@ -28,9 +28,26 @@ export function TaskCard(props: Props) {
     (id) => api.tasks.subtasks(id).then(r => r.subtasks)
   );
 
+  // Habit streak strip — fetched only for habit tasks (template or instance).
+  const [streak, { refetch: refetchStreak }] = createResource(
+    () => (props.task.is_habit ? props.task.id : null),
+    (id) => api.tasks.streak(id).catch(() => null)
+  );
+
+  const isInstance = () => !!props.task.recurrence_parent_id;
+
   function toggleSubs() {
     setSubsFetched(true);
     setShowSubs(v => !v);
+  }
+
+  async function skip() {
+    try {
+      await api.tasks.skip(props.task.id);
+      showToast('Occurrence skipped', 'default');
+      refetchTasks();
+      refetchStreak();
+    } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
   async function toggleDone() {
@@ -41,6 +58,7 @@ export function TaskCard(props: Props) {
         await api.tasks.update(props.task.id, { completed: true });
       }
       refetchTasks();
+      refetchStreak();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -96,6 +114,9 @@ export function TaskCard(props: Props) {
             <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
               {props.task.title}
             </span>
+            <Show when={isInstance() || props.task.is_habit}>
+              <Repeat size={11} class="text-muted-foreground flex-shrink-0 mt-1" />
+            </Show>
             {dueLabel()}
             {est()}
           </div>
@@ -113,10 +134,44 @@ export function TaskCard(props: Props) {
               </For>
             </div>
           </Show>
+
+          {/* Habit streak strip */}
+          <Show when={props.task.is_habit && streak()}>
+            {(s) => (
+              <div class="flex items-center gap-1.5 mt-1.5 ml-4">
+                <div class="flex gap-0.5">
+                  <For each={s().recent}>
+                    {(r) => (
+                      <span
+                        class="w-2 h-2 rounded-full"
+                        classList={{
+                          'bg-primary': r.status === 'done',
+                          'border border-border': r.status === 'open',
+                          'bg-muted-foreground/40': r.status === 'missed',
+                          'border border-muted-foreground': r.status === 'skipped',
+                        }}
+                        title={`${r.date}: ${r.status}`}
+                      />
+                    )}
+                  </For>
+                </div>
+                <Show when={s().current > 0}>
+                  <span class="flex items-center gap-0.5 text-[11px] text-primary font-medium">
+                    <Flame size={10} /> {s().current}
+                  </span>
+                </Show>
+              </div>
+            )}
+          </Show>
         </div>
 
         {/* Actions (visible on hover) */}
         <div class="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity duration-100 flex-shrink-0">
+          <Show when={isInstance()}>
+            <button onClick={skip} class="btn-icon" title="Skip this occurrence">
+              <SkipForward size={13} />
+            </button>
+          </Show>
           <button onClick={toggleSubs} class="btn-icon" title="Subtasks">
             <Show when={showSubs()} fallback={<ChevronRight size={13} />}>
               <ChevronDown size={13} />

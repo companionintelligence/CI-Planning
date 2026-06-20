@@ -1,5 +1,5 @@
 import { createResource, Show, For, createSignal } from 'solid-js';
-import { Zap, Sparkles, Clock, TrendingUp, AlertCircle } from 'lucide-solid';
+import { Zap, Sparkles, Clock, TrendingUp, AlertCircle, Flame, Check, SkipForward } from 'lucide-solid';
 import { tasks, blocks, refetchTasks, refetchBlocks, showToast, setTaskModal } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
@@ -25,6 +25,19 @@ export function Today() {
 
   const openTasks = () =>
     (tasks() ?? []).filter(t => t.status === 'open' && !t.parent_id).slice(0, 6);
+
+  // Missed habit instances — surfaced gently (pick it back up), never as an alarm.
+  const missedHabits = () =>
+    (tasks() ?? []).filter(t => t.status === 'missed' && t.is_habit);
+
+  async function catchUp(id: number) {
+    try { await api.tasks.update(id, { completed: true }); refetchTasks(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function skipMissed(id: number) {
+    try { await api.tasks.skip(id); refetchTasks(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   function openFocus(taskId: number) {
     const t = (tasks() ?? []).find((x) => x.id === taskId);
@@ -101,6 +114,36 @@ export function Today() {
             </Show>
           </div>
         )}
+      </Show>
+
+      {/* Missed habits — gentle nudge, not an alarm */}
+      <Show when={missedHabits().length > 0}>
+        <div class="card mb-6 max-w-4xl bg-muted/40">
+          <div class="flex items-center gap-2 mb-2.5">
+            <Flame size={14} class="text-muted-foreground" />
+            <span class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Missed habits — pick them back up
+            </span>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <For each={missedHabits()}>
+              {(t) => (
+                <div class="flex items-center gap-2 text-sm">
+                  <span class="flex-1 text-foreground truncate">{t.title}</span>
+                  <Show when={t.occurrence_date}>
+                    <span class="text-xs text-muted-foreground font-mono">{t.occurrence_date}</span>
+                  </Show>
+                  <button onClick={() => catchUp(t.id)} class="btn-secondary text-xs px-2.5 py-1" title="Do it today">
+                    <Check size={12} /> Do today
+                  </button>
+                  <button onClick={() => skipMissed(t.id)} class="btn-ghost text-xs px-2 py-1" title="Skip this one">
+                    <SkipForward size={12} />
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
       </Show>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-4xl">
