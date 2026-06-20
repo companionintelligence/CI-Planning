@@ -1,9 +1,10 @@
 import { createSignal, createMemo, createResource, For, Show, onCleanup } from 'solid-js';
-import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil } from 'lucide-solid';
+import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowUpRight } from 'lucide-solid';
 import { patterns, patternTypes, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
 import { api, type Pattern, type PatternType, type Task } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
+import { MinuteDial } from '../components/MinuteDial.js';
 import { colorVar } from '../lib/pattern-meta.js';
 
 /**
@@ -16,7 +17,8 @@ import { colorVar } from '../lib/pattern-meta.js';
 export function Patterns() {
   // Own unfiltered task fetch so the view is correct regardless of the global
   // task filter; refreshed on task SSE + after our own mutations.
-  const [allTasks, { refetch: refetchAll }] = createResource(() => api.tasks.list({}).then((r) => r.tasks));
+  // include_fast so a ritual's hidden fast tasks resolve here (they're excluded elsewhere).
+  const [allTasks, { refetch: refetchAll }] = createResource(() => api.tasks.list({ include_fast: '1' }).then((r) => r.tasks));
   const offCreated = on('task:created', () => refetchAll());
   const offUpdated = on('task:updated', () => refetchAll());
   onCleanup(() => { offCreated(); offUpdated(); });
@@ -59,16 +61,61 @@ export function Patterns() {
     try { await api.patterns.removeTask(p.id, taskId); refetchPatterns(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+  // Promote a (regular or fast) task to a habit — it joins the Habits group, the
+  // ritual keeps it, and a fast task loses its hidden/local status.
+  async function promoteHabit(t: Task) {
+    try { await api.tasks.promoteHabit(t.id); refetchAll(); refetchPatterns(); showToast(`"${t.title}" is now a habit`, 'success'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function addFast(p: Pattern, title: string) {
+    try { await api.patterns.addFastTask(p.id, { title: title.trim() }); refetchPatterns(); refetchAll(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function removeFast(p: Pattern, taskId: number) {
+    try { await api.patterns.removeFastTask(p.id, taskId); refetchPatterns(); refetchAll(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function saveEst(taskId: number, v: number) {
+    try { await api.tasks.update(taskId, { estimated_minutes: v }); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
-  // ── Inline pattern card (members + add/remove + delete) ───────────────────────
-  function PatternCard(props: { pattern: Pattern; shape: string; color: string }) {
+  // A member row — fast tasks get the minute dial + delete; regular members can be
+  // promoted to a habit. `allowFast` (rituals) gates the fast-task affordances.
+  function MemberRow(props: { pattern: Pattern; task: Task; allowFast: boolean }) {
+    const [est, setEst] = createSignal(props.task.estimated_minutes ?? 15);
+    const onDial = (v: number) => { setEst(v); saveEst(props.task.id, v); };
+    return (
+      <li class="flex items-center gap-2 text-sm">
+        <Show when={props.task.is_fast_task} fallback={<Show when={props.task.is_habit}><Repeat size={11} class="text-primary flex-shrink-0" /></Show>}>
+          <Zap size={11} class="text-chart-1 flex-shrink-0" />
+        </Show>
+        <span class="flex-1 text-foreground truncate">{props.task.title}</span>
+        <Show when={props.task.is_fast_task}>
+          <MinuteDial value={est()} onChange={onDial} min={0} max={480} />
+        </Show>
+        <Show when={props.allowFast && !props.task.is_habit}>
+          <button onClick={() => promoteHabit(props.task)} class="btn-icon" title="Promote to habit"><ArrowUpRight size={13} /></button>
+        </Show>
+        <button
+          onClick={() => (props.task.is_fast_task ? removeFast(props.pattern, props.task.id) : removeMember(props.pattern, props.task.id))}
+          class="btn-icon hover:text-destructive" title={props.task.is_fast_task ? 'Delete fast task' : 'Remove from pattern'}
+        ><X size={12} /></button>
+      </li>
+    );
+  }
+
+  // ── Inline pattern card (members + add/remove + delete; rituals add fast tasks) ─
+  function PatternCard(props: { pattern: Pattern; shape: string; color: string; allowFast: boolean }) {
     const [open, setOpen] = createSignal(false);
     const [picking, setPicking] = createSignal(false);
+    const [fast, setFast] = createSignal('');
     const members = () => props.pattern.task_ids.map((id) => taskById().get(id)).filter(Boolean) as Task[];
     const candidates = () => {
       const have = new Set(props.pattern.task_ids);
-      return (allTasks() ?? []).filter((t) => t.status === 'open' && !t.parent_id && !have.has(t.id)).slice(0, 30);
+      return (allTasks() ?? []).filter((t) => t.status === 'open' && !t.parent_id && !t.is_fast_task && !have.has(t.id)).slice(0, 30);
     };
+    const submitFast = () => { if (fast().trim()) { addFast(props.pattern, fast()); setFast(''); } };
     return (
       <div class="rounded-lg border border-border bg-card">
         <div class="flex items-center gap-2 px-3 py-2">
@@ -85,34 +132,44 @@ export function Patterns() {
             <Show when={members().length > 0} fallback={<p class="text-xs text-muted-foreground italic mb-2">No tasks yet.</p>}>
               <ul class="flex flex-col gap-1 mb-2">
                 <For each={members()}>
-                  {(t) => (
-                    <li class="flex items-center gap-2 text-sm">
-                      <Show when={t.is_habit}><Repeat size={11} class="text-primary flex-shrink-0" /></Show>
-                      <span class="flex-1 text-foreground truncate">{t.title}</span>
-                      <button onClick={() => removeMember(props.pattern, t.id)} class="btn-icon" title="Remove from pattern"><X size={12} /></button>
-                    </li>
-                  )}
+                  {(t) => <MemberRow pattern={props.pattern} task={t} allowFast={props.allowFast} />}
                 </For>
               </ul>
             </Show>
-            <Show when={picking()} fallback={
-              <button onClick={() => setPicking(true)} class="btn-secondary text-xs px-2.5 py-1"><Plus size={12} /> Add task</button>
-            }>
-              <div class="rounded-md border border-border bg-popover max-h-44 overflow-y-auto">
-                <Show when={candidates().length > 0} fallback={<p class="p-3 text-xs text-muted-foreground text-center">No open tasks to add.</p>}>
-                  <For each={candidates()}>
-                    {(t) => (
-                      <button onClick={() => { addMember(props.pattern, t.id); setPicking(false); }}
-                        class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-sidebar-accent">
-                        <Plus size={12} class="text-primary flex-shrink-0" />
-                        <span class="flex-1 truncate text-foreground">{t.title}</span>
-                      </button>
-                    )}
-                  </For>
-                </Show>
-              </div>
-              <button onClick={() => setPicking(false)} class="btn-ghost text-xs px-2 py-1 mt-1">Done</button>
-            </Show>
+
+            <div class="flex flex-wrap items-center gap-1.5">
+              <Show when={picking()} fallback={
+                <button onClick={() => setPicking(true)} class="btn-secondary text-xs px-2.5 py-1"><Plus size={12} /> Add task</button>
+              }>
+                <div class="w-full rounded-md border border-border bg-popover max-h-44 overflow-y-auto">
+                  <Show when={candidates().length > 0} fallback={<p class="p-3 text-xs text-muted-foreground text-center">No open tasks to add.</p>}>
+                    <For each={candidates()}>
+                      {(t) => (
+                        <button onClick={() => { addMember(props.pattern, t.id); setPicking(false); }}
+                          class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-sidebar-accent">
+                          <Plus size={12} class="text-primary flex-shrink-0" />
+                          <span class="flex-1 truncate text-foreground">{t.title}</span>
+                        </button>
+                      )}
+                    </For>
+                  </Show>
+                  <button onClick={() => setPicking(false)} class="btn-ghost text-xs px-2 py-1 m-1">Done</button>
+                </div>
+              </Show>
+
+              {/* Rituals: a fast task — title only; the estimate is predicted, then dialed. */}
+              <Show when={props.allowFast && !picking()}>
+                <div class="inline-flex items-center gap-1">
+                  <Zap size={12} class="text-chart-1" />
+                  <input
+                    class="input py-1 text-sm w-44" placeholder="Fast task (e.g. blow-out hair)"
+                    value={fast()} onInput={(e) => setFast(e.currentTarget.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && submitFast()}
+                  />
+                  <button onClick={submitFast} disabled={!fast().trim()} class="btn-secondary text-xs px-2 py-1"><Plus size={12} /> Fast</button>
+                </div>
+              </Show>
+            </div>
           </div>
         </Show>
       </div>
@@ -202,7 +259,7 @@ export function Patterns() {
       <Show when={patternsOfType(props.typeName).length > 0} fallback={<EmptyHint>No {props.typeName.toLowerCase()}s yet.</EmptyHint>}>
         <div class="flex flex-col gap-1.5">
           <For each={patternsOfType(props.typeName)}>
-            {(p) => <PatternCard pattern={p} shape={ty()?.icon_shape ?? 'square'} color={colorVar(ty()?.color_token)} />}
+            {(p) => <PatternCard pattern={p} shape={ty()?.icon_shape ?? 'square'} color={colorVar(ty()?.color_token)} allowFast={props.typeName === 'Ritual'} />}
           </For>
         </div>
       </Show>
