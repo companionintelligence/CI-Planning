@@ -1,6 +1,7 @@
 import type Koa from 'koa';
 import { tasksRouter } from './tasks.js';
 import { blocksRouter } from './blocks.js';
+import { blockTemplatesRouter } from './block-templates.js';
 import { possiblesRouter } from './possibles.js';
 import { tagsRouter } from './tags.js';
 import { jobsRouter } from './jobs.js';
@@ -17,6 +18,7 @@ export function mountRoutes(app: Koa) {
     sseRouter(),
     tasksRouter(),
     blocksRouter(),
+    blockTemplatesRouter(),
     possiblesRouter(),
     tagsRouter(),
     jobsRouter(),

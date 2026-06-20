@@ -67,7 +67,8 @@ export const timeBlocks = sqliteTable('time_blocks', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
-  blockKind: text('block_kind').default('task'),     // task | meeting | habit | focus | break | buffer
+  blockKind: text('block_kind').default('task'),     // task | meeting | habit | focus | break | buffer | timeblock (container)
+  tag: text('tag'),                                  // grouping tag for 'timeblock' containers (Phase G)
   startAt: text('start_at').notNull(),
   endAt: text('end_at').notNull(),
   isLocked: integer('is_locked', { mode: 'boolean' }).default(false),
@@ -77,6 +78,16 @@ export const timeBlocks = sqliteTable('time_blocks', {
   sourceRef: text('source_ref'),
   status: text('status').default('planned'),         // planned | completed | skipped | overrun
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Reusable Time-Block templates (Phase G): a saved named/tagged container with a
+// default duration, re-instantiated onto a day as a 'timeblock' time_blocks row.
+export const blockTemplates = sqliteTable('block_templates', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: integer('owner_id').references(() => owners.id),
+  name: text('name').notNull(),
+  tag: text('tag'),
+  defaultMinutes: integer('default_minutes').default(60),
 });
 
 // Persisted real work per task. The single ended_at IS NULL row per owner is
