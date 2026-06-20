@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2 } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2, Save, Repeat } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -9,6 +9,7 @@ import { isAllDay } from '../lib/overlay.js';
 import { textureStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
+import { BlockEditModal } from './BlockEditModal.js';
 
 /**
  * The PLANNER (Phase G, G6): the hour-by-hour view of TODAY. 8h visible by default,
@@ -28,6 +29,82 @@ const VISIBLE_PX = VISIBLE_HOURS * 60 * PX_PER_MIN;
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+// ── Shared block interaction: drag/resize gesture + a click→options popover ─────
+// A move gesture under this pixel threshold is treated as a click (opens the menu).
+const CLICK_PX = 5;
+
+/** Drag/resize state + a pointer handler. `onClick` fires for a near-zero move. */
+function useBlockDrag(opts: {
+  block: () => Block; day: string; locked: () => boolean;
+  baseTop: () => number; baseHeight: () => number;
+  onClick: (x: number, y: number) => void;
+}) {
+  const [drag, setDrag] = createSignal<{ mode: GestureMode; dy: number } | null>(null);
+  const liveTop = () => {
+    const g = drag();
+    if (!g) return opts.baseTop();
+    const dMin = g.dy / PX_PER_MIN;
+    return g.mode === 'resize-bottom' ? opts.baseTop() : opts.baseTop() + dMin;
+  };
+  const liveHeight = () => {
+    const g = drag();
+    if (!g) return opts.baseHeight();
+    const dMin = g.dy / PX_PER_MIN;
+    if (g.mode === 'move') return opts.baseHeight();
+    if (g.mode === 'resize-top') return opts.baseHeight() - dMin;
+    return opts.baseHeight() + dMin;
+  };
+  function startGesture(mode: GestureMode, e: PointerEvent) {
+    if (opts.locked()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture?.(e.pointerId);
+    const onMove = (ev: PointerEvent) => setDrag({ mode, dy: ev.clientY - startY });
+    const onUp = (ev: PointerEvent) => {
+      target.releasePointerCapture?.(ev.pointerId);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      const dy = ev.clientY - startY;
+      setDrag(null);
+      if (mode === 'move' && Math.abs(dy) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
+      const resolved = resolveGesture(opts.block(), opts.day, mode, dy);
+      void commitDrag(opts.block(), resolved, { onError: (m) => showToast(m, 'error') });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    setDrag({ mode, dy: 0 });
+  }
+  return { drag, liveTop, liveHeight, startGesture };
+}
+
+interface MenuItem { label: string; icon: any; onClick: () => void; danger?: boolean }
+
+/** The options popover (Edit / Remove / …) — fixed-positioned + z-999 so it's never clipped. */
+function BlockMenu(props: { pos: { x: number; y: number }; title: string; items: MenuItem[]; onClose: () => void }) {
+  return (
+    <>
+      <div class="fixed inset-0 z-[998]" onClick={props.onClose} onPointerDown={(e) => e.stopPropagation()} />
+      <div
+        class="fixed z-[999] rounded-md border border-border bg-popover shadow-2xl text-xs overflow-hidden min-w-[150px]"
+        style={{ left: `${Math.min(props.pos.x, window.innerWidth - 160)}px`, top: `${Math.min(props.pos.y, window.innerHeight - 120)}px` }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <div class="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-border truncate">{props.title}</div>
+        <For each={props.items}>
+          {(it) => (
+            <button onClick={it.onClick} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent"
+              classList={{ 'text-destructive': it.danger, 'text-foreground': !it.danger }}>
+              <it.icon size={12} /> {it.label}
+            </button>
+          )}
+        </For>
+      </div>
+    </>
+  );
 }
 
 // ── Time gutter (hour labels) ─────────────────────────────────────────────────
@@ -73,20 +150,66 @@ function NowLine(props: { day: string; now: string }) {
   );
 }
 
-// ── Plan container outline (a timed Time-Block: ★ solid 3pt) ───────────────────
-function ContainerOutline(props: { block: Block; day: string }) {
-  const top = () => minutesIntoDay(props.block.start_at, props.day);
-  const height = () => Math.max(minutesIntoDay(props.block.end_at, props.day) - top(), 0);
+// ── Plan container outline (a timed Time-Block: ★ solid 3pt) — interactive ─────
+function ContainerOutline(props: { block: Block; day: string; onEdit: (b: Block) => void }) {
+  const b = () => props.block;
+  const baseTop = () => minutesIntoDay(b().start_at, props.day);
+  const baseHeight = () => Math.max(minutesIntoDay(b().end_at, props.day) - baseTop(), 0);
+  const locked = () => isImmovable(b());
+  const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
+  const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
+    block: b, day: props.day, locked, baseTop, baseHeight, onClick: (x, y) => setMenu({ x, y }),
+  });
+
+  async function removeBlock() {
+    setMenu(null);
+    try { await api.blocks.delete(b().id); refetchBlocks(); showToast('Plan removed', 'default'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  // Save the Plan + the task blocks currently inside its window as a reusable template.
+  async function saveTemplate() {
+    setMenu(null);
+    const s = Date.parse(b().start_at), e = Date.parse(b().end_at);
+    const tasks = (blocks() ?? [])
+      .filter((x) => x.block_kind === 'task' && Date.parse(x.start_at) < e && Date.parse(x.end_at) > s)
+      .map((x) => ({
+        title: taskOf(x.task_id)?.title ?? x.title,
+        tag: taskOf(x.task_id)?.tags?.[0] ?? x.tag ?? null,
+        estimated_minutes: Math.round((Date.parse(x.end_at) - Date.parse(x.start_at)) / 60000),
+        offset_minutes: Math.max(0, Math.round((Date.parse(x.start_at) - s) / 60000)),
+      }));
+    try {
+      await api.blockTemplates.create({ name: b().title, tag: b().tag ?? undefined, default_minutes: Math.round((e - s) / 60000), tasks });
+      showToast(`Saved "${b().title}" template (${tasks.length} task${tasks.length === 1 ? '' : 's'})`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   return (
     <div
-      class="absolute left-0.5 right-0.5 z-0 rounded-lg border-[3px] border-primary/70 pointer-events-none"
-      style={{ top: `${yOf(top())}px`, height: `${yOf(height())}px` }}
+      class="absolute left-0.5 right-0.5 rounded-lg border-[3px] border-primary/70 select-none touch-none"
+      classList={{ 'z-0': !drag(), 'z-[25] shadow-lg': !!drag(), 'cursor-grab': !locked() }}
+      style={{ top: `${yOf(liveTop())}px`, height: `${yOf(liveHeight())}px` }}
+      title={`${b().title} · Plan`}
+      onPointerDown={(e) => startGesture('move', e)}
     >
-      <span class="absolute -top-2 left-2 px-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-card rounded">
+      <span class="absolute -top-2 left-2 px-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-card rounded pointer-events-none">
         <Star size={9} class="text-primary" />
-        {props.block.title}
-        <Show when={props.block.tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
+        {b().title}
+        <Show when={b().tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
       </span>
+      <Show when={!locked()}>
+        <div class="absolute top-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-top', e)} />
+        <div class="absolute bottom-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-bottom', e)} />
+      </Show>
+      <Show when={menu()}>
+        {(pos) => (
+          <BlockMenu pos={pos()} title={b().title} onClose={() => setMenu(null)} items={[
+            { label: 'Edit', icon: Pencil, onClick: () => { setMenu(null); props.onEdit(b()); } },
+            { label: 'Save as template', icon: Save, onClick: saveTemplate },
+            { label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true },
+          ]} />
+        )}
+      </Show>
     </div>
   );
 }
@@ -121,32 +244,27 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
   const done = () => ['completed', 'skipped'].includes(b().status);
   const locked = () => isImmovable(b());
 
-  // Live gesture (visual-only) — a single PATCH fires on pointer-up, like the grid.
-  const [drag, setDrag] = createSignal<{ mode: GestureMode; dy: number } | null>(null);
-  const liveTop = () => {
-    const g = drag();
-    if (!g) return props.placed.top;
-    const dMin = g.dy / PX_PER_MIN;
-    return g.mode === 'resize-bottom' ? props.placed.top : props.placed.top + dMin;
-  };
-  const liveHeight = () => {
-    const g = drag();
-    if (!g) return props.placed.height;
-    const dMin = g.dy / PX_PER_MIN;
-    if (g.mode === 'move') return props.placed.height;
-    if (g.mode === 'resize-top') return props.placed.height - dMin;
-    return props.placed.height + dMin;
-  };
+  // Drag/resize + click→menu via the shared hook.
+  const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
+  const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
+    block: b, day: props.day, locked,
+    baseTop: () => props.placed.top, baseHeight: () => props.placed.height,
+    onClick: (x, y) => setMenu({ x, y }),
+  });
   const heightPx = () => Math.max(yOf(liveHeight()), 18);
 
-  // Click (vs drag) opens an options popover; a small move threshold disambiguates.
-  const CLICK_PX = 5;
-  const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
-  function expand() {
+  function edit() {
     setMenu(null);
     const t = task();
     if (t) setTaskModal({ open: true, editTask: t });
     else showToast('Nothing to edit on this block', 'default');
+  }
+  async function promoteHabit() {
+    setMenu(null);
+    const t = task();
+    if (!t) return;
+    try { await api.tasks.promoteHabit(t.id); showToast(`"${t.title}" is now a habit`, 'success'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function removeBlock() {
     setMenu(null);
@@ -159,33 +277,13 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
       showToast(blk.task_id ? 'Removed — sent back to the flight-plan' : 'Removed', 'default');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
-
-  function startGesture(mode: GestureMode, e: PointerEvent) {
-    if (locked()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const startY = e.clientY;
-    const target = e.currentTarget as HTMLElement;
-    target.setPointerCapture?.(e.pointerId);
-    const onMove = (ev: PointerEvent) => setDrag({ mode, dy: ev.clientY - startY });
-    const onUp = (ev: PointerEvent) => {
-      target.releasePointerCapture?.(ev.pointerId);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      const dy = ev.clientY - startY;
-      setDrag(null);
-      // A move gesture that barely moved is a click → open the options menu.
-      if (mode === 'move' && Math.abs(dy) < CLICK_PX) {
-        setMenu({ x: ev.clientX, y: ev.clientY });
-        return;
-      }
-      const resolved = resolveGesture(b(), props.day, mode, dy);
-      void commitDrag(b(), resolved, { onError: (m) => showToast(m, 'error') });
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    setDrag({ mode, dy: 0 });
-  }
+  const menuItems = (): MenuItem[] => {
+    const t = task();
+    const items: MenuItem[] = [{ label: 'Edit', icon: Pencil, onClick: edit }];
+    if (t && !t.is_habit) items.push({ label: 'Promote to habit', icon: Repeat, onClick: promoteHabit });
+    items.push({ label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true });
+    return items;
+  };
 
   return (
     <div
@@ -240,27 +338,9 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
           onPointerDown={(e) => startGesture('resize-bottom', e)} />
       </Show>
 
-      {/* Options popover — click the chip to Expand (edit) or Remove (back to list).
-          Fixed-positioned so the chip's overflow-hidden never clips it. */}
+      {/* Options popover (click the chip) — fixed/z-999 so the chip's overflow never clips it. */}
       <Show when={menu()}>
-        {(pos) => (
-          <>
-            <div class="fixed inset-0 z-[998]" onClick={() => setMenu(null)} onPointerDown={(e) => e.stopPropagation()} />
-            <div
-              class="fixed z-[999] rounded-md border border-border bg-popover shadow-2xl text-xs overflow-hidden min-w-[140px]"
-              style={{ left: `${Math.min(pos().x, window.innerWidth - 150)}px`, top: `${pos().y}px` }}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <div class="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-border truncate">{b().title}</div>
-              <button onClick={expand} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent text-foreground">
-                <Pencil size={12} /> Edit
-              </button>
-              <button onClick={removeBlock} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent text-destructive">
-                <Trash2 size={12} /> Remove
-              </button>
-            </div>
-          </>
-        )}
+        {(pos) => <BlockMenu pos={pos()} title={b().title} onClose={() => setMenu(null)} items={menuItems()} />}
       </Show>
     </div>
   );
@@ -269,6 +349,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
 export function Planner() {
   const day = () => localISODate();
   const [expanded, setExpanded] = createSignal(false);
+  const [editBlock, setEditBlock] = createSignal<Block | null>(null);
 
   // A minute ticker so "next up" (and the now line) advance over the day.
   const [nowISO, setNowISO] = createSignal(new Date().toISOString());
@@ -336,7 +417,7 @@ export function Planner() {
           <TimeGutter />
           <div class="relative border-l border-border/60" style={{ height: `${DAY_HEIGHT_PX}px` }}>
             <HourLines />
-            <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} />}</For>
+            <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} onEdit={setEditBlock} />}</For>
             <For each={placed()}>
               {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} />}
             </For>
@@ -350,6 +431,7 @@ export function Planner() {
           </div>
         </div>
       </div>
+      <BlockEditModal block={editBlock()} onClose={() => setEditBlock(null)} />
     </div>
   );
 }
