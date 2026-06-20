@@ -11,6 +11,7 @@ import { summaryRouter } from './summary.js';
 import { llmRouter } from './llm.js';
 import { memoryRouter } from './memory.js';
 import { patternsRouter } from './patterns.js';
+import { flightPlanRouter } from './flight-plan.js';
 import { sseRouter } from './sse.js';
 
 export function mountRoutes(app: Koa) {
@@ -28,6 +29,7 @@ export function mountRoutes(app: Koa) {
     llmRouter(),
     memoryRouter(),
     patternsRouter(),
+    flightPlanRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }
