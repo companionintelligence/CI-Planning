@@ -68,7 +68,7 @@ function addDaysISO(date: string, n: number): string {
 }
 
 /** Owner's planning timezone, falling back to the server zone. */
-function ownerTimezone(owner: number): string {
+export function ownerTimezone(owner: number): string {
   const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
     | { timezone: string | null }
     | undefined;
