@@ -172,9 +172,49 @@ export function PlannerDrawer() {
     );
   }
 
+  // Plan Blocks tile — saved Plan templates the user can drop onto today.
+  // Mirrors PatternCat's shape but reads from `templates` (block_templates).
+  function PlanBlocksCat() {
+    const [open, setOpen] = createSignal(true);
+    const items = () => {
+      const q = query().trim().toLowerCase().replace(/^#/, '');
+      const list = templates() ?? [];
+      return q ? list.filter((t) => t.name.toLowerCase().includes(q) || (t.tag ?? '').toLowerCase().includes(q)) : list;
+    };
+    return (
+      <div class="rounded-md border border-border">
+        <button onClick={() => setOpen((v) => !v)} class="w-full flex items-center gap-2 px-3 py-2 text-left">
+          <Star size={14} class="text-primary fill-primary/30" />
+          <span class="text-sm font-medium text-foreground">Plan Blocks</span>
+          <span class="text-[11px] text-muted-foreground">· saved Plan shapes · {items().length}</span>
+          <span class="ml-auto text-muted-foreground"><Show when={open()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show></span>
+        </button>
+        <Show when={open()}>
+          <div class="border-t border-border">
+            <Show when={items().length > 0} fallback={<p class="px-3 py-2 text-xs text-muted-foreground italic">None yet — save a Plan from the Planner ★ menu.</p>}>
+              <For each={items()}>
+                {(t) => (
+                  <div class="flex items-center gap-2 px-3 py-1.5 hover:bg-sidebar-accent">
+                    <Star size={12} class="text-primary" />
+                    <span class="flex-1 text-sm text-foreground truncate">{t.name}</span>
+                    <Show when={t.tag}><span class="text-primary text-xs">#{t.tag}</span></Show>
+                    <span class="text-[11px] text-muted-foreground">{t.default_minutes}m</span>
+                    <button onClick={() => instantiate(t)} class="btn-icon" title="Drop onto today"><Plus size={14} class="text-primary" /></button>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        </Show>
+      </div>
+    );
+  }
+
   // ── Block tab ────────────────────────────────────────────────────────────────
+  // Templates feed BOTH the Block tab (instantiate from history) and the Pattern
+  // tab's Plan Blocks tile (PR-C+), so the resource fires when either tab opens.
   const [templates, { refetch: refetchTemplates }] = createResource(
-    () => (tab() === 'block' ? 'block' : null),
+    () => (tab() === 'block' || tab() === 'pattern' ? 'on' : null),
     () => api.blockTemplates.list().then((r) => r.block_templates),
   );
   // Block Wizard — every block starts as a Concept (named/tagged from the canonical
@@ -335,12 +375,14 @@ export function PlannerDrawer() {
               </Show>
             </Show>
 
-          {/* Pattern Wizard — Routines first (the bundle), then Habits; Rituals are
-              hidden behind a feature flag (prefs.enable_rituals, default OFF). */}
+          {/* Pattern Wizard — Routines first (the bundle), then Habits, then
+              Plan Blocks (saved Plan templates from the Planner ★ menu). Rituals
+              are hidden behind a feature flag (prefs.enable_rituals, default OFF). */}
           <Show when={tab() === 'pattern'}>
             <div class="p-2 space-y-2">
               <PatternCat typeName="Routine" title="Routines" desc="bundles of habits" />
               <PatternCat typeName="Habit" title="Habits" desc="repeating actions" />
+              <PlanBlocksCat />
               <Show when={prefs()?.enable_rituals}>
                 <PatternCat typeName="Ritual" title="Rituals" desc="occasion prep" />
               </Show>
