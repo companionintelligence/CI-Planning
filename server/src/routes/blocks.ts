@@ -37,6 +37,7 @@ export function blocksRouter() {
       block_type?: string;
       goal_start_date?: string;
       duration_minutes?: number;
+      note?: string;
       start_at: string;
       end_at: string;
       is_locked?: boolean;
@@ -59,6 +60,7 @@ export function blocksRouter() {
         blockType: body.block_type,
         goalStartDate: body.goal_start_date,
         durationMinutes: body.duration_minutes,
+        note: body.note,
         startAt: body.start_at,
         endAt: body.end_at,
         isLocked: body.is_locked ?? false,
@@ -88,6 +90,7 @@ export function blocksRouter() {
       block_type: string | null;
       goal_start_date: string | null;
       duration_minutes: number | null;
+      note: string | null;
       all_day: boolean;
     }>;
 
