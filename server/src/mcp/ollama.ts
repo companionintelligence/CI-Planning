@@ -1,5 +1,6 @@
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
+import { resolveModel, resolveEmbedModel } from '../lib/models.js';
 
 /** Thrown when Ollama is unreachable or a model isn't available. Callers may catch and degrade. */
 export class OllamaUnavailable extends Error {
@@ -12,7 +13,7 @@ export class OllamaUnavailable extends Error {
 export type ModelTier = 'small' | 'medium';
 
 function modelFor(tier: ModelTier): string {
-  return tier === 'medium' ? config.ollamaMediumModel : config.ollamaSmallModel;
+  return resolveModel(tier); // per-owner Settings override, else env default
 }
 
 interface GenerateOpts {
@@ -99,7 +100,7 @@ export async function embed(text: string, timeoutMs = 30_000): Promise<number[]>
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: config.ollamaEmbedModel, prompt: text }),
+      body: JSON.stringify({ model: resolveEmbedModel(), prompt: text }),
     },
     timeoutMs
   );
