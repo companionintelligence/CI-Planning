@@ -21,7 +21,7 @@ export function tasksRouter() {
 
   // GET /api/tasks
   router.get('/api/tasks', async (ctx) => {
-    const { status, owner_id, tag, q, due_before, priority } = ctx.query as Record<string, string>;
+    const { status, owner_id, tag, q, due_before, priority, include_fast } = ctx.query as Record<string, string>;
 
     let rows = db.select().from(tasks);
 
@@ -32,6 +32,8 @@ export function tasksRouter() {
     if (priority)  conditions.push(eq(tasks.priority, Number(priority)));
     if (due_before) conditions.push(lte(tasks.dueAt, due_before));
     if (q)         conditions.push(like(tasks.title, `%${q}%`));
+    // Fast tasks are ritual-local — hidden from the list unless explicitly requested.
+    if (include_fast !== '1') conditions.push(eq(tasks.isFastTask, false));
 
     const result = conditions.length
       ? await rows.where(and(...conditions)).orderBy(asc(tasks.priority), asc(tasks.dueAt))
@@ -233,6 +235,27 @@ export function tasksRouter() {
   });
 
   // PATCH /api/tasks/:id
+  // POST /api/tasks/:id/promote-habit — make a (possibly fast/ritual-local) task a
+  // habit: flag it, drop fast-task hiding, and ensure its Habit-type pattern (G2).
+  router.post('/api/tasks/:id/promote-habit', async (ctx) => {
+    const id = Number(ctx.params.id);
+    const owner = currentOwnerId();
+    const [task] = await db
+      .update(tasks)
+      .set({ isHabit: true, isFastTask: false })
+      .where(eq(tasks.id, id))
+      .returning();
+    if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    ensureHabitPattern(id, task.ownerId ?? owner, task.title);
+    const tagRows = sqlite
+      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
+      .all({ task_id: id }) as { name: string }[];
+    const out = { ...toApi(task), tags: tagRows.map((r) => r.name), depends_on: getDependencies(id) };
+    broadcast(owner, 'task:updated', out);
+    broadcast(owner, 'pattern:updated', { id });
+    ctx.body = { task: out };
+  });
+
   router.patch('/api/tasks/:id', async (ctx) => {
     const id = Number(ctx.params.id);
     // Accept both snake_case (client/API convention) and camelCase (drizzle) field names.
