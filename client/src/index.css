@@ -283,3 +283,20 @@
 .p1 { box-shadow: 0 0 5px rgba(239,68,68,.5); }
 .p2 { box-shadow: 0 0 5px rgba(249,115,22,.4); }
 .p3 { box-shadow: 0 0 5px rgba(88,235,191,.4); }
+
+/* ── Mobile: modals become bottom sheets (global, so every .modal follows) ── */
+@media (max-width: 767px) {
+  .modal-backdrop { align-items: flex-end; padding: 0; }
+  .modal {
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+    border-radius: 1.25rem 1.25rem 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: sheetIn 240ms cubic-bezier(0.34, 1.2, 0.64, 1) both;
+  }
+  @keyframes sheetIn {
+    from { transform: translateY(100%); opacity: 0.6; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+}
