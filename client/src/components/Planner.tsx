@@ -245,15 +245,15 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
       <Show when={menu()}>
         {(pos) => (
           <>
-            <div class="fixed inset-0 z-[60]" onClick={() => setMenu(null)} onPointerDown={(e) => e.stopPropagation()} />
+            <div class="fixed inset-0 z-[998]" onClick={() => setMenu(null)} onPointerDown={(e) => e.stopPropagation()} />
             <div
-              class="fixed z-[61] rounded-md border border-border bg-popover shadow-xl text-xs overflow-hidden min-w-[140px]"
+              class="fixed z-[999] rounded-md border border-border bg-popover shadow-2xl text-xs overflow-hidden min-w-[140px]"
               style={{ left: `${Math.min(pos().x, window.innerWidth - 150)}px`, top: `${pos().y}px` }}
               onPointerDown={(e) => e.stopPropagation()}
             >
               <div class="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-border truncate">{b().title}</div>
               <button onClick={expand} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent text-foreground">
-                <Pencil size={12} /> Expand
+                <Pencil size={12} /> Edit
               </button>
               <button onClick={removeBlock} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent text-destructive">
                 <Trash2 size={12} /> Remove

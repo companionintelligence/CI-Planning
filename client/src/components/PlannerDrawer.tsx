@@ -39,6 +39,13 @@ function isoAtMidnight(dateStr: string): string {
   return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
 }
 
+/** ISO instant for HH:MM on a given YYYY-MM-DD local date. */
+function isoAt(dateStr: string, hhmm: string): string {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const [h, mi] = hhmm.split(':').map(Number);
+  return new Date(y, mo - 1, d, h || 0, mi || 0, 0, 0).toISOString();
+}
+
 export function PlannerDrawer() {
   const [tab, setTab] = createSignal<Tab>(null);
   const [query, setQuery] = createSignal('');
@@ -97,6 +104,7 @@ export function PlannerDrawer() {
   const [blockMode, setBlockMode] = createSignal<'plan' | 'concept'>('plan');
   const [blkName, setBlkName] = createSignal('');
   const [blkTag, setBlkTag] = createSignal('');
+  const [blkDay, setBlkDay] = createSignal(localISODate());
   const [blkStart, setBlkStart] = createSignal(nextHalfHour());
   const [blkMin, setBlkMin] = createSignal(60);
   const [saveTpl, setSaveTpl] = createSignal(false);
@@ -112,7 +120,7 @@ export function PlannerDrawer() {
   async function createBlock() {
     const tag = blkTag().trim().replace(/^#/, '');
     const name = blkName().trim() || tag || 'Time-Block';
-    const start = isoAtToday(blkStart());
+    const start = isoAt(blkDay(), blkStart());
     const end = new Date(Date.parse(start) + blkMin() * 60_000).toISOString();
     try {
       await api.blocks.create({ title: name, block_kind: 'timeblock', block_type: 'plan', tag: tag || undefined, start_at: start, end_at: end });
@@ -161,17 +169,25 @@ export function PlannerDrawer() {
   );
 
   return (
-    <>
-      {/* Darkened backdrop — focus mode when a tab is open; click to dismiss. */}
-      <Show when={tab()}>
-        <div class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm" onClick={() => setTab(null)} />
-      </Show>
-
-      {/* The drawer: fixed flush above the bottom nav, clearing the desktop rail. */}
-      <div class="fixed inset-x-0 bottom-14 md:bottom-0 md:left-52 z-40" style={{ 'padding-bottom': 'env(safe-area-inset-bottom)' }}>
-        {/* Expanding sheet (above the always-present bar) */}
+    <div class="rounded-xl border border-border bg-card overflow-hidden">
+      {/* Buttons inside the container (header row) — Block / Pattern / Open Task. */}
+      <div class="flex items-stretch">
+        <TabBtn t="block" icon={Boxes} label="Block" />
+        <div class="w-px bg-border" />
+        <TabBtn t="pattern" icon={Triangle} label="Pattern" />
+        <div class="w-px bg-border" />
+        <TabBtn t="task" icon={ListPlus} label="Open Task" />
         <Show when={tab()}>
-          <div class="rounded-t-xl border border-b-0 border-border bg-popover shadow-2xl max-h-[70vh] overflow-y-auto">
+          <div class="w-px bg-border" />
+          <button onClick={() => setTab(null)} class="px-3 text-muted-foreground hover:text-foreground" title="Collapse">
+            <ChevronDown size={16} />
+          </button>
+        </Show>
+      </div>
+
+      {/* Expanded content — inline within the container. */}
+      <Show when={tab()}>
+        <div class="border-t border-border max-h-[60vh] overflow-y-auto">
             {/* Search (task + pattern tabs) */}
             <Show when={tab() === 'task' || tab() === 'pattern'}>
               <div class="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
@@ -255,8 +271,12 @@ export function PlannerDrawer() {
                 <input class="input py-1 text-sm" placeholder="#tag" value={blkTag()} onInput={(e) => setBlkTag(e.currentTarget.value)} />
               </div>
 
-              {/* Plan: time + duration + reusable templates */}
+              {/* Plan: day + time + duration + reusable templates */}
               <Show when={blockMode() === 'plan'}>
+                <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CalendarClock size={13} /> Day
+                  <input type="date" class="input py-1 text-sm" value={blkDay()} onInput={(e) => setBlkDay(e.currentTarget.value)} />
+                </label>
                 <div class="grid grid-cols-2 gap-2">
                   <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Clock size={13} /> Start
@@ -319,23 +339,6 @@ export function PlannerDrawer() {
           </Show>
         </div>
       </Show>
-
-      {/* The always-present bar (never closes) */}
-      <div class="border border-border bg-card shadow-lg flex items-stretch"
-        classList={{ 'rounded-xl': !tab(), 'rounded-b-xl': !!tab() }}>
-        <TabBtn t="block" icon={Boxes} label="Block" />
-        <div class="w-px bg-border" />
-        <TabBtn t="pattern" icon={Triangle} label="Pattern" />
-        <div class="w-px bg-border" />
-        <TabBtn t="task" icon={ListPlus} label="Open Task" />
-        <Show when={tab()}>
-          <div class="w-px bg-border" />
-          <button onClick={() => setTab(null)} class="px-3 text-muted-foreground hover:text-foreground" title="Collapse drawer">
-            <ChevronDown size={16} />
-          </button>
-        </Show>
-      </div>
-      </div>
-    </>
+    </div>
   );
 }
