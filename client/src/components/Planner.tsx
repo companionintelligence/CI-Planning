@@ -1,10 +1,11 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Maximize2, Minimize2 } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon } from 'lucide-solid';
 import type { Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, taskOf, patternForTask, showToast } from '../stores/index.js';
+import { blocks, concepts, taskOf, patternForTask, showToast } from '../stores/index.js';
+import { isAllDay } from '../lib/overlay.js';
 import { textureStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
@@ -72,20 +73,41 @@ function NowLine(props: { day: string; now: string }) {
   );
 }
 
-// ── Time-Block container outline (block_kind = 'timeblock') ────────────────────
+// ── Plan container outline (a timed Time-Block: ★ solid 3pt) ───────────────────
 function ContainerOutline(props: { block: Block; day: string }) {
   const top = () => minutesIntoDay(props.block.start_at, props.day);
   const height = () => Math.max(minutesIntoDay(props.block.end_at, props.day) - top(), 0);
   return (
     <div
-      class="absolute left-0.5 right-0.5 z-0 rounded-lg border border-dashed border-border pointer-events-none"
+      class="absolute left-0.5 right-0.5 z-0 rounded-lg border-[3px] border-primary/70 pointer-events-none"
       style={{ top: `${yOf(top())}px`, height: `${yOf(height())}px` }}
     >
-      <span class="absolute -top-2 left-2 px-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-card rounded">
+      <span class="absolute -top-2 left-2 px-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-card rounded">
+        <Star size={9} class="text-primary" />
         {props.block.title}
-        <Show when={props.block.tag}>{(t) => <span class="text-primary"> #{t()}</span>}</Show>
+        <Show when={props.block.tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
       </span>
     </div>
+  );
+}
+
+// ── Header-lane chip (all-day Plans ★ + goal-day Concepts ⬟) — off the minute axis.
+function HeaderChip(props: { block: Block; concept?: boolean }) {
+  return (
+    <span
+      class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-card max-w-[180px]"
+      classList={{
+        'border-l-2 border-l-primary border border-border': !props.concept,
+        'border-2 border-dotted border-muted-foreground': props.concept,
+      }}
+      title={props.block.title}
+    >
+      <Show when={props.concept} fallback={<Star size={10} class="text-primary flex-shrink-0" />}>
+        <Pentagon size={10} class="text-muted-foreground flex-shrink-0" />
+      </Show>
+      <span class="text-foreground truncate">{props.block.title}</span>
+      <Show when={props.block.tag}>{(t) => <span class="text-primary flex-shrink-0">#{t()}</span>}</Show>
+    </span>
   );
 }
 
@@ -203,12 +225,19 @@ export function Planner() {
   const tick = setInterval(() => setNowISO(new Date().toISOString()), 60_000);
   onCleanup(() => clearInterval(tick));
 
-  const dayBlocks = () => blocks() ?? [];
-  const containers = () => dayBlocks().filter((b) => b.block_kind === 'timeblock');
-  // Task/meeting/focus chips share the overlap layout; containers + break/buffer don't.
-  const chips = () => dayBlocks().filter((b) => !['timeblock', 'break', 'buffer'].includes(b.block_kind));
+  // Concepts live off the minute grid (the header lane + horizon), never on it.
+  const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'concept');
+  // Plan containers on the timed grid (★ outline); all-day ones go to the header lane.
+  const containers = () => dayBlocks().filter((b) => b.block_kind === 'timeblock' && !isAllDay(b));
+  // Task/meeting/focus chips share the overlap layout; containers + break/buffer + all-day don't.
+  const chips = () => dayBlocks().filter((b) => !['timeblock', 'break', 'buffer'].includes(b.block_kind) && !isAllDay(b));
   const placed = createMemo(() => layoutBlocks(chips(), day()));
   const nextUp = createMemo(() => pickNextUp(chips(), nowISO()));
+
+  // Header lane (off the minute axis): all-day Plans/events ★ + today's Concepts ⬟.
+  const allDayPlans = () => dayBlocks().filter(isAllDay);
+  const todayConcepts = () => (concepts() ?? []).filter((c) => c.goal_start_date === day());
+  const hasHeaderLane = () => allDayPlans().length > 0 || todayConcepts().length > 0;
 
   let scroller: HTMLDivElement | undefined;
   const repin = () => {
@@ -237,6 +266,15 @@ export function Planner() {
           </Show>
         </button>
       </div>
+
+      {/* Header lane — all-day Plans + Concepts whose goal day is today (off the grid). */}
+      <Show when={hasHeaderLane()}>
+        <div class="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border bg-card/60 flex-shrink-0">
+          <span class="text-[9px] uppercase tracking-wide text-muted-foreground mr-0.5">all-day</span>
+          <For each={allDayPlans()}>{(b) => <HeaderChip block={b} />}</For>
+          <For each={todayConcepts()}>{(c) => <HeaderChip block={c} concept />}</For>
+        </div>
+      </Show>
 
       {/* Windowed scroller: 8h tall by default, full 24h when expanded. */}
       <div

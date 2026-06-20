@@ -69,6 +69,9 @@ export const timeBlocks = sqliteTable('time_blocks', {
   title: text('title').notNull(),
   blockKind: text('block_kind').default('task'),     // task | meeting | habit | focus | break | buffer | timeblock (container)
   tag: text('tag'),                                  // grouping tag for 'timeblock' containers (Phase G)
+  blockType: text('block_type'),                     // 'plan' | 'concept' for 'timeblock' containers (0019)
+  goalStartDate: text('goal_start_date'),            // YYYY-MM-DD goal day for concepts (nullable = someday)
+  durationMinutes: integer('duration_minutes'),      // concept duration (no start/end semantics)
   startAt: text('start_at').notNull(),
   endAt: text('end_at').notNull(),
   isLocked: integer('is_locked', { mode: 'boolean' }).default(false),

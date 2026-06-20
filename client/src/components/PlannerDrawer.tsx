@@ -1,9 +1,9 @@
 import { For, Show, createSignal, createMemo, createResource } from 'solid-js';
-import { Plus, Triangle, ListPlus, Boxes, Search, ChevronDown, Clock } from 'lucide-solid';
+import { Plus, Triangle, ListPlus, Boxes, Search, ChevronDown, Clock, Star, Pentagon, CalendarClock } from 'lucide-solid';
 import { A } from '@solidjs/router';
 import { api, type BlockTemplate } from '../lib/api.js';
 import {
-  tasks, flightPlan, patterns, patternTypes, refetchFlightPlan, refetchBlocks, showToast,
+  tasks, flightPlan, patterns, patternTypes, refetchFlightPlan, refetchBlocks, refetchConcepts, showToast,
 } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
 import { ShapeIcon } from './ShapeIcon.js';
@@ -31,6 +31,12 @@ function nextHalfHour(): string {
   d.setSeconds(0, 0);
   d.setMinutes(d.getMinutes() < 30 ? 30 : 60);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** Local-midnight ISO for a YYYY-MM-DD date — the placeholder anchor for a Concept. */
+function isoAtMidnight(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString();
 }
 
 export function PlannerDrawer() {
@@ -76,23 +82,51 @@ export function PlannerDrawer() {
     () => (tab() === 'block' ? 'block' : null),
     () => api.blockTemplates.list().then((r) => r.block_templates),
   );
+  const [blockMode, setBlockMode] = createSignal<'plan' | 'concept'>('plan');
   const [blkName, setBlkName] = createSignal('');
   const [blkTag, setBlkTag] = createSignal('');
   const [blkStart, setBlkStart] = createSignal(nextHalfHour());
   const [blkMin, setBlkMin] = createSignal(60);
   const [saveTpl, setSaveTpl] = createSignal(false);
+  // Concept form: a goal day (optional) + a Days/Hours/Minutes duration.
+  const [cGoal, setCGoal] = createSignal(localISODate());
+  const [cDays, setCDays] = createSignal(0);
+  const [cHrs, setCHrs] = createSignal(1);
+  const [cMins, setCMins] = createSignal(0);
 
+  function resetBlockForm() { setBlkName(''); setBlkTag(''); }
+
+  // Create a scheduled Plan container on the timed grid.
   async function createBlock() {
     const tag = blkTag().trim().replace(/^#/, '');
     const name = blkName().trim() || tag || 'Time-Block';
     const start = isoAtToday(blkStart());
     const end = new Date(Date.parse(start) + blkMin() * 60_000).toISOString();
     try {
-      await api.blocks.create({ title: name, block_kind: 'timeblock', tag: tag || undefined, start_at: start, end_at: end });
+      await api.blocks.create({ title: name, block_kind: 'timeblock', block_type: 'plan', tag: tag || undefined, start_at: start, end_at: end });
       if (saveTpl()) { await api.blockTemplates.create({ name, tag: tag || undefined, default_minutes: blkMin() }); refetchTemplates(); }
       refetchBlocks();
-      showToast(`Time-Block "${name}" added`, 'success');
-      setBlkName(''); setBlkTag('');
+      showToast(`Plan "${name}" added`, 'success');
+      resetBlockForm();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // Create an unscheduled Concept (off-grid: goal day + duration, stored all-day).
+  async function createConcept() {
+    const tag = blkTag().trim().replace(/^#/, '');
+    const name = blkName().trim() || tag || 'Concept';
+    const durMin = Math.max(cDays() * 1440 + cHrs() * 60 + cMins(), 15);
+    const goal = cGoal() || null;
+    const start = isoAtMidnight(goal ?? localISODate()); // placeholder; the client renders off the grid
+    const end = new Date(Date.parse(start) + durMin * 60_000).toISOString();
+    try {
+      await api.blocks.create({
+        title: name, block_kind: 'timeblock', block_type: 'concept', tag: tag || undefined,
+        goal_start_date: goal, duration_minutes: durMin, all_day: true, start_at: start, end_at: end,
+      });
+      refetchConcepts(); refetchBlocks();
+      showToast(`Concept "${name}" added`, 'success');
+      resetBlockForm();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function instantiate(t: BlockTemplate) {
@@ -173,40 +207,86 @@ export function PlannerDrawer() {
             </Show>
           </Show>
 
-          {/* Block creator + templates */}
+          {/* Block creator — Plan (scheduled) | Concept (goal) */}
           <Show when={tab() === 'block'}>
             <div class="p-3 space-y-3">
+              {/* Plan | Concept mode */}
+              <div class="flex rounded-md border border-border overflow-hidden text-xs">
+                <button onClick={() => setBlockMode('plan')} class="flex-1 inline-flex items-center justify-center gap-1 py-1.5"
+                  classList={{ 'bg-primary/15 text-primary': blockMode() === 'plan', 'text-muted-foreground': blockMode() !== 'plan' }}>
+                  <Star size={12} /> Plan
+                </button>
+                <button onClick={() => setBlockMode('concept')} class="flex-1 inline-flex items-center justify-center gap-1 py-1.5 border-l border-border"
+                  classList={{ 'bg-primary/15 text-primary': blockMode() === 'concept', 'text-muted-foreground': blockMode() !== 'concept' }}>
+                  <Pentagon size={12} /> Concept
+                </button>
+              </div>
+
+              {/* Shared name + tag */}
               <div class="grid grid-cols-2 gap-2">
                 <input class="input py-1 text-sm" placeholder="Name (defaults to tag)" value={blkName()} onInput={(e) => setBlkName(e.currentTarget.value)} />
                 <input class="input py-1 text-sm" placeholder="#tag" value={blkTag()} onInput={(e) => setBlkTag(e.currentTarget.value)} />
-                <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Clock size={13} /> Start
-                  <input type="time" class="input py-1 text-sm" value={blkStart()} onInput={(e) => setBlkStart(e.currentTarget.value)} />
-                </label>
-                <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  Mins
-                  <input type="number" min="15" step="15" class="input py-1 text-sm" value={blkMin()} onInput={(e) => setBlkMin(Number(e.currentTarget.value) || 60)} />
-                </label>
               </div>
-              <div class="flex items-center justify-between">
-                <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                  <input type="checkbox" checked={saveTpl()} onChange={(e) => setSaveTpl(e.currentTarget.checked)} /> Save as reusable template
+
+              {/* Plan: time + duration + reusable templates */}
+              <Show when={blockMode() === 'plan'}>
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Clock size={13} /> Start
+                    <input type="time" class="input py-1 text-sm" value={blkStart()} onInput={(e) => setBlkStart(e.currentTarget.value)} />
+                  </label>
+                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    Mins
+                    <input type="number" min="15" step="15" class="input py-1 text-sm" value={blkMin()} onInput={(e) => setBlkMin(Number(e.currentTarget.value) || 60)} />
+                  </label>
+                </div>
+                <div class="flex items-center justify-between">
+                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                    <input type="checkbox" checked={saveTpl()} onChange={(e) => setSaveTpl(e.currentTarget.checked)} /> Save as reusable template
+                  </label>
+                  <button onClick={createBlock} class="btn-primary text-xs px-3 py-1.5"><Plus size={13} /> Add Plan</button>
+                </div>
+                <Show when={(templates() ?? []).length > 0}>
+                  <div>
+                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Reusable blocks</div>
+                    <div class="flex flex-wrap gap-1.5">
+                      <For each={templates()}>
+                        {(t) => (
+                          <button onClick={() => instantiate(t)} class="btn-secondary text-xs px-2.5 py-1" title={`Drop ${t.name} onto today`}>
+                            <Boxes size={12} /> {t.name}{t.tag ? ` · #${t.tag}` : ''}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+              </Show>
+
+              {/* Concept: optional goal day + D/H/M duration (no fixed time) */}
+              <Show when={blockMode() === 'concept'}>
+                <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CalendarClock size={13} /> Goal day
+                  <input type="date" class="input py-1 text-sm" value={cGoal()} onInput={(e) => setCGoal(e.currentTarget.value)} />
+                  <button type="button" class="btn-ghost text-[11px] px-1.5 py-0.5" onClick={() => setCGoal('')} title="Someday (no date)">clear</button>
                 </label>
-                <button onClick={createBlock} class="btn-primary text-xs px-3 py-1.5"><Plus size={13} /> Add Time-Block</button>
-              </div>
-              <Show when={(templates() ?? []).length > 0}>
                 <div>
-                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Reusable blocks</div>
-                  <div class="flex flex-wrap gap-1.5">
-                    <For each={templates()}>
-                      {(t) => (
-                        <button onClick={() => instantiate(t)} class="btn-secondary text-xs px-2.5 py-1" title={`Drop ${t.name} onto today`}>
-                          <Boxes size={12} /> {t.name}{t.tag ? ` · #${t.tag}` : ''}
-                        </button>
-                      )}
-                    </For>
+                  <span class="text-[11px] text-muted-foreground">Duration</span>
+                  <div class="flex gap-2 mt-1">
+                    <label class="flex flex-col gap-0.5 flex-1">
+                      <input type="number" min="0" max="60" class="input py-1 text-sm" value={cDays()} onInput={(e) => setCDays(Number(e.currentTarget.value) || 0)} />
+                      <span class="text-[10px] text-muted-foreground text-center">days</span>
+                    </label>
+                    <label class="flex flex-col gap-0.5 flex-1">
+                      <input type="number" min="0" max="23" class="input py-1 text-sm" value={cHrs()} onInput={(e) => setCHrs(Number(e.currentTarget.value) || 0)} />
+                      <span class="text-[10px] text-muted-foreground text-center">hrs</span>
+                    </label>
+                    <label class="flex flex-col gap-0.5 flex-1">
+                      <input type="number" min="0" max="55" step="5" class="input py-1 text-sm" value={cMins()} onInput={(e) => setCMins(Number(e.currentTarget.value) || 0)} />
+                      <span class="text-[10px] text-muted-foreground text-center">min</span>
+                    </label>
                   </div>
                 </div>
+                <button onClick={createConcept} class="btn-primary text-xs px-3 py-1.5 w-full justify-center"><Plus size={13} /> Add Concept</button>
               </Show>
             </div>
           </Show>

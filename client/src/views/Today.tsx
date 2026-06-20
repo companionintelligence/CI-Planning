@@ -4,6 +4,7 @@ import { blocks, tasks, taskOf, setTaskModal } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
+import { ConceptLane } from '../components/ConceptLane.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { PlannerDrawer } from '../components/PlannerDrawer.js';
 
@@ -80,6 +81,9 @@ export function Today() {
 
       {/* PLANNER */}
       <Planner />
+
+      {/* Concept horizon lane (hidden when empty) */}
+      <ConceptLane />
 
       {/* Flight-plan (Auto Schedule lives at its top) */}
       <FlightPlan />
