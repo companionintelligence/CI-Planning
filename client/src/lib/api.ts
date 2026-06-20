@@ -34,6 +34,12 @@ export interface Task {
   tags: string[];
   depends_on?: number[];
   blocked?: boolean;
+  // Recurrence (Phase E): a template has recurrence_rule set + no parent; an
+  // instance has recurrence_parent_id + occurrence_date. is_habit propagates.
+  recurrence_rule?: string;
+  recurrence_parent_id?: number;
+  occurrence_date?: string;
+  is_habit?: boolean;
 }
 
 export interface TaskInput {
@@ -50,6 +56,14 @@ export interface TaskInput {
   owner_id?: number;
   tags?: string[];
   depends_on?: number[];
+  recurrence_rule?: string | null;
+  is_habit?: boolean;
+}
+
+export interface Streak {
+  templateId: number;
+  current: number;
+  recent: { date: string; status: string }[];
 }
 
 export interface ParsedQuick {
@@ -72,10 +86,15 @@ export const api = {
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
-    update: (id: number, body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string | null }>) =>
-      request<{ task: Task }>('PATCH', `/tasks/${id}`, body),
+    update: (
+      id: number,
+      body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string | null }>,
+      scope?: 'instance' | 'series',
+    ) => request<{ task: Task }>('PATCH', `/tasks/${id}${scope === 'series' ? '?scope=series' : ''}`, body),
     delete: (id: number) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
     subtasks: (id: number) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
+    skip: (id: number) => request<{ task: Task; skipped: string }>('POST', `/tasks/${id}/skip`, {}),
+    streak: (id: number) => request<Streak>('GET', `/tasks/${id}/streak`),
   },
 
   blocks: {
