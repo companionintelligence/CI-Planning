@@ -3,8 +3,8 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   darkMode: 'class',
   safelist: [
-    { pattern: /^(bg|text|border|ring|shadow|fill|stroke|outline)-(surface|ci|accent|primary|secondary|card|muted|destructive|sidebar|chart)/ },
-    { pattern: /^(hover|focus-visible):(bg|text|border|ring)-(surface|ci|accent|primary|secondary|card|muted|destructive)/ },
+    { pattern: /^(bg|text|border|ring|shadow|fill|stroke|outline)-(surface|ci|accent|primary|secondary|card|muted|destructive|sidebar|chart|tag)/ },
+    { pattern: /^(hover|focus-visible):(bg|text|border|ring)-(surface|ci|accent|primary|secondary|card|muted|destructive|tag)/ },
   ],
   theme: {
     extend: {
@@ -42,6 +42,12 @@ export default {
           ring: 'var(--sidebar-ring)',
         },
         chart: { 1: 'var(--chart-1)', 2: 'var(--chart-2)', 3: 'var(--chart-3)', 4: 'var(--chart-4)', 5: 'var(--chart-5)' },
+        // Tag palette bases (categorical labels only — see index.css). Variants via var(--tag-N-*).
+        tag: {
+          1: 'var(--tag-1)', 2: 'var(--tag-2)', 3: 'var(--tag-3)', 4: 'var(--tag-4)',
+          5: 'var(--tag-5)', 6: 'var(--tag-6)', 7: 'var(--tag-7)', 8: 'var(--tag-8)',
+          9: 'var(--tag-9)', 10: 'var(--tag-10)', 11: 'var(--tag-11)', 12: 'var(--tag-12)',
+        },
 
         // ── Legacy scales remapped onto the tokens so existing utilities theme automatically ──
         // surface-* (page → lines) now resolves to themed surfaces instead of fixed hex.

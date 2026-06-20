@@ -82,6 +82,80 @@
   color-scheme: dark;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   TAG PALETTE — 12 complementary hues that support (never compete with) the
+   CI teal-first system. USE ONLY for categorical labels: tags, chips, status
+   pills — NOT primary CTAs (keep the teal family as the main interaction
+   colour). Prefer one tag colour per semantic category and keep it consistent.
+
+   Each hue exposes 6 saturation steps at L62% (s6 vivid → s1 near-neutral) and
+   3 dark steps at S54% (d3 dark → d1 deepest). `--tag-N` is the balanced base.
+   Theme-independent: defined once, shared by light + dark. Tailwind exposes the
+   bases as `bg-tag-1`…`bg-tag-12`; reach for variants via `var(--tag-1-d2)`.
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* tag-1 Carnelian */
+  --tag-1: #e07a5f;
+  --tag-1-s6: hsl(14 78% 62%); --tag-1-s5: hsl(14 66% 62%); --tag-1-s4: hsl(14 54% 62%);
+  --tag-1-s3: hsl(14 42% 62%); --tag-1-s2: hsl(14 30% 62%); --tag-1-s1: hsl(14 18% 62%);
+  --tag-1-d3: hsl(14 54% 48%); --tag-1-d2: hsl(14 54% 38%); --tag-1-d1: hsl(14 54% 28%);
+  /* tag-2 Sunstone */
+  --tag-2: #f2a65a;
+  --tag-2-s6: hsl(32 78% 62%); --tag-2-s5: hsl(32 66% 62%); --tag-2-s4: hsl(32 54% 62%);
+  --tag-2-s3: hsl(32 42% 62%); --tag-2-s2: hsl(32 30% 62%); --tag-2-s1: hsl(32 18% 62%);
+  --tag-2-d3: hsl(32 54% 48%); --tag-2-d2: hsl(32 54% 38%); --tag-2-d1: hsl(32 54% 28%);
+  /* tag-3 Pyrite */
+  --tag-3: #f4d35e;
+  --tag-3-s6: hsl(48 78% 62%); --tag-3-s5: hsl(48 66% 62%); --tag-3-s4: hsl(48 54% 62%);
+  --tag-3-s3: hsl(48 42% 62%); --tag-3-s2: hsl(48 30% 62%); --tag-3-s1: hsl(48 18% 62%);
+  --tag-3-d3: hsl(48 54% 48%); --tag-3-d2: hsl(48 54% 38%); --tag-3-d1: hsl(48 54% 28%);
+  /* tag-4 Citrine */
+  --tag-4: #c3d86d;
+  --tag-4-s6: hsl(74 78% 62%); --tag-4-s5: hsl(74 66% 62%); --tag-4-s4: hsl(74 54% 62%);
+  --tag-4-s3: hsl(74 42% 62%); --tag-4-s2: hsl(74 30% 62%); --tag-4-s1: hsl(74 18% 62%);
+  --tag-4-d3: hsl(74 54% 48%); --tag-4-d2: hsl(74 54% 38%); --tag-4-d1: hsl(74 54% 28%);
+  /* tag-5 Jade */
+  --tag-5: #8ecf9e;
+  --tag-5-s6: hsl(142 78% 62%); --tag-5-s5: hsl(142 66% 62%); --tag-5-s4: hsl(142 54% 62%);
+  --tag-5-s3: hsl(142 42% 62%); --tag-5-s2: hsl(142 30% 62%); --tag-5-s1: hsl(142 18% 62%);
+  --tag-5-d3: hsl(142 54% 48%); --tag-5-d2: hsl(142 54% 38%); --tag-5-d1: hsl(142 54% 28%);
+  /* tag-6 Amazonite */
+  --tag-6: #6ec9c2;
+  --tag-6-s6: hsl(174 78% 62%); --tag-6-s5: hsl(174 66% 62%); --tag-6-s4: hsl(174 54% 62%);
+  --tag-6-s3: hsl(174 42% 62%); --tag-6-s2: hsl(174 30% 62%); --tag-6-s1: hsl(174 18% 62%);
+  --tag-6-d3: hsl(174 54% 48%); --tag-6-d2: hsl(174 54% 38%); --tag-6-d1: hsl(174 54% 28%);
+  /* tag-7 Aquamarine */
+  --tag-7: #78a6f5;
+  --tag-7-s6: hsl(218 78% 62%); --tag-7-s5: hsl(218 66% 62%); --tag-7-s4: hsl(218 54% 62%);
+  --tag-7-s3: hsl(218 42% 62%); --tag-7-s2: hsl(218 30% 62%); --tag-7-s1: hsl(218 18% 62%);
+  --tag-7-d3: hsl(218 54% 48%); --tag-7-d2: hsl(218 54% 38%); --tag-7-d1: hsl(218 54% 28%);
+  /* tag-8 Amethyst */
+  --tag-8: #8b8fe5;
+  --tag-8-s6: hsl(244 78% 62%); --tag-8-s5: hsl(244 66% 62%); --tag-8-s4: hsl(244 54% 62%);
+  --tag-8-s3: hsl(244 42% 62%); --tag-8-s2: hsl(244 30% 62%); --tag-8-s1: hsl(244 18% 62%);
+  --tag-8-d3: hsl(244 54% 48%); --tag-8-d2: hsl(244 54% 38%); --tag-8-d1: hsl(244 54% 28%);
+  /* tag-9 Kunzite */
+  --tag-9: #b18bd9;
+  --tag-9-s6: hsl(268 78% 62%); --tag-9-s5: hsl(268 66% 62%); --tag-9-s4: hsl(268 54% 62%);
+  --tag-9-s3: hsl(268 42% 62%); --tag-9-s2: hsl(268 30% 62%); --tag-9-s1: hsl(268 18% 62%);
+  --tag-9-d3: hsl(268 54% 48%); --tag-9-d2: hsl(268 54% 38%); --tag-9-d1: hsl(268 54% 28%);
+  /* tag-10 Rhodochrosite */
+  --tag-10: #d28fc1;
+  --tag-10-s6: hsl(318 78% 62%); --tag-10-s5: hsl(318 66% 62%); --tag-10-s4: hsl(318 54% 62%);
+  --tag-10-s3: hsl(318 42% 62%); --tag-10-s2: hsl(318 30% 62%); --tag-10-s1: hsl(318 18% 62%);
+  --tag-10-d3: hsl(318 54% 48%); --tag-10-d2: hsl(318 54% 38%); --tag-10-d1: hsl(318 54% 28%);
+  /* tag-11 Rhodonite */
+  --tag-11: #e89ab0;
+  --tag-11-s6: hsl(340 78% 62%); --tag-11-s5: hsl(340 66% 62%); --tag-11-s4: hsl(340 54% 62%);
+  --tag-11-s3: hsl(340 42% 62%); --tag-11-s2: hsl(340 30% 62%); --tag-11-s1: hsl(340 18% 62%);
+  --tag-11-d3: hsl(340 54% 48%); --tag-11-d2: hsl(340 54% 38%); --tag-11-d1: hsl(340 54% 28%);
+  /* tag-12 Topaz */
+  --tag-12: #d7a37a;
+  --tag-12-s6: hsl(24 78% 62%); --tag-12-s5: hsl(24 66% 62%); --tag-12-s4: hsl(24 54% 62%);
+  --tag-12-s3: hsl(24 42% 62%); --tag-12-s2: hsl(24 30% 62%); --tag-12-s1: hsl(24 18% 62%);
+  --tag-12-d3: hsl(24 54% 48%); --tag-12-d2: hsl(24 54% 38%); --tag-12-d1: hsl(24 54% 28%);
+}
+
 @layer base {
   * { box-sizing: border-box; }
   body {

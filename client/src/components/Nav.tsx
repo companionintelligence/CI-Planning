@@ -2,7 +2,7 @@ import { A } from '@solidjs/router';
 import { Show } from 'solid-js';
 import {
   CalendarDays, CheckSquare, Inbox, Tag, Settings, Activity,
-  Sun, Cpu,
+  Sun, Cpu, Shapes,
 } from 'lucide-solid';
 import { possibles } from '../stores/index.js';
 import { ThemeToggle } from './ThemeToggle.js';
@@ -12,6 +12,7 @@ const links = [
   { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
   { href: '/inbox',    label: 'Inbox',    Icon: Inbox, badge: true },
   { href: '/tasks',    label: 'Tasks',    Icon: CheckSquare },
+  { href: '/patterns', label: 'Patterns', Icon: Shapes },
   { href: '/tags',     label: 'Tags',     Icon: Tag },
   { href: '/jobs',     label: 'Jobs',     Icon: Activity },
   { href: '/settings', label: 'Settings', Icon: Settings },
@@ -43,23 +44,30 @@ export function Nav() {
       <div class="section-label">Navigation</div>
 
       {links.map((l) => (
-        <A
-          href={l.href}
-          end={l.href === '/'}
-          class="nav-item"
-          activeClass="nav-item-active"
-        >
-          <l.Icon size={15} class="flex-shrink-0" />
-          <span class="flex-1">{l.label}</span>
-          <Show when={l.badge && pendingCount() > 0}>
-            <span
-              class="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
-              style={{ background: 'rgba(88,235,191,.2)', color: '#58ebbf' }}
-            >
-              {pendingCount()}
-            </span>
+        <>
+          <A
+            href={l.href}
+            end={l.href === '/'}
+            class="nav-item"
+            activeClass="nav-item-active"
+          >
+            <l.Icon size={15} class="flex-shrink-0" />
+            <span class="flex-1">{l.label}</span>
+            <Show when={l.badge && pendingCount() > 0}>
+              <span
+                class="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                style={{ background: 'rgba(88,235,191,.2)', color: '#58ebbf' }}
+              >
+                {pendingCount()}
+              </span>
+            </Show>
+          </A>
+          {/* Stroke line under Inbox — separates capture (Today/Calendar/Inbox)
+              from planning (Tasks/Patterns/…). */}
+          <Show when={l.href === '/inbox'}>
+            <div class="my-1.5 border-t border-border/60" />
           </Show>
-        </A>
+        </>
       ))}
 
       <div class="flex-1" />
