@@ -164,6 +164,20 @@ export const patternTasks = sqliteTable(
   (t) => ({ pk: primaryKey({ columns: [t.patternId, t.taskId] }) })
 );
 
+// Flight-plan (Phase G): persisted, owner-scoped staging area for the two-step Auto.
+export const flightPlan = sqliteTable(
+  'flight_plan',
+  {
+    ownerId: integer('owner_id').references(() => owners.id),
+    taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    sourcePatternId: integer('source_pattern_id').references(() => patterns.id, { onDelete: 'set null' }),
+    selected: integer('selected', { mode: 'boolean' }).default(true),
+    position: integer('position').default(0),
+    addedAt: text('added_at').default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.ownerId, t.taskId] }) })
+);
+
 export const taskTags = sqliteTable('task_tags', {
   taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
   tagId: integer('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),

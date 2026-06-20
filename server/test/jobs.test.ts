@@ -57,7 +57,7 @@ describe('jobs', () => {
     expect(row?.name).toBe('legal');
   });
 
-  it('auto_schedule creates time blocks for open tasks and logs a run', async () => {
+  it('auto_schedule is retired: it proposes candidates into the flight-plan, not blocks (Phase G)', async () => {
     sqlite
       .prepare(
         `INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes)
@@ -69,8 +69,13 @@ describe('jobs', () => {
 
     const run = lastRun('auto_schedule');
     expect(run?.status).toBe('done');
+    // No blocks are packed any more — Auto only touches the flight-plan.
     const blocks = sqlite.prepare("SELECT COUNT(*) AS n FROM time_blocks WHERE block_kind='task'").get() as { n: number };
-    expect(blocks.n).toBeGreaterThanOrEqual(1);
+    expect(blocks.n).toBe(0);
+    // The two open tasks were proposed into the flight-plan (unselected).
+    const staged = sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = 1`).get() as { n: number };
+    expect(staged.n).toBe(2);
+    expect(run?.items_created).toBe(2);
   });
 
   it('nightly_grooming runs end-to-end and records a run (no hard LLM dependency)', async () => {
