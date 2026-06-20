@@ -152,11 +152,19 @@ place by **manual drag**, by **Auto with a time-block tag filter**, or by
 - The drawer and flight-plan use `bg-card`/`bg-popover` with `border-border`; the
   drawer respects `safe-area-inset-bottom`.
 
-## 8. Open decisions (assumptions for V1 — flag to change)
+## 8. Decisions (resolved 2026-06-20)
 
-- **Flight-plan persistence:** V1 assumes a **client-side ephemeral** staging store
-  (lost on reload). If cross-reload / cross-device staging is wanted, add a small
-  owner-scoped `flight_plan` table — noted as a later ticket.
-- **Time-Block reuse store:** saved/reusable blocks modeled as lightweight
-  templates (`block_templates`); confirm whether reuse is needed in V1 or can wait.
+- **Flight-plan is persisted, owner-scoped, "until reset."** It survives reloads
+  and devices; a **Reset** button clears it. → owner-scoped `flight_plan` table.
+- **Staging a Pattern stages its member tasks.** Tapping a pattern in the drawer
+  adds each of its tasks to the flight-plan (grouped under the pattern for display);
+  Auto then places the individual tasks.
+- **Patterns contain tasks only in V1 (no nesting).** Shared tasks link related
+  patterns (e.g. "grocery shopping" is in both `errands` and "Family dinner");
+  pattern-in-pattern nesting is deferred to `G-INT`.
+- **Time-Block reuse is in V1.** Saved/reusable blocks are lightweight
+  `block_templates` (named, tagged, default duration).
+- **Auto replaces the nightly auto-pack.** Auto is flight-plan-only (two-step); the
+  old `auto_schedule` "pack the whole backlog" job is **retired** (repurposed at most
+  to *propose* candidates into the flight-plan). Phase-A scheduler tests are reworked.
 - **"Open bugs" in the Summary** is read as **open tasks/items**.

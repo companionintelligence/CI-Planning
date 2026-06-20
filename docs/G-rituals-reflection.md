@@ -19,12 +19,16 @@ rules of a Time-Block or Pattern.
 - **Pattern timing intelligence.** "Check groceries *before work*" relative
   anchors, proximity ranking, and learned/past-pattern ordering are a **later
   ticket** (G-INT). V1 Auto is structural: tag-filter + free-gap packing.
-- **Flight-plan persistence / multi-device.** V1 flight-plan is a client store
-  (lost on reload). A persisted owner-scoped table is deferred.
+- **Pattern nesting.** V1 patterns contain **tasks only**; shared tasks link related
+  patterns. Pattern-in-pattern nesting is deferred to `G-INT`.
 - **Reminder *delivery*.** G stores per-pattern-type reminder *config*; firing
   reminders is **Phase H**.
 - **Reflection / weekly-review screens.** Dropped from this phase (was in old G);
   reconsider after the cockpit lands.
+
+*(Decided in V1, not deferred: the flight-plan is **persisted owner-scoped until
+reset** (with a Reset button); Time-Block **reuse** via `block_templates`; Auto
+**replaces** the nightly auto-pack job.)*
 
 ## The model (what changes)
 - **`planning_mode` (`auto | ritual`) is retired.** "Ritual" becomes a Pattern
@@ -66,6 +70,19 @@ CREATE TABLE block_templates (
 -- time_blocks gains a container variant + a tag (the outline drawn in the PLANNER).
 ALTER TABLE time_blocks ADD COLUMN tag TEXT;            -- container/grouping tag
 -- block_kind already enumerates kinds; add 'timeblock' (the container) at the app layer.
+
+-- Flight-plan: the persisted, owner-scoped staging area. Survives reloads/devices;
+-- cleared by the Reset button. Holds tasks (members of staged patterns land here as
+-- individual rows, tagged with their source pattern). `selected` drives the Auto pass.
+CREATE TABLE flight_plan (
+  owner_id INTEGER REFERENCES owners(id),
+  task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  source_pattern_id INTEGER REFERENCES patterns(id) ON DELETE SET NULL, -- null = added directly
+  selected INTEGER DEFAULT 1,
+  position INTEGER DEFAULT 0,
+  added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (owner_id, task_id)
+);
 ```
 - `tasks.is_habit` is **migrated away** by `E'` (see E spec): existing habits become
   members of a habit-type pattern; the column is dropped/ignored after backfill.
@@ -116,21 +133,31 @@ ALTER TABLE time_blocks ADD COLUMN tag TEXT;            -- container/grouping ta
 - **State.** not-started.
 
 ### G4 — Flight-plan + the Auto reframe (the A′ reframe)
-- **Goal.** A flight-plan staging store (client V1) + the **two-step Auto**: (1)
-  empty flight-plan → Auto proposes candidates into it; (2) staged selection → Auto
-  **places** them via Time-Block tag-filter or Pattern rules (free-gap packing,
-  V1). Manual drag from flight-plan onto the PLANNER. A's scheduler is repurposed as
-  this engine; it no longer auto-packs the whole backlog.
-- **Acceptance.** Auto on an empty flight-plan adds candidates and schedules
-  **nothing**; Auto on a tag-filtered Time-Block places only matching staged items
-  inside the block window; manual drag persists one tz-correct PATCH; nothing
-  outside the flight-plan is auto-placed.
-- **Tests.** Step-1 fills flight-plan, creates 0 blocks; step-2 places staged items
-  into the block's window, respecting its tag; non-staged open tasks are never
-  auto-placed; existing scheduler invariants (no lost minutes, tz-correct) hold for
-  the placement pass; property test over random staged sets.
-- **State.** not-started. *(Note: revises the Phase-A `auto_schedule` job contract —
-  call it out in A's tests.)*
+- **Goal.** A **persisted, owner-scoped** flight-plan (`flight_plan` table; survives
+  reloads/devices; a **Reset** button clears it) + the **two-step Auto**: (1) empty
+  flight-plan → Auto proposes candidates into it; (2) staged selection → Auto
+  **places** them via Time-Block tag-filter or Pattern rules (free-gap packing, V1).
+  Staging a Pattern adds its **member tasks** to the flight-plan (tagged with the
+  source pattern). Manual drag from flight-plan onto the PLANNER. The old nightly
+  `auto_schedule` "pack the whole backlog" job is **retired** — Auto only ever
+  touches the flight-plan (it may at most *propose* candidates into it).
+  REST: `GET /api/flight-plan`, `POST /api/flight-plan` (add task / add pattern's
+  tasks), `PATCH` (toggle `selected`/`position`), `DELETE /api/flight-plan/:taskId`,
+  `POST /api/flight-plan/reset`, plus the Auto endpoints.
+- **Acceptance.** Flight-plan persists across reloads + is owner-scoped; Reset
+  empties it; staging a pattern adds its tasks; Auto on an empty flight-plan adds
+  candidates and schedules **nothing**; Auto on a tag-filtered Time-Block places only
+  matching **selected** staged items inside the block window; manual drag persists
+  one tz-correct PATCH; nothing outside the flight-plan is auto-placed; the nightly
+  auto-pack no longer runs.
+- **Tests.** Flight-plan CRUD + persistence + reset + owner isolation; pattern-stage
+  expands to member tasks; step-1 fills flight-plan / creates 0 blocks; step-2 places
+  selected staged items into the block window respecting its tag; non-staged tasks
+  never auto-placed; placement invariants (no lost minutes, tz-correct) hold;
+  property test over random staged sets; the retired `auto_schedule` job is gone /
+  no-ops (update A's tests).
+- **State.** not-started. *(Revises the Phase-A `auto_schedule` contract — A's
+  scheduler tests are reworked here.)*
 
 ### G5 — TODAY cockpit layout (client)
 - **Goal.** Rebuild `Today.tsx`: **Day Overview** (day/date + today's tag set),
