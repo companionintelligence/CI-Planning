@@ -12,6 +12,7 @@ import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generate.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
+import { ensureHabitPattern } from '../services/patterns.js';
 import { utcDayBounds } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 
@@ -112,6 +113,8 @@ export function tasksRouter() {
         })
         .returning();
       if (body.tags?.length) await attachTags(template.id, body.tags);
+      // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
+      if (body.is_habit) ensureHabitPattern(template.id, owner, template.title);
       const generated = generateRecurrences();
       const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as number[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
