@@ -1,12 +1,13 @@
 import { For, Show, createSignal, createMemo, createResource } from 'solid-js';
-import { Plus, Triangle, ListPlus, Boxes, Search, ChevronDown, Clock, Star, Pentagon, CalendarClock } from 'lucide-solid';
+import { Plus, Triangle, ListPlus, Boxes, Search, ChevronDown, ChevronRight, Star, Pentagon, StickyNote, RotateCcw } from 'lucide-solid';
 import { A } from '@solidjs/router';
-import { api, type BlockTemplate } from '../lib/api.js';
+import { api, type BlockTemplate, type Pattern } from '../lib/api.js';
 import {
-  tasks, flightPlan, patterns, patternTypes, refetchTasks, refetchFlightPlan, refetchBlocks, refetchConcepts, showToast,
+  tasks, flightPlan, patterns, patternTypes, prefs, refetchTasks, refetchFlightPlan, refetchBlocks, refetchConcepts, showToast,
 } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
 import { ShapeIcon } from './ShapeIcon.js';
+import { DEFAULT_CONCEPT_TAGS, type ConceptTag } from '../lib/pattern-meta.js';
 
 /**
  * The lower drawer (Phase G, G5). Floats above the cockpit and **never closes** —
@@ -78,22 +79,97 @@ export function PlannerDrawer() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  // ── Pattern tab ──────────────────────────────────────────────────────────────
-  const typeOf = createMemo(() => {
-    const m = new Map<number, string>();
-    for (const t of patternTypes() ?? []) m.set(t.id, t.icon_shape);
+  // ── Pattern Wizard (Habits / Routines / Rituals as separate submenus) ─────────
+  const typeIdByName = createMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of patternTypes() ?? []) m.set(t.name, t.id);
     return m;
   });
-  const shownPatterns = () => {
-    const q = query().toLowerCase();
-    return (patterns() ?? []).filter((p) => !q || p.name.toLowerCase().includes(q) || (p.tag ?? '').toLowerCase().includes(q));
+  const shapeByName = (name: string) => (patternTypes() ?? []).find((t) => t.name === name)?.icon_shape ?? 'square';
+  // Habits are is_habit *tasks*; Routines/Rituals are patterns of that type.
+  const habitItems = () => {
+    const q = query().trim().toLowerCase().replace(/^#/, '');
+    return (tasks() ?? []).filter((t) => t.is_habit && !t.recurrence_parent_id && (!q || t.title.toLowerCase().includes(q)));
   };
+  const patternsByType = (name: string) => {
+    const q = query().trim().toLowerCase().replace(/^#/, '');
+    const id = typeIdByName().get(name);
+    return (patterns() ?? []).filter((p) => p.type_id === id && (!q || p.name.toLowerCase().includes(q) || (p.tag ?? '').toLowerCase().includes(q)));
+  };
+  async function stageHabit(id: number) {
+    try { await api.flightPlan.addTask(id); refetchFlightPlan(); showToast('Added to flight-plan', 'default'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
   async function stagePattern(id: number, name: string) {
     try {
       const r = await api.flightPlan.addPattern(id);
       refetchFlightPlan();
-      showToast(`Staged ${r.added} task${r.added === 1 ? '' : 's'} from ${name}`, 'default');
+      showToast(`Staged ${name} (${r.added} task${r.added === 1 ? '' : 's'})`, 'default');
     } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // A pattern row: icon · name · description, expand to see member tasks, add to flight-plan.
+  function PatternRow(props: { pattern: Pattern }) {
+    const [open, setOpen] = createSignal(false);
+    const members = () => props.pattern.task_ids.map((id) => (tasks() ?? []).find((t) => t.id === id)?.title).filter(Boolean) as string[];
+    return (
+      <div>
+        <div class="flex items-center gap-2 px-3 py-1.5 hover:bg-sidebar-accent">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm text-foreground truncate">{props.pattern.name}</div>
+            <Show when={props.pattern.notes}>{(n) => <div class="text-[11px] text-muted-foreground truncate">{n()}</div>}</Show>
+          </div>
+          <Show when={props.pattern.tag}>{(t) => <span class="text-primary text-xs">#{t()}</span>}</Show>
+          <span class="text-[11px] text-muted-foreground">{props.pattern.task_ids.length}t</span>
+          <button onClick={() => setOpen((v) => !v)} class="btn-icon" title="Show tasks">
+            <Show when={open()} fallback={<ChevronRight size={13} />}><ChevronDown size={13} /></Show>
+          </button>
+          <button onClick={() => stagePattern(props.pattern.id, props.pattern.name)} class="btn-icon" title="Add to flight-plan"><Plus size={14} class="text-primary" /></button>
+        </div>
+        <Show when={open()}>
+          <ul class="pl-8 pr-3 pb-1.5 flex flex-col gap-0.5">
+            <For each={members()}>{(n) => <li class="text-[11px] text-muted-foreground truncate">· {n}</li>}</For>
+          </ul>
+        </Show>
+      </div>
+    );
+  }
+
+  // A collapsible category submenu.
+  function PatternCat(props: { typeName: string; title: string; desc: string }) {
+    const [open, setOpen] = createSignal(true);
+    const count = () => (props.typeName === 'Habit' ? habitItems().length : patternsByType(props.typeName).length);
+    return (
+      <div class="rounded-md border border-border">
+        <button onClick={() => setOpen((v) => !v)} class="w-full flex items-center gap-2 px-3 py-2 text-left">
+          <span class="text-primary"><ShapeIcon shape={shapeByName(props.typeName)} size={14} /></span>
+          <span class="text-sm font-medium text-foreground">{props.title}</span>
+          <span class="text-[11px] text-muted-foreground">· {props.desc} · {count()}</span>
+          <span class="ml-auto text-muted-foreground"><Show when={open()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show></span>
+        </button>
+        <Show when={open()}>
+          <div class="border-t border-border">
+            <Show when={count() > 0} fallback={<p class="px-3 py-2 text-xs text-muted-foreground italic">None yet.</p>}>
+              <Show when={props.typeName === 'Habit'}>
+                <For each={habitItems()}>
+                  {(t) => (
+                    <div class="flex items-center gap-2 px-3 py-1.5 hover:bg-sidebar-accent">
+                      <ShapeIcon shape="circle" size={12} />
+                      <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
+                      <Show when={t.estimated_minutes}><span class="text-[11px] text-muted-foreground">{t.estimated_minutes}m</span></Show>
+                      <button onClick={() => stageHabit(t.id)} class="btn-icon" title="Add to flight-plan"><Plus size={14} class="text-primary" /></button>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              <Show when={props.typeName !== 'Habit'}>
+                <For each={patternsByType(props.typeName)}>{(p) => <PatternRow pattern={p} />}</For>
+              </Show>
+            </Show>
+          </div>
+        </Show>
+      </div>
+    );
   }
 
   // ── Block tab ────────────────────────────────────────────────────────────────
@@ -101,52 +177,85 @@ export function PlannerDrawer() {
     () => (tab() === 'block' ? 'block' : null),
     () => api.blockTemplates.list().then((r) => r.block_templates),
   );
-  const [blockMode, setBlockMode] = createSignal<'plan' | 'concept'>('plan');
-  const [blkName, setBlkName] = createSignal('');
-  const [blkTag, setBlkTag] = createSignal('');
-  const [blkDay, setBlkDay] = createSignal(localISODate());
-  const [blkStart, setBlkStart] = createSignal(nextHalfHour());
-  const [blkMin, setBlkMin] = createSignal(60);
+  // Block Wizard — every block starts as a Concept (named/tagged from the canonical
+  // list), then optionally becomes a scheduled Plan.
+  const conceptTags = () => prefs()?.concept_tags ?? DEFAULT_CONCEPT_TAGS;
+  const [step, setStep] = createSignal<'concept' | 'plan'>('concept');
+  const [bwName, setBwName] = createSignal('');
+  const [bwTags, setBwTags] = createSignal('');             // space/comma separated; first is primary
+  const [bwGoal, setBwGoal] = createSignal(localISODate());
+  const [bwEst, setBwEst] = createSignal(60);               // concept estimate (minutes)
+  const [bwStart, setBwStart] = createSignal(nextHalfHour());
+  const [pD, setPD] = createSignal(0);
+  const [pH, setPH] = createSignal(1);
+  const [pM, setPM] = createSignal(0);
+  const [noteOn, setNoteOn] = createSignal(false);
+  const [note, setNote] = createSignal('');
   const [saveTpl, setSaveTpl] = createSignal(false);
-  // Concept form: a goal day (optional) + a Days/Hours/Minutes duration.
-  const [cGoal, setCGoal] = createSignal(localISODate());
-  const [cDays, setCDays] = createSignal(0);
-  const [cHrs, setCHrs] = createSignal(1);
-  const [cMins, setCMins] = createSignal(0);
 
-  function resetBlockForm() { setBlkName(''); setBlkTag(''); }
-
-  // Create a scheduled Plan container on the timed grid.
-  async function createBlock() {
-    const tag = blkTag().trim().replace(/^#/, '');
-    const name = blkName().trim() || tag || 'Time-Block';
-    const start = isoAt(blkDay(), blkStart());
-    const end = new Date(Date.parse(start) + blkMin() * 60_000).toISOString();
-    try {
-      await api.blocks.create({ title: name, block_kind: 'timeblock', block_type: 'plan', tag: tag || undefined, start_at: start, end_at: end });
-      if (saveTpl()) { await api.blockTemplates.create({ name, tag: tag || undefined, default_minutes: blkMin() }); refetchTemplates(); }
-      refetchBlocks();
-      showToast(`Plan "${name}" added`, 'success');
-      resetBlockForm();
-    } catch (err) { showToast((err as Error).message, 'error'); }
+  const tagList = () => bwTags().split(/[\s,]+/).map((t) => t.replace(/^#/, '').trim()).filter(Boolean);
+  function pickConceptTag(ct: ConceptTag) { setBwName(ct.name); setBwTags(ct.name); setBwEst(ct.minutes); }
+  function resetWizard() {
+    setStep('concept'); setBwName(''); setBwTags(''); setBwGoal(localISODate());
+    setBwEst(60); setBwStart(nextHalfHour()); setPD(0); setPH(1); setPM(0); setNoteOn(false); setNote('');
   }
+  const noteOrNull = () => (noteOn() && note().trim() ? note().trim() : undefined);
 
-  // Create an unscheduled Concept (off-grid: goal day + duration, stored all-day).
-  async function createConcept() {
-    const tag = blkTag().trim().replace(/^#/, '');
-    const name = blkName().trim() || tag || 'Concept';
-    const durMin = Math.max(cDays() * 1440 + cHrs() * 60 + cMins(), 15);
-    const goal = cGoal() || null;
-    const start = isoAtMidnight(goal ?? localISODate()); // placeholder; the client renders off the grid
+  // A small note toggle shared by the Concept + Plan steps.
+  const NoteToggle = () => (
+    <div>
+      <button type="button" onClick={() => setNoteOn((v) => !v)} class="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+        <StickyNote size={12} /> {noteOn() ? 'Remove note' : 'Add a note'}
+      </button>
+      <Show when={noteOn()}>
+        <textarea class="textarea mt-1 text-sm" rows="2" placeholder="Saved with the container…" value={note()} onInput={(e) => setNote(e.currentTarget.value)} />
+      </Show>
+    </div>
+  );
+
+  // Track Concept: add the concept to its goal day (off the minute grid).
+  async function trackConcept() {
+    const tag = tagList()[0];
+    const name = bwName().trim() || tag || 'Concept';
+    const durMin = Math.max(bwEst(), 15);
+    const goal = bwGoal() || null;
+    const start = isoAtMidnight(goal ?? localISODate()); // placeholder; rendered off the grid
     const end = new Date(Date.parse(start) + durMin * 60_000).toISOString();
     try {
       await api.blocks.create({
         title: name, block_kind: 'timeblock', block_type: 'concept', tag: tag || undefined,
-        goal_start_date: goal, duration_minutes: durMin, all_day: true, start_at: start, end_at: end,
+        goal_start_date: goal, duration_minutes: durMin, all_day: true, note: noteOrNull(), start_at: start, end_at: end,
       });
       refetchConcepts(); refetchBlocks();
-      showToast(`Concept "${name}" added`, 'success');
-      resetBlockForm();
+      showToast(`Concept "${name}" tracked`, 'success');
+      resetWizard();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // Make Plan: carry the concept into the Plan step (estimate → D/H/M, default start).
+  function makePlan() {
+    const m = Math.max(bwEst(), 15);
+    setPD(Math.floor(m / 1440)); setPH(Math.floor((m % 1440) / 60)); setPM(m % 60);
+    setBwStart(nextHalfHour());
+    setStep('plan');
+  }
+
+  // Add Plan: schedule it on the chosen day/time with the D/H/M duration (multi-tag).
+  async function addPlan() {
+    const tags = tagList();
+    const name = bwName().trim() || tags[0] || 'Plan';
+    const durMin = Math.max(pD() * 1440 + pH() * 60 + pM(), 15);
+    const start = isoAt(bwGoal() || localISODate(), bwStart());
+    const end = new Date(Date.parse(start) + durMin * 60_000).toISOString();
+    try {
+      await api.blocks.create({
+        title: name, block_kind: 'timeblock', block_type: 'plan', tag: tags.join(',') || undefined,
+        note: noteOrNull(), start_at: start, end_at: end,
+      });
+      if (saveTpl()) { await api.blockTemplates.create({ name, tag: tags[0], default_minutes: durMin }); refetchTemplates(); }
+      refetchBlocks();
+      showToast(`Plan "${name}" added`, 'success');
+      resetWizard();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function instantiate(t: BlockTemplate) {
@@ -226,76 +335,107 @@ export function PlannerDrawer() {
               </Show>
             </Show>
 
-          {/* Pattern list */}
+          {/* Pattern Wizard — Habits / Routines / Rituals as separate submenus. */}
           <Show when={tab() === 'pattern'}>
-            <Show when={shownPatterns().length > 0} fallback={
-              <div class="p-4 text-center text-sm text-muted-foreground">
-                No patterns yet. <A href="/settings" class="text-primary underline" onClick={() => setTab(null)}>Create one in Settings</A>.
-              </div>
-            }>
-              <ul class="divide-y divide-border">
-                <For each={shownPatterns()}>
-                  {(p) => (
-                    <li>
-                      <button onClick={() => stagePattern(p.id, p.name)} class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-accent transition-colors">
-                        <ShapeIcon shape={p.type_id != null ? (typeOf().get(p.type_id) ?? 'square') : 'square'} />
-                        <span class="flex-1 text-sm text-foreground truncate">{p.name}</span>
-                        <Show when={p.tag}>{(t) => <span class="text-primary text-xs">#{t()}</span>}</Show>
-                        <span class="text-[11px] text-muted-foreground">{p.task_ids.length} task{p.task_ids.length === 1 ? '' : 's'}</span>
-                      </button>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </Show>
+            <div class="p-2 space-y-2">
+              <PatternCat typeName="Habit" title="Habits" desc="repeating actions" />
+              <PatternCat typeName="Routine" title="Routines" desc="bundles of habits" />
+              <PatternCat typeName="Ritual" title="Rituals" desc="occasion prep" />
+              <p class="text-[11px] text-muted-foreground text-center pt-1">
+                Create patterns in <A href="/patterns" class="text-primary underline" onClick={() => setTab(null)}>Patterns</A>.
+              </p>
+            </div>
           </Show>
 
-          {/* Block creator — Plan (scheduled) | Concept (goal) */}
+          {/* Block Wizard — concept-first; Make Plan carries it into the scheduled step. */}
           <Show when={tab() === 'block'}>
             <div class="p-3 space-y-3">
-              {/* Plan | Concept mode */}
-              <div class="flex rounded-md border border-border overflow-hidden text-xs">
-                <button onClick={() => setBlockMode('plan')} class="flex-1 inline-flex items-center justify-center gap-1 py-1.5"
-                  classList={{ 'bg-primary/15 text-primary': blockMode() === 'plan', 'text-muted-foreground': blockMode() !== 'plan' }}>
-                  <Star size={12} /> Plan
-                </button>
-                <button onClick={() => setBlockMode('concept')} class="flex-1 inline-flex items-center justify-center gap-1 py-1.5 border-l border-border"
-                  classList={{ 'bg-primary/15 text-primary': blockMode() === 'concept', 'text-muted-foreground': blockMode() !== 'concept' }}>
+              {/* Step trail */}
+              <div class="flex items-center gap-2 text-[11px]">
+                <span class="inline-flex items-center gap-1" classList={{ 'text-primary font-medium': step() === 'concept', 'text-muted-foreground': step() !== 'concept' }}>
                   <Pentagon size={12} /> Concept
-                </button>
+                </span>
+                <ChevronRight size={12} class="text-muted-foreground" />
+                <span class="inline-flex items-center gap-1" classList={{ 'text-primary font-medium': step() === 'plan', 'text-muted-foreground': step() !== 'plan' }}>
+                  <Star size={12} /> Plan
+                </span>
               </div>
 
-              {/* Shared name + tag */}
-              <div class="grid grid-cols-2 gap-2">
-                <input class="input py-1 text-sm" placeholder="Name (defaults to tag)" value={blkName()} onInput={(e) => setBlkName(e.currentTarget.value)} />
-                <input class="input py-1 text-sm" placeholder="#tag" value={blkTag()} onInput={(e) => setBlkTag(e.currentTarget.value)} />
-              </div>
+              {/* ── CONCEPT step ── */}
+              <Show when={step() === 'concept'}>
+                <div class="flex flex-wrap gap-1.5">
+                  <For each={conceptTags()}>
+                    {(ct) => (
+                      <button type="button" onClick={() => pickConceptTag(ct)}
+                        class="text-xs px-2 py-1 rounded-full border transition-colors"
+                        classList={{ 'border-primary text-primary bg-primary/10': bwName() === ct.name, 'border-border text-muted-foreground hover:text-foreground': bwName() !== ct.name }}>
+                        {ct.name} <span class="opacity-60">· {ct.minutes}m</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
 
-              {/* Plan: day + time + duration + reusable templates */}
-              <Show when={blockMode() === 'plan'}>
-                <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <CalendarClock size={13} /> Day
-                  <input type="date" class="input py-1 text-sm" value={blkDay()} onInput={(e) => setBlkDay(e.currentTarget.value)} />
-                </label>
                 <div class="grid grid-cols-2 gap-2">
-                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Clock size={13} /> Start
-                    <input type="time" class="input py-1 text-sm" value={blkStart()} onInput={(e) => setBlkStart(e.currentTarget.value)} />
-                  </label>
-                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    Mins
-                    <input type="number" min="15" step="15" class="input py-1 text-sm" value={blkMin()} onInput={(e) => setBlkMin(Number(e.currentTarget.value) || 60)} />
-                  </label>
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Title</span>
+                    <input class="input py-1 text-sm" value={bwName()} onInput={(e) => setBwName(e.currentTarget.value)} /></label>
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Tag</span>
+                    <input class="input py-1 text-sm" placeholder="#tag" value={bwTags()} onInput={(e) => setBwTags(e.currentTarget.value)} /></label>
                 </div>
-                <div class="flex items-center justify-between">
-                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                    <input type="checkbox" checked={saveTpl()} onChange={(e) => setSaveTpl(e.currentTarget.checked)} /> Save as reusable template
-                  </label>
-                  <button onClick={createBlock} class="btn-primary text-xs px-3 py-1.5"><Plus size={13} /> Add Plan</button>
+
+                {/* Goal day + Duration on one line — labels over the inputs. */}
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Goal day</span>
+                    <input type="date" class="input py-1 text-sm" value={bwGoal()} onInput={(e) => setBwGoal(e.currentTarget.value)} /></label>
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Est. duration (min)</span>
+                    <input type="number" min="5" step="5" class="input py-1 text-sm" value={bwEst()} onInput={(e) => setBwEst(Number(e.currentTarget.value) || 0)} /></label>
                 </div>
+
+                <NoteToggle />
+
+                <div class="flex gap-2">
+                  <button onClick={trackConcept} class="btn-secondary text-xs px-3 py-1.5 flex-1 justify-center"><Pentagon size={13} /> Track Concept</button>
+                  <button onClick={makePlan} class="btn-primary text-xs px-3 py-1.5 flex-1 justify-center"><Star size={13} /> Make Plan</button>
+                </div>
+              </Show>
+
+              {/* ── PLAN step ── prefilled from the concept; set a start time + confirm. */}
+              <Show when={step() === 'plan'}>
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Title</span>
+                    <input class="input py-1 text-sm" value={bwName()} onInput={(e) => setBwName(e.currentTarget.value)} /></label>
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Tags (space-separated)</span>
+                    <input class="input py-1 text-sm" placeholder="#work #focus" value={bwTags()} onInput={(e) => setBwTags(e.currentTarget.value)} /></label>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Day</span>
+                    <input type="date" class="input py-1 text-sm" value={bwGoal()} onInput={(e) => setBwGoal(e.currentTarget.value)} /></label>
+                  <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Start time</span>
+                    <input type="time" class="input py-1 text-sm" value={bwStart()} onInput={(e) => setBwStart(e.currentTarget.value)} /></label>
+                </div>
+                <div>
+                  <span class="text-[11px] text-muted-foreground">Duration</span>
+                  <div class="flex gap-2 mt-1">
+                    <label class="flex flex-col gap-0.5 flex-1"><input type="number" min="0" max="60" class="input py-1 text-sm" value={pD()} onInput={(e) => setPD(Number(e.currentTarget.value) || 0)} /><span class="text-[10px] text-muted-foreground text-center">days</span></label>
+                    <label class="flex flex-col gap-0.5 flex-1"><input type="number" min="0" max="23" class="input py-1 text-sm" value={pH()} onInput={(e) => setPH(Number(e.currentTarget.value) || 0)} /><span class="text-[10px] text-muted-foreground text-center">hrs</span></label>
+                    <label class="flex flex-col gap-0.5 flex-1"><input type="number" min="0" max="55" step="5" class="input py-1 text-sm" value={pM()} onInput={(e) => setPM(Number(e.currentTarget.value) || 0)} /><span class="text-[10px] text-muted-foreground text-center">min</span></label>
+                  </div>
+                </div>
+
+                <NoteToggle />
+
+                <label class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <input type="checkbox" checked={saveTpl()} onChange={(e) => setSaveTpl(e.currentTarget.checked)} /> Save as reusable template
+                </label>
+
+                <div class="flex gap-2">
+                  <button onClick={() => setStep('concept')} class="btn-ghost text-xs px-2.5 py-1.5"><ChevronRight size={12} class="rotate-180" /> Back</button>
+                  <button onClick={resetWizard} class="btn-ghost text-xs px-2.5 py-1.5"><RotateCcw size={12} /> Reset</button>
+                  <button onClick={addPlan} class="btn-primary text-xs px-3 py-1.5 flex-1 justify-center"><Plus size={13} /> Add Plan</button>
+                </div>
+
                 <Show when={(templates() ?? []).length > 0}>
                   <div>
-                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Reusable blocks</div>
+                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Saved plan templates</div>
                     <div class="flex flex-wrap gap-1.5">
                       <For each={templates()}>
                         {(t) => (
@@ -307,33 +447,6 @@ export function PlannerDrawer() {
                     </div>
                   </div>
                 </Show>
-              </Show>
-
-              {/* Concept: optional goal day + D/H/M duration (no fixed time) */}
-              <Show when={blockMode() === 'concept'}>
-                <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <CalendarClock size={13} /> Goal day
-                  <input type="date" class="input py-1 text-sm" value={cGoal()} onInput={(e) => setCGoal(e.currentTarget.value)} />
-                  <button type="button" class="btn-ghost text-[11px] px-1.5 py-0.5" onClick={() => setCGoal('')} title="Someday (no date)">clear</button>
-                </label>
-                <div>
-                  <span class="text-[11px] text-muted-foreground">Duration</span>
-                  <div class="flex gap-2 mt-1">
-                    <label class="flex flex-col gap-0.5 flex-1">
-                      <input type="number" min="0" max="60" class="input py-1 text-sm" value={cDays()} onInput={(e) => setCDays(Number(e.currentTarget.value) || 0)} />
-                      <span class="text-[10px] text-muted-foreground text-center">days</span>
-                    </label>
-                    <label class="flex flex-col gap-0.5 flex-1">
-                      <input type="number" min="0" max="23" class="input py-1 text-sm" value={cHrs()} onInput={(e) => setCHrs(Number(e.currentTarget.value) || 0)} />
-                      <span class="text-[10px] text-muted-foreground text-center">hrs</span>
-                    </label>
-                    <label class="flex flex-col gap-0.5 flex-1">
-                      <input type="number" min="0" max="55" step="5" class="input py-1 text-sm" value={cMins()} onInput={(e) => setCMins(Number(e.currentTarget.value) || 0)} />
-                      <span class="text-[10px] text-muted-foreground text-center">min</span>
-                    </label>
-                  </div>
-                </div>
-                <button onClick={createConcept} class="btn-primary text-xs px-3 py-1.5 w-full justify-center"><Plus size={13} /> Add Concept</button>
               </Show>
             </div>
           </Show>
