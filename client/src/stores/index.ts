@@ -1,6 +1,6 @@
 import { createSignal, createMemo, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
-import type { Block, Task } from '../lib/api.js';
+import type { Block, Task, Pattern, PatternType } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
@@ -26,6 +26,17 @@ on('block:created', () => refetchBlocks());
 on('block:updated', () => refetchBlocks());
 on('block:deleted', () => refetchBlocks());
 on('schedule:done',  () => refetchBlocks());
+
+// ── Concepts (Phase G, Step 2b) ────────────────────────────────────────────────
+// Unscheduled goal Time-Blocks — owner-scoped, off the minute grid (a goal day +
+// duration, no fixed time). Fetched separately from the dated range since they have
+// no real time; the horizon lane + the PLANNER's goal-day header chip read them here.
+export const [concepts, { refetch: refetchConcepts }] = createResource(() =>
+  api.blocks.listConcepts().then((r) => r.blocks)
+);
+on('block:created', () => refetchConcepts());
+on('block:updated', () => refetchConcepts());
+on('block:deleted', () => refetchConcepts());
 
 // ── Overlays (tag AND priority, combinable) ────────────────────────────────────
 // Tag/priority live on the linked *task*, not the block. The filter is client-side
@@ -71,6 +82,60 @@ export const [possibles, { refetch: refetchPossibles }] = createResource(() =>
 
 on('possible:promoted',  () => { refetchPossibles(); refetchTasks(); });
 on('possible:dismissed', () => refetchPossibles());
+
+// ── Phase G: flight-plan, patterns, pattern types ──────────────────────────────
+// The flight-plan is the persisted, owner-scoped staging area the two-step Auto
+// runs over. It survives reloads; Reset clears it. SSE keeps every device in sync.
+export const [flightPlan, { refetch: refetchFlightPlan }] = createResource(() =>
+  api.flightPlan.list().then((r) => r.flight_plan)
+);
+
+on('flight_plan:updated', () => refetchFlightPlan());
+on('flight_plan:filled',  () => refetchFlightPlan());
+on('flight_plan:reset',   () => refetchFlightPlan());
+// Auto step-2 places staged items into the day as time_blocks → refresh the PLANNER.
+on('auto:placed', () => { refetchBlocks(); refetchFlightPlan(); });
+
+export const [patterns, { refetch: refetchPatterns }] = createResource(() =>
+  api.patterns.list().then((r) => r.patterns)
+);
+on('pattern:created', () => refetchPatterns());
+on('pattern:updated', () => refetchPatterns());
+on('pattern:deleted', () => refetchPatterns());
+
+export const [patternTypes, { refetch: refetchPatternTypes }] = createResource(() =>
+  api.patternTypes.list().then((r) => r.pattern_types)
+);
+on('pattern_type:created', () => refetchPatternTypes());
+on('pattern_type:updated', () => refetchPatternTypes());
+on('pattern_type:deleted', () => refetchPatternTypes());
+
+/** Pattern types keyed by id — for resolving a pattern's icon shape. */
+const patternTypeById = createMemo<Map<number, PatternType>>(() => {
+  const m = new Map<number, PatternType>();
+  for (const t of patternTypes() ?? []) m.set(t.id, t);
+  return m;
+});
+
+/**
+ * The pattern a task belongs to (first by lowest position), for texture rendering.
+ * Membership is many-to-many; V1 picks one pattern per task to choose the texture.
+ */
+const patternByTaskId = createMemo<Map<number, Pattern>>(() => {
+  const m = new Map<number, Pattern>();
+  for (const p of patterns() ?? []) {
+    for (const tid of p.task_ids) if (!m.has(tid)) m.set(tid, p);
+  }
+  return m;
+});
+
+/** The pattern + its type for a task, if any — drives the PLANNER's pattern texture. */
+export function patternForTask(taskId?: number): { pattern: Pattern; type?: PatternType } | undefined {
+  if (taskId == null) return undefined;
+  const pattern = patternByTaskId().get(taskId);
+  if (!pattern) return undefined;
+  return { pattern, type: pattern.type_id != null ? patternTypeById().get(pattern.type_id) : undefined };
+}
 
 // ── Tags ─────────────────────────────────────────────────────────────────────
 export const [tags, { refetch: refetchTags }] = createResource(() =>

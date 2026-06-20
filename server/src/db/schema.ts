@@ -69,6 +69,9 @@ export const timeBlocks = sqliteTable('time_blocks', {
   title: text('title').notNull(),
   blockKind: text('block_kind').default('task'),     // task | meeting | habit | focus | break | buffer | timeblock (container)
   tag: text('tag'),                                  // grouping tag for 'timeblock' containers (Phase G)
+  blockType: text('block_type'),                     // 'plan' | 'concept' for 'timeblock' containers (0019)
+  goalStartDate: text('goal_start_date'),            // YYYY-MM-DD goal day for concepts (nullable = someday)
+  durationMinutes: integer('duration_minutes'),      // concept duration (no start/end semantics)
   startAt: text('start_at').notNull(),
   endAt: text('end_at').notNull(),
   isLocked: integer('is_locked', { mode: 'boolean' }).default(false),
@@ -112,9 +115,20 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   maxFocusBlockMinutes: integer('max_focus_block_minutes').default(90),
   minBreakMinutes: integer('min_break_minutes').default(10),
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
-  planningMode: text('planning_mode').default('ritual'), // auto | ritual
+  planningMode: text('planning_mode').default('ritual'), // retired (Phase G); column kept, UI removed
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
   planningHorizonDays: integer('planning_horizon_days').default(7), // "today set" lookahead for auto-scheduling
+  // Time-Block container duration bounds (0017). Distinct from the Auto engine's
+  // focus-session/break knobs above.
+  maxTimeBlockMinutes: integer('max_time_block_minutes').default(240),
+  minTimeBlockMinutes: integer('min_time_block_minutes').default(15),
+  // Plan/Concept Time-Block config (0018). Plan horizon reuses planningHorizonDays.
+  planAlldayAlways: integer('plan_allday_always', { mode: 'boolean' }).default(false),
+  planDaylongForPromoted: integer('plan_daylong_for_promoted', { mode: 'boolean' }).default(false),
+  planAutofillGaps: integer('plan_autofill_gaps', { mode: 'boolean' }).default(true),
+  conceptDefaultMinutes: integer('concept_default_minutes').default(60),
+  conceptAutosurface: integer('concept_autosurface', { mode: 'boolean' }).default(true),
+  conceptHorizonDays: integer('concept_horizon_days').default(30),
   // Per-owner Ollama model overrides (null = use the env default). 0012.
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings
@@ -142,6 +156,12 @@ export const patternTypes = sqliteTable('pattern_types', {
   iconShape: text('icon_shape').notNull(),                       // square | circle | triangle | <custom>
   reminderConfig: text('reminder_config', { mode: 'json' }),     // opaque until Phase H
   isBuiltin: integer('is_builtin', { mode: 'boolean' }).default(false),
+  // Per-type display/config defaults (0017). Colour is a CI-Hub token key (e.g.
+  // 'chart-1'), never a hex — patterns stay on the shared design system.
+  colorToken: text('color_token'),                              // token key; null = default
+  texture: text('texture'),                                     // motif override; null = derive from tag
+  defaultEstMinutes: integer('default_est_minutes'),            // default est for this category
+  notify: integer('notify', { mode: 'boolean' }).default(false), // per-type reminder toggle (Phase H fires)
 });
 
 export const patterns = sqliteTable('patterns', {
