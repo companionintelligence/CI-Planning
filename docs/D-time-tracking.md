@@ -11,7 +11,7 @@ Companion to [ROADMAP.md](ROADMAP.md). Depends on **B0** (migration runner, `lib
 ## Non-goals
 - No multi-timer / parallel tracking, no Pomodoro cycles, no idle-detection or auto-pause (Phase H reminders can prompt later).
 - No manual time-entry editor UI (add/correct entries by hand) — the API supports `source='manual'` rows, but the editor screen is deferred.
-- No cross-task rollups/reports beyond per-task actuals (Phase G weekly review aggregates these).
+- No cross-task rollups/reports beyond per-task actuals. *(The old "Phase G weekly review" that would aggregate these was dropped in the 2026-06-20 G reconception; rollups/reports are unscheduled — revisit after the TODAY cockpit lands.)*
 - No LLM call in the hot path. The estimate suggestion is pure arithmetic; an LLM refinement is out of scope here.
 
 ## Current state (what exists today)
