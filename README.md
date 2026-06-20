@@ -23,6 +23,15 @@ plan, with one spec per phase under [docs/](docs/). SQLite is the single source 
 truth for data (no markdown-on-disk model — that was an earlier, abandoned
 incarnation).
 
+**Where TODAY is headed (Phase G).** Planning is moving to a **manual-or-Auto,
+flight-plan** model built on three primitives — **Time-Blocks** (tagged containers),
+**Patterns** (typed task collections: Routine ▢ / Habit ◯ / Ritual △), and the
+**Flight-plan** staging area. The old `auto`/`ritual` planning-mode toggle is being
+retired ("ritual" becomes a Pattern type). The TODAY-cockpit UX is canonical in
+[docs/design-today-cockpit.md](docs/design-today-cockpit.md); the phase plan is
+[docs/G-rituals-reflection.md](docs/G-rituals-reflection.md). Not built yet — A–F
+(scheduler, tasks, timers, recurrence/habits, calendar) are what ships today.
+
 ## See it in action
 
 From an empty day to a planned one: capture a task, pick a priority, and let the

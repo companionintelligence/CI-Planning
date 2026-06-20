@@ -1,10 +1,10 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-**Status:** Phase A **complete** (scheduler correctness, today-set + rolling horizon, fixed-time pins, cached briefing). **B0 in progress.** Everything below is re-ordered so user-visible capability lands *before* the security/sync epic.
+**Status (2026-06-20):** **A · B0 · C · D · E · F shipped & merged.** Settings (Ollama model picker + Companion Memory sync) and the responsive mobile shell are in review. **G has been reconceived** as *Time-Blocking, Patterns & the TODAY cockpit* and is the next build; it reframes A and pulls revision tickets into E (`E′` habit→pattern) and F (`F′` calendar→PLANNER).
 
-> **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). The companion implementation spec for the in-progress phase is [B0-migration-runner.md](B0-migration-runner.md); each later phase has its own `docs/<id>-*.md` spec.
+> **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). Each phase has its own `docs/<id>-*.md` spec; the new G UX is canonical in [design-today-cockpit.md](design-today-cockpit.md).
 
-> **Deferred from Phase A — AI-assisted ordering.** The optional `planning_mode = 'auto'` LLM task-ordering pass is **deferred**, not shipped: ordering tasks well needs signals Phase A doesn't have yet (per-task actuals from **D**, history from **E**). It is revisited inside **G — Rituals** once those land. Phase A's scheduler is fully deterministic; the dead `planning_mode` toggle is wired up in **G**, not before.
+> **Phase G reconception (2026-06-20).** The old "Rituals & reflection / wire `planning_mode` / AI-ordering" G is **replaced**. Planning is now **manual-or-Auto, flight-plan-centric**: you drag, or **Auto** schedules *only staged flight-plan items* per **Time-Block** (tag) or **Pattern** rules. The `planning_mode` (`auto | ritual`) toggle is **retired** — "ritual" becomes a **Pattern type** (Routine ▢ / Habit ◯ / Ritual △, user-extensible). A's deterministic scheduler is **reframed** as that Auto engine (no longer auto-packs the whole backlog), and **overlap becomes allowed-but-flagged**. The "before work" relative-timing / proximity / learned-ordering intelligence is **deferred** (`G-INT`). Full spec: [G-rituals-reflection.md](G-rituals-reflection.md).
 
 ## What changed from v1
 - **Value-first sequencing.** The features that make it "best-in-class" (task semantics, time tracking, recurrence, calendar grid, rituals, notifications) no longer wait on auth. They need a data-model foundation, not identity.
@@ -32,23 +32,25 @@
 | D6 *(new)* | Contract coupling | Depend on a **published, versioned** CI auth contract (JWKS + documented claims), not reverse-engineered internals | new guardrail |
 
 ## Phase map (resequenced)
-| Track | Phase | Was (v1) | Depends on | Effort | Status |
-|---|---|---|---|---|---|
-| — | **A** Scheduler correctness + today-set + cached briefing | A | — | — | ✅ done (AI ordering deferred → G) |
-| 0 Foundation | **B0** Migrations + owner scoping (no auth) | half of B | A | **S** | 🔧 in progress |
-| 1 Features | **C** Rich task semantics | C | B0 | M | 📋 spec'd |
-| | **D** Time tracking & timers | D | B0 | S–M | 📋 spec'd |
-| | **E** Recurring & habits | E | B0, C | M | 📋 spec'd |
-| | **F** Calendar grid (2-D, drag/resize, overlays) | F | B0 | L | 📋 spec'd |
-| | **G** Rituals & reflection (wire `planning_mode`, AI ordering) | J | C, D, E | M | 📋 spec'd |
-| | **H** Notifications + service worker / Web Push | I | B0 (D/G for content) | M | 📋 spec'd |
-| 2 Resilience | **R** Backups, restore, export/import | *(new)* | B0 | S–M | 📋 spec'd |
-| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | other half of B + G-infra | B0, R | L | 📋 spec'd |
-| | **J** Two-way calendar sync | G | I, F | L | 📋 spec'd |
-| | **K** Auto-defense (continuous re-plan) | H | A, F, J | M | 📋 spec'd |
-| | **L** Multi-device sync & offline writes | K | B0, I, H | L | 📋 spec'd |
+| Track | Phase | Depends on | Effort | Status |
+|---|---|---|---|---|
+| — | **A** Scheduler correctness + today-set + cached briefing | — | — | ✅ done *(reframed by G as the flight-plan Auto engine)* |
+| 0 Foundation | **B0** Migrations + owner scoping (no auth) | A | S | ✅ done |
+| 1 Features | **C** Rich task semantics | B0 | M | ✅ done |
+| | **D** Time tracking & timers | B0 | S–M | ✅ done |
+| | **E** Recurring & habits | B0, C | M | ✅ done · **E′ habit→pattern** pending (under G) |
+| | **F** Calendar grid (2-D, drag/resize, overlays) | B0 | L | ✅ done · **F′ →PLANNER / overlap-flag / drag-reorder** pending (under G) |
+| | *Settings* — Ollama model picker + Companion Memory sync | E | S | 🔜 in review |
+| | *Responsive* — mobile shell (bottom nav, sheets, touch) | F | S | 🔜 in review |
+| | **G** **Time-Blocking, Patterns & the TODAY cockpit** | B0, C, E, F | **L** | 📋 spec'd — **next build** |
+| | **H** Notifications + service worker / Web Push | B0 (G for pattern-reminder content) | M | 📋 spec'd |
+| 2 Resilience | **R** Backups, restore, export/import | B0 | S–M | 📋 spec'd |
+| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | 📋 spec'd |
+| | **J** Two-way calendar sync | I, F | L | 📋 spec'd |
+| | **K** Auto-defense (continuous re-plan) | A, F, J | M | 📋 spec'd |
+| | **L** Multi-device sync & offline writes | B0, I, H | L | 📋 spec'd |
 
-**Parallelizable after B0:** C, D, F, and H-infra (service worker) can run concurrently; E follows C; G follows C/D/E.
+**G ticket order:** G1 patterns → G2/E′ habit→pattern → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures → G7 type/reminder settings → *(G-INT deferred)*. See [G-rituals-reflection.md](G-rituals-reflection.md) for each ticket's goal/acceptance/tests/state.
 
 ---
 
@@ -111,12 +113,28 @@
 - **Tests:** drag emits one tz-correct PATCH; resize below min clamps; locked/meeting blocks reject drag; overlays accurate + combinable; **no tz drift** between grid position and stored UTC.
 - **Acceptance:** day/week/month consistent; drag/resize persists across reload; no tz drift; locked/meeting blocks immovable.
 
-### G — Rituals & reflection (wire the dead `planning_mode`; home of the deferred AI ordering)
-**Goal:** make `planning_mode` behaviorally real; daily-plan, shutdown, weekly review. This is where the **AI-ordering deferred from Phase A** lands — by now D (actuals) and E (history) give the model real signal to order on.
-- **Engine/API:** `ritual` = guided daily plan + evening shutdown; `auto` = silent auto-schedule with the **AI-ordering pass** (deterministic placement, LLM orders only; falls back to the deterministic ranking when Ollama is down). Weekly review aggregates planned-vs-done, estimate-vs-actual (D), habit streaks (E).
-- **Client:** daily-plan + shutdown flows; weekly-review screen.
-- **Tests:** `auto` vs `ritual` now diverge observably; weekly-review numbers reconcile exactly with raw entries/completions; daily-plan carries unfinished items via Phase-A rollover.
-- **Acceptance:** toggling planning mode is observably different (no longer dead); review metrics match source data exactly.
+### G — Time-Blocking, Patterns & the TODAY cockpit *(reconceived 2026-06-20)*
+**Goal:** the TODAY planner cockpit on three primitives — **Time-Blocks** (tagged
+outline containers), **Patterns** (typed task collections: Routine ▢ / Habit ◯ /
+Ritual △), and the **Flight-plan** (staging area) — with **manual-or-Auto,
+flight-plan-centric** scheduling. Auto only places *staged* items, per a
+Time-Block's tag filter or a Pattern's rules.
+- **Model:** `planning_mode` retired (ritual → a Pattern *type*); A's scheduler
+  reframed as the flight-plan Auto engine; **overlap allowed-but-flagged**; patterns
+  are **collections only** (repetition stays E's task-level RRULE).
+- **Scope:** structure + tag-filtered/manual scheduling in V1; relative-timing /
+  proximity / learned ordering deferred (`G-INT`).
+- **Pulls in revisions:** `E′` (habit→pattern migration, streaks intact) and `F′`
+  (calendar grid → PLANNER: 8h/expand-24, next-up pin, drag-reorder, overlap-flag,
+  block outlines, pattern textures).
+- **Tickets, acceptance, tests, and per-ticket state:**
+  [G-rituals-reflection.md](G-rituals-reflection.md) · UX:
+  [design-today-cockpit.md](design-today-cockpit.md).
+- **Acceptance (phase):** cockpit renders (Day Overview · Summary+NewTask · PLANNER ·
+  Flight-plan · never-closing drawer); Time-Blocks + Patterns exist end-to-end;
+  scheduling is flight-plan-only with the two-step Auto; PLANNER shows the 8h/pin/
+  reorder/overlap-flag behaviour; former habits are patterns with recurrence/streaks
+  intact; standing suites green.
 
 ### H — Notifications + service worker / Web Push
 **Goal:** the missing service worker + Web Push and reminder scheduling. *(Owner scoping from B0 suffices — single-owner is fine.)*

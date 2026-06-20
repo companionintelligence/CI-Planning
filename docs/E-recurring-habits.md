@@ -227,3 +227,37 @@ In `TaskForm.tsx`, add a "Repeat" control inside the existing `expanded()` block
 4. **Client editor + streak:** `TaskForm.tsx` repeat control + habit checkbox + scope toggle; streak strip. Wire to the routes above.
 
 Splitting this keeps the deterministic engine (the part that must be right) reviewable in isolation before any UI or job wiring lands on top.
+
+---
+
+## E′ — Habit → Pattern revision (pulled in by Phase G)
+
+> **Status:** PRs 1–4 above are **shipped/merged** (engine, generation job,
+> instance ops, client editor + streaks). E′ is the **revision** Phase G requires:
+> "habit" becomes a **Pattern type**, not a `tasks.is_habit` flag. Recurrence stays
+> a **task-level** concern here (Patterns are collections only — see
+> [G-rituals-reflection.md](G-rituals-reflection.md) and
+> [design-today-cockpit.md](design-today-cockpit.md)). Each ticket carries
+> **Goal · Acceptance · Tests · State**.
+
+### E′-1 — Map habits onto the pattern model (migration)
+- **Goal.** Backfill every `is_habit` template into a **habit-type pattern** (one
+  pattern per habit) with its recurring task as the member; stop reading
+  `tasks.is_habit` for behaviour (keep the column until G2 lands, then ignore/drop).
+- **Acceptance.** Each former habit is exactly one habit-type pattern; the task's
+  RRULE / generation / instances are untouched; nothing duplicated; migration
+  idempotent on re-run.
+- **Tests.** Idempotent backfill on a copy of a habit-bearing DB; instance counts +
+  occurrence dates unchanged pre/post; owner-scoped.
+- **State.** not-started.
+
+### E′-2 — Streaks & skip/complete keyed off habit patterns
+- **Goal.** `GET /api/tasks/:id/streak`, skip, and complete semantics resolve
+  "is this a habit?" via **habit-type pattern membership** instead of `is_habit`;
+  the streak strip reads the same data.
+- **Acceptance.** Streak counts, EXDATE-durable skips, and missed-flagging behave
+  identically to the shipped E behaviour; the client streak strip is unchanged.
+- **Tests.** `generate.test.ts` + `recurrence-ops.test.ts` pass unchanged against
+  pattern-backed habits; streak parity test (pre/post identical).
+- **State.** not-started. *(Recurrence engine, generation job, and EXDATE/streak
+  logic from PRs 1–4 are reused as-is; only the "what is a habit" lookup changes.)*
