@@ -1,214 +1,247 @@
-# G — Rituals & reflection (implementation spec)
+# G — Time-Blocking, Patterns & the TODAY cockpit (implementation spec)
 
-Companion to [ROADMAP.md](ROADMAP.md). Depends on **C** (rich task semantics), **D** (time tracking / actuals), and **E** (recurring & habits). This is where the **AI-ordering pass deferred from Phase A** finally lands — by now D gives per-task actuals and E gives habit history, so the model has real signal to order on.
+Companion to [ROADMAP.md](ROADMAP.md). **Supersedes the old "Rituals & reflection"
+G.** UX source of truth: [design-today-cockpit.md](design-today-cockpit.md).
+Depends on **B0** (owner scoping), **C** (task semantics), **E** (task-level
+recurrence) and **F** (the calendar grid this phase turns into the PLANNER). It
+**reframes A's scheduler** and pulls scoped revisions into **E** and **F** (their
+`E'` / `F'` tickets live in [E-recurring-habits.md](E-recurring-habits.md) and
+[F-calendar-grid.md](F-calendar-grid.md)).
 
 ## Goal
-1. Make the **dead `planning_mode` column behaviorally real** — `auto` and `ritual` must observably diverge, not just store a different string.
-2. `ritual` = guided **daily-plan** + evening **shutdown** flows (human in the loop).
-3. `auto` = silent auto-schedule **plus an AI-ordering pass** over the today-set: the LLM orders candidates, **placement stays deterministic**, and it falls back to the deterministic ranking whenever Ollama is unavailable or returns junk.
-4. A **weekly review** that aggregates planned-vs-done, estimate-vs-actual (from D), and habit streaks (from E) — numbers that reconcile exactly with source rows.
+Turn TODAY into a planner cockpit built on three primitives — **Time-Blocks**
+(tagged containers), **Patterns** (typed task collections: Routine ▢ / Habit ◯ /
+Ritual △), and the **Flight-plan** (a staging area) — driven by a **manual-or-Auto,
+flight-plan-centric** model. Auto only ever schedules staged items, governed by the
+rules of a Time-Block or Pattern.
 
-## Non-goals
-- No new scheduling algorithm. The packer (`buildGaps`/`pickGap`/`splitIntoSessions` in `engine/scheduler.ts`) is untouched; G only changes the **order** candidates are fed to it in `auto` mode.
-- The LLM never **places** a block, never picks a time, never invents or drops a task. It re-orders a fixed candidate list, full stop.
-- No notifications/reminders (that's **H**) — shutdown/daily-plan are in-app flows triggered by the user or the existing cron, not push.
-- No multi-owner anything; single-owner via `lib/context.ts` (B0) as everywhere else.
+## Non-goals (V1 — explicitly deferred)
+- **Pattern timing intelligence.** "Check groceries *before work*" relative
+  anchors, proximity ranking, and learned/past-pattern ordering are a **later
+  ticket** (G-INT). V1 Auto is structural: tag-filter + free-gap packing.
+- **Pattern nesting.** V1 patterns contain **tasks only**; shared tasks link related
+  patterns. Pattern-in-pattern nesting is deferred to `G-INT`.
+- **Reminder *delivery*.** G stores per-pattern-type reminder *config*; firing
+  reminders is **Phase H**.
+- **Reflection / weekly-review screens.** Dropped from this phase (was in old G);
+  reconsider after the cockpit lands.
 
-## Current state (what exists today)
-- **`scheduling_prefs.planningMode`** — `server/src/db/schema.ts:68`: `text('planning_mode').default('ritual')` with comment `// auto | ritual`. **Stored, never read by any logic.** Grep `planning_mode`/`planningMode` across `server/src` hits only schema + the prefs router serialize path; `engine/scheduler.ts` ignores it entirely.
-- **Scheduler** — `server/src/engine/scheduler.ts`: fully deterministic. Builds the today-set (`candidates`, lines 89–93) via `ORDER BY priority ASC, due_at ASC, id ASC`, pins fixed-time tasks, then packs the rest into gaps. `runScheduler(date)` is the only entry point; called by `POST /api/schedule/run` (`routes/schedule.ts`) and the cron.
-- **Summarizer** — `server/src/agents/summarize.ts`: the established "LLM with deterministic fallback" pattern. `summarizeDay()` calls `generate(...)` inside try/catch, falls back to `fallbackProse()`, caches per `(owner, date)` in `daily_summaries` keyed on an `inputsHash`. **Copy this shape for the AI-ordering pass and the weekly review.**
-- **Ollama client** — `server/src/mcp/ollama.ts`: exports `generate`, `generateJson<T>` (tolerant JSON parse via `parseJsonLoose`), and `isAvailable()` (never throws). `generateJson` throws `OllamaUnavailable` on transport failure and a plain `Error` if no JSON parses — both must be caught and treated as "degrade".
-- **Settings UI** — `client/src/views/Settings.tsx:54–77`: the planning-mode radio (`auto` ⚡ / `ritual` 🌅) already writes `planning_mode` via `api.prefs.update`. The toggle works; nothing downstream reacts to it.
-- **Today UI** — `client/src/views/Today.tsx`: unconditional "Auto-schedule" button + AI briefing card. No ritual entry point, no shutdown, no review.
-- **tz** — `server/src/lib/tz.ts` exports `serverTimezone`, `zonedWallTimeToUTC`, `utcDayBounds`. All day-boundary math goes through these; no hand-rolled `Z` wall-clock.
+*(Decided in V1, not deferred: the flight-plan is **persisted owner-scoped until
+reset** (with a Reset button); Time-Block **reuse** via `block_templates`; Auto
+**replaces** the nightly auto-pack job.)*
 
-## Design
+## The model (what changes)
+- **`planning_mode` (`auto | ritual`) is retired.** "Ritual" becomes a Pattern
+  *type*. Scheduling = **manual drag** or **Auto over the flight-plan**.
+- **A's scheduler is reframed** as the Auto engine invoked on flight-plan items
+  with Time-Block / Pattern rules — it no longer packs the whole open backlog.
+- **Overlaps are allowed but flagged** (relaxes A/F's no-overlap invariant).
+- **Patterns are collections only** — no own recurrence; repetition is E's
+  task-level RRULE on member tasks.
 
-### 1. Making `planning_mode` behavioral
-Read the column once, branch on it. Resolve mode at the scheduler entry and at the route layer:
+## Data model (new tables + extensions; all owner-scoped, via the B0 runner)
+```sql
+-- Extensible pattern types (Routine ▢ / Habit ◯ / Ritual △ + user-defined).
+CREATE TABLE pattern_types (
+  id INTEGER PRIMARY KEY, owner_id INTEGER REFERENCES owners(id),
+  name TEXT NOT NULL, icon_shape TEXT NOT NULL,        -- square | circle | triangle | <custom>
+  reminder_config TEXT,                                -- JSON: per-type reminder defaults (Phase H reads)
+  is_builtin INTEGER DEFAULT 0
+);
+-- A pattern = a typed, reusable collection of tasks (no own recurrence).
+CREATE TABLE patterns (
+  id INTEGER PRIMARY KEY, owner_id INTEGER REFERENCES owners(id),
+  type_id INTEGER REFERENCES pattern_types(id),
+  name TEXT NOT NULL, tag TEXT, notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+-- Membership is many-to-many; a task can be in several patterns. position orders it.
+CREATE TABLE pattern_tasks (
+  pattern_id INTEGER REFERENCES patterns(id) ON DELETE CASCADE,
+  task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  position INTEGER DEFAULT 0,
+  PRIMARY KEY (pattern_id, task_id)
+);
+-- Reusable Time-Block templates (named, tagged containers).
+CREATE TABLE block_templates (
+  id INTEGER PRIMARY KEY, owner_id INTEGER REFERENCES owners(id),
+  name TEXT NOT NULL, tag TEXT, default_minutes INTEGER
+);
+-- time_blocks gains a container variant + a tag (the outline drawn in the PLANNER).
+ALTER TABLE time_blocks ADD COLUMN tag TEXT;            -- container/grouping tag
+-- block_kind already enumerates kinds; add 'timeblock' (the container) at the app layer.
 
-```ts
-// engine/scheduler.ts — inside runScheduler, after loading prefs
-const mode = (prefs.planningMode === 'auto' ? 'auto' : 'ritual') as 'auto' | 'ritual';
+-- Flight-plan: the persisted, owner-scoped staging area. Survives reloads/devices;
+-- cleared by the Reset button. Holds tasks (members of staged patterns land here as
+-- individual rows, tagged with their source pattern). `selected` drives the Auto pass.
+CREATE TABLE flight_plan (
+  owner_id INTEGER REFERENCES owners(id),
+  task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  source_pattern_id INTEGER REFERENCES patterns(id) ON DELETE SET NULL, -- null = added directly
+  selected INTEGER DEFAULT 1,
+  position INTEGER DEFAULT 0,
+  added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (owner_id, task_id)
+);
 ```
+- `tasks.is_habit` is **migrated away** by `E'` (see E spec): existing habits become
+  members of a habit-type pattern; the column is dropped/ignored after backfill.
+- **Textures are derived, not stored:** a deterministic `textureSeed(tag)` (hash of
+  the tag name) + the type's `icon_shape` fully determine the look.
 
-- **`auto`**: `runScheduler` runs end-to-end as today, but the candidate list is reordered by the AI pass (§2) before pinning/packing. The morning cron fires the schedule only when `mode === 'auto'`.
-- **`ritual`**: the morning cron does **not** silently place blocks; it produces a **draft plan** the user confirms via the daily-plan flow (§3). Same deterministic packer, but the divergence is *who commits it* (cron vs. human) — in `ritual`, no auto blocks appear until the user finishes the daily plan. That is the observable difference the Roadmap requires.
+---
 
-A thin resolver keeps route and cron in agreement:
+## Tickets
 
-```ts
-// engine/planning.ts (new)
-import { db } from '../db/index.js';
-import { schedulingPrefs } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
-import { currentOwnerId } from '../lib/context.js'; // B0
-export async function planningMode(): Promise<'auto' | 'ritual'> {
-  const [p] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, currentOwnerId()));
-  return p?.planningMode === 'auto' ? 'auto' : 'ritual';
-}
-```
+> Convention: every ticket carries **Goal · Acceptance · Tests · State**. State is
+> one of `not-started | in-progress | blocked | done`. All schema lands as numbered
+> B0 migrations; the standing Vitest + container suites stay green each ticket.
 
-### 2. The AI-ordering pass (deferred from Phase A)
-A pure **re-ranking** step over the already-computed today-set. Deterministic core, AI on top.
+### G1 — Pattern model + types (server)
+- **Goal.** `pattern_types`, `patterns`, `pattern_tasks` tables + seeded built-in
+  types (Routine ▢, Habit ◯, Ritual △). REST: `GET/POST/PATCH/DELETE /api/patterns`,
+  `GET/POST/PATCH/DELETE /api/pattern-types`, and pattern↔task membership endpoints.
+- **Acceptance.** Create a pattern of any type with N member tasks; a task can
+  belong to ≥2 patterns; deleting a pattern leaves its tasks intact; a user-defined
+  type with a custom `icon_shape` is creatable and usable; all owner-scoped.
+- **Tests.** CRUD + membership round-trip; many-to-many (task in 2 patterns);
+  cascade on pattern delete leaves tasks; owner isolation; invalid type → 422.
+- **State.** not-started.
 
-```ts
-// engine/aiOrder.ts (new)
-import { generateJson, isAvailable } from '../mcp/ollama.js';
-import { logger } from '../lib/logger.js';
+### G2 — Habit → Pattern migration (bridges E′)
+- **Goal.** Migrate every `is_habit` template into a **habit-type pattern** whose
+  member task is the (still-recurring) task; preserve streak/skip/complete behaviour
+  by keying it off habit-type patterns; drop reliance on `tasks.is_habit`.
+- **Acceptance.** After migration, every former habit shows as a habit-type pattern;
+  recurrence (RRULE, generation job) and streaks/skips behave exactly as before
+  (E's tests stay green); no orphaned habits.
+- **Tests.** Migration on a copy of a 0.x DB maps each habit → one habit pattern,
+  idempotent; E's `generate.test.ts` + `recurrence-ops.test.ts` pass unchanged
+  against the pattern-backed habit; streak counts identical pre/post.
+- **State.** not-started. *(Detailed as `E′-1`/`E′-2` in the E spec.)*
 
-interface Candidate { id: number; title: string; priority: number; dueAt: string | null;
-  estimatedMinutes: number | null; actualAvgMinutes?: number | null; /* from D */ }
+### G3 — Time-Block containers (server + reuse)
+- **Goal.** A Time-Block: a named, tagged container over a time range, plus reusable
+  `block_templates`. API to create a container block (default name = tag, renameable,
+  save standalone or under the tag) and to list/instantiate templates.
+- **Acceptance.** Create a container block tagged `errands`; rename + save as a
+  reusable template; re-instantiate it on another day; the container persists its
+  tag and range; container blocks never count as schedulable tasks.
+- **Tests.** Container create/rename/save-template/instantiate round-trip;
+  template reuse produces an independent block; owner-scoped; container excluded
+  from the today-set.
+- **State.** not-started.
 
-/** Returns the SAME tasks, reordered. On any failure returns `det` unchanged. */
-export async function aiOrder<T extends Candidate>(det: T[]): Promise<{ order: T[]; usedLlm: boolean }> {
-  if (det.length < 2 || !(await isAvailable())) return { order: det, usedLlm: false };
-  try {
-    const prompt = buildOrderPrompt(det);                    // asks for a JSON array of ids
-    const out = await generateJson<{ order: number[] }>(prompt, { tier: 'small', temperature: 0.1, timeoutMs: 20_000 });
-    const ranked = reconcile(det, out.order);                // see guard below
-    if (!ranked) return { order: det, usedLlm: false };
-    return { order: ranked, usedLlm: true };
-  } catch (err) {
-    logger.warn('aiOrder fell back to deterministic ranking', { err: (err as Error).message });
-    return { order: det, usedLlm: false };
-  }
-}
-```
+### G4 — Flight-plan + the Auto reframe (the A′ reframe)
+- **Goal.** A **persisted, owner-scoped** flight-plan (`flight_plan` table; survives
+  reloads/devices; a **Reset** button clears it) + the **two-step Auto**: (1) empty
+  flight-plan → Auto proposes candidates into it; (2) staged selection → Auto
+  **places** them via Time-Block tag-filter or Pattern rules (free-gap packing, V1).
+  Staging a Pattern adds its **member tasks** to the flight-plan (tagged with the
+  source pattern). Manual drag from flight-plan onto the PLANNER. The old nightly
+  `auto_schedule` "pack the whole backlog" job is **retired** — Auto only ever
+  touches the flight-plan (it may at most *propose* candidates into it).
+  REST: `GET /api/flight-plan`, `POST /api/flight-plan` (add task / add pattern's
+  tasks), `PATCH` (toggle `selected`/`position`), `DELETE /api/flight-plan/:taskId`,
+  `POST /api/flight-plan/reset`, plus the Auto endpoints.
+- **Acceptance.** Flight-plan persists across reloads + is owner-scoped; Reset
+  empties it; staging a pattern adds its tasks; Auto on an empty flight-plan adds
+  candidates and schedules **nothing**; Auto on a tag-filtered Time-Block places only
+  matching **selected** staged items inside the block window; manual drag persists
+  one tz-correct PATCH; nothing outside the flight-plan is auto-placed; the nightly
+  auto-pack no longer runs.
+- **Tests.** Flight-plan CRUD + persistence + reset + owner isolation; pattern-stage
+  expands to member tasks; step-1 fills flight-plan / creates 0 blocks; step-2 places
+  selected staged items into the block window respecting its tag; non-staged tasks
+  never auto-placed; placement invariants (no lost minutes, tz-correct) hold;
+  property test over random staged sets; the retired `auto_schedule` job is gone /
+  no-ops (update A's tests).
+- **State.** not-started. *(Revises the Phase-A `auto_schedule` contract — A's
+  scheduler tests are reworked here.)*
 
-**`reconcile` is the safety gate** — junk-tolerant, never trusts the model with set membership:
-- Build `byId` from `det`. Walk `out.order`, emit each id seen **exactly once** that exists in `byId`.
-- **Append any `det` id the model omitted**, in original deterministic order (so a truncated/partial response can't drop a task).
-- If the result isn't a permutation of `det` (length mismatch after dedupe/append), **return `null`** → caller uses `det`.
-- This guarantees: same set, no dupes, no drops, no hallucinated ids — the LLM only permutes.
+### G5 — TODAY cockpit layout (client)
+- **Goal.** Rebuild `Today.tsx`: **Day Overview** (day/date + today's tag set),
+  **Summary** (overdue/blocked/open counts **+ the moved `+ New Task` button**),
+  the **PLANNER** (renamed from "Next Up"), the **Flight-plan** container (where Open
+  Tasks was, **with `Auto Schedule` at its top**), and the **lower drawer**
+  (`[+ Block] [+ Pattern] [+ Open Task]`) that floats on top and never closes.
+- **Acceptance.** All four regions render on the CI-Hub tokens; `+ New Task` lives in
+  the Summary; `Auto Schedule` lives atop the flight-plan; the drawer expands/
+  contracts but cannot be dismissed and overlays other UI; responsive (mobile sheet
+  behaviour from F/responsive shell).
+- **Tests.** Component tests: button placement, drawer open/expand/contract (no
+  close), region presence; visual-regression via `capture-listing`.
+- **State.** not-started.
 
-Wire into the scheduler **before** pinning, replacing the static sort as the input order:
+### G6 — PLANNER view (bridges F′)
+- **Goal.** The hour-by-hour PLANNER: 8h visible / expand to 24h, **next-up pinned
+  to the 2nd slot** + auto-scroll, items show **name · tag · start–end**, Time-Block
+  **outlines**, pattern **textures**, **drag-to-reorder**, **overlap allowed +
+  flagged**.
+- **Acceptance.** Default 8h window; expand shows 24h/24 items; next-up sits row-2
+  and stays there on scroll; reordering persists; two items can share a slot and a
+  conflict marker appears; outlines/textures render; no tz drift.
+- **Tests.** next-up pin position; expand/collapse; drag-reorder emits correct
+  PATCH; overlap detection flags (not prevents); tz-correct placement (reuse F's
+  grid tests). *(Detailed as `F′-1..4` in the F spec.)*
+- **State.** not-started.
 
-```ts
-// engine/scheduler.ts, after the `candidates` query
-let ordered = candidates;
-if (mode === 'auto') {
-  const { order, usedLlm } = await aiOrder(candidates);
-  ordered = order;
-  logger.info('scheduler.aiOrder', { usedLlm, n: candidates.length });
-}
-// ...then use `ordered` everywhere `candidates` was used (pinned filter + packing loop)
-```
+### G7 — Pattern types & reminders in Settings (client + server config)
+- **Goal.** Settings UI to **add a pattern type / change its icon shape** and edit
+  each type's **reminder config**. Persist to `pattern_types.reminder_config`.
+- **Acceptance.** A new type with a chosen icon appears everywhere patterns are
+  picked; per-type reminder config saves and round-trips; built-in types editable
+  but not deletable.
+- **Tests.** Type CRUD via Settings; reminder-config round-trip; built-in delete
+  rejected (400); icon-shape change reflected in pattern rendering.
+- **State.** not-started. *(Reminder **firing** is Phase H; this only stores config.)*
 
-Pinned tasks (fixed time-of-day) keep their clock time regardless of AI order — ordering only affects which flexible tasks win contested gaps first. The prompt feeds priority, due date, estimate, and D's `actualAvgMinutes` so the model can reason about effort fit; it returns **only** `{ "order": [ids...] }`.
+### G8 — Pattern textures (client)
+- **Goal.** A deterministic, dependency-light texture generator: `icon_shape` →
+  motif (squares/circles/triangles), `textureSeed(tag)` → the per-tag variation;
+  rendered as a ≤8%-contrast background behind pattern items.
+- **Acceptance.** Same tag → identical texture across renders/sessions; different
+  tags → visibly different; texture shape always matches the pattern type; contrast
+  stays subtle in both light and dark.
+- **Tests.** `textureSeed` deterministic + well-distributed (unit); shape↔type
+  mapping; snapshot of a few tag/type pairs.
+- **State.** not-started.
 
-### 3. Daily-plan + shutdown ritual flows
-Two stateless endpoints over existing data; no new heavy machinery.
+### G-INT — Pattern timing intelligence (**deferred** — own follow-on)
+- **Goal.** Relative anchors ("before the first work block"), proximity/type
+  ranking for Time-Block auto-fill, and learned ordering from past patterns.
+- **Acceptance / Tests / State.** **deferred** — specced when V1 lands and there's
+  history (E actuals/streaks) to learn from.
 
-**Daily plan** (morning, `ritual` mode):
-- `GET /api/ritual/daily-plan?date=YYYY-MM-DD` → returns the **proposed** plan: run the deterministic packer in-memory (or read the draft blocks) + the today-set, *including unfinished items carried forward via the Phase-A rollover/today-set* (overdue + undated tasks already fall into `candidates` by the existing `isNull(dueAt) OR dueAt < horizonEnd` clause — no new carry-forward logic needed).
-- `POST /api/ritual/daily-plan/commit { date }` → runs `runScheduler(date)` for real (committing the auto/unlocked blocks) and stamps a `ritual_log` row (`kind='daily_plan'`). This is the human "commit" that `ritual` mode requires.
+---
 
-**Shutdown** (evening, both modes):
-- `GET /api/ritual/shutdown?date=YYYY-MM-DD` → today's blocks with their `status` (planned/completed/skipped/overrun) + tasks touched, so the user can tick off / reflect.
-- `POST /api/ritual/shutdown/commit { date, notes? }` → writes a `ritual_log` row (`kind='shutdown'`, freeform `notes`), and **rolls unfinished open work forward** by leaving it open (the today-set re-pulls it next day — we don't mutate due dates). Optionally marks the day "closed".
+## Acceptance criteria (phase-level)
+1. TODAY renders the cockpit (Day Overview · Summary+NewTask · PLANNER · Flight-plan ·
+   never-closing drawer) on the CI-Hub design system.
+2. Time-Blocks (tagged outline containers, reusable) and Patterns (typed, textured,
+   many-to-many task collections) exist end-to-end with owner-scoped APIs.
+3. Scheduling is **manual-or-Auto, flight-plan-only**; Auto's two-step flow works;
+   nothing outside the flight-plan is auto-placed.
+4. The PLANNER shows 8h/expand-24, next-up pinned row-2, drag-reorder, and
+   **overlap-allowed-but-flagged**.
+5. Former habits are **patterns** with recurrence/streaks intact (E migration green).
+6. `planning_mode` retired; "ritual" is a pattern type. Standing suites green.
 
-```ts
-// routes/ritual.ts (new) — register in routes/index.ts alongside scheduleRouter()
-router.get('/api/ritual/daily-plan', async (ctx) => {
-  const date = (ctx.query.date as string) ?? localISODate();
-  ctx.body = await buildDailyPlan(date);           // { date, proposed: Block[], carriedForward: Task[], mode }
-});
-router.post('/api/ritual/daily-plan/commit', async (ctx) => {
-  const { date } = ctx.request.body as { date?: string };
-  const d = date ?? localISODate();
-  const result = await runScheduler(d);
-  logRitual('daily_plan', d);
-  ctx.body = { committed: true, ...result };
-});
-```
-
-New table (via a **numbered B0-runner migration** — owner-scoped, UTC ISO text):
-
-```ts
-// db/migrations/00NN_ritual_log.ts
-export const id = '00NN_ritual_log';
-export function up(db) {
-  db.exec(`CREATE TABLE IF NOT EXISTS ritual_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id   INTEGER NOT NULL REFERENCES owners(id),
-    date       TEXT NOT NULL,                 -- local calendar day YYYY-MM-DD
-    kind       TEXT NOT NULL,                 -- daily_plan | shutdown
-    notes      TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_ritual_owner_date ON ritual_log(owner_id, date);`);
-}
-```
-
-**Client** (`Today.tsx`): branch the header on `prefs().planning_mode`. In `ritual`, replace the bare "Auto-schedule" button with a **"Plan my day"** entry that opens a daily-plan panel (proposed blocks + carried-forward list, a Confirm button hitting `/commit`); add an evening **"Shut down"** entry → shutdown panel. In `auto`, keep today's button (it already commits silently).
-
-```tsx
-<Show when={prefs()?.planning_mode === 'ritual'} fallback={<AutoScheduleButton />}>
-  <button class="btn-primary" onClick={() => setRitual('daily-plan')}>
-    <Sunrise size={14} /> Plan my day
-  </button>
-</Show>
-```
-
-### 4. Weekly-review aggregation
-Read-only rollup over a 7-day window; **all numbers derived from raw rows so they reconcile exactly.** UTC bounds via `utcDayBounds(start)` … `utcDayBounds(end)` from `lib/tz.ts`.
-
-- `GET /api/review/weekly?week=YYYY-MM-DD` (any date in the week; server snaps to the local week start).
-- Aggregates, owner-scoped (`currentOwnerId()`):
-  - **planned-vs-done**: `time_blocks` in range grouped by `status` (`planned`/`completed`/`skipped`/`overrun`).
-  - **estimate-vs-actual** (D): join task `estimated_minutes` against summed `time_entries` actuals (D's table) per task; report total estimated, total actual, and per-task variance.
-  - **habit streaks** (E): current/longest streak per `habit` flag from E's recurrence-instance completion history.
-- Prose summary reuses the summarizer pattern: deterministic table always computed; an **optional** LLM narrative via `generate(...)` in try/catch, `usedLlm` flag in the response, deterministic sentence fallback. Cache per `(owner, week)` keyed on an inputs hash, mirroring `daily_summaries`.
-
-```ts
-// agents/weeklyReview.ts (new)
-export interface WeeklyReview {
-  weekStart: string; weekEnd: string;
-  planned: { completed: number; skipped: number; overrun: number; planned: number };
-  estimateVsActual: { taskId: number; title: string; estimated: number; actual: number }[];
-  habits: { habit: string; current: number; longest: number }[];
-  prose: string; llm: boolean;
-}
-```
-
-**Client**: a new `Review.tsx` view (route in the existing router) — a scorecard: planned/done donut, an estimate-vs-actual table with variance badges, habit-streak chips. No new design system; reuse `card`/`section-label`.
-
-## Tests
-- **`aiOrder.test.ts`** (the core safety net):
-  - **Permutation invariant**: for any model `order`, output is a permutation of input (same id multiset) — property test over random id lists incl. dupes, missing ids, extra/hallucinated ids, empty, reversed.
-  - **Ollama down** (`isAvailable()` false / `generateJson` throws `OllamaUnavailable`) → returns `det` unchanged, `usedLlm:false`.
-  - **Junk JSON** (non-array, wrong key, ids not in set) → `reconcile` rejects → `det` unchanged.
-  - **Partial order** (model returns first 3 of 10) → omitted 7 appended in deterministic order.
-- **Scheduler divergence**: with a fixed candidate set and a stubbed `aiOrder` returning a known permutation, `auto` produces a different block ordering than `ritual`'s deterministic order — `auto` vs `ritual` **observably diverge** (Roadmap acceptance). With Ollama stubbed unavailable, `auto` === deterministic (graceful degrade), proving placement stayed deterministic.
-- **Ritual flow**: `ritual` mode → morning cron creates **no** committed auto blocks until `/daily-plan/commit`; after commit, blocks exist and a `ritual_log(kind='daily_plan')` row is written. Shutdown writes `kind='shutdown'`; unfinished tasks remain open and reappear in the next day's today-set (carry-forward via Phase-A rollover, no due-date mutation).
-- **Weekly review reconciliation**: seed known blocks/`time_entries`/habit completions → every review number equals a hand-summed expectation **exactly** (Roadmap: "reconcile exactly with raw entries/completions"). DST week included via `lib/tz.ts` bounds.
-- **Migration**: `ritual_log` migration is idempotent on re-run (B0 runner); fresh + upgrade both apply.
-- **Standing suites**: Vitest + container Playwright green; scheduler property tests (no overlaps, no lost minutes) still pass under `auto` ordering.
-
-## Acceptance criteria
-1. **`planning_mode` is no longer dead**: `auto` and `ritual` produce observably different behavior (silent commit vs. human-confirmed daily plan), proven by test.
-2. `auto` runs the AI-ordering pass; **placement stays byte-for-byte deterministic** and identical to the no-LLM path whenever Ollama is unavailable or returns junk.
-3. The LLM only re-orders the today-set — never places, invents, or drops a task (permutation invariant enforced by `reconcile` + property tests).
-4. Daily-plan carries unfinished items forward via the Phase-A rollover/today-set; shutdown records reflection without losing open work.
-5. Weekly review's planned-vs-done, estimate-vs-actual (D), and habit-streak (E) numbers reconcile **exactly** with source rows.
-6. Whole existing suite green; no auth surface added; all new schema via numbered B0 migrations.
-
-## Risks / notes
-- **The AI pass is the only place an LLM touches scheduling — keep it caged.** `reconcile` is load-bearing: if it ever lets a non-permutation through, the deterministic-core principle breaks. Test it adversarially.
-- **Don't let `auto` block on Ollama.** `isAvailable()` gates the call; `timeoutMs` is 20s (shorter than the summarizer's 60s — the morning cron is latency-sensitive). A slow model must degrade, not stall the schedule.
-- **Reconciliation depends on D and E.** Estimate-vs-actual needs D's `time_entries`; streaks need E's history. If a dependency table is absent, degrade that section to "—" (feature-detect), don't crash.
-- **Ritual-mode cron change is behavioral.** The morning cron goes from unconditional commit to mode-conditional; it must read mode via the §1 resolver so cron and route never disagree.
-- **No reversibility / no due-date mutation.** `ritual_log` is append-only, forward-only per B0. Shutdown carry-forward is "leave it open," nothing more — mutating due dates would corrupt the deterministic today-set.
-- **Cache invalidation.** Weekly-review caches on an inputs hash like `summarize.ts`; hash over the raw aggregates (not just the date) so a late time-entry edit invalidates it.
-
-## Effort
-**M** — roughly 4–6 days. The AI-ordering pass + `reconcile` guard and its property tests are ~1.5 days; the ritual route/flow + `ritual_log` migration + Today.tsx branching ~2 days; weekly-review aggregation + `Review.tsx` ~1.5 days. Most of the risk is concentrated in the `reconcile` invariant and the mode-conditional cron.
+## Cross-cutting
+- **Tests.** Server Vitest + container Playwright green each ticket; new
+  client-component tests for the cockpit + drawer; a scheduler **property test** for
+  the flight-plan placement pass (no lost minutes, deterministic, tz-correct,
+  overlap-flagged-not-prevented); the idempotent-migration check covers the new
+  tables + the habit→pattern backfill.
+- **Scale budget.** `pattern_tasks` and the texture seed are cheap; index
+  `patterns(owner_id, type_id)` and `pattern_tasks(task_id)`; the Auto pass is
+  bounded by the flight-plan size (small), not the backlog.
+- **Risks.** (a) The A-scheduler reframe changes the `auto_schedule` contract —
+  guard with the property test and update A's tests. (b) Overlap-allowed weakens an
+  invariant several F tests assert — relax those deliberately in `F′-3`. (c) Habit
+  migration must be lossless — the E suites are the gate.
 
 ## Suggested PR breakdown
-1. **AI-ordering pass** (no UI): `engine/aiOrder.ts` + `reconcile`, wire into `scheduler.ts` behind `mode==='auto'`, `engine/planning.ts` resolver. Ship with `aiOrder.test.ts` (property tests) + the scheduler divergence/degrade tests. Pure server, fully testable, no schema.
-2. **Ritual flows**: `ritual_log` migration, `routes/ritual.ts` (daily-plan + shutdown), mode-conditional morning cron, `Today.tsx` daily-plan/shutdown panels. Makes `planning_mode` observably live.
-3. **Weekly review**: `agents/weeklyReview.ts` (cached, LLM-optional), `GET /api/review/weekly`, `Review.tsx` scorecard + route. Reconciliation tests.
-
-Sequencing 1→2→3 keeps each diff small: ordering is invisible until UI exists, rituals don't need review, and review is read-only over data the first two PRs (and D/E) already produce.
+G1 (pattern model) → G2/E′ (habit→pattern) → G3 (time-blocks) → G4/A′ (flight-plan +
+Auto) → G6/F′ (PLANNER) → G5 (cockpit layout) → G8 (textures) → G7 (type/reminder
+settings). G-INT follows once V1 is in daily use.
