@@ -1,10 +1,10 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon } from 'lucide-solid';
-import type { Block } from '../lib/api.js';
+import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2 } from 'lucide-solid';
+import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, taskOf, patternForTask, showToast } from '../stores/index.js';
+import { blocks, concepts, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
@@ -139,6 +139,27 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
   };
   const heightPx = () => Math.max(yOf(liveHeight()), 18);
 
+  // Click (vs drag) opens an options popover; a small move threshold disambiguates.
+  const CLICK_PX = 5;
+  const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
+  function expand() {
+    setMenu(null);
+    const t = task();
+    if (t) setTaskModal({ open: true, editTask: t });
+    else showToast('Nothing to edit on this block', 'default');
+  }
+  async function removeBlock() {
+    setMenu(null);
+    const blk = b();
+    try {
+      await api.blocks.delete(blk.id);
+      if (blk.task_id) await api.flightPlan.addTask(blk.task_id); // send the task back to the flight-plan
+      refetchBlocks();
+      refetchFlightPlan();
+      showToast(blk.task_id ? 'Removed — sent back to the flight-plan' : 'Removed', 'default');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   function startGesture(mode: GestureMode, e: PointerEvent) {
     if (locked()) return;
     e.preventDefault();
@@ -153,6 +174,11 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
       window.removeEventListener('pointerup', onUp);
       const dy = ev.clientY - startY;
       setDrag(null);
+      // A move gesture that barely moved is a click → open the options menu.
+      if (mode === 'move' && Math.abs(dy) < CLICK_PX) {
+        setMenu({ x: ev.clientX, y: ev.clientY });
+        return;
+      }
       const resolved = resolveGesture(b(), props.day, mode, dy);
       void commitDrag(b(), resolved, { onError: (m) => showToast(m, 'error') });
     };
@@ -180,6 +206,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}`}
       onPointerDown={(e) => startGesture('move', e)}
+      onClick={(e) => { if (locked()) setMenu({ x: e.clientX, y: e.clientY }); }}
     >
       {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
       <Show when={pat()}>
@@ -211,6 +238,29 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
       <Show when={!locked()}>
         <div class="absolute bottom-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }}
           onPointerDown={(e) => startGesture('resize-bottom', e)} />
+      </Show>
+
+      {/* Options popover — click the chip to Expand (edit) or Remove (back to list).
+          Fixed-positioned so the chip's overflow-hidden never clips it. */}
+      <Show when={menu()}>
+        {(pos) => (
+          <>
+            <div class="fixed inset-0 z-[60]" onClick={() => setMenu(null)} onPointerDown={(e) => e.stopPropagation()} />
+            <div
+              class="fixed z-[61] rounded-md border border-border bg-popover shadow-xl text-xs overflow-hidden min-w-[140px]"
+              style={{ left: `${Math.min(pos().x, window.innerWidth - 150)}px`, top: `${pos().y}px` }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div class="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-border truncate">{b().title}</div>
+              <button onClick={expand} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent text-foreground">
+                <Pencil size={12} /> Expand
+              </button>
+              <button onClick={removeBlock} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent text-destructive">
+                <Trash2 size={12} /> Remove
+              </button>
+            </div>
+          </>
+        )}
       </Show>
     </div>
   );

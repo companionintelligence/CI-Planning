@@ -1,4 +1,4 @@
-import { Route, Router } from '@solidjs/router';
+import { Route, Router, useLocation } from '@solidjs/router';
 import { Show } from 'solid-js';
 import { Plus, Cpu } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
@@ -16,6 +16,7 @@ import { Jobs }     from './views/Jobs.js';
 import { taskModal, setTaskModal } from './stores/index.js';
 
 function Shell(props: { children?: any }) {
+  const location = useLocation();
   return (
     <div class="flex h-screen overflow-hidden bg-surface-950">
       <Nav />
@@ -42,15 +43,18 @@ function Shell(props: { children?: any }) {
         </div>
       </main>
 
-      {/* Floating Create TODO button — lifted above the bottom nav on mobile */}
-      <button
-        class="fab bottom-20 md:bottom-6"
-        onClick={() => setTaskModal({ open: true })}
-        title="Create TODO (N)"
-      >
-        <Plus size={18} />
-        <span class="hidden sm:inline">New Task</span>
-      </button>
+      {/* Floating Create TODO button — lifted above the bottom nav on mobile.
+          Hidden on Today, where the Day Overview + drawer own the new-task entry. */}
+      <Show when={location.pathname !== '/'}>
+        <button
+          class="fab bottom-20 md:bottom-6"
+          onClick={() => setTaskModal({ open: true })}
+          title="Create TODO (N)"
+        >
+          <Plus size={18} />
+          <span class="hidden sm:inline">New Task</span>
+        </button>
+      </Show>
 
       {/* Task creation / edit modal */}
       <Show when={taskModal().open}>
