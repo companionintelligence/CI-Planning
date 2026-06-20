@@ -122,6 +122,37 @@ export const tags = sqliteTable('tags', {
   name: text('name').notNull().unique(),
 });
 
+// --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
+//     Ritual △ + user-defined). No own recurrence; tasks-only (no nesting) in V1. ---
+export const patternTypes = sqliteTable('pattern_types', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: integer('owner_id').references(() => owners.id),
+  name: text('name').notNull(),
+  iconShape: text('icon_shape').notNull(),                       // square | circle | triangle | <custom>
+  reminderConfig: text('reminder_config', { mode: 'json' }),     // opaque until Phase H
+  isBuiltin: integer('is_builtin', { mode: 'boolean' }).default(false),
+});
+
+export const patterns = sqliteTable('patterns', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: integer('owner_id').references(() => owners.id),
+  typeId: integer('type_id').references(() => patternTypes.id),
+  name: text('name').notNull(),
+  tag: text('tag'),
+  notes: text('notes'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const patternTasks = sqliteTable(
+  'pattern_tasks',
+  {
+    patternId: integer('pattern_id').references(() => patterns.id, { onDelete: 'cascade' }).notNull(),
+    taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    position: integer('position').default(0),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.patternId, t.taskId] }) })
+);
+
 export const taskTags = sqliteTable('task_tags', {
   taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
   tagId: integer('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
