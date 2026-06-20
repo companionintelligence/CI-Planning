@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw } from 'lucide-solid';
 import { prefs, refetchPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 
@@ -10,12 +10,26 @@ const ALL_TIMEZONES: string[] = (() => {
   try { return (Intl as any).supportedValuesOf?.('timeZone') ?? [BROWSER_TZ]; } catch { return [BROWSER_TZ]; }
 })();
 
+interface SettingsForm {
+  workday_start: string; workday_end: string;
+  max_focus_block_minutes: number; min_break_minutes: number;
+  planning_mode: string; timezone: string; planning_horizon_days: number;
+  fast_model: string; quality_model: string; embed_model: string;
+  memory_sync_enabled: boolean; memory_sync_completed: boolean;
+  memory_sync_habits: boolean; memory_sync_reflections: boolean;
+}
+
+const DEFAULTS: SettingsForm = {
+  workday_start: '09:00', workday_end: '18:00',
+  max_focus_block_minutes: 90, min_break_minutes: 10,
+  planning_mode: 'ritual', timezone: BROWSER_TZ, planning_horizon_days: 3,
+  fast_model: '', quality_model: '', embed_model: '',
+  memory_sync_enabled: false, memory_sync_completed: true,
+  memory_sync_habits: true, memory_sync_reflections: true,
+};
+
 export function Settings() {
-  const [form, setForm] = createSignal({
-    workday_start: '09:00', workday_end: '18:00',
-    max_focus_block_minutes: 90, min_break_minutes: 10,
-    planning_mode: 'ritual', timezone: BROWSER_TZ, planning_horizon_days: 3,
-  });
+  const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   createEffect(() => {
     const p = prefs();
@@ -28,23 +42,84 @@ export function Settings() {
       planning_mode:           p.planning_mode ?? 'ritual',
       timezone:                p.timezone ?? BROWSER_TZ,
       planning_horizon_days:   p.planning_horizon_days ?? 3,
+      fast_model:              p.fast_model ?? '',
+      quality_model:           p.quality_model ?? '',
+      embed_model:             p.embed_model ?? '',
+      memory_sync_enabled:     p.memory_sync_enabled ?? false,
+      memory_sync_completed:   p.memory_sync_completed ?? true,
+      memory_sync_habits:      p.memory_sync_habits ?? true,
+      memory_sync_reflections: p.memory_sync_reflections ?? true,
     });
   });
 
-  function setField(key: string, val: string | number) {
-    setForm(f => ({ ...f, [key]: val }));
+  function setField<K extends keyof SettingsForm>(key: K, val: SettingsForm[K]) {
+    setForm((f) => ({ ...f, [key]: val }));
   }
 
   async function save(e: Event) {
     e.preventDefault();
     try {
-      await api.prefs.update(form());
+      // Empty model selection ⇒ null (use env default).
+      const body = {
+        ...form(),
+        fast_model: form().fast_model || null,
+        quality_model: form().quality_model || null,
+        embed_model: form().embed_model || null,
+      };
+      await api.prefs.update(body);
       refetchPrefs();
       showToast('Settings saved', 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
   const [integrations] = createResource(() => api.llm.integrations());
+  const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
+
+  const ollamaModels = () => integrations()?.ollama.models ?? [];
+  const ollamaUp = () => integrations()?.ollama.available ?? false;
+
+  async function connectMemory() {
+    if (!memStatus()?.available) {
+      showToast('Companion Memory connection arrives with the auth phase (Phase I)', 'default');
+      return;
+    }
+    // (Phase I) hand off to CI-Server sign-in here.
+  }
+  async function disconnectMemory() {
+    try {
+      await api.prefs.update({ memory_account: null });
+      refetchPrefs(); refetchMem();
+      showToast('Disconnected from Companion Memory', 'default');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function syncNow() {
+    try {
+      await api.memory.sync();
+      refetchMem();
+      showToast('Synced to Companion Memory', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  const ModelSelect = (props: { label: string; hint: string; field: 'fast_model' | 'quality_model' | 'embed_model'; fallback?: string }) => (
+    <label class="flex flex-col gap-1.5">
+      <span class="text-xs text-muted-foreground">
+        {props.label} <span class="opacity-70">· {props.hint}</span>
+      </span>
+      <select class="input" value={form()[props.field]} onChange={(e) => setField(props.field, e.currentTarget.value)}>
+        <option value="">Default{props.fallback ? ` (${props.fallback})` : ''}</option>
+        <For each={ollamaModels()}>{(m) => <option value={m}>{m}</option>}</For>
+      </select>
+    </label>
+  );
+
+  const ScopeCheck = (props: { label: string; field: 'memory_sync_completed' | 'memory_sync_habits' | 'memory_sync_reflections' }) => (
+    <label class="flex items-center gap-2 text-sm cursor-pointer select-none"
+      classList={{ 'opacity-40 pointer-events-none': !form().memory_sync_enabled }}>
+      <input type="checkbox" class="accent-primary w-4 h-4"
+        checked={form()[props.field]} onChange={(e) => setField(props.field, e.currentTarget.checked)} />
+      <span class="text-foreground">{props.label}</span>
+    </label>
+  );
 
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-2xl mx-auto w-full">
@@ -124,6 +199,103 @@ export function Settings() {
               value={form().planning_horizon_days}
               onInput={e => setField('planning_horizon_days', Number(e.currentTarget.value))} />
           </label>
+        </section>
+
+        {/* Models */}
+        <section class="card">
+          <div class="section-label mb-3 flex items-center gap-1.5"><Cpu size={12} /> Models</div>
+          <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking Ollama…</div>}>
+            <Show
+              when={ollamaUp()}
+              fallback={
+                <div class="flex items-center gap-2 text-xs text-destructive">
+                  <XCircle size={13} /> Ollama unavailable — start it on localhost:11434 to choose models.
+                </div>
+              }
+            >
+              <div class="flex flex-col gap-4">
+                <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.smallModel} />
+                <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.mediumModel} />
+                <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
+                <p class="text-[11px] text-muted-foreground">{ollamaModels().length} models installed · changes apply on Save.</p>
+              </div>
+            </Show>
+          </Show>
+        </section>
+
+        {/* Companion Memory */}
+        <section class="card">
+          <div class="section-label mb-3 flex items-center gap-1.5"><Brain size={12} /> Companion Memory</div>
+
+          {/* Master toggle */}
+          <label class="flex items-start gap-3 cursor-pointer select-none">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={form().memory_sync_enabled}
+              onClick={() => setField('memory_sync_enabled', !form().memory_sync_enabled)}
+              class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+              classList={{ 'bg-primary': form().memory_sync_enabled, 'bg-muted border border-border': !form().memory_sync_enabled }}
+            >
+              <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                classList={{ 'translate-x-4': form().memory_sync_enabled }} />
+            </button>
+            <div class="flex-1">
+              <div class="text-sm font-medium text-foreground">Sync with Companion Memory</div>
+              <div class="text-xs text-muted-foreground mt-0.5">
+                Your plan stays on this device. Turn this on to back it up and enrich it with your Companion Memory. One-way push.
+              </div>
+            </div>
+          </label>
+
+          {/* Connection + scopes (only meaningful when enabled) */}
+          <Show when={form().memory_sync_enabled}>
+            <div class="flex flex-col gap-3 mt-4 pt-4 border-t border-border">
+              {/* Connection row */}
+              <Show
+                when={memStatus()?.connected}
+                fallback={
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="text-xs text-muted-foreground">Not connected</span>
+                    <button type="button" onClick={connectMemory} class="btn-secondary text-xs px-3 py-1.5">
+                      <Link2 size={12} /> Connect
+                    </button>
+                  </div>
+                }
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <span class="flex items-center gap-1.5 text-xs text-foreground">
+                    <CheckCircle2 size={13} class="text-primary" /> Connected as {memStatus()!.account}
+                  </span>
+                  <button type="button" onClick={disconnectMemory} class="btn-ghost text-xs px-2 py-1">
+                    <Unlink size={12} /> Disconnect
+                  </button>
+                </div>
+              </Show>
+
+              {/* What syncs */}
+              <div class="flex flex-col gap-2">
+                <span class="text-xs text-muted-foreground">What syncs</span>
+                <ScopeCheck label="Completed tasks & time actuals" field="memory_sync_completed" />
+                <ScopeCheck label="Habits & streaks" field="memory_sync_habits" />
+                <ScopeCheck label="Daily reflections & briefings" field="memory_sync_reflections" />
+              </div>
+
+              {/* Status footer */}
+              <div class="flex items-center justify-between gap-3 pt-1">
+                <span class="text-[11px] text-muted-foreground">
+                  <Show when={memStatus()?.lastSyncedAt} fallback="Never synced">
+                    Last synced {new Date(memStatus()!.lastSyncedAt!).toLocaleString()}
+                  </Show>
+                  <Show when={!memStatus()?.available}> · connector arrives with the auth phase</Show>
+                </span>
+                <button type="button" onClick={syncNow} class="btn-secondary text-xs px-3 py-1.5"
+                  disabled={!memStatus()?.connected}>
+                  <RefreshCw size={12} /> Sync now
+                </button>
+              </div>
+            </div>
+          </Show>
         </section>
 
         {/* Integrations */}

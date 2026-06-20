@@ -129,6 +129,11 @@ export const api = {
     update: (body: Partial<Prefs>) => request<{ prefs: Prefs }>('PATCH', '/prefs', body),
   },
 
+  memory: {
+    status: () => request<MemoryStatus>('GET', '/memory/status'),
+    sync: () => request<{ ok: boolean; syncedAt?: string }>('POST', '/memory/sync', {}),
+  },
+
   jobs: {
     list: () => request<{ jobs: Job[] }>('GET', '/jobs'),
     run: (id: number) => request<{ ok: boolean; message: string }>('POST', `/jobs/${id}/run`, {}),
@@ -171,6 +176,18 @@ export interface Prefs {
   max_focus_block_minutes: number; min_break_minutes: number;
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
+  // Ollama model overrides (null/'' = use env default).
+  fast_model?: string | null; quality_model?: string | null; embed_model?: string | null;
+  // Companion Memory sync.
+  memory_sync_enabled?: boolean; memory_sync_completed?: boolean;
+  memory_sync_habits?: boolean; memory_sync_reflections?: boolean;
+  memory_account?: string | null; memory_last_synced_at?: string | null;
+}
+
+export interface MemoryStatus {
+  enabled: boolean; connected: boolean; account: string | null;
+  lastSyncedAt: string | null; available: boolean;
+  scopes: { completed: boolean; habits: boolean; reflections: boolean };
 }
 
 export interface Job {
@@ -192,6 +209,6 @@ export interface LLMStatus {
 }
 
 export interface Integrations {
-  ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string };
+  ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
   google: { mode: string };
 }

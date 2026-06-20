@@ -8,6 +8,7 @@ import { prefsRouter } from './prefs.js';
 import { scheduleRouter } from './schedule.js';
 import { summaryRouter } from './summary.js';
 import { llmRouter } from './llm.js';
+import { memoryRouter } from './memory.js';
 import { sseRouter } from './sse.js';
 
 export function mountRoutes(app: Koa) {
@@ -22,6 +23,7 @@ export function mountRoutes(app: Koa) {
     scheduleRouter(),
     summaryRouter(),
     llmRouter(),
+    memoryRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }
