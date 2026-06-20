@@ -336,6 +336,7 @@ export interface Tag { id: number; name: string; count: number; }
 
 export interface Prefs {
   id: number; owner_id: number; workday_start: string; workday_end: string;
+  auto_fill_workday?: boolean; // Auto's secondary workday fallback (0028); default true
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
   // Time-Block container duration bounds (0017).

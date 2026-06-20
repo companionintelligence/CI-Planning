@@ -248,6 +248,43 @@ export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } 
   return null;
 }
 
+/**
+ * Fixed obstacles overlapping [windowStartMs, windowEndMs] that placement must
+ * schedule around (PR-C+, Workstream A — the shared "don't double-book" rule).
+ *
+ * Always obstacles: locked blocks, meetings, and every non-completed *task*
+ * block — so Auto/pattern placement never stacks on existing work (manual or
+ * auto) and pass 1's placements survive into pass 2. With `includePlans`, Plan
+ * containers are obstacles too (the workday fallback flows *around* the Plans
+ * the user drew, leaving their windows to their own tag-matched tasks).
+ *
+ * `excludeBlockId` drops one row (the Plan being filled) so a Plan isn't an
+ * obstacle to placing inside itself.
+ */
+export function dayObstacles(
+  windowStartMs: number,
+  windowEndMs: number,
+  opts: { includePlans?: boolean; excludeBlockId?: number | null } = {}
+): { start: number; end: number }[] {
+  const windowStartISO = new Date(windowStartMs).toISOString();
+  const windowEndISO = new Date(windowEndMs).toISOString();
+  const rows = sqlite
+    .prepare(
+      `SELECT id, start_at, end_at FROM time_blocks
+        WHERE start_at < ? AND end_at > ?
+          AND (
+               is_locked = 1
+            OR block_kind = 'meeting'
+            OR (block_kind = 'task' AND status NOT IN ('completed','skipped','cancelled'))
+            OR (? = 1 AND block_kind = 'timeblock' AND block_type = 'plan')
+          )`
+    )
+    .all(windowEndISO, windowStartISO, opts.includePlans ? 1 : 0) as { id: number; start_at: string; end_at: string }[];
+  return rows
+    .filter((r) => r.id !== opts.excludeBlockId)
+    .map((r) => ({ start: Date.parse(r.start_at), end: Date.parse(r.end_at) }));
+}
+
 /** Carve the workday into free windows between fixed events, with a break after each. */
 export function buildGaps(
   dayStart: number,

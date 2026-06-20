@@ -133,6 +133,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   planAlldayAlways: integer('plan_allday_always', { mode: 'boolean' }).default(false),
   planDaylongForPromoted: integer('plan_daylong_for_promoted', { mode: 'boolean' }).default(false),
   planAutofillGaps: integer('plan_autofill_gaps', { mode: 'boolean' }).default(true),
+  // Auto's secondary workday-window fallback (0028). Plans are filled first;
+  // this gates whether leftover tasks also fill open 9–6 time. Default ON.
+  autoFillWorkday: integer('auto_fill_workday', { mode: 'boolean' }).default(true),
   conceptDefaultMinutes: integer('concept_default_minutes').default(60),
   conceptAutosurface: integer('concept_autosurface', { mode: 'boolean' }).default(true),
   conceptHorizonDays: integer('concept_horizon_days').default(30),
