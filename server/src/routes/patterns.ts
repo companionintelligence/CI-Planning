@@ -16,6 +16,10 @@ interface TypeRow {
   icon_shape: string;
   reminder_config: string | null;
   is_builtin: number;
+  color_token: string | null;
+  texture: string | null;
+  default_est_minutes: number | null;
+  notify: number;
 }
 interface PatternRow {
   id: number;
@@ -25,6 +29,17 @@ interface PatternRow {
   tag: string | null;
   notes: string | null;
   created_at: string;
+}
+
+/** Editable fields of a pattern type (the per-category display/config defaults). */
+interface TypeInput {
+  name?: string;
+  icon_shape?: string;
+  reminder_config?: unknown;
+  color_token?: string | null;
+  texture?: string | null;
+  default_est_minutes?: number | null;
+  notify?: boolean;
 }
 
 function parseJson(raw: string | null): unknown {
@@ -43,6 +58,10 @@ const serializeType = (t: TypeRow) => ({
   icon_shape: t.icon_shape,
   reminder_config: parseJson(t.reminder_config),
   is_builtin: !!t.is_builtin,
+  color_token: t.color_token,
+  texture: t.texture,
+  default_est_minutes: t.default_est_minutes,
+  notify: !!t.notify,
 });
 
 function taskIdsOf(patternId: number): number[] {
@@ -83,7 +102,7 @@ export function patternsRouter() {
   });
 
   router.post('/api/pattern-types', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as { name?: string; icon_shape?: string; reminder_config?: unknown };
+    const body = (ctx.request.body ?? {}) as TypeInput;
     if (!body.name?.trim() || !body.icon_shape?.trim()) {
       ctx.status = 422;
       ctx.body = { error: 'name and icon_shape are required' };
@@ -92,14 +111,18 @@ export function patternsRouter() {
     try {
       const row = sqlite
         .prepare(
-          `INSERT INTO pattern_types (owner_id, name, icon_shape, reminder_config, is_builtin)
-           VALUES (?, ?, ?, ?, 0) RETURNING *`
+          `INSERT INTO pattern_types (owner_id, name, icon_shape, reminder_config, is_builtin, color_token, texture, default_est_minutes, notify)
+           VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?) RETURNING *`
         )
         .get(
           currentOwnerId(),
           body.name.trim(),
           body.icon_shape.trim(),
-          body.reminder_config != null ? JSON.stringify(body.reminder_config) : null
+          body.reminder_config != null ? JSON.stringify(body.reminder_config) : null,
+          body.color_token ?? null,
+          body.texture ?? null,
+          body.default_est_minutes ?? null,
+          body.notify ? 1 : 0
         ) as TypeRow;
       const out = serializeType(row);
       broadcast(currentOwnerId(), 'pattern_type:created', out);
@@ -121,13 +144,21 @@ export function patternsRouter() {
       ctx.body = { error: 'not found' };
       return;
     }
-    const body = (ctx.request.body ?? {}) as { name?: string; icon_shape?: string; reminder_config?: unknown };
+    const body = (ctx.request.body ?? {}) as TypeInput;
     const name = body.name?.trim() ?? existing.name;
     const iconShape = body.icon_shape?.trim() ?? existing.icon_shape;
     const reminder = body.reminder_config !== undefined ? JSON.stringify(body.reminder_config) : existing.reminder_config;
+    const colorToken = body.color_token !== undefined ? body.color_token : existing.color_token;
+    const texture = body.texture !== undefined ? body.texture : existing.texture;
+    const defaultEst = body.default_est_minutes !== undefined ? body.default_est_minutes : existing.default_est_minutes;
+    const notify = body.notify !== undefined ? (body.notify ? 1 : 0) : existing.notify;
     const row = sqlite
-      .prepare(`UPDATE pattern_types SET name = ?, icon_shape = ?, reminder_config = ? WHERE id = ? RETURNING *`)
-      .get(name, iconShape, reminder, id) as TypeRow;
+      .prepare(
+        `UPDATE pattern_types
+            SET name = ?, icon_shape = ?, reminder_config = ?, color_token = ?, texture = ?, default_est_minutes = ?, notify = ?
+          WHERE id = ? RETURNING *`
+      )
+      .get(name, iconShape, reminder, colorToken, texture, defaultEst, notify, id) as TypeRow;
     const out = serializeType(row);
     broadcast(currentOwnerId(), 'pattern_type:updated', out);
     ctx.body = { pattern_type: out };
