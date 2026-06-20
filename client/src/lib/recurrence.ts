@@ -4,7 +4,7 @@
  * and renders a plain-language summary. The server (engine/recurrence.ts) is the
  * source of truth for validation; this is light, dependency-free convenience.
  */
-export type RepeatPreset = 'none' | 'daily' | 'weekly' | 'custom';
+export type RepeatPreset = 'none' | 'daily' | 'specific-days' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
 export const WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'] as const;
 export const DAY_LABEL: Record<string, string> = {
@@ -15,18 +15,36 @@ export const DAY_INITIAL: Record<string, string> = {
   MO: 'M', TU: 'T', WE: 'W', TH: 'T', FR: 'F', SA: 'S', SU: 'S',
 };
 
-/** Build an RRULE from the editor state, or null for one-off / empty-custom. */
+/**
+ * Build an RRULE from the editor state, or null for one-off / empty-custom.
+ *
+ * `specific-days` is RRULE-equivalent to `weekly` + BYDAY (the distinction is
+ * purely a UI label per the PR-C+ pattern-repeat editor: "every day / specific
+ * days / weekly / monthly / yearly" reads cleaner than "weekly with days").
+ */
 export function buildRule(preset: RepeatPreset, weekdays: string[], custom: string): string | null {
   if (preset === 'none') return null;
   if (preset === 'daily') return 'FREQ=DAILY';
+  if (preset === 'specific-days') {
+    const days = WEEKDAYS.filter((d) => weekdays.includes(d));
+    return days.length ? `FREQ=WEEKLY;BYDAY=${days.join(',')}` : 'FREQ=WEEKLY';
+  }
   if (preset === 'weekly') {
     const days = WEEKDAYS.filter((d) => weekdays.includes(d));
     return days.length ? `FREQ=WEEKLY;BYDAY=${days.join(',')}` : 'FREQ=WEEKLY';
   }
+  if (preset === 'monthly') return 'FREQ=MONTHLY';
+  if (preset === 'yearly') return 'FREQ=YEARLY';
   return custom.trim() || null; // custom
 }
 
-/** Parse an existing rule back into editor state (best-effort; falls back to custom). */
+/**
+ * Parse an existing rule back into editor state (best-effort; falls back to custom).
+ *
+ * `FREQ=WEEKLY` with BYDAY collapses to `weekly` here. The pattern editor calls
+ * `rulePresetForPattern` (below) if it wants to prefer `specific-days` instead;
+ * task-level callers (TaskForm) still see the simpler `weekly` mapping.
+ */
 export function rulePreset(rule?: string | null): { preset: RepeatPreset; weekdays: string[]; custom: string } {
   if (!rule) return { preset: 'none', weekdays: [], custom: '' };
   const up = rule.toUpperCase();
@@ -34,7 +52,16 @@ export function rulePreset(rule?: string | null): { preset: RepeatPreset; weekda
   const byday = /BYDAY=([A-Z,]+)/.exec(up)?.[1]?.split(',') ?? [];
   if (freq === 'DAILY' && !/(COUNT|UNTIL|INTERVAL|BYDAY)/.test(up)) return { preset: 'daily', weekdays: [], custom: rule };
   if (freq === 'WEEKLY' && !/(COUNT|UNTIL|INTERVAL)/.test(up)) return { preset: 'weekly', weekdays: byday, custom: rule };
+  if (freq === 'MONTHLY' && !/(COUNT|UNTIL|INTERVAL|BYDAY|BYMONTHDAY)/.test(up)) return { preset: 'monthly', weekdays: [], custom: rule };
+  if (freq === 'YEARLY' && !/(COUNT|UNTIL|INTERVAL|BYDAY|BYMONTH)/.test(up)) return { preset: 'yearly', weekdays: [], custom: rule };
   return { preset: 'custom', weekdays: byday, custom: rule };
+}
+
+/** Pattern-editor variant: prefer `specific-days` for `FREQ=WEEKLY;BYDAY=…`. */
+export function rulePresetForPattern(rule?: string | null): { preset: RepeatPreset; weekdays: string[]; custom: string } {
+  const r = rulePreset(rule);
+  if (r.preset === 'weekly' && r.weekdays.length) return { ...r, preset: 'specific-days' };
+  return r;
 }
 
 /** Plain-language summary of a rule (FREQ + BYDAY; echoes anything richer). */

@@ -19,6 +19,7 @@ import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, MS_PER_MIN } from './scheduler.js';
+import { occurrencesBetween, parseRule } from './recurrence.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -208,3 +209,82 @@ export function placePatternOnDay(
     return { patternId, date, blocksCreated, placed, unplaced, skippedAlreadyPlaced: false };
   })();
 }
+
+// ── Pattern recurrence + nightly auto-place (Phase D) ──────────────────────────
+
+interface RecurringPattern {
+  id: number;
+  name: string;
+  type_name: string;
+}
+
+/**
+ * Owner's patterns whose recurrence rule fires on the given local YYYY-MM-DD.
+ * Ritual rows are excluded — the type is hidden behind a flag in V1. Patterns
+ * with no rule are ignored.
+ */
+export function patternsRecurringOnDate(owner: number, today: string): RecurringPattern[] {
+  const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+  const rows = sqlite
+    .prepare(
+      `SELECT p.id, p.name, p.recurrence_rule, p.recurrence_dtstart, pt.name AS type_name
+         FROM patterns p
+         JOIN pattern_types pt ON pt.id = p.type_id
+        WHERE p.owner_id = ? AND p.recurrence_rule IS NOT NULL
+          AND pt.name IN ('Habit', 'Routine')`
+    )
+    .all(owner) as { id: number; name: string; recurrence_rule: string; recurrence_dtstart: string | null; type_name: string }[];
+
+  const out: RecurringPattern[] = [];
+  for (const r of rows) {
+    if (!r.recurrence_dtstart) continue; // malformed; skip defensively
+    try {
+      const hits = occurrencesBetween(
+        { recurrenceRule: r.recurrence_rule, recurrenceDtstart: r.recurrence_dtstart, taskTime: null, recurrenceExdates: [], timezone: tz },
+        today,
+        today,
+      );
+      if (hits.length > 0) out.push({ id: r.id, name: r.name, type_name: r.type_name });
+    } catch {
+      // a malformed rule shouldn't take down the job — skip the pattern
+    }
+  }
+  return out;
+}
+
+export interface PlaceAllResult {
+  patternsConsidered: number;
+  patternsPlaced: number;     // had >= 1 block created
+  patternsSkipped: number;    // marker said already done
+  blocksCreated: number;
+}
+
+/**
+ * The 06:00 cron entry. For each owner, expand patterns matching today and
+ * call `placePatternOnDay` per. Rituals are excluded by `patternsRecurringOnDate`.
+ */
+export function placeAllPatternsForToday(opts: { today?: string } = {}): PlaceAllResult {
+  const today = opts.today ?? localISODate();
+  const owners = sqlite.prepare(`SELECT id FROM owners`).all() as { id: number }[];
+  let patternsConsidered = 0;
+  let patternsPlaced = 0;
+  let patternsSkipped = 0;
+  let blocksCreated = 0;
+  for (const { id: ownerId } of owners) {
+    const matches = patternsRecurringOnDate(ownerId, today);
+    patternsConsidered += matches.length;
+    for (const p of matches) {
+      const r = placePatternOnDay(ownerId, p.id, { date: today });
+      if (r.skippedAlreadyPlaced) patternsSkipped++;
+      else if (r.blocksCreated > 0) patternsPlaced++;
+      blocksCreated += r.blocksCreated;
+    }
+  }
+  return { patternsConsidered, patternsPlaced, patternsSkipped, blocksCreated };
+}
+
+/** Validate that an RRULE is acceptable on a pattern — reuses `parseRule`. */
+export function validatePatternRule(rule: string): { ok: true; rule: string } | { ok: false; error: string } {
+  return parseRule(rule);
+}
+

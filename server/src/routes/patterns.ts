@@ -2,7 +2,9 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
-import { placePatternOnDay } from '../engine/patterns-place.js';
+import { placePatternOnDay, validatePatternRule } from '../engine/patterns-place.js';
+import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { localISODate } from '../lib/dates.js';
 
 /**
  * Patterns (Phase G, ticket G1). Typed, reusable task collections — Routine ▢ /
@@ -29,6 +31,8 @@ interface PatternRow {
   name: string;
   tag: string | null;
   notes: string | null;
+  recurrence_rule: string | null;
+  recurrence_dtstart: string | null;
   created_at: string;
 }
 
@@ -80,6 +84,8 @@ const serializePattern = (p: PatternRow) => ({
   name: p.name,
   tag: p.tag,
   notes: p.notes,
+  recurrence_rule: p.recurrence_rule,
+  recurrence_dtstart: p.recurrence_dtstart,
   created_at: p.created_at,
   task_ids: taskIdsOf(p.id),
 });
@@ -89,6 +95,39 @@ function setMembers(patternId: number, taskIds: number[]) {
   sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ?`).run(patternId);
   const ins = sqlite.prepare(`INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`);
   taskIds.forEach((taskId, i) => ins.run(patternId, taskId, i));
+}
+
+/** The name of a pattern type by id (used for the Ritual-recurrence guard). */
+function typeNameOf(typeId: number | null): string | null {
+  if (typeId == null) return null;
+  const row = sqlite.prepare(`SELECT name FROM pattern_types WHERE id = ?`).get(typeId) as { name: string } | undefined;
+  return row?.name ?? null;
+}
+
+/**
+ * Validate + normalize a recurrence body on a pattern. Only Habit + Routine
+ * types may carry a rule (Rituals are hidden in V1). If the caller omits
+ * `recurrence_dtstart`, defaults to local-noon-as-UTC (mirrors the task-level
+ * convention in engine/recurrence.ts — keeps every hit a safe ~12h away from
+ * the local midnight boundary so a DST flip never moves a hit's local date).
+ */
+function buildRecurrenceFields(
+  owner: number,
+  typeId: number | null,
+  rule: string | null | undefined,
+  dtstart: string | null | undefined,
+): { ok: true; rule: string | null; dtstart: string | null } | { ok: false; error: string } {
+  if (rule === undefined && dtstart === undefined) return { ok: true, rule: undefined as unknown as null, dtstart: undefined as unknown as null };
+  if (rule == null) return { ok: true, rule: null, dtstart: null }; // explicit clear
+  const typeName = typeNameOf(typeId);
+  if (typeName !== 'Habit' && typeName !== 'Routine') {
+    return { ok: false, error: 'only Habit and Routine patterns can recur' };
+  }
+  const v = validatePatternRule(rule);
+  if (!v.ok) return { ok: false, error: v.error };
+  if (dtstart) return { ok: true, rule: v.rule, dtstart };
+  const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+  return { ok: true, rule: v.rule, dtstart: zonedWallTimeToUTC(localISODate(), '12:00', tz) };
 }
 
 export function patternsRouter() {
@@ -202,45 +241,60 @@ export function patternsRouter() {
   });
 
   router.post('/api/patterns', async (ctx) => {
+    const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as {
       type_id?: number; name?: string; tag?: string; notes?: string; task_ids?: number[];
+      recurrence_rule?: string | null; recurrence_dtstart?: string | null;
     };
     if (!body.name?.trim()) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
     // Validate the type belongs to this owner.
     const type = body.type_id != null
-      ? (sqlite.prepare(`SELECT id FROM pattern_types WHERE id = ? AND owner_id = ?`).get(body.type_id, currentOwnerId()) as { id: number } | undefined)
+      ? (sqlite.prepare(`SELECT id FROM pattern_types WHERE id = ? AND owner_id = ?`).get(body.type_id, owner) as { id: number } | undefined)
       : undefined;
     if (body.type_id != null && !type) { ctx.status = 422; ctx.body = { error: 'unknown pattern type' }; return; }
 
+    const rec = buildRecurrenceFields(owner, body.type_id ?? null, body.recurrence_rule, body.recurrence_dtstart);
+    if (!rec.ok) { ctx.status = 422; ctx.body = { error: rec.error }; return; }
+
     const p = sqlite
-      .prepare(`INSERT INTO patterns (owner_id, type_id, name, tag, notes) VALUES (?, ?, ?, ?, ?) RETURNING *`)
-      .get(currentOwnerId(), body.type_id ?? null, body.name.trim(), body.tag ?? null, body.notes ?? null) as PatternRow;
+      .prepare(`INSERT INTO patterns (owner_id, type_id, name, tag, notes, recurrence_rule, recurrence_dtstart) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+      .get(owner, body.type_id ?? null, body.name.trim(), body.tag ?? null, body.notes ?? null,
+           rec.rule === undefined ? null : rec.rule,
+           rec.dtstart === undefined ? null : rec.dtstart) as PatternRow;
     if (Array.isArray(body.task_ids) && body.task_ids.length) {
       try { setMembers(p.id, body.task_ids); }
       catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
     }
     const out = serializePattern(p);
-    broadcast(currentOwnerId(), 'pattern:created', out);
+    broadcast(owner, 'pattern:created', out);
     ctx.status = 201;
     ctx.body = { pattern: out };
   });
 
   router.patch('/api/patterns/:id', async (ctx) => {
+    const owner = currentOwnerId();
     const id = Number(ctx.params.id);
-    const existing = sqlite.prepare(`SELECT * FROM patterns WHERE id = ? AND owner_id = ?`).get(id, currentOwnerId()) as
+    const existing = sqlite.prepare(`SELECT * FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner) as
       | PatternRow
       | undefined;
     if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as {
       type_id?: number | null; name?: string; tag?: string | null; notes?: string | null; task_ids?: number[];
+      recurrence_rule?: string | null; recurrence_dtstart?: string | null;
     };
+    const nextTypeId = body.type_id !== undefined ? body.type_id : existing.type_id;
+    const rec = buildRecurrenceFields(owner, nextTypeId, body.recurrence_rule, body.recurrence_dtstart);
+    if (!rec.ok) { ctx.status = 422; ctx.body = { error: rec.error }; return; }
+
     const row = sqlite
-      .prepare(`UPDATE patterns SET type_id = ?, name = ?, tag = ?, notes = ? WHERE id = ? RETURNING *`)
+      .prepare(`UPDATE patterns SET type_id = ?, name = ?, tag = ?, notes = ?, recurrence_rule = ?, recurrence_dtstart = ? WHERE id = ? RETURNING *`)
       .get(
-        body.type_id !== undefined ? body.type_id : existing.type_id,
+        nextTypeId,
         body.name?.trim() ?? existing.name,
         body.tag !== undefined ? body.tag : existing.tag,
         body.notes !== undefined ? body.notes : existing.notes,
+        rec.rule === undefined ? existing.recurrence_rule : rec.rule,
+        rec.dtstart === undefined ? existing.recurrence_dtstart : rec.dtstart,
         id
       ) as PatternRow;
     if (Array.isArray(body.task_ids)) {
@@ -248,7 +302,7 @@ export function patternsRouter() {
       catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
     }
     const out = serializePattern(row);
-    broadcast(currentOwnerId(), 'pattern:updated', out);
+    broadcast(owner, 'pattern:updated', out);
     ctx.body = { pattern: out };
   });
 

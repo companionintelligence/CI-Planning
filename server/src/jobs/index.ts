@@ -2,6 +2,7 @@ import { Cron } from 'croner';
 import { sqlite } from '../db/index.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
 import { fillFlightPlanCandidates } from '../engine/autoplan.js';
+import { placeAllPatternsForToday } from '../engine/patterns-place.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
@@ -60,6 +61,17 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsCreated: r.created,
         itemsUpdated: r.missed,
         log: `Materialized ${r.created} instances across ${r.templates} templates; flagged ${r.missed} missed habits`,
+      };
+    }
+    case 'place_patterns': {
+      // 06:00 — after generate_recurrences (02:45) and auto_schedule (03:00).
+      // Expands every owner's Habit/Routine patterns recurring today and runs
+      // placePatternOnDay idempotently. Rituals are excluded (V1 flag).
+      const r = placeAllPatternsForToday();
+      return {
+        itemsCreated: r.blocksCreated,
+        itemsUpdated: r.patternsSkipped,
+        log: `Considered ${r.patternsConsidered} patterns → placed ${r.patternsPlaced}, skipped ${r.patternsSkipped}, ${r.blocksCreated} blocks`,
       };
     }
     default:
