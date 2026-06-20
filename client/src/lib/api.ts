@@ -168,7 +168,7 @@ export const api = {
 
   blockTemplates: {
     list: () => request<{ block_templates: BlockTemplate[] }>('GET', '/block-templates'),
-    create: (body: { name: string; tag?: string; default_minutes?: number }) =>
+    create: (body: { name: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[] }) =>
       request<{ block_template: BlockTemplate }>('POST', '/block-templates', body),
     delete: (id: number) => request<{ ok: boolean }>('DELETE', `/block-templates/${id}`),
     instantiate: (id: number, start_at: string, end_at?: string) =>
@@ -286,9 +286,13 @@ export interface AutoResult {
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
 }
 
-/** A reusable Time-Block template (named, tagged container with a default duration). */
+/** A task saved inside a Plan template — recreated at start + offset on instantiate. */
+export interface TemplateTask { title: string; tag: string | null; estimated_minutes: number | null; offset_minutes: number }
+
+/** A reusable Time-Block template (named, tagged container + default duration + saved tasks). */
 export interface BlockTemplate {
   id: number; owner_id: number; name: string; tag: string | null; default_minutes: number;
+  tasks?: TemplateTask[];
 }
 
 export interface Tag { id: number; name: string; count: number; }
