@@ -18,7 +18,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
-import { buildGaps, pickGap, splitIntoSessions, MS_PER_MIN } from './scheduler.js';
+import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { occurrencesBetween, parseRule } from './recurrence.js';
 
 const DEFAULT_EST_MIN = 30;
@@ -167,17 +167,10 @@ export function placePatternOnDay(
       return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };
     }
 
-    // Fixed obstacles inside the window (locked blocks + meetings, like Auto).
-    const windowStartISO = new Date(windowStartMs).toISOString();
-    const windowEndISO = new Date(windowEndMs).toISOString();
-    const fixed = (
-      sqlite
-        .prepare(
-          `SELECT start_at, end_at FROM time_blocks
-            WHERE (is_locked = 1 OR block_kind = 'meeting') AND start_at < ? AND end_at > ?`
-        )
-        .all(windowEndISO, windowStartISO) as { start_at: string; end_at: string }[]
-    ).map((b) => ({ start: Date.parse(b.start_at), end: Date.parse(b.end_at) }));
+    // Shared obstacle set: locked + meetings + every non-completed task block,
+    // so a pattern never stacks on existing work (manual or auto). When scoped
+    // to a Plan we exclude that Plan from its own obstacle set (it's the target).
+    const fixed = dayObstacles(windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
 
     const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
     const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
