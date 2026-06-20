@@ -173,7 +173,7 @@ function BlockChip(props: { placed: Placed; day: string }) {
 
   return (
     <div
-      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none"
+      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none touch-none"
       classList={{
         'opacity-40': done(),
         'ring-1 ring-amber-400/70': conflict(),
