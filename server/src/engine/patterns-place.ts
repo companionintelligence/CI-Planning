@@ -252,35 +252,60 @@ export function patternsRecurringOnDate(owner: number, today: string): Recurring
   return out;
 }
 
-export interface PlaceAllResult {
-  patternsConsidered: number;
-  patternsPlaced: number;     // had >= 1 block created
-  patternsSkipped: number;    // marker said already done
-  blocksCreated: number;
-}
-
 /**
- * The 06:00 cron entry. For each owner, expand patterns matching today and
- * call `placePatternOnDay` per. Rituals are excluded by `patternsRecurringOnDate`.
+ * Lazy placement triggered by the day-view read (GET /api/blocks). For each
+ * future-or-today local day intersecting [fromUtcISO, toUtcISO], place every
+ * recurring pattern that fires that day. Idempotent — the marker on time_blocks
+ * makes repeat calls a no-op, so the read endpoint can call this every time.
+ *
+ * Past days are skipped (no backfill). A recurring Routine the user creates
+ * mid-day appears on the board the moment that day is next read, without any
+ * cron in the loop.
  */
-export function placeAllPatternsForToday(opts: { today?: string } = {}): PlaceAllResult {
-  const today = opts.today ?? localISODate();
-  const owners = sqlite.prepare(`SELECT id FROM owners`).all() as { id: number }[];
-  let patternsConsidered = 0;
-  let patternsPlaced = 0;
-  let patternsSkipped = 0;
+export function ensurePatternsForRange(owner: number, fromUtcISO: string, toUtcISO: string): { placed: number; blocksCreated: number } {
+  const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+  const today = localISODate(); // server-local day; recurrence days are compared as YYYY-MM-DD strings
+  const days = localDaysInRange(fromUtcISO, toUtcISO, tz).filter((d) => d >= today);
+  let placed = 0;
   let blocksCreated = 0;
-  for (const { id: ownerId } of owners) {
-    const matches = patternsRecurringOnDate(ownerId, today);
-    patternsConsidered += matches.length;
-    for (const p of matches) {
-      const r = placePatternOnDay(ownerId, p.id, { date: today });
-      if (r.skippedAlreadyPlaced) patternsSkipped++;
-      else if (r.blocksCreated > 0) patternsPlaced++;
+  for (const day of days) {
+    for (const p of patternsRecurringOnDate(owner, day)) {
+      const r = placePatternOnDay(owner, p.id, { date: day });
+      if (!r.skippedAlreadyPlaced && r.blocksCreated > 0) placed++;
       blocksCreated += r.blocksCreated;
     }
   }
-  return { patternsConsidered, patternsPlaced, patternsSkipped, blocksCreated };
+  return { placed, blocksCreated };
+}
+
+/**
+ * Local YYYY-MM-DD calendar days that intersect [fromUtcISO, toUtcISO] in `tz`,
+ * inclusive. The boundary edge cases (a window of width 0 or sub-day) collapse
+ * to a single day. We step in 24h chunks anchored at the start instant — this
+ * is correct because we only need the *set* of local days the range touches,
+ * not the count of seconds per day. DST adds/drops up to one hour from a day,
+ * which never moves a hit's derived local date when sampled at noon.
+ */
+function localDaysInRange(fromUtcISO: string, toUtcISO: string, tz: string): string[] {
+  const startMs = Date.parse(fromUtcISO);
+  const endMs = Math.max(Date.parse(toUtcISO), startMs);
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const localOf = (ms: number) => {
+    const parts = fmt.formatToParts(new Date(ms));
+    const p: Record<string, string> = {};
+    for (const part of parts) if (part.type !== 'literal') p[part.type] = part.value;
+    return `${p.year}-${p.month}-${p.day}`;
+  };
+  const out: string[] = [];
+  const seen = new Set<string>();
+  // Step every 12h so a DST short day still gets sampled inside its local window.
+  const step = 12 * 60 * 60_000;
+  for (let ms = startMs; ms <= endMs + step; ms += step) {
+    const d = localOf(Math.min(ms, endMs));
+    if (!seen.has(d)) { seen.add(d); out.push(d); }
+    if (ms >= endMs) break;
+  }
+  return out.sort();
 }
 
 /** Validate that an RRULE is acceptable on a pattern — reuses `parseRule`. */

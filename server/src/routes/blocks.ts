@@ -5,6 +5,7 @@ import { timeBlocks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
+import { ensurePatternsForRange } from '../engine/patterns-place.js';
 
 export function blocksRouter() {
   const router = new Router();
@@ -14,6 +15,14 @@ export function blocksRouter() {
   // (they have no real time) — the horizon lane reads them this way.
   router.get('/api/blocks', async (ctx) => {
     const { from, to, block_type } = ctx.query as Record<string, string>;
+
+    // Lazy pattern placement (PR-C+, Phase D refactor): when the read targets
+    // a real time range (not the concept list), ensure every recurring Habit/
+    // Routine pattern that fires inside it is on the board before we SELECT.
+    // Idempotent via the marker on time_blocks → safe to call on every read.
+    if (from && to && !block_type) {
+      ensurePatternsForRange(currentOwnerId(), from, to);
+    }
 
     const conditions = [];
     if (from) conditions.push(gte(timeBlocks.startAt, from));
