@@ -20,6 +20,7 @@ export function llmRouter() {
         models: ollama.models,
         smallModel: ollama.smallModel,
         mediumModel: ollama.mediumModel,
+        embedModel: ollama.embedModel,
       },
       google: { mode: google.mode },
     };

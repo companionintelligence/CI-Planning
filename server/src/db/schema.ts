@@ -104,6 +104,17 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   planningMode: text('planning_mode').default('ritual'), // auto | ritual
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
   planningHorizonDays: integer('planning_horizon_days').default(7), // "today set" lookahead for auto-scheduling
+  // Per-owner Ollama model overrides (null = use the env default). 0012.
+  fastModel: text('fast_model'),       // extraction / triage
+  qualityModel: text('quality_model'), // briefings
+  embedModel: text('embed_model'),     // dedupe embeddings
+  // Companion Memory sync (one-way push; off by default). 0012.
+  memorySyncEnabled: integer('memory_sync_enabled', { mode: 'boolean' }).default(false),
+  memorySyncCompleted: integer('memory_sync_completed', { mode: 'boolean' }).default(true),
+  memorySyncHabits: integer('memory_sync_habits', { mode: 'boolean' }).default(true),
+  memorySyncReflections: integer('memory_sync_reflections', { mode: 'boolean' }).default(true),
+  memoryAccount: text('memory_account'),            // connected account (null = not connected)
+  memoryLastSyncedAt: text('memory_last_synced_at'), // UTC ISO of the last successful push
 });
 
 export const tags = sqliteTable('tags', {
