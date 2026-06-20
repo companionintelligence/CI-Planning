@@ -1,12 +1,11 @@
 import { Cron } from 'croner';
 import { sqlite } from '../db/index.js';
-import { runScheduler } from '../engine/scheduler.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
+import { fillFlightPlanCandidates } from '../engine/autoplan.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
-import { localISODate } from '../lib/dates.js';
 import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
 
 export interface JobOutcome {
@@ -49,13 +48,11 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'auto_schedule': {
-      const date = localISODate();
-      const r = await runScheduler(date);
-      return {
-        itemsCreated: r.blocksCreated,
-        itemsUpdated: r.blocksRemoved,
-        log: `Scheduled ${r.blocksCreated} blocks, removed ${r.blocksRemoved}, ${r.unscheduled} unscheduled`,
-      };
+      // Retired (Phase G): Auto no longer packs the backlog into the day. Repurposed
+      // to *propose* open-task candidates into the flight-plan; placement is
+      // user-triggered via POST /api/auto/run. See engine/autoplan.ts.
+      const added = fillFlightPlanCandidates();
+      return { itemsCreated: added, itemsUpdated: 0, log: `Proposed ${added} candidates into the flight-plan (auto-pack retired)` };
     }
     case 'generate_recurrences': {
       const r = generateRecurrences();
