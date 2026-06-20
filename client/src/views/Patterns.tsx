@@ -3,6 +3,7 @@ import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowU
 import { patterns, patternTypes, prefs, refetchBlocks, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
 import { api, type BlockTemplate, type Pattern, type PatternType, type Task } from '../lib/api.js';
 import { buildRule, rulePresetForPattern, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
+import { useDraggable, useDropZone, dragPayload } from '../lib/draggable.js';
 import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { MinuteDial } from '../components/MinuteDial.js';
@@ -70,6 +71,26 @@ export function Patterns() {
     try { await api.blockTemplates.delete(t.id); refetchTemplates(); showToast(`Removed "${t.name}"`, 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+
+  // Routines section is a drop zone (Phase E): a Habit task or Plan Block dropped
+  // in promotes into a new Routine (server picks the right promote-from-* route).
+  async function onRoutineDrop(p: { kind: string; id: number }) {
+    try {
+      if (p.kind === 'habit') {
+        const task = (allTasks() ?? []).find((t) => t.id === p.id);
+        if (!task) return;
+        await api.patterns.promoteFromTasks([p.id], `${task.title} routine`);
+        showToast(`Created Routine from "${task.title}"`, 'success');
+      } else if (p.kind === 'plan-block') {
+        const tpl = (templates() ?? []).find((t) => t.id === p.id);
+        if (!tpl) return;
+        await api.patterns.promoteFromPlanTemplate(p.id, tpl.name);
+        showToast(`Created Routine from "${tpl.name}"`, 'success');
+      }
+      refetchPatterns();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  const routineDrop = useDropZone(onRoutineDrop);
 
   // ── Pattern create + membership ops (closure over refetch) ────────────────────
   async function createPattern(typeName: string, name: string, tag: string) {
@@ -336,23 +357,41 @@ export function Patterns() {
         <Show when={prefs()?.enable_rituals}> · Rituals assemble a day's prep</Show>.
       </p>
 
-      <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work)">
-        <PatternList typeName="Routine" />
-      </Section>
+      <div
+        onPointerUp={routineDrop.handlers.onPointerUp}
+        class="rounded-xl transition-colors"
+        classList={{
+          'ring-2 ring-primary/40 bg-primary/[0.04]': routineDrop.isOver(),
+          '-mx-1 px-1': routineDrop.isOver(),
+        }}
+      >
+        <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work). Drop a Habit or Plan Block to make one.">
+          <Show when={dragPayload()}>
+            <p class="text-[11px] text-primary text-center -mt-2 mb-2">Drop here to create a Routine →</p>
+          </Show>
+          <PatternList typeName="Routine" />
+        </Section>
+      </div>
 
-      <Section typeName="Habit" title="Habits" subtitle="Repeating single actions with a known duration">
+      <Section typeName="Habit" title="Habits" subtitle="Repeating single actions with a known duration. Drag onto Routines to bundle.">
         <Show when={habitTasks().length > 0} fallback={<EmptyHint>No habits yet — “New Habit” creates a recurring task.</EmptyHint>}>
           <div class="flex flex-col gap-1.5">
             <For each={habitTasks()}>
-              {(t) => (
-                <div class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-                  <Repeat size={12} class="text-primary flex-shrink-0" />
-                  <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
-                  <Show when={t.tags?.length}><span class="text-primary text-xs">#{t.tags[0]}</span></Show>
-                  <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground">{t.estimated_minutes}m</span></Show>
-                  <button onClick={() => setTaskModal({ open: true, editTask: t })} class="btn-icon" title="Edit habit"><Pencil size={13} /></button>
-                </div>
-              )}
+              {(t) => {
+                const drag = useDraggable({ kind: 'habit', id: t.id });
+                return (
+                  <div
+                    onPointerDown={drag.onPointerDown}
+                    class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 cursor-grab select-none touch-none"
+                  >
+                    <Repeat size={12} class="text-primary flex-shrink-0" />
+                    <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
+                    <Show when={t.tags?.length}><span class="text-primary text-xs">#{t.tags[0]}</span></Show>
+                    <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground">{t.estimated_minutes}m</span></Show>
+                    <button onClick={(e) => { e.stopPropagation(); setTaskModal({ open: true, editTask: t }); }} class="btn-icon" title="Edit habit"><Pencil size={13} /></button>
+                  </div>
+                );
+              }}
             </For>
           </div>
         </Show>
@@ -369,17 +408,23 @@ export function Patterns() {
         <Show when={(templates() ?? []).length > 0} fallback={<EmptyHint>No saved Plan Blocks yet — save a Plan as a template from the Planner ★ menu.</EmptyHint>}>
           <div class="flex flex-col gap-1.5">
             <For each={templates()}>
-              {(t) => (
-                <div class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-                  <Star size={12} class="text-primary flex-shrink-0" />
-                  <span class="flex-1 text-sm text-foreground truncate">{t.name}</span>
-                  <Show when={t.tag}><span class="text-primary text-xs">#{t.tag}</span></Show>
-                  <span class="text-[11px] font-mono text-muted-foreground">{t.default_minutes}m</span>
-                  <Show when={(t.tasks ?? []).length}><span class="text-[11px] text-muted-foreground">{(t.tasks ?? []).length}t</span></Show>
-                  <button onClick={() => instantiateTemplate(t)} class="btn-icon" title="Drop onto today"><Plus size={14} class="text-primary" /></button>
-                  <button onClick={() => deleteTemplate(t)} class="btn-icon" title="Delete template"><Trash2 size={13} class="text-muted-foreground" /></button>
-                </div>
-              )}
+              {(t) => {
+                const drag = useDraggable({ kind: 'plan-block', id: t.id });
+                return (
+                  <div
+                    onPointerDown={drag.onPointerDown}
+                    class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 cursor-grab select-none touch-none"
+                  >
+                    <Star size={12} class="text-primary flex-shrink-0" />
+                    <span class="flex-1 text-sm text-foreground truncate">{t.name}</span>
+                    <Show when={t.tag}><span class="text-primary text-xs">#{t.tag}</span></Show>
+                    <span class="text-[11px] font-mono text-muted-foreground">{t.default_minutes}m</span>
+                    <Show when={(t.tasks ?? []).length}><span class="text-[11px] text-muted-foreground">{(t.tasks ?? []).length}t</span></Show>
+                    <button onClick={(e) => { e.stopPropagation(); instantiateTemplate(t); }} class="btn-icon" title="Drop onto today"><Plus size={14} class="text-primary" /></button>
+                    <button onClick={(e) => { e.stopPropagation(); deleteTemplate(t); }} class="btn-icon" title="Delete template"><Trash2 size={13} class="text-muted-foreground" /></button>
+                  </div>
+                );
+              }}
             </For>
           </div>
         </Show>
