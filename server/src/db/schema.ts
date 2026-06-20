@@ -30,6 +30,7 @@ export const tasks = sqliteTable('tasks', {
   occurrenceDate: text('occurrence_date'),                 // local YYYY-MM-DD of this instance
   isHabit: integer('is_habit', { mode: 'boolean' }).default(false),
   isFastTask: integer('is_fast_task', { mode: 'boolean' }).default(false), // ritual-local, hidden from the task list (0020)
+  deferCount: integer('defer_count').notNull().default(0), // times rescheduled by the nightly review (0029)
   ownerId: integer('owner_id').references(() => owners.id),
   sourceKind: text('source_kind').default('manual'), // manual | agent | gmail | gcal
   sourceRef: text('source_ref'),

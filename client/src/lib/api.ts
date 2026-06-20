@@ -98,6 +98,9 @@ export const api = {
     streak: (id: number) => request<Streak>('GET', `/tasks/${id}/streak`),
     // Make a (possibly ritual-local) task a habit — flags it + ensures its Habit pattern.
     promoteHabit: (id: number) => request<{ task: Task }>('POST', `/tasks/${id}/promote-habit`, {}),
+    // Reschedule a missed/planned task `days` out from today (the +1/+3/+7 buttons).
+    reschedule: (id: number, days: number) =>
+      request<{ task: Task; scheduled_for: string }>('POST', `/tasks/${id}/reschedule`, { days }),
   },
 
   blocks: {
