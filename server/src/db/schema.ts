@@ -73,6 +73,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   blockType: text('block_type'),                     // 'plan' | 'concept' for 'timeblock' containers (0019)
   goalStartDate: text('goal_start_date'),            // YYYY-MM-DD goal day for concepts (nullable = someday)
   durationMinutes: integer('duration_minutes'),      // concept duration (no start/end semantics)
+  note: text('note'),                                // optional saved note on a Plan/Concept container (0021)
   startAt: text('start_at').notNull(),
   endAt: text('end_at').notNull(),
   isLocked: integer('is_locked', { mode: 'boolean' }).default(false),
@@ -130,6 +131,8 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   conceptDefaultMinutes: integer('concept_default_minutes').default(60),
   conceptAutosurface: integer('concept_autosurface', { mode: 'boolean' }).default(true),
   conceptHorizonDays: integer('concept_horizon_days').default(30),
+  // Canonical, user-editable concept-tag list for the Block Wizard (0021).
+  conceptTags: text('concept_tags', { mode: 'json' }).$type<{ name: string; minutes: number }[]>(),
   // Per-owner Ollama model overrides (null = use the env default). 0012.
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings

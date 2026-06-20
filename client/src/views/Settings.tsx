@@ -1,8 +1,9 @@
 import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags } from 'lucide-solid';
 import { prefs, refetchPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { PatternTypeSettings } from '../components/PatternTypeSettings.js';
+import { DEFAULT_CONCEPT_TAGS, type ConceptTag } from '../lib/pattern-meta.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -18,6 +19,7 @@ interface SettingsForm {
   // Plan/Concept Time-Block config. Plan horizon = planning_horizon_days.
   plan_allday_always: boolean; plan_daylong_for_promoted: boolean; plan_autofill_gaps: boolean;
   concept_default_minutes: number; concept_autosurface: boolean; concept_horizon_days: number;
+  concept_tags: ConceptTag[];
   timezone: string; planning_horizon_days: number;
   fast_model: string; quality_model: string; embed_model: string;
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
@@ -34,6 +36,7 @@ const DEFAULTS: SettingsForm = {
   max_time_block_minutes: 240, min_time_block_minutes: 15,
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
   concept_default_minutes: 60, concept_autosurface: true, concept_horizon_days: 30,
+  concept_tags: DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
   timezone: BROWSER_TZ, planning_horizon_days: 3,
   fast_model: '', quality_model: '', embed_model: '',
   memory_sync_enabled: false, memory_sync_completed: true,
@@ -59,6 +62,7 @@ export function Settings() {
       concept_default_minutes:   p.concept_default_minutes ?? 60,
       concept_autosurface:       p.concept_autosurface ?? true,
       concept_horizon_days:      p.concept_horizon_days ?? 30,
+      concept_tags:              p.concept_tags?.length ? p.concept_tags.map((c) => ({ ...c })) : DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
       timezone:                p.timezone ?? BROWSER_TZ,
       planning_horizon_days:   p.planning_horizon_days ?? 3,
       fast_model:              p.fast_model ?? '',
@@ -98,6 +102,17 @@ export function Settings() {
   const cDays = () => Math.floor(cdm() / 1440);
   const cHrs = () => Math.floor((cdm() % 1440) / 60);
   const cMin = () => cdm() % 60;
+
+  // Canonical concept-tag list editor (the Block Wizard starts from this).
+  function updateCT(i: number, patch: Partial<ConceptTag>) {
+    setForm((f) => ({ ...f, concept_tags: f.concept_tags.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) }));
+  }
+  function removeCT(i: number) {
+    setForm((f) => ({ ...f, concept_tags: f.concept_tags.filter((_, idx) => idx !== i) }));
+  }
+  function addCT() {
+    setForm((f) => ({ ...f, concept_tags: [...f.concept_tags, { name: 'New', minutes: 60 }] }));
+  }
 
   async function save(e: Event) {
     e.preventDefault();
@@ -287,6 +302,25 @@ export function Settings() {
             </div>
 
           </div>
+        </section>
+
+        {/* Concept Tags — the canonical Block-Wizard list */}
+        <section class="card">
+          <div class="section-label mb-3 flex items-center gap-1.5"><Tags size={12} /> Concept Tags</div>
+          <p class="text-xs text-muted-foreground mb-3">The canonical list the Block Wizard starts from — each is a title/tag with a default estimate. Saved with the rest of Settings.</p>
+          <div class="flex flex-col gap-2">
+            <For each={form().concept_tags}>
+              {(ct, i) => (
+                <div class="flex items-center gap-2">
+                  <input class="input py-1 text-sm flex-1" value={ct.name} onInput={(e) => updateCT(i(), { name: e.currentTarget.value })} />
+                  <input type="number" min="5" step="5" class="input py-1 text-sm w-20" value={ct.minutes} onInput={(e) => updateCT(i(), { minutes: Number(e.currentTarget.value) || 0 })} />
+                  <span class="text-[11px] text-muted-foreground">min</span>
+                  <button type="button" onClick={() => removeCT(i())} class="btn-icon hover:text-destructive" title="Remove"><Trash2 size={13} /></button>
+                </div>
+              )}
+            </For>
+          </div>
+          <button type="button" onClick={addCT} class="btn-secondary text-xs px-2.5 py-1 mt-2"><Plus size={12} /> Add tag</button>
         </section>
 
         {/* Pattern settings */}

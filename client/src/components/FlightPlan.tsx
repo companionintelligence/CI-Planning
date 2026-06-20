@@ -1,6 +1,6 @@
 import { For, Show, createSignal, createMemo } from 'solid-js';
-import { Zap, RotateCcw, X } from 'lucide-solid';
-import { api } from '../lib/api.js';
+import { Zap, RotateCcw, X, ChevronDown, ChevronRight } from 'lucide-solid';
+import { api, type FlightPlanItem } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, patterns, showToast,
 } from '../stores/index.js';
@@ -17,6 +17,7 @@ import {
  */
 export function FlightPlan() {
   const [running, setRunning] = createSignal(false);
+  const [collapsed, setCollapsed] = createSignal(false);
   const items = () => flightPlan() ?? [];
   const selectedCount = () => items().filter((i) => i.selected).length;
 
@@ -25,6 +26,29 @@ export function FlightPlan() {
     for (const p of patterns() ?? []) m.set(p.id, p.name);
     return m;
   });
+
+  // Group staged items by their source pattern — a staged routine/ritual reads as one
+  // unit (header + members), not separated rows. Directly-added tasks stay solo.
+  const grouped = createMemo(() => {
+    const groups = new Map<number, FlightPlanItem[]>();
+    const solo: FlightPlanItem[] = [];
+    for (const it of items()) {
+      if (it.source_pattern_id != null) {
+        const arr = groups.get(it.source_pattern_id) ?? [];
+        arr.push(it);
+        groups.set(it.source_pattern_id, arr);
+      } else solo.push(it);
+    }
+    return { groups: [...groups.entries()], solo };
+  });
+  async function toggleMany(its: FlightPlanItem[], selected: boolean) {
+    for (const it of its) await api.flightPlan.update(it.task_id, { selected });
+    refetchFlightPlan();
+  }
+  async function removeMany(its: FlightPlanItem[]) {
+    for (const it of its) await api.flightPlan.remove(it.task_id);
+    refetchFlightPlan();
+  }
 
   async function runAuto() {
     setRunning(true);
@@ -64,16 +88,62 @@ export function FlightPlan() {
     catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  const Check = (props: { on: boolean }) => (
+    <Show when={props.on}>
+      <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
+        <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </Show>
+  );
+
+  const FpRow = (props: { it: FlightPlanItem; inGroup?: boolean }) => {
+    const p = () => Math.min(Math.max(props.it.priority ?? 3, 1), 5);
+    return (
+      <li class="flex items-center gap-2.5 px-3 py-2 group" classList={{ 'pl-7': props.inGroup }}>
+        <button onClick={() => toggle(props.it.task_id, !props.it.selected)} class="checkbox flex-shrink-0" classList={{ 'checkbox-checked': props.it.selected }} title={props.it.selected ? 'Deselect' : 'Select for Auto'}>
+          <Check on={props.it.selected} />
+        </button>
+        <span class={`priority-dot p${p()} flex-shrink-0`} />
+        <span class="flex-1 text-sm text-foreground truncate" classList={{ 'opacity-50': !props.it.selected }}>{props.it.title}</span>
+        <Show when={props.it.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground flex-shrink-0">{props.it.estimated_minutes}m</span></Show>
+        <button onClick={() => remove(props.it.task_id)} class="btn-icon opacity-0 group-hover:opacity-100 flex-shrink-0" title="Remove from flight-plan"><X size={13} /></button>
+      </li>
+    );
+  };
+
+  // A staged pattern as one collapsible unit — its members travel together.
+  const FpGroup = (props: { patternId: number; its: FlightPlanItem[] }) => {
+    const [open, setOpen] = createSignal(true);
+    const allSelected = () => props.its.every((i) => i.selected);
+    return (
+      <li class="block">
+        <div class="flex items-center gap-2.5 px-3 py-2 bg-sidebar-accent/40 group">
+          <button onClick={() => toggleMany(props.its, !allSelected())} class="checkbox flex-shrink-0" classList={{ 'checkbox-checked': allSelected() }} title={allSelected() ? 'Deselect all' : 'Select all'}>
+            <Check on={allSelected()} />
+          </button>
+          <button onClick={() => setOpen((v) => !v)} class="text-muted-foreground"><Show when={open()} fallback={<ChevronRight size={13} />}><ChevronDown size={13} /></Show></button>
+          <span class="flex-1 text-sm font-medium text-foreground truncate">{patternName().get(props.patternId) ?? 'Pattern'}</span>
+          <span class="text-[11px] text-muted-foreground">{props.its.length} task{props.its.length === 1 ? '' : 's'}</span>
+          <button onClick={() => removeMany(props.its)} class="btn-icon opacity-0 group-hover:opacity-100 flex-shrink-0" title="Remove group"><X size={13} /></button>
+        </div>
+        <Show when={open()}>
+          <ul><For each={props.its}>{(it) => <FpRow it={it} inGroup />}</For></ul>
+        </Show>
+      </li>
+    );
+  };
+
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden">
-      {/* Header: label · Auto Schedule (top) · Reset */}
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mr-auto">
+      {/* Header: collapse toggle · label · Auto Schedule (top) · Reset */}
+      <div class="flex items-center gap-2 px-3 py-2" classList={{ 'border-b border-border': !collapsed() }}>
+        <button onClick={() => setCollapsed((v) => !v)} class="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mr-auto" title={collapsed() ? 'Expand flight-plan' : 'Collapse flight-plan'}>
+          <Show when={collapsed()} fallback={<ChevronDown size={13} />}><ChevronRight size={13} /></Show>
           Flight-plan
           <Show when={items().length > 0}>
-            <span class="ml-1.5 text-muted-foreground">· {selectedCount()}/{items().length} selected</span>
+            <span class="ml-1 normal-case font-normal tracking-normal text-muted-foreground">· {selectedCount()}/{items().length} selected</span>
           </Show>
-        </span>
+        </button>
         <Show when={items().length > 0}>
           <button onClick={reset} class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors" title="Clear the flight-plan">
             <RotateCcw size={12} /> Reset
@@ -86,7 +156,8 @@ export function FlightPlan() {
         </button>
       </div>
 
-      {/* Staged items */}
+      {/* Staged items — hidden when the flight-plan is collapsed */}
+      <Show when={!collapsed()}>
       <Show
         when={items().length > 0}
         fallback={
@@ -97,41 +168,10 @@ export function FlightPlan() {
         }
       >
         <ul class="divide-y divide-border">
-          <For each={items()}>
-            {(it) => {
-              const p = () => Math.min(Math.max(it.priority ?? 3, 1), 5);
-              return (
-                <li class="flex items-center gap-2.5 px-3 py-2 group">
-                  <button
-                    onClick={() => toggle(it.task_id, !it.selected)}
-                    class="checkbox flex-shrink-0"
-                    classList={{ 'checkbox-checked': it.selected }}
-                    title={it.selected ? 'Deselect' : 'Select for Auto'}
-                  >
-                    <Show when={it.selected}>
-                      <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
-                        <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                      </svg>
-                    </Show>
-                  </button>
-                  <span class={`priority-dot p${p()} flex-shrink-0`} />
-                  <span class="flex-1 text-sm text-foreground truncate" classList={{ 'opacity-50': !it.selected }}>
-                    {it.title}
-                  </span>
-                  <Show when={it.source_pattern_id != null && patternName().get(it.source_pattern_id)}>
-                    {(name) => <span class="badge-neutral text-[10px] flex-shrink-0">{name()}</span>}
-                  </Show>
-                  <Show when={it.estimated_minutes}>
-                    <span class="text-[11px] font-mono text-muted-foreground flex-shrink-0">{it.estimated_minutes}m</span>
-                  </Show>
-                  <button onClick={() => remove(it.task_id)} class="btn-icon opacity-0 group-hover:opacity-100 flex-shrink-0" title="Remove from flight-plan">
-                    <X size={13} />
-                  </button>
-                </li>
-              );
-            }}
-          </For>
+          <For each={grouped().groups}>{([pid, its]) => <FpGroup patternId={pid} its={its} />}</For>
+          <For each={grouped().solo}>{(it) => <FpRow it={it} />}</For>
         </ul>
+      </Show>
       </Show>
     </div>
   );
