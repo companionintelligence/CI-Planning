@@ -3,48 +3,72 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   darkMode: 'class',
   safelist: [
-    { pattern: /^(bg|text|border|ring|shadow|fill|stroke|outline)-(surface|ci|accent)/ },
-    { pattern: /^(hover|focus-visible):(bg|text|border|ring)-(surface|ci|accent)/ },
+    { pattern: /^(bg|text|border|ring|shadow|fill|stroke|outline)-(surface|ci|accent|primary|secondary|card|muted|destructive|sidebar|chart)/ },
+    { pattern: /^(hover|focus-visible):(bg|text|border|ring)-(surface|ci|accent|primary|secondary|card|muted|destructive)/ },
   ],
   theme: {
     extend: {
       fontFamily: {
-        // CI uses Source Code Pro as primary + Abel for headings
-        sans:    ['"Source Code Pro"', 'ui-monospace', 'monospace'],
-        heading: ['Abel', '"Source Code Pro"', 'sans-serif'],
+        // CI-Hub uses Montserrat across the org. Mono kept as a fallback for any code.
+        sans:    ['Montserrat', 'system-ui', 'sans-serif'],
+        heading: ['Montserrat', 'system-ui', 'sans-serif'],
         mono:    ['"Source Code Pro"', 'ui-monospace', 'monospace'],
       },
+      // Radius scale keyed off the global --radius token (CI-Hub: 0.625rem).
+      borderRadius: {
+        sm: 'calc(var(--radius) - 4px)',
+        md: 'calc(var(--radius) - 2px)',
+        lg: 'var(--radius)',
+        xl: 'calc(var(--radius) + 4px)',
+      },
       colors: {
-        // CI exact palette (from CSS variables)
-        ci: {
-          1:  '#ABD4D8',  // light teal
-          2:  '#85c3b4',  // medium teal-green
-          3:  '#58ebbf',  // bright mint — primary CTA
-          4:  '#409b9b',  // medium teal — interactive accent
-          5:  '#2c676d',  // dark teal
-          6:  '#1d5f6e',  // deep teal-blue
-          7:  '#0f717a',  // deep teal
-          8:  '#079d99',  // vivid teal
-          9:  '#82ffe1',  // neon mint — glow
-          10: '#244859',  // dark navy-teal surface
-          11: '#172e39',  // darkest hero bg
+        // ── CI-Hub semantic design tokens (shared org system; flip light/dark via CSS vars) ──
+        background: 'var(--background)',
+        foreground: 'var(--foreground)',
+        card:        { DEFAULT: 'var(--card)', foreground: 'var(--card-foreground)' },
+        popover:     { DEFAULT: 'var(--popover)', foreground: 'var(--popover-foreground)' },
+        primary:     { DEFAULT: 'var(--primary)', foreground: 'var(--primary-foreground)' },
+        secondary:   { DEFAULT: 'var(--secondary)', foreground: 'var(--secondary-foreground)' },
+        muted:       { DEFAULT: 'var(--muted)', foreground: 'var(--muted-foreground)' },
+        destructive: { DEFAULT: 'var(--destructive)', foreground: 'var(--destructive-foreground)' },
+        border: 'var(--border)',
+        input:  'var(--input)',
+        ring:   'var(--ring)',
+        sidebar: {
+          DEFAULT: 'var(--sidebar)',
+          foreground: 'var(--sidebar-foreground)',
+          accent: 'var(--sidebar-accent)',
+          border: 'var(--sidebar-border)',
+          ring: 'var(--sidebar-ring)',
         },
-        // App surfaces — teal-navy instead of blue-gray
+        chart: { 1: 'var(--chart-1)', 2: 'var(--chart-2)', 3: 'var(--chart-3)', 4: 'var(--chart-4)', 5: 'var(--chart-5)' },
+
+        // ── Legacy scales remapped onto the tokens so existing utilities theme automatically ──
+        // surface-* (page → lines) now resolves to themed surfaces instead of fixed hex.
         surface: {
-          950: '#070d11',
-          900: '#0a1520',
-          800: '#0f1e2e',
-          700: '#152637',
-          600: '#1a3040',
-          500: '#1f3a4a',
+          950: 'var(--background)', // page background
+          900: 'var(--sidebar)',    // nav / top-bar chrome
+          800: 'var(--card)',       // cards, modals, popovers
+          700: 'var(--border)',     // dividers, nav hover/active, subtle fills
+          600: 'var(--input)',      // input / control borders (lighter)
+          500: 'var(--input)',
         },
-        // Accent maps to CI teal
-        accent: {
-          DEFAULT: '#409b9b',  // c4 — borders, rings, badges
-          hi:      '#58ebbf',  // c3 — CTA buttons
-          light:   '#ABD4D8',  // c1 — text accent
-          glow:    '#82ffe1',  // c9 — neon highlight
+        // slate-* text shades map onto themed text tokens so text flips in light mode,
+        // preserving hierarchy: 50–200 = prominent (headings), 300–400 = body,
+        // 500–700 = muted/secondary. 800–950 cover the rare bg-slate-* usage.
+        slate: {
+          50: 'var(--secondary-foreground)', 100: 'var(--secondary-foreground)', 200: 'var(--secondary-foreground)',
+          300: 'var(--foreground)', 400: 'var(--foreground)',
+          500: 'var(--muted-foreground)', 600: 'var(--muted-foreground)', 700: 'var(--muted-foreground)',
+          800: 'var(--card)', 900: 'var(--sidebar)', 950: 'var(--background)',
         },
+        // Signature CI teal scale — constant across modes (brand accent: CTA, focus, glow).
+        ci: {
+          1: '#ABD4D8', 2: '#85c3b4', 3: '#58ebbf', 4: '#409b9b', 5: '#2c676d',
+          6: '#1d5f6e', 7: '#0f717a', 8: '#079d99', 9: '#82ffe1', 10: '#244859', 11: '#172e39',
+        },
+        // accent-* kept as the bright legacy teal for rings/badges; sub-keys unchanged.
+        accent: { DEFAULT: '#409b9b', hi: '#58ebbf', light: '#ABD4D8', glow: '#82ffe1' },
       },
       keyframes: {
         slideDown: {
