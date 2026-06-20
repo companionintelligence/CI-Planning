@@ -93,6 +93,8 @@ export const blockTemplates = sqliteTable('block_templates', {
   name: text('name').notNull(),
   tag: text('tag'),
   defaultMinutes: integer('default_minutes').default(60),
+  // Tasks saved with the Plan (PR-B): recreated at start + offset on instantiate.
+  tasks: text('tasks', { mode: 'json' }).$type<{ title: string; tag: string | null; estimated_minutes: number | null; offset_minutes: number }[]>(),
 });
 
 // Persisted real work per task. The single ended_at IS NULL row per owner is
