@@ -16,8 +16,17 @@
  * No DB writes, no generation job here — PR-1 ships the deterministic expander
  * only. The generation job (PR-2) consumes `occurrencesBetween` / `instanceStartUTC`.
  */
-import { RRule, rrulestr } from 'rrule';
+import type { RRule as RRuleInstance } from 'rrule';
+import * as rruleModule from 'rrule';
 import { zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+
+// `rrule` ships a CommonJS (ES5) `main` with no `exports` map, so Node's ESM
+// loader can't statically detect its named exports — a bare
+// `import { RRule, rrulestr } from 'rrule'` throws "does not provide an export
+// named 'RRule'" at container boot under Node 26 (it works under vite/esbuild,
+// which synthesize the named bindings, hence the test/runtime divergence). Pull
+// the bindings off the CJS default-interop object when present, else the namespace.
+const { RRule, rrulestr } = (rruleModule as unknown as { default?: typeof rruleModule }).default ?? rruleModule;
 
 export interface Template {
   recurrenceRule: string; // e.g. 'FREQ=WEEKLY;BYDAY=MO,WE,FR'
@@ -149,7 +158,7 @@ export function parseRule(s: string): ParseResult {
     return { ok: false, error: `Sub-daily recurrence (FREQ=${freq}) is not supported` };
   }
 
-  let rule: RRule;
+  let rule: RRuleInstance;
   try {
     // Anchor at an arbitrary fixed DTSTART so rrule.js can parse + we can re-emit.
     const parsed = rrulestr(`DTSTART:20000101T000000Z\nRRULE:${body}`);

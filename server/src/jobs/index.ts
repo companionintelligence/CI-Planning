@@ -1,6 +1,7 @@
 import { Cron } from 'croner';
 import { sqlite } from '../db/index.js';
 import { runScheduler } from '../engine/scheduler.js';
+import { generateRecurrences } from '../engine/recurrence-generate.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
@@ -54,6 +55,14 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsCreated: r.blocksCreated,
         itemsUpdated: r.blocksRemoved,
         log: `Scheduled ${r.blocksCreated} blocks, removed ${r.blocksRemoved}, ${r.unscheduled} unscheduled`,
+      };
+    }
+    case 'generate_recurrences': {
+      const r = generateRecurrences();
+      return {
+        itemsCreated: r.created,
+        itemsUpdated: r.missed,
+        log: `Materialized ${r.created} instances across ${r.templates} templates; flagged ${r.missed} missed habits`,
       };
     }
     default:
