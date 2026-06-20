@@ -14,6 +14,9 @@ import * as m0013 from './0013_patterns.js';
 import * as m0014 from './0014_habit_patterns_backfill.js';
 import * as m0015 from './0015_time_blocks.js';
 import * as m0016 from './0016_flight_plan.js';
+import * as m0017 from './0017_pattern_settings.js';
+import * as m0018 from './0018_timeblock_prefs.js';
+import * as m0019 from './0019_timeblock_types.js';
 
 export interface Migration {
   id: string;
@@ -24,4 +27,4 @@ export interface Migration {
  * Ordered list of migrations. Explicit (not a glob / dynamic import) so order is
  * deterministic and the set is bundler-safe. Append new migrations to the end.
  */
-export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016];
+export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019];

@@ -1,7 +1,8 @@
 import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes } from 'lucide-solid';
 import { prefs, refetchPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
+import { PatternTypeSettings } from '../components/PatternTypeSettings.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -13,16 +14,27 @@ const ALL_TIMEZONES: string[] = (() => {
 interface SettingsForm {
   workday_start: string; workday_end: string;
   max_focus_block_minutes: number; min_break_minutes: number;
-  planning_mode: string; timezone: string; planning_horizon_days: number;
+  max_time_block_minutes: number; min_time_block_minutes: number;
+  // Plan/Concept Time-Block config. Plan horizon = planning_horizon_days.
+  plan_allday_always: boolean; plan_daylong_for_promoted: boolean; plan_autofill_gaps: boolean;
+  concept_default_minutes: number; concept_autosurface: boolean; concept_horizon_days: number;
+  timezone: string; planning_horizon_days: number;
   fast_model: string; quality_model: string; embed_model: string;
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
 }
 
+/** The boolean fields of the form — for the reusable Toggle. */
+type BoolField =
+  | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface';
+
 const DEFAULTS: SettingsForm = {
   workday_start: '09:00', workday_end: '18:00',
   max_focus_block_minutes: 90, min_break_minutes: 10,
-  planning_mode: 'ritual', timezone: BROWSER_TZ, planning_horizon_days: 3,
+  max_time_block_minutes: 240, min_time_block_minutes: 15,
+  plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
+  concept_default_minutes: 60, concept_autosurface: true, concept_horizon_days: 30,
+  timezone: BROWSER_TZ, planning_horizon_days: 3,
   fast_model: '', quality_model: '', embed_model: '',
   memory_sync_enabled: false, memory_sync_completed: true,
   memory_sync_habits: true, memory_sync_reflections: true,
@@ -39,7 +51,14 @@ export function Settings() {
       workday_end:             p.workday_end ?? '18:00',
       max_focus_block_minutes: p.max_focus_block_minutes ?? 90,
       min_break_minutes:       p.min_break_minutes ?? 10,
-      planning_mode:           p.planning_mode ?? 'ritual',
+      max_time_block_minutes:  p.max_time_block_minutes ?? 240,
+      min_time_block_minutes:  p.min_time_block_minutes ?? 15,
+      plan_allday_always:        p.plan_allday_always ?? false,
+      plan_daylong_for_promoted: p.plan_daylong_for_promoted ?? false,
+      plan_autofill_gaps:        p.plan_autofill_gaps ?? true,
+      concept_default_minutes:   p.concept_default_minutes ?? 60,
+      concept_autosurface:       p.concept_autosurface ?? true,
+      concept_horizon_days:      p.concept_horizon_days ?? 30,
       timezone:                p.timezone ?? BROWSER_TZ,
       planning_horizon_days:   p.planning_horizon_days ?? 3,
       fast_model:              p.fast_model ?? '',
@@ -55,6 +74,30 @@ export function Settings() {
   function setField<K extends keyof SettingsForm>(key: K, val: SettingsForm[K]) {
     setForm((f) => ({ ...f, [key]: val }));
   }
+
+  // A small switch bound to a boolean form field.
+  const Toggle = (props: { field: BoolField; label: string; hint?: string }) => (
+    <label class="flex items-start gap-2 cursor-pointer select-none">
+      <button type="button" role="switch" aria-checked={form()[props.field]}
+        onClick={() => setField(props.field, !form()[props.field])}
+        class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+        classList={{ 'bg-primary': form()[props.field], 'bg-muted border border-border': !form()[props.field] }}>
+        <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+          classList={{ 'translate-x-4': form()[props.field] }} />
+      </button>
+      <div>
+        <div class="text-sm text-foreground leading-tight">{props.label}</div>
+        <Show when={props.hint}><div class="text-[11px] text-muted-foreground">{props.hint}</div></Show>
+      </div>
+    </label>
+  );
+
+  // Concept default duration is stored as total minutes; entered as Days/Hours/Minutes.
+  const cdm = () => form().concept_default_minutes;
+  const setCdm = (d: number, h: number, m: number) => setField('concept_default_minutes', d * 1440 + h * 60 + m);
+  const cDays = () => Math.floor(cdm() / 1440);
+  const cHrs = () => Math.floor((cdm() % 1440) / 60);
+  const cMin = () => cdm() % 60;
 
   async function save(e: Event) {
     e.preventDefault();
@@ -126,32 +169,6 @@ export function Settings() {
       <h1 class="text-2xl font-bold text-slate-100 mb-6">Settings</h1>
 
       <form onSubmit={save} class="flex flex-col gap-5">
-        {/* Planning mode */}
-        <section class="card">
-          <div class="section-label mb-3">Planning Mode</div>
-          <div class="flex gap-3">
-            {(['auto', 'ritual'] as const).map((mode) => (
-              <label
-                class={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border cursor-pointer transition-all duration-150
-                  ${form().planning_mode === mode
-                    ? 'border-accent bg-accent/10 shadow-glow-accent'
-                    : 'border-surface-600 hover:border-surface-500'}`}
-              >
-                <input
-                  type="radio" class="sr-only" value={mode}
-                  checked={form().planning_mode === mode}
-                  onChange={() => setField('planning_mode', mode)}
-                />
-                <span class="text-2xl">{mode === 'auto' ? '⚡' : '🌅'}</span>
-                <span class="text-sm font-semibold text-slate-200 capitalize">{mode}</span>
-                <span class="text-xs text-slate-500 text-center leading-snug">
-                  {mode === 'auto' ? 'AI plans your day automatically' : 'Guided morning ritual'}
-                </span>
-              </label>
-            ))}
-          </div>
-        </section>
-
         {/* Work hours */}
         <section class="card">
           <div class="section-label mb-3">Work Hours</div>
@@ -176,29 +193,107 @@ export function Settings() {
           </label>
         </section>
 
-        {/* Block settings */}
+        {/* Time-Block settings — Plan | Concept */}
         <section class="card">
-          <div class="section-label mb-3">Block Settings</div>
-          <div class="flex gap-4">
-            <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">Max focus block (minutes)</span>
-              <input type="number" class="input" min={15} max={240} step={15}
-                value={form().max_focus_block_minutes}
-                onInput={e => setField('max_focus_block_minutes', Number(e.currentTarget.value))} />
-            </label>
-            <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">Min break (minutes)</span>
-              <input type="number" class="input" min={0} max={60} step={5}
-                value={form().min_break_minutes}
-                onInput={e => setField('min_break_minutes', Number(e.currentTarget.value))} />
-            </label>
+          <div class="section-label mb-3">Time-Block Settings</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            {/* ── PLAN ── scheduled (set time + duration) */}
+            <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-semibold text-foreground">Plan</span>
+                <Star size={15} class="text-primary" />
+              </div>
+              <div class="border-t-[3px] border-primary" />
+              <p class="text-[11px] text-muted-foreground -mt-1.5">Scheduled — set time + duration.</p>
+
+              <div class="flex gap-3">
+                <label class="flex flex-col gap-1 flex-1">
+                  <span class="text-[11px] text-muted-foreground">Max (min)</span>
+                  <input type="number" class="input py-1 text-sm" min={15} max={1440} step={15}
+                    value={form().max_time_block_minutes} onInput={e => setField('max_time_block_minutes', Number(e.currentTarget.value))} />
+                </label>
+                <label class="flex flex-col gap-1 flex-1">
+                  <span class="text-[11px] text-muted-foreground">Min (min)</span>
+                  <input type="number" class="input py-1 text-sm" min={5} max={240} step={5}
+                    value={form().min_time_block_minutes} onInput={e => setField('min_time_block_minutes', Number(e.currentTarget.value))} />
+                </label>
+              </div>
+
+              <Toggle field="plan_allday_always" label="All-day Plans" hint="Always allow creating all-day Plans." />
+              <Toggle field="plan_daylong_for_promoted" label="Day-long when promoted" hint="A promoted Concept becomes a day-long Plan." />
+
+              <label class="flex flex-col gap-1">
+                <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
+                <input type="number" class="input py-1 text-sm" min={1} max={60} step={1}
+                  value={form().planning_horizon_days} onInput={e => setField('planning_horizon_days', Number(e.currentTarget.value))} />
+              </label>
+
+              <div class="pt-2 border-t border-border mt-auto">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
+                <Toggle field="plan_autofill_gaps" label="Auto-fill free gaps" hint="Let Auto place Plans into open time." />
+                <div class="flex gap-3 mt-2">
+                  <label class="flex flex-col gap-1 flex-1">
+                    <span class="text-[11px] text-muted-foreground">Max focus (min)</span>
+                    <input type="number" class="input py-1 text-sm" min={15} max={240} step={15}
+                      value={form().max_focus_block_minutes} onInput={e => setField('max_focus_block_minutes', Number(e.currentTarget.value))} />
+                  </label>
+                  <label class="flex flex-col gap-1 flex-1">
+                    <span class="text-[11px] text-muted-foreground">Min break (min)</span>
+                    <input type="number" class="input py-1 text-sm" min={0} max={60} step={5}
+                      value={form().min_break_minutes} onInput={e => setField('min_break_minutes', Number(e.currentTarget.value))} />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* ── CONCEPT ── unscheduled goal (start day + duration) */}
+            <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-semibold text-foreground">Concept</span>
+                <Pentagon size={15} class="text-muted-foreground" />
+              </div>
+              <div class="border-t-2 border-dashed border-muted-foreground" />
+              <p class="text-[11px] text-muted-foreground -mt-1.5">A goal — start day + duration, no set time.</p>
+
+              <div>
+                <span class="text-[11px] text-muted-foreground">Default duration</span>
+                <div class="flex gap-2 mt-1">
+                  <label class="flex flex-col gap-0.5 flex-1">
+                    <input type="number" class="input py-1 text-sm" min={0} max={60} value={cDays()} onInput={e => setCdm(Number(e.currentTarget.value) || 0, cHrs(), cMin())} />
+                    <span class="text-[10px] text-muted-foreground text-center">days</span>
+                  </label>
+                  <label class="flex flex-col gap-0.5 flex-1">
+                    <input type="number" class="input py-1 text-sm" min={0} max={23} value={cHrs()} onInput={e => setCdm(cDays(), Number(e.currentTarget.value) || 0, cMin())} />
+                    <span class="text-[10px] text-muted-foreground text-center">hrs</span>
+                  </label>
+                  <label class="flex flex-col gap-0.5 flex-1">
+                    <input type="number" class="input py-1 text-sm" min={0} max={55} step={5} value={cMin()} onInput={e => setCdm(cDays(), cHrs(), Number(e.currentTarget.value) || 0)} />
+                    <span class="text-[10px] text-muted-foreground text-center">min</span>
+                  </label>
+                </div>
+              </div>
+
+              <label class="flex flex-col gap-1">
+                <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
+                <input type="number" class="input py-1 text-sm" min={1} max={365} step={1}
+                  value={form().concept_horizon_days} onInput={e => setField('concept_horizon_days', Number(e.currentTarget.value))} />
+              </label>
+
+              <div class="pt-2 border-t border-border mt-auto">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
+                <Toggle field="concept_autosurface" label="Surface on goal day" hint="Show the Concept on its goal start day." />
+              </div>
+            </div>
+
           </div>
-          <label class="flex flex-col gap-1.5 mt-4">
-            <span class="text-xs text-slate-500">Planning horizon (days) — how far ahead a dated task can be pulled into today</span>
-            <input type="number" class="input" min={1} max={30} step={1}
-              value={form().planning_horizon_days}
-              onInput={e => setField('planning_horizon_days', Number(e.currentTarget.value))} />
-          </label>
+        </section>
+
+        {/* Pattern settings */}
+        <section class="card">
+          <div class="section-label mb-3 flex items-center gap-1.5"><Shapes size={12} /> Pattern Settings</div>
+          <p class="text-xs text-muted-foreground mb-3">Each category's default shape, colour, estimate, and reminders. Colours come from the shared theme palette; reminders fire in a later phase.</p>
+          <PatternTypeSettings />
         </section>
 
         {/* Models */}

@@ -108,6 +108,63 @@ export const api = {
       request<{ block: Block }>('POST', '/blocks', body),
     update: (id: number, body: Partial<Block>) => request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
     delete: (id: number) => request<{ ok: boolean }>('DELETE', `/blocks/${id}`),
+    // Concepts have no real time — fetch them all (owner-scoped) for the horizon lane.
+    listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?block_type=concept'),
+    // Promote a Concept into a scheduled Plan at the chosen start (end ⇐ duration).
+    promote: (id: number, start_at: string, opts?: { end_at?: string; all_day?: boolean }) =>
+      request<{ block: Block }>('POST', `/blocks/${id}/promote`, { start_at, ...opts }),
+  },
+
+  // ── Patterns (Phase G, G1) — typed, reusable task collections ────────────────
+  patterns: {
+    list: () => request<{ patterns: Pattern[] }>('GET', '/patterns'),
+    get: (id: number) => request<{ pattern: Pattern }>('GET', `/patterns/${id}`),
+    create: (body: PatternInput) => request<{ pattern: Pattern }>('POST', '/patterns', body),
+    update: (id: number, body: Partial<PatternInput>) =>
+      request<{ pattern: Pattern }>('PATCH', `/patterns/${id}`, body),
+    delete: (id: number) => request<{ ok: boolean }>('DELETE', `/patterns/${id}`),
+    addTask: (id: number, task_id: number, position?: number) =>
+      request<{ pattern_id: number; task_ids: number[] }>('POST', `/patterns/${id}/tasks`, { task_id, position }),
+    removeTask: (id: number, taskId: number) =>
+      request<{ pattern_id: number; task_ids: number[] }>('DELETE', `/patterns/${id}/tasks/${taskId}`),
+  },
+
+  patternTypes: {
+    list: () => request<{ pattern_types: PatternType[] }>('GET', '/pattern-types'),
+    create: (body: PatternTypeInput) =>
+      request<{ pattern_type: PatternType }>('POST', '/pattern-types', body),
+    update: (id: number, body: Partial<PatternTypeInput>) =>
+      request<{ pattern_type: PatternType }>('PATCH', `/pattern-types/${id}`, body),
+    delete: (id: number) => request<{ ok: boolean }>('DELETE', `/pattern-types/${id}`),
+  },
+
+  // ── Flight-plan + two-step Auto (Phase G, G4) ────────────────────────────────
+  flightPlan: {
+    list: () => request<{ flight_plan: FlightPlanItem[] }>('GET', '/flight-plan'),
+    addTask: (task_id: number) =>
+      request<{ flight_plan: FlightPlanItem[]; added: number }>('POST', '/flight-plan', { task_id }),
+    addPattern: (pattern_id: number) =>
+      request<{ flight_plan: FlightPlanItem[]; added: number }>('POST', '/flight-plan', { pattern_id }),
+    update: (taskId: number, body: { selected?: boolean; position?: number }) =>
+      request<{ flight_plan: FlightPlanItem[] }>('PATCH', `/flight-plan/${taskId}`, body),
+    remove: (taskId: number) =>
+      request<{ flight_plan: FlightPlanItem[] }>('DELETE', `/flight-plan/${taskId}`),
+    reset: () => request<{ ok: boolean; cleared: number }>('POST', '/flight-plan/reset', {}),
+  },
+
+  // Two-step Auto: empty/unselected flight-plan → fill candidates; selected → place.
+  auto: {
+    run: (body?: { block_id?: number; date?: string }) =>
+      request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/run', body ?? {}),
+  },
+
+  blockTemplates: {
+    list: () => request<{ block_templates: BlockTemplate[] }>('GET', '/block-templates'),
+    create: (body: { name: string; tag?: string; default_minutes?: number }) =>
+      request<{ block_template: BlockTemplate }>('POST', '/block-templates', body),
+    delete: (id: number) => request<{ ok: boolean }>('DELETE', `/block-templates/${id}`),
+    instantiate: (id: number, start_at: string, end_at?: string) =>
+      request<{ block: Block }>('POST', `/block-templates/${id}/instantiate`, { start_at, end_at }),
   },
 
   possibles: {
@@ -157,6 +214,11 @@ export const api = {
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface Block {
   id: number; task_id?: number; title: string; block_kind: string;
+  tag?: string | null; // container/grouping tag (G3); set on 'timeblock' containers
+  // Plan/Concept container typing (0019). block_type is set on 'timeblock' containers.
+  block_type?: 'plan' | 'concept' | null;
+  goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
+  duration_minutes?: number | null; // concept duration (no start/end semantics)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
@@ -168,12 +230,69 @@ export interface Possible {
   status: string; created_at: string;
 }
 
+// ── Phase G: patterns, flight-plan, block templates ───────────────────────────
+/** A pattern type: Routine ▢ / Habit ◯ / Ritual △ (+ user-defined). icon_shape drives textures. */
+export interface PatternType {
+  id: number; owner_id: number; name: string;
+  icon_shape: string;                    // square | circle | triangle | <custom>
+  reminder_config: unknown | null;       // per-type reminder defaults (Phase H reads)
+  is_builtin: boolean;
+  // Per-type display/config defaults (0017).
+  color_token: string | null;            // CI-Hub token key (e.g. 'chart-1'); null = default
+  texture: string | null;                // motif override; null = derive from tag
+  default_est_minutes: number | null;    // default est for this category
+  notify: boolean;                       // per-type reminder toggle (Phase H fires)
+}
+
+export interface PatternTypeInput {
+  name: string; icon_shape: string;
+  reminder_config?: unknown;
+  color_token?: string | null; texture?: string | null;
+  default_est_minutes?: number | null; notify?: boolean;
+}
+
+/** A pattern: a typed, reusable, many-to-many collection of tasks (no own recurrence). */
+export interface Pattern {
+  id: number; owner_id: number; type_id: number | null;
+  name: string; tag: string | null; notes: string | null;
+  created_at: string; task_ids: number[];
+}
+
+export interface PatternInput {
+  type_id?: number | null; name: string; tag?: string | null;
+  notes?: string | null; task_ids?: number[];
+}
+
+/** A flight-plan row: a staged task (+ its source pattern, if added via one). */
+export interface FlightPlanItem {
+  task_id: number; selected: boolean; position: number;
+  source_pattern_id: number | null; added_at: string;
+  title: string; priority: number | null; estimated_minutes: number | null; status: string;
+}
+
+/** Result of POST /api/auto/run — `fill` (step 1) proposes; `place` (step 2) schedules. */
+export interface AutoResult {
+  step: 'fill' | 'place';
+  candidatesAdded?: number;              // step 1
+  blocksCreated?: number; placed?: number; unplaced?: number; // step 2
+}
+
+/** A reusable Time-Block template (named, tagged container with a default duration). */
+export interface BlockTemplate {
+  id: number; owner_id: number; name: string; tag: string | null; default_minutes: number;
+}
+
 export interface Tag { id: number; name: string; count: number; }
 
 export interface Prefs {
   id: number; owner_id: number; workday_start: string; workday_end: string;
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
+  // Time-Block container duration bounds (0017).
+  max_time_block_minutes?: number; min_time_block_minutes?: number;
+  // Plan/Concept Time-Block config (0018). Plan horizon = planning_horizon_days.
+  plan_allday_always?: boolean; plan_daylong_for_promoted?: boolean; plan_autofill_gaps?: boolean;
+  concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
   // Ollama model overrides (null/'' = use env default).
