@@ -3,7 +3,7 @@ import { Plus, Triangle, ListPlus, Boxes, Search, ChevronDown, Clock, Star, Pent
 import { A } from '@solidjs/router';
 import { api, type BlockTemplate } from '../lib/api.js';
 import {
-  tasks, flightPlan, patterns, patternTypes, refetchFlightPlan, refetchBlocks, refetchConcepts, showToast,
+  tasks, flightPlan, patterns, patternTypes, refetchTasks, refetchFlightPlan, refetchBlocks, refetchConcepts, showToast,
 } from '../stores/index.js';
 import { localISODate } from '../lib/dates.js';
 import { ShapeIcon } from './ShapeIcon.js';
@@ -47,16 +47,28 @@ export function PlannerDrawer() {
   const stagedIds = createMemo(() => new Set((flightPlan() ?? []).map((i) => i.task_id)));
 
   // ── Open Task tab ────────────────────────────────────────────────────────────
+  // Search open tasks by name OR tag (strip a leading '#'); empty query = all.
   const openTasks = () => {
-    const q = query().toLowerCase();
+    const q = query().trim().toLowerCase().replace(/^#/, '');
     return (tasks() ?? [])
-      .filter((t) => t.status === 'open' && !t.parent_id && !stagedIds().has(t.id))
-      .filter((t) => !q || t.title.toLowerCase().includes(q))
+      .filter((t) => t.status === 'open' && !t.parent_id && !t.is_fast_task && !stagedIds().has(t.id))
+      .filter((t) => !q || t.title.toLowerCase().includes(q) || (t.tags ?? []).some((tag) => tag.toLowerCase().includes(q)))
       .slice(0, 50);
   };
   async function stageTask(id: number) {
     try { await api.flightPlan.addTask(id); refetchFlightPlan(); showToast('Added to flight-plan', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  // Create a brand-new task from the typed text (quick-add parses #tags / times) and
+  // stage it straight onto the flight-plan.
+  async function createAndStage(text: string) {
+    try {
+      const { task } = await api.tasks.quick(text.trim());
+      await api.flightPlan.addTask(task.id);
+      refetchTasks(); refetchFlightPlan();
+      setQuery('');
+      showToast(`Added "${task.title}" to the flight-plan`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
   // ── Pattern tab ──────────────────────────────────────────────────────────────
@@ -149,39 +161,54 @@ export function PlannerDrawer() {
   );
 
   return (
-    <div class="sticky bottom-16 md:bottom-0 z-20 mt-4" style={{ 'padding-bottom': 'env(safe-area-inset-bottom)' }}>
-      {/* Expanding panel (above the always-present bar) */}
+    <>
+      {/* Darkened backdrop — focus mode when a tab is open; click to dismiss. */}
       <Show when={tab()}>
-        <div class="rounded-t-xl border border-b-0 border-border bg-popover shadow-2xl max-h-[40vh] overflow-y-auto">
-          {/* Search (task + pattern tabs) */}
-          <Show when={tab() === 'task' || tab() === 'pattern'}>
-            <div class="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
-              <Search size={14} class="text-muted-foreground flex-shrink-0" />
-              <input
-                class="input py-1 text-sm" placeholder={tab() === 'task' ? 'Search open tasks…' : 'Search patterns…'}
-                value={query()} onInput={(e) => setQuery(e.currentTarget.value)}
-              />
-            </div>
-          </Show>
+        <div class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm" onClick={() => setTab(null)} />
+      </Show>
 
-          {/* Open Task list */}
-          <Show when={tab() === 'task'}>
-            <Show when={openTasks().length > 0} fallback={<p class="p-4 text-center text-sm text-muted-foreground">No open tasks to stage.</p>}>
-              <ul class="divide-y divide-border">
-                <For each={openTasks()}>
-                  {(t) => (
-                    <li>
-                      <button onClick={() => stageTask(t.id)} class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-accent transition-colors">
-                        <Plus size={13} class="text-primary flex-shrink-0" />
-                        <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
-                        <For each={t.tags.slice(0, 2)}>{(tg) => <span class="badge-neutral text-[10px]">#{tg}</span>}</For>
-                      </button>
-                    </li>
-                  )}
-                </For>
-              </ul>
+      {/* The drawer: fixed flush above the bottom nav, clearing the desktop rail. */}
+      <div class="fixed inset-x-0 bottom-14 md:bottom-0 md:left-52 z-40" style={{ 'padding-bottom': 'env(safe-area-inset-bottom)' }}>
+        {/* Expanding sheet (above the always-present bar) */}
+        <Show when={tab()}>
+          <div class="rounded-t-xl border border-b-0 border-border bg-popover shadow-2xl max-h-[70vh] overflow-y-auto">
+            {/* Search (task + pattern tabs) */}
+            <Show when={tab() === 'task' || tab() === 'pattern'}>
+              <div class="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
+                <Search size={14} class="text-muted-foreground flex-shrink-0" />
+                <input
+                  class="input py-1 text-sm"
+                  placeholder={tab() === 'task' ? 'Search by name or #tag, or type a new task…' : 'Search patterns…'}
+                  value={query()} onInput={(e) => setQuery(e.currentTarget.value)}
+                  onKeyDown={(e) => { if (tab() === 'task' && e.key === 'Enter' && query().trim()) createAndStage(query()); }}
+                />
+              </div>
             </Show>
-          </Show>
+
+            {/* Open Task list — plus a "create new task" row from the typed text. */}
+            <Show when={tab() === 'task'}>
+              <Show when={query().trim()}>
+                <button onClick={() => createAndStage(query())} class="w-full flex items-center gap-2 px-3 py-2 text-left border-b border-border hover:bg-sidebar-accent transition-colors">
+                  <Plus size={13} class="text-primary flex-shrink-0" />
+                  <span class="flex-1 text-sm text-foreground truncate">Add new task: <span class="font-medium">“{query().trim()}”</span></span>
+                </button>
+              </Show>
+              <Show when={openTasks().length > 0} fallback={<Show when={!query().trim()}><p class="p-4 text-center text-sm text-muted-foreground">No open tasks to stage.</p></Show>}>
+                <ul class="divide-y divide-border">
+                  <For each={openTasks()}>
+                    {(t) => (
+                      <li>
+                        <button onClick={() => stageTask(t.id)} class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-accent transition-colors">
+                          <Plus size={13} class="text-primary flex-shrink-0" />
+                          <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
+                          <For each={t.tags.slice(0, 2)}>{(tg) => <span class="badge-neutral text-[10px]">#{tg}</span>}</For>
+                        </button>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </Show>
 
           {/* Pattern list */}
           <Show when={tab() === 'pattern'}>
@@ -308,6 +335,7 @@ export function PlannerDrawer() {
           </button>
         </Show>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

@@ -1,5 +1,5 @@
 import { createResource, createMemo, Show, For } from 'solid-js';
-import { Plus, AlertCircle, Ban, ListTodo, Sparkles } from 'lucide-solid';
+import { Plus, AlertCircle, Ban, ListTodo } from 'lucide-solid';
 import { blocks, tasks, taskOf, setTaskModal } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
@@ -36,46 +36,34 @@ export function Today() {
 
   return (
     <div class="flex flex-col gap-4 p-4 md:p-6 page-enter min-h-full">
-      {/* Day Overview + Summary */}
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Day Overview */}
-        <div class="rounded-xl border border-border bg-card p-4">
-          <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mb-1">Day Overview</div>
-          <div class="flex items-baseline gap-2">
-            <h1 class="text-xl font-semibold text-foreground">{weekday}</h1>
-            <span class="text-sm text-muted-foreground">· {monthDay}</span>
-          </div>
-          <Show
-            when={todayTags().length > 0}
-            fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing scheduled yet.</p>}
-          >
-            <div class="mt-2 flex flex-wrap gap-1.5">
-              <For each={todayTags()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
+      {/* Day Overview — date · tag set · counts, with + New Task top-right */}
+      <div class="rounded-xl border border-border bg-card p-4">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mb-1">Day Overview</div>
+            <div class="flex items-baseline gap-2">
+              <h1 class="text-xl font-semibold text-foreground">{weekday}</h1>
+              <span class="text-sm text-muted-foreground">· {monthDay}</span>
             </div>
-          </Show>
-          <Show when={summary()?.prose}>
-            {(prose) => (
-              <p class="mt-3 flex items-start gap-1.5 text-sm text-muted-foreground leading-relaxed">
-                <Sparkles size={13} class="text-primary flex-shrink-0 mt-0.5" />
-                <span>{prose()}</span>
-              </p>
-            )}
-          </Show>
+          </div>
+          <button onClick={() => setTaskModal({ open: true })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0">
+            <Plus size={13} /> New Task
+          </button>
         </div>
 
-        {/* Summary — counts + the moved [+ New Task] */}
-        <div class="rounded-xl border border-border bg-card p-4 flex flex-col">
-          <div class="flex items-center justify-between mb-3">
-            <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Summary</span>
-            <button onClick={() => setTaskModal({ open: true })} class="btn-primary text-xs px-3 py-1.5">
-              <Plus size={13} /> New Task
-            </button>
+        <Show
+          when={todayTags().length > 0}
+          fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing scheduled yet.</p>}
+        >
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            <For each={todayTags()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
           </div>
-          <div class="grid grid-cols-3 gap-2 mt-auto">
-            <Stat icon={AlertCircle} value={overdue()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
-            <Stat icon={Ban} value={blocked()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
-            <Stat icon={ListTodo} value={open()} label="open" tone="foreground" />
-          </div>
+        </Show>
+
+        <div class="grid grid-cols-3 gap-2 mt-3">
+          <Stat icon={AlertCircle} value={overdue()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
+          <Stat icon={Ban} value={blocked()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
+          <Stat icon={ListTodo} value={open()} label="open" tone="foreground" />
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createMemo } from 'solid-js';
-import { Zap, RotateCcw, X } from 'lucide-solid';
+import { Zap, RotateCcw, X, ChevronDown, ChevronRight } from 'lucide-solid';
 import { api } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, patterns, showToast,
@@ -17,6 +17,7 @@ import {
  */
 export function FlightPlan() {
   const [running, setRunning] = createSignal(false);
+  const [collapsed, setCollapsed] = createSignal(false);
   const items = () => flightPlan() ?? [];
   const selectedCount = () => items().filter((i) => i.selected).length;
 
@@ -66,14 +67,15 @@ export function FlightPlan() {
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden">
-      {/* Header: label · Auto Schedule (top) · Reset */}
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mr-auto">
+      {/* Header: collapse toggle · label · Auto Schedule (top) · Reset */}
+      <div class="flex items-center gap-2 px-3 py-2" classList={{ 'border-b border-border': !collapsed() }}>
+        <button onClick={() => setCollapsed((v) => !v)} class="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mr-auto" title={collapsed() ? 'Expand flight-plan' : 'Collapse flight-plan'}>
+          <Show when={collapsed()} fallback={<ChevronDown size={13} />}><ChevronRight size={13} /></Show>
           Flight-plan
           <Show when={items().length > 0}>
-            <span class="ml-1.5 text-muted-foreground">· {selectedCount()}/{items().length} selected</span>
+            <span class="ml-1 normal-case font-normal tracking-normal text-muted-foreground">· {selectedCount()}/{items().length} selected</span>
           </Show>
-        </span>
+        </button>
         <Show when={items().length > 0}>
           <button onClick={reset} class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors" title="Clear the flight-plan">
             <RotateCcw size={12} /> Reset
@@ -86,7 +88,8 @@ export function FlightPlan() {
         </button>
       </div>
 
-      {/* Staged items */}
+      {/* Staged items — hidden when the flight-plan is collapsed */}
+      <Show when={!collapsed()}>
       <Show
         when={items().length > 0}
         fallback={
@@ -132,6 +135,7 @@ export function FlightPlan() {
             }}
           </For>
         </ul>
+      </Show>
       </Show>
     </div>
   );
