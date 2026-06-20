@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const owners = sqliteTable('owners', {
@@ -82,6 +82,9 @@ export const timeBlocks = sqliteTable('time_blocks', {
   sourceKind: text('source_kind').default('manual'),
   sourceRef: text('source_ref'),
   status: text('status').default('planned'),         // planned | completed | skipped | overrun
+  // Plan-as-container (PR-C / 0023): a task block's containing Plan. Self-ref FK,
+  // ON DELETE SET NULL — deleting a Plan detaches members (they stay as loose blocks).
+  parentBlockId: integer('parent_block_id').references((): AnySQLiteColumn => timeBlocks.id, { onDelete: 'set null' }),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
