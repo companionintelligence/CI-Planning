@@ -131,7 +131,7 @@
 
 ### R — Backups, restore, export/import *(new — was missing)*
 **Goal:** recoverability for hardware you *sell*, and portability for "UnCloud Your Life."
-- **Infra:** scheduled SQLite snapshots and/or **Litestream** continuous replication (flagged in PLANNING.md); one-command restore; the rule "replicate the `.db`, never sync `.db` over Syncthing."
+- **Infra:** scheduled SQLite snapshots and/or **Litestream** continuous replication; one-command restore; the rule "replicate the `.db`, never sync `.db` over Syncthing." Full spec: [R-backups-restore.md](R-backups-restore.md).
 - **API/Client:** `GET /api/export` (full JSON), `POST /api/import` (validated, owner-scoped); a Settings "Back up / restore / export" panel.
 - **Audit log (foundation):** append-only `audit_log(owner_id, actor, action, entity, at)` — lightweight now, essential before auth/multi-device.
 - **Tests:** snapshot→wipe→restore yields byte-identical state; export→import round-trips with stable ids; import rejects malformed/foreign-owner data.

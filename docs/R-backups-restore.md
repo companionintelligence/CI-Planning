@@ -16,7 +16,7 @@ Companion to [ROADMAP.md](ROADMAP.md). Depends on **B0** (migration runner + `li
 ## Current state (what exists today)
 - **Single DB file at `DB_PATH`.** `server/src/lib/config.ts` resolves `config.dbPath` from `process.env.DB_PATH` (Docker sets `/data/companion.db`; local dev falls back to `~/Library/Application Support/CompanionPlanning/companion.db`) and `mkdirSync(dirname(dbPath), { recursive: true })` ensures the dir exists. `Dockerfile` sets `DB_PATH=/data/companion.db` and `mkdir -p /data`.
 - **WAL is on.** `server/src/db/setup.ts` `runSetup()` runs `PRAGMA journal_mode = WAL` and `foreign_keys = ON` before creating tables. `server/src/db/index.ts` opens one `BetterSqlite3(config.dbPath)` handle and wraps it in Drizzle. (B0 moves this to `runMigrations`.)
-- **No backup, no replication, no audit.** Nothing snapshots the DB; PLANNING.md §5 only sketches Litestream + the "never Syncthing the `.db`" rule as a future Phase-5 item. There is no `audit_log` table and no `/api/export` or `/api/import`.
+- **No backup, no replication, no audit.** Nothing snapshots the DB; Litestream replication and the "never Syncthing the `.db`" rule are sketched only as future work (this phase). There is no `audit_log` table and no `/api/export` or `/api/import`.
 - **Mutating routes don't record anything.** Every write goes straight through Drizzle and then `broadcast(...)` (e.g. `server/src/routes/tasks.ts`: `broadcast('task:created', out)` after `db.insert(tasks)`). Mutating routers today: `tasks.ts`, `blocks.ts`, `possibles.ts`, `tags.ts`, `prefs.ts`, `schedule.ts`, `jobs.ts`, `summary.ts`. (B0 changes `broadcast` to `broadcast(ownerId, event, data)`.)
 - **Settings panel** does not exist on the client; prefs are edited via `routes/prefs.ts` only.
 
@@ -141,7 +141,7 @@ export function writeAudit(e: { ownerId: number; actor: string; action: string; 
 
 ## Risks / notes
 - **Naive copy = corruption.** A plain `cp companion.db` during a write loses uncheckpointed WAL pages. The backup API / `VACUUM INTO` is mandatory; encode it in code, not docs.
-- **Syncthing + live `.db` = corruption.** Block-level sync of an open SQLite file is the classic foot-gun (PLANNING.md §5). Repeat the warning in README, Settings, and `ops/litestream.yml` comments.
+- **Syncthing + live `.db` = corruption.** Block-level sync of an open SQLite file is the classic foot-gun. Repeat the warning in README, Settings, and `ops/litestream.yml` comments.
 - **Import id collisions.** Re-importing into a non-empty owner partition collides on explicit PKs — hence replace-owner-partition default; document that merge mode is deferred.
 - **Export size.** Full JSON is fine at single-user scale; if `daily_summaries`/`audit_log` grow large, stream the response rather than buffering. Audit rows are the fastest-growing table — fine for R, but Phase I should add a retention/rotation policy.
 - **Restore must re-migrate.** A restored older snapshot has to pass through `runMigrations()` (B0) before serving, or the schema won't match the running code.
