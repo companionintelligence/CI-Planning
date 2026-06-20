@@ -30,6 +30,7 @@ export function blocksRouter() {
       task_id?: number;
       title: string;
       block_kind?: string;
+      tag?: string;
       start_at: string;
       end_at: string;
       is_locked?: boolean;
@@ -48,6 +49,7 @@ export function blocksRouter() {
         taskId: body.task_id,
         title: body.title,
         blockKind: body.block_kind ?? 'task',
+        tag: body.tag,
         startAt: body.start_at,
         endAt: body.end_at,
         isLocked: body.is_locked ?? false,
@@ -73,6 +75,7 @@ export function blocksRouter() {
       is_locked: boolean;
       status: string;
       block_kind: string;
+      tag: string | null;
       all_day: boolean;
     }>;
 
@@ -83,6 +86,7 @@ export function blocksRouter() {
     if (body.is_locked  !== undefined) update.isLocked   = body.is_locked;
     if (body.status     !== undefined) update.status     = body.status;
     if (body.block_kind !== undefined) update.blockKind  = body.block_kind;
+    if (body.tag        !== undefined) update.tag        = body.tag;
     if (body.all_day    !== undefined) update.allDay     = body.all_day;
 
     const [block] = await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning();
