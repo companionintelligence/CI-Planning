@@ -60,10 +60,10 @@ export function Today() {
           </div>
         </Show>
 
-        <div class="grid grid-cols-3 gap-2 mt-3">
-          <Stat icon={AlertCircle} value={overdue()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
-          <Stat icon={Ban} value={blocked()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
-          <Stat icon={ListTodo} value={open()} label="open" tone="foreground" />
+        <div class="flex flex-col gap-1.5 mt-3">
+          <Bar icon={AlertCircle} value={overdue()} max={open()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
+          <Bar icon={Ban}         value={blocked()} max={open()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
+          <Bar icon={ListTodo}    value={open()}    max={open()} label="open"    tone="foreground" />
         </div>
       </div>
 
@@ -82,11 +82,32 @@ export function Today() {
   );
 }
 
-function Stat(props: { icon: any; value: number; label: string; tone: 'destructive' | 'foreground' | 'muted' }) {
+/**
+ * Horizontal summary row — label/icon on the left, a proportional bar in the
+ * middle, the count on the right. Bar fill = value / max(1, max). With max ==
+ * the day's open count, each bar reads as "this many of the day's open tasks
+ * are X" — so "open" itself always reads full-width as the visual anchor.
+ */
+function Bar(props: { icon: any; value: number; max: number; label: string; tone: 'destructive' | 'foreground' | 'muted' }) {
+  const pct = () => `${Math.min(100, (props.value / Math.max(1, props.max)) * 100)}%`;
   return (
-    <div class="rounded-lg border border-border bg-background/40 px-2.5 py-2 flex flex-col items-center justify-center text-center">
+    <div class="flex items-center gap-2 text-[11px]">
+      <span class="flex items-center gap-1 w-20 text-muted-foreground uppercase tracking-wide text-[10px] flex-shrink-0">
+        <props.icon size={10} /> {props.label}
+      </span>
+      <div class="flex-1 h-2 rounded-full bg-background/60 border border-border overflow-hidden">
+        <div
+          class="h-full rounded-full transition-[width] duration-200"
+          classList={{
+            'bg-destructive': props.tone === 'destructive',
+            'bg-foreground/70': props.tone === 'foreground',
+            'bg-muted-foreground/30': props.tone === 'muted',
+          }}
+          style={{ width: pct() }}
+        />
+      </div>
       <span
-        class="text-lg font-semibold tabular-nums"
+        class="tabular-nums font-semibold w-6 text-right flex-shrink-0"
         classList={{
           'text-destructive': props.tone === 'destructive',
           'text-foreground': props.tone === 'foreground',
@@ -94,9 +115,6 @@ function Stat(props: { icon: any; value: number; label: string; tone: 'destructi
         }}
       >
         {props.value}
-      </span>
-      <span class="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-        <props.icon size={10} /> {props.label}
       </span>
     </div>
   );

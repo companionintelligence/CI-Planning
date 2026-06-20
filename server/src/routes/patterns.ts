@@ -95,10 +95,16 @@ export function patternsRouter() {
 
   // ── Pattern types ──────────────────────────────────────────────────────────
   router.get('/api/pattern-types', async (ctx) => {
+    const owner = currentOwnerId();
     const rows = sqlite
       .prepare(`SELECT * FROM pattern_types WHERE owner_id = ? ORDER BY is_builtin DESC, id`)
-      .all(currentOwnerId()) as TypeRow[];
-    ctx.body = { pattern_types: rows.map(serializeType) };
+      .all(owner) as TypeRow[];
+    // Rituals are hidden behind a per-owner feature flag (0024). The seeded
+    // Ritual type stays in the DB so flipping the flag back on restores it.
+    const enableRituals = !!(sqlite.prepare(`SELECT enable_rituals FROM scheduling_prefs WHERE owner_id = ?`)
+      .get(owner) as { enable_rituals: number } | undefined)?.enable_rituals;
+    const visible = enableRituals ? rows : rows.filter((r) => r.name !== 'Ritual');
+    ctx.body = { pattern_types: visible.map(serializeType) };
   });
 
   router.post('/api/pattern-types', async (ctx) => {

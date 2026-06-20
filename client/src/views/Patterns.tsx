@@ -1,6 +1,6 @@
 import { createSignal, createMemo, createResource, For, Show, onCleanup } from 'solid-js';
 import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowUpRight } from 'lucide-solid';
-import { patterns, patternTypes, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
+import { patterns, patternTypes, prefs, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
 import { api, type Pattern, type PatternType, type Task } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
@@ -222,7 +222,14 @@ export function Patterns() {
   return (
     <div class="flex-1 overflow-auto p-4 md:p-6 page-enter max-w-3xl mx-auto w-full pb-24">
       <h1 class="text-2xl font-bold text-foreground mb-1">Patterns</h1>
-      <p class="text-sm text-muted-foreground mb-6">Habits repeat · Routines bundle habits · Rituals assemble a day's prep.</p>
+      <p class="text-sm text-muted-foreground mb-6">
+        Routines bundle habits · Habits repeat
+        <Show when={prefs()?.enable_rituals}> · Rituals assemble a day's prep</Show>.
+      </p>
+
+      <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work)">
+        <PatternList typeName="Routine" />
+      </Section>
 
       <Section typeName="Habit" title="Habits" subtitle="Repeating single actions with a known duration">
         <Show when={habitTasks().length > 0} fallback={<EmptyHint>No habits yet — “New Habit” creates a recurring task.</EmptyHint>}>
@@ -242,13 +249,11 @@ export function Patterns() {
         </Show>
       </Section>
 
-      <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work)">
-        <PatternList typeName="Routine" />
-      </Section>
-
-      <Section typeName="Ritual" title="Rituals" subtitle="Habits + one-off tasks for an occasion (e.g. Board-meeting prep)">
-        <PatternList typeName="Ritual" />
-      </Section>
+      <Show when={prefs()?.enable_rituals}>
+        <Section typeName="Ritual" title="Rituals" subtitle="Habits + one-off tasks for an occasion (e.g. Board-meeting prep)">
+          <PatternList typeName="Ritual" />
+        </Section>
+      </Show>
     </div>
   );
 

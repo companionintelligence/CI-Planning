@@ -31,15 +31,26 @@ beforeEach(() => {
 });
 
 describe('pattern types', () => {
-  it('seeds the three built-in types (Routine ▢ / Habit ◯ / Ritual △)', async () => {
+  it('seeds the three built-in types, but hides Ritual by default (PR-C+: enable_rituals flag)', async () => {
+    // Default: enable_rituals=false (0024 migration), so the listing route filters Ritual out.
     const { status, body } = await api(srv.url, '/api/pattern-types');
     expect(status).toBe(200);
+    const names = body.pattern_types.map((t: any) => t.name).sort();
+    expect(names).toEqual(['Habit', 'Routine']);
     const byName = Object.fromEntries(body.pattern_types.map((t: any) => [t.name, t]));
-    expect(Object.keys(byName).sort()).toEqual(['Habit', 'Ritual', 'Routine']);
     expect(byName.Routine.icon_shape).toBe('square');
     expect(byName.Habit.icon_shape).toBe('circle');
-    expect(byName.Ritual.icon_shape).toBe('triangle');
     expect(byName.Habit.is_builtin).toBe(true);
+
+    // The Ritual row still exists in the DB — flipping the flag on restores it
+    // (no migration required, just a PATCH /api/prefs in the real client).
+    expect((sqlite.prepare(`SELECT name FROM pattern_types WHERE name = 'Ritual' AND owner_id = ?`).get(OWNER) as { name: string }).name).toBe('Ritual');
+
+    sqlite.prepare(`UPDATE scheduling_prefs SET enable_rituals = 1 WHERE owner_id = ?`).run(OWNER);
+    const after = await api(srv.url, '/api/pattern-types');
+    const ritual = after.body.pattern_types.find((t: any) => t.name === 'Ritual');
+    expect(ritual?.icon_shape).toBe('triangle');
+    sqlite.prepare(`UPDATE scheduling_prefs SET enable_rituals = 0 WHERE owner_id = ?`).run(OWNER); // reset for sibling tests
   });
 
   it('creates a custom type (is_builtin false) and lists it', async () => {

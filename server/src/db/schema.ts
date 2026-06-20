@@ -138,6 +138,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   conceptHorizonDays: integer('concept_horizon_days').default(30),
   // Canonical, user-editable concept-tag list for the Block Wizard (0021).
   conceptTags: text('concept_tags', { mode: 'json' }).$type<{ name: string; minutes: number }[]>(),
+  // Per-owner feature flags (0024). Default OFF — V1 mental model is Routine /
+  // Habit / Plan-Block; Rituals are hidden until the user opts back in.
+  enableRituals: integer('enable_rituals', { mode: 'boolean' }).default(false),
   // Per-owner Ollama model overrides (null = use the env default). 0012.
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings
