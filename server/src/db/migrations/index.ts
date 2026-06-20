@@ -23,6 +23,7 @@ import * as m0022 from './0022_template_tasks.js';
 import * as m0023 from './0023_block_parent.js';
 import * as m0024 from './0024_feature_flags.js';
 import * as m0025 from './0025_pattern_recurrence.js';
+import * as m0026 from './0026_drop_place_patterns_cron.js';
 
 export interface Migration {
   id: string;
@@ -33,4 +34,4 @@ export interface Migration {
  * Ordered list of migrations. Explicit (not a glob / dynamic import) so order is
  * deterministic and the set is bundler-safe. Append new migrations to the end.
  */
-export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025];
+export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025, m0026];

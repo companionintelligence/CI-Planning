@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
-import { patternsRecurringOnDate, placeAllPatternsForToday } from '../src/engine/patterns-place.js';
+import { patternsRecurringOnDate, ensurePatternsForRange } from '../src/engine/patterns-place.js';
 
 /**
  * Pattern-level recurrence + the nightly auto-place job (PR-C+, Phase D).
@@ -64,30 +64,46 @@ describe('patternsRecurringOnDate', () => {
   });
 });
 
-describe('place_patterns job end-to-end', () => {
-  it('places matching patterns onto the day; idempotent on re-run', async () => {
+describe('ensurePatternsForRange (lazy placement on GET)', () => {
+  it('places every Habit/Routine firing inside the range; Rituals stay excluded', () => {
     const t1 = insertTask('A', 30);
     const t2 = insertTask('B', 30);
     insertPattern('Routine', 'DailyTwo', [t1, t2], 'FREQ=DAILY', noonUTC(MONDAY));
+    insertPattern('Habit', 'HabitDaily', [t1], 'FREQ=DAILY', noonUTC(MONDAY));
     insertPattern('Ritual', 'Skipped', [t1], 'FREQ=DAILY', noonUTC(MONDAY));
 
-    const first = placeAllPatternsForToday({ today: MONDAY });
-    expect(first.patternsConsidered).toBe(1); // Ritual excluded
-    expect(first.patternsPlaced).toBe(1);
-    expect(first.blocksCreated).toBeGreaterThanOrEqual(2);
-
-    const second = placeAllPatternsForToday({ today: MONDAY });
-    expect(second.patternsSkipped).toBe(1);
-    expect(second.blocksCreated).toBe(0);
+    const r = ensurePatternsForRange(OWNER, `${MONDAY}T00:00:00.000Z`, `${MONDAY}T23:59:59.999Z`);
+    expect(r.placed).toBeGreaterThanOrEqual(1);
+    expect(r.blocksCreated).toBeGreaterThanOrEqual(3); // 2 Routine + 1 Habit
+    // marker-based idempotency: a 2nd call places nothing new.
+    expect(ensurePatternsForRange(OWNER, `${MONDAY}T00:00:00.000Z`, `${MONDAY}T23:59:59.999Z`).blocksCreated).toBe(0);
+    // Ritual was not placed.
+    const ritualBlocks = sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number };
+    expect(ritualBlocks.n).toBeGreaterThanOrEqual(3); // routine 2 + habit 1 placed; ritual not.
   });
 
-  it('runs via POST /api/jobs/:id/run (the job entry the cron hits)', async () => {
+  it('GET /api/blocks lazy-places recurring patterns inside the requested window', async () => {
     const t = insertTask('A', 30);
     insertPattern('Routine', 'DailyOne', [t], 'FREQ=DAILY', noonUTC(MONDAY));
-    const job = (sqlite.prepare(`SELECT id FROM scheduled_jobs WHERE kind = 'place_patterns'`).get() as { id: number });
-    expect(job).toBeTruthy();
-    const r = await api(srv.url, `/api/jobs/${job.id}/run`, { method: 'POST', json: {} });
+    // Before the GET, no pattern blocks exist.
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number }).n).toBe(0);
+    // The GET for Monday triggers lazy placement and returns the placed blocks.
+    const r = await api(srv.url, `/api/blocks?from=${MONDAY}T00:00:00.000Z&to=${MONDAY}T23:59:59.999Z`);
     expect(r.status).toBe(200);
+    expect(r.body.blocks.some((b: any) => b.source_kind === 'pattern' && b.title === 'A')).toBe(true);
+  });
+
+  it('does NOT backfill past days (no recursion into yesterday on a normal read)', () => {
+    const yesterday = '2026-06-15';
+    const t = insertTask('A', 30);
+    insertPattern('Routine', 'DailyOne', [t], 'FREQ=DAILY', noonUTC(yesterday));
+    ensurePatternsForRange(OWNER, `${yesterday}T00:00:00.000Z`, `${yesterday}T23:59:59.999Z`);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number }).n).toBe(0);
+  });
+
+  it('the place_patterns cron is GONE (no scheduled_jobs row)', () => {
+    const row = sqlite.prepare(`SELECT 1 FROM scheduled_jobs WHERE kind = 'place_patterns'`).get();
+    expect(row).toBeUndefined();
   });
 });
 
