@@ -96,15 +96,34 @@ export function PlannerDrawer() {
     const id = typeIdByName().get(name);
     return (patterns() ?? []).filter((p) => p.type_id === id && (!q || p.name.toLowerCase().includes(q) || (p.tag ?? '').toLowerCase().includes(q)));
   };
-  async function stageHabit(id: number) {
-    try { await api.flightPlan.addTask(id); refetchFlightPlan(); showToast('Added to flight-plan', 'default'); }
-    catch (err) { showToast((err as Error).message, 'error'); }
+  /** Resolve a habit task to its Habit-type Pattern id (always exists once a task
+   *  is flagged is_habit — `ensureHabitPattern` runs on promote-habit and on POST
+   *  /api/tasks with is_habit=true). One pattern code path for both habits + bundles. */
+  function habitPatternIdFor(taskId: number): number | null {
+    const habitTypeId = typeIdByName().get('Habit');
+    if (habitTypeId == null) return null;
+    const p = (patterns() ?? []).find((p) => p.type_id === habitTypeId && p.task_ids.includes(taskId));
+    return p?.id ?? null;
   }
-  async function stagePattern(id: number, name: string) {
+  async function placeHabitToday(taskTitle: string, taskId: number) {
+    const patternId = habitPatternIdFor(taskId);
+    if (patternId == null) {
+      showToast('Habit pattern not found yet — try again in a moment', 'error');
+      return;
+    }
     try {
-      const r = await api.flightPlan.addPattern(id);
-      refetchFlightPlan();
-      showToast(`Staged ${name} (${r.added} task${r.added === 1 ? '' : 's'})`, 'default');
+      const { result } = await api.patterns.placeToday(patternId);
+      refetchBlocks();
+      if (result.skippedAlreadyPlaced) showToast(`"${taskTitle}" already on today`, 'default');
+      else showToast(`Placed "${taskTitle}" (${result.blocksCreated} block${result.blocksCreated === 1 ? '' : 's'})`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function placePatternToday(id: number, name: string) {
+    try {
+      const { result } = await api.patterns.placeToday(id);
+      refetchBlocks();
+      if (result.skippedAlreadyPlaced) showToast(`"${name}" already placed today`, 'default');
+      else showToast(`Placed ${name} (${result.blocksCreated} block${result.blocksCreated === 1 ? '' : 's'})`, 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -124,7 +143,7 @@ export function PlannerDrawer() {
           <button onClick={() => setOpen((v) => !v)} class="btn-icon" title="Show tasks">
             <Show when={open()} fallback={<ChevronRight size={13} />}><ChevronDown size={13} /></Show>
           </button>
-          <button onClick={() => stagePattern(props.pattern.id, props.pattern.name)} class="btn-icon" title="Add to flight-plan"><Plus size={14} class="text-primary" /></button>
+          <button onClick={() => placePatternToday(props.pattern.id, props.pattern.name)} class="btn-icon" title="Add to today's board"><Plus size={14} class="text-primary" /></button>
         </div>
         <Show when={open()}>
           <ul class="pl-8 pr-3 pb-1.5 flex flex-col gap-0.5">
@@ -157,7 +176,7 @@ export function PlannerDrawer() {
                       <ShapeIcon shape="circle" size={12} />
                       <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
                       <Show when={t.estimated_minutes}><span class="text-[11px] text-muted-foreground">{t.estimated_minutes}m</span></Show>
-                      <button onClick={() => stageHabit(t.id)} class="btn-icon" title="Add to flight-plan"><Plus size={14} class="text-primary" /></button>
+                      <button onClick={() => placeHabitToday(t.title, t.id)} class="btn-icon" title="Add to today's board"><Plus size={14} class="text-primary" /></button>
                     </div>
                   )}
                 </For>
