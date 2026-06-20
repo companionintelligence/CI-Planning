@@ -145,6 +145,15 @@ export const api = {
     // replaces the old "stage into flight-plan" flow. `block_id` scopes to a Plan.
     placeToday: (id: number, body?: { date?: string; block_id?: number | null }) =>
       request<{ result: PlacePatternResult; blocks: Block[] }>('POST', `/patterns/${id}/place-today`, body ?? {}),
+    // Three Routine-promotion endpoints (Phase E + F): same backend write path,
+    // different sources (a placed Plan's members; a saved template's tasks; a
+    // multi-selection of task ids).
+    promoteFromPlan: (plan_block_id: number, name?: string) =>
+      request<{ pattern: Pattern }>('POST', '/patterns/promote-from-plan', { plan_block_id, name }),
+    promoteFromPlanTemplate: (template_id: number, name?: string) =>
+      request<{ pattern: Pattern }>('POST', '/patterns/promote-from-plan-template', { template_id, name }),
+    promoteFromTasks: (task_ids: number[], name?: string) =>
+      request<{ pattern: Pattern }>('POST', '/patterns/promote-from-tasks', { task_ids, name }),
   },
 
   patternTypes: {

@@ -393,6 +393,87 @@ export function patternsRouter() {
     ctx.body = { ok: true };
   });
 
+  // ── Promote-to-Routine (PR-C+, Phase E + F) ────────────────────────────────
+  // Three sister endpoints share the same write path: a Routine-type pattern is
+  // created (owner-scoped), then `task_ids` are added in order. Source-specific
+  // logic — extracting tasks from a Plan, a Plan template, or a selection —
+  // happens above the helper.
+  function createRoutineWithTasks(name: string, taskIds: number[]): PatternRow {
+    const owner = currentOwnerId();
+    const routineType = sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Routine' AND owner_id = ?`).get(owner) as { id: number } | undefined;
+    if (!routineType) throw new Error('no Routine pattern type for owner');
+    const p = sqlite
+      .prepare(`INSERT INTO patterns (owner_id, type_id, name) VALUES (?, ?, ?) RETURNING *`)
+      .get(owner, routineType.id, name) as PatternRow;
+    if (taskIds.length) setMembers(p.id, taskIds);
+    return p;
+  }
+
+  /** POST /api/patterns/promote-from-plan { plan_block_id, name? } — create a
+   *  Routine from a Plan container's currently-attached member task blocks. */
+  router.post('/api/patterns/promote-from-plan', async (ctx) => {
+    const owner = currentOwnerId();
+    const body = (ctx.request.body ?? {}) as { plan_block_id?: number; name?: string };
+    if (body.plan_block_id == null) { ctx.status = 422; ctx.body = { error: 'plan_block_id is required' }; return; }
+    const plan = sqlite.prepare(`SELECT id, title, block_kind FROM time_blocks WHERE id = ?`).get(body.plan_block_id) as
+      | { id: number; title: string; block_kind: string } | undefined;
+    if (!plan || plan.block_kind !== 'timeblock') { ctx.status = 404; ctx.body = { error: 'plan not found' }; return; }
+    const taskIds = (sqlite
+      .prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE parent_block_id = ? AND task_id IS NOT NULL`)
+      .all(plan.id) as { task_id: number }[]).map((r) => r.task_id);
+    const p = createRoutineWithTasks(body.name?.trim() || plan.title, taskIds);
+    const out = serializePattern(p);
+    broadcast(owner, 'pattern:created', out);
+    ctx.status = 201;
+    ctx.body = { pattern: out };
+  });
+
+  /** POST /api/patterns/promote-from-plan-template { template_id, name? } —
+   *  create a Routine from a saved Plan template's tasks. Creates real tasks
+   *  for each saved entry (the template only stores titles + estimates), then
+   *  adds them as Routine members. */
+  router.post('/api/patterns/promote-from-plan-template', async (ctx) => {
+    const owner = currentOwnerId();
+    const body = (ctx.request.body ?? {}) as { template_id?: number; name?: string };
+    if (body.template_id == null) { ctx.status = 422; ctx.body = { error: 'template_id is required' }; return; }
+    const tpl = sqlite.prepare(`SELECT id, name, tasks FROM block_templates WHERE id = ? AND owner_id = ?`).get(body.template_id, owner) as
+      | { id: number; name: string; tasks: string | null } | undefined;
+    if (!tpl) { ctx.status = 404; ctx.body = { error: 'template not found' }; return; }
+    interface TemplateTask { title: string; estimated_minutes?: number | null }
+    let savedTasks: TemplateTask[] = [];
+    try { savedTasks = JSON.parse(tpl.tasks ?? '[]'); if (!Array.isArray(savedTasks)) savedTasks = []; } catch { savedTasks = []; }
+
+    const insTask = sqlite.prepare(`INSERT INTO tasks (title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (?, ?, ?, 'open', 3, 'manual') RETURNING id`);
+    const taskIds: number[] = [];
+    for (const t of savedTasks) {
+      const id = (insTask.get(t.title, t.estimated_minutes ?? null, owner) as { id: number }).id;
+      taskIds.push(id);
+    }
+    const p = createRoutineWithTasks(body.name?.trim() || tpl.name, taskIds);
+    const out = serializePattern(p);
+    broadcast(owner, 'pattern:created', out);
+    ctx.status = 201;
+    ctx.body = { pattern: out };
+  });
+
+  /** POST /api/patterns/promote-from-tasks { task_ids, name? } — create a
+   *  Routine from a multi-selected set of existing tasks (Phase F: Shift+= hotkey). */
+  router.post('/api/patterns/promote-from-tasks', async (ctx) => {
+    const owner = currentOwnerId();
+    const body = (ctx.request.body ?? {}) as { task_ids?: number[]; name?: string };
+    const ids = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is number => typeof x === 'number') : [];
+    if (ids.length === 0) { ctx.status = 422; ctx.body = { error: 'task_ids is required' }; return; }
+    // Verify all tasks belong to this owner (defensive).
+    const placeholders = ids.map(() => '?').join(',');
+    const owned = sqlite.prepare(`SELECT id FROM tasks WHERE id IN (${placeholders}) AND owner_id = ?`).all(...ids, owner) as { id: number }[];
+    if (owned.length !== ids.length) { ctx.status = 422; ctx.body = { error: 'task ids must belong to the current owner' }; return; }
+    const p = createRoutineWithTasks(body.name?.trim() || 'New routine', ids);
+    const out = serializePattern(p);
+    broadcast(owner, 'pattern:created', out);
+    ctx.status = 201;
+    ctx.body = { pattern: out };
+  });
+
   // POST /api/patterns/:id/place-today — auto-place this pattern's tasks into
   // today's free gaps (PR-C+, Phase C). `block_id` scopes to a Plan's window +
   // makes the placed tasks members of that group (PR-C grouped movement).
