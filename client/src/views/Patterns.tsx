@@ -1,7 +1,8 @@
 import { createSignal, createMemo, createResource, For, Show, onCleanup } from 'solid-js';
-import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowUpRight, Star } from 'lucide-solid';
+import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowUpRight, Star, Play } from 'lucide-solid';
 import { patterns, patternTypes, prefs, refetchBlocks, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
 import { api, type BlockTemplate, type Pattern, type PatternType, type Task } from '../lib/api.js';
+import { buildRule, rulePresetForPattern, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { MinuteDial } from '../components/MinuteDial.js';
@@ -109,6 +110,18 @@ export function Patterns() {
     try { await api.tasks.update(taskId, { estimated_minutes: v }); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+  async function savePatternRule(p: Pattern, rule: string | null) {
+    try { await api.patterns.update(p.id, { recurrence_rule: rule }); refetchPatterns(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function placePattern(p: Pattern) {
+    try {
+      const { result } = await api.patterns.placeToday(p.id);
+      refetchBlocks();
+      if (result.skippedAlreadyPlaced) showToast(`"${p.name}" already placed today`, 'default');
+      else showToast(`Placed "${p.name}" — ${result.blocksCreated} block${result.blocksCreated === 1 ? '' : 's'}`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   // A member row — fast tasks get the minute dial + delete; regular members can be
   // promoted to a habit. `allowFast` (rituals) gates the fast-task affordances.
@@ -146,6 +159,29 @@ export function Patterns() {
       return (allTasks() ?? []).filter((t) => t.status === 'open' && !t.parent_id && !t.is_fast_task && !have.has(t.id)).slice(0, 30);
     };
     const submitFast = () => { if (fast().trim()) { addFast(props.pattern, fast()); setFast(''); } };
+
+    // Pattern-level recurrence editor (PR-C+, Phase D). Routines and Habits only;
+    // Rituals are flagged off (server returns 422 if asked to set a rule on one).
+    const parsed = createMemo(() => rulePresetForPattern(props.pattern.recurrence_rule));
+    const [preset, setPreset] = createSignal<RepeatPreset>(parsed().preset);
+    const [days, setDays] = createSignal<string[]>(parsed().weekdays);
+    const ruleNow = () => buildRule(preset(), days(), '');
+    const describe = () => {
+      const r = ruleNow();
+      return r ? describeRule(r) : 'Doesn’t repeat';
+    };
+    function onPreset(p: RepeatPreset) {
+      setPreset(p);
+      if (p !== 'specific-days') setDays([]);
+      void savePatternRule(props.pattern, buildRule(p, days(), ''));
+    }
+    function toggleDay(d: string) {
+      const next = days().includes(d) ? days().filter((x) => x !== d) : [...days(), d];
+      setDays(next);
+      if (preset() === 'specific-days') void savePatternRule(props.pattern, buildRule('specific-days', next, ''));
+    }
+    const canRecur = props.shape !== 'triangle'; // not a Ritual
+
     return (
       <div class="rounded-lg border border-border bg-card">
         <div class="flex items-center gap-2 px-3 py-2">
@@ -154,11 +190,54 @@ export function Patterns() {
           </button>
           <span class="flex-1 text-sm font-medium text-foreground truncate">{props.pattern.name}</span>
           <Show when={props.pattern.tag}>{(t) => <span class="text-primary text-xs">#{t()}</span>}</Show>
+          <Show when={props.pattern.recurrence_rule}>
+            <span class="text-[10px] text-muted-foreground" title={describe()}>{describe()}</span>
+          </Show>
           <span class="text-[11px] text-muted-foreground">{props.pattern.task_ids.length} task{props.pattern.task_ids.length === 1 ? '' : 's'}</span>
+          <button onClick={() => placePattern(props.pattern)} class="btn-icon" title="Place onto today's board"><Play size={13} class="text-primary" /></button>
           <button onClick={() => deletePattern(props.pattern)} class="btn-icon hover:text-destructive" title="Delete pattern"><Trash2 size={13} /></button>
         </div>
         <Show when={open()}>
           <div class="px-3 pb-2.5 border-t border-border pt-2">
+            <Show when={canRecur}>
+              <div class="mb-3 rounded-md border border-border/60 bg-background/40 p-2">
+                <div class="flex items-center gap-1.5 mb-1.5">
+                  <Repeat size={11} class="text-muted-foreground" />
+                  <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Repeat</span>
+                  <span class="ml-auto text-[10px] text-muted-foreground">{describe()}</span>
+                </div>
+                <div class="flex flex-wrap gap-1">
+                  <For each={['none','daily','specific-days','weekly','monthly','yearly'] as RepeatPreset[]}>
+                    {(p) => (
+                      <button onClick={() => onPreset(p)}
+                        class="text-[11px] px-2 py-0.5 rounded border"
+                        classList={{
+                          'border-primary text-primary bg-primary/10': preset() === p,
+                          'border-border text-muted-foreground hover:text-foreground': preset() !== p,
+                        }}>
+                        {p === 'none' ? 'Never' : p === 'specific-days' ? 'Days' : (p[0].toUpperCase() + p.slice(1))}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <Show when={preset() === 'specific-days'}>
+                  <div class="flex gap-1 mt-1.5">
+                    <For each={WEEKDAYS}>
+                      {(d) => (
+                        <button onClick={() => toggleDay(d)}
+                          class="text-[10px] w-6 h-6 rounded border"
+                          classList={{
+                            'border-primary text-primary bg-primary/10': days().includes(d),
+                            'border-border text-muted-foreground hover:text-foreground': !days().includes(d),
+                          }}>
+                          {DAY_INITIAL[d]}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </Show>
             <Show when={members().length > 0} fallback={<p class="text-xs text-muted-foreground italic mb-2">No tasks yet.</p>}>
               <ul class="flex flex-col gap-1 mb-2">
                 <For each={members()}>

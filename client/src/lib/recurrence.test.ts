@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRule, rulePreset, describeRule } from './recurrence.js';
+import { buildRule, rulePreset, rulePresetForPattern, describeRule } from './recurrence.js';
 
 describe('buildRule', () => {
   it('none → null', () => expect(buildRule('none', [], '')).toBeNull());
@@ -12,6 +12,14 @@ describe('buildRule', () => {
   it('custom → trimmed string, or null when blank', () => {
     expect(buildRule('custom', [], '  FREQ=MONTHLY ')).toBe('FREQ=MONTHLY');
     expect(buildRule('custom', [], '   ')).toBeNull();
+  });
+  it('specific-days with weekdays → BYDAY (UI-label distinct from weekly, RRULE-equivalent)', () => {
+    expect(buildRule('specific-days', ['MO', 'WE'], '')).toBe('FREQ=WEEKLY;BYDAY=MO,WE');
+    expect(buildRule('specific-days', [], '')).toBe('FREQ=WEEKLY');
+  });
+  it('monthly / yearly', () => {
+    expect(buildRule('monthly', [], '')).toBe('FREQ=MONTHLY');
+    expect(buildRule('yearly', [], '')).toBe('FREQ=YEARLY');
   });
 });
 
@@ -26,6 +34,16 @@ describe('rulePreset', () => {
   it('a rule with COUNT / INTERVAL falls back to custom (round-trips the raw string)', () => {
     expect(rulePreset('FREQ=DAILY;COUNT=5').preset).toBe('custom');
     expect(rulePreset('FREQ=WEEKLY;INTERVAL=2;BYDAY=MO').preset).toBe('custom');
+  });
+  it('FREQ=MONTHLY / FREQ=YEARLY → monthly / yearly', () => {
+    expect(rulePreset('FREQ=MONTHLY').preset).toBe('monthly');
+    expect(rulePreset('FREQ=YEARLY').preset).toBe('yearly');
+  });
+  it('round-trips: build(specific-days) → rulePresetForPattern reads back as specific-days', () => {
+    const rule = buildRule('specific-days', ['MO', 'WE'], '')!;
+    expect(rulePresetForPattern(rule)).toEqual({ preset: 'specific-days', weekdays: ['MO', 'WE'], custom: rule });
+    // rulePreset (task-level) still surfaces it as weekly
+    expect(rulePreset(rule).preset).toBe('weekly');
   });
 });
 

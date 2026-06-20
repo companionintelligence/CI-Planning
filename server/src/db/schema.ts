@@ -183,6 +183,11 @@ export const patterns = sqliteTable('patterns', {
   name: text('name').notNull(),
   tag: text('tag'),
   notes: text('notes'),
+  // Pattern-level recurrence (0025): RRULE + its UTC anchor. Only Habits +
+  // Routines respect it; Rituals are flagged off in V1. The 06:00 cron
+  // `place_patterns` expands these and runs `placePatternOnDay` idempotently.
+  recurrenceRule: text('recurrence_rule'),
+  recurrenceDtstart: text('recurrence_dtstart'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 

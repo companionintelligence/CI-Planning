@@ -271,16 +271,23 @@ export interface PatternTypeInput {
   default_est_minutes?: number | null; notify?: boolean;
 }
 
-/** A pattern: a typed, reusable, many-to-many collection of tasks (no own recurrence). */
+/**
+ * A pattern: a typed, reusable, many-to-many collection of tasks. Habit + Routine
+ * patterns may carry an RRULE (PR-C+ / 0025); Ritual patterns may not (flag-off
+ * in V1, server returns 422 if asked). A non-null `recurrence_rule` is what the
+ * 06:00 `place_patterns` cron expands daily.
+ */
 export interface Pattern {
   id: number; owner_id: number; type_id: number | null;
   name: string; tag: string | null; notes: string | null;
+  recurrence_rule: string | null; recurrence_dtstart: string | null;
   created_at: string; task_ids: number[];
 }
 
 export interface PatternInput {
   type_id?: number | null; name: string; tag?: string | null;
   notes?: string | null; task_ids?: number[];
+  recurrence_rule?: string | null; recurrence_dtstart?: string | null;
 }
 
 /** A flight-plan row: a staged task (+ its source pattern, if added via one). */
