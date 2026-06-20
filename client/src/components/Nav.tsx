@@ -21,7 +21,7 @@ export function Nav() {
   const pendingCount = () => possibles()?.length ?? 0;
 
   return (
-    <nav class="w-52 flex-shrink-0 border-r border-surface-700/50 flex flex-col py-5 px-3 gap-0.5 bg-surface-900">
+    <nav class="hidden md:flex w-52 flex-shrink-0 border-r border-surface-700/50 flex-col py-5 px-3 gap-0.5 bg-surface-900">
       {/* CI logo mark */}
       <div class="flex items-center gap-2.5 px-3 mb-5">
         <div

@@ -18,8 +18,17 @@ import type { Block } from '../lib/api.js';
 
 type ViewMode = 'day' | 'week' | 'month';
 
+/** Phones default to the single-day column; wider screens to the week grid. */
+function defaultView(): ViewMode {
+  try {
+    return window.matchMedia('(max-width: 767px)').matches ? 'day' : 'week';
+  } catch {
+    return 'week';
+  }
+}
+
 export function Calendar() {
-  const [view, setView] = createSignal<ViewMode>('week');
+  const [view, setView] = createSignal<ViewMode>(defaultView());
   const [anchor, setAnchor] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
 
@@ -130,7 +139,7 @@ export function Calendar() {
   }
 
   return (
-    <div class="flex-1 overflow-hidden flex flex-col p-6 page-enter w-full">
+    <div class="flex-1 overflow-hidden flex flex-col p-3 md:p-6 page-enter w-full">
       <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <h1 class="text-2xl font-bold text-slate-100">Calendar</h1>
         <div class="flex items-center gap-2">
