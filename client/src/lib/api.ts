@@ -40,6 +40,7 @@ export interface Task {
   recurrence_parent_id?: number;
   occurrence_date?: string;
   is_habit?: boolean;
+  is_fast_task?: boolean; // ritual-local, hidden from the task list (Step 3)
 }
 
 export interface TaskInput {
@@ -95,6 +96,8 @@ export const api = {
     subtasks: (id: number) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
     skip: (id: number) => request<{ task: Task; skipped: string }>('POST', `/tasks/${id}/skip`, {}),
     streak: (id: number) => request<Streak>('GET', `/tasks/${id}/streak`),
+    // Make a (possibly ritual-local) task a habit — flags it + ensures its Habit pattern.
+    promoteHabit: (id: number) => request<{ task: Task }>('POST', `/tasks/${id}/promote-habit`, {}),
   },
 
   blocks: {
@@ -127,6 +130,11 @@ export const api = {
       request<{ pattern_id: number; task_ids: number[] }>('POST', `/patterns/${id}/tasks`, { task_id, position }),
     removeTask: (id: number, taskId: number) =>
       request<{ pattern_id: number; task_ids: number[] }>('DELETE', `/patterns/${id}/tasks/${taskId}`),
+    // Fast tasks — ritual-local, hidden from the task list (Step 3).
+    addFastTask: (id: number, body: { title: string; estimated_minutes?: number }) =>
+      request<{ task: Task }>('POST', `/patterns/${id}/fast-tasks`, body),
+    removeFastTask: (id: number, taskId: number) =>
+      request<{ ok: boolean }>('DELETE', `/patterns/${id}/fast-tasks/${taskId}`),
   },
 
   patternTypes: {
