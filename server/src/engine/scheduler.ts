@@ -22,13 +22,13 @@ export interface ScheduleResult {
 }
 
 /** A free window in the day, with a moving cursor as blocks are packed in. */
-interface Gap {
+export interface Gap {
   start: number;
   end: number;
   cursor: number;
 }
 
-const MS_PER_MIN = 60_000;
+export const MS_PER_MIN = 60_000;
 // Don't carve a focus block shorter than this — sub-quarter-hour slivers aren't useful.
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
 // Cap how many tasks the optional LLM ordering pass sees, to bound the prompt.
@@ -207,7 +207,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
 }
 
 /** Split a duration into focus-sized sessions; the final session may be shorter. */
-function splitIntoSessions(totalMs: number, maxFocusMs: number): number[] {
+export function splitIntoSessions(totalMs: number, maxFocusMs: number): number[] {
   const out: number[] = [];
   let rem = totalMs;
   while (rem > 0) {
@@ -224,7 +224,7 @@ function splitIntoSessions(totalMs: number, maxFocusMs: number): number[] {
  * the largest remaining gap and truncates the session to fit. Scans *all* gaps,
  * so smaller tasks backfill holes a bigger task skipped.
  */
-function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } | null {
+export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } | null {
   let fit: Gap | null = null;
   let fitLeftover = Infinity;
   let largest: Gap | null = null;
@@ -249,7 +249,7 @@ function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } | null 
 }
 
 /** Carve the workday into free windows between fixed events, with a break after each. */
-function buildGaps(
+export function buildGaps(
   dayStart: number,
   dayEnd: number,
   fixed: { start: number; end: number }[],
