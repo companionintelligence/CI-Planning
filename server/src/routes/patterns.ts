@@ -2,6 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
+import { placePatternOnDay } from '../engine/patterns-place.js';
 
 /**
  * Patterns (Phase G, ticket G1). Typed, reusable task collections — Routine ▢ /
@@ -336,6 +337,34 @@ export function patternsRouter() {
     else sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, taskId);
     broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     ctx.body = { ok: true };
+  });
+
+  // POST /api/patterns/:id/place-today — auto-place this pattern's tasks into
+  // today's free gaps (PR-C+, Phase C). `block_id` scopes to a Plan's window +
+  // makes the placed tasks members of that group (PR-C grouped movement).
+  // Idempotent via a marker on time_blocks (source_kind='pattern', source_ref=id).
+  router.post('/api/patterns/:id/place-today', async (ctx) => {
+    const owner = currentOwnerId();
+    const id = Number(ctx.params.id);
+    const pattern = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner);
+    if (!pattern) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const body = (ctx.request.body ?? {}) as { date?: string; block_id?: number | null };
+    const result = placePatternOnDay(owner, id, { date: body.date, blockId: body.block_id ?? null });
+
+    // Return the freshly placed (or already-on-the-day pattern-marked) blocks
+    // so the client can patch its block store without waiting on SSE.
+    const blocks = sqlite
+      .prepare(
+        `SELECT * FROM time_blocks
+          WHERE source_kind = 'pattern' AND source_ref = ?
+            AND date(start_at) = date(?)
+          ORDER BY start_at`
+      )
+      .all(String(id), `${result.date}T00:00:00`) as Record<string, unknown>[];
+    ctx.body = {
+      result,
+      blocks: blocks.map((b) => ({ ...b, is_locked: !!b.is_locked, is_auto: !!b.is_auto, all_day: !!b.all_day })),
+    };
   });
 
   return router;

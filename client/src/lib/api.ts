@@ -141,6 +141,10 @@ export const api = {
       request<{ task: Task }>('POST', `/patterns/${id}/fast-tasks`, body),
     removeFastTask: (id: number, taskId: number) =>
       request<{ ok: boolean }>('DELETE', `/patterns/${id}/fast-tasks/${taskId}`),
+    // Auto-place the pattern's tasks into today's free gaps (PR-C+, Phase C) —
+    // replaces the old "stage into flight-plan" flow. `block_id` scopes to a Plan.
+    placeToday: (id: number, body?: { date?: string; block_id?: number | null }) =>
+      request<{ result: PlacePatternResult; blocks: Block[] }>('POST', `/patterns/${id}/place-today`, body ?? {}),
   },
 
   patternTypes: {
@@ -291,6 +295,16 @@ export interface AutoResult {
   step: 'fill' | 'place';
   candidatesAdded?: number;              // step 1
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
+}
+
+/** Result of POST /api/patterns/:id/place-today (PR-C+, Phase C). */
+export interface PlacePatternResult {
+  patternId: number;
+  date: string;
+  blocksCreated: number;
+  placed: number;                        // tasks with >= 1 session placed
+  unplaced: number;                      // tasks with no fit
+  skippedAlreadyPlaced: boolean;         // marker query short-circuited
 }
 
 /** A task saved inside a Plan template — recreated at start + offset on instantiate. */
