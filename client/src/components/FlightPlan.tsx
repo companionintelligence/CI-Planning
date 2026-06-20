@@ -4,6 +4,7 @@ import { api, type FlightPlanItem } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, patterns, showToast,
 } from '../stores/index.js';
+import { isSelected, toggleSelection } from '../stores/selection.js';
 
 /**
  * The Flight-plan (Phase G, G5 + G4): the persisted, owner-scoped staging area the
@@ -98,15 +99,22 @@ export function FlightPlan() {
 
   const FpRow = (props: { it: FlightPlanItem; inGroup?: boolean }) => {
     const p = () => Math.min(Math.max(props.it.priority ?? 3, 1), 5);
+    const selected = () => isSelected({ kind: 'flight-plan-task', id: props.it.task_id });
     return (
-      <li class="flex items-center gap-2.5 px-3 py-2 group" classList={{ 'pl-7': props.inGroup }}>
-        <button onClick={() => toggle(props.it.task_id, !props.it.selected)} class="checkbox flex-shrink-0" classList={{ 'checkbox-checked': props.it.selected }} title={props.it.selected ? 'Deselect' : 'Select for Auto'}>
+      <li
+        class="flex items-center gap-2.5 px-3 py-2 group rounded-md"
+        classList={{ 'pl-7': props.inGroup, 'ring-2 ring-chart-1 bg-chart-1/5': selected() }}
+        // Cmd/Ctrl-click anywhere on the row toggles multi-select (Phase F).
+        // The Auto-step-2 selection (the checkbox) is a separate axis, intentionally.
+        onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); toggleSelection({ kind: 'flight-plan-task', id: props.it.task_id }); } }}
+      >
+        <button onClick={(e) => { if (e.metaKey || e.ctrlKey) return; toggle(props.it.task_id, !props.it.selected); }} class="checkbox flex-shrink-0" classList={{ 'checkbox-checked': props.it.selected }} title={props.it.selected ? 'Deselect' : 'Select for Auto'}>
           <Check on={props.it.selected} />
         </button>
         <span class={`priority-dot p${p()} flex-shrink-0`} />
         <span class="flex-1 text-sm text-foreground truncate" classList={{ 'opacity-50': !props.it.selected }}>{props.it.title}</span>
         <Show when={props.it.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground flex-shrink-0">{props.it.estimated_minutes}m</span></Show>
-        <button onClick={() => remove(props.it.task_id)} class="btn-icon opacity-0 group-hover:opacity-100 flex-shrink-0" title="Remove from flight-plan"><X size={13} /></button>
+        <button onClick={(e) => { e.stopPropagation(); remove(props.it.task_id); }} class="btn-icon opacity-0 group-hover:opacity-100 flex-shrink-0" title="Remove from flight-plan"><X size={13} /></button>
       </li>
     );
   };

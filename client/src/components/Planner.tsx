@@ -4,6 +4,7 @@ import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
 import { resolveGroup, containerAt } from '../lib/group-move.js';
+import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
@@ -327,6 +328,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     return items;
   };
 
+  const selectedBlock = () => isSelected({ kind: 'block', id: b().id });
   return (
     <div
       class="absolute z-10 rounded-md overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
@@ -337,6 +339,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         'cursor-grab': !locked(),
         'cursor-default': locked(),
         'z-30 cursor-grabbing shadow-lg': !!drag(),
+        'ring-2 ring-chart-1 ring-offset-1 ring-offset-card': selectedBlock(),
       }}
       style={{
         top: `${yOf(top())}px`,
@@ -345,7 +348,15 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         width: `calc(${100 / props.placed.cols}% - 3px - ${inset()}px)`,
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
-      onPointerDown={(e) => startGesture('move', e)}
+      onPointerDown={(e) => {
+        // Cmd/Ctrl-click toggles multi-select (Phase F) — don't start a drag.
+        if ((e.metaKey || e.ctrlKey) && b().task_id != null) {
+          e.preventDefault(); e.stopPropagation();
+          toggleSelection({ kind: 'block', id: b().id });
+          return;
+        }
+        startGesture('move', e);
+      }}
       onClick={(e) => { if (locked()) setMenu({ x: e.clientX, y: e.clientY }); }}
     >
       {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
