@@ -193,3 +193,52 @@ export const visibleBlocks = createMemo(() => (blocks() ?? []).filter((b) => {
 3. **All-day + overlays:** `00NN_block_all_day` migration + DTO/PATCH wiring, all-day lane, tag+priority overlay filter UI and `visibleBlocks` memo, their tests.
 
 Splitting this way lands a usable read-only grid first (PR 1), then makes it editable (PR 2), then adds the schema-touching extras (PR 3) — each diff stays reviewable and the DST/tz risk is concentrated in PR 2.
+
+---
+
+## F′ — Calendar → PLANNER revision (pulled in by Phase G)
+
+> **Status:** PRs 1–3 above are **shipped/merged** (grid, drag/resize, all-day +
+> overlays). F′ is the **revision** Phase G requires to turn the grid into the
+> TODAY **PLANNER** (UX in [design-today-cockpit.md](design-today-cockpit.md)). The
+> grid geometry (`lib/grid.ts`, DST/tz handling, gesture→PATCH loop) is **reused**.
+> Each ticket carries **Goal · Acceptance · Tests · State**.
+
+### F′-1 — PLANNER viewport (8h window, expand-24, next-up pin)
+- **Goal.** A single-day hour grid that shows **8 hours** by default, **expands to
+  24h / 24 items**, and keeps **"next up" pinned to the 2nd row from the top** with
+  auto-scroll. Items read **name · tag · start–end**.
+- **Acceptance.** Default 8h height; expand control reveals 24h; next-up sits in
+  row 2 and stays there as time advances / on scroll; reuses the tz-correct geometry
+  (no drift).
+- **Tests.** Viewport height by mode; next-up pin index; expand/collapse;
+  next-up recompute as "now" crosses an item (reuse `grid.test.ts` tz cases).
+- **State.** not-started.
+
+### F′-2 — Drag-to-reorder within the hour grid
+- **Goal.** Reorder items by dragging in the PLANNER (on top of the existing
+  move/resize gestures), persisting via the established `PATCH /api/blocks` loop.
+- **Acceptance.** Dropping an item to a new time persists one tz-correct PATCH;
+  optimistic move + SSE reconcile; locked/meeting items still reject.
+- **Tests.** Reorder emits one PATCH; optimistic→authoritative reconcile; locked
+  guard holds (extend `drag.test.ts`).
+- **State.** not-started.
+
+### F′-3 — Overlap allowed + flagged (relax the no-overlap invariant)
+- **Goal.** Permit two items to share a slot; render a clear **conflict marker**
+  instead of preventing or reflowing. **Deliberately relaxes** the no-overlap
+  assertions in the existing scheduler/grid tests.
+- **Acceptance.** Two overlapping items both render with a conflict badge; nothing
+  is auto-moved to resolve it; the overlap layout still lays columns sanely.
+- **Tests.** Overlap → flagged not prevented; the prior "no overlaps" invariant
+  tests are updated to "overlaps flagged"; layout columns correct under overlap.
+- **State.** not-started. *(Coordinated with G4's scheduler reframe.)*
+
+### F′-4 — Time-Block outlines + Pattern textures in the grid
+- **Goal.** Render **Time-Block** containers as labelled **outlines** spanning their
+  range, and **Pattern** items with their **type texture** (G8) behind the chip.
+- **Acceptance.** A container block draws an outline with its tag/name; pattern
+  chips show the correct shape texture; both legible in light + dark on the tokens.
+- **Tests.** Outline renders for container blocks only; texture shape ↔ pattern type;
+  snapshot in both themes.
+- **State.** not-started. *(Depends on G3 containers + G8 textures.)*

@@ -48,7 +48,7 @@ The market splits cleanly into three camps. None occupies the corner Companion P
 1. **Local-first.** SQLite on the device is the source of truth. Tailscale is the only network surface; no cloud sync by default.
 2. **Private by construction.** All LLM inference runs on Ollama at `localhost`. MCP servers run on the same host.
 3. **Agentic but bounded.** Agents propose; they write only through a small allowed-tool surface and never silently mutate user-locked data.
-4. **Two planning modes.** *Auto* (Motion-style: the day is pre-planned) and *Ritual* (Sunsama-style: guided manual blocking). User-selectable.
+4. **Manual-or-Auto, flight-plan planning (v2 / Phase G).** *Supersedes the old Auto/Ritual mode toggle.* You schedule by **dragging** tasks, or by **Auto** — which acts **only on a flight-plan** staging area: empty → it proposes candidates into the flight-plan; selected → it places them per a **Time-Block** (tag filter) or **Pattern** (typed task collection) rules. The deterministic scheduler is the engine Auto runs over the flight-plan; **overlaps are allowed-but-flagged**. "Ritual" is now a **Pattern type** (Routine ▢ / Habit ◯ / Ritual △), not a mode. Canonical UX: [docs/design-today-cockpit.md](docs/design-today-cockpit.md); plan: [docs/G-rituals-reflection.md](docs/G-rituals-reflection.md). Data model additions (`patterns`, `pattern_types`, `pattern_tasks`, Time-Block containers, `block_templates`) are specced there. *(A–F as below are shipped; the cockpit is the next build.)*
 5. **Structured data + light unstructured layer.** SQL is canonical; tags are a free-form many-to-many overlay.
 6. **MVC, legible, forkable.** Modern look, conservative architecture.
 7. **Static-deployable frontend.** The SolidJS app builds to static assets; the backend hosts it and powers the agentic pipeline.
@@ -399,15 +399,15 @@ stateDiagram-v2
 Credentials live in macOS Keychain (or libsecret), never in a committed `.env`. Lock Ollama to `127.0.0.1` and firewall port 11434.
 ---
 ## 13. Frontend (SolidJS) — Views
-1. **Today** — single-screen focus; today's blocks + next-up. Auto-mode shows a pre-planned day.
-2. **Calendar / Timeline** — day/week grid of `time_blocks`; drag/resize/lock; meetings shown read-only.
+1. **Today (the cockpit, Phase G)** — Day Overview (date + today's tag set) · Summary (overdue/blocked/open + the `+ New Task` button) · the **PLANNER** (hour-by-hour, 8h/expand-24, "next up" pinned to row 2, drag-reorder, overlap-flagged) · the **Flight-plan** staging area (with `Auto Schedule` on top) · a never-closing lower **drawer** `[+ Block] [+ Pattern] [+ Open Task]`. *(Today the view is a simpler briefing + next-up + open-tasks; the cockpit is the G build — see [docs/design-today-cockpit.md](docs/design-today-cockpit.md).)*
+2. **Calendar → PLANNER** — day/week grid of `time_blocks`; drag/resize/lock; under G it gains 8h-scroll, next-up pinning, **Time-Block outlines**, **Pattern textures**, and overlap-flagging (the calendar grid becomes the TODAY PLANNER; `F′` revision).
 3. **Inbox / Review** — `possible_tasks` cards; keyboard `P` promote, `D` dismiss, `M` merge.
 4. **All Tasks** — filterable table (status, owner, tag, due).
 5. **Tags** — weighted tag cloud; click to filter.
-6. **Ritual** — optional guided morning planning sequence.
+6. **Patterns** — typed task collections (Routine ▢ / Habit ◯ / Ritual △ + user-defined), searchable; add existing or create new; tap to stage in the flight-plan. *(Replaces the old "Ritual" sequence — ritual is now a Pattern type.)*
 7. **Jobs** — schedule status, run logs, manual triggers.
-8. **Settings** — scheduling prefs, day themes, MCP connections, model choices, planning mode.
-Design language: modern, minimal, dark-first; Inter / Geist Mono; geometric priority markers consistent with *Date My Day*'s instroke system. SSE drives live updates.
+8. **Settings** — scheduling prefs, **Ollama model picker (Fast/Quality/Embedding)**, **Companion Memory sync**, **pattern types + per-type reminders**, MCP connections, light/dark theme.
+Design language: the **CI-Hub shared design system** (semantic tokens + primitives, Montserrat, dark-first with a light mode) — global styles first. SSE drives live updates.
 ---
 ## 14. Tagging System
 Many-to-many over `tasks`/`possible_tasks`. Names normalized on insert (lowercase, hyphenated, ≤32 chars). Tags survive promotion (`possible_task_tags` → `task_tags`). Agents may *suggest* tags but only surface them in the queue above a confidence threshold. Batching and day-theming key off tags.
