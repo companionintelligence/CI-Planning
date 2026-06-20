@@ -5,6 +5,7 @@ import {
   Sun, Cpu,
 } from 'lucide-solid';
 import { possibles } from '../stores/index.js';
+import { ThemeToggle } from './ThemeToggle.js';
 
 const links = [
   { href: '/',         label: 'Today',    Icon: Sun },
@@ -60,6 +61,9 @@ export function Nav() {
           </Show>
         </A>
       ))}
+
+      <div class="flex-1" />
+      <ThemeToggle />
     </nav>
   );
 }

@@ -2,14 +2,98 @@
 @config "../tailwind.config.js";
 @reference "tailwindcss";
 
+/* ──────────────────────────────────────────────────────────────────────────
+   CI-Hub global design tokens (the shared org "deep teal-navy" system).
+   Source of truth: CI-Hub/packages/frontend/src/styles/globals.css.
+   Light = :root, dark = .dark. Every surface/text color in the app resolves to
+   one of these (directly via bg-card / text-foreground / …, or via the legacy
+   surface-* / slate-* scales remapped onto them in tailwind.config.js), so the
+   whole UI themes from this one place — global styles first.
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.625rem;
+
+  --background: #f3f3f3;
+  --foreground: #010f16;
+  --card: #f7f7f9;
+  --card-foreground: #041620;
+  --popover: oklch(100% 0 0);
+  --popover-foreground: #041620;
+  --primary: #0f717a;
+  --primary-foreground: oklch(98.4% 0.003 247.858);
+  --secondary: oklch(96.8% 0.007 247.896);
+  --secondary-foreground: #0a222e;
+  --muted: oklch(96.8% 0.007 247.896);
+  --muted-foreground: oklch(55.4% 0.046 257.417);
+  --accent: oklch(96.8% 0.007 247.896);
+  --accent-foreground: #0a222e;
+  --destructive: oklch(62% 0.22 27);
+  --destructive-foreground: oklch(98.4% 0.003 247.858);
+  --border: oklch(92.9% 0.013 255.508);
+  --input: oklch(92.9% 0.013 255.508);
+  --ring: oklch(70.4% 0.04 256.788);
+  --chart-1: oklch(64.6% 0.222 41.116);
+  --chart-2: oklch(60% 0.118 184.704);
+  --chart-3: oklch(39.8% 0.07 227.392);
+  --chart-4: oklch(82.8% 0.189 84.429);
+  --chart-5: oklch(76.9% 0.188 70.08);
+  --sidebar: oklch(98.4% 0.003 247.858);
+  --sidebar-foreground: oklch(12.9% 0.042 264.695);
+  --sidebar-accent: oklch(96.8% 0.007 247.896);
+  --sidebar-accent-foreground: #0a222e;
+  --sidebar-border: oklch(92.9% 0.013 255.508);
+  --sidebar-ring: #70a6af;
+
+  color-scheme: light;
+}
+
+.dark {
+  --background: #041620;
+  --foreground: #88a29e;
+  --card: #0a222e;
+  --card-foreground: #88a29e;
+  --popover: #0a222e;
+  --popover-foreground: #88a29e;
+  --primary: #abd4d8;
+  --primary-foreground: #041620;
+  --secondary: #0a222e;
+  --secondary-foreground: #f5f8fa;
+  --muted: #0a222e;
+  --muted-foreground: #8f98a3;
+  --accent: #2c676d;
+  --accent-foreground: #f5f8fa;
+  --destructive: #ef7070;
+  --destructive-foreground: #f5f8fa;
+  --border: #2c676d;
+  --input: #6992a2;
+  --ring: #58ebbf;
+  --chart-1: #58ebbf;
+  --chart-2: #409b9b;
+  --chart-3: #079d99;
+  --chart-4: #70a6af;
+  --chart-5: #2c676d;
+  --sidebar: #041620;
+  --sidebar-foreground: #f5f8fa;
+  --sidebar-accent: #1d293d;
+  --sidebar-accent-foreground: #f5f8fa;
+  --sidebar-border: #2c676d;
+  --sidebar-ring: #58ebbf;
+
+  color-scheme: dark;
+}
+
 @layer base {
   * { box-sizing: border-box; }
-  :root { color-scheme: dark; }
-  body { min-height: 100vh; }
+  body {
+    min-height: 100vh;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: 'Montserrat', system-ui, sans-serif;
+  }
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #1a3040; border-radius: 2px; }
-  ::-webkit-scrollbar-thumb:hover { background: #244859; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
   .page-enter { animation: pageIn 140ms ease both; }
   @keyframes pageIn {
     from { opacity: 0; transform: translateY(5px); }
@@ -31,41 +115,47 @@
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
            active:scale-95 select-none cursor-pointer;
   }
-  /* CI-style mint CTA — matches "Get Your Core" button */
+  /* Signature CI mint CTA — kept across modes; text stays dark on the bright gradient. */
   .btn-primary {
-    @apply text-surface-950;
+    color: #041620;
     background: linear-gradient(135deg, #58ebbf, #409b9b);
-    font-family: 'Source Code Pro', monospace;
   }
   .btn-secondary {
-    @apply text-ci-1 border border-accent;
+    @apply border;
+    color: var(--primary);
+    border-color: var(--border);
     background: transparent;
   }
   .btn-ghost {
-    @apply text-slate-400;
+    color: var(--muted-foreground);
   }
   .btn-danger {
-    @apply text-red-400;
+    color: var(--destructive);
   }
   .btn-icon {
-    @apply text-slate-400 p-1.5 rounded-md;
+    @apply p-1.5 rounded-md;
+    color: var(--muted-foreground);
   }
 
   /* ── Cards ───────────────────────────────────────────────────── */
   .card {
-    @apply bg-surface-800 border border-surface-700 rounded-2xl p-4;
+    @apply rounded-2xl p-4 border;
+    background: var(--card);
+    border-color: var(--border);
   }
 
   /* ── Inputs ──────────────────────────────────────────────────── */
   .input,
   .input-lg,
   .textarea {
-    @apply bg-surface-700 border border-surface-600 rounded-xl px-3 py-1.5 text-sm
-           text-slate-100 placeholder-slate-500
-           focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent
-           transition-colors duration-150 w-full;
-    font-family: 'Source Code Pro', monospace;
+    @apply rounded-xl px-3 py-1.5 text-sm border
+           focus:outline-none transition-colors duration-150 w-full;
+    background: transparent;
+    border-color: var(--input);
+    color: var(--foreground);
   }
+  .input::placeholder,
+  .textarea::placeholder { color: var(--muted-foreground); }
   .input-lg { @apply py-2.5 text-base; }
   .textarea  { @apply resize-none; }
 
@@ -79,14 +169,14 @@
   .badge-blue {
     @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium tracking-wide;
   }
-  .badge-neutral { @apply bg-surface-700 text-slate-400; }
+  .badge-neutral { background: var(--muted); color: var(--muted-foreground); }
   .badge-accent  { @apply bg-accent/20 text-accent-light; }
   .badge-green   { @apply text-ci-3; background: rgba(88,235,191,.12); }
   .badge-yellow  { @apply bg-yellow-900/40 text-yellow-400; }
   .badge-red     { @apply bg-red-900/40 text-red-400; }
   .badge-blue    { @apply bg-ci-6/30 text-ci-2; }
 
-  /* ── Priority dots ────────────────────────────────────────────── */
+  /* ── Priority dots (constant across modes) ────────────────────── */
   .priority-dot { @apply w-2 h-2 rounded-full flex-shrink-0; }
   .p1 { background: #ef4444; }
   .p2 { background: #f97316; }
@@ -99,16 +189,15 @@
   .toast-success,
   .toast-error {
     @apply fixed bottom-4 right-4 z-50 flex items-center gap-2.5
-           px-4 py-3 rounded-2xl text-sm font-medium shadow-xl
-           border text-slate-100;
-    background: rgba(15,30,46,.97);
-    border-color: #1a3040;
+           px-4 py-3 rounded-2xl text-sm font-medium shadow-xl border;
+    background: var(--popover);
+    border-color: var(--border);
+    color: var(--popover-foreground);
     backdrop-filter: blur(12px);
     animation: toastIn 200ms ease both;
-    font-family: 'Source Code Pro', monospace;
   }
-  .toast-success { border-color: rgba(88,235,191,.3); background: rgba(11,30,24,.97); color: #58ebbf; }
-  .toast-error   { border-color: rgba(239,68,68,.3); background: rgba(30,11,11,.97); }
+  .toast-success { border-color: rgba(88,235,191,.4); color: #58ebbf; }
+  .toast-error   { border-color: var(--destructive); color: var(--destructive); }
   @keyframes toastIn {
     from { opacity: 0; transform: translateY(8px) scale(0.95); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -122,7 +211,9 @@
     animation: fadeIn 150ms ease both;
   }
   .modal {
-    @apply bg-surface-800 border border-surface-700 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden;
+    @apply rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border;
+    background: var(--card);
+    border-color: var(--border);
     animation: modalIn 200ms cubic-bezier(0.34,1.56,0.64,1) both;
   }
   @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
@@ -131,41 +222,41 @@
     to   { opacity: 1; transform: scale(1)    translateY(0); }
   }
 
-  /* ── FAB ─────────────────────────────────────────────────────── */
+  /* ── FAB (signature mint CTA) ─────────────────────────────────── */
   .fab {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
-           px-5 py-3 text-surface-950 font-semibold rounded-full
+           px-5 py-3 font-semibold rounded-full
            transition-all duration-150 active:scale-95 select-none cursor-pointer;
+    color: #041620;
     background: linear-gradient(135deg, #58ebbf, #409b9b);
     box-shadow: 0 8px 24px rgba(88,235,191,.25);
-    font-family: 'Source Code Pro', monospace;
     letter-spacing: .03em;
   }
 
   /* ── Nav ─────────────────────────────────────────────────────── */
   .nav-item {
     @apply flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium
-           text-slate-500 hover:text-ci-1 hover:bg-surface-700
            transition-all duration-100 cursor-pointer select-none;
+    color: var(--muted-foreground);
     letter-spacing: .02em;
   }
+  .nav-item:hover { color: var(--foreground); background: var(--sidebar-accent); }
   .nav-item-active {
-    @apply text-ci-3 bg-surface-700;
-    text-shadow: 0 0 12px rgba(88,235,191,.4);
+    color: #58ebbf;
+    background: var(--sidebar-accent);
   }
 
   /* ── Labels ──────────────────────────────────────────────────── */
   .section-label {
     @apply text-[10px] font-semibold tracking-[0.15em] uppercase mb-2 px-1;
-    color: #409b9b;
-    font-family: 'Source Code Pro', monospace;
+    color: var(--primary);
   }
 
   /* ── Checkbox ────────────────────────────────────────────────── */
   .checkbox {
     @apply w-4 h-4 rounded-md border-2 flex items-center justify-center
            flex-shrink-0 transition-all duration-200 cursor-pointer;
-    border-color: #244859;
+    border-color: var(--border);
   }
   .checkbox-checked {
     background: linear-gradient(135deg, #58ebbf, #409b9b);
@@ -176,16 +267,17 @@
 /* ── Hover overrides (outside @layer to avoid @apply nesting limit) ── */
 .btn-primary:hover  { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 4px 16px rgba(88,235,191,.3); }
 .btn-secondary:hover { background: rgba(64,155,155,.1); border-color: #58ebbf; color: #82ffe1; }
-.btn-ghost:hover    { color: #ABD4D8; background-color: rgba(21,38,55,.6); }
-.btn-icon:hover     { color: #ABD4D8; background-color: rgba(21,38,55,.6); }
+.btn-ghost:hover    { color: var(--foreground); background-color: var(--sidebar-accent); }
+.btn-icon:hover     { color: var(--foreground); background-color: var(--sidebar-accent); }
 .btn-danger:hover   { background-color: rgba(127,29,29,.3); color: #fca5a5; }
-.card-hover:hover   { border-color: #244859; box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
+.card-hover:hover   { border-color: var(--ring); box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
 .fab:hover          { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 12px 32px rgba(88,235,191,.4); transform: scale(1.03) translateY(-1px); }
 .checkbox:hover     { border-color: #409b9b; }
 .nav-item-active    { border-left: 2px solid #58ebbf; }
 
 /* CI glow effect on focused inputs */
-.input:focus { box-shadow: 0 0 0 2px rgba(88,235,191,.25); }
+.input:focus,
+.textarea:focus { box-shadow: 0 0 0 2px rgba(88,235,191,.25); border-color: var(--ring); }
 
 /* Priority dot glows */
 .p1 { box-shadow: 0 0 5px rgba(239,68,68,.5); }
