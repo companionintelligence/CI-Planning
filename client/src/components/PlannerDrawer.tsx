@@ -335,12 +335,15 @@ export function PlannerDrawer() {
               </Show>
             </Show>
 
-          {/* Pattern Wizard — Habits / Routines / Rituals as separate submenus. */}
+          {/* Pattern Wizard — Routines first (the bundle), then Habits; Rituals are
+              hidden behind a feature flag (prefs.enable_rituals, default OFF). */}
           <Show when={tab() === 'pattern'}>
             <div class="p-2 space-y-2">
-              <PatternCat typeName="Habit" title="Habits" desc="repeating actions" />
               <PatternCat typeName="Routine" title="Routines" desc="bundles of habits" />
-              <PatternCat typeName="Ritual" title="Rituals" desc="occasion prep" />
+              <PatternCat typeName="Habit" title="Habits" desc="repeating actions" />
+              <Show when={prefs()?.enable_rituals}>
+                <PatternCat typeName="Ritual" title="Rituals" desc="occasion prep" />
+              </Show>
               <p class="text-[11px] text-muted-foreground text-center pt-1">
                 Create patterns in <A href="/patterns" class="text-primary underline" onClick={() => setTab(null)}>Patterns</A>.
               </p>

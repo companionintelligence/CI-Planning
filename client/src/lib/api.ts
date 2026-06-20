@@ -314,6 +314,7 @@ export interface Prefs {
   plan_allday_always?: boolean; plan_daylong_for_promoted?: boolean; plan_autofill_gaps?: boolean;
   concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
+  enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
   // Ollama model overrides (null/'' = use env default).
