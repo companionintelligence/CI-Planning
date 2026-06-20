@@ -27,6 +27,17 @@ on('block:updated', () => refetchBlocks());
 on('block:deleted', () => refetchBlocks());
 on('schedule:done',  () => refetchBlocks());
 
+// ── Concepts (Phase G, Step 2b) ────────────────────────────────────────────────
+// Unscheduled goal Time-Blocks — owner-scoped, off the minute grid (a goal day +
+// duration, no fixed time). Fetched separately from the dated range since they have
+// no real time; the horizon lane + the PLANNER's goal-day header chip read them here.
+export const [concepts, { refetch: refetchConcepts }] = createResource(() =>
+  api.blocks.listConcepts().then((r) => r.blocks)
+);
+on('block:created', () => refetchConcepts());
+on('block:updated', () => refetchConcepts());
+on('block:deleted', () => refetchConcepts());
+
 // ── Overlays (tag AND priority, combinable) ────────────────────────────────────
 // Tag/priority live on the linked *task*, not the block. The filter is client-side
 // over the already-fetched range — no new endpoint. Both filters AND-combine; an

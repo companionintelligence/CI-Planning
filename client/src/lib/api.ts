@@ -108,6 +108,11 @@ export const api = {
       request<{ block: Block }>('POST', '/blocks', body),
     update: (id: number, body: Partial<Block>) => request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
     delete: (id: number) => request<{ ok: boolean }>('DELETE', `/blocks/${id}`),
+    // Concepts have no real time — fetch them all (owner-scoped) for the horizon lane.
+    listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?block_type=concept'),
+    // Promote a Concept into a scheduled Plan at the chosen start (end ⇐ duration).
+    promote: (id: number, start_at: string, opts?: { end_at?: string; all_day?: boolean }) =>
+      request<{ block: Block }>('POST', `/blocks/${id}/promote`, { start_at, ...opts }),
   },
 
   // ── Patterns (Phase G, G1) — typed, reusable task collections ────────────────
@@ -210,6 +215,10 @@ export const api = {
 export interface Block {
   id: number; task_id?: number; title: string; block_kind: string;
   tag?: string | null; // container/grouping tag (G3); set on 'timeblock' containers
+  // Plan/Concept container typing (0019). block_type is set on 'timeblock' containers.
+  block_type?: 'plan' | 'concept' | null;
+  goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
+  duration_minutes?: number | null; // concept duration (no start/end semantics)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
