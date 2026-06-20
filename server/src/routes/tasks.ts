@@ -9,6 +9,11 @@ import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError 
 import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
 import { startTimer, stopTimer, getRunning } from '../services/timer.js';
+import { parseRule } from '../engine/recurrence.js';
+import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generate.js';
+import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
+import { utcDayBounds } from '../lib/tz.js';
+import { localISODate } from '../lib/dates.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -69,11 +74,50 @@ export function tasksRouter() {
       parent_id?: number;
       tags?: string[];
       depends_on?: number[];
+      recurrence_rule?: string;
+      recurrence_dtstart?: string;
+      is_habit?: boolean;
     };
 
     if (!body.title?.trim()) {
       ctx.status = 400;
       ctx.body = { error: 'title is required' };
+      return;
+    }
+
+    // Recurring task → create a TEMPLATE (status 'recurring', never scheduled
+    // directly) and materialize its instances now so the series appears immediately.
+    if (body.recurrence_rule) {
+      const parsed = parseRule(body.recurrence_rule);
+      if (!parsed.ok) {
+        ctx.status = 422;
+        ctx.body = { error: parsed.error };
+        return;
+      }
+      const owner = body.owner_id ?? currentOwnerId();
+      const tz = ownerTimezone(owner);
+      const [template] = await db
+        .insert(tasks)
+        .values({
+          title: body.title.trim(),
+          notes: body.notes,
+          taskTime: body.task_time,
+          estimatedMinutes: body.estimated_minutes,
+          priority: body.priority ?? 3,
+          status: 'recurring',
+          recurrenceRule: parsed.rule,
+          recurrenceDtstart: body.recurrence_dtstart ?? utcDayBounds(localISODate(), tz).start,
+          isHabit: body.is_habit ?? false,
+          ownerId: owner,
+        })
+        .returning();
+      if (body.tags?.length) await attachTags(template.id, body.tags);
+      const generated = generateRecurrences();
+      const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as number[], blocked: false };
+      broadcast(currentOwnerId(), 'task:created', out);
+      broadcast(currentOwnerId(), 'recurrence:generated', generated);
+      ctx.status = 201;
+      ctx.body = { task: out, generated };
       return;
     }
 
@@ -161,6 +205,30 @@ export function tasksRouter() {
     ctx.body = { subtasks: withTags };
   });
 
+  // POST /api/tasks/:id/skip — skip a recurring instance: mark it `skipped` and
+  // add its day to the template's EXDATE so a regenerate won't resurrect it.
+  router.post('/api/tasks/:id/skip', async (ctx) => {
+    const id = Number(ctx.params.id);
+    const res = skipInstance(id);
+    if (!res.ok) {
+      ctx.status = res.reason === 'not_found' ? 404 : 400;
+      ctx.body = { error: res.reason === 'not_found' ? 'not found' : 'not a recurring instance' };
+      return;
+    }
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+    const out = { ...toApi(task), tags: [] as string[], depends_on: [] as number[], blocked: false };
+    broadcast(currentOwnerId(), 'task:updated', out);
+    ctx.body = { task: out, skipped: res.date };
+  });
+
+  // GET /api/tasks/:id/streak — habit streak + last-7 occurrence strip for a
+  // recurring task (pass a template or any instance id). 404 if not recurring.
+  router.get('/api/tasks/:id/streak', async (ctx) => {
+    const res = computeStreak(Number(ctx.params.id));
+    if (!res) { ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return; }
+    ctx.body = res;
+  });
+
   // PATCH /api/tasks/:id
   router.patch('/api/tasks/:id', async (ctx) => {
     const id = Number(ctx.params.id);
@@ -183,7 +251,15 @@ export function tasksRouter() {
       parent_id?: number | null;
       tags?: string[];
       depends_on?: number[];
+      recurrence_rule?: string | null;
+      recurrence_dtstart?: string | null;
+      is_habit?: boolean;
     };
+
+    // scope=series edits the whole recurring series (the template); scope=instance
+    // (default) edits just this row. For a non-recurring task the two coincide.
+    const scope = (ctx.query.scope as string) === 'series' ? 'series' : 'instance';
+    const targetId = scope === 'series' ? (resolveTemplateId(id) ?? id) : id;
 
     const update: Partial<typeof tasks.$inferInsert> = {};
     if (body.title !== undefined)             update.title = body.title;
@@ -200,33 +276,60 @@ export function tasksRouter() {
     if (body.status !== undefined)            update.status = body.status;
     if (body.completed_at !== undefined)      update.completedAt = body.completed_at;
     if (body.parent_id !== undefined)         update.parentId = body.parent_id;
+    if (body.is_habit !== undefined)          update.isHabit = body.is_habit;
+    if (body.recurrence_dtstart !== undefined) update.recurrenceDtstart = body.recurrence_dtstart;
     if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
+
+    // A recurrence-rule change is validated; an invalid rule is a 422, never a 500.
+    if (body.recurrence_rule !== undefined) {
+      if (body.recurrence_rule === null) {
+        update.recurrenceRule = null;
+      } else {
+        const parsed = parseRule(body.recurrence_rule);
+        if (!parsed.ok) { ctx.status = 422; ctx.body = { error: parsed.error }; return; }
+        update.recurrenceRule = parsed.rule;
+      }
+    }
 
     // Only issue an UPDATE when there are column changes; a tags/depends-only
     // PATCH still resolves the task (drizzle rejects an empty .set()).
     const [task] = Object.keys(update).length
-      ? await db.update(tasks).set(update).where(eq(tasks.id, id)).returning()
-      : await db.select().from(tasks).where(eq(tasks.id, id));
+      ? await db.update(tasks).set(update).where(eq(tasks.id, targetId)).returning()
+      : await db.select().from(tasks).where(eq(tasks.id, targetId));
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     if (Array.isArray(body.tags)) {
-      sqlite.prepare('DELETE FROM task_tags WHERE task_id = ?').run(id);
-      await attachTags(id, body.tags);
+      sqlite.prepare('DELETE FROM task_tags WHERE task_id = ?').run(targetId);
+      await attachTags(targetId, body.tags);
     }
 
-    if (Array.isArray(body.depends_on) && !applyDependencies(ctx, id, body.depends_on)) return;
+    if (Array.isArray(body.depends_on) && !applyDependencies(ctx, targetId, body.depends_on)) return;
+
+    // A series edit that changes the recurrence pattern or per-instance time drops
+    // future un-actioned instances and re-materializes them under the new rule;
+    // past / completed / skipped / missed instances are preserved.
+    let generated: ReturnType<typeof generateRecurrences> | undefined;
+    if (
+      scope === 'series' &&
+      resolveTemplateId(targetId) != null &&
+      (body.recurrence_rule !== undefined || body.recurrence_dtstart !== undefined || body.task_time !== undefined)
+    ) {
+      deleteFutureOpenInstances(targetId);
+      generated = generateRecurrences();
+    }
 
     const currentTags = (sqlite
       .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
-      .all({ task_id: id }) as { name: string }[]).map((r) => r.name);
+      .all({ task_id: targetId }) as { name: string }[]).map((r) => r.name);
     const out = {
       ...toApi(task),
       tags: currentTags,
-      depends_on: getDependencies(id),
-      blocked: blockedTaskIds().has(id),
+      depends_on: getDependencies(targetId),
+      blocked: blockedTaskIds().has(targetId),
     };
     broadcast(currentOwnerId(), 'task:updated', out);
-    ctx.body = { task: out };
+    if (generated) broadcast(currentOwnerId(), 'recurrence:generated', generated);
+    ctx.body = { task: out, ...(generated ? { generated } : {}) };
   });
 
   // DELETE /api/tasks/:id  (soft delete)
