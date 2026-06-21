@@ -1,7 +1,13 @@
-import { createSignal, createEffect, Show } from 'solid-js';
+import { createSignal, createEffect, Show, For } from 'solid-js';
 import { X, Save } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { refetchBlocks, showToast } from '../stores/index.js';
+import { buildRule, rulePreset, type RepeatPreset } from '../lib/recurrence.js';
+
+// CON-4: a recurring Time Block repeats via a shared RRULE. Minimal preset set;
+// 'custom' exposes the raw rule for power users (validated server-side).
+const REPEAT_OPTS: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
+const repeatLabels: Record<string, string> = { none: 'Once', daily: 'Daily', weekly: 'Weekly', custom: 'Custom' };
 
 /**
  * Edit a Plan container (PR-B): title, multi-tag, day/start, D/H/M duration, and a
@@ -26,6 +32,8 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
   const [pH, setPH] = createSignal(1);
   const [pM, setPM] = createSignal(0);
   const [note, setNote] = createSignal('');
+  const [repeat, setRepeat] = createSignal<RepeatPreset>('none');
+  const [customRule, setCustomRule] = createSignal('');
 
   createEffect(() => {
     const b = props.block;
@@ -38,6 +46,10 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
     const min = Math.max(Math.round((Date.parse(b.end_at) - Date.parse(b.start_at)) / 60000), 0);
     setPD(Math.floor(min / 1440)); setPH(Math.floor((min % 1440) / 60)); setPM(min % 60);
     setNote(b.note ?? '');
+    const ps = rulePreset(b.recurrence_rule);
+    // Only the curated presets get a button; everything else is 'custom'.
+    setRepeat(REPEAT_OPTS.includes(ps.preset) ? ps.preset : 'custom');
+    setCustomRule(b.recurrence_rule ?? '');
   });
 
   async function save() {
@@ -54,6 +66,7 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
         title: name().trim() || 'Time Block', tag: tagList.join(',') || null,
         secondary_tags: secondaryList,
         start_at: start, end_at: end, note: note().trim() || null,
+        recurrence_rule: buildRule(repeat(), [], customRule()),
       });
       refetchBlocks();
       showToast('Time Block updated', 'success');
@@ -89,6 +102,22 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
                 <label class="flex flex-col gap-0.5 flex-1"><input type="number" min="0" max="23" class="input" value={pH()} onInput={(e) => setPH(Number(e.currentTarget.value) || 0)} /><span class="text-[10px] text-muted-foreground text-center">hrs</span></label>
                 <label class="flex flex-col gap-0.5 flex-1"><input type="number" min="0" max="55" step="5" class="input" value={pM()} onInput={(e) => setPM(Number(e.currentTarget.value) || 0)} /><span class="text-[10px] text-muted-foreground text-center">min</span></label>
               </div>
+            </div>
+            <div class="flex flex-col gap-1">
+              <span class="text-[11px] text-muted-foreground">Repeat</span>
+              <div class="flex gap-1">
+                <For each={REPEAT_OPTS}>{(opt) => (
+                  <button type="button" onClick={() => setRepeat(opt)}
+                    class="text-xs px-2 py-1 rounded-md border"
+                    classList={{
+                      'bg-primary text-primary-foreground border-primary': repeat() === opt,
+                      'border-border text-muted-foreground hover:text-foreground': repeat() !== opt,
+                    }}>{repeatLabels[opt]}</button>
+                )}</For>
+              </div>
+              <Show when={repeat() === 'custom'}>
+                <input class="input mt-1" placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR" value={customRule()} onInput={(e) => setCustomRule(e.currentTarget.value)} />
+              </Show>
             </div>
             <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Note</span>
               <textarea class="textarea" rows="2" value={note()} onInput={(e) => setNote(e.currentTarget.value)} /></label>

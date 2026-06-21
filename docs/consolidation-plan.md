@@ -1,9 +1,15 @@
 # Companion Planning — Consolidation Pass
 
-> **Status:** planning doc — no implementation yet. Branch off `main` (after #70).
-> **This pass gates `claude/cockpit-v2` (#71): consolidation lands first; #71
-> rebases onto it.** Vocabulary canon: [GLOSSARY.md](GLOSSARY.md). UX target:
-> [cockpit-v2-plan.md](cockpit-v2-plan.md).
+> **Status (2026-06-21):** SHIPPED. CON-1 (#74/#76), CON-2 (#75/#76; ConceptLane
+> removed in #77), CON-3 (#78), CON-5 (#73/#76), and **CON-4 (re-scoped — see
+> below)** are all merged to `main`, along with the cockpit-v2 UI batch (#77,
+> phases 1–6 + tag dilution). Vocabulary canon: [GLOSSARY.md](GLOSSARY.md). UX
+> target: [cockpit-v2-plan.md](cockpit-v2-plan.md).
+>
+> **Two intentional deviations from the original plan:** (a) CON-2's
+> `is_habit`/`is_fast_task` booleans were kept as in-sync runtime aliases (additive
+> `tasks.subtype`), not dropped — the engine still reads `is_habit`. (b) **CON-4 was
+> re-scoped to NOT retire the `0025` pattern RRULE** — see the CON-4 section.
 
 ## Why consolidate first
 
@@ -97,19 +103,38 @@ Forward-only, expand → backfill → contract. Migration numbers continue from
 - **Hands to #71 Phase 5:** levels-use + dilution (the only behavior change), where
   it’s tested against `auto-placement.test.ts`.
 
-### CON-4 — Recurrence unification
-- **Goal.** One recurrence engine, attachable to Task, Time Block, and
-  Routine-placement.
-- **Scope.** Migration **`0034`** — add `time_blocks.recurrence_rule` (+
-  `recurrence_dtstart`); reuse the task engine’s `ux_*_occurrence` keying; **retire
-  `0025`’s pattern RRULE** (a recurring Routine places its member tasks through the
-  shared engine). Keep lazy `ensurePatternsForRange` on GET; wrap it
-  concurrency-safe and document it as canonical.
-- **Behavior.** Existing recurring habits/patterns behave identically; bare
-  recurring Time Blocks (“Deep Work 9–11 every weekday”) now supported.
+### CON-4 — Recurrence: add recurring Time Blocks *(RE-SCOPED — `0025` KEPT)*
+- **Re-scope decision (2026-06-21, with the user).** The original plan said
+  "retire `0025`'s pattern RRULE; a Routine recurs by placing its member tasks."
+  Investigation showed the two engines are **already integrated, not parallel**:
+  the task engine generates recurring task *instances*, and the pattern path
+  (`patterns.recurrence_rule` → `ensurePatternsForRange` → `placePatternOnDay`)
+  only schedules a Routine's *appearance*, placing its member tasks lazily and
+  **redirecting a recurring member to that day's task instance**
+  ([patterns-place.ts:60-90](../server/src/engine/patterns-place.ts)). "Retiring"
+  it isn't deletion — it's a redesign with open questions, and it collides with the
+  behavior-preservation contract. So CON-4 was re-scoped to **additive only**:
+  ship recurring Time Blocks and **keep the `0025` pattern path** as canonical.
+- **Scope (shipped).** Migration **`0034`** — add `time_blocks.recurrence_rule`,
+  `recurrence_dtstart`, `recurrence_parent_id`, `occurrence_date` + partial UNIQUE
+  `ux_block_occurrence(recurrence_parent_id, occurrence_date)`. New engine
+  [blocks-recur.ts](../server/src/engine/blocks-recur.ts) `ensureRecurringBlocksForRange`
+  mirrors `ensurePatternsForRange` and shares the SAME rrule.js expander
+  (`recurrence.ts`): a *template* (rule set, no parent) is never rendered; GET
+  materializes one *instance* per occurrence, idempotent + concurrency-safe via
+  `INSERT OR IGNORE` against the unique index (no backfill — today-or-future only).
+  Blocks route: create/PATCH accept `recurrence_rule`/`recurrence_dtstart`; a series
+  rule change drops future instances (GET re-materializes); deleting a template
+  cascades its instances (+ their `entity_tags`). Client `BlockEditModal` gets a
+  Repeat control via the shared `lib/recurrence.ts`.
+- **Behavior.** Additive + behavior-preserving: no existing block has a rule, so the
+  machinery is a no-op on current data; the `0025` Routine/Habit path is untouched.
 - **Acceptance / tests.** `generate.test.ts` + `recurrence-ops.test.ts` +
-  `pattern-recurrence.test.ts` green; a recurring Time Block materializes
-  idempotently across a DST week; concurrent GETs never double-place.
+  `pattern-recurrence.test.ts` stay green; new `block-recurrence.test.ts` proves
+  per-day materialization, RRULE honoring, idempotent re-GET, stable wall-clock in a
+  non-UTC tz, series-edit re-materialization, and orphan-free template delete.
+- **Deferred (its own decision later):** truly unifying onto one engine + finishing
+  the `is_habit`/`is_fast_task` boolean-drop — not done here.
 
 ### CON-5 — Drag-to-place primitive *(the one additive capability)*
 - **Goal.** Make the Planner write-capable so authoring isn’t wizard-only — and so
@@ -149,8 +174,10 @@ Forward-only, expand → backfill → contract. Migration numbers continue from
    Dedicated PR, FK-integrity + round-trip tests, no other work in it.
 2. **CON-3 trades DB-enforced referential integrity for app-enforced** — the
    tag-repo layer must own every entity-delete path or tag rows orphan.
-3. **CON-4 deletes code** (the `0025` path) rather than relabeling — the recurrence
-   suites are the gate; verify habits/streaks unchanged.
+3. **CON-4 was re-scoped to additive** (recurring Time Blocks) and **keeps** the
+   `0025` pattern path rather than deleting it — the recurrence suites remain the
+   gate; habits/streaks are untouched. (Original risk: deleting `0025` would have
+   fought behavior-preservation — see the CON-4 section.)
 4. **Behavior-preservation is the contract** — if any of CON-1..4 changes a test
    expectation, that’s a red flag, not an update. Only CON-5 adds behavior.
 5. **Scope** — 5 PRs. They’re ordered so each is independently reviewable and #71
