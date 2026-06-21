@@ -6,6 +6,7 @@ import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
+import { syncEntityTags, removeEntityTags, splitTagString } from '../services/tags.js';
 
 export function blocksRouter() {
   const router = new Router();
@@ -80,6 +81,9 @@ export function blocksRouter() {
       })
       .returning();
 
+    // CON-3: mirror the (denormalized) tag string into the normalized store.
+    if (body.tag !== undefined) syncEntityTags('time_block', block.id, splitTagString(body.tag));
+
     const out = toApi(block);
     broadcast(currentOwnerId(), 'block:created', out);
     ctx.status = 201;
@@ -122,6 +126,10 @@ export function blocksRouter() {
 
     const [block] = await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    // CON-3: keep the normalized store in sync when the tag string changes
+    // (null/'' clears). Replace semantics mirror the `time_blocks.tag` overwrite.
+    if (body.tag !== undefined) syncEntityTags('time_block', id, splitTagString(body.tag));
 
     const out = toApi(block);
     broadcast(currentOwnerId(), 'block:updated', out);
@@ -193,10 +201,17 @@ export function blocksRouter() {
   router.delete('/api/blocks/:id', async (ctx) => {
     const id = ctx.params.id;
     if ((ctx.query.children as string) === 'delete') {
+      // CON-3 cascade: members are HARD-deleted here — drop their tag rows first.
+      const members = sqlite
+        .prepare(`SELECT id FROM time_blocks WHERE parent_block_id = ?`)
+        .all(id) as { id: string }[];
+      for (const m of members) removeEntityTags('time_block', m.id);
       sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(id);
     }
     const [block] = await db.delete(timeBlocks).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    // CON-3 cascade: the block itself is HARD-deleted — drop its tag rows.
+    removeEntityTags('time_block', id);
     broadcast(currentOwnerId(), 'block:deleted', { id });
     ctx.body = { ok: true };
   });

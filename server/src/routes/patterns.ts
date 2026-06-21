@@ -5,6 +5,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { placePatternOnDay, validatePatternRule } from '../engine/patterns-place.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
+import { syncEntityTags, removeEntityTags, splitTagString } from '../services/tags.js';
 
 /**
  * Patterns (Phase G, ticket G1). Typed, reusable task collections — Routine ▢ /
@@ -265,6 +266,8 @@ export function patternsRouter() {
       try { setMembers(p.id, body.task_ids); }
       catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
     }
+    // CON-3: mirror the routine's (denormalized) tag string into the normalized store.
+    if (body.tag !== undefined) syncEntityTags('routine', p.id, splitTagString(body.tag));
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
     ctx.status = 201;
@@ -301,6 +304,8 @@ export function patternsRouter() {
       try { setMembers(id, body.task_ids); }
       catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
     }
+    // CON-3: keep the normalized store in sync when the tag string changes (null/'' clears).
+    if (body.tag !== undefined) syncEntityTags('routine', id, splitTagString(body.tag));
     const out = serializePattern(row);
     broadcast(owner, 'pattern:updated', out);
     ctx.body = { pattern: out };
@@ -314,8 +319,15 @@ export function patternsRouter() {
     if (!p) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     // Ritual-local fast tasks are owned by the pattern — delete them with it. Shared
     // real tasks are untouched (only the membership rows cascade).
+    // CON-3 cascade: these tasks + the routine itself are HARD-deleted — drop their
+    // tag rows first (the fast-task ids must be read before the DELETE).
+    const fastTasks = sqlite
+      .prepare(`SELECT id FROM tasks WHERE is_fast_task = 1 AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`)
+      .all(id) as { id: string }[];
+    for (const t of fastTasks) removeEntityTags('task', t.id);
     sqlite.prepare(`DELETE FROM tasks WHERE is_fast_task = 1 AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`).run(id);
     sqlite.prepare(`DELETE FROM patterns WHERE id = ?`).run(id); // pattern_tasks cascade; tasks untouched
+    removeEntityTags('routine', id);
     broadcast(currentOwnerId(), 'pattern:deleted', { id });
     ctx.body = { ok: true };
   });
@@ -387,7 +399,11 @@ export function patternsRouter() {
     // Delete the underlying task only when it's genuinely a fast task (membership
     // cascades). A shared real task just loses its membership.
     const isFast = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ? AND is_fast_task = 1`).get(taskId, owner);
-    if (isFast) sqlite.prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId);
+    if (isFast) {
+      // CON-3 cascade: the fast task is HARD-deleted — drop its tag rows.
+      removeEntityTags('task', taskId);
+      sqlite.prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId);
+    }
     else sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, taskId);
     broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     ctx.body = { ok: true };

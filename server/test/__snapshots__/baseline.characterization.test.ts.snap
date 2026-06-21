@@ -554,6 +554,15 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "entity_kind",
+      "entity_id",
+      "tag_id",
+      "level",
+    ],
+    "table": "entity_tags",
+  },
+  {
+    "columns": [
       "owner_id",
       "task_id",
       "source_pattern_id",

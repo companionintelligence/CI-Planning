@@ -16,6 +16,7 @@
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { localISODate } from '../lib/dates.js';
+import { removeEntityTags } from '../services/tags.js';
 
 /** Backoff schedule by prior deferral count: 0→+1d, 1→+3d, 2+→+7d. */
 export function backoffDays(deferCount: number): number {
@@ -71,7 +72,7 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
     `UPDATE tasks SET scheduled_for = ?, defer_count = defer_count + 1, status = 'open' WHERE id = ?`
   );
   const dropBlocks = sqlite.prepare(
-    `DELETE FROM time_blocks WHERE task_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ?`
+    `DELETE FROM time_blocks WHERE task_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ? RETURNING id`
   );
   const markMissed = sqlite.prepare(`UPDATE tasks SET status = 'missed' WHERE id = ?`);
   const markBlocksMissed = sqlite.prepare(
@@ -85,7 +86,8 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
       if (m.priority >= 3) {
         // Low priority → auto-defer with backoff; drop the stale block.
         bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
-        dropBlocks.run(m.task_id, nowISO);
+        // CON-3 cascade: dropped blocks are HARD-deleted — clear their tag rows.
+        for (const b of dropBlocks.all(m.task_id, nowISO) as { id: string }[]) removeEntityTags('time_block', b.id);
         deferred++;
       } else {
         // High priority → surface for the user; don't move it silently.
@@ -110,7 +112,10 @@ export function rescheduleTask(taskId: string, days: number): { scheduled_for: s
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   const tx = sqlite.transaction(() => {
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ?`).run(scheduledFor, taskId);
-    sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND block_kind = 'task' AND status IN ('missed','planned')`).run(taskId);
+    // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
+    for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND block_kind = 'task' AND status IN ('missed','planned') RETURNING id`).all(taskId) as { id: string }[]) {
+      removeEntityTags('time_block', b.id);
+    }
   });
   tx();
   return { scheduled_for: scheduledFor };
