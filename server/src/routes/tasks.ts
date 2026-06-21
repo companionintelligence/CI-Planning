@@ -269,7 +269,7 @@ export function tasksRouter() {
   // dates/status; no recurrence or history. cockpit-v2 Phase 6.
   router.post('/api/tasks/:id/recall', async (ctx) => {
     const owner = currentOwnerId();
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ?').get(ctx.params.id)) {
+    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(ctx.params.id, owner)) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
     const keepPattern = !!(sqlite.prepare('SELECT recall_keeps_pattern AS v FROM scheduling_prefs WHERE owner_id = ?').get(owner) as { v: number } | undefined)?.v;
@@ -303,7 +303,8 @@ export function tasksRouter() {
       return newId;
     };
 
-    const newId = cloneTree(ctx.params.id, null);
+    // Atomic: a partway failure must not leave a half-built clone subtree.
+    const newId = sqlite.transaction(() => cloneTree(ctx.params.id, null))();
     const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
     const tagRows = sqlite
       .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')

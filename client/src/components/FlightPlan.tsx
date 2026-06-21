@@ -2,7 +2,7 @@ import { For, Show, createSignal, createMemo } from 'solid-js';
 import { Zap, RotateCcw, X, ChevronDown, ChevronRight, Clock } from 'lucide-solid';
 import { api, type FlightPlanItem } from '../lib/api.js';
 import {
-  flightPlan, refetchFlightPlan, refetchBlocks, patterns, prefs, refetchPrefs, showToast,
+  flightPlan, refetchFlightPlan, refetchBlocks, patterns, prefs, refetchPrefs, showToast, selectedDay,
 } from '../stores/index.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { useDraggable } from '../lib/draggable.js';
@@ -59,7 +59,8 @@ export function FlightPlan() {
   async function runAuto() {
     setRunning(true);
     try {
-      const { result } = await api.auto.run();
+      // Schedule into the day the cockpit is viewing, not always today (Phase 1 day-nav).
+      const { result } = await api.auto.run({ date: selectedDay() });
       if (result.step === 'fill') {
         showToast(
           result.candidatesAdded
