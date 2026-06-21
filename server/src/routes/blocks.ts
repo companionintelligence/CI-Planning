@@ -10,24 +10,25 @@ import { ensurePatternsForRange } from '../engine/patterns-place.js';
 export function blocksRouter() {
   const router = new Router();
 
-  // GET /api/blocks?from=ISO&to=ISO&block_type=concept
-  // `block_type=concept` returns all of the owner's Concepts regardless of date
-  // (they have no real time) — the horizon lane reads them this way.
+  // GET /api/blocks?from=ISO&to=ISO&state=someday
+  // `state=someday` returns all of the owner's someday Time Blocks regardless of
+  // date (they have no real time) — the horizon lane reads them this way.
+  // (`state` is the Time-Block state: 'scheduled' | 'someday'; CON-2.)
   router.get('/api/blocks', async (ctx) => {
-    const { from, to, block_type } = ctx.query as Record<string, string>;
+    const { from, to, state } = ctx.query as Record<string, string>;
 
     // Lazy pattern placement (PR-C+, Phase D refactor): when the read targets
     // a real time range (not the concept list), ensure every recurring Habit/
     // Routine pattern that fires inside it is on the board before we SELECT.
     // Idempotent via the marker on time_blocks → safe to call on every read.
-    if (from && to && !block_type) {
+    if (from && to && !state) {
       ensurePatternsForRange(currentOwnerId(), from, to);
     }
 
     const conditions = [];
     if (from) conditions.push(gte(timeBlocks.startAt, from));
     if (to)   conditions.push(lte(timeBlocks.endAt, to));
-    if (block_type) conditions.push(eq(timeBlocks.blockType, block_type));
+    if (state) conditions.push(eq(timeBlocks.blockType, state));
 
     const rows = conditions.length
       ? await db.select().from(timeBlocks).where(and(...conditions))
@@ -177,7 +178,7 @@ export function blocksRouter() {
     const endAt = body.end_at ?? new Date(Date.parse(body.start_at) + dur * 60_000).toISOString();
     const [block] = await db
       .update(timeBlocks)
-      .set({ blockType: 'plan', allDay: body.all_day ?? false, startAt: body.start_at, endAt, goalStartDate: null })
+      .set({ blockType: 'scheduled', allDay: body.all_day ?? false, startAt: body.start_at, endAt, goalStartDate: null })
       .where(eq(timeBlocks.id, id))
       .returning();
     const out = toApi(block);

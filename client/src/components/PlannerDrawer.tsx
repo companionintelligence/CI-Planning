@@ -282,7 +282,7 @@ export function PlannerDrawer() {
     const end = new Date(Date.parse(start) + durMin * 60_000).toISOString();
     try {
       await api.blocks.create({
-        title: name, block_kind: 'timeblock', block_type: 'concept', tag: tag || undefined,
+        title: name, block_kind: 'timeblock', block_type: 'someday', tag: tag || undefined,
         goal_start_date: goal, duration_minutes: durMin, all_day: true, note: noteOrNull(), start_at: start, end_at: end,
       });
       refetchConcepts(); refetchBlocks();
@@ -308,7 +308,7 @@ export function PlannerDrawer() {
     const end = new Date(Date.parse(start) + durMin * 60_000).toISOString();
     try {
       await api.blocks.create({
-        title: name, block_kind: 'timeblock', block_type: 'plan', tag: tags.join(',') || undefined,
+        title: name, block_kind: 'timeblock', block_type: 'scheduled', tag: tags.join(',') || undefined,
         note: noteOrNull(), start_at: start, end_at: end,
       });
       if (saveTpl()) { await api.blockTemplates.create({ name, tag: tags[0], default_minutes: durMin }); refetchTemplates(); }
