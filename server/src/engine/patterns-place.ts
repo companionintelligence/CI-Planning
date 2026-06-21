@@ -279,7 +279,7 @@ export function ensurePatternsForRange(owner: string, fromUtcISO: string, toUtcI
  * not the count of seconds per day. DST adds/drops up to one hour from a day,
  * which never moves a hit's derived local date when sampled at noon.
  */
-function localDaysInRange(fromUtcISO: string, toUtcISO: string, tz: string): string[] {
+export function localDaysInRange(fromUtcISO: string, toUtcISO: string, tz: string): string[] {
   const startMs = Date.parse(fromUtcISO);
   const endMs = Math.max(Date.parse(toUtcISO), startMs);
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
