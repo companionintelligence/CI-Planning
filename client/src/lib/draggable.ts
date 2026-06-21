@@ -18,8 +18,8 @@
  */
 import { createSignal } from 'solid-js';
 
-export type DragKind = 'habit' | 'plan-block';
-export interface DragPayload { kind: DragKind; id: string }
+export type DragKind = 'habit' | 'plan-block' | 'flight-task';
+export interface DragPayload { kind: DragKind; id: string } // CON-1: ids are opaque UUIDv7 strings
 
 const [dragPayload, setDragPayload] = createSignal<DragPayload | null>(null);
 export { dragPayload };
@@ -63,15 +63,19 @@ export function useDraggable(payload: DragPayload | (() => DragPayload)) {
  * Wire a drop target. Reads `dragPayload` on pointerup-within-bounds and calls
  * `onDrop`. The `isOver` signal it returns flips to true while a drag is in
  * progress so the JSX can show the highlight state.
+ *
+ * `onDrop` also receives the originating `PointerEvent`, so a position-aware target
+ * (e.g. the Planner grid: drop-Y → time) can read the drop coordinates. Targets that
+ * don't care about position simply ignore the second argument.
  */
-export function useDropZone(onDrop: (payload: DragPayload) => void) {
+export function useDropZone(onDrop: (payload: DragPayload, e: PointerEvent) => void) {
   const isOver = () => dragPayload() != null;
   return {
     isOver,
     handlers: {
-      onPointerUp(_e: PointerEvent) {
+      onPointerUp(e: PointerEvent) {
         const p = dragPayload();
-        if (p) onDrop(p);
+        if (p) onDrop(p, e);
       },
     },
   };
