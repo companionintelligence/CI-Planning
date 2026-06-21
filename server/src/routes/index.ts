@@ -13,6 +13,7 @@ import { memoryRouter } from './memory.js';
 import { patternsRouter } from './patterns.js';
 import { flightPlanRouter } from './flight-plan.js';
 import { sseRouter } from './sse.js';
+import { patternBlocksRouter } from './pattern-blocks.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -30,6 +31,7 @@ export function mountRoutes(app: Koa) {
     memoryRouter(),
     patternsRouter(),
     flightPlanRouter(),
+    patternBlocksRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

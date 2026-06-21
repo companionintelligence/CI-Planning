@@ -249,6 +249,12 @@ export const api = {
     status: () => request<LLMStatus>('GET', '/llm/status'),
     integrations: () => request<Integrations>('GET', '/integrations'),
   },
+
+  patternBlocks: {
+    list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
+    set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
+            request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
+  },
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -415,3 +421,7 @@ export interface Integrations {
   ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
   google: { mode: string };
 }
+
+// ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
+export interface PatternRange { id: string; start_time: string; end_time: string }
+export type PatternWindows = Record<string, PatternRange[]>; // dirTagId → ranges

@@ -197,6 +197,17 @@ export const tagDirections = sqliteTable(
   (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.directionTagId] }) })
 );
 
+// 0037: direction-scoped scheduling windows (Pattern-block, noun 8). Multiple rows
+//       per (owner, direction_tag_id, day_type) = multiple time ranges.
+export const patternBlocks = sqliteTable('pattern_blocks', {
+  id:            text('id').primaryKey().$defaultFn(newId),
+  ownerId:       text('owner_id').references(() => owners.id).notNull(),
+  directionTagId: text('direction_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  dayType:       text('day_type').notNull(), // 'workday' | 'weekend'
+  startTime:     text('start_time').notNull(), // 'HH:MM' wall-clock in owner's timezone
+  endTime:       text('end_time').notNull(),
+});
+
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
 //     Ritual △ + user-defined). No own recurrence; tasks-only (no nesting) in V1. ---
 export const patternTypes = sqliteTable('pattern_types', {
