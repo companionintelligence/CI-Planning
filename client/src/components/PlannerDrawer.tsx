@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createMemo, createResource } from 'solid-js';
+import { For, Show, createSignal, createMemo, createResource, onMount, onCleanup } from 'solid-js';
 import { Plus, Triangle, ListPlus, Boxes, Search, ChevronDown, ChevronRight, Star, Pentagon, StickyNote, RotateCcw } from 'lucide-solid';
 import { A } from '@solidjs/router';
 import { api, type BlockTemplate, type Pattern } from '../lib/api.js';
@@ -51,6 +51,11 @@ export function PlannerDrawer() {
   const [tab, setTab] = createSignal<Tab>(null);
   const [query, setQuery] = createSignal('');
   const select = (t: Exclude<Tab, null>) => { setQuery(''); setTab((cur) => (cur === t ? null : t)); };
+
+  // Esc closes the drawer (focus-trap nicety, cockpit-v2 Phase 3).
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && tab() !== null) setTab(null); };
+  onMount(() => window.addEventListener('keydown', onKey));
+  onCleanup(() => window.removeEventListener('keydown', onKey));
 
   const stagedIds = createMemo(() => new Set((flightPlan() ?? []).map((i) => i.task_id)));
 
@@ -337,9 +342,13 @@ export function PlannerDrawer() {
   );
 
   return (
-    <div class="rounded-xl border border-border bg-card overflow-hidden">
-      {/* Buttons inside the container (header row) — Block / Routine / Open Task. */}
-      <div class="flex items-stretch">
+    <div class="relative" classList={{ 'z-40': tab() !== null }}>
+      {/* Dim + freeze the flight-plan above while a tab is open (cockpit-v2 Phase 3). */}
+      <Show when={tab()}>
+        <div class="absolute inset-x-0 bottom-full h-screen z-30 bg-black/80" onClick={() => setTab(null)} />
+      </Show>
+      {/* Always-present bar — Block / Routine / Open Task. */}
+      <div class="relative z-40 rounded-xl border border-border bg-card overflow-hidden flex items-stretch">
         <TabBtn t="block" icon={Boxes} label="Block" />
         <div class="w-px bg-border" />
         <TabBtn t="pattern" icon={Triangle} label="Routine" />
@@ -353,9 +362,9 @@ export function PlannerDrawer() {
         </Show>
       </div>
 
-      {/* Expanded content — inline within the container. */}
+      {/* Expanded content — opens UPWARD over the flight-plan, above the dim layer. */}
       <Show when={tab()}>
-        <div class="border-t border-border max-h-[60vh] overflow-y-auto">
+        <div class="absolute inset-x-0 bottom-full mb-2 z-40 rounded-xl border border-border bg-popover shadow-2xl max-h-[60vh] overflow-y-auto">
             {/* Search (task + pattern tabs) */}
             <Show when={tab() === 'task' || tab() === 'pattern'}>
               <div class="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
