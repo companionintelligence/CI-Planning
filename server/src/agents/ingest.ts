@@ -21,9 +21,9 @@ function normTag(name: string): string {
 }
 
 function tagId(name: string): number {
-  const existing = sqlite.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: number } | undefined;
+  const existing = sqlite.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: string } | undefined;
   if (existing) return existing.id;
-  return (sqlite.prepare('INSERT INTO tags (name) VALUES (?) RETURNING id').get(name) as { id: number }).id;
+  return (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string }).id;
 }
 
 /**
@@ -38,9 +38,9 @@ export function upsertPossible(
 ): 'created' | 'updated' {
   const existing = sqlite
     .prepare('SELECT id FROM possible_tasks WHERE source_kind = ? AND source_ref = ?')
-    .get(sourceKind, sourceRef) as { id: number } | undefined;
+    .get(sourceKind, sourceRef) as { id: string } | undefined;
 
-  let possibleId: number;
+  let possibleId: string;
   let outcome: 'created' | 'updated';
 
   if (existing) {
@@ -64,9 +64,9 @@ export function upsertPossible(
     const row = sqlite
       .prepare(
         `INSERT INTO possible_tasks
-         (raw_title, raw_summary, proposed_due_at, proposed_priority, proposed_owner_id,
+         (id, raw_title, raw_summary, proposed_due_at, proposed_priority, proposed_owner_id,
           source_kind, source_ref, source_payload, confidence, status)
-         VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 'pending') RETURNING id`
+         VALUES (uuid7(), ?, ?, ?, ?, 1, ?, ?, ?, ?, 'pending') RETURNING id`
       )
       .get(
         task.title,
@@ -77,7 +77,7 @@ export function upsertPossible(
         sourceRef,
         JSON.stringify(payload),
         task.confidence
-      ) as { id: number };
+      ) as { id: string };
     possibleId = row.id;
     outcome = 'created';
   }
@@ -97,12 +97,12 @@ export function upsertPossible(
 function upsertMeetingBlock(event: CalendarEvent): boolean {
   const existing = sqlite
     .prepare("SELECT id FROM time_blocks WHERE source_kind = 'gcal' AND source_ref = ?")
-    .get(event.id) as { id: number } | undefined;
+    .get(event.id) as { id: string } | undefined;
   if (existing) return false;
   sqlite
     .prepare(
-      `INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-       VALUES (NULL, ?, 'meeting', ?, ?, 1, 0, 'gcal', ?, 'planned')`
+      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+       VALUES (uuid7(), NULL, ?, 'meeting', ?, ?, 1, 0, 'gcal', ?, 'planned')`
     )
     .run(event.title, event.start, event.end, event.id);
   return true;

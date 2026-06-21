@@ -136,8 +136,8 @@ async function main() {
     if (!exists) {
       sqlite
         .prepare(
-          `INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-           VALUES (NULL, ?, 'meeting', ?, ?, 1, 0, 'gcal', ?, 'planned')`
+          `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+           VALUES (uuid7(), NULL, ?, 'meeting', ?, ?, 1, 0, 'gcal', ?, 'planned')`
         )
         .run(event.title, event.start, event.end, event.id);
     }
@@ -165,14 +165,14 @@ async function main() {
   let taskCount = (sqlite.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number }).n;
   const fillerNeeded = Math.max(0, args.target - taskCount);
   if (fillerNeeded > 0) {
-    const fillerTagId = (sqlite.prepare("INSERT OR IGNORE INTO tags (name) VALUES ('seed-filler')").run(),
-      sqlite.prepare("SELECT id FROM tags WHERE name='seed-filler'").get() as { id: number }).id;
+    const fillerTagId = (sqlite.prepare("INSERT OR IGNORE INTO tags (id, name) VALUES (uuid7(), 'seed-filler')").run(),
+      sqlite.prepare("SELECT id FROM tags WHERE name='seed-filler'").get() as { id: string }).id;
     const insert = sqlite.prepare(
-      `INSERT INTO tasks (title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (?, ?, 1, 'agent', 'open', ?) RETURNING id`
+      `INSERT INTO tasks (id, title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (uuid7(), ?, ?, 1, 'agent', 'open', ?) RETURNING id`
     );
     const tx = sqlite.transaction((n: number) => {
       for (let i = 1; i <= n; i++) {
-        const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), 15 + (i % 4) * 15) as { id: number };
+        const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), 15 + (i % 4) * 15) as { id: string };
         sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)').run(r.id, fillerTagId);
       }
     });

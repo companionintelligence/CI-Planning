@@ -36,7 +36,7 @@ interface PrefsRow {
   memory_sync_reflections: number;
 }
 
-function prefs(owner: number): PrefsRow | undefined {
+function prefs(owner: string): PrefsRow | undefined {
   return sqlite
     .prepare(
       `SELECT memory_sync_enabled, memory_account, memory_last_synced_at,
@@ -54,7 +54,7 @@ export function memoryConnectorAvailable(): boolean {
   return false;
 }
 
-export function memoryStatus(owner: number): MemoryStatus {
+export function memoryStatus(owner: string): MemoryStatus {
   const p = prefs(owner);
   return {
     enabled: !!p?.memory_sync_enabled,
@@ -79,7 +79,7 @@ export type SyncResult =
  * the push is stubbed until the connector lands. On success it records
  * `memory_last_synced_at` — the only branch unreachable today.
  */
-export function syncToMemory(owner: number): SyncResult {
+export function syncToMemory(owner: string): SyncResult {
   const p = prefs(owner);
   if (!p?.memory_sync_enabled) return { ok: false, reason: 'disabled' };
   if (!p.memory_account) return { ok: false, reason: 'not_connected' };
