@@ -102,6 +102,8 @@ export const api = {
     // Reschedule a missed/planned task `days` out from today (the +1/+3/+7 buttons).
     reschedule: (id: string, days: number) =>
       request<{ task: Task; scheduled_for: string }>('POST', `/tasks/${id}/reschedule`, { days }),
+    // Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
+    recall: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/recall`, {}),
   },
 
   blocks: {
@@ -245,7 +247,8 @@ export const api = {
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface Block {
   id: string; task_id?: string; title: string; block_kind: string;
-  tag?: string | null; // container/grouping tag (G3); set on 'timeblock' containers
+  tag?: string | null; // top-level/grouping tag (G3); set on 'timeblock' containers
+  secondary_tags?: string[]; // Phase 5: diluted secondary tags (entity_tags level>1)
   // Plan/Concept container typing (0019). block_type is set on 'timeblock' containers.
   block_type?: 'scheduled' | 'someday' | null;
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
@@ -350,6 +353,7 @@ export interface Prefs {
   concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
+  recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
   // Ollama model overrides (null/'' = use env default).

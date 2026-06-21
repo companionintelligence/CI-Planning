@@ -1,12 +1,11 @@
 import { A } from '@solidjs/router';
 import { createSignal, Show, For } from 'solid-js';
-import { CalendarDays, CheckSquare, Inbox, Tag, Settings, Activity, Sun, Shapes, MoreHorizontal } from 'lucide-solid';
+import { CheckSquare, Inbox, Tag, Settings, Activity, Sun, Shapes, MoreHorizontal } from 'lucide-solid';
 import { possibles } from '../stores/index.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 const primary = [
   { href: '/', label: 'Today', Icon: Sun },
-  { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
   { href: '/inbox', label: 'Inbox', Icon: Inbox, badge: true },
   { href: '/tasks', label: 'Tasks', Icon: CheckSquare },
 ];
