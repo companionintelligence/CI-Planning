@@ -119,10 +119,10 @@ export function Today() {
           </div>
         </Show>
 
-        <div class="flex flex-col gap-1.5 mt-3">
-          <Bar icon={AlertCircle} value={overdue()} max={open()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
-          <Bar icon={Ban}         value={blocked()} max={open()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
-          <Bar icon={ListTodo}    value={open()}    max={open()} label="open"    tone="foreground" />
+        <div class="flex flex-wrap gap-2 mt-3">
+          <Pill icon={AlertCircle} value={overdue()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
+          <Pill icon={Ban}         value={blocked()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
+          <Pill icon={ListTodo}    value={open()}    label="open"    tone="foreground" />
         </div>
       </div>
 
@@ -188,39 +188,26 @@ export function Today() {
 }
 
 /**
- * Horizontal summary row — label/icon on the left, a proportional bar in the
- * middle, the count on the right. Bar fill = value / max(1, max). With max ==
- * the day's open count, each bar reads as "this many of the day's open tasks
- * are X" — so "open" itself always reads full-width as the visual anchor.
+ * A Day-Overview stat pill — icon · count · label in a rounded pill, the count
+ * toned by urgency. Replaces the proportional bars (cockpit-v2 Phase 2).
  */
-function Bar(props: { icon: any; value: number; max: number; label: string; tone: 'destructive' | 'foreground' | 'muted' }) {
-  const pct = () => `${Math.min(100, (props.value / Math.max(1, props.max)) * 100)}%`;
+function Pill(props: { icon: any; value: number; label: string; tone: 'destructive' | 'foreground' | 'muted' }) {
+  const toneText = () => ({
+    'text-destructive': props.tone === 'destructive',
+    'text-foreground': props.tone === 'foreground',
+    'text-muted-foreground': props.tone === 'muted',
+  });
   return (
-    <div class="flex items-center gap-2 text-[11px]">
-      <span class="flex items-center gap-1 w-20 text-muted-foreground uppercase tracking-wide text-[10px] flex-shrink-0">
-        <props.icon size={10} /> {props.label}
-      </span>
-      <div class="flex-1 h-2 rounded-full bg-background/60 border border-border overflow-hidden">
-        <div
-          class="h-full rounded-full transition-[width] duration-200"
-          classList={{
-            'bg-destructive': props.tone === 'destructive',
-            'bg-foreground/70': props.tone === 'foreground',
-            'bg-muted-foreground/30': props.tone === 'muted',
-          }}
-          style={{ width: pct() }}
-        />
-      </div>
-      <span
-        class="tabular-nums font-semibold w-6 text-right flex-shrink-0"
-        classList={{
-          'text-destructive': props.tone === 'destructive',
-          'text-foreground': props.tone === 'foreground',
-          'text-muted-foreground': props.tone === 'muted',
-        }}
-      >
-        {props.value}
-      </span>
-    </div>
+    <span
+      class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs"
+      classList={{
+        'border-destructive/40 bg-destructive/5': props.tone === 'destructive',
+        'border-border bg-background/40': props.tone !== 'destructive',
+      }}
+    >
+      <props.icon size={12} classList={toneText()} />
+      <span class="tabular-nums font-semibold" classList={toneText()}>{props.value}</span>
+      <span class="text-muted-foreground">{props.label}</span>
+    </span>
   );
 }
