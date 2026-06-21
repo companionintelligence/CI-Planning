@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2 } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2 } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -40,7 +40,6 @@ import { BlockEditModal } from './BlockEditModal.js';
 
 type Placed = ReturnType<typeof layoutBlocks>[number];
 
-const VISIBLE_PX = VISIBLE_HOURS * 60 * PX_PER_MIN;
 /** Horizontal inset (px) for a member chip nested inside its Plan. */
 const NEST_INSET_PX = 12;
 /** Default duration (minutes) for click-to-create / drag-to-schedule when no estimate. */
@@ -490,7 +489,10 @@ export function Planner() {
   const day = () => selectedDay();
   // Now-line, next-up pin, and auto-scroll are today-relative — gated off other days.
   const isToday = () => day() === localISODate();
-  const [expanded, setExpanded] = createSignal(false);
+  // Visible window height: 4 / 8 / 16 hours (cockpit-v2 Phase 2). The grid is always
+  // the full day tall and scrolls, so any block stays reachable at any window size.
+  const [windowHours, setWindowHours] = createSignal(VISIBLE_HOURS);
+  const visiblePx = () => windowHours() * 60 * PX_PER_MIN;
   const [updateMode, setUpdateMode] = createSignal(false);
   const [editBlock, setEditBlock] = createSignal<Block | null>(null);
   const [deletePlan, setDeletePlan] = createSignal<{ plan: Block; childCount: number } | null>(null);
@@ -638,12 +640,12 @@ export function Planner() {
 
   let scroller: HTMLDivElement | undefined;
   const repin = () => {
-    if (!scroller || expanded() || !isToday()) return;
+    if (!scroller || !isToday()) return;
     scroller.scrollTop = scrollTopForBlock(nextUp(), day());
   };
   onMount(repin);
   // Re-pin whenever the next-up item or the expand state changes.
-  createEffect(() => { nextUp(); expanded(); queueMicrotask(repin); });
+  createEffect(() => { nextUp(); windowHours(); queueMicrotask(repin); });
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
@@ -651,7 +653,7 @@ export function Planner() {
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <span class="text-[10px] text-muted-foreground">{expanded() ? '24h' : '8h · scroll for more'}</span>
+          <span class="text-[10px] text-muted-foreground">{windowHours()}h · scroll for more</span>
         </div>
         <div class="flex items-center gap-3">
           {/* Update mode — tap a task to mark it done (no need to have started it). */}
@@ -663,15 +665,19 @@ export function Planner() {
           >
             <CheckCircle2 size={12} /> {updateMode() ? 'Done' : 'Update'}
           </button>
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            title={expanded() ? 'Collapse to 8 hours' : 'Expand to 24 hours'}
-          >
-            <Show when={expanded()} fallback={<><Maximize2 size={12} /> Expand 24h</>}>
-              <Minimize2 size={12} /> Collapse
-            </Show>
-          </button>
+          <div class="inline-flex items-center rounded-md border border-border overflow-hidden text-xs" title="Visible hours">
+            <For each={[4, 8, 16]}>
+              {(h) => (
+                <button
+                  onClick={() => setWindowHours(h)}
+                  class="px-2 py-0.5 transition-colors"
+                  classList={{ 'text-foreground underline': windowHours() === h, 'text-muted-foreground hover:text-foreground': windowHours() !== h }}
+                >
+                  {h}h
+                </button>
+              )}
+            </For>
+          </div>
         </div>
       </div>
 
@@ -688,7 +694,7 @@ export function Planner() {
       <div
         ref={scroller}
         class="overflow-y-auto overflow-x-hidden relative"
-        style={{ height: `${expanded() ? DAY_HEIGHT_PX : VISIBLE_PX}px` }}
+        style={{ height: `${visiblePx()}px` }}
       >
         <div class="grid" style={{ 'grid-template-columns': '3.5rem 1fr' }}>
           <TimeGutter />
