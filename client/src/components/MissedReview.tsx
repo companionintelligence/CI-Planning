@@ -15,7 +15,7 @@ export function MissedReview() {
   const off = on('task:updated', () => refetch());
   onCleanup(off);
 
-  async function reschedule(id: number, title: string, days: number) {
+  async function reschedule(id: string, title: string, days: number) {
     try {
       await api.tasks.reschedule(id, days);
       refetch();
@@ -26,7 +26,7 @@ export function MissedReview() {
 
   // "Did it" — the task was actually done, the review just couldn't tell. Mark it
   // done + complete its stale missed/planned blocks so the grid agrees.
-  async function markDone(id: number, title: string) {
+  async function markDone(id: string, title: string) {
     try {
       await api.tasks.update(id, { completed: true });
       for (const b of (blocks() ?? []).filter((b) => b.task_id === id && ['missed', 'planned'].includes(b.status))) {

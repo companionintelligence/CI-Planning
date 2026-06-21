@@ -21,7 +21,7 @@ export function possiblesRouter() {
 
   // POST /api/possible-tasks/:id/promote
   router.post('/api/possible-tasks/:id/promote', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const [possible] = await db.select().from(possibleTasks).where(eq(possibleTasks.id, id));
     if (!possible) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
@@ -57,7 +57,7 @@ export function possiblesRouter() {
 
   // POST /api/possible-tasks/:id/dismiss
   router.post('/api/possible-tasks/:id/dismiss', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const [possible] = await db
       .update(possibleTasks)
       .set({ status: 'dismissed' })

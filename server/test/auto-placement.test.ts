@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 
@@ -8,22 +9,22 @@ import { placeFlightPlan } from '../src/engine/autoplan.js';
  * workday fallback, on a shared "don't double-book" obstacle set.
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 const DAY = '2026-06-22';
 const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 
-function insertTask(title: string, est = 30, tag?: string, priority = 3): number {
+function insertTask(title: string, est = 30, tag?: string, priority = 3): string {
   const id = (sqlite
-    .prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, priority) VALUES (?, ?, 'open', ?, ?) RETURNING id`)
-    .get(title, OWNER, est, priority) as { id: number }).id;
+    .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', ?, ?) RETURNING id`)
+    .get(title, OWNER, est, priority) as { id: string }).id;
   if (tag) {
-    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: number } | undefined;
-    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (name) VALUES (?) RETURNING id`).get(tag) as { id: number };
+    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: string } | undefined;
+    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id`).get(tag) as { id: string };
     sqlite.prepare(`INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)`).run(id, tg.id);
   }
   return id;
 }
-function stage(taskId: number) {
+function stage(taskId: string) {
   sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`).run(OWNER, taskId);
 }
 async function makePlan(srv: TestServer, tag: string, start: string, end: string) {
@@ -34,7 +35,7 @@ async function makePlan(srv: TestServer, tag: string, start: string, end: string
 }
 const agentBlocks = () =>
   sqlite.prepare(`SELECT title, start_at, end_at, parent_block_id FROM time_blocks WHERE source_kind = 'agent' ORDER BY start_at`).all() as
-    { title: string; start_at: string; end_at: string; parent_block_id: number | null }[];
+    { title: string; start_at: string; end_at: string; parent_block_id: string | null }[];
 const overlaps = (a: { start_at: string; end_at: string }, b: { start_at: string; end_at: string }) =>
   Date.parse(a.start_at) < Date.parse(b.end_at) && Date.parse(a.end_at) > Date.parse(b.start_at);
 
@@ -94,7 +95,7 @@ describe('Plans-first placement', () => {
 describe('no double-booking (shared obstacle set)', () => {
   it('does not stack on a manually-placed task block; workday fallback flows around it', () => {
     // a manual block 09:00–10:00 (source_kind manual, not agent → survives re-place)
-    sqlite.prepare(`INSERT INTO time_blocks (title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES ('Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
       .run(at('09:00'), at('10:00'));
     const t = insertTask('Auto task', 60);
     stage(t);
@@ -158,9 +159,9 @@ describe('idempotent re-place', () => {
     const t = insertTask('Coding', 30, 'work');
     stage(t);
     // a pattern-marked block + a manual block must survive a re-place
-    sqlite.prepare(`INSERT INTO time_blocks (title, block_kind, start_at, end_at, is_auto, source_kind, source_ref, status) VALUES ('Routine task', 'task', ?, ?, 1, 'pattern', '999', 'planned')`)
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, source_ref, status) VALUES (uuid7(), 'Routine task', 'task', ?, ?, 1, 'pattern', '999', 'planned')`)
       .run(at('13:00'), at('13:30'));
-    sqlite.prepare(`INSERT INTO time_blocks (title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES ('Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
       .run(at('16:00'), at('16:30'));
 
     placeFlightPlan(OWNER, { date: DAY });

@@ -11,17 +11,17 @@ import { sqlite } from '../db/index.js';
 import { localISODate } from '../lib/dates.js';
 
 interface TaskRow {
-  id: number;
+  id: string;
   status: string;
   recurrence_rule: string | null;
-  recurrence_parent_id: number | null;
+  recurrence_parent_id: string | null;
   recurrence_exdates: string | null;
   occurrence_date: string | null;
   is_habit: number;
-  owner_id: number;
+  owner_id: string;
 }
 
-function getTask(id: number): TaskRow | undefined {
+function getTask(id: string): TaskRow | undefined {
   return sqlite
     .prepare(
       `SELECT id, status, recurrence_rule, recurrence_parent_id, recurrence_exdates,
@@ -46,7 +46,7 @@ function parseExdates(raw: string | null): string[] {
  * The template id for a task: itself if it is a template, its parent if it is an
  * instance, else null (the task isn't part of a recurring series).
  */
-export function resolveTemplateId(id: number): number | null {
+export function resolveTemplateId(id: string): string | null {
   const t = getTask(id);
   if (!t) return null;
   if (t.recurrence_parent_id != null) return t.recurrence_parent_id; // instance → template
@@ -55,7 +55,7 @@ export function resolveTemplateId(id: number): number | null {
 }
 
 export type SkipResult =
-  | { ok: true; instanceId: number; templateId: number; date: string }
+  | { ok: true; instanceId: string; templateId: string; date: string }
   | { ok: false; reason: 'not_found' | 'not_instance' };
 
 /**
@@ -63,7 +63,7 @@ export type SkipResult =
  * the template's EXDATE so a regenerate won't bring it back. Idempotent — a second
  * skip of the same instance is a no-op on the EXDATE set.
  */
-export function skipInstance(id: number): SkipResult {
+export function skipInstance(id: string): SkipResult {
   const inst = getTask(id);
   if (!inst) return { ok: false, reason: 'not_found' };
   if (inst.recurrence_parent_id == null || inst.occurrence_date == null) {
@@ -87,7 +87,7 @@ export function skipInstance(id: number): SkipResult {
 }
 
 export interface StreakResult {
-  templateId: number;
+  templateId: string;
   /** Consecutive `done` instances back from today. */
   current: number;
   /** Up to 7 most recent occurrences (≤ today), oldest→newest, for the dot strip. */
@@ -100,7 +100,7 @@ export interface StreakResult {
  * breaks it. Today's still-`open` instance is *pending* — it neither counts nor
  * breaks the streak. Returns null for a non-recurring task.
  */
-export function computeStreak(id: number, today: string = localISODate()): StreakResult | null {
+export function computeStreak(id: string, today: string = localISODate()): StreakResult | null {
   const templateId = resolveTemplateId(id);
   if (templateId == null) return null;
 
@@ -132,7 +132,7 @@ export function computeStreak(id: number, today: string = localISODate()): Strea
  * instances are preserved; the generator then re-materializes the window under the
  * new rule. Returns the number deleted.
  */
-export function deleteFutureOpenInstances(templateId: number, today: string = localISODate()): number {
+export function deleteFutureOpenInstances(templateId: string, today: string = localISODate()): number {
   return sqlite
     .prepare(
       `DELETE FROM tasks

@@ -187,7 +187,7 @@ function NowLine(props: { day: string; now: string }) {
 
 /** Handlers the Plan-as-container gestures need from the Planner (group ghost + commits). */
 interface GroupCtx {
-  extraMin: (id: number) => number;                         // optimistic group-ghost offset (minutes)
+  extraMin: (id: string) => number;                         // optimistic group-ghost offset (minutes)
   onMoveLive: (anchor: Block, dy: number, ev: PointerEvent) => void;
   onMoveEnd: () => void;
   onMoveCommit: (anchor: Block, dy: number, ev: PointerEvent) => void;
@@ -520,8 +520,8 @@ export function Planner() {
   // `ghost` offsets every member EXCEPT the one under the pointer (it follows the
   // cursor via its own liveTop) during a drag; on commit it holds the whole group at
   // the snapped delta until the refetch lands, so nothing snaps back.
-  const [ghost, setGhost] = createSignal<{ ids: Set<number>; dy: number } | null>(null);
-  const extraMin = (id: number) => { const g = ghost(); return g && g.ids.has(id) ? g.dy / PX_PER_MIN : 0; };
+  const [ghost, setGhost] = createSignal<{ ids: Set<string>; dy: number } | null>(null);
+  const extraMin = (id: string) => { const g = ghost(); return g && g.ids.has(id) ? g.dy / PX_PER_MIN : 0; };
   const isGroupAnchor = (b: Block) => b.block_kind === 'timeblock' || b.parent_block_id != null;
 
   function onMoveLive(anchor: Block, dy: number, ev: PointerEvent) {
@@ -580,7 +580,7 @@ export function Planner() {
   // Create a Time Block at grid Y, optionally bound to a flight-plan task; attach it
   // if it lands inside a Plan's window (mirrors the loose-chip drop path). One POST
   // (+ one attach PATCH only when dropped into a container).
-  async function createBlockAt(clientY: number, task?: { task_id: number; title: string; estimated_minutes: number | null }) {
+  async function createBlockAt(clientY: number, task?: { task_id: string; title: string; estimated_minutes: number | null }) {
     const span = spanAtY(day(), gridY(clientY), task?.estimated_minutes ?? DEFAULT_BLOCK_MIN);
     const tag = task ? taskOf(task.task_id)?.tags?.[0] : undefined;
     try {

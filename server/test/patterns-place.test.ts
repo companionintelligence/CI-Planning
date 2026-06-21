@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { placePatternOnDay } from '../src/engine/patterns-place.js';
 
@@ -10,35 +11,35 @@ import { placePatternOnDay } from '../src/engine/patterns-place.js';
  * source_ref=patternId, day-bounds) marker on time_blocks.
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 const DAY = '2026-06-22'; // a Monday
 
-function insertTask(title: string, est = 30, tag?: string): number {
+function insertTask(title: string, est = 30, tag?: string): string {
   const id = (sqlite
-    .prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, priority) VALUES (?, ?, 'open', ?, 3) RETURNING id`)
-    .get(title, OWNER, est) as { id: number }).id;
+    .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', ?, 3) RETURNING id`)
+    .get(title, OWNER, est) as { id: string }).id;
   if (tag) {
-    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: number } | undefined;
-    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (name) VALUES (?) RETURNING id`).get(tag) as { id: number };
+    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: string } | undefined;
+    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id`).get(tag) as { id: string };
     sqlite.prepare(`INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)`).run(id, tg.id);
   }
   return id;
 }
-function insertPattern(typeName: string, name: string, taskIds: number[]): number {
-  const ty = sqlite.prepare(`SELECT id FROM pattern_types WHERE name = ? AND owner_id = ?`).get(typeName, OWNER) as { id: number };
+function insertPattern(typeName: string, name: string, taskIds: string[]): string {
+  const ty = sqlite.prepare(`SELECT id FROM pattern_types WHERE name = ? AND owner_id = ?`).get(typeName, OWNER) as { id: string };
   const pid = (sqlite
-    .prepare(`INSERT INTO patterns (owner_id, type_id, name) VALUES (?, ?, ?) RETURNING id`)
-    .get(OWNER, ty.id, name) as { id: number }).id;
+    .prepare(`INSERT INTO patterns (id, owner_id, type_id, name) VALUES (uuid7(), ?, ?, ?) RETURNING id`)
+    .get(OWNER, ty.id, name) as { id: string }).id;
   taskIds.forEach((tid, i) =>
     sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(pid, tid, i),
   );
   return pid;
 }
 
-const patternBlocks = (patternId: number) =>
+const patternBlocks = (patternId: string) =>
   sqlite
     .prepare(`SELECT title, start_at, end_at, parent_block_id, task_id FROM time_blocks WHERE source_kind = 'pattern' AND source_ref = ? ORDER BY start_at`)
-    .all(String(patternId)) as { title: string; start_at: string; end_at: string; parent_block_id: number | null; task_id: number }[];
+    .all(patternId) as { title: string; start_at: string; end_at: string; parent_block_id: string | null; task_id: string }[];
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -105,11 +106,11 @@ describe('placePatternOnDay — gap math + member redirection', () => {
   it('redirects a recurrence template to today’s instance when one exists', async () => {
     // a habit task template + its materialized instance for today
     const template = (sqlite
-      .prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, recurrence_rule, recurrence_dtstart, is_habit) VALUES ('Drink water', ?, 'recurring', 15, 'FREQ=DAILY', '2026-06-22T12:00:00Z', 1) RETURNING id`)
-      .get(OWNER) as { id: number }).id;
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, recurrence_rule, recurrence_dtstart, is_habit) VALUES (uuid7(), 'Drink water', ?, 'recurring', 15, 'FREQ=DAILY', '2026-06-22T12:00:00Z', 1) RETURNING id`)
+      .get(OWNER) as { id: string }).id;
     const instance = (sqlite
-      .prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, recurrence_parent_id, occurrence_date) VALUES ('Drink water', ?, 'open', 15, ?, ?) RETURNING id`)
-      .get(OWNER, template, DAY) as { id: number }).id;
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, recurrence_parent_id, occurrence_date) VALUES (uuid7(), 'Drink water', ?, 'open', 15, ?, ?) RETURNING id`)
+      .get(OWNER, template, DAY) as { id: string }).id;
     const pid = insertPattern('Habit', 'Hydration', [template]);
 
     placePatternOnDay(OWNER, pid, { date: DAY });
@@ -124,7 +125,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     const pid = insertPattern('Routine', 'Pair', [t1, t2]);
 
     sqlite
-      .prepare(`INSERT INTO time_blocks (title, block_kind, start_at, end_at, is_locked, is_auto, status) VALUES ('Meeting', 'task', ?, ?, 1, 0, 'planned')`)
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, status) VALUES (uuid7(), 'Meeting', 'task', ?, ?, 1, 0, 'planned')`)
       .run(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`);
 
     placePatternOnDay(OWNER, pid, { date: DAY });

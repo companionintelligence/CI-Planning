@@ -36,7 +36,7 @@ export interface ReviewResult {
 }
 
 interface MissedRow {
-  task_id: number;
+  task_id: string;
   priority: number;
   defer_count: number;
 }
@@ -106,7 +106,7 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
  * bumps scheduled_for + defer_count, and removes any stale missed/planned
  * blocks so it re-places cleanly on the new day.
  */
-export function rescheduleTask(taskId: number, days: number): { scheduled_for: string } {
+export function rescheduleTask(taskId: string, days: number): { scheduled_for: string } {
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   const tx = sqlite.transaction(() => {
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ?`).run(scheduledFor, taskId);

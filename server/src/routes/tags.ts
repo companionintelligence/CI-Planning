@@ -15,7 +15,7 @@ export function tagsRouter() {
          GROUP BY tags.id
          ORDER BY count DESC, tags.name`
       )
-      .all() as { id: number; name: string; count: number }[];
+      .all() as { id: string; name: string; count: number }[];
     ctx.body = { tags: rows };
   });
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { ensureHabitPattern } from '../src/services/patterns.js';
 import { up as backfillHabits } from '../src/db/migrations/0014_habit_patterns_backfill.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
@@ -10,28 +11,28 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  * the runtime flag (E behaviour unchanged — covered by the recurrence suites).
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 
 const habitTypeId = () =>
-  (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Habit' AND is_builtin = 1 AND owner_id = ?`).get(OWNER) as { id: number }).id;
+  (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Habit' AND is_builtin = 1 AND owner_id = ?`).get(OWNER) as { id: string }).id;
 
-const insertHabitTemplate = (title: string): number =>
+const insertHabitTemplate = (title: string): string =>
   (
     sqlite
       .prepare(
-        `INSERT INTO tasks (title, owner_id, status, is_habit, recurrence_rule, recurrence_dtstart)
-         VALUES (?, ?, 'recurring', 1, 'FREQ=DAILY', '2026-06-01T12:00:00.000Z') RETURNING id`
+        `INSERT INTO tasks (id, title, owner_id, status, is_habit, recurrence_rule, recurrence_dtstart)
+         VALUES (uuid7(), ?, ?, 'recurring', 1, 'FREQ=DAILY', '2026-06-01T12:00:00.000Z') RETURNING id`
       )
-      .get(title, OWNER) as { id: number }
+      .get(title, OWNER) as { id: string }
   ).id;
 
-const habitPatternsFor = (taskId: number) =>
+const habitPatternsFor = (taskId: string) =>
   sqlite
     .prepare(
       `SELECT p.id, p.name FROM patterns p JOIN pattern_tasks pt ON pt.pattern_id = p.id
         WHERE pt.task_id = ? AND p.type_id = ?`
     )
-    .all(taskId, habitTypeId()) as { id: number; name: string }[];
+    .all(taskId, habitTypeId()) as { id: string; name: string }[];
 
 beforeEach(() => {
   resetDb();
@@ -62,10 +63,10 @@ describe('habit → pattern bridge', () => {
     const inst = (
       sqlite
         .prepare(
-          `INSERT INTO tasks (title, owner_id, status, is_habit, recurrence_parent_id, occurrence_date)
-           VALUES ('Walk', ?, 'open', 1, ?, '2026-06-10') RETURNING id`
+          `INSERT INTO tasks (id, title, owner_id, status, is_habit, recurrence_parent_id, occurrence_date)
+           VALUES (uuid7(), 'Walk', ?, 'open', 1, ?, '2026-06-10') RETURNING id`
         )
-        .get(OWNER, tpl) as { id: number }
+        .get(OWNER, tpl) as { id: string }
     ).id;
     backfillHabits(sqlite);
     expect(habitPatternsFor(tpl).length).toBe(1);
