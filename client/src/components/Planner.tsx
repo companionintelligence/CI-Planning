@@ -334,7 +334,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   }
   async function detach() {
     setMenu(null);
-    try { await api.blocks.update(b().id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Plan', 'default'); }
+    try { await api.blocks.update(b().id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Time Block', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function removeBlock() {
@@ -352,7 +352,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     const t = task();
     const items: MenuItem[] = [{ label: 'Edit', icon: Pencil, onClick: edit }];
     if (t && !t.is_habit) items.push({ label: 'Promote to habit', icon: Repeat, onClick: promoteHabit });
-    if (b().parent_block_id != null) items.push({ label: 'Remove from Plan', icon: Unlink, onClick: detach });
+    if (b().parent_block_id != null) items.push({ label: 'Remove from Time Block', icon: Unlink, onClick: detach });
     items.push({ label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true });
     return items;
   };
@@ -499,7 +499,7 @@ export function Planner() {
   onCleanup(() => clearInterval(tick));
 
   // Concepts live off the minute grid (the header lane + horizon), never on it.
-  const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'concept');
+  const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'someday');
   // Plan containers on the timed grid (★ outline); all-day ones go to the header lane.
   const containers = () => dayBlocks().filter((b) => b.block_kind === 'timeblock' && !isAllDay(b));
   // Task/meeting/focus chips share the overlap layout; containers + break/buffer + all-day don't.
@@ -541,7 +541,7 @@ export function Planner() {
       setGhost(null);
       const resolved = resolveGesture(anchor, day(), 'move', dy);
       if (!resolved) return;
-      try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Plan', 'default'); }
+      try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Time Block', 'default'); }
       catch (err) { showToast((err as Error).message, 'error'); }
       return;
     }

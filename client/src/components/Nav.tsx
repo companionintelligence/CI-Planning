@@ -12,7 +12,7 @@ const links = [
   { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
   { href: '/inbox',    label: 'Inbox',    Icon: Inbox, badge: true },
   { href: '/tasks',    label: 'Tasks',    Icon: CheckSquare },
-  { href: '/patterns', label: 'Patterns', Icon: Shapes },
+  { href: '/patterns', label: 'Routines', Icon: Shapes },
   { href: '/tags',     label: 'Tags',     Icon: Tag },
   { href: '/jobs',     label: 'Jobs',     Icon: Activity },
   { href: '/settings', label: 'Settings', Icon: Settings },

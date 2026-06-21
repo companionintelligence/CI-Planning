@@ -30,7 +30,7 @@ function stage(taskId: string) {
 async function makePlan(srv: TestServer, tag: string, start: string, end: string) {
   return (await api(srv.url, '/api/blocks', {
     method: 'POST',
-    json: { title: `${tag} plan`, block_kind: 'timeblock', block_type: 'plan', tag, start_at: start, end_at: end },
+    json: { title: `${tag} plan`, block_kind: 'timeblock', block_type: 'scheduled', tag, start_at: start, end_at: end },
   })).body.block;
 }
 const agentBlocks = () =>

@@ -87,7 +87,7 @@ export function blockTemplatesRouter() {
     const block = sqlite
       .prepare(
         `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, status)
-         VALUES (uuid7(), ?, 'timeblock', 'plan', ?, ?, ?, 0, 0, 'manual', 'planned') RETURNING *`
+         VALUES (uuid7(), ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 0, 'manual', 'planned') RETURNING *`
       )
       .get(t.name, t.tag, body.start_at, endAt) as Record<string, unknown>;
 

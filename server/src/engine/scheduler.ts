@@ -276,7 +276,7 @@ export function dayObstacles(
                is_locked = 1
             OR block_kind = 'meeting'
             OR (block_kind = 'task' AND status NOT IN ('completed','skipped','cancelled'))
-            OR (? = 1 AND block_kind = 'timeblock' AND block_type = 'plan')
+            OR (? = 1 AND block_kind = 'timeblock' AND block_type = 'scheduled')
           )`
     )
     .all(windowEndISO, windowStartISO, opts.includePlans ? 1 : 0) as { id: string; start_at: string; end_at: string }[];
