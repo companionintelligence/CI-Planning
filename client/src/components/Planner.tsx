@@ -14,6 +14,7 @@ import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
 import { BlockEditModal } from './BlockEditModal.js';
+import { PatternBlockOverlay } from './PatternBlockOverlay.js';
 
 /**
  * The PLANNER (Phase G, G6): the hour-by-hour view of TODAY. 8h visible by default,
@@ -756,6 +757,7 @@ export function Planner() {
             onPointerDown={onGridPointerDown}
             onPointerUp={gridDrop.handlers.onPointerUp}
           >
+            <PatternBlockOverlay date={day()} />
             <HourLines />
             <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={setEditBlock} onRequestDelete={requestDeletePlan} />}</For>
             <For each={placed()}>

@@ -38,9 +38,13 @@ reserved)** and demotes everything else.
 | 5 | **Inbox** | Capture / triage queue. (internal: `possible_tasks`; promoting one creates a Task) |
 | 6 | **Flight-plan** | The day’s staging tray — what Auto runs over. |
 | 7 | **Planner** | The date-navigable board where Time Blocks live. (absorbs the old `/calendar` view once day-nav lands) |
-| 8 | *(reserved)* | Headroom — e.g. a future “Project”. **Do not spend without retiring a noun.** |
+| 8 | **Pattern-block** | A named availability window tying a direction tag to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
 
 ## States, subtypes & kinds (demoted — not nouns)
+
+- **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each direction tag has
+  0–N time ranges per day type. Direction-less tasks fall back to the general `workday_start`/
+  `workday_end` window from scheduling\_prefs.
 
 - **Task states:** `open` · `TBD` (title + ≥1 tag, nothing else) · `scheduled` ·
   `deferred` · `done` · `missed` · `past` (the shelf).

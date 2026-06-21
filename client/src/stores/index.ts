@@ -151,6 +151,11 @@ export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
   api.prefs.get().then((r) => r.prefs)
 );
 
+// ── Pattern-blocks ────────────────────────────────────────────────────────────
+export const [patternBlocks, { refetch: refetchPatternBlocks }] = createResource(() =>
+  api.patternBlocks.list()
+);
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 export const [jobs, { refetch: refetchJobs }] = createResource(() =>
   api.jobs.list().then((r) => r.jobs)

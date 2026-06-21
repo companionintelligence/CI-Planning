@@ -48,6 +48,12 @@ export function addDays(dateStr: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** True for Saturday (6) and Sunday (0). Anchored at noon UTC — DST-safe. */
+export function isWeekend(dateStr: string): boolean {
+  const d = new Date(dateStr + 'T12:00:00Z').getUTCDay();
+  return d === 0 || d === 6;
+}
+
 /** Day-of-week (0=Sun..6=Sat) for a YYYY-MM-DD string, computed at noon UTC. */
 function dowOf(dateStr: string): number {
   return new Date(dateStr + 'T12:00:00Z').getUTCDay();

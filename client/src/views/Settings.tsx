@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags } from 'lucide-solid';
-import { prefs, refetchPrefs, showToast } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternBlocks, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { PatternTypeSettings } from '../components/PatternTypeSettings.js';
 import { DEFAULT_CONCEPT_TAGS, type ConceptTag } from '../lib/pattern-meta.js';
@@ -49,6 +49,44 @@ const DEFAULTS: SettingsForm = {
 
 export function Settings() {
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
+
+  // ── Pattern-blocks local edit state ─────────────────────────────────────────
+  const [dayTab, setDayTab] = createSignal<'workday' | 'weekend'>('workday');
+  const [localWindows, setLocalWindows] = createSignal<Record<string, { start_time: string; end_time: string }[]>>({});
+
+  let pbInitialized = false;
+  createEffect(() => {
+    const pb = patternBlocks();
+    if (!pb || pbInitialized) return;
+    pbInitialized = true;
+    const out: Record<string, { start_time: string; end_time: string }[]> = {};
+    for (const dt of ['workday', 'weekend'] as const) {
+      for (const [dirTagId, ranges] of Object.entries(pb[dt])) {
+        out[`${dt}:${dirTagId}`] = ranges.map((r) => ({ start_time: r.start_time, end_time: r.end_time }));
+      }
+    }
+    setLocalWindows(out);
+  });
+
+  function pbKey(dirTagId: string) { return `${dayTab()}:${dirTagId}`; }
+  function getRanges(dirTagId: string) { return localWindows()[pbKey(dirTagId)] ?? []; }
+  function addRange(dirTagId: string) {
+    setLocalWindows((w) => ({ ...w, [pbKey(dirTagId)]: [...getRanges(dirTagId), { start_time: '09:00', end_time: '17:00' }] }));
+  }
+  function removeRange(dirTagId: string, idx: number) {
+    setLocalWindows((w) => ({ ...w, [pbKey(dirTagId)]: getRanges(dirTagId).filter((_, i) => i !== idx) }));
+  }
+  function updateRange(dirTagId: string, idx: number, field: 'start_time' | 'end_time', val: string) {
+    setLocalWindows((w) => ({
+      ...w,
+      [pbKey(dirTagId)]: getRanges(dirTagId).map((r, i) => (i === idx ? { ...r, [field]: val } : r)),
+    }));
+  }
+  async function savePatternWindows(dirTagId: string) {
+    try {
+      await api.patternBlocks.set(dirTagId, dayTab(), getRanges(dirTagId));
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   createEffect(() => {
     const p = prefs();
@@ -220,6 +258,61 @@ export function Settings() {
               <For each={ALL_TIMEZONES}>{(tz) => <option value={tz}>{tz}</option>}</For>
             </select>
           </label>
+        </section>
+
+        {/* Schedule Patterns — per-direction availability windows */}
+        <section class="card">
+          <div class="section-label mb-1">Schedule Patterns</div>
+          <p class="text-xs text-muted-foreground mb-3">
+            Availability windows per direction. Auto places direction-tagged tasks only inside these windows;
+            direction-less tasks use the Work Hours window above.
+          </p>
+          <div class="flex gap-2 mb-4">
+            <For each={[['workday', 'Workday'], ['weekend', 'Weekend']] as [string, string][]}>
+              {([val, label]) => (
+                <button type="button"
+                  onClick={() => setDayTab(val as 'workday' | 'weekend')}
+                  class="px-3 py-1 text-sm rounded-md transition-colors"
+                  classList={{ 'bg-primary text-primary-foreground': dayTab() === val, 'text-muted-foreground hover:text-foreground': dayTab() !== val }}>
+                  {label}
+                </button>
+              )}
+            </For>
+          </div>
+          <div class="flex flex-col gap-5">
+            <For each={(tags() ?? []).filter((t) => t.kind === 'direction')}>
+              {(dir) => (
+                <div class="flex flex-col gap-2">
+                  <div class="text-sm font-medium text-foreground capitalize">{dir.name}</div>
+                  <For each={getRanges(dir.id)}>
+                    {(r, i) => (
+                      <div class="flex items-center gap-2">
+                        <input type="time" class="input py-1 text-sm flex-1"
+                          value={r.start_time}
+                          onInput={(e) => updateRange(dir.id, i(), 'start_time', e.currentTarget.value)}
+                          onBlur={() => savePatternWindows(dir.id)} />
+                        <span class="text-muted-foreground text-xs">–</span>
+                        <input type="time" class="input py-1 text-sm flex-1"
+                          value={r.end_time}
+                          onInput={(e) => updateRange(dir.id, i(), 'end_time', e.currentTarget.value)}
+                          onBlur={() => savePatternWindows(dir.id)} />
+                        <button type="button"
+                          class="text-muted-foreground hover:text-destructive transition-colors"
+                          onClick={() => { removeRange(dir.id, i()); savePatternWindows(dir.id); }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                  <button type="button"
+                    class="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors self-start"
+                    onClick={() => addRange(dir.id)}>
+                    <Plus size={12} /> Add window
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
         </section>
 
         {/* Time-Block settings — Plan | Concept */}
