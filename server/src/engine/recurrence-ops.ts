@@ -9,6 +9,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { localISODate } from '../lib/dates.js';
+import { removeEntityTags } from '../services/tags.js';
 
 interface TaskRow {
   id: string;
@@ -133,11 +134,16 @@ export function computeStreak(id: string, today: string = localISODate()): Strea
  * new rule. Returns the number deleted.
  */
 export function deleteFutureOpenInstances(templateId: string, today: string = localISODate()): number {
-  return sqlite
+  // CON-3 cascade: instances are HARD-deleted — a user can tag a single occurrence,
+  // so clear those tag rows before dropping the instances.
+  const dropped = sqlite
     .prepare(
       `DELETE FROM tasks
         WHERE recurrence_parent_id = ? AND status = 'open'
-          AND occurrence_date IS NOT NULL AND occurrence_date >= ?`
+          AND occurrence_date IS NOT NULL AND occurrence_date >= ?
+        RETURNING id`
     )
-    .run(templateId, today).changes;
+    .all(templateId, today) as { id: string }[];
+  for (const t of dropped) removeEntityTags('task', t.id);
+  return dropped.length;
 }

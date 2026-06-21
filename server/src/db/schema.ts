@@ -229,6 +229,24 @@ export const taskTags = sqliteTable('task_tags', {
   tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
 });
 
+// CON-3: the canonical normalized tag store. ONE polymorphic association table
+// for Task · Time Block · Routine, so Phase 5 (tag levels + dilution) has a
+// single place to read level-weighted tags. `entity_id` spans three tables, so
+// it has NO FK — integrity is **app-enforced** by the tag-repo (services/tags.ts),
+// which owns every entity-delete path (the orphan-free tests are the gate).
+// `time_blocks.tag` / `patterns.tag` stay as denormalized top-level mirrors;
+// existing reads still use them. `level` defaults 1 (top-level); no dilution here.
+export const entityTags = sqliteTable(
+  'entity_tags',
+  {
+    entityKind: text('entity_kind').notNull(),                    // 'task' | 'time_block' | 'routine'
+    entityId: text('entity_id').notNull(),                        // PK of the entity (no FK — spans tables)
+    tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    level: integer('level').notNull().default(1),                 // 1 = top-level; >1 = secondary (Phase 5)
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.entityKind, t.entityId, t.tagId] }) })
+);
+
 export const possibleTaskTags = sqliteTable('possible_task_tags', {
   possibleTaskId: text('possible_task_id').references(() => possibleTasks.id, { onDelete: 'cascade' }).notNull(),
   tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
