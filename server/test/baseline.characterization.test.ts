@@ -57,8 +57,11 @@ beforeEach(() => {
   // the prefs that influence the read surfaces back to their defaults.
   sqlite.exec(`DELETE FROM flight_plan; DELETE FROM pattern_tasks; DELETE FROM patterns; DELETE FROM block_templates;`);
   sqlite.exec(`DELETE FROM pattern_types WHERE is_builtin = 0;`);
+  // timezone = 'UTC' (not NULL): summary's day-window + lazy placement resolve the
+  // day in this tz; NULL falls back to the *system* tz, which makes the block-count
+  // boundary (a concept at midnight-UTC) env-dependent. Pin it so CI == local.
   sqlite.prepare(
-    `UPDATE scheduling_prefs SET timezone = NULL, workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 1, enable_rituals = 0 WHERE owner_id = ?`,
+    `UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', auto_fill_workday = 1, enable_rituals = 0 WHERE owner_id = ?`,
   ).run(OWNER);
 });
 
