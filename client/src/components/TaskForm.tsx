@@ -1,10 +1,11 @@
-import { createSignal, createEffect, Show, For } from 'solid-js';
+import { createSignal, createEffect, onMount, Show, For } from 'solid-js';
 import { X, Plus, AlignLeft, Clock, Calendar, Tag, Flag, Timer, Link2, CalendarClock, Repeat, Flame } from 'lucide-solid';
 import { api, type Task, type TaskInput } from '../lib/api.js';
-import { refetchTasks, showToast, setTaskModal, tasks } from '../stores/index.js';
+import { refetchTasks, showToast, setTaskModal, tasks, tags } from '../stores/index.js';
 import {
   buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset,
 } from '../lib/recurrence.js';
+import { suggestTagsFromTitle, localDayPlus } from '../lib/tag-suggest.js';
 
 interface Props {
   editTask?: Task;
@@ -33,6 +34,13 @@ export function TaskForm(props: Props) {
   const [estimatedMinutes, setEstimatedMinutes] = createSignal('');
   const [priority, setPriority] = createSignal(3);
   const [tagsInput, setTagsInput] = createSignal('');
+  // New Task wizard: Someday (suppresses scheduling → TBD list), start-day / due in
+  // the reduced view, and whether the user has hand-edited tags (stops auto-tag).
+  const [someday, setSomeday] = createSignal(false);
+  const [scheduledFor, setScheduledFor] = createSignal('');
+  const [dueOverridden, setDueOverridden] = createSignal(false);
+  const [showDuePicker, setShowDuePicker] = createSignal(false);
+  const [tagsTouched, setTagsTouched] = createSignal(false);
   const [deferUntil, setDeferUntil] = createSignal('');
   const [dependsOn, setDependsOn] = createSignal<string[]>([]);
   const [saving, setSaving] = createSignal(false);
@@ -79,7 +87,62 @@ export function TaskForm(props: Props) {
     setCustomRule(ps.custom);
     // Default a recurring-task edit to the safer per-instance scope.
     setEditScope('instance');
+    setScheduledFor(t.scheduled_for ?? '');
+    setDueOverridden(!!t.due_at);
+    setShowDuePicker(!!t.due_at);
+    setTagsTouched(true); // never auto-clobber an existing task's tags
     setExpanded(true);
+  });
+
+  // Create-mode defaults: start today, due defaults to the same day, a sensible
+  // estimate. (No-op for edits — populated from the task above.)
+  onMount(() => {
+    if (isEdit()) return;
+    const today = localDayPlus(0);
+    setScheduledFor(today);
+    setDueAt(today);
+    setEstimatedMinutes('30');
+  });
+
+  // Existing tags as toggleable bubbles; toggling marks tags hand-edited so the
+  // auto-tagger stops overwriting.
+  const existingTagNames = () => (tags() ?? []).map((t) => t.name);
+  const selectedTags = () => tagsInput().split(',').map((s) => s.trim().replace(/^#/, '')).filter(Boolean);
+  function toggleTag(name: string) {
+    setTagsTouched(true);
+    const cur = selectedTags();
+    const next = cur.includes(name) ? cur.filter((t) => t !== name) : [...cur, name];
+    setTagsInput(next.join(', '));
+  }
+
+  // Start-day quick picks → scheduled_for; due follows the start day until the user
+  // overrides it with the calendar.
+  function pickStart(days: number) {
+    const d = localDayPlus(days);
+    setScheduledFor(d);
+    if (!dueOverridden()) setDueAt(d);
+  }
+  const startSel = (days: number) => !someday() && scheduledFor() === localDayPlus(days);
+
+  // Auto-tag by context (create only): heuristic instantly, LLM refine debounced;
+  // both constrained to existing tags. Stops once the user touches tags.
+  let llmTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(() => {
+    const t = title();
+    if (isEdit() || tagsTouched()) return;
+    const existing = existingTagNames();
+    const heur = suggestTagsFromTitle(t, existing);
+    setTagsInput(heur.join(', '));
+    clearTimeout(llmTimer);
+    if (!t.trim()) return;
+    llmTimer = setTimeout(async () => {
+      if (tagsTouched()) return;
+      try {
+        const { tags: llm } = await api.tasks.suggestTags(t);
+        if (tagsTouched() || title() !== t) return; // user moved on
+        setTagsInput(Array.from(new Set([...heur, ...llm])).join(', '));
+      } catch { /* offline: keep the heuristic */ }
+    }, 600);
   });
 
   async function submit(e: Event) {
@@ -87,15 +150,20 @@ export function TaskForm(props: Props) {
     if (!title().trim()) return;
     setSaving(true);
     try {
+      // Someday = capture title + tags only (no dates/estimate/notes) so it lands in
+      // the TBD list (open + ≥1 tag + nothing scheduled). Otherwise carry the
+      // reduced-view start day / duration / due date.
+      const sd = someday();
       const body: TaskInput = {
         title: title().trim(),
-        notes: notes().trim() || undefined,
-        due_at: dueAt() || undefined,
-        task_time: taskTime() || undefined,
-        estimated_minutes: estimatedMinutes() ? Number(estimatedMinutes()) : undefined,
-        priority: priority(),
+        notes: sd ? undefined : (notes().trim() || undefined),
+        scheduled_for: sd ? undefined : (scheduledFor() || undefined),
+        due_at: sd ? undefined : (dueAt() || undefined),
+        task_time: sd ? undefined : (taskTime() || undefined),
+        estimated_minutes: sd ? undefined : (estimatedMinutes() ? Number(estimatedMinutes()) : undefined),
+        priority: sd ? undefined : priority(),
         parent_id: props.parentId,
-        tags: tagsInput() ? tagsInput().split(',').map(t => t.trim()).filter(Boolean) : [],
+        tags: tagsInput() ? tagsInput().split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean) : [],
         defer_until: deferUntil() ? new Date(deferUntil() + 'T00:00:00').toISOString() : undefined,
         depends_on: dependsOn(),
       };
@@ -149,27 +217,89 @@ export function TaskForm(props: Props) {
             onInput={(e) => setTitle(e.currentTarget.value)}
           />
 
-          {/* Priority selector — CI teal gradient for selected */}
+          {/* Priority: P1–P3 + Someday (Someday → unscheduled, lands in TBD). */}
           <div class="flex gap-1.5">
-            {[1,2,3,4,5].map(p => (
+            <For each={[1, 2, 3]}>{(p) => (
               <button
                 type="button"
-                onClick={() => setPriority(p)}
+                onClick={() => { setPriority(p); setSomeday(false); }}
                 class="flex-1 py-1.5 rounded-full text-xs font-medium tracking-wide transition-all duration-100 border"
-                style={priority() === p ? {
-                  background: 'linear-gradient(135deg,#58ebbf,#409b9b)',
-                  color: '#070d11',
-                  'border-color': '#58ebbf',
-                } : {
-                  background: 'transparent',
-                  color: '#244859',
-                  'border-color': '#1a3040',
-                }}
-              >
-                P{p}
-              </button>
-            ))}
+                style={!someday() && priority() === p
+                  ? { background: 'linear-gradient(135deg,#58ebbf,#409b9b)', color: '#070d11', 'border-color': '#58ebbf' }
+                  : { background: 'transparent', color: '#244859', 'border-color': '#1a3040' }}
+              >P{p}</button>
+            )}</For>
+            <button
+              type="button"
+              onClick={() => setSomeday(true)}
+              class="flex-1 py-1.5 rounded-full text-xs font-medium tracking-wide transition-all duration-100 border"
+              style={someday()
+                ? { background: 'linear-gradient(135deg,#58ebbf,#409b9b)', color: '#070d11', 'border-color': '#58ebbf' }
+                : { background: 'transparent', color: '#244859', 'border-color': '#1a3040' }}
+            >Someday</button>
           </div>
+
+          {/* Quick tag bubbles — the user's existing tags (auto-selected by context). */}
+          <Show when={existingTagNames().length > 0}>
+            <div class="flex flex-wrap gap-1.5">
+              <For each={existingTagNames()}>{(name) => (
+                <button
+                  type="button"
+                  onClick={() => toggleTag(name)}
+                  class="px-2.5 py-1 rounded-full text-xs font-medium border transition-all"
+                  classList={{
+                    'bg-primary text-primary-foreground border-primary': selectedTags().includes(name),
+                    'border-border text-muted-foreground hover:text-foreground': !selectedTags().includes(name),
+                  }}
+                >#{name}</button>
+              )}</For>
+            </div>
+          </Show>
+
+          {/* Reduced-view scheduling: start day · duration · due (hidden for Someday). */}
+          <Show when={!someday()}>
+            <div class="flex flex-col gap-2">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-slate-500 w-14">Start</span>
+                <For each={[['Today', 0], ['+1 day', 1], ['+1 week', 7]] as const}>{([label, days]) => (
+                  <button
+                    type="button"
+                    onClick={() => pickStart(days)}
+                    class="flex-1 py-1 rounded-lg text-xs font-medium border transition-all"
+                    classList={{
+                      'bg-primary text-primary-foreground border-primary': startSel(days),
+                      'border-border text-muted-foreground hover:text-foreground': !startSel(days),
+                    }}
+                  >{label}</button>
+                )}</For>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-slate-500 w-14">Duration</span>
+                <input
+                  type="number" min={5} step={5} class="input flex-1"
+                  placeholder="30 min"
+                  value={estimatedMinutes()}
+                  onInput={(e) => setEstimatedMinutes(e.currentTarget.value)}
+                />
+                <span class="text-xs text-slate-500">min</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-slate-500 w-14">Due</span>
+                <Show
+                  when={showDuePicker()}
+                  fallback={
+                    <button type="button" onClick={() => setShowDuePicker(true)}
+                      class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                      <Calendar size={13} /> {dueAt() || 'same as start'} — change
+                    </button>
+                  }
+                >
+                  <input type="date" class="input flex-1" value={dueAt()}
+                    onInput={(e) => { setDueAt(e.currentTarget.value); setDueOverridden(true); }} />
+                </Show>
+              </div>
+            </div>
+          </Show>
 
           {/* Expand toggle */}
           <Show when={!expanded()}>
@@ -184,31 +314,13 @@ export function TaskForm(props: Props) {
 
           {/* Expanded fields */}
           <Show when={expanded()}>
-            <div class="flex gap-3">
-              <label class="flex flex-col gap-1.5 flex-1">
-                <span class="flex items-center gap-1.5 text-xs text-slate-500">
-                  <Calendar size={11} /> Due date
-                </span>
-                <input type="date" class="input" value={dueAt()} onInput={(e) => setDueAt(e.currentTarget.value)} />
-              </label>
-              <label class="flex flex-col gap-1.5 flex-1">
-                <span class="flex items-center gap-1.5 text-xs text-slate-500">
-                  <Clock size={11} /> Task time
-                </span>
-                <input type="time" class="input" value={taskTime()} onInput={(e) => setTaskTime(e.currentTarget.value)} />
-              </label>
-              <label class="flex flex-col gap-1.5 w-28">
-                <span class="flex items-center gap-1.5 text-xs text-slate-500">
-                  <Timer size={11} /> Est. min
-                </span>
-                <input
-                  type="number" min={5} step={5} class="input"
-                  placeholder="30"
-                  value={estimatedMinutes()}
-                  onInput={(e) => setEstimatedMinutes(e.currentTarget.value)}
-                />
-              </label>
-            </div>
+            {/* Start day, duration, and due date live in the reduced view above. */}
+            <label class="flex flex-col gap-1.5 w-40">
+              <span class="flex items-center gap-1.5 text-xs text-slate-500">
+                <Clock size={11} /> Task time (optional)
+              </span>
+              <input type="time" class="input" value={taskTime()} onInput={(e) => setTaskTime(e.currentTarget.value)} />
+            </label>
 
             <div class="flex gap-3">
               <label class="flex flex-col gap-1.5 flex-1">
@@ -365,13 +477,13 @@ export function TaskForm(props: Props) {
 
             <label class="flex flex-col gap-1.5">
               <span class="flex items-center gap-1.5 text-xs text-slate-500">
-                <Tag size={11} /> Tags (comma-separated)
+                <Tag size={11} /> Add new tags (comma-separated)
               </span>
               <input
                 class="input"
                 placeholder="work, eng, urgent"
                 value={tagsInput()}
-                onInput={(e) => setTagsInput(e.currentTarget.value)}
+                onInput={(e) => { setTagsTouched(true); setTagsInput(e.currentTarget.value); }}
               />
             </label>
           </Show>

@@ -88,6 +88,8 @@ export const api = {
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
+    // Best-effort LLM auto-tag for the wizard, constrained to existing tags ([] if Ollama down).
+    suggestTags: (title: string) => request<{ tags: string[] }>('POST', '/tasks/suggest-tags', { title }),
     update: (
       id: string,
       body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string | null }>,

@@ -8,6 +8,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError } from '../engine/deps.js';
 import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
+import { suggestTags } from '../agents/tags.js';
 import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generate.js';
@@ -261,6 +262,16 @@ export function tasksRouter() {
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
+  });
+
+  // POST /api/tasks/suggest-tags { title } → { tags } — best-effort LLM auto-tag for
+  // the New Task wizard, constrained to existing tags. Returns [] when Ollama is down
+  // (the client still has its offline heuristic). Literal path; no clash with /:id/*.
+  router.post('/api/tasks/suggest-tags', async (ctx) => {
+    const { title } = (ctx.request.body ?? {}) as { title?: string };
+    const vocab = (sqlite.prepare('SELECT name FROM tags ORDER BY name').all() as { name: string }[]).map((r) => r.name);
+    const tags = await suggestTags(title ?? '', vocab);
+    ctx.body = { tags };
   });
 
   // POST /api/tasks/:id/recall — clone a (usually shelved/Past) task to a brand-new
