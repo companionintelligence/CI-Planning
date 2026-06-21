@@ -1,12 +1,14 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2, Save, Repeat } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2 } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
-import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf } from '../lib/grid.js';
+import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
+import { resolveGroup, containerAt } from '../lib/group-move.js';
+import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
-import { textureStyle } from '../lib/textures.js';
+import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
 import { BlockEditModal } from './BlockEditModal.js';
@@ -18,14 +20,21 @@ import { BlockEditModal } from './BlockEditModal.js';
  * render as labelled outlines; pattern instances carry their type texture; chips
  * drag-to-reorder (one tz-safe PATCH); overlaps are **allowed but flagged**.
  *
+ * Plan-as-container (PR-C): a Plan + the task blocks scheduled into it move together.
+ * Dragging the Plan — or any member — shifts the whole group by one minute delta
+ * (atomic `move-group`); members render nested under their Plan; Alt-dragging a
+ * member detaches just it; dropping a loose chip into a Plan's window attaches it.
+ *
  * Built on the shared grid math (`grid.ts`), the overlap layout (`layoutBlocks`),
- * and the drag gesture (`drag.ts`) — the same engine the Calendar grid uses — so
- * there is no tz drift between a chip's pixel position and its stored instant.
+ * the drag gesture (`drag.ts`), and the pure group math (`group-move.ts`) — so there
+ * is no tz drift between a chip's pixel position and its stored instant.
  */
 
 type Placed = ReturnType<typeof layoutBlocks>[number];
 
 const VISIBLE_PX = VISIBLE_HOURS * 60 * PX_PER_MIN;
+/** Horizontal inset (px) for a member chip nested inside its Plan. */
+const NEST_INSET_PX = 12;
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -35,11 +44,21 @@ function fmtTime(iso: string) {
 // A move gesture under this pixel threshold is treated as a click (opens the menu).
 const CLICK_PX = 5;
 
-/** Drag/resize state + a pointer handler. `onClick` fires for a near-zero move. */
+/**
+ * Drag/resize state + a pointer handler. `onClick` fires for a near-zero move.
+ *
+ * A 'move' gesture can be owned by the caller for group-aware behavior: `onMoveLive`
+ * fires on every pointermove (live group ghost), `onMoveEnd` on pointerup (clear the
+ * ghost), and `onMoveCommit` replaces the default single-block PATCH. Resize always
+ * uses the default `resolveGesture` + `commitDrag` path.
+ */
 function useBlockDrag(opts: {
   block: () => Block; day: string; locked: () => boolean;
   baseTop: () => number; baseHeight: () => number;
   onClick: (x: number, y: number) => void;
+  onMoveLive?: (dy: number, ev: PointerEvent) => void;
+  onMoveEnd?: () => void;
+  onMoveCommit?: (dy: number, ev: PointerEvent) => void;
 }) {
   const [drag, setDrag] = createSignal<{ mode: GestureMode; dy: number } | null>(null);
   const liveTop = () => {
@@ -63,14 +82,20 @@ function useBlockDrag(opts: {
     const startY = e.clientY;
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture?.(e.pointerId);
-    const onMove = (ev: PointerEvent) => setDrag({ mode, dy: ev.clientY - startY });
+    const onMove = (ev: PointerEvent) => {
+      const dy = ev.clientY - startY;
+      setDrag({ mode, dy });
+      if (mode === 'move') opts.onMoveLive?.(dy, ev);
+    };
     const onUp = (ev: PointerEvent) => {
       target.releasePointerCapture?.(ev.pointerId);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       const dy = ev.clientY - startY;
       setDrag(null);
+      if (mode === 'move') opts.onMoveEnd?.();
       if (mode === 'move' && Math.abs(dy) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
+      if (mode === 'move' && opts.onMoveCommit) { opts.onMoveCommit(dy, ev); return; }
       const resolved = resolveGesture(opts.block(), opts.day, mode, dy);
       void commitDrag(opts.block(), resolved, { onError: (m) => showToast(m, 'error') });
     };
@@ -150,8 +175,16 @@ function NowLine(props: { day: string; now: string }) {
   );
 }
 
+/** Handlers the Plan-as-container gestures need from the Planner (group ghost + commits). */
+interface GroupCtx {
+  extraMin: (id: number) => number;                         // optimistic group-ghost offset (minutes)
+  onMoveLive: (anchor: Block, dy: number, ev: PointerEvent) => void;
+  onMoveEnd: () => void;
+  onMoveCommit: (anchor: Block, dy: number, ev: PointerEvent) => void;
+}
+
 // ── Plan container outline (a timed Time-Block: ★ solid 3pt) — interactive ─────
-function ContainerOutline(props: { block: Block; day: string; onEdit: (b: Block) => void }) {
+function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; onEdit: (b: Block) => void; onRequestDelete: (b: Block) => void }) {
   const b = () => props.block;
   const baseTop = () => minutesIntoDay(b().start_at, props.day);
   const baseHeight = () => Math.max(minutesIntoDay(b().end_at, props.day) - baseTop(), 0);
@@ -159,13 +192,12 @@ function ContainerOutline(props: { block: Block; day: string; onEdit: (b: Block)
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
   const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
     block: b, day: props.day, locked, baseTop, baseHeight, onClick: (x, y) => setMenu({ x, y }),
+    onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
+    onMoveEnd: () => props.group.onMoveEnd(),
+    onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
   });
+  const top = () => liveTop() + props.group.extraMin(b().id);
 
-  async function removeBlock() {
-    setMenu(null);
-    try { await api.blocks.delete(b().id); refetchBlocks(); showToast('Plan removed', 'default'); }
-    catch (err) { showToast((err as Error).message, 'error'); }
-  }
   // Save the Plan + the task blocks currently inside its window as a reusable template.
   async function saveTemplate() {
     setMenu(null);
@@ -188,8 +220,8 @@ function ContainerOutline(props: { block: Block; day: string; onEdit: (b: Block)
     <div
       class="absolute left-0.5 right-0.5 rounded-lg border-[3px] border-primary/70 select-none touch-none"
       classList={{ 'z-0': !drag(), 'z-[25] shadow-lg': !!drag(), 'cursor-grab': !locked() }}
-      style={{ top: `${yOf(liveTop())}px`, height: `${yOf(liveHeight())}px` }}
-      title={`${b().title} · Plan`}
+      style={{ top: `${yOf(top())}px`, height: `${yOf(liveHeight())}px` }}
+      title={`${b().title} · Plan — drag to move the whole group`}
       onPointerDown={(e) => startGesture('move', e)}
     >
       <span class="absolute -top-2 left-2 px-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-card rounded pointer-events-none">
@@ -206,7 +238,7 @@ function ContainerOutline(props: { block: Block; day: string; onEdit: (b: Block)
           <BlockMenu pos={pos()} title={b().title} onClose={() => setMenu(null)} items={[
             { label: 'Edit', icon: Pencil, onClick: () => { setMenu(null); props.onEdit(b()); } },
             { label: 'Save as template', icon: Save, onClick: saveTemplate },
-            { label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true },
+            { label: 'Remove', icon: Trash2, onClick: () => { setMenu(null); props.onRequestDelete(b()); }, danger: true },
           ]} />
         )}
       </Show>
@@ -235,14 +267,33 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
 }
 
 // ── A draggable planner chip (name · tag · start–end, texture, next-up marker) ──
-function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) {
+function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
   const b = () => props.placed.block;
   const task = () => taskOf(b().task_id);
   const pat = () => patternForTask(b().task_id);
   const tag = () => task()?.tags?.[0] ?? b().tag ?? undefined;
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
+  const completed = () => b().status === 'completed';
   const locked = () => isImmovable(b());
+
+  // Quick-complete (Update mode): a tap toggles done. The completed chip wears a
+  // tag-coloured diagonal hatch + a one-shot glow (set on the act of completing).
+  const [glow, setGlow] = createSignal(false);
+  async function setDone(next: boolean) {
+    const blk = b(); const t = task();
+    try {
+      if (next) {
+        await api.blocks.update(blk.id, { status: 'completed' });
+        if (t) await api.tasks.update(t.id, { completed: true });
+        setGlow(true);
+      } else {
+        await api.blocks.update(blk.id, { status: 'planned' });
+        if (t) await api.tasks.update(t.id, { status: 'open', completed_at: null });
+      }
+      refetchBlocks();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   // Drag/resize + click→menu via the shared hook.
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
@@ -250,8 +301,13 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
     block: b, day: props.day, locked,
     baseTop: () => props.placed.top, baseHeight: () => props.placed.height,
     onClick: (x, y) => setMenu({ x, y }),
+    onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
+    onMoveEnd: () => props.group.onMoveEnd(),
+    onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
   });
+  const top = () => liveTop() + props.group.extraMin(b().id);
   const heightPx = () => Math.max(yOf(liveHeight()), 18);
+  const inset = () => (props.nested ? NEST_INSET_PX : 0);
 
   function edit() {
     setMenu(null);
@@ -264,6 +320,11 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
     const t = task();
     if (!t) return;
     try { await api.tasks.promoteHabit(t.id); showToast(`"${t.title}" is now a habit`, 'success'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function detach() {
+    setMenu(null);
+    try { await api.blocks.update(b().id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Plan', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function removeBlock() {
@@ -281,45 +342,82 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
     const t = task();
     const items: MenuItem[] = [{ label: 'Edit', icon: Pencil, onClick: edit }];
     if (t && !t.is_habit) items.push({ label: 'Promote to habit', icon: Repeat, onClick: promoteHabit });
+    if (b().parent_block_id != null) items.push({ label: 'Remove from Plan', icon: Unlink, onClick: detach });
     items.push({ label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true });
     return items;
   };
 
+  const selectedBlock = () => isSelected({ kind: 'block', id: b().id });
   return (
     <div
       class="absolute z-10 rounded-md overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
       classList={{
-        'opacity-40': done(),
+        'opacity-40': b().status === 'skipped',
+        'opacity-70': completed(),
+        'anim-done-glow': glow(),
         'border-l-[3px] border-l-primary border-border': !props.isNextUp,
         'border-l-[3px] border-l-primary border-primary ring-2 ring-primary/70': props.isNextUp,
-        'cursor-grab': !locked(),
-        'cursor-default': locked(),
+        'cursor-grab': !locked() && !props.updateMode,
+        'cursor-pointer': props.updateMode,
+        'cursor-default': locked() && !props.updateMode,
         'z-30 cursor-grabbing shadow-lg': !!drag(),
+        'ring-2 ring-chart-1 ring-offset-1 ring-offset-card': selectedBlock(),
       }}
       style={{
-        top: `${yOf(liveTop())}px`,
+        top: `${yOf(top())}px`,
         height: `${heightPx()}px`,
-        left: `${(props.placed.col / props.placed.cols) * 100}%`,
-        width: `calc(${100 / props.placed.cols}% - 3px)`,
+        left: `calc(${(props.placed.col / props.placed.cols) * 100}% + ${inset()}px)`,
+        width: `calc(${100 / props.placed.cols}% - 3px - ${inset()}px)`,
+        ...(completed() ? doneHatchStyle(tag()) : {}),
+        ...(glow() ? { '--done-glow': `color-mix(in srgb, ${tagColorVar(tag())} 55%, transparent)` } : {}),
       }}
-      title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}`}
-      onPointerDown={(e) => startGesture('move', e)}
-      onClick={(e) => { if (locked()) setMenu({ x: e.clientX, y: e.clientY }); }}
+      title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
+      onAnimationEnd={() => setGlow(false)}
+      onPointerDown={(e) => {
+        if (props.updateMode) return; // Update mode: a tap toggles done (onClick) — no drag.
+        // Cmd/Ctrl-click toggles multi-select (Phase F) — don't start a drag.
+        if ((e.metaKey || e.ctrlKey) && b().task_id != null) {
+          e.preventDefault(); e.stopPropagation();
+          toggleSelection({ kind: 'block', id: b().id });
+          return;
+        }
+        startGesture('move', e);
+      }}
+      onClick={(e) => {
+        if (props.updateMode) { void setDone(!completed()); return; }
+        if (locked()) setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
       {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
       <Show when={pat()}>
         {(p) => <div style={textureStyle(p().type?.icon_shape, p().pattern.tag ?? tag() ?? null)} />}
       </Show>
 
-      <Show when={!locked()}>
+      {/* Update-mode checkbox (top-left) — the explicit affordance; tapping the
+          chip body anywhere toggles too. */}
+      <Show when={props.updateMode}>
+        <button
+          class="absolute top-1 left-1 z-20 w-4 h-4 rounded-[4px] border flex items-center justify-center"
+          classList={{ 'bg-card border-muted-foreground': !completed(), 'border-transparent': completed() }}
+          style={completed() ? { background: tagColorVar(tag()) } : {}}
+          title={completed() ? 'Mark not done' : 'Mark done'}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); void setDone(!completed()); }}
+        >
+          <Show when={completed()}><Check size={11} class="text-background" /></Show>
+        </button>
+      </Show>
+
+      <Show when={!locked() && !props.updateMode}>
         <div class="absolute top-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }}
           onPointerDown={(e) => startGesture('resize-top', e)} />
       </Show>
 
-      <div class="relative px-1.5 py-0.5">
+      <div class="relative px-1.5 py-0.5" classList={{ 'pl-6': props.updateMode }}>
         <div class="flex items-center gap-1 font-medium text-foreground truncate">
           <Show when={props.isNextUp}><Play size={9} class="text-primary flex-shrink-0 fill-primary" /></Show>
           <Show when={b().is_locked}><Lock size={9} class="text-muted-foreground flex-shrink-0" /></Show>
+          <Show when={props.nested}><Star size={8} class="text-primary/60 flex-shrink-0" /></Show>
           <span class="truncate">{b().title}</span>
           <Show when={conflict()}>
             <AlertTriangle size={10} class="text-destructive flex-shrink-0 ml-auto" />
@@ -333,7 +431,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
         </Show>
       </div>
 
-      <Show when={!locked()}>
+      <Show when={!locked() && !props.updateMode}>
         <div class="absolute bottom-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }}
           onPointerDown={(e) => startGesture('resize-bottom', e)} />
       </Show>
@@ -346,10 +444,44 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean }) 
   );
 }
 
+// ── Delete-a-Plan confirm: keep the member tasks (detach) or remove them too ────
+function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () => void }) {
+  async function run(children: boolean) {
+    try {
+      await api.blocks.delete(props.plan.id, children ? { children: 'delete' } : undefined);
+      refetchBlocks();
+      showToast(children ? 'Plan and its tasks removed' : 'Plan removed — tasks kept', 'default');
+      props.onClose();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  return (
+    <div class="modal-backdrop" onClick={props.onClose}>
+      <div class="modal max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <div class="px-4 py-3 border-b border-border">
+          <span class="text-sm font-semibold text-foreground">Remove "{props.plan.title}"?</span>
+        </div>
+        <div class="p-4 flex flex-col gap-3">
+          <p class="text-xs text-muted-foreground">
+            This Plan contains {props.childCount} task{props.childCount === 1 ? '' : 's'}. Keep them on the day as
+            loose blocks, or remove them along with the Plan?
+          </p>
+          <div class="flex flex-col gap-2">
+            <button onClick={() => run(false)} class="btn-primary text-sm px-4 py-1.5 justify-center">Keep tasks</button>
+            <button onClick={() => run(true)} class="btn-ghost text-sm px-4 py-1.5 justify-center text-destructive">Remove tasks too</button>
+            <button onClick={props.onClose} class="btn-ghost text-sm px-4 py-1.5 justify-center">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Planner() {
   const day = () => localISODate();
   const [expanded, setExpanded] = createSignal(false);
+  const [updateMode, setUpdateMode] = createSignal(false);
   const [editBlock, setEditBlock] = createSignal<Block | null>(null);
+  const [deletePlan, setDeletePlan] = createSignal<{ plan: Block; childCount: number } | null>(null);
 
   // A minute ticker so "next up" (and the now line) advance over the day.
   const [nowISO, setNowISO] = createSignal(new Date().toISOString());
@@ -370,6 +502,75 @@ export function Planner() {
   const todayConcepts = () => (concepts() ?? []).filter((c) => c.goal_start_date === day());
   const hasHeaderLane = () => allDayPlans().length > 0 || todayConcepts().length > 0;
 
+  // A chip is nested when its Plan is a container currently drawn on the grid.
+  const containerIds = createMemo(() => new Set(containers().map((c) => c.id)));
+  const isNested = (b: Block) => b.parent_block_id != null && containerIds().has(b.parent_block_id);
+
+  // ── Grouped movement (PR-C): a live group ghost + the gesture commits ──────────
+  // `ghost` offsets every member EXCEPT the one under the pointer (it follows the
+  // cursor via its own liveTop) during a drag; on commit it holds the whole group at
+  // the snapped delta until the refetch lands, so nothing snaps back.
+  const [ghost, setGhost] = createSignal<{ ids: Set<number>; dy: number } | null>(null);
+  const extraMin = (id: number) => { const g = ghost(); return g && g.ids.has(id) ? g.dy / PX_PER_MIN : 0; };
+  const isGroupAnchor = (b: Block) => b.block_kind === 'timeblock' || b.parent_block_id != null;
+
+  function onMoveLive(anchor: Block, dy: number, ev: PointerEvent) {
+    // Alt-detaching a member → only the member moves (no group ghost).
+    if (anchor.parent_block_id != null && ev.altKey) { setGhost(null); return; }
+    if (!isGroupAnchor(anchor)) return;
+    const members = resolveGroup(blocks() ?? [], anchor.id);
+    if (members.length <= 1) return;
+    setGhost({ ids: new Set(members.filter((m) => m.id !== anchor.id).map((m) => m.id)), dy });
+  }
+
+  async function onMoveCommit(anchor: Block, dy: number, ev: PointerEvent) {
+    const deltaMin = minsOf(dy);
+
+    // Member + Alt → detach this one and move it alone.
+    if (anchor.parent_block_id != null && ev.altKey) {
+      setGhost(null);
+      const resolved = resolveGesture(anchor, day(), 'move', dy);
+      if (!resolved) return;
+      try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Plan', 'default'); }
+      catch (err) { showToast((err as Error).message, 'error'); }
+      return;
+    }
+
+    // Plan container or member (non-Alt) → move the whole group atomically.
+    if (isGroupAnchor(anchor)) {
+      if (deltaMin === 0) { setGhost(null); return; } // identity — no write
+      const members = resolveGroup(blocks() ?? [], anchor.id);
+      setGhost({ ids: new Set(members.map((m) => m.id)), dy: deltaMin * PX_PER_MIN }); // hold at snapped delta
+      try { await api.blocks.moveGroup(anchor.id, deltaMin); refetchBlocks(); }
+      catch (err) { showToast((err as Error).message, 'error'); }
+      finally { setGhost(null); }
+      return;
+    }
+
+    // Loose chip → plain move; if dropped inside a Plan's window, attach it.
+    setGhost(null);
+    const resolved = resolveGesture(anchor, day(), 'move', dy);
+    if (!resolved) return;
+    const container = containerAt(blocks() ?? [], Date.parse(resolved.start_at), anchor.id);
+    try {
+      await api.blocks.update(anchor.id, container ? { ...resolved, parent_block_id: container.id } : resolved);
+      refetchBlocks();
+      if (container) showToast(`Added to "${container.title}"`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  const groupCtx: GroupCtx = { extraMin, onMoveLive, onMoveEnd: () => setGhost(null), onMoveCommit };
+
+  function requestDeletePlan(plan: Block) {
+    const childCount = (blocks() ?? []).filter((b) => b.parent_block_id === plan.id).length;
+    if (childCount === 0) {
+      api.blocks.delete(plan.id).then(() => { refetchBlocks(); showToast('Plan removed', 'default'); })
+        .catch((err) => showToast((err as Error).message, 'error'));
+      return;
+    }
+    setDeletePlan({ plan, childCount });
+  }
+
   let scroller: HTMLDivElement | undefined;
   const repin = () => {
     if (!scroller || expanded()) return;
@@ -387,15 +588,26 @@ export function Planner() {
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
           <span class="text-[10px] text-muted-foreground">{expanded() ? '24h' : '8h · scroll for more'}</span>
         </div>
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          title={expanded() ? 'Collapse to 8 hours' : 'Expand to 24 hours'}
-        >
-          <Show when={expanded()} fallback={<><Maximize2 size={12} /> Expand 24h</>}>
-            <Minimize2 size={12} /> Collapse
-          </Show>
-        </button>
+        <div class="flex items-center gap-3">
+          {/* Update mode — tap a task to mark it done (no need to have started it). */}
+          <button
+            onClick={() => setUpdateMode((v) => !v)}
+            class="inline-flex items-center gap-1 text-xs transition-colors"
+            classList={{ 'text-primary font-medium': updateMode(), 'text-muted-foreground hover:text-foreground': !updateMode() }}
+            title={updateMode() ? 'Done updating' : 'Update — tap tasks to mark them done'}
+          >
+            <CheckCircle2 size={12} /> {updateMode() ? 'Done' : 'Update'}
+          </button>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            title={expanded() ? 'Collapse to 8 hours' : 'Expand to 24 hours'}
+          >
+            <Show when={expanded()} fallback={<><Maximize2 size={12} /> Expand 24h</>}>
+              <Minimize2 size={12} /> Collapse
+            </Show>
+          </button>
+        </div>
       </div>
 
       {/* Header lane — all-day Plans + Concepts whose goal day is today (off the grid). */}
@@ -417,9 +629,9 @@ export function Planner() {
           <TimeGutter />
           <div class="relative border-l border-border/60" style={{ height: `${DAY_HEIGHT_PX}px` }}>
             <HourLines />
-            <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} onEdit={setEditBlock} />}</For>
+            <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={setEditBlock} onRequestDelete={requestDeletePlan} />}</For>
             <For each={placed()}>
-              {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} />}
+              {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={isNested(p.block)} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <NowLine day={day()} now={nowISO()} />
             <Show when={chips().length === 0 && containers().length === 0}>
@@ -432,6 +644,9 @@ export function Planner() {
         </div>
       </div>
       <BlockEditModal block={editBlock()} onClose={() => setEditBlock(null)} />
+      <Show when={deletePlan()}>
+        {(d) => <DeletePlanDialog plan={d().plan} childCount={d().childCount} onClose={() => setDeletePlan(null)} />}
+      </Show>
     </div>
   );
 }

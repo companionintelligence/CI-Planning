@@ -1,7 +1,9 @@
 import { createSignal, createMemo, createResource, For, Show, onCleanup } from 'solid-js';
-import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowUpRight } from 'lucide-solid';
-import { patterns, patternTypes, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
-import { api, type Pattern, type PatternType, type Task } from '../lib/api.js';
+import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowUpRight, Star, Play } from 'lucide-solid';
+import { patterns, patternTypes, prefs, refetchBlocks, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
+import { api, type BlockTemplate, type Pattern, type PatternType, type Task } from '../lib/api.js';
+import { buildRule, rulePresetForPattern, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
+import { useDraggable, useDropZone, dragPayload } from '../lib/draggable.js';
 import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { MinuteDial } from '../components/MinuteDial.js';
@@ -39,6 +41,56 @@ export function Patterns() {
     const ty = typeByName().get(name);
     return ty ? (patterns() ?? []).filter((p) => p.type_id === ty.id) : [];
   };
+
+  // Plan Blocks (PR-C+): saved Plan templates (block_templates) the user has
+  // captured with "Save as template" on a Plan. Each row drops onto today.
+  const [templates, { refetch: refetchTemplates }] = createResource(() =>
+    api.blockTemplates.list().then((r) => r.block_templates),
+  );
+  const offTplCreated = on('block_template:created', () => refetchTemplates());
+  const offTplDeleted = on('block_template:deleted', () => refetchTemplates());
+  onCleanup(() => { offTplCreated(); offTplDeleted(); });
+
+  /** ISO instant for the next half-hour boundary from now (drop target for an instantiated template). */
+  function nextHalfHourISO(): string {
+    const d = new Date(); d.setSeconds(0, 0);
+    d.setMinutes(d.getMinutes() < 30 ? 30 : 60);
+    return d.toISOString();
+  }
+  async function instantiateTemplate(t: BlockTemplate) {
+    const start = nextHalfHourISO();
+    const end = new Date(Date.parse(start) + (t.default_minutes ?? 60) * 60_000).toISOString();
+    try {
+      await api.blockTemplates.instantiate(t.id, start, end);
+      refetchBlocks();
+      showToast(`Dropped "${t.name}" onto today`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function deleteTemplate(t: BlockTemplate) {
+    if (!confirm(`Delete the "${t.name}" Plan Block? Saved tasks won't come back.`)) return;
+    try { await api.blockTemplates.delete(t.id); refetchTemplates(); showToast(`Removed "${t.name}"`, 'default'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // Routines section is a drop zone (Phase E): a Habit task or Plan Block dropped
+  // in promotes into a new Routine (server picks the right promote-from-* route).
+  async function onRoutineDrop(p: { kind: string; id: number }) {
+    try {
+      if (p.kind === 'habit') {
+        const task = (allTasks() ?? []).find((t) => t.id === p.id);
+        if (!task) return;
+        await api.patterns.promoteFromTasks([p.id], `${task.title} routine`);
+        showToast(`Created Routine from "${task.title}"`, 'success');
+      } else if (p.kind === 'plan-block') {
+        const tpl = (templates() ?? []).find((t) => t.id === p.id);
+        if (!tpl) return;
+        await api.patterns.promoteFromPlanTemplate(p.id, tpl.name);
+        showToast(`Created Routine from "${tpl.name}"`, 'success');
+      }
+      refetchPatterns();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  const routineDrop = useDropZone(onRoutineDrop);
 
   // ── Pattern create + membership ops (closure over refetch) ────────────────────
   async function createPattern(typeName: string, name: string, tag: string) {
@@ -79,6 +131,18 @@ export function Patterns() {
     try { await api.tasks.update(taskId, { estimated_minutes: v }); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+  async function savePatternRule(p: Pattern, rule: string | null) {
+    try { await api.patterns.update(p.id, { recurrence_rule: rule }); refetchPatterns(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function placePattern(p: Pattern) {
+    try {
+      const { result } = await api.patterns.placeToday(p.id);
+      refetchBlocks();
+      if (result.skippedAlreadyPlaced) showToast(`"${p.name}" already placed today`, 'default');
+      else showToast(`Placed "${p.name}" — ${result.blocksCreated} block${result.blocksCreated === 1 ? '' : 's'}`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   // A member row — fast tasks get the minute dial + delete; regular members can be
   // promoted to a habit. `allowFast` (rituals) gates the fast-task affordances.
@@ -116,6 +180,29 @@ export function Patterns() {
       return (allTasks() ?? []).filter((t) => t.status === 'open' && !t.parent_id && !t.is_fast_task && !have.has(t.id)).slice(0, 30);
     };
     const submitFast = () => { if (fast().trim()) { addFast(props.pattern, fast()); setFast(''); } };
+
+    // Pattern-level recurrence editor (PR-C+, Phase D). Routines and Habits only;
+    // Rituals are flagged off (server returns 422 if asked to set a rule on one).
+    const parsed = createMemo(() => rulePresetForPattern(props.pattern.recurrence_rule));
+    const [preset, setPreset] = createSignal<RepeatPreset>(parsed().preset);
+    const [days, setDays] = createSignal<string[]>(parsed().weekdays);
+    const ruleNow = () => buildRule(preset(), days(), '');
+    const describe = () => {
+      const r = ruleNow();
+      return r ? describeRule(r) : 'Doesn’t repeat';
+    };
+    function onPreset(p: RepeatPreset) {
+      setPreset(p);
+      if (p !== 'specific-days') setDays([]);
+      void savePatternRule(props.pattern, buildRule(p, days(), ''));
+    }
+    function toggleDay(d: string) {
+      const next = days().includes(d) ? days().filter((x) => x !== d) : [...days(), d];
+      setDays(next);
+      if (preset() === 'specific-days') void savePatternRule(props.pattern, buildRule('specific-days', next, ''));
+    }
+    const canRecur = props.shape !== 'triangle'; // not a Ritual
+
     return (
       <div class="rounded-lg border border-border bg-card">
         <div class="flex items-center gap-2 px-3 py-2">
@@ -124,11 +211,54 @@ export function Patterns() {
           </button>
           <span class="flex-1 text-sm font-medium text-foreground truncate">{props.pattern.name}</span>
           <Show when={props.pattern.tag}>{(t) => <span class="text-primary text-xs">#{t()}</span>}</Show>
+          <Show when={props.pattern.recurrence_rule}>
+            <span class="text-[10px] text-muted-foreground" title={describe()}>{describe()}</span>
+          </Show>
           <span class="text-[11px] text-muted-foreground">{props.pattern.task_ids.length} task{props.pattern.task_ids.length === 1 ? '' : 's'}</span>
+          <button onClick={() => placePattern(props.pattern)} class="btn-icon" title="Place onto today's board"><Play size={13} class="text-primary" /></button>
           <button onClick={() => deletePattern(props.pattern)} class="btn-icon hover:text-destructive" title="Delete pattern"><Trash2 size={13} /></button>
         </div>
         <Show when={open()}>
           <div class="px-3 pb-2.5 border-t border-border pt-2">
+            <Show when={canRecur}>
+              <div class="mb-3 rounded-md border border-border/60 bg-background/40 p-2">
+                <div class="flex items-center gap-1.5 mb-1.5">
+                  <Repeat size={11} class="text-muted-foreground" />
+                  <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Repeat</span>
+                  <span class="ml-auto text-[10px] text-muted-foreground">{describe()}</span>
+                </div>
+                <div class="flex flex-wrap gap-1">
+                  <For each={['none','daily','specific-days','weekly','monthly','yearly'] as RepeatPreset[]}>
+                    {(p) => (
+                      <button onClick={() => onPreset(p)}
+                        class="text-[11px] px-2 py-0.5 rounded border"
+                        classList={{
+                          'border-primary text-primary bg-primary/10': preset() === p,
+                          'border-border text-muted-foreground hover:text-foreground': preset() !== p,
+                        }}>
+                        {p === 'none' ? 'Never' : p === 'specific-days' ? 'Days' : (p[0].toUpperCase() + p.slice(1))}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <Show when={preset() === 'specific-days'}>
+                  <div class="flex gap-1 mt-1.5">
+                    <For each={WEEKDAYS}>
+                      {(d) => (
+                        <button onClick={() => toggleDay(d)}
+                          class="text-[10px] w-6 h-6 rounded border"
+                          classList={{
+                            'border-primary text-primary bg-primary/10': days().includes(d),
+                            'border-border text-muted-foreground hover:text-foreground': !days().includes(d),
+                          }}>
+                          {DAY_INITIAL[d]}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </Show>
             <Show when={members().length > 0} fallback={<p class="text-xs text-muted-foreground italic mb-2">No tasks yet.</p>}>
               <ul class="flex flex-col gap-1 mb-2">
                 <For each={members()}>
@@ -222,33 +352,89 @@ export function Patterns() {
   return (
     <div class="flex-1 overflow-auto p-4 md:p-6 page-enter max-w-3xl mx-auto w-full pb-24">
       <h1 class="text-2xl font-bold text-foreground mb-1">Patterns</h1>
-      <p class="text-sm text-muted-foreground mb-6">Habits repeat · Routines bundle habits · Rituals assemble a day's prep.</p>
+      <p class="text-sm text-muted-foreground mb-6">
+        Routines bundle habits · Habits repeat
+        <Show when={prefs()?.enable_rituals}> · Rituals assemble a day's prep</Show>.
+      </p>
 
-      <Section typeName="Habit" title="Habits" subtitle="Repeating single actions with a known duration">
+      <div
+        onPointerUp={routineDrop.handlers.onPointerUp}
+        class="rounded-xl transition-colors"
+        classList={{
+          'ring-2 ring-primary/40 bg-primary/[0.04]': routineDrop.isOver(),
+          '-mx-1 px-1': routineDrop.isOver(),
+        }}
+      >
+        <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work). Drop a Habit or Plan Block to make one.">
+          <Show when={dragPayload()}>
+            <p class="text-[11px] text-primary text-center -mt-2 mb-2">Drop here to create a Routine →</p>
+          </Show>
+          <PatternList typeName="Routine" />
+        </Section>
+      </div>
+
+      <Section typeName="Habit" title="Habits" subtitle="Repeating single actions with a known duration. Drag onto Routines to bundle.">
         <Show when={habitTasks().length > 0} fallback={<EmptyHint>No habits yet — “New Habit” creates a recurring task.</EmptyHint>}>
           <div class="flex flex-col gap-1.5">
             <For each={habitTasks()}>
-              {(t) => (
-                <div class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-                  <Repeat size={12} class="text-primary flex-shrink-0" />
-                  <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
-                  <Show when={t.tags?.length}><span class="text-primary text-xs">#{t.tags[0]}</span></Show>
-                  <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground">{t.estimated_minutes}m</span></Show>
-                  <button onClick={() => setTaskModal({ open: true, editTask: t })} class="btn-icon" title="Edit habit"><Pencil size={13} /></button>
-                </div>
-              )}
+              {(t) => {
+                const drag = useDraggable({ kind: 'habit', id: t.id });
+                return (
+                  <div
+                    onPointerDown={drag.onPointerDown}
+                    class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 cursor-grab select-none touch-none"
+                  >
+                    <Repeat size={12} class="text-primary flex-shrink-0" />
+                    <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
+                    <Show when={t.tags?.length}><span class="text-primary text-xs">#{t.tags[0]}</span></Show>
+                    <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground">{t.estimated_minutes}m</span></Show>
+                    <button onClick={(e) => { e.stopPropagation(); setTaskModal({ open: true, editTask: t }); }} class="btn-icon" title="Edit habit"><Pencil size={13} /></button>
+                  </div>
+                );
+              }}
             </For>
           </div>
         </Show>
       </Section>
 
-      <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work)">
-        <PatternList typeName="Routine" />
-      </Section>
+      <section class="mb-6">
+        <div class="flex items-center gap-2 mb-2.5">
+          <span class="text-primary"><Star size={16} class="fill-primary/30" /></span>
+          <div class="flex-1">
+            <h2 class="text-sm font-semibold text-foreground">Plan Blocks</h2>
+            <p class="text-[11px] text-muted-foreground">Saved Plan shapes — drop one onto today</p>
+          </div>
+        </div>
+        <Show when={(templates() ?? []).length > 0} fallback={<EmptyHint>No saved Plan Blocks yet — save a Plan as a template from the Planner ★ menu.</EmptyHint>}>
+          <div class="flex flex-col gap-1.5">
+            <For each={templates()}>
+              {(t) => {
+                const drag = useDraggable({ kind: 'plan-block', id: t.id });
+                return (
+                  <div
+                    onPointerDown={drag.onPointerDown}
+                    class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 cursor-grab select-none touch-none"
+                  >
+                    <Star size={12} class="text-primary flex-shrink-0" />
+                    <span class="flex-1 text-sm text-foreground truncate">{t.name}</span>
+                    <Show when={t.tag}><span class="text-primary text-xs">#{t.tag}</span></Show>
+                    <span class="text-[11px] font-mono text-muted-foreground">{t.default_minutes}m</span>
+                    <Show when={(t.tasks ?? []).length}><span class="text-[11px] text-muted-foreground">{(t.tasks ?? []).length}t</span></Show>
+                    <button onClick={(e) => { e.stopPropagation(); instantiateTemplate(t); }} class="btn-icon" title="Drop onto today"><Plus size={14} class="text-primary" /></button>
+                    <button onClick={(e) => { e.stopPropagation(); deleteTemplate(t); }} class="btn-icon" title="Delete template"><Trash2 size={13} class="text-muted-foreground" /></button>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+      </section>
 
-      <Section typeName="Ritual" title="Rituals" subtitle="Habits + one-off tasks for an occasion (e.g. Board-meeting prep)">
-        <PatternList typeName="Ritual" />
-      </Section>
+      <Show when={prefs()?.enable_rituals}>
+        <Section typeName="Ritual" title="Rituals" subtitle="Habits + one-off tasks for an occasion (e.g. Board-meeting prep)">
+          <PatternList typeName="Ritual" />
+        </Section>
+      </Show>
     </div>
   );
 

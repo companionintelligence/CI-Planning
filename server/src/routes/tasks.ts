@@ -11,6 +11,7 @@ import { enrichQuick } from '../agents/quickadd.js';
 import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generate.js';
+import { rescheduleTask } from '../engine/review.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { ensureHabitPattern } from '../services/patterns.js';
 import { utcDayBounds } from '../lib/tz.js';
@@ -254,6 +255,28 @@ export function tasksRouter() {
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
+  });
+
+  // POST /api/tasks/:id/reschedule { days } — bump a missed/planned task `days`
+  // out from today (the +1/+3/+7 buttons on the Missed review surface). Clears
+  // 'missed', increments defer_count, drops stale blocks so it re-places cleanly.
+  router.post('/api/tasks/:id/reschedule', async (ctx) => {
+    const id = Number(ctx.params.id);
+    const owner = currentOwnerId();
+    const body = (ctx.request.body ?? {}) as { days?: number };
+    if (typeof body.days !== 'number') { ctx.status = 422; ctx.body = { error: 'days is required' }; return; }
+    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+    const { scheduled_for } = rescheduleTask(id, body.days);
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
+    const tagRows = sqlite
+      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
+      .all({ task_id: id }) as { name: string }[];
+    const out = { ...toApi(task), tags: tagRows.map((r) => r.name), depends_on: getDependencies(id) };
+    broadcast(owner, 'task:updated', out);
+    broadcast(owner, 'block:updated', { rescheduled: id });
+    ctx.body = { task: out, scheduled_for };
   });
 
   router.patch('/api/tasks/:id', async (ctx) => {

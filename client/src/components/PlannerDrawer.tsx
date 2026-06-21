@@ -96,15 +96,34 @@ export function PlannerDrawer() {
     const id = typeIdByName().get(name);
     return (patterns() ?? []).filter((p) => p.type_id === id && (!q || p.name.toLowerCase().includes(q) || (p.tag ?? '').toLowerCase().includes(q)));
   };
-  async function stageHabit(id: number) {
-    try { await api.flightPlan.addTask(id); refetchFlightPlan(); showToast('Added to flight-plan', 'default'); }
-    catch (err) { showToast((err as Error).message, 'error'); }
+  /** Resolve a habit task to its Habit-type Pattern id (always exists once a task
+   *  is flagged is_habit — `ensureHabitPattern` runs on promote-habit and on POST
+   *  /api/tasks with is_habit=true). One pattern code path for both habits + bundles. */
+  function habitPatternIdFor(taskId: number): number | null {
+    const habitTypeId = typeIdByName().get('Habit');
+    if (habitTypeId == null) return null;
+    const p = (patterns() ?? []).find((p) => p.type_id === habitTypeId && p.task_ids.includes(taskId));
+    return p?.id ?? null;
   }
-  async function stagePattern(id: number, name: string) {
+  async function placeHabitToday(taskTitle: string, taskId: number) {
+    const patternId = habitPatternIdFor(taskId);
+    if (patternId == null) {
+      showToast('Habit pattern not found yet — try again in a moment', 'error');
+      return;
+    }
     try {
-      const r = await api.flightPlan.addPattern(id);
-      refetchFlightPlan();
-      showToast(`Staged ${name} (${r.added} task${r.added === 1 ? '' : 's'})`, 'default');
+      const { result } = await api.patterns.placeToday(patternId);
+      refetchBlocks();
+      if (result.skippedAlreadyPlaced) showToast(`"${taskTitle}" already on today`, 'default');
+      else showToast(`Placed "${taskTitle}" (${result.blocksCreated} block${result.blocksCreated === 1 ? '' : 's'})`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function placePatternToday(id: number, name: string) {
+    try {
+      const { result } = await api.patterns.placeToday(id);
+      refetchBlocks();
+      if (result.skippedAlreadyPlaced) showToast(`"${name}" already placed today`, 'default');
+      else showToast(`Placed ${name} (${result.blocksCreated} block${result.blocksCreated === 1 ? '' : 's'})`, 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -124,7 +143,7 @@ export function PlannerDrawer() {
           <button onClick={() => setOpen((v) => !v)} class="btn-icon" title="Show tasks">
             <Show when={open()} fallback={<ChevronRight size={13} />}><ChevronDown size={13} /></Show>
           </button>
-          <button onClick={() => stagePattern(props.pattern.id, props.pattern.name)} class="btn-icon" title="Add to flight-plan"><Plus size={14} class="text-primary" /></button>
+          <button onClick={() => placePatternToday(props.pattern.id, props.pattern.name)} class="btn-icon" title="Add to today's board"><Plus size={14} class="text-primary" /></button>
         </div>
         <Show when={open()}>
           <ul class="pl-8 pr-3 pb-1.5 flex flex-col gap-0.5">
@@ -157,7 +176,7 @@ export function PlannerDrawer() {
                       <ShapeIcon shape="circle" size={12} />
                       <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
                       <Show when={t.estimated_minutes}><span class="text-[11px] text-muted-foreground">{t.estimated_minutes}m</span></Show>
-                      <button onClick={() => stageHabit(t.id)} class="btn-icon" title="Add to flight-plan"><Plus size={14} class="text-primary" /></button>
+                      <button onClick={() => placeHabitToday(t.title, t.id)} class="btn-icon" title="Add to today's board"><Plus size={14} class="text-primary" /></button>
                     </div>
                   )}
                 </For>
@@ -172,9 +191,49 @@ export function PlannerDrawer() {
     );
   }
 
+  // Plan Blocks tile — saved Plan templates the user can drop onto today.
+  // Mirrors PatternCat's shape but reads from `templates` (block_templates).
+  function PlanBlocksCat() {
+    const [open, setOpen] = createSignal(true);
+    const items = () => {
+      const q = query().trim().toLowerCase().replace(/^#/, '');
+      const list = templates() ?? [];
+      return q ? list.filter((t) => t.name.toLowerCase().includes(q) || (t.tag ?? '').toLowerCase().includes(q)) : list;
+    };
+    return (
+      <div class="rounded-md border border-border">
+        <button onClick={() => setOpen((v) => !v)} class="w-full flex items-center gap-2 px-3 py-2 text-left">
+          <Star size={14} class="text-primary fill-primary/30" />
+          <span class="text-sm font-medium text-foreground">Plan Blocks</span>
+          <span class="text-[11px] text-muted-foreground">· saved Plan shapes · {items().length}</span>
+          <span class="ml-auto text-muted-foreground"><Show when={open()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show></span>
+        </button>
+        <Show when={open()}>
+          <div class="border-t border-border">
+            <Show when={items().length > 0} fallback={<p class="px-3 py-2 text-xs text-muted-foreground italic">None yet — save a Plan from the Planner ★ menu.</p>}>
+              <For each={items()}>
+                {(t) => (
+                  <div class="flex items-center gap-2 px-3 py-1.5 hover:bg-sidebar-accent">
+                    <Star size={12} class="text-primary" />
+                    <span class="flex-1 text-sm text-foreground truncate">{t.name}</span>
+                    <Show when={t.tag}><span class="text-primary text-xs">#{t.tag}</span></Show>
+                    <span class="text-[11px] text-muted-foreground">{t.default_minutes}m</span>
+                    <button onClick={() => instantiate(t)} class="btn-icon" title="Drop onto today"><Plus size={14} class="text-primary" /></button>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        </Show>
+      </div>
+    );
+  }
+
   // ── Block tab ────────────────────────────────────────────────────────────────
+  // Templates feed BOTH the Block tab (instantiate from history) and the Pattern
+  // tab's Plan Blocks tile (PR-C+), so the resource fires when either tab opens.
   const [templates, { refetch: refetchTemplates }] = createResource(
-    () => (tab() === 'block' ? 'block' : null),
+    () => (tab() === 'block' || tab() === 'pattern' ? 'on' : null),
     () => api.blockTemplates.list().then((r) => r.block_templates),
   );
   // Block Wizard — every block starts as a Concept (named/tagged from the canonical
@@ -335,12 +394,17 @@ export function PlannerDrawer() {
               </Show>
             </Show>
 
-          {/* Pattern Wizard — Habits / Routines / Rituals as separate submenus. */}
+          {/* Pattern Wizard — Routines first (the bundle), then Habits, then
+              Plan Blocks (saved Plan templates from the Planner ★ menu). Rituals
+              are hidden behind a feature flag (prefs.enable_rituals, default OFF). */}
           <Show when={tab() === 'pattern'}>
             <div class="p-2 space-y-2">
-              <PatternCat typeName="Habit" title="Habits" desc="repeating actions" />
               <PatternCat typeName="Routine" title="Routines" desc="bundles of habits" />
-              <PatternCat typeName="Ritual" title="Rituals" desc="occasion prep" />
+              <PatternCat typeName="Habit" title="Habits" desc="repeating actions" />
+              <PlanBlocksCat />
+              <Show when={prefs()?.enable_rituals}>
+                <PatternCat typeName="Ritual" title="Rituals" desc="occasion prep" />
+              </Show>
               <p class="text-[11px] text-muted-foreground text-center pt-1">
                 Create patterns in <A href="/patterns" class="text-primary underline" onClick={() => setTab(null)}>Patterns</A>.
               </p>

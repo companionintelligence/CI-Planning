@@ -296,6 +296,15 @@
     to   { opacity: 1; transform: scale(1)    translateY(0); }
   }
 
+  /* One-shot "just completed" glow on a task chip (Update mode). Slow single
+     pulse of a soft ring, then settles. The ring colour is set inline per-tag. */
+  .anim-done-glow { animation: doneGlow 900ms ease-out both; }
+  @keyframes doneGlow {
+    0%   { box-shadow: 0 0 0 0 var(--done-glow, rgba(88,235,191,.0)); }
+    35%  { box-shadow: 0 0 10px 2px var(--done-glow, rgba(88,235,191,.55)); }
+    100% { box-shadow: 0 0 0 0 var(--done-glow, rgba(88,235,191,.0)); }
+  }
+
   /* ── FAB (signature mint CTA) ─────────────────────────────────── */
   .fab {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2

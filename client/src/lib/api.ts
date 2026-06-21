@@ -98,6 +98,9 @@ export const api = {
     streak: (id: number) => request<Streak>('GET', `/tasks/${id}/streak`),
     // Make a (possibly ritual-local) task a habit — flags it + ensures its Habit pattern.
     promoteHabit: (id: number) => request<{ task: Task }>('POST', `/tasks/${id}/promote-habit`, {}),
+    // Reschedule a missed/planned task `days` out from today (the +1/+3/+7 buttons).
+    reschedule: (id: number, days: number) =>
+      request<{ task: Task; scheduled_for: string }>('POST', `/tasks/${id}/reschedule`, { days }),
   },
 
   blocks: {
@@ -110,7 +113,13 @@ export const api = {
     create: (body: Partial<Block> & { title: string; start_at: string; end_at: string }) =>
       request<{ block: Block }>('POST', '/blocks', body),
     update: (id: number, body: Partial<Block>) => request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
-    delete: (id: number) => request<{ ok: boolean }>('DELETE', `/blocks/${id}`),
+    // children:'delete' also removes a Plan's member task blocks; default keeps them (FK SET NULL).
+    delete: (id: number, opts?: { children?: 'delete' }) =>
+      request<{ ok: boolean }>('DELETE', `/blocks/${id}${opts?.children === 'delete' ? '?children=delete' : ''}`),
+    // Shift a Plan + all its members by one minute delta, atomically (PR-C). `id` may
+    // be the Plan or any member; returns the whole moved group.
+    moveGroup: (id: number, delta_minutes: number) =>
+      request<{ blocks: Block[] }>('POST', `/blocks/${id}/move-group`, { delta_minutes }),
     // Concepts have no real time — fetch them all (owner-scoped) for the horizon lane.
     listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?block_type=concept'),
     // Promote a Concept into a scheduled Plan at the chosen start (end ⇐ duration).
@@ -135,6 +144,19 @@ export const api = {
       request<{ task: Task }>('POST', `/patterns/${id}/fast-tasks`, body),
     removeFastTask: (id: number, taskId: number) =>
       request<{ ok: boolean }>('DELETE', `/patterns/${id}/fast-tasks/${taskId}`),
+    // Auto-place the pattern's tasks into today's free gaps (PR-C+, Phase C) —
+    // replaces the old "stage into flight-plan" flow. `block_id` scopes to a Plan.
+    placeToday: (id: number, body?: { date?: string; block_id?: number | null }) =>
+      request<{ result: PlacePatternResult; blocks: Block[] }>('POST', `/patterns/${id}/place-today`, body ?? {}),
+    // Three Routine-promotion endpoints (Phase E + F): same backend write path,
+    // different sources (a placed Plan's members; a saved template's tasks; a
+    // multi-selection of task ids).
+    promoteFromPlan: (plan_block_id: number, name?: string) =>
+      request<{ pattern: Pattern }>('POST', '/patterns/promote-from-plan', { plan_block_id, name }),
+    promoteFromPlanTemplate: (template_id: number, name?: string) =>
+      request<{ pattern: Pattern }>('POST', '/patterns/promote-from-plan-template', { template_id, name }),
+    promoteFromTasks: (task_ids: number[], name?: string) =>
+      request<{ pattern: Pattern }>('POST', '/patterns/promote-from-tasks', { task_ids, name }),
   },
 
   patternTypes: {
@@ -228,6 +250,7 @@ export interface Block {
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)
+  parent_block_id?: number | null; // the containing Plan for a member task block (PR-C / 0023)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
@@ -260,16 +283,23 @@ export interface PatternTypeInput {
   default_est_minutes?: number | null; notify?: boolean;
 }
 
-/** A pattern: a typed, reusable, many-to-many collection of tasks (no own recurrence). */
+/**
+ * A pattern: a typed, reusable, many-to-many collection of tasks. Habit + Routine
+ * patterns may carry an RRULE (PR-C+ / 0025); Ritual patterns may not (flag-off
+ * in V1, server returns 422 if asked). A non-null `recurrence_rule` is what the
+ * 06:00 `place_patterns` cron expands daily.
+ */
 export interface Pattern {
   id: number; owner_id: number; type_id: number | null;
   name: string; tag: string | null; notes: string | null;
+  recurrence_rule: string | null; recurrence_dtstart: string | null;
   created_at: string; task_ids: number[];
 }
 
 export interface PatternInput {
   type_id?: number | null; name: string; tag?: string | null;
   notes?: string | null; task_ids?: number[];
+  recurrence_rule?: string | null; recurrence_dtstart?: string | null;
 }
 
 /** A flight-plan row: a staged task (+ its source pattern, if added via one). */
@@ -286,6 +316,16 @@ export interface AutoResult {
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
 }
 
+/** Result of POST /api/patterns/:id/place-today (PR-C+, Phase C). */
+export interface PlacePatternResult {
+  patternId: number;
+  date: string;
+  blocksCreated: number;
+  placed: number;                        // tasks with >= 1 session placed
+  unplaced: number;                      // tasks with no fit
+  skippedAlreadyPlaced: boolean;         // marker query short-circuited
+}
+
 /** A task saved inside a Plan template — recreated at start + offset on instantiate. */
 export interface TemplateTask { title: string; tag: string | null; estimated_minutes: number | null; offset_minutes: number }
 
@@ -299,6 +339,7 @@ export interface Tag { id: number; name: string; count: number; }
 
 export interface Prefs {
   id: number; owner_id: number; workday_start: string; workday_end: string;
+  auto_fill_workday?: boolean; // Auto's secondary workday fallback (0028); default true
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
   // Time-Block container duration bounds (0017).
@@ -307,6 +348,7 @@ export interface Prefs {
   plan_allday_always?: boolean; plan_daylong_for_promoted?: boolean; plan_autofill_gaps?: boolean;
   concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
+  enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
   // Ollama model overrides (null/'' = use env default).

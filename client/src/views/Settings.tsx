@@ -14,6 +14,7 @@ const ALL_TIMEZONES: string[] = (() => {
 
 interface SettingsForm {
   workday_start: string; workday_end: string;
+  auto_fill_workday: boolean;
   max_focus_block_minutes: number; min_break_minutes: number;
   max_time_block_minutes: number; min_time_block_minutes: number;
   // Plan/Concept Time-Block config. Plan horizon = planning_horizon_days.
@@ -28,10 +29,11 @@ interface SettingsForm {
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
-  | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface';
+  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface';
 
 const DEFAULTS: SettingsForm = {
   workday_start: '09:00', workday_end: '18:00',
+  auto_fill_workday: true,
   max_focus_block_minutes: 90, min_break_minutes: 10,
   max_time_block_minutes: 240, min_time_block_minutes: 15,
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
@@ -52,6 +54,7 @@ export function Settings() {
     setForm({
       workday_start:           p.workday_start ?? '09:00',
       workday_end:             p.workday_end ?? '18:00',
+      auto_fill_workday:       p.auto_fill_workday ?? true,
       max_focus_block_minutes: p.max_focus_block_minutes ?? 90,
       min_break_minutes:       p.min_break_minutes ?? 10,
       max_time_block_minutes:  p.max_time_block_minutes ?? 240,
@@ -198,6 +201,10 @@ export function Settings() {
               <input type="time" class="input" value={form().workday_end}
                 onInput={e => setField('workday_end', e.currentTarget.value)} />
             </label>
+          </div>
+          <div class="mt-4">
+            <Toggle field="auto_fill_workday" label="Fill the workday with leftovers"
+              hint="Auto fills your tagged Plans first. With this on, tasks that match no Plan also fill open work hours. Off → Auto only fills the Plans you drew." />
           </div>
           <label class="flex flex-col gap-1.5 mt-4">
             <span class="text-xs text-slate-500">Timezone — work hours are wall-clock here</span>
