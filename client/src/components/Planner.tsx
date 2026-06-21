@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2 } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -8,7 +8,7 @@ import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast, selectedDay } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
@@ -647,6 +647,55 @@ export function Planner() {
   // Re-pin whenever the next-up item or the expand state changes.
   createEffect(() => { nextUp(); windowHours(); queueMicrotask(repin); });
 
+  // Someday Time Blocks (was Concepts) render on their goal day in the header lane;
+  // clicking one opens a lightweight popover — Edit · Add to day · Delete (cockpit-v2
+  // Phase 4, replacing the ConceptLane). Local so it closes over setEditBlock + refetch.
+  function SomedayChip(props: { block: Block }) {
+    const [open, setOpen] = createSignal(false);
+    async function addToDay() {
+      setOpen(false);
+      try {
+        await api.blocks.promote(props.block.id, new Date(selectedDay() + 'T00:00:00').toISOString(), { all_day: true });
+        refetchConcepts(); refetchBlocks();
+        showToast(`"${props.block.title}" added to ${selectedDay()}`, 'success');
+      } catch (err) { showToast((err as Error).message, 'error'); }
+    }
+    async function del() {
+      setOpen(false);
+      try { await api.blocks.delete(props.block.id); refetchConcepts(); refetchBlocks(); showToast(`Deleted "${props.block.title}"`, 'default'); }
+      catch (err) { showToast((err as Error).message, 'error'); }
+    }
+    return (
+      <span class="relative">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-card max-w-[180px] border-2 border-dotted border-muted-foreground hover:border-primary transition-colors"
+          title={props.block.title}
+        >
+          <Pentagon size={10} class="text-muted-foreground flex-shrink-0" />
+          <span class="text-foreground truncate">{props.block.title}</span>
+          <Show when={props.block.tag}>{(t) => <span class="text-primary flex-shrink-0">#{t()}</span>}</Show>
+        </button>
+        <Show when={open()}>
+          <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div class="absolute top-full left-0 mt-1 z-30 w-56 rounded-lg border border-border bg-popover shadow-xl p-3">
+            <div class="text-sm font-medium text-foreground truncate">{props.block.title}</div>
+            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Show when={props.block.tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
+              <Show when={props.block.goal_start_date}>{(d) => <span>· goal {d()}</span>}</Show>
+              <Show when={props.block.duration_minutes}>{(m) => <span>· {m()}m</span>}</Show>
+            </div>
+            <div class="mt-2 flex flex-col gap-1">
+              <button onClick={() => { setOpen(false); setEditBlock(props.block); }} class="btn-ghost text-xs px-2 py-1 justify-start"><Pencil size={12} /> Edit</button>
+              <button onClick={addToDay} class="btn-secondary text-xs px-2 py-1 justify-start"><ArrowUpRight size={12} /> Add to day</button>
+              <button onClick={del} class="btn-ghost text-xs px-2 py-1 justify-start hover:text-destructive"><Trash2 size={12} /> Delete</button>
+            </div>
+          </div>
+        </Show>
+      </span>
+    );
+  }
+
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
       {/* Header — region label + the 8h⇄24h expand control */}
@@ -686,7 +735,7 @@ export function Planner() {
         <div class="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border bg-card/60 flex-shrink-0">
           <span class="text-[9px] uppercase tracking-wide text-muted-foreground mr-0.5">all-day</span>
           <For each={allDayPlans()}>{(b) => <HeaderChip block={b} />}</For>
-          <For each={todayConcepts()}>{(c) => <HeaderChip block={c} concept />}</For>
+          <For each={todayConcepts()}>{(c) => <SomedayChip block={c} />}</For>
         </div>
       </Show>
 

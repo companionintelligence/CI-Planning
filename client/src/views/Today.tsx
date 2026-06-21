@@ -5,7 +5,6 @@ import { selection, clearSelection, selectedTaskIds, selectedTitles } from '../s
 import { api } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
-import { ConceptLane } from '../components/ConceptLane.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { PlannerDrawer } from '../components/PlannerDrawer.js';
 import { MissedReview } from '../components/MissedReview.js';
@@ -129,17 +128,16 @@ export function Today() {
       {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
       <MissedReview />
 
-      {/* PLANNER */}
-      <Planner />
-
-      {/* Concept horizon lane (hidden when empty) */}
-      <ConceptLane />
-
-      {/* Flight-plan (Auto Schedule lives at its top) */}
-      <FlightPlan />
-
-      {/* Lower drawer — floats above, never closes */}
-      <PlannerDrawer />
+      {/* Two-column workspace (cockpit-v2 Phase 3): Planner left · Flight-plan +
+          drawer right (≥ md); stacked on mobile. Someday Time Blocks now render on
+          their goal day in the Planner header lane (the ConceptLane is retired — CON-2d). */}
+      <div class="grid gap-4 items-start md:grid-cols-[1fr_minmax(20rem,24rem)]">
+        <Planner />
+        <div class="relative flex flex-col gap-4">
+          <FlightPlan />
+          <PlannerDrawer />
+        </div>
+      </div>
 
       {/* Multi-select indicator (Phase F) — appears when items are picked. */}
       <Show when={selection().size > 0 && !routineModal().open}>
