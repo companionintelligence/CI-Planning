@@ -701,6 +701,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "concept_tags",
       "enable_rituals",
       "auto_fill_workday",
+      "recall_keeps_pattern",
     ],
     "table": "scheduling_prefs",
   },

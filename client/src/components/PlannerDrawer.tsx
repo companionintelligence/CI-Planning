@@ -59,17 +59,33 @@ export function PlannerDrawer() {
 
   const stagedIds = createMemo(() => new Set((flightPlan() ?? []).map((i) => i.task_id)));
 
+  // Open-Task views (cockpit-v2 Phase 6): filtered slices of the one tasks table.
+  const [taskView, setTaskView] = createSignal<'open' | 'tbd' | 'deferred' | 'past'>('open');
+
   // ── Open Task tab ────────────────────────────────────────────────────────────
-  // Search open tasks by name OR tag (strip a leading '#'); empty query = all.
-  const openTasks = () => {
+  // Four filtered views over the one tasks table (cockpit-v2 Phase 6): Open · TBD ·
+  // Deferred · Past (the shelf). Search by name OR tag (strip '#'); empty query = all.
+  const viewTasks = () => {
     const q = query().trim().toLowerCase().replace(/^#/, '');
+    const v = taskView();
     return (tasks() ?? [])
-      .filter((t) => t.status === 'open' && !t.parent_id && !t.is_fast_task && !stagedIds().has(t.id))
+      .filter((t) => !t.parent_id && !t.is_fast_task)
+      .filter((t) => {
+        if (v === 'open')     return t.status === 'open' && !stagedIds().has(t.id);
+        if (v === 'tbd')      return t.status === 'open' && (t.tags?.length ?? 0) >= 1 && !t.due_at && !t.estimated_minutes && !t.scheduled_for && !(t.notes && t.notes.trim());
+        if (v === 'deferred') return t.status === 'deferred';
+        return ['done', 'completed', 'deferred'].includes(t.status); // past — the shelf
+      })
       .filter((t) => !q || t.title.toLowerCase().includes(q) || (t.tags ?? []).some((tag) => tag.toLowerCase().includes(q)))
       .slice(0, 50);
   };
   async function stageTask(id: string) {
     try { await api.flightPlan.addTask(id); refetchFlightPlan(); showToast('Added to flight-plan', 'default'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  // Recall (cockpit-v2 Phase 6): clone a shelved/Past task to a brand-new open task.
+  async function recall(id: string) {
+    try { const { task } = await api.tasks.recall(id); refetchTasks(); showToast(`Recalled "${task.title}" as a new task`, 'success'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   // Create a brand-new task from the typed text (quick-add parses #tags / times) and
@@ -378,24 +394,38 @@ export function PlannerDrawer() {
               </div>
             </Show>
 
-            {/* Open Task list — plus a "create new task" row from the typed text. */}
+            {/* Open-Task views (Open · TBD · Deferred · Past) + a "create" row. */}
             <Show when={tab() === 'task'}>
-              <Show when={query().trim()}>
+              <div class="flex items-center gap-1 px-2 py-1.5 border-b border-border text-[11px]">
+                <For each={[['open', 'Open'], ['tbd', 'TBD'], ['deferred', 'Deferred'], ['past', 'Past']] as const}>
+                  {([v, label]) => (
+                    <button
+                      onClick={() => setTaskView(v)}
+                      class="px-2 py-0.5 rounded-full transition-colors"
+                      classList={{ 'bg-primary/10 text-primary font-medium': taskView() === v, 'text-muted-foreground hover:text-foreground': taskView() !== v }}
+                    >{label}</button>
+                  )}
+                </For>
+              </div>
+              <Show when={query().trim() && taskView() === 'open'}>
                 <button onClick={() => createAndStage(query())} class="w-full flex items-center gap-2 px-3 py-2 text-left border-b border-border hover:bg-sidebar-accent transition-colors">
                   <Plus size={13} class="text-primary flex-shrink-0" />
                   <span class="flex-1 text-sm text-foreground truncate">Add new task: <span class="font-medium">“{query().trim()}”</span></span>
                 </button>
               </Show>
-              <Show when={openTasks().length > 0} fallback={<Show when={!query().trim()}><p class="p-4 text-center text-sm text-muted-foreground">No open tasks to stage.</p></Show>}>
+              <Show when={viewTasks().length > 0} fallback={<p class="p-4 text-center text-sm text-muted-foreground">No {taskView()} tasks.</p>}>
                 <ul class="divide-y divide-border">
-                  <For each={openTasks()}>
+                  <For each={viewTasks()}>
                     {(t) => (
-                      <li>
-                        <button onClick={() => stageTask(t.id)} class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-accent transition-colors">
-                          <Plus size={13} class="text-primary flex-shrink-0" />
-                          <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
-                          <For each={t.tags.slice(0, 2)}>{(tg) => <span class="badge-neutral text-[10px]">#{tg}</span>}</For>
-                        </button>
+                      <li class="flex items-center gap-2 px-3 py-2 hover:bg-sidebar-accent transition-colors">
+                        <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
+                        <For each={t.tags.slice(0, 2)}>{(tg) => <span class="badge-neutral text-[10px]">#{tg}</span>}</For>
+                        <Show
+                          when={taskView() === 'past'}
+                          fallback={<button onClick={() => stageTask(t.id)} class="btn-icon flex-shrink-0" title="Add to flight-plan"><Plus size={14} class="text-primary" /></button>}
+                        >
+                          <button onClick={() => recall(t.id)} class="btn-secondary text-xs px-2 py-1 flex-shrink-0" title="Duplicate as a brand-new task"><RotateCcw size={12} /> Recall</button>
+                        </Show>
                       </li>
                     )}
                   </For>
