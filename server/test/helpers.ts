@@ -37,6 +37,25 @@ export function resetDb(): void {
     DELETE FROM job_runs;
     DELETE FROM daily_summaries;
   `);
+  // Pin the scheduling prefs that drive Auto placement / recurrence / recall back to
+  // a deterministic baseline. resetDb keeps the prefs ROW, and files run in a
+  // non-guaranteed order sharing one DB — so a test that leaves e.g.
+  // `auto_fill_workday = 0` or a non-UTC timezone would otherwise leak into a later
+  // file's Auto tests and flake them. timezone is forced to UTC (not the NULL
+  // schema default → system tz) so CI == local. Tests that need other values still
+  // override in their own beforeEach, which runs after this.
+  sqlite.exec(`
+    UPDATE scheduling_prefs SET
+      timezone = 'UTC',
+      workday_start = '09:00',
+      workday_end = '18:00',
+      auto_fill_workday = 1,
+      enable_rituals = 0,
+      max_focus_block_minutes = 90,
+      min_break_minutes = 10,
+      planning_horizon_days = 7,
+      recall_keeps_pattern = 0;
+  `);
 }
 
 /** Convenience JSON fetch wrapper. */
