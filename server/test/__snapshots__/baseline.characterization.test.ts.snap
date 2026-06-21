@@ -257,7 +257,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
 
 exports[`behavior baseline — read API serialization > serializes the canonical read surfaces stably (id/ts-normalized) > GET /api/summary (stats) 1`] = `
 {
-  "blocks": 3,
+  "blocks": 4,
   "dueToday": 1,
   "open": 5,
   "overdue": 0,
