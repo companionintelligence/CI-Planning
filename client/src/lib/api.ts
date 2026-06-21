@@ -41,6 +41,7 @@ export interface Task {
   occurrence_date?: string;
   is_habit?: boolean;
   is_fast_task?: boolean; // ritual-local, hidden from the task list (Step 3)
+  subtype?: 'standard' | 'habit' | 'quick'; // CON-2c canonical Task subtype (is_habit/is_fast_task kept as aliases)
 }
 
 export interface TaskInput {
@@ -120,8 +121,8 @@ export const api = {
     // be the Plan or any member; returns the whole moved group.
     moveGroup: (id: string, delta_minutes: number) =>
       request<{ blocks: Block[] }>('POST', `/blocks/${id}/move-group`, { delta_minutes }),
-    // Concepts have no real time — fetch them all (owner-scoped) for the horizon lane.
-    listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?block_type=concept'),
+    // Someday Time Blocks have no real time — fetch them all (owner-scoped) for the horizon lane.
+    listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?state=someday'),
     // Promote a Concept into a scheduled Plan at the chosen start (end ⇐ duration).
     promote: (id: string, start_at: string, opts?: { end_at?: string; all_day?: boolean }) =>
       request<{ block: Block }>('POST', `/blocks/${id}/promote`, { start_at, ...opts }),
@@ -246,7 +247,7 @@ export interface Block {
   id: string; task_id?: string; title: string; block_kind: string;
   tag?: string | null; // container/grouping tag (G3); set on 'timeblock' containers
   // Plan/Concept container typing (0019). block_type is set on 'timeblock' containers.
-  block_type?: 'plan' | 'concept' | null;
+  block_type?: 'scheduled' | 'someday' | null;
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)

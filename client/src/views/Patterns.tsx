@@ -67,7 +67,7 @@ export function Patterns() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function deleteTemplate(t: BlockTemplate) {
-    if (!confirm(`Delete the "${t.name}" Plan Block? Saved tasks won't come back.`)) return;
+    if (!confirm(`Delete the "${t.name}" Time Block? Saved tasks won't come back.`)) return;
     try { await api.blockTemplates.delete(t.id); refetchTemplates(); showToast(`Removed "${t.name}"`, 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -81,7 +81,7 @@ export function Patterns() {
         if (!task) return;
         await api.patterns.promoteFromTasks([p.id], `${task.title} routine`);
         showToast(`Created Routine from "${task.title}"`, 'success');
-      } else if (p.kind === 'plan-block') {
+      } else if (p.kind === 'time-block') {
         const tpl = (templates() ?? []).find((t) => t.id === p.id);
         if (!tpl) return;
         await api.patterns.promoteFromPlanTemplate(p.id, tpl.name);
@@ -351,7 +351,7 @@ export function Patterns() {
 
   return (
     <div class="flex-1 overflow-auto p-4 md:p-6 page-enter max-w-3xl mx-auto w-full pb-24">
-      <h1 class="text-2xl font-bold text-foreground mb-1">Patterns</h1>
+      <h1 class="text-2xl font-bold text-foreground mb-1">Routines</h1>
       <p class="text-sm text-muted-foreground mb-6">
         Routines bundle habits · Habits repeat
         <Show when={prefs()?.enable_rituals}> · Rituals assemble a day's prep</Show>.
@@ -365,7 +365,7 @@ export function Patterns() {
           '-mx-1 px-1': routineDrop.isOver(),
         }}
       >
-        <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work). Drop a Habit or Plan Block to make one.">
+        <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work). Drop a Habit or Time Block to make one.">
           <Show when={dragPayload()}>
             <p class="text-[11px] text-primary text-center -mt-2 mb-2">Drop here to create a Routine →</p>
           </Show>
@@ -401,15 +401,15 @@ export function Patterns() {
         <div class="flex items-center gap-2 mb-2.5">
           <span class="text-primary"><Star size={16} class="fill-primary/30" /></span>
           <div class="flex-1">
-            <h2 class="text-sm font-semibold text-foreground">Plan Blocks</h2>
-            <p class="text-[11px] text-muted-foreground">Saved Plan shapes — drop one onto today</p>
+            <h2 class="text-sm font-semibold text-foreground">Time Blocks</h2>
+            <p class="text-[11px] text-muted-foreground">Saved Time Block shapes — drop one onto today</p>
           </div>
         </div>
-        <Show when={(templates() ?? []).length > 0} fallback={<EmptyHint>No saved Plan Blocks yet — save a Plan as a template from the Planner ★ menu.</EmptyHint>}>
+        <Show when={(templates() ?? []).length > 0} fallback={<EmptyHint>No saved Time Blocks yet — save a Time Block as a template from the Planner ★ menu.</EmptyHint>}>
           <div class="flex flex-col gap-1.5">
             <For each={templates()}>
               {(t) => {
-                const drag = useDraggable({ kind: 'plan-block', id: t.id });
+                const drag = useDraggable({ kind: 'time-block', id: t.id });
                 return (
                   <div
                     onPointerDown={drag.onPointerDown}

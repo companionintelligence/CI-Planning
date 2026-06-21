@@ -94,7 +94,7 @@ function dayPlans(date: string, tz: string): PlanRow[] {
   return sqlite
     .prepare(
       `SELECT id, start_at, end_at, tag FROM time_blocks
-        WHERE block_kind = 'timeblock' AND block_type = 'plan' AND tag IS NOT NULL
+        WHERE block_kind = 'timeblock' AND block_type = 'scheduled' AND tag IS NOT NULL
           AND COALESCE(all_day, 0) = 0
           AND start_at < ? AND end_at > ?
         ORDER BY start_at`

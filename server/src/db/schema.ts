@@ -34,6 +34,7 @@ export const tasks = sqliteTable('tasks', {
   occurrenceDate: text('occurrence_date'),                 // local YYYY-MM-DD of this instance
   isHabit: integer('is_habit', { mode: 'boolean' }).default(false),
   isFastTask: integer('is_fast_task', { mode: 'boolean' }).default(false), // ritual-local, hidden from the task list (0020)
+  subtype: text('subtype').default('standard'), // CON-2c canonical Task subtype: standard | habit | quick (is_habit/is_fast_task kept as in-sync runtime aliases)
   deferCount: integer('defer_count').notNull().default(0), // times rescheduled by the nightly review (0029)
   ownerId: text('owner_id').references(() => owners.id),
   sourceKind: text('source_kind').default('manual'), // manual | agent | gmail | gcal
@@ -75,7 +76,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   title: text('title').notNull(),
   blockKind: text('block_kind').default('task'),     // task | meeting | habit | focus | break | buffer | timeblock (container)
   tag: text('tag'),                                  // grouping tag for 'timeblock' containers (Phase G)
-  blockType: text('block_type'),                     // 'plan' | 'concept' for 'timeblock' containers (0019)
+  blockType: text('block_type'),                     // Time-Block state: 'scheduled' | 'someday' (0019; renamed CON-2/0031)
   goalStartDate: text('goal_start_date'),            // YYYY-MM-DD goal day for concepts (nullable = someday)
   durationMinutes: integer('duration_minutes'),      // concept duration (no start/end semantics)
   note: text('note'),                                // optional saved note on a Plan/Concept container (0021)
