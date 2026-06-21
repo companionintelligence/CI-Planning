@@ -3,6 +3,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
 import { runMigrations, rebuildTable } from '../src/db/migrate.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
+import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 
 // Isolated in-memory DBs — these tests never touch the shared file DB.
 const fresh = () => new BetterSqlite3(':memory:');
@@ -20,8 +21,9 @@ describe('migration runner', () => {
     expect(count(db, 'schema_migrations')).toBe(MIGRATIONS.length);
     expect(db.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
 
-    // Seed migration ran: owner 1 + cron jobs present; full schema in place.
-    expect(db.prepare('SELECT id FROM owners WHERE id = 1').get()).toBeTruthy();
+    // Seed migration ran: the single owner + cron jobs present; full schema in place.
+    // 0030 remaps the legacy integer owner `1` to the fixed UUIDv7 sentinel.
+    expect(db.prepare('SELECT id FROM owners WHERE id = ?').get(SYSTEM_OWNER_ID)).toBeTruthy();
     expect(count(db, 'scheduled_jobs')).toBeGreaterThan(0);
     expect(cols(db, 'daily_summaries')).toContain('focus');
     // 0010: all_day column on time_blocks (Phase F PR-3).
@@ -32,9 +34,11 @@ describe('migration runner', () => {
   it('0010 adds all_day to time_blocks, default 0, and is idempotent', () => {
     const db = fresh();
     runMigrations(db);
-    // Inserting a block without all_day defaults to 0 (false).
+    // Inserting a block without all_day defaults to 0 (false). After 0030 the id
+    // column is TEXT NOT NULL with no SQL default (this isolated in-memory DB has no
+    // uuid7() UDF), so supply a literal UUIDv7-shaped id.
     db.prepare(
-      `INSERT INTO time_blocks (title, start_at, end_at) VALUES ('B', '2026-06-15T16:00:00Z', '2026-06-15T17:00:00Z')`,
+      `INSERT INTO time_blocks (id, title, start_at, end_at) VALUES ('00000000-0000-7000-8000-0000000000b1', 'B', '2026-06-15T16:00:00Z', '2026-06-15T17:00:00Z')`,
     ).run();
     const row = db.prepare('SELECT all_day FROM time_blocks LIMIT 1').get() as { all_day: number };
     expect(row.all_day).toBe(0);
@@ -89,14 +93,16 @@ describe('migration runner', () => {
     const { applied } = runMigrations(db);
     expect(applied.length).toBe(MIGRATIONS.length);
 
-    // Existing rows preserved; seed did not clobber the existing owner.
-    expect((db.prepare('SELECT title FROM tasks WHERE id = 1').get() as { title: string }).title).toBe('Old task');
-    expect((db.prepare('SELECT name FROM owners WHERE id = 1').get() as { name: string }).name).toBe('Existing User');
+    // Existing rows preserved through the migration; seed did not clobber the existing
+    // owner. 0030 retyped ids (the legacy integer owner `1` → the UUIDv7 sentinel), so
+    // identify the surviving rows by their stable attributes rather than the old int id.
+    expect(db.prepare("SELECT 1 FROM tasks WHERE title = 'Old task'").get()).toBeTruthy();
+    expect((db.prepare('SELECT name FROM owners WHERE id = ?').get(SYSTEM_OWNER_ID) as { name: string }).name).toBe('Existing User');
 
     // Missing columns were added; timezone backfilled (never null for the scheduler).
     expect(cols(db, 'tasks')).toEqual(expect.arrayContaining(['notes', 'task_time', 'parent_id']));
     expect(cols(db, 'scheduling_prefs')).toEqual(expect.arrayContaining(['timezone', 'planning_horizon_days']));
-    const tz = (db.prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = 1').get() as { timezone: string }).timezone;
+    const tz = (db.prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?').get(SYSTEM_OWNER_ID) as { timezone: string }).timezone;
     expect(tz).toBeTruthy();
 
     // Second run changes nothing.

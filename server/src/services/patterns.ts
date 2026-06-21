@@ -6,10 +6,10 @@ import { sqlite } from '../db/index.js';
  * (which remains the runtime flag). Idempotent; a no-op if the owner has no built-in
  * Habit type or the task is already in a Habit pattern.
  */
-export function ensureHabitPattern(taskId: number, ownerId: number, name: string): void {
+export function ensureHabitPattern(taskId: string, ownerId: string, name: string): void {
   const habitType = sqlite
     .prepare(`SELECT id FROM pattern_types WHERE name = 'Habit' AND is_builtin = 1 AND owner_id = ?`)
-    .get(ownerId) as { id: number } | undefined;
+    .get(ownerId) as { id: string } | undefined;
   if (!habitType) return;
 
   const already = sqlite
@@ -21,7 +21,7 @@ export function ensureHabitPattern(taskId: number, ownerId: number, name: string
   if (already) return;
 
   const p = sqlite
-    .prepare(`INSERT INTO patterns (owner_id, type_id, name) VALUES (?, ?, ?) RETURNING id`)
-    .get(ownerId, habitType.id, name) as { id: number };
+    .prepare(`INSERT INTO patterns (id, owner_id, type_id, name) VALUES (uuid7(), ?, ?, ?) RETURNING id`)
+    .get(ownerId, habitType.id, name) as { id: string };
   sqlite.prepare(`INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, 0)`).run(p.id, taskId);
 }

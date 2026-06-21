@@ -8,7 +8,7 @@ import {
 
 interface Props {
   editTask?: Task;
-  parentId?: number;
+  parentId?: string;
   onClose: () => void;
 }
 
@@ -34,7 +34,7 @@ export function TaskForm(props: Props) {
   const [priority, setPriority] = createSignal(3);
   const [tagsInput, setTagsInput] = createSignal('');
   const [deferUntil, setDeferUntil] = createSignal('');
-  const [dependsOn, setDependsOn] = createSignal<number[]>([]);
+  const [dependsOn, setDependsOn] = createSignal<string[]>([]);
   const [saving, setSaving] = createSignal(false);
   const [expanded, setExpanded] = createSignal(false);
 
@@ -341,7 +341,7 @@ export function TaskForm(props: Props) {
                   multiple
                   class="input min-h-[72px]"
                   onChange={(e) =>
-                    setDependsOn(Array.from(e.currentTarget.selectedOptions).map((o) => Number(o.value)))
+                    setDependsOn(Array.from(e.currentTarget.selectedOptions).map((o) => o.value))
                   }
                 >
                   <For each={candidateTasks()}>

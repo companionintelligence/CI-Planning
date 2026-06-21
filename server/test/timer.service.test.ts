@@ -8,37 +8,37 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 const OWNER = SYSTEM_OWNER;
 
 /** Insert a bare task and return its id. */
-function insertTask(title = 'Timed task'): number {
+function insertTask(title = 'Timed task'): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (title, priority, owner_id, status) VALUES (?, 3, ?, 'open') RETURNING id`
+        `INSERT INTO tasks (id, title, priority, owner_id, status) VALUES (uuid7(), ?, 3, ?, 'open') RETURNING id`
       )
-      .get(title, OWNER) as { id: number }
+      .get(title, OWNER) as { id: string }
   ).id;
 }
 
 /** Insert a finished entry directly with explicit instants (UTC ISO). */
-function insertEntry(taskId: number, startedAt: string, endedAt: string | null): number {
+function insertEntry(taskId: string, startedAt: string, endedAt: string | null): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO time_entries (task_id, owner_id, started_at, ended_at, source)
-         VALUES (?, ?, ?, ?, 'timer') RETURNING id`
+        `INSERT INTO time_entries (id, task_id, owner_id, started_at, ended_at, source)
+         VALUES (uuid7(), ?, ?, ?, ?, 'timer') RETURNING id`
       )
-      .get(taskId, OWNER, startedAt, endedAt) as { id: number }
+      .get(taskId, OWNER, startedAt, endedAt) as { id: string }
   ).id;
 }
 
-const actualOf = (taskId: number) =>
+const actualOf = (taskId: string) =>
   (sqlite.prepare(`SELECT actual_minutes AS m FROM tasks WHERE id = ?`).get(taskId) as { m: number }).m;
 
 const runningRows = () =>
   sqlite
     .prepare(`SELECT id FROM time_entries WHERE owner_id = ? AND ended_at IS NULL`)
-    .all(OWNER) as { id: number }[];
+    .all(OWNER) as { id: string }[];
 
-const recompute = (taskId: number): number => {
+const recompute = (taskId: string): number => {
   const { total } = sqlite
     .prepare(
       `SELECT COALESCE(SUM((julianday(ended_at) - julianday(started_at)) * 24 * 60), 0) AS total
@@ -115,10 +115,10 @@ describe('timer service', () => {
     const blockId = (
       sqlite
         .prepare(
-          `INSERT INTO time_blocks (task_id, title, start_at, end_at, status)
-           VALUES (?, 'block', '2026-06-15T10:00:00Z', '2026-06-15T11:00:00Z', 'planned') RETURNING id`
+          `INSERT INTO time_blocks (id, task_id, title, start_at, end_at, status)
+           VALUES (uuid7(), ?, 'block', '2026-06-15T10:00:00Z', '2026-06-15T11:00:00Z', 'planned') RETURNING id`
         )
-        .get(task) as { id: number }
+        .get(task) as { id: string }
     ).id;
     runWithOwner(OWNER, () => {
       const { entry } = startTimer(task, blockId);

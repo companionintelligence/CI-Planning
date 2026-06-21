@@ -4,9 +4,11 @@ import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
 import { resolveGroup, containerAt } from '../lib/group-move.js';
+import { spanAtY } from '../lib/place.js';
+import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
@@ -25,9 +27,15 @@ import { BlockEditModal } from './BlockEditModal.js';
  * (atomic `move-group`); members render nested under their Plan; Alt-dragging a
  * member detaches just it; dropping a loose chip into a Plan's window attaches it.
  *
+ * Write-capable (CON-5): clicking an empty slot creates a Time Block at that time,
+ * and a flight-plan task dragged onto the grid is scheduled there (drop-Y → time via
+ * `place.ts`/`grid.ts`, then `api.blocks.create` + `flightPlan.remove`); a drop inside
+ * a Plan's window attaches via `parent_block_id`. Authoring is no longer wizard-only.
+ *
  * Built on the shared grid math (`grid.ts`), the overlap layout (`layoutBlocks`),
- * the drag gesture (`drag.ts`), and the pure group math (`group-move.ts`) — so there
- * is no tz drift between a chip's pixel position and its stored instant.
+ * the drag gesture (`drag.ts`), the pure group math (`group-move.ts`), and the shared
+ * pointer-DnD (`draggable.ts`) — so there is no tz drift between a chip's pixel
+ * position and its stored instant.
  */
 
 type Placed = ReturnType<typeof layoutBlocks>[number];
@@ -35,6 +43,8 @@ type Placed = ReturnType<typeof layoutBlocks>[number];
 const VISIBLE_PX = VISIBLE_HOURS * 60 * PX_PER_MIN;
 /** Horizontal inset (px) for a member chip nested inside its Plan. */
 const NEST_INSET_PX = 12;
+/** Default duration (minutes) for click-to-create / drag-to-schedule when no estimate. */
+const DEFAULT_BLOCK_MIN = 60;
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -177,7 +187,7 @@ function NowLine(props: { day: string; now: string }) {
 
 /** Handlers the Plan-as-container gestures need from the Planner (group ghost + commits). */
 interface GroupCtx {
-  extraMin: (id: number) => number;                         // optimistic group-ghost offset (minutes)
+  extraMin: (id: string) => number;                         // optimistic group-ghost offset (minutes)
   onMoveLive: (anchor: Block, dy: number, ev: PointerEvent) => void;
   onMoveEnd: () => void;
   onMoveCommit: (anchor: Block, dy: number, ev: PointerEvent) => void;
@@ -324,7 +334,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   }
   async function detach() {
     setMenu(null);
-    try { await api.blocks.update(b().id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Plan', 'default'); }
+    try { await api.blocks.update(b().id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Time Block', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function removeBlock() {
@@ -342,7 +352,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     const t = task();
     const items: MenuItem[] = [{ label: 'Edit', icon: Pencil, onClick: edit }];
     if (t && !t.is_habit) items.push({ label: 'Promote to habit', icon: Repeat, onClick: promoteHabit });
-    if (b().parent_block_id != null) items.push({ label: 'Remove from Plan', icon: Unlink, onClick: detach });
+    if (b().parent_block_id != null) items.push({ label: 'Remove from Time Block', icon: Unlink, onClick: detach });
     items.push({ label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true });
     return items;
   };
@@ -489,7 +499,7 @@ export function Planner() {
   onCleanup(() => clearInterval(tick));
 
   // Concepts live off the minute grid (the header lane + horizon), never on it.
-  const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'concept');
+  const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'someday');
   // Plan containers on the timed grid (★ outline); all-day ones go to the header lane.
   const containers = () => dayBlocks().filter((b) => b.block_kind === 'timeblock' && !isAllDay(b));
   // Task/meeting/focus chips share the overlap layout; containers + break/buffer + all-day don't.
@@ -510,8 +520,8 @@ export function Planner() {
   // `ghost` offsets every member EXCEPT the one under the pointer (it follows the
   // cursor via its own liveTop) during a drag; on commit it holds the whole group at
   // the snapped delta until the refetch lands, so nothing snaps back.
-  const [ghost, setGhost] = createSignal<{ ids: Set<number>; dy: number } | null>(null);
-  const extraMin = (id: number) => { const g = ghost(); return g && g.ids.has(id) ? g.dy / PX_PER_MIN : 0; };
+  const [ghost, setGhost] = createSignal<{ ids: Set<string>; dy: number } | null>(null);
+  const extraMin = (id: string) => { const g = ghost(); return g && g.ids.has(id) ? g.dy / PX_PER_MIN : 0; };
   const isGroupAnchor = (b: Block) => b.block_kind === 'timeblock' || b.parent_block_id != null;
 
   function onMoveLive(anchor: Block, dy: number, ev: PointerEvent) {
@@ -531,7 +541,7 @@ export function Planner() {
       setGhost(null);
       const resolved = resolveGesture(anchor, day(), 'move', dy);
       if (!resolved) return;
-      try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Plan', 'default'); }
+      try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Time Block', 'default'); }
       catch (err) { showToast((err as Error).message, 'error'); }
       return;
     }
@@ -560,6 +570,59 @@ export function Planner() {
   }
 
   const groupCtx: GroupCtx = { extraMin, onMoveLive, onMoveEnd: () => setGhost(null), onMoveCommit };
+
+  // ── CON-5: write-capable Planner (click-to-create + drag-to-schedule) ──────────
+  // The grid column element — the origin for drop/click Y → time math. Its top is the
+  // column's midnight, so `clientY - rect.top` is pixels-into-day at any scroll offset.
+  let gridEl: HTMLDivElement | undefined;
+  const gridY = (clientY: number) => (gridEl ? clientY - gridEl.getBoundingClientRect().top : 0);
+
+  // Create a Time Block at grid Y, optionally bound to a flight-plan task; attach it
+  // if it lands inside a Plan's window (mirrors the loose-chip drop path). One POST
+  // (+ one attach PATCH only when dropped into a container).
+  async function createBlockAt(clientY: number, task?: { task_id: string; title: string; estimated_minutes: number | null }) {
+    const span = spanAtY(day(), gridY(clientY), task?.estimated_minutes ?? DEFAULT_BLOCK_MIN);
+    const tag = task ? taskOf(task.task_id)?.tags?.[0] : undefined;
+    try {
+      const { block } = await api.blocks.create({
+        title: task?.title ?? 'New block',
+        block_kind: task ? 'task' : 'timeblock',
+        ...(task ? { task_id: task.task_id } : {}),
+        ...(tag ? { tag } : {}),
+        ...span,
+      });
+      const container = containerAt(blocks() ?? [], Date.parse(span.start_at), block.id);
+      if (container) await api.blocks.update(block.id, { parent_block_id: container.id });
+      if (task) { await api.flightPlan.remove(task.task_id); refetchFlightPlan(); }
+      refetchBlocks();
+      showToast(
+        container ? `Added to "${container.title}"` : task ? `Scheduled "${task.title}"` : 'Block created',
+        task || container ? 'success' : 'default',
+      );
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // Drop target: a flight-plan task dropped on the grid schedules it at that time.
+  const gridDrop = useDropZone((payload, e) => {
+    if (payload.kind !== 'flight-task') return;
+    const it = (flightPlan() ?? []).find((i) => i.task_id === payload.id);
+    if (it) void createBlockAt(e.clientY, it);
+  });
+
+  // Click-to-create: a near-zero pointer interaction on empty grid space (chips and
+  // containers stopPropagation on their own pointerdown, so only the background
+  // reaches here) creates a default Time Block at the clicked time.
+  function onGridPointerDown(e: PointerEvent) {
+    if (updateMode() || dragPayload()) return; // not while completing, not mid-drag
+    const startX = e.clientX, startY = e.clientY;
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointerup', onUp);
+      if (Math.abs(ev.clientX - startX) < CLICK_PX && Math.abs(ev.clientY - startY) < CLICK_PX) {
+        void createBlockAt(ev.clientY);
+      }
+    };
+    window.addEventListener('pointerup', onUp);
+  }
 
   function requestDeletePlan(plan: Block) {
     const childCount = (blocks() ?? []).filter((b) => b.parent_block_id === plan.id).length;
@@ -627,7 +690,15 @@ export function Planner() {
       >
         <div class="grid" style={{ 'grid-template-columns': '3.5rem 1fr' }}>
           <TimeGutter />
-          <div class="relative border-l border-border/60" style={{ height: `${DAY_HEIGHT_PX}px` }}>
+          <div
+            ref={gridEl}
+            class="relative border-l border-border/60 transition-colors"
+            classList={{ 'bg-primary/[0.04]': gridDrop.isOver() }}
+            style={{ height: `${DAY_HEIGHT_PX}px` }}
+            title="Click an empty slot to add a block · drop a flight-plan task to schedule it"
+            onPointerDown={onGridPointerDown}
+            onPointerUp={gridDrop.handlers.onPointerUp}
+          >
             <HourLines />
             <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={setEditBlock} onRequestDelete={requestDeletePlan} />}</For>
             <For each={placed()}>
@@ -635,9 +706,10 @@ export function Planner() {
             </For>
             <NowLine day={day()} now={nowISO()} />
             <Show when={chips().length === 0 && containers().length === 0}>
-              <div class="absolute left-0 right-0 top-24 text-center text-sm text-muted-foreground px-4">
-                Nothing planned yet — stage items in the flight-plan, then hit
-                <span class="text-primary font-medium"> Auto Schedule</span>, or drag one onto the grid.
+              <div class="absolute left-0 right-0 top-24 text-center text-sm text-muted-foreground px-4 pointer-events-none">
+                Nothing planned yet — <span class="text-primary font-medium">click an empty slot</span> to add a block,
+                drag a flight-plan task onto a time, or stage items and hit
+                <span class="text-primary font-medium"> Auto Schedule</span>.
               </div>
             </Show>
           </div>

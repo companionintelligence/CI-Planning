@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { reviewAndReschedule, rescheduleTask, backoffDays } from '../src/engine/review.js';
 
@@ -9,24 +10,24 @@ import { reviewAndReschedule, rescheduleTask, backoffDays } from '../src/engine/
  * user (status='missed'). Plus the +1/+3/+7 reschedule endpoint.
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 
-function insertTask(title: string, priority: number, status = 'open', deferCount = 0): number {
+function insertTask(title: string, priority: number, status = 'open', deferCount = 0): string {
   return (sqlite
-    .prepare(`INSERT INTO tasks (title, owner_id, status, priority, defer_count) VALUES (?, ?, ?, ?, ?) RETURNING id`)
-    .get(title, OWNER, status, priority, deferCount) as { id: number }).id;
+    .prepare(`INSERT INTO tasks (id, title, owner_id, status, priority, defer_count) VALUES (uuid7(), ?, ?, ?, ?, ?) RETURNING id`)
+    .get(title, OWNER, status, priority, deferCount) as { id: string }).id;
 }
 /** A planned task block that ended in the past (missed) or future (not missed). */
-function insertBlock(taskId: number, endOffsetHrs: number, status = 'planned'): number {
+function insertBlock(taskId: string, endOffsetHrs: number, status = 'planned'): string {
   const end = new Date(Date.now() + endOffsetHrs * 3600_000);
   const start = new Date(end.getTime() - 3600_000);
   return (sqlite
-    .prepare(`INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, is_auto, status) VALUES (?, 'b', 'task', ?, ?, 1, ?) RETURNING id`)
-    .get(taskId, start.toISOString(), end.toISOString(), status) as { id: number }).id;
+    .prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, status) VALUES (uuid7(), ?, 'b', 'task', ?, ?, 1, ?) RETURNING id`)
+    .get(taskId, start.toISOString(), end.toISOString(), status) as { id: string }).id;
 }
-const task = (id: number) => sqlite.prepare(`SELECT status, scheduled_for, defer_count FROM tasks WHERE id = ?`).get(id) as
+const task = (id: string) => sqlite.prepare(`SELECT status, scheduled_for, defer_count FROM tasks WHERE id = ?`).get(id) as
   { status: string; scheduled_for: string | null; defer_count: number };
-const blockCount = (taskId: number) => (sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE task_id = ?`).get(taskId) as { n: number }).n;
+const blockCount = (taskId: string) => (sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE task_id = ?`).get(taskId) as { n: number }).n;
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -109,7 +110,7 @@ describe('POST /api/tasks/:id/reschedule', () => {
 
 describe('review_day job', () => {
   it('is seeded and runs via POST /api/jobs/:id/run', async () => {
-    const job = sqlite.prepare(`SELECT id FROM scheduled_jobs WHERE kind = 'review_day'`).get() as { id: number } | undefined;
+    const job = sqlite.prepare(`SELECT id FROM scheduled_jobs WHERE kind = 'review_day'`).get() as { id: string } | undefined;
     expect(job).toBeTruthy();
     const t = insertTask('Low', 4); insertBlock(t, -2);
     const r = await api(srv.url, `/api/jobs/${job!.id}/run`, { method: 'POST', json: {} });

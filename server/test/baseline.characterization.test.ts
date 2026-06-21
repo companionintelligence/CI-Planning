@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 import { makeNormalizer } from './normalize.js';
@@ -22,7 +23,11 @@ import { makeNormalizer } from './normalize.js';
  * See docs/consolidation-plan.md and docs/con-1-uuidv7-design.md.
  */
 
-const OWNER = 1;
+// CON-1: the single owner's id is the fixed UUIDv7 sentinel after migration 0030
+// (the legacy integer `1` is remapped to it). API reads are scoped by
+// currentOwnerId() === SYSTEM_OWNER, so the fixture must own its rows as SYSTEM_OWNER.
+// Snapshots normalize owner ids to referent tokens, so this is invisible to the golden.
+const OWNER = SYSTEM_OWNER;
 const DAY = '2026-06-22';
 const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 const MIDNIGHT = `${DAY}T00:00:00.000Z`;
@@ -31,12 +36,15 @@ const snap = (b: unknown) => makeNormalizer()(b);
 const snapOrdered = (a: unknown) => makeNormalizer({ sortArrays: false })(a);
 
 /** Insert a row into an id-bearing table; returns the new id. */
-function insert(table: string, row: Record<string, unknown>): number {
+function insert(table: string, row: Record<string, unknown>): string {
   const keys = Object.keys(row);
+  // CON-1: id columns are TEXT NOT NULL — mint a UUIDv7 via the registered uuid7()
+  // UDF. Prepended as a SQL literal so the row's own keys still map 1:1 to the `?`
+  // placeholders. (Snapshots are id-normalized, so this is invisible to the golden.)
   const stmt = sqlite.prepare(
-    `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')}) RETURNING id`,
+    `INSERT INTO ${table} (id, ${keys.join(', ')}) VALUES (uuid7(), ${keys.map(() => '?').join(', ')}) RETURNING id`,
   );
-  return (stmt.get(...keys.map((k) => row[k])) as { id: number }).id;
+  return (stmt.get(...keys.map((k) => row[k])) as { id: string }).id;
 }
 /** Insert a row into a join/composite-key table (no surrogate id). */
 function insertNoId(table: string, row: Record<string, unknown>): void {
@@ -74,19 +82,19 @@ function seedApiFixture(): void {
   const post = insert('tasks', { title: 'Post office', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 30, due_at: at('17:00') });
   insert('tasks', { title: 'Spec subtask', owner_id: OWNER, status: 'open', priority: 3, parent_id: spec });
   insert('tasks', { title: 'Daily standup', owner_id: OWNER, status: 'open', priority: 3, recurrence_rule: 'FREQ=DAILY', recurrence_dtstart: at('09:30') });
-  const meditate = insert('tasks', { title: 'Meditate', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 10, is_habit: 1 });
+  const meditate = insert('tasks', { title: 'Meditate', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 10, is_habit: 1, subtype: 'habit' });
   insert('tasks', { title: 'Old task', owner_id: OWNER, status: 'done', priority: 4, completed_at: at('08:00') });
 
   insertNoId('task_tags', { task_id: spec, tag_id: work });
   insertNoId('task_tags', { task_id: post, tag_id: errands });
   insertNoId('task_dependencies', { task_id: post, depends_on_id: spec }); // Post office blocked by Write spec
 
-  const plan = insert('time_blocks', { title: 'Work block', block_kind: 'timeblock', block_type: 'plan', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
+  const plan = insert('time_blocks', { title: 'Work block', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
   insert('time_blocks', { task_id: spec, title: 'Write spec', block_kind: 'task', parent_block_id: plan, start_at: at('09:00'), end_at: at('09:45'), is_auto: 0, source_kind: 'manual', status: 'planned' });
-  insert('time_blocks', { title: 'Read paper', block_kind: 'timeblock', block_type: 'concept', tag: 'work', goal_start_date: DAY, duration_minutes: 60, all_day: 1, start_at: MIDNIGHT, end_at: at('01:00'), source_kind: 'manual', status: 'planned' });
+  insert('time_blocks', { title: 'Read paper', block_kind: 'timeblock', block_type: 'someday', tag: 'work', goal_start_date: DAY, duration_minutes: 60, all_day: 1, start_at: MIDNIGHT, end_at: at('01:00'), source_kind: 'manual', status: 'planned' });
   insert('time_blocks', { title: 'Standup mtg', block_kind: 'meeting', start_at: at('13:00'), end_at: at('13:30'), is_locked: 1, is_auto: 0, source_kind: 'gcal', source_ref: 'evt-123', status: 'planned' });
 
-  const routineType = (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Routine'`).get() as { id: number }).id;
+  const routineType = (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Routine'`).get() as { id: string }).id;
   const pattern = insert('patterns', { owner_id: OWNER, type_id: routineType, name: 'Morning routine', tag: 'morning' });
   insertNoId('pattern_tasks', { pattern_id: pattern, task_id: meditate, position: 0 });
 
@@ -122,7 +130,7 @@ describe('behavior baseline — Auto placement engine', () => {
   it('places Plans-first then the workday fallback, deterministically', () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC', workday_start='09:00', workday_end='18:00', auto_fill_workday=1 WHERE owner_id=?`).run(OWNER);
 
-    const plan = insert('time_blocks', { title: 'work plan', block_kind: 'timeblock', block_type: 'plan', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
+    const plan = insert('time_blocks', { title: 'work plan', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
     const work = insert('tags', { name: 'work' });
     const code = insert('tasks', { title: 'Write code', owner_id: OWNER, status: 'open', estimated_minutes: 60, priority: 2 });
     const milk = insert('tasks', { title: 'Buy milk', owner_id: OWNER, status: 'open', estimated_minutes: 30, priority: 3 });

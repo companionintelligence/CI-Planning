@@ -24,7 +24,7 @@ export function jobsRouter() {
 
   // POST /api/jobs/:id/run
   router.post('/api/jobs/:id/run', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const [job] = await db.select().from(scheduledJobs).where(eq(scheduledJobs.id, id));
     if (!job) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 

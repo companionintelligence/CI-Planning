@@ -48,13 +48,13 @@ export interface GenerateResult {
 }
 
 interface TemplateRow {
-  id: number;
+  id: string;
   title: string;
   task_time: string | null;
   estimated_minutes: number | null;
   priority: number | null;
   status: string;
-  owner_id: number;
+  owner_id: string;
   is_habit: number;
   recurrence_rule: string;
   recurrence_dtstart: string | null;
@@ -68,7 +68,7 @@ function addDaysISO(date: string, n: number): string {
 }
 
 /** Owner's planning timezone, falling back to the server zone. */
-export function ownerTimezone(owner: number): string {
+export function ownerTimezone(owner: string): string {
   const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
     | { timezone: string | null }
     | undefined;
@@ -92,7 +92,7 @@ function parseExdates(raw: string | null): string[] {
  * broken-streak marker the client surfaces (Phase H later turns it into a
  * notification). Returns the count flagged. Idempotent (only touches `open` rows).
  */
-export function flagMissedHabits(templateId: number, today: string): number {
+export function flagMissedHabits(templateId: string, today: string): number {
   return sqlite
     .prepare(
       `UPDATE tasks SET status = 'missed'
@@ -130,9 +130,9 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
 
   const ins = sqlite.prepare(
     `INSERT OR IGNORE INTO tasks
-       (title, scheduled_for, defer_until, task_time, due_at, estimated_minutes, priority,
+       (id, title, scheduled_for, defer_until, task_time, due_at, estimated_minutes, priority,
         status, owner_id, recurrence_parent_id, occurrence_date, is_habit, source_kind)
-     VALUES (@title, @sched, @defer, @time, @due, @est, @prio,
+     VALUES (uuid7(), @title, @sched, @defer, @time, @due, @est, @prio,
              'open', @owner, @parent, @day, @habit, 'recurrence')`
   );
 

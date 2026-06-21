@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { runScheduler } from '../src/engine/scheduler.js';
 import { addDependency } from '../src/engine/deps.js';
 import { resetDb } from './helpers.js';
+
+const OWNER = SYSTEM_OWNER;
 
 function insertTask(opts: {
   title: string;
@@ -11,21 +14,22 @@ function insertTask(opts: {
   dueAt?: string | null;
   scheduledFor?: string | null;
   deferUntil?: string | null;
-}): number {
+}): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes, due_at, scheduled_for, defer_until)
-         VALUES (?, ?, 1, 'open', ?, ?, ?, ?) RETURNING id`
+        `INSERT INTO tasks (id, title, priority, owner_id, status, estimated_minutes, due_at, scheduled_for, defer_until)
+         VALUES (uuid7(), ?, ?, ?, 'open', ?, ?, ?, ?) RETURNING id`
       )
       .get(
         opts.title,
         opts.priority ?? 3,
+        OWNER,
         opts.estimate ?? 60,
         opts.dueAt ?? null,
         opts.scheduledFor ?? null,
         opts.deferUntil ?? null
-      ) as { id: number }
+      ) as { id: string }
   ).id;
 }
 
@@ -37,7 +41,7 @@ function setPrefs(p: { start?: string; end?: string; tz?: string; maxFocus?: num
       `UPDATE scheduling_prefs
        SET workday_start = ?, workday_end = ?, timezone = ?, max_focus_block_minutes = ?, min_break_minutes = ?,
            planning_horizon_days = ?
-       WHERE owner_id = 1`
+       WHERE owner_id = ?`
     )
     .run(
       p.start ?? '09:00',
@@ -45,14 +49,15 @@ function setPrefs(p: { start?: string; end?: string; tz?: string; maxFocus?: num
       p.tz ?? 'America/Los_Angeles',
       p.maxFocus ?? 90,
       p.brk ?? 10,
-      p.horizon ?? 7
+      p.horizon ?? 7,
+      OWNER
     );
 }
 
 function addTask(title: string, estimate: number, priority: number) {
   sqlite
-    .prepare(`INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes) VALUES (?, ?, 1, 'open', ?)`)
-    .run(title, priority, estimate);
+    .prepare(`INSERT INTO tasks (id, title, priority, owner_id, status, estimated_minutes) VALUES (uuid7(), ?, ?, ?, 'open', ?)`)
+    .run(title, priority, OWNER, estimate);
 }
 
 function addDatedTask(
@@ -64,10 +69,10 @@ function addDatedTask(
 ) {
   sqlite
     .prepare(
-      `INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes, due_at, task_time)
-       VALUES (?, ?, 1, 'open', ?, ?, ?)`
+      `INSERT INTO tasks (id, title, priority, owner_id, status, estimated_minutes, due_at, task_time)
+       VALUES (uuid7(), ?, ?, ?, 'open', ?, ?, ?)`
     )
-    .run(title, priority, estimate, dueAt, taskTime);
+    .run(title, priority, OWNER, estimate, dueAt, taskTime);
 }
 
 interface BlockRow { title: string; start_at: string; end_at: string }
@@ -112,8 +117,8 @@ describe('scheduler', () => {
     setPrefs({ start: '09:00', end: '12:00', maxFocus: 90, brk: 10 });
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (title, block_kind, start_at, end_at, is_locked, is_auto, status)
-         VALUES ('Standup', 'meeting', ?, ?, 1, 0, 'planned')`
+        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, status)
+         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 1, 0, 'planned')`
       )
       .run('2026-06-15T17:00:00.000Z', '2026-06-15T17:30:00.000Z');
 

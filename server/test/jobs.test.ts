@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { runJob } from '../src/jobs/index.js';
 import { resetDb, ollamaAvailable } from './helpers.js';
 
@@ -18,9 +19,9 @@ describe('jobs', () => {
   it('promote_possibles promotes high-confidence possibles into tasks and logs a run', async () => {
     sqlite
       .prepare(
-        `INSERT INTO possible_tasks (raw_title, proposed_priority, source_kind, source_ref, confidence, status)
-         VALUES ('Sign the contract', 2, 'gmail', 'm1#0', 0.9, 'pending'),
-                ('Maybe look into X', 3, 'gmail', 'm2#0', 0.3, 'pending')`
+        `INSERT INTO possible_tasks (id, raw_title, proposed_priority, source_kind, source_ref, confidence, status)
+         VALUES (uuid7(), 'Sign the contract', 2, 'gmail', 'm1#0', 0.9, 'pending'),
+                (uuid7(), 'Maybe look into X', 3, 'gmail', 'm2#0', 0.3, 'pending')`
       )
       .run();
 
@@ -38,11 +39,11 @@ describe('jobs', () => {
   it('promotion carries suggested tags across to the new task', async () => {
     const p = sqlite
       .prepare(
-        `INSERT INTO possible_tasks (raw_title, source_kind, source_ref, confidence, status)
-         VALUES ('Tagged task', 'text', 't1#0', 0.95, 'pending') RETURNING id`
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status)
+         VALUES (uuid7(), 'Tagged task', 'text', 't1#0', 0.95, 'pending') RETURNING id`
       )
-      .get() as { id: number };
-    const tag = sqlite.prepare("INSERT INTO tags (name) VALUES ('legal') RETURNING id").get() as { id: number };
+      .get() as { id: string };
+    const tag = sqlite.prepare("INSERT INTO tags (id, name) VALUES (uuid7(), 'legal') RETURNING id").get() as { id: string };
     sqlite.prepare('INSERT INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)').run(p.id, tag.id);
 
     await runJob('promote_possibles');
@@ -60,10 +61,10 @@ describe('jobs', () => {
   it('auto_schedule is retired: it proposes candidates into the flight-plan, not blocks (Phase G)', async () => {
     sqlite
       .prepare(
-        `INSERT INTO tasks (title, priority, owner_id, status, estimated_minutes)
-         VALUES ('Write spec', 1, 1, 'open', 60), ('Review PR', 2, 1, 'open', 30)`
+        `INSERT INTO tasks (id, title, priority, owner_id, status, estimated_minutes)
+         VALUES (uuid7(), 'Write spec', 1, ?, 'open', 60), (uuid7(), 'Review PR', 2, ?, 'open', 30)`
       )
-      .run();
+      .run(SYSTEM_OWNER, SYSTEM_OWNER);
 
     await runJob('auto_schedule');
 
@@ -73,7 +74,7 @@ describe('jobs', () => {
     const blocks = sqlite.prepare("SELECT COUNT(*) AS n FROM time_blocks WHERE block_kind='task'").get() as { n: number };
     expect(blocks.n).toBe(0);
     // The two open tasks were proposed into the flight-plan (unselected).
-    const staged = sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = 1`).get() as { n: number };
+    const staged = sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(SYSTEM_OWNER) as { n: number };
     expect(staged.n).toBe(2);
     expect(run?.items_created).toBe(2);
   });
@@ -81,8 +82,8 @@ describe('jobs', () => {
   it('nightly_grooming runs end-to-end and records a run (no hard LLM dependency)', async () => {
     sqlite
       .prepare(
-        `INSERT INTO possible_tasks (raw_title, source_kind, source_ref, confidence, status)
-         VALUES ('Groom me', 'text', 'g1#0', 0.8, 'pending')`
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status)
+         VALUES (uuid7(), 'Groom me', 'text', 'g1#0', 0.8, 'pending')`
       )
       .run();
     await runJob('nightly_grooming');

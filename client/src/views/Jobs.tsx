@@ -16,9 +16,9 @@ function statusIcon(s?: string) {
 }
 
 export function Jobs() {
-  const [triggering, setTriggering] = createSignal<number | null>(null);
+  const [triggering, setTriggering] = createSignal<string | null>(null);
 
-  async function trigger(id: number) {
+  async function trigger(id: string) {
     setTriggering(id);
     try {
       const r = await api.jobs.run(id);

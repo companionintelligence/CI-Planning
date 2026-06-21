@@ -11,7 +11,7 @@
 import { createSignal } from 'solid-js';
 
 export type SelectableKind = 'block' | 'flight-plan-task';
-export interface Selection { kind: SelectableKind; id: number }
+export interface Selection { kind: SelectableKind; id: string }
 
 const keyOf = (s: Selection) => `${s.kind}:${s.id}`;
 const [selection, setSelection] = createSignal<Map<string, Selection>>(new Map());
@@ -40,11 +40,11 @@ export function clearSelection(): void {
  *  - block:id → looks up `blocks[id].task_id` (skipped if NULL).
  *  - flight-plan-task:id → IS the task id.
  */
-export function selectedTaskIds(blocks: { id: number; task_id?: number }[]): number[] {
-  const out: number[] = [];
-  const seen = new Set<number>();
+export function selectedTaskIds(blocks: { id: string; task_id?: string }[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
   for (const s of selection().values()) {
-    let tid: number | undefined;
+    let tid: string | undefined;
     if (s.kind === 'flight-plan-task') {
       tid = s.id;
     } else {
@@ -61,8 +61,8 @@ export function selectedTaskIds(blocks: { id: number; task_id?: number }[]): num
 
 /** A human label for the selected items (for the modal preview). */
 export function selectedTitles(
-  blocks: { id: number; title: string }[],
-  tasks: { id: number; title: string }[],
+  blocks: { id: string; title: string }[],
+  tasks: { id: string; title: string }[],
 ): string[] {
   const out: string[] = [];
   for (const s of selection().values()) {

@@ -10,10 +10,10 @@ import { runAuto } from '../engine/autoplan.js';
  */
 
 interface FpRow {
-  task_id: number;
+  task_id: string;
   selected: number;
   position: number;
-  source_pattern_id: number | null;
+  source_pattern_id: string | null;
   added_at: string;
   title: string;
   priority: number | null;
@@ -21,7 +21,7 @@ interface FpRow {
   status: string;
 }
 
-function list(owner: number) {
+function list(owner: string) {
   const rows = sqlite
     .prepare(
       `SELECT fp.task_id, fp.selected, fp.position, fp.source_pattern_id, fp.added_at,
@@ -33,7 +33,7 @@ function list(owner: number) {
   return rows.map((r) => ({ ...r, selected: !!r.selected }));
 }
 
-function nextPos(owner: number): number {
+function nextPos(owner: string): number {
   return (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number }).m + 1;
 }
 
@@ -55,7 +55,7 @@ export function flightPlanRouter() {
     if (body.pattern_id != null) {
       const owns = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(body.pattern_id, owner);
       if (!owns) { ctx.status = 404; ctx.body = { error: 'pattern not found' }; return; }
-      const members = sqlite.prepare(`SELECT task_id FROM pattern_tasks WHERE pattern_id = ? ORDER BY position`).all(body.pattern_id) as { task_id: number }[];
+      const members = sqlite.prepare(`SELECT task_id FROM pattern_tasks WHERE pattern_id = ? ORDER BY position`).all(body.pattern_id) as { task_id: string }[];
       let pos = nextPos(owner);
       for (const m of members) if (ins.run(owner, m.task_id, body.pattern_id, pos++).changes > 0) added++;
     } else if (body.task_id != null) {
@@ -70,7 +70,7 @@ export function flightPlanRouter() {
 
   router.patch('/api/flight-plan/:taskId', async (ctx) => {
     const owner = currentOwnerId();
-    const taskId = Number(ctx.params.taskId);
+    const taskId = ctx.params.taskId;
     if (!sqlite.prepare(`SELECT 1 FROM flight_plan WHERE owner_id = ? AND task_id = ?`).get(owner, taskId)) {
       ctx.status = 404; ctx.body = { error: 'not staged' }; return;
     }
@@ -83,8 +83,8 @@ export function flightPlanRouter() {
 
   router.delete('/api/flight-plan/:taskId', async (ctx) => {
     const owner = currentOwnerId();
-    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, Number(ctx.params.taskId));
-    broadcast(owner, 'flight_plan:updated', { removed: Number(ctx.params.taskId) });
+    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, ctx.params.taskId);
+    broadcast(owner, 'flight_plan:updated', { removed: ctx.params.taskId });
     ctx.body = { flight_plan: list(owner) };
   });
 
@@ -98,7 +98,7 @@ export function flightPlanRouter() {
 
   // Two-step Auto: empty flight-plan → propose candidates; selected → place them.
   router.post('/api/auto/run', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as { block_id?: number; date?: string };
+    const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string };
     const result = runAuto({ blockId: body.block_id, date: body.date });
     ctx.body = { result, flight_plan: list(currentOwnerId()) };
   });

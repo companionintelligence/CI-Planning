@@ -47,11 +47,11 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
     const end = new Date(Date.parse(start) + durMin * 60000).toISOString();
     try {
       await api.blocks.update(b.id, {
-        title: name().trim() || 'Plan', tag: tagList.join(',') || null,
+        title: name().trim() || 'Time Block', tag: tagList.join(',') || null,
         start_at: start, end_at: end, note: note().trim() || null,
       });
       refetchBlocks();
-      showToast('Plan updated', 'success');
+      showToast('Time Block updated', 'success');
       props.onClose();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -61,7 +61,7 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
       <div class="modal-backdrop" onClick={props.onClose}>
         <div class="modal" onClick={(e) => e.stopPropagation()}>
           <div class="flex items-center justify-between px-4 py-3 border-b border-border">
-            <span class="text-sm font-semibold text-foreground">Edit Plan</span>
+            <span class="text-sm font-semibold text-foreground">Edit Time Block</span>
             <button onClick={props.onClose} class="btn-icon"><X size={16} /></button>
           </div>
           <div class="p-4 flex flex-col gap-3">
