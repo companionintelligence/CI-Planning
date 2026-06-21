@@ -177,4 +177,12 @@ describe('tasks / blocks / tags / possibles API', () => {
     expect(typeof res.body.prose).toBe('string');
     expect(res.body.prose.length).toBeGreaterThan(0);
   });
+
+  it('suggest-tags returns an array constrained to existing tags (empty when Ollama is down)', async () => {
+    await api(server.url, '/api/tasks', { method: 'POST', json: { title: 'seed', tags: ['email'] } });
+    const res = await api(server.url, '/api/tasks/suggest-tags', { method: 'POST', json: { title: 'Email Bluepeak about the invoice' } });
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.tags)).toBe(true);
+    for (const t of res.body.tags) expect(['email']).toContain(t); // never invents a tag
+  });
 });
