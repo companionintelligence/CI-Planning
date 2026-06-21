@@ -2,7 +2,7 @@ import Router from '@koa/router';
 import { PassThrough } from 'node:stream';
 import { currentOwnerId } from '../lib/context.js';
 
-const clients = new Map<PassThrough, number>(); // stream -> ownerId
+const clients = new Map<PassThrough, string>(); // stream -> ownerId
 
 /** Register an SSE client for an owner. Returns an unregister function. */
 export function registerClient(stream: PassThrough, ownerId: string): () => void {

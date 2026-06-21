@@ -116,7 +116,7 @@ export async function dedupePossibles(opts: { threshold?: number } = {}): Promis
 
   let duplicates = 0;
   let compared = 0;
-  const kept: number[] = [];
+  const kept: string[] = [];
   for (const v of vectors) {
     let isDup = false;
     for (const k of kept) {

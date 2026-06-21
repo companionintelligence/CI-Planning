@@ -69,7 +69,7 @@ const serializeType = (t: TypeRow) => ({
   notify: !!t.notify,
 });
 
-function taskIdsOf(patternId: string): number[] {
+function taskIdsOf(patternId: string): string[] {
   return (
     sqlite
       .prepare(`SELECT task_id FROM pattern_tasks WHERE pattern_id = ? ORDER BY position, task_id`)
@@ -243,7 +243,7 @@ export function patternsRouter() {
   router.post('/api/patterns', async (ctx) => {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as {
-      type_id?: number; name?: string; tag?: string; notes?: string; task_ids?: number[];
+      type_id?: string; name?: string; tag?: string; notes?: string; task_ids?: string[];
       recurrence_rule?: string | null; recurrence_dtstart?: string | null;
     };
     if (!body.name?.trim()) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
@@ -279,7 +279,7 @@ export function patternsRouter() {
       | undefined;
     if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as {
-      type_id?: number | null; name?: string; tag?: string | null; notes?: string | null; task_ids?: number[];
+      type_id?: string | null; name?: string; tag?: string | null; notes?: string | null; task_ids?: string[];
       recurrence_rule?: string | null; recurrence_dtstart?: string | null;
     };
     const nextTypeId = body.type_id !== undefined ? body.type_id : existing.type_id;
@@ -460,8 +460,8 @@ export function patternsRouter() {
    *  Routine from a multi-selected set of existing tasks (Phase F: Shift+= hotkey). */
   router.post('/api/patterns/promote-from-tasks', async (ctx) => {
     const owner = currentOwnerId();
-    const body = (ctx.request.body ?? {}) as { task_ids?: number[]; name?: string };
-    const ids = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is number => typeof x === 'number') : [];
+    const body = (ctx.request.body ?? {}) as { task_ids?: string[]; name?: string };
+    const ids = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is string => typeof x === 'string') : [];
     if (ids.length === 0) { ctx.status = 422; ctx.body = { error: 'task_ids is required' }; return; }
     // Verify all tasks belong to this owner (defensive).
     const placeholders = ids.map(() => '?').join(',');
@@ -483,7 +483,7 @@ export function patternsRouter() {
     const id = ctx.params.id;
     const pattern = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner);
     if (!pattern) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const body = (ctx.request.body ?? {}) as { date?: string; block_id?: number | null };
+    const body = (ctx.request.body ?? {}) as { date?: string; block_id?: string | null };
     const result = placePatternOnDay(owner, id, { date: body.date, blockId: body.block_id ?? null });
 
     // Return the freshly placed (or already-on-the-day pattern-marked) blocks

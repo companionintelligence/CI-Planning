@@ -31,7 +31,7 @@ export function Patterns() {
     return m;
   });
   const taskById = createMemo(() => {
-    const m = new Map<number, Task>();
+    const m = new Map<string, Task>();
     for (const t of allTasks() ?? []) m.set(t.id, t);
     return m;
   });
@@ -74,7 +74,7 @@ export function Patterns() {
 
   // Routines section is a drop zone (Phase E): a Habit task or Plan Block dropped
   // in promotes into a new Routine (server picks the right promote-from-* route).
-  async function onRoutineDrop(p: { kind: string; id: number }) {
+  async function onRoutineDrop(p: { kind: string; id: string }) {
     try {
       if (p.kind === 'habit') {
         const task = (allTasks() ?? []).find((t) => t.id === p.id);
@@ -105,11 +105,11 @@ export function Patterns() {
     try { await api.patterns.delete(p.id); refetchPatterns(); showToast(`Deleted "${p.name}"`, 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
-  async function addMember(p: Pattern, taskId: number) {
+  async function addMember(p: Pattern, taskId: string) {
     try { await api.patterns.addTask(p.id, taskId); refetchPatterns(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
-  async function removeMember(p: Pattern, taskId: number) {
+  async function removeMember(p: Pattern, taskId: string) {
     try { await api.patterns.removeTask(p.id, taskId); refetchPatterns(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -123,11 +123,11 @@ export function Patterns() {
     try { await api.patterns.addFastTask(p.id, { title: title.trim() }); refetchPatterns(); refetchAll(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
-  async function removeFast(p: Pattern, taskId: number) {
+  async function removeFast(p: Pattern, taskId: string) {
     try { await api.patterns.removeFastTask(p.id, taskId); refetchPatterns(); refetchAll(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
-  async function saveEst(taskId: number, v: number) {
+  async function saveEst(taskId: string, v: number) {
     try { await api.tasks.update(taskId, { estimated_minutes: v }); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }

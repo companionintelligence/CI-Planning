@@ -113,7 +113,7 @@ function orderForPlan(cands: StagedTask[]): StagedTask[] {
   const overlap = (c: StagedTask) => c.tags.reduce((s, t) => s + ((freq.get(t) ?? 1) - 1), 0);
   const dueRank = (c: StagedTask) => (c.due_at ? Date.parse(c.due_at) : Number.POSITIVE_INFINITY);
   return [...cands].sort(
-    (a, b) => a.priority - b.priority || overlap(b) - overlap(a) || dueRank(a) - dueRank(b) || a.task_id - b.task_id
+    (a, b) => a.priority - b.priority || overlap(b) - overlap(a) || dueRank(a) - dueRank(b) || a.task_id.localeCompare(b.task_id)
   );
 }
 
@@ -147,9 +147,9 @@ function placeIntoWindow(
   windowStartMs: number,
   windowEndMs: number,
   prefs: PrefsRow | undefined,
-  opts: { parentBlockId?: number | null; includePlans?: boolean }
-): { blocksCreated: number; placedTaskIds: Set<number> } {
-  const placedTaskIds = new Set<number>();
+  opts: { parentBlockId?: string | null; includePlans?: boolean }
+): { blocksCreated: number; placedTaskIds: Set<string> } {
+  const placedTaskIds = new Set<string>();
   if (windowEndMs <= windowStartMs || tasks.length === 0) return { blocksCreated: 0, placedTaskIds };
 
   const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
@@ -203,7 +203,7 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
  */
-export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?: string; blockId?: number } = {}): AutoResult {
+export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?: string; blockId?: string } = {}): AutoResult {
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
@@ -224,7 +224,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
 
   // ── General Auto: Plans first, then the workday fallback ────────────────────
   clearPriorAuto(date, tz);
-  const placedIds = new Set<number>();
+  const placedIds = new Set<string>();
   let blocksCreated = 0;
 
   // Pass 1 — fill each tagged Plan with its tag-matched, still-unplaced tasks.
@@ -269,7 +269,7 @@ function clearPriorAutoInWindow(windowStartMs: number, windowEndMs: number): voi
  * The two-step Auto entry point. No selected staged items → propose candidates;
  * some selected → place them. Never touches anything outside the flight-plan.
  */
-export function runAuto(opts: { date?: string; blockId?: number } = {}): AutoResult {
+export function runAuto(opts: { date?: string; blockId?: string } = {}): AutoResult {
   const owner = currentOwnerId();
   if (selectedStaged(owner).length === 0) {
     const added = fillFlightPlanCandidates(owner);

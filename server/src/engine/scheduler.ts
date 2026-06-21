@@ -264,7 +264,7 @@ export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } 
 export function dayObstacles(
   windowStartMs: number,
   windowEndMs: number,
-  opts: { includePlans?: boolean; excludeBlockId?: number | null } = {}
+  opts: { includePlans?: boolean; excludeBlockId?: string | null } = {}
 ): { start: number; end: number }[] {
   const windowStartISO = new Date(windowStartMs).toISOString();
   const windowEndISO = new Date(windowEndMs).toISOString();

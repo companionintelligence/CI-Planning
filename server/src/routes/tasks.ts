@@ -74,8 +74,8 @@ export function tasksRouter() {
       task_time?: string;
       estimated_minutes?: number;
       priority?: number;
-      owner_id?: number;
-      parent_id?: number;
+      owner_id?: string;
+      parent_id?: string;
       tags?: string[];
       depends_on?: string[];
       recurrence_rule?: string;
@@ -119,7 +119,7 @@ export function tasksRouter() {
       // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
       if (body.is_habit) ensureHabitPattern(template.id, owner, template.title);
       const generated = generateRecurrences();
-      const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as number[], blocked: false };
+      const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
       broadcast(currentOwnerId(), 'recurrence:generated', generated);
       ctx.status = 201;
@@ -297,7 +297,7 @@ export function tasksRouter() {
       status?: string;
       completed?: boolean;
       completed_at?: string | null;
-      parent_id?: number | null;
+      parent_id?: string | null;
       tags?: string[];
       depends_on?: string[];
       recurrence_rule?: string | null;
@@ -434,7 +434,7 @@ export function tasksRouter() {
 }
 
 /** Replace a task's blockers; on a cycle, respond 409 and return false. */
-function applyDependencies(ctx: { status: number; body: unknown }, taskId: string, dependsOn: number[]): boolean {
+function applyDependencies(ctx: { status: number; body: unknown }, taskId: string, dependsOn: string[]): boolean {
   try {
     setDependencies(taskId, dependsOn);
     return true;

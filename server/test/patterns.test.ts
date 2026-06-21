@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
 /**
@@ -7,15 +8,15 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  * (typed, many-to-many task collections) with their REST surface.
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 
-const insertTask = (title: string): number =>
-  (sqlite.prepare(`INSERT INTO tasks (title, owner_id, status) VALUES (?, ?, 'open') RETURNING id`).get(title, OWNER) as { id: number }).id;
-const taskExists = (id: number) => !!sqlite.prepare(`SELECT id FROM tasks WHERE id = ?`).get(id);
-const memberCount = (pid: number) =>
+const insertTask = (title: string): string =>
+  (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), ?, ?, 'open') RETURNING id`).get(title, OWNER) as { id: string }).id;
+const taskExists = (id: string) => !!sqlite.prepare(`SELECT id FROM tasks WHERE id = ?`).get(id);
+const memberCount = (pid: string) =>
   (sqlite.prepare(`SELECT COUNT(*) AS c FROM pattern_tasks WHERE pattern_id = ?`).get(pid) as { c: number }).c;
-const typeByName = (name: string): { id: number } =>
-  sqlite.prepare(`SELECT id FROM pattern_types WHERE name = ? AND owner_id = ?`).get(name, OWNER) as { id: number };
+const typeByName = (name: string): { id: string } =>
+  sqlite.prepare(`SELECT id FROM pattern_types WHERE name = ? AND owner_id = ?`).get(name, OWNER) as { id: string };
 
 let srv: TestServer;
 beforeAll(async () => {

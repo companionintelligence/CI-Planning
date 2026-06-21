@@ -20,7 +20,7 @@ function normTag(name: string): string {
   return name.toLowerCase().replace(/\s+/g, '-').slice(0, 32);
 }
 
-function tagId(name: string): number {
+function tagId(name: string): string {
   const existing = sqlite.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: string } | undefined;
   if (existing) return existing.id;
   return (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string }).id;
