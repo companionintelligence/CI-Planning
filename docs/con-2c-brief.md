@@ -39,4 +39,5 @@
 - `pnpm -C server exec tsc --noEmit` clean + suite **253** green; `pnpm -C client exec tsc --noEmit` clean + tests green.
 
 ## Deliverable
-- Commit on `claude/con-2-vocab` (`feat(con-2c): add tasks.subtype (additive); is_habit/is_fast_task kept as runtime aliases`). End with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. Do NOT open a PR (CON-2d still follows). Push + report; show the baseline diff is only the added `subtype` field.
+- Commit on `claude/con-2-vocab` (`feat(con-2c): add tasks.subtype (additive); is_habit/is_fast_task kept as runtime aliases`). End with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. Push + report; show the baseline diff is only the added `subtype` field.
+- **This is the last CON-2 code sub-task** (CON-2d is deferred until #71's day-nav). **Do NOT open the PR yourself** — report back. CON-1 was *squash*-merged into `main`, so the orchestrator will `git rebase --onto main <CON-1-tip> claude/con-2-vocab` (drop the already-merged CON-1 commits) to produce a clean CON-2-only diff, then open the CON-2 PR (base `main`).

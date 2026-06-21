@@ -1,12 +1,16 @@
 # CON-2d — Remove the ConceptLane (handoff brief)
 
+> **STATUS: DEFERRED (decided with the user).** Do **not** run this yet. Removing
+> ConceptLane before #71 Phase 1 (day navigation) would leave future-day someday
+> blocks unbrowsable (the Planner is today-only). CON-2d is therefore sequenced
+> **after #71's day-nav lands**, not as part of the CON-2 PR. CON-2 ships as
+> 2a + 2b + 2c. Keep this brief for when day-nav is in.
+>
 > **Self-contained brief for a fresh session.** Remove the separate Concept
 > horizon lane; someday Time Blocks render on their goal day in the Planner header
 > lane. Canon: [GLOSSARY.md](GLOSSARY.md). Plan: [consolidation-plan.md](consolidation-plan.md).
 >
-> **SEQUENCING: run last, after CON-2b + CON-2c.** Branch off the *latest*
-> `claude/con-2-vocab` HEAD. Shares `Planner.tsx`/`Today.tsx` with the other
-> sub-tasks — not parallel-safe.
+> **SEQUENCING: run after #71 Phase 1 (day-nav).** Branch off the latest base then.
 
 ## Where things stand
 - CON-2a (block_type → scheduled/someday), CON-2b (vocab relabels), CON-2c (subtype) are in.
