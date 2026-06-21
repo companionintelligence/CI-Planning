@@ -11,7 +11,7 @@ import { DEFAULT_CONCEPT_TAGS, type ConceptTag } from '../lib/pattern-meta.js';
 
 /**
  * The lower drawer (Phase G, G5). Floats above the cockpit and **never closes** —
- * its bar (`[+ Block] [+ Pattern] [+ Open Task]`) is always present; the panel
+ * its bar (`[+ Block] [+ Routine] [+ Open Task]`) is always present; the panel
  * above it expands/contracts. Each action stages onto the flight-plan (tasks,
  * patterns) or drops a Time-Block container onto the PLANNER.
  */
@@ -204,13 +204,13 @@ export function PlannerDrawer() {
       <div class="rounded-md border border-border">
         <button onClick={() => setOpen((v) => !v)} class="w-full flex items-center gap-2 px-3 py-2 text-left">
           <Star size={14} class="text-primary fill-primary/30" />
-          <span class="text-sm font-medium text-foreground">Plan Blocks</span>
-          <span class="text-[11px] text-muted-foreground">· saved Plan shapes · {items().length}</span>
+          <span class="text-sm font-medium text-foreground">Time Blocks</span>
+          <span class="text-[11px] text-muted-foreground">· saved Time Block shapes · {items().length}</span>
           <span class="ml-auto text-muted-foreground"><Show when={open()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show></span>
         </button>
         <Show when={open()}>
           <div class="border-t border-border">
-            <Show when={items().length > 0} fallback={<p class="px-3 py-2 text-xs text-muted-foreground italic">None yet — save a Plan from the Planner ★ menu.</p>}>
+            <Show when={items().length > 0} fallback={<p class="px-3 py-2 text-xs text-muted-foreground italic">None yet — save a Time Block from the Planner ★ menu.</p>}>
               <For each={items()}>
                 {(t) => (
                   <div class="flex items-center gap-2 px-3 py-1.5 hover:bg-sidebar-accent">
@@ -275,7 +275,7 @@ export function PlannerDrawer() {
   // Track Concept: add the concept to its goal day (off the minute grid).
   async function trackConcept() {
     const tag = tagList()[0];
-    const name = bwName().trim() || tag || 'Concept';
+    const name = bwName().trim() || tag || 'Time Block';
     const durMin = Math.max(bwEst(), 15);
     const goal = bwGoal() || null;
     const start = isoAtMidnight(goal ?? localISODate()); // placeholder; rendered off the grid
@@ -286,7 +286,7 @@ export function PlannerDrawer() {
         goal_start_date: goal, duration_minutes: durMin, all_day: true, note: noteOrNull(), start_at: start, end_at: end,
       });
       refetchConcepts(); refetchBlocks();
-      showToast(`Concept "${name}" tracked`, 'success');
+      showToast(`"${name}" saved for someday`, 'success');
       resetWizard();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -302,7 +302,7 @@ export function PlannerDrawer() {
   // Add Plan: schedule it on the chosen day/time with the D/H/M duration (multi-tag).
   async function addPlan() {
     const tags = tagList();
-    const name = bwName().trim() || tags[0] || 'Plan';
+    const name = bwName().trim() || tags[0] || 'Time Block';
     const durMin = Math.max(pD() * 1440 + pH() * 60 + pM(), 15);
     const start = isoAt(bwGoal() || localISODate(), bwStart());
     const end = new Date(Date.parse(start) + durMin * 60_000).toISOString();
@@ -313,7 +313,7 @@ export function PlannerDrawer() {
       });
       if (saveTpl()) { await api.blockTemplates.create({ name, tag: tags[0], default_minutes: durMin }); refetchTemplates(); }
       refetchBlocks();
-      showToast(`Plan "${name}" added`, 'success');
+      showToast(`Time Block "${name}" added`, 'success');
       resetWizard();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -338,11 +338,11 @@ export function PlannerDrawer() {
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden">
-      {/* Buttons inside the container (header row) — Block / Pattern / Open Task. */}
+      {/* Buttons inside the container (header row) — Block / Routine / Open Task. */}
       <div class="flex items-stretch">
         <TabBtn t="block" icon={Boxes} label="Block" />
         <div class="w-px bg-border" />
-        <TabBtn t="pattern" icon={Triangle} label="Pattern" />
+        <TabBtn t="pattern" icon={Triangle} label="Routine" />
         <div class="w-px bg-border" />
         <TabBtn t="task" icon={ListPlus} label="Open Task" />
         <Show when={tab()}>
@@ -362,7 +362,7 @@ export function PlannerDrawer() {
                 <Search size={14} class="text-muted-foreground flex-shrink-0" />
                 <input
                   class="input py-1 text-sm"
-                  placeholder={tab() === 'task' ? 'Search by name or #tag, or type a new task…' : 'Search patterns…'}
+                  placeholder={tab() === 'task' ? 'Search by name or #tag, or type a new task…' : 'Search routines…'}
                   value={query()} onInput={(e) => setQuery(e.currentTarget.value)}
                   onKeyDown={(e) => { if (tab() === 'task' && e.key === 'Enter' && query().trim()) createAndStage(query()); }}
                 />
@@ -395,7 +395,7 @@ export function PlannerDrawer() {
             </Show>
 
           {/* Pattern Wizard — Routines first (the bundle), then Habits, then
-              Plan Blocks (saved Plan templates from the Planner ★ menu). Rituals
+              Time Blocks (saved Time Block templates from the Planner ★ menu). Rituals
               are hidden behind a feature flag (prefs.enable_rituals, default OFF). */}
           <Show when={tab() === 'pattern'}>
             <div class="p-2 space-y-2">
@@ -406,7 +406,7 @@ export function PlannerDrawer() {
                 <PatternCat typeName="Ritual" title="Rituals" desc="occasion prep" />
               </Show>
               <p class="text-[11px] text-muted-foreground text-center pt-1">
-                Create patterns in <A href="/patterns" class="text-primary underline" onClick={() => setTab(null)}>Patterns</A>.
+                Create routines in <A href="/patterns" class="text-primary underline" onClick={() => setTab(null)}>Routines</A>.
               </p>
             </div>
           </Show>
@@ -417,11 +417,11 @@ export function PlannerDrawer() {
               {/* Step trail */}
               <div class="flex items-center gap-2 text-[11px]">
                 <span class="inline-flex items-center gap-1" classList={{ 'text-primary font-medium': step() === 'concept', 'text-muted-foreground': step() !== 'concept' }}>
-                  <Pentagon size={12} /> Concept
+                  <Pentagon size={12} /> Someday
                 </span>
                 <ChevronRight size={12} class="text-muted-foreground" />
                 <span class="inline-flex items-center gap-1" classList={{ 'text-primary font-medium': step() === 'plan', 'text-muted-foreground': step() !== 'plan' }}>
-                  <Star size={12} /> Plan
+                  <Star size={12} /> Scheduled
                 </span>
               </div>
 
@@ -457,8 +457,8 @@ export function PlannerDrawer() {
                 <NoteToggle />
 
                 <div class="flex gap-2">
-                  <button onClick={trackConcept} class="btn-secondary text-xs px-3 py-1.5 flex-1 justify-center"><Pentagon size={13} /> Track Concept</button>
-                  <button onClick={makePlan} class="btn-primary text-xs px-3 py-1.5 flex-1 justify-center"><Star size={13} /> Make Plan</button>
+                  <button onClick={trackConcept} class="btn-secondary text-xs px-3 py-1.5 flex-1 justify-center"><Pentagon size={13} /> Save for someday</button>
+                  <button onClick={makePlan} class="btn-primary text-xs px-3 py-1.5 flex-1 justify-center"><Star size={13} /> Schedule</button>
                 </div>
               </Show>
 
@@ -494,12 +494,12 @@ export function PlannerDrawer() {
                 <div class="flex gap-2">
                   <button onClick={() => setStep('concept')} class="btn-ghost text-xs px-2.5 py-1.5"><ChevronRight size={12} class="rotate-180" /> Back</button>
                   <button onClick={resetWizard} class="btn-ghost text-xs px-2.5 py-1.5"><RotateCcw size={12} /> Reset</button>
-                  <button onClick={addPlan} class="btn-primary text-xs px-3 py-1.5 flex-1 justify-center"><Plus size={13} /> Add Plan</button>
+                  <button onClick={addPlan} class="btn-primary text-xs px-3 py-1.5 flex-1 justify-center"><Plus size={13} /> Add Time Block</button>
                 </div>
 
                 <Show when={(templates() ?? []).length > 0}>
                   <div>
-                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Saved plan templates</div>
+                    <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Saved Time Block templates</div>
                     <div class="flex flex-wrap gap-1.5">
                       <For each={templates()}>
                         {(t) => (
