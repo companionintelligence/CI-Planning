@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   PX_PER_MIN,
   SNAP_MIN,
+  MINUTES_PER_DAY,
   minutesIntoDay,
   instantFor,
   yOf,
   minsOf,
+  instantAtY,
 } from './grid.js';
 import { rangeUTC, weekDaysOf, monthGridOf, addDays } from './dates.js';
 
@@ -55,6 +57,26 @@ describe('grid math — pixel positioning', () => {
     expect(minsOf(yOf(547))).toBe(540);          // 547 → nearest 15 = 540
     expect(minsOf(yOf(548))).toBe(555);          // 548 → nearest 15 = 555
     expect(minsOf(yOf(0))).toBe(0);
+  });
+});
+
+describe('instantAtY — drop/click Y → snapped start instant (CON-5)', () => {
+  const day = '2026-06-15';
+
+  it('is the inverse of yOf at snap boundaries (a chip dropped where it sits)', () => {
+    for (const mins of [0, 15, 540, 555, 720, 1425]) {
+      expect(instantAtY(day, yOf(mins))).toBe(instantFor(day, mins));
+    }
+  });
+
+  it('snaps an off-grid pixel to the nearest SNAP_MIN start', () => {
+    expect(instantAtY(day, yOf(547))).toBe(instantFor(day, 540)); // 547 → 540
+    expect(instantAtY(day, yOf(548))).toBe(instantFor(day, 555)); // 548 → 555
+  });
+
+  it('clamps below midnight to 00:00 and past end-of-day to the last slot', () => {
+    expect(instantAtY(day, -200)).toBe(instantFor(day, 0));
+    expect(instantAtY(day, yOf(MINUTES_PER_DAY + 600))).toBe(instantFor(day, MINUTES_PER_DAY - SNAP_MIN));
   });
 });
 
