@@ -5,10 +5,15 @@ import {
   flightPlan, refetchFlightPlan, refetchBlocks, patterns, showToast,
 } from '../stores/index.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
+import { useDraggable } from '../lib/draggable.js';
 
 /**
  * The Flight-plan (Phase G, G5 + G4): the persisted, owner-scoped staging area the
  * two-step Auto runs over, with **Auto Schedule** pinned at its top and a **Reset**.
+ *
+ * Manual placement (CON-5): each row is a drag source (`kind: 'flight-task'`) — drag
+ * one onto the Planner grid to schedule it at that time (the Planner is the drop
+ * target). A near-zero move falls through as a normal click (checkbox / multi-select).
  *
  *  - Auto with **nothing selected** → step 1: proposes candidates *into* the
  *    flight-plan and schedules nothing.
@@ -100,9 +105,13 @@ export function FlightPlan() {
   const FpRow = (props: { it: FlightPlanItem; inGroup?: boolean }) => {
     const p = () => Math.min(Math.max(props.it.priority ?? 3, 1), 5);
     const selected = () => isSelected({ kind: 'flight-plan-task', id: props.it.task_id });
+    // Drag source (CON-5): drop onto the Planner grid to schedule. The shared
+    // CLICK_PX threshold lets a clean click still reach the row/checkbox onClick.
+    const drag = useDraggable(() => ({ kind: 'flight-task', id: props.it.task_id }));
     return (
       <li
-        class="flex items-center gap-2.5 px-3 py-2 group rounded-md"
+        onPointerDown={drag.onPointerDown}
+        class="flex items-center gap-2.5 px-3 py-2 group rounded-md cursor-grab select-none touch-none"
         classList={{ 'pl-7': props.inGroup, 'ring-2 ring-chart-1 bg-chart-1/5': selected() }}
         // Cmd/Ctrl-click anywhere on the row toggles multi-select (Phase F).
         // The Auto-step-2 selection (the checkbox) is a separate axis, intentionally.
