@@ -177,7 +177,25 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
 export const tags = sqliteTable('tags', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),
+  // Tag taxonomy (0036) — a SECOND axis, orthogonal to entity_tags.level (Phase-5
+  // per-entity dilution). `kind` is the taxonomy LEVEL: a 'direction' is a top-level
+  // category (brand-set Home/Work/Community + user-added), an 'intention' is grouped
+  // under one or more directions via tag_directions.
+  kind: text('kind').notNull().default('intention'),       // 'direction' | 'intention'
+  muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
+  isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
 });
+
+// 0036: intention→direction membership (many-to-many). An intention tag with no row
+// here is "Unsorted". Both sides FK tags(id) cascade.
+export const tagDirections = sqliteTable(
+  'tag_directions',
+  {
+    intentionTagId: text('intention_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    directionTagId: text('direction_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.directionTagId] }) })
+);
 
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
 //     Ritual △ + user-defined). No own recurrence; tasks-only (no nesting) in V1. ---
