@@ -30,6 +30,34 @@ describe('tasks / blocks / tags / possibles API', () => {
     expect(cancelled.body.task.status).toBe('cancelled');
   });
 
+  it('recall clones a shelved task + its subtree to fresh open tasks (cockpit-v2 Phase 6)', async () => {
+    const parent = await api(server.url, '/api/tasks', {
+      method: 'POST',
+      json: { title: 'Quarterly report', priority: 2, estimated_minutes: 90, notes: 'draft then review', tags: ['work'] },
+    });
+    const pid = parent.body.task.id;
+    const sub = await api(server.url, '/api/tasks', { method: 'POST', json: { title: 'Gather numbers', parent_id: pid } });
+    const subId = sub.body.task.id;
+    await api(server.url, `/api/tasks/${pid}`, { method: 'PATCH', json: { completed: true } }); // shelve it
+
+    const recalled = await api(server.url, `/api/tasks/${pid}/recall`, { method: 'POST', json: {} });
+    expect(recalled.status).toBe(201);
+    const clone = recalled.body.task;
+    expect(clone.id).not.toBe(pid);                       // brand-new id
+    expect(clone.status).toBe('open');                    // fresh, not done
+    expect(clone.title).toBe('Quarterly report');
+    expect(clone.estimated_minutes).toBe(90);
+    expect(clone.notes).toBe('draft then review');
+    expect(clone.tags).toEqual(expect.arrayContaining(['work']));
+    expect(clone.parent_id ?? null).toBeNull();           // top clone is independent
+
+    const kids = await api(server.url, `/api/tasks/${clone.id}/subtasks`);
+    expect(kids.body.subtasks.length).toBe(1);            // subtree came along
+    expect(kids.body.subtasks[0].id).not.toBe(subId);     // re-id'd
+    expect(kids.body.subtasks[0].title).toBe('Gather numbers');
+    expect(kids.body.subtasks[0].status).toBe('open');
+  });
+
   it('rejects a task with no title', async () => {
     const res = await api(server.url, '/api/tasks', { method: 'POST', json: { priority: 1 } });
     expect(res.status).toBe(400);

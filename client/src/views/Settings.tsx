@@ -25,11 +25,12 @@ interface SettingsForm {
   fast_model: string; quality_model: string; embed_model: string;
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
+  recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
-  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface';
+  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern';
 
 const DEFAULTS: SettingsForm = {
   workday_start: '09:00', workday_end: '18:00',
@@ -43,6 +44,7 @@ const DEFAULTS: SettingsForm = {
   fast_model: '', quality_model: '', embed_model: '',
   memory_sync_enabled: false, memory_sync_completed: true,
   memory_sync_habits: true, memory_sync_reflections: true,
+  recall_keeps_pattern: false,
 };
 
 export function Settings() {
@@ -71,6 +73,7 @@ export function Settings() {
       fast_model:              p.fast_model ?? '',
       quality_model:           p.quality_model ?? '',
       embed_model:             p.embed_model ?? '',
+      recall_keeps_pattern:    p.recall_keeps_pattern ?? false,
       memory_sync_enabled:     p.memory_sync_enabled ?? false,
       memory_sync_completed:   p.memory_sync_completed ?? true,
       memory_sync_habits:      p.memory_sync_habits ?? true,
@@ -205,6 +208,10 @@ export function Settings() {
           <div class="mt-4">
             <Toggle field="auto_fill_workday" label="Fill the workday with leftovers"
               hint="Auto fills your tagged Plans first. With this on, tasks that match no Plan also fill open work hours. Off → Auto only fills the Plans you drew." />
+          </div>
+          <div class="mt-4">
+            <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
+              hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
           </div>
           <label class="flex flex-col gap-1.5 mt-4">
             <span class="text-xs text-slate-500">Timezone — work hours are wall-clock here</span>
