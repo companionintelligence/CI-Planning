@@ -56,3 +56,13 @@ export const yOf = (mins: number): number => mins * PX_PER_MIN;
 /** Pixels → minutes, snapped to `SNAP_MIN`. (Used by PR2 gestures; pure + tested here.) */
 export const minsOf = (y: number): number =>
   Math.round(y / PX_PER_MIN / SNAP_MIN) * SNAP_MIN;
+
+/**
+ * A grid Y offset (px from the column's midnight) → the snapped UTC instant at that
+ * row, clamped into the day. The single seam for "dropped/clicked at this pixel →
+ * this start time" (CON-5 click-to-create + drag-to-schedule): compose `minsOf`
+ * (snap) with `instantFor` (the exact inverse of `minutesIntoDay`), so a created
+ * block snaps to the grid with no tz drift. Pure + tested.
+ */
+export const instantAtY = (dayStr: string, y: number): string =>
+  instantFor(dayStr, Math.min(Math.max(minsOf(y), 0), MINUTES_PER_DAY - SNAP_MIN));
