@@ -59,7 +59,7 @@ describe('POST /api/patterns/promote-from-plan', () => {
   it('creates a Routine with the Plan’s currently-attached member task blocks', async () => {
     const plan = (await api(srv.url, '/api/blocks', {
       method: 'POST',
-      json: { title: 'Big Plan', block_kind: 'timeblock', block_type: 'plan', start_at: `${DAY}T14:00:00.000Z`, end_at: `${DAY}T17:00:00.000Z` },
+      json: { title: 'Big Plan', block_kind: 'timeblock', block_type: 'scheduled', start_at: `${DAY}T14:00:00.000Z`, end_at: `${DAY}T17:00:00.000Z` },
     })).body.block;
     const a = insertTask('A');
     const b = insertTask('B');

@@ -120,8 +120,8 @@ export const api = {
     // be the Plan or any member; returns the whole moved group.
     moveGroup: (id: string, delta_minutes: number) =>
       request<{ blocks: Block[] }>('POST', `/blocks/${id}/move-group`, { delta_minutes }),
-    // Concepts have no real time — fetch them all (owner-scoped) for the horizon lane.
-    listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?block_type=concept'),
+    // Someday Time Blocks have no real time — fetch them all (owner-scoped) for the horizon lane.
+    listConcepts: () => request<{ blocks: Block[] }>('GET', '/blocks?state=someday'),
     // Promote a Concept into a scheduled Plan at the chosen start (end ⇐ duration).
     promote: (id: string, start_at: string, opts?: { end_at?: string; all_day?: boolean }) =>
       request<{ block: Block }>('POST', `/blocks/${id}/promote`, { start_at, ...opts }),
@@ -246,7 +246,7 @@ export interface Block {
   id: string; task_id?: string; title: string; block_kind: string;
   tag?: string | null; // container/grouping tag (G3); set on 'timeblock' containers
   // Plan/Concept container typing (0019). block_type is set on 'timeblock' containers.
-  block_type?: 'plan' | 'concept' | null;
+  block_type?: 'scheduled' | 'someday' | null;
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)

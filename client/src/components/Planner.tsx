@@ -499,7 +499,7 @@ export function Planner() {
   onCleanup(() => clearInterval(tick));
 
   // Concepts live off the minute grid (the header lane + horizon), never on it.
-  const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'concept');
+  const dayBlocks = () => (blocks() ?? []).filter((b) => b.block_type !== 'someday');
   // Plan containers on the timed grid (★ outline); all-day ones go to the header lane.
   const containers = () => dayBlocks().filter((b) => b.block_kind === 'timeblock' && !isAllDay(b));
   // Task/meeting/focus chips share the overlap layout; containers + break/buffer + all-day don't.

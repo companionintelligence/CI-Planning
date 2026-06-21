@@ -67,7 +67,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "all_day": true,
       "block_kind": "timeblock",
-      "block_type": "concept",
+      "block_type": "someday",
       "created_at": "<ts>",
       "duration_minutes": 60,
       "end_at": "2026-06-22T01:00:00.000Z",
@@ -109,7 +109,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "all_day": false,
       "block_kind": "timeblock",
-      "block_type": "plan",
+      "block_type": "scheduled",
       "created_at": "<ts>",
       "duration_minutes": null,
       "end_at": "2026-06-22T12:00:00.000Z",
