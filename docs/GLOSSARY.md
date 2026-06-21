@@ -38,9 +38,13 @@ reserved)** and demotes everything else.
 | 5 | **Inbox** | Capture / triage queue. (internal: `possible_tasks`; promoting one creates a Task) |
 | 6 | **Flight-plan** | The day’s staging tray — what Auto runs over. |
 | 7 | **Planner** | The date-navigable board where Time Blocks live. (absorbs the old `/calendar` view once day-nav lands) |
-| 8 | *(reserved)* | Headroom — e.g. a future “Project”. **Do not spend without retiring a noun.** |
+| 8 | **Pattern-block** | A named availability window tying a direction tag to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
 
 ## States, subtypes & kinds (demoted — not nouns)
+
+- **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each direction tag has
+  0–N time ranges per day type. Direction-less tasks fall back to the general `workday_start`/
+  `workday_end` window from scheduling\_prefs.
 
 - **Task states:** `open` · `TBD` (title + ≥1 tag, nothing else) · `scheduled` ·
   `deferred` · `done` · `missed` · `past` (the shelf).
@@ -55,8 +59,15 @@ reserved)** and demotes everything else.
 - **Routine flavors:** routine · ritual (flagged off via `enable_rituals`).
   **Habit is a Task subtype** surfaced in the Routines menu — *not* a Routine
   flavor or a “pattern type”.
-- **Tag levels:** top-level (full match weight, dilution-immune) · second-level
-  (diluted: weight = `1 / #tags`).
+- **Tag levels (per-entity, dilution):** top-level (full match weight,
+  dilution-immune) · second-level (diluted: weight = `1 / #tags`). This is a weight on
+  a tag *as applied to an entity*.
+- **Tag taxonomy (per-tag, `tags.kind` — a separate axis from the levels above):**
+  **direction** (top-level category — brand-set **Home / Work / Community**,
+  `is_base` & undeletable, plus user-added) · **intention** (every other tag, grouped
+  under one or more directions via `tag_directions`; ungrouped = *Unsorted*). A tag may
+  be **muted** (a per-tag state, not a noun). Directions/intentions are Tag sub-levels,
+  **not** new nouns.
 
 ## Translation (old term → canonical)
 

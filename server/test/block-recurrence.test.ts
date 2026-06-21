@@ -29,12 +29,11 @@ let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
 beforeEach(() => {
-  resetDb();
+  resetDb(); // also pins timezone = 'UTC' (and all other scheduling_prefs) since PR #81
   sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(OWNER);
 });
-// resetDb does NOT reset scheduling_prefs; the non-UTC test below sets a foreign
-// timezone, so restore it after each test or it leaks into later files (e.g.
-// flight-plan, which doesn't pin its own tz).
+// Belt-and-suspenders: explicitly restore UTC after the non-UTC test below so a
+// future refactor of resetDb() can't silently reintroduce the cross-file leak.
 afterEach(() => {
   sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(OWNER);
 });
