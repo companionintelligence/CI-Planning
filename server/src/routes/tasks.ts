@@ -81,6 +81,7 @@ export function tasksRouter() {
       recurrence_rule?: string;
       recurrence_dtstart?: string;
       is_habit?: boolean;
+      subtype?: Subtype;
     };
 
     if (!body.title?.trim()) {
@@ -88,6 +89,9 @@ export function tasksRouter() {
       ctx.body = { error: 'title is required' };
       return;
     }
+
+    // CON-2c: resolve subtype ⇄ is_habit/is_fast_task once for both create paths.
+    const sw = subtypeWrite(body);
 
     // Recurring task → create a TEMPLATE (status 'recurring', never scheduled
     // directly) and materialize its instances now so the series appears immediately.
@@ -111,13 +115,13 @@ export function tasksRouter() {
           status: 'recurring',
           recurrenceRule: parsed.rule,
           recurrenceDtstart: body.recurrence_dtstart ?? utcDayBounds(localISODate(), tz).start,
-          isHabit: body.is_habit ?? false,
           ownerId: owner,
+          ...(sw ?? {}),
         })
         .returning();
       if (body.tags?.length) await attachTags(template.id, body.tags);
       // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
-      if (body.is_habit) ensureHabitPattern(template.id, owner, template.title);
+      if (sw?.isHabit) ensureHabitPattern(template.id, owner, template.title);
       const generated = generateRecurrences();
       const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
@@ -141,6 +145,7 @@ export function tasksRouter() {
         priority: body.priority ?? 3,
         parentId: body.parent_id,
         ownerId: body.owner_id ?? currentOwnerId(),
+        ...(sw ?? {}),
       })
       .returning();
 
@@ -243,7 +248,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const [task] = await db
       .update(tasks)
-      .set({ isHabit: true, isFastTask: false })
+      .set({ isHabit: true, isFastTask: false, subtype: 'habit' })
       .where(eq(tasks.id, id))
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
@@ -303,6 +308,7 @@ export function tasksRouter() {
       recurrence_rule?: string | null;
       recurrence_dtstart?: string | null;
       is_habit?: boolean;
+      subtype?: Subtype;
     };
 
     // scope=series edits the whole recurring series (the template); scope=instance
@@ -325,7 +331,13 @@ export function tasksRouter() {
     if (body.status !== undefined)            update.status = body.status;
     if (body.completed_at !== undefined)      update.completedAt = body.completed_at;
     if (body.parent_id !== undefined)         update.parentId = body.parent_id;
-    if (body.is_habit !== undefined)          update.isHabit = body.is_habit;
+    // CON-2c: keep subtype ⇄ is_habit/is_fast_task in sync (engine still reads is_habit).
+    const sw = subtypeWrite(body);
+    if (sw) {
+      update.subtype = sw.subtype;
+      if (sw.isHabit !== undefined) update.isHabit = sw.isHabit;
+      if (sw.isFastTask !== undefined) update.isFastTask = sw.isFastTask;
+    }
     if (body.recurrence_dtstart !== undefined) update.recurrenceDtstart = body.recurrence_dtstart;
     if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
 
@@ -431,6 +443,26 @@ export function tasksRouter() {
   });
 
   return router;
+}
+
+type Subtype = 'standard' | 'habit' | 'quick';
+
+/**
+ * CON-2c: `subtype` is the canonical Task subtype; `is_habit`/`is_fast_task` are
+ * kept as in-sync runtime aliases (the recurrence/streak engine reads `is_habit`).
+ * A canonical `subtype` derives both booleans; a legacy `is_habit` derives subtype
+ * and leaves `is_fast_task` untouched. Returns the drizzle columns to write, or
+ * null when neither field was supplied.
+ */
+function subtypeWrite(body: { subtype?: Subtype; is_habit?: boolean }):
+  { subtype: Subtype; isHabit?: boolean; isFastTask?: boolean } | null {
+  if (body.subtype !== undefined) {
+    return { subtype: body.subtype, isHabit: body.subtype === 'habit', isFastTask: body.subtype === 'quick' };
+  }
+  if (body.is_habit !== undefined) {
+    return { subtype: body.is_habit ? 'habit' : 'standard', isHabit: body.is_habit };
+  }
+  return null;
 }
 
 /** Replace a task's blockers; on a cycle, respond 409 and return false. */

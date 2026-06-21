@@ -366,15 +366,15 @@ export function patternsRouter() {
     const est = body.estimated_minutes ?? typeDefault ?? 15;
     const task = sqlite
       .prepare(
-        `INSERT INTO tasks (id, title, estimated_minutes, is_fast_task, owner_id, status, priority, source_kind)
-         VALUES (uuid7(), ?, ?, 1, ?, 'open', 3, 'manual') RETURNING id, title, estimated_minutes`
+        `INSERT INTO tasks (id, title, estimated_minutes, is_fast_task, subtype, owner_id, status, priority, source_kind)
+         VALUES (uuid7(), ?, ?, 1, 'quick', ?, 'open', 3, 'manual') RETURNING id, title, estimated_minutes`
       )
       .get(body.title.trim(), est, owner) as { id: string; title: string; estimated_minutes: number };
     const pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM pattern_tasks WHERE pattern_id = ?`).get(patternId) as { m: number }).m + 1;
     sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(patternId, task.id, pos);
     broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     ctx.status = 201;
-    ctx.body = { task: { id: task.id, title: task.title, estimated_minutes: task.estimated_minutes, is_fast_task: true } };
+    ctx.body = { task: { id: task.id, title: task.title, estimated_minutes: task.estimated_minutes, is_fast_task: true, subtype: 'quick' } };
   });
 
   router.delete('/api/patterns/:id/fast-tasks/:taskId', async (ctx) => {

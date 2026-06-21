@@ -41,6 +41,7 @@ export interface Task {
   occurrence_date?: string;
   is_habit?: boolean;
   is_fast_task?: boolean; // ritual-local, hidden from the task list (Step 3)
+  subtype?: 'standard' | 'habit' | 'quick'; // CON-2c canonical Task subtype (is_habit/is_fast_task kept as aliases)
 }
 
 export interface TaskInput {
