@@ -249,6 +249,12 @@ export interface Block {
   id: string; task_id?: string; title: string; block_kind: string;
   tag?: string | null; // top-level/grouping tag (G3); set on 'timeblock' containers
   secondary_tags?: string[]; // Phase 5: diluted secondary tags (entity_tags level>1)
+  // CON-4 recurring Time Blocks: a template carries recurrence_rule; rendered rows
+  // are materialized instances (recurrence_parent_id + occurrence_date set).
+  recurrence_rule?: string | null;
+  recurrence_dtstart?: string | null;
+  recurrence_parent_id?: string | null;
+  occurrence_date?: string | null;
   // Plan/Concept container typing (0019). block_type is set on 'timeblock' containers.
   block_type?: 'scheduled' | 'someday' | null;
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)

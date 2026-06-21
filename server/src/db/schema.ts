@@ -91,6 +91,15 @@ export const timeBlocks = sqliteTable('time_blocks', {
   // Plan-as-container (PR-C / 0023): a task block's containing Plan. Self-ref FK,
   // ON DELETE SET NULL — deleting a Plan detaches members (they stay as loose blocks).
   parentBlockId: text('parent_block_id').references((): AnySQLiteColumn => timeBlocks.id, { onDelete: 'set null' }),
+  // CON-4 recurrence (0034): bare recurring Time Blocks via the SHARED rrule.js
+  // engine (recurrence.ts), mirroring tasks. A *template* has recurrenceRule set +
+  // recurrenceParentId null (never rendered directly); GET materializes one
+  // *instance* per occurrence (recurrenceParentId = template, occurrenceDate set),
+  // idempotent via ux_block_occurrence. patterns.recurrence_rule (0025) is kept.
+  recurrenceRule: text('recurrence_rule'),           // RRULE string; null = one-off
+  recurrenceDtstart: text('recurrence_dtstart'),     // UTC ISO anchor of the series
+  recurrenceParentId: text('recurrence_parent_id'),  // template id on an instance (no FK: cleared by hand)
+  occurrenceDate: text('occurrence_date'),           // YYYY-MM-DD local day of an instance
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
