@@ -580,7 +580,7 @@ export function Planner() {
   // Create a Time Block at grid Y, optionally bound to a flight-plan task; attach it
   // if it lands inside a Plan's window (mirrors the loose-chip drop path). One POST
   // (+ one attach PATCH only when dropped into a container).
-  async function createBlockAt(clientY: number, task?: { task_id: number; title: string; estimated_minutes: number | null }) {
+  async function createBlockAt(clientY: number, task?: { task_id: string; title: string; estimated_minutes: number | null }) {
     const span = spanAtY(day(), gridY(clientY), task?.estimated_minutes ?? DEFAULT_BLOCK_MIN);
     const tag = task ? taskOf(task.task_id)?.tags?.[0] : undefined;
     try {
