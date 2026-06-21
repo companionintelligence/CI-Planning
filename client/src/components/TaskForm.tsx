@@ -1,11 +1,12 @@
 import { createSignal, createEffect, onMount, Show, For } from 'solid-js';
 import { X, Plus, AlignLeft, Clock, Calendar, Tag, Flag, Timer, Link2, CalendarClock, Repeat, Flame } from 'lucide-solid';
 import { api, type Task, type TaskInput } from '../lib/api.js';
-import { refetchTasks, showToast, setTaskModal, tasks, tags } from '../stores/index.js';
+import { refetchTasks, refetchTags, showToast, setTaskModal, tasks, tags } from '../stores/index.js';
 import {
   buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset,
 } from '../lib/recurrence.js';
 import { suggestTagsFromTitle, localDayPlus } from '../lib/tag-suggest.js';
+import { sortDirections, displayTag } from '../lib/tag-tax.js';
 
 interface Props {
   editTask?: Task;
@@ -104,10 +105,19 @@ export function TaskForm(props: Props) {
     setEstimatedMinutes('30');
   });
 
-  // Existing tags as toggleable bubbles; toggling marks tags hand-edited so the
-  // auto-tagger stops overwriting.
-  const existingTagNames = () => (tags() ?? []).map((t) => t.name);
+  // Tag taxonomy (0036): the quick menu shows DIRECTIONS only; intention tags are
+  // revealed for the selected direction(s), with directions always pinned on top.
+  const allTags = () => tags() ?? [];
+  const existingTagNames = () => allTags().map((t) => t.name);
+  const directionTags = () => sortDirections(allTags().filter((t) => t.kind === 'direction'));
   const selectedTags = () => tagsInput().split(',').map((s) => s.trim().replace(/^#/, '')).filter(Boolean);
+  const selectedDirectionNames = () => directionTags().map((d) => d.name).filter((n) => selectedTags().includes(n));
+  // Intentions to show below: those in a selected direction, plus any already selected.
+  const visibleIntentions = () =>
+    allTags().filter(
+      (t) => t.kind === 'intention' &&
+        (t.directions.some((d) => selectedDirectionNames().includes(d)) || selectedTags().includes(t.name)),
+    );
   function toggleTag(name: string) {
     setTagsTouched(true);
     const cur = selectedTags();
@@ -168,6 +178,19 @@ export function TaskForm(props: Props) {
         depends_on: dependsOn(),
       };
 
+      // New intention tags created here attach to the selected direction(s) so they
+      // aren't orphaned to Unsorted (a brand-new tag with no direction).
+      const dirNames = new Set(directionTags().map((d) => d.name));
+      const dirs = selectedDirectionNames();
+      const known = new Set(existingTagNames());
+      if (dirs.length) {
+        for (const name of body.tags ?? []) {
+          if (!known.has(name) && !dirNames.has(name)) {
+            await api.tags.create(name, { kind: 'intention', directions: dirs });
+          }
+        }
+      }
+
       if (!isEdit()) {
         // Create. A repeat preset makes it a recurring template (server materializes it).
         const rule = currentRule();
@@ -188,6 +211,7 @@ export function TaskForm(props: Props) {
         showToast('Task updated', 'success');
       }
       refetchTasks();
+      refetchTags();
       props.onClose();
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -239,21 +263,37 @@ export function TaskForm(props: Props) {
             >Someday</button>
           </div>
 
-          {/* Quick tag bubbles — the user's existing tags (auto-selected by context). */}
-          <Show when={existingTagNames().length > 0}>
+          {/* Quick menu: DIRECTION tags (Home/Work/Community + custom) pinned on top. */}
+          <Show when={directionTags().length > 0}>
             <div class="flex flex-wrap gap-1.5">
-              <For each={existingTagNames()}>{(name) => (
+              <For each={directionTags()}>{(d) => (
                 <button
                   type="button"
-                  onClick={() => toggleTag(name)}
-                  class="px-2.5 py-1 rounded-full text-xs font-medium border transition-all"
+                  onClick={() => toggleTag(d.name)}
+                  class="px-2.5 py-1 rounded-full text-xs font-semibold border transition-all"
                   classList={{
-                    'bg-primary text-primary-foreground border-primary': selectedTags().includes(name),
-                    'border-border text-muted-foreground hover:text-foreground': !selectedTags().includes(name),
+                    'bg-primary text-primary-foreground border-primary': selectedTags().includes(d.name),
+                    'border-border text-muted-foreground hover:text-foreground': !selectedTags().includes(d.name),
                   }}
-                >#{name}</button>
+                >{displayTag(d.name)}</button>
               )}</For>
             </div>
+            {/* Intention tags for the selected direction(s) — only shown on drill-in. */}
+            <Show when={visibleIntentions().length > 0}>
+              <div class="flex flex-wrap gap-1.5 -mt-1">
+                <For each={visibleIntentions()}>{(t) => (
+                  <button
+                    type="button"
+                    onClick={() => toggleTag(t.name)}
+                    class="px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all"
+                    classList={{
+                      'bg-primary text-primary-foreground border-primary': selectedTags().includes(t.name),
+                      'border-border text-muted-foreground hover:text-foreground': !selectedTags().includes(t.name),
+                    }}
+                  >#{t.name}</button>
+                )}</For>
+              </div>
+            </Show>
           </Show>
 
           {/* Reduced-view scheduling: start day · duration · due (hidden for Someday). */}

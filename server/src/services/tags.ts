@@ -118,3 +118,31 @@ export function syncLeveledEntityTags(
     }
   }
 }
+
+// ── Tag taxonomy (0036): direction ▸ intention ───────────────────────────────
+
+const usedStmt = sqlite.prepare(`SELECT 1 FROM entity_tags WHERE tag_id = ? LIMIT 1`);
+/** Has this tag ever been applied to an entity? Used tags can't be deleted. */
+export function tagIsUsed(tagId: string): boolean {
+  return !!usedStmt.get(tagId);
+}
+
+const delDirs = sqlite.prepare(`DELETE FROM tag_directions WHERE intention_tag_id = ?`);
+const insDir = sqlite.prepare(
+  `INSERT OR IGNORE INTO tag_directions (intention_tag_id, direction_tag_id) VALUES (?, ?)`,
+);
+/** Replace an intention tag's direction membership (drag-move = a single target). */
+export function setTagDirections(intentionTagId: string, directionTagIds: string[]): void {
+  delDirs.run(intentionTagId);
+  for (const d of directionTagIds) insDir.run(intentionTagId, d);
+}
+
+const dirsOfStmt = sqlite.prepare(
+  `SELECT d.name AS name FROM tag_directions td
+     JOIN tags d ON d.id = td.direction_tag_id
+    WHERE td.intention_tag_id = ? ORDER BY d.name`,
+);
+/** The direction names an intention tag belongs to (empty = Unsorted). */
+export function directionsOf(intentionTagId: string): string[] {
+  return (dirsOfStmt.all(intentionTagId) as { name: string }[]).map((r) => r.name);
+}

@@ -24,6 +24,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
+import { getPatternBlocks } from '../services/pattern-blocks.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -228,6 +229,12 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
   return added;
 }
 
+/** True for Saturday (6) and Sunday (0) — UTC date-of-week, DST-safe. */
+function isWeekendDate(dateStr: string): boolean {
+  const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
 /**
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
@@ -275,13 +282,63 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   const placedInPlans = placedIds.size;
 
   // Pass 2 — workday fallback (secondary, toggleable). Flows around the Plans.
+  // When pattern_blocks are configured, direction-tagged tasks are constrained to
+  // their direction's windows (union, earliest-first); direction-less tasks use the
+  // classic workday_start/workday_end window (backward-compatible).
   if ((prefs?.auto_fill_workday ?? 1) === 1) {
-    const windowStartMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-    const windowEndMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+    const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
+    const patWindows = getPatternBlocks(owner, dayType);
+    const dirNameToId = new Map<string, string>(); // direction tag name → id
+
+    if (Object.keys(patWindows).length > 0) {
+      const ids = Object.keys(patWindows);
+      const dirTags = sqlite
+        .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'direction'`)
+        .all(ids) as { id: string; name: string }[];
+      for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
+    }
+
     const remaining = staged.filter((t) => !placedIds.has(t.task_id));
-    const r = placeIntoWindow(remaining, windowStartMs, windowEndMs, prefs, { parentBlockId: null, includePlans: true });
-    r.placedTaskIds.forEach((id) => placedIds.add(id));
-    blocksCreated += r.blocksCreated;
+
+    if (dirNameToId.size > 0) {
+      // Pass 2a — direction-tagged tasks → their direction's windows (union, earliest-first)
+      for (const t of remaining) {
+        if (placedIds.has(t.task_id)) continue;
+        const taskDirIds = t.tags
+          .map((name) => dirNameToId.get(name))
+          .filter((id): id is string => id !== undefined);
+        if (taskDirIds.length === 0) continue;
+        const allRanges = taskDirIds
+          .flatMap((did) => patWindows[did] ?? [])
+          .sort((a, b) => a.start_time.localeCompare(b.start_time));
+        for (const range of allRanges) {
+          if (placedIds.has(t.task_id)) break;
+          const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
+          const winEnd   = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
+          const r = placeIntoWindow([t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true });
+          r.placedTaskIds.forEach((id) => placedIds.add(id));
+          blocksCreated += r.blocksCreated;
+        }
+      }
+      // Pass 2b — direction-less tasks → classic workday_start/workday_end
+      const undirected = remaining.filter(
+        (t) => !placedIds.has(t.task_id) && !t.tags.some((n) => dirNameToId.has(n))
+      );
+      if (undirected.length > 0) {
+        const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
+        const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+        const r = placeIntoWindow(undirected, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true });
+        r.placedTaskIds.forEach((id) => placedIds.add(id));
+        blocksCreated += r.blocksCreated;
+      }
+    } else {
+      // No pattern windows configured → classic single window (backward-compatible)
+      const windowStartMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
+      const windowEndMs   = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+      const r = placeIntoWindow(remaining, windowStartMs, windowEndMs, prefs, { parentBlockId: null, includePlans: true });
+      r.placedTaskIds.forEach((id) => placedIds.add(id));
+      blocksCreated += r.blocksCreated;
+    }
   }
 
   const placed = placedIds.size;

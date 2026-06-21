@@ -16,9 +16,10 @@ import { resetDb } from './helpers.js';
  */
 
 const OWNER = SYSTEM_OWNER;
-// Pin a concrete, non-UTC zone so the test is hermetic. resetDb() keeps
-// scheduling_prefs, and sibling test files mutate owner-1's timezone (DST cases),
-// so we set it explicitly in beforeEach rather than assuming serverTimezone().
+// Pin a concrete, non-UTC zone so the test is hermetic. resetDb() (since PR #81)
+// resets all scheduling_prefs including timezone, but we still set it explicitly in
+// beforeEach so the intent is self-documenting and a future resetDb() change can't
+// silently break these DST assertions.
 const TZ = 'America/Los_Angeles';
 
 interface TemplateOpts {

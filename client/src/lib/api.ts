@@ -213,7 +213,12 @@ export const api = {
 
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
-    create: (name: string) => request<{ tag: Tag }>('POST', '/tags', { name }),
+    create: (name: string, opts?: { kind?: 'direction' | 'intention'; directions?: string[] }) =>
+      request<{ tag: Tag }>('POST', '/tags', { name, ...opts }),
+    // PATCH directions REPLACES membership (drag-move = single target); muted toggles.
+    update: (id: string, body: { directions?: string[]; muted?: boolean }) =>
+      request<{ tag: Tag }>('PATCH', `/tags/${id}`, body),
+    remove: (id: string) => request<{ ok: boolean }>('DELETE', `/tags/${id}`),
   },
 
   prefs: {
@@ -243,6 +248,12 @@ export const api = {
   llm: {
     status: () => request<LLMStatus>('GET', '/llm/status'),
     integrations: () => request<Integrations>('GET', '/integrations'),
+  },
+
+  patternBlocks: {
+    list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
+    set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
+            request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
   },
 };
 
@@ -347,7 +358,17 @@ export interface BlockTemplate {
   tasks?: TemplateTask[];
 }
 
-export interface Tag { id: string; name: string; count: number; }
+export interface Tag {
+  id: string; name: string; count: number;
+  // Tag taxonomy (0036): 'direction' = top-level category (brand-set home/work/community);
+  // 'intention' = grouped under one+ directions. `used` blocks delete. `directions` =
+  // member direction names (empty intention = Unsorted).
+  kind: 'direction' | 'intention';
+  muted: boolean;
+  is_base: boolean;
+  used: boolean;
+  directions: string[];
+}
 
 export interface Prefs {
   id: string; owner_id: string; workday_start: string; workday_end: string;
@@ -400,3 +421,7 @@ export interface Integrations {
   ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
   google: { mode: string };
 }
+
+// ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
+export interface PatternRange { id: string; start_time: string; end_time: string }
+export type PatternWindows = Record<string, PatternRange[]>; // dirTagId → ranges

@@ -288,14 +288,24 @@ exports[`behavior baseline — read API serialization > serializes the canonical
 {
   "tags": [
     {
-      "count": 1,
+      "count": 0,
+      "directions": [],
       "id": "tag#1",
+      "is_base": false,
+      "kind": "intention",
+      "muted": false,
       "name": "errands",
+      "used": false,
     },
     {
-      "count": 1,
+      "count": 0,
+      "directions": [],
       "id": "tag#2",
+      "is_base": false,
+      "kind": "intention",
+      "muted": false,
       "name": "work",
+      "used": false,
     },
   ],
 }
@@ -615,6 +625,17 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "id",
+      "owner_id",
+      "direction_tag_id",
+      "day_type",
+      "start_time",
+      "end_time",
+    ],
+    "table": "pattern_blocks",
+  },
+  {
+    "columns": [
       "pattern_id",
       "task_id",
       "position",
@@ -727,8 +748,18 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "intention_tag_id",
+      "direction_tag_id",
+    ],
+    "table": "tag_directions",
+  },
+  {
+    "columns": [
       "id",
       "name",
+      "kind",
+      "muted",
+      "is_base",
     ],
     "table": "tags",
   },
