@@ -1,9 +1,9 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
-import { Plus, AlertCircle, Ban, ListTodo, X, Repeat } from 'lucide-solid';
-import { blocks, tasks, taskOf, setTaskModal, refetchPatterns, showToast } from '../stores/index.js';
+import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-solid';
+import { blocks, tasks, taskOf, setTaskModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles } from '../stores/selection.js';
 import { api } from '../lib/api.js';
-import { localISODate } from '../lib/dates.js';
+import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
 import { ConceptLane } from '../components/ConceptLane.js';
 import { FlightPlan } from '../components/FlightPlan.js';
@@ -17,10 +17,14 @@ import { MissedReview } from '../components/MissedReview.js';
  * never-closing **drawer** floating at the bottom.
  */
 export function Today() {
-  const [summary] = createResource(() => localISODate(), (date) => api.summary.get(date));
+  const [summary] = createResource(selectedDay, (date) => api.summary.get(date));
 
-  const weekday = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-  const monthDay = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const today = () => localISODate();
+  const isToday = () => selectedDay() === today();
+  const viewedDate = () => new Date(selectedDay() + 'T12:00:00');
+  const weekday = () => viewedDate().toLocaleDateString('en-US', { weekday: 'long' });
+  const monthDay = () => viewedDate().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const stepDay = (n: number) => setSelectedDay(addDays(selectedDay(), n));
 
   // The tag set of everything scheduled today — the shape of the day at a glance.
   const todayTags = createMemo(() => {
@@ -77,10 +81,28 @@ export function Today() {
       <div class="rounded-xl border border-border bg-card p-4">
         <div class="flex items-start justify-between gap-3">
           <div>
-            <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mb-1">Day Overview</div>
-            <div class="flex items-baseline gap-2">
-              <h1 class="text-xl font-semibold text-foreground">{weekday}</h1>
-              <span class="text-sm text-muted-foreground">· {monthDay}</span>
+            <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mb-1">
+              {isToday() ? 'Today' : 'Day Overview'}
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button onClick={() => stepDay(-1)} class="btn-icon" title="Previous day"><ChevronLeft size={16} /></button>
+              <div class="flex items-baseline gap-2">
+                <h1 class="text-xl font-semibold text-foreground">{weekday()}</h1>
+                <span class="text-sm text-muted-foreground">· {monthDay()}</span>
+              </div>
+              <button onClick={() => stepDay(1)} class="btn-icon" title="Next day"><ChevronRight size={16} /></button>
+              <label class="btn-icon relative cursor-pointer" title="Pick a day">
+                <CalendarDays size={15} />
+                <input
+                  type="date"
+                  class="absolute inset-0 opacity-0 cursor-pointer"
+                  value={selectedDay()}
+                  onInput={(e) => e.currentTarget.value && setSelectedDay(e.currentTarget.value)}
+                />
+              </label>
+              <Show when={!isToday()}>
+                <button onClick={() => setSelectedDay(today())} class="text-xs text-primary hover:underline ml-1">Jump to today</button>
+              </Show>
             </div>
           </div>
           <button onClick={() => setTaskModal({ open: true })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0">

@@ -17,7 +17,11 @@ on('task:created', () => refetchTasks());
 on('task:updated', () => refetchTasks());
 
 // ── Blocks ───────────────────────────────────────────────────────────────────
-export const [blockRange, setBlockRange] = createSignal(dayRangeUTC(localISODate()));
+// `selectedDay` is the day the cockpit is viewing (cockpit-v2 Phase 1). The Planner,
+// blocks fetch, header lane, and Day Overview all read it instead of calling
+// localISODate() directly; `blockRange` derives from it.
+export const [selectedDay, setSelectedDay] = createSignal(localISODate());
+export const blockRange = createMemo(() => dayRangeUTC(selectedDay()));
 export const [blocks, { refetch: refetchBlocks }] = createResource(blockRange, (r) =>
   api.blocks.list(r.from, r.to).then((res) => res.blocks)
 );

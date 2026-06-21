@@ -8,7 +8,7 @@ import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast, selectedDay } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
@@ -487,7 +487,9 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
 }
 
 export function Planner() {
-  const day = () => localISODate();
+  const day = () => selectedDay();
+  // Now-line, next-up pin, and auto-scroll are today-relative — gated off other days.
+  const isToday = () => day() === localISODate();
   const [expanded, setExpanded] = createSignal(false);
   const [updateMode, setUpdateMode] = createSignal(false);
   const [editBlock, setEditBlock] = createSignal<Block | null>(null);
@@ -636,7 +638,7 @@ export function Planner() {
 
   let scroller: HTMLDivElement | undefined;
   const repin = () => {
-    if (!scroller || expanded()) return;
+    if (!scroller || expanded() || !isToday()) return;
     scroller.scrollTop = scrollTopForBlock(nextUp(), day());
   };
   onMount(repin);
@@ -704,7 +706,7 @@ export function Planner() {
             <For each={placed()}>
               {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={isNested(p.block)} updateMode={updateMode()} group={groupCtx} />}
             </For>
-            <NowLine day={day()} now={nowISO()} />
+            <Show when={isToday()}><NowLine day={day()} now={nowISO()} /></Show>
             <Show when={chips().length === 0 && containers().length === 0}>
               <div class="absolute left-0 right-0 top-24 text-center text-sm text-muted-foreground px-4 pointer-events-none">
                 Nothing planned yet — <span class="text-primary font-medium">click an empty slot</span> to add a block,
