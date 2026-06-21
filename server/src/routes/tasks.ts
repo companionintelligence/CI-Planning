@@ -14,6 +14,7 @@ import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generat
 import { rescheduleTask } from '../engine/review.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { ensureHabitPattern } from '../services/patterns.js';
+import { setEntityTagIds } from '../services/tags.js';
 import { utcDayBounds } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 
@@ -481,6 +482,7 @@ function applyDependencies(ctx: { status: number; body: unknown }, taskId: strin
 }
 
 async function attachTags(taskId: string, names: string[]) {
+  const tagIds: string[] = [];
   for (const rawName of names) {
     const name = rawName.toLowerCase().replace(/\s+/g, '-').slice(0, 32);
     const existing = sqlite.prepare('SELECT id FROM tags WHERE name = @name').get({ name }) as { id: string } | undefined;
@@ -492,5 +494,11 @@ async function attachTags(taskId: string, names: string[]) {
       tagId = r.id;
     }
     sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)').run(taskId, tagId);
+    tagIds.push(tagId);
   }
+  // CON-3: mirror the resolved set into the normalized store (replace semantics).
+  // Reuse the *same* tag ids so entity_tags is byte-consistent with task_tags. All
+  // callers pass the task's full tag set (create paths; PATCH first clears
+  // task_tags), so a replace here is correct — including clearing to empty.
+  setEntityTagIds('task', taskId, tagIds);
 }
