@@ -11,7 +11,7 @@ const primary = [
   { href: '/tasks', label: 'Tasks', Icon: CheckSquare },
 ];
 const overflow = [
-  { href: '/patterns', label: 'Patterns', Icon: Shapes },
+  { href: '/patterns', label: 'Routines', Icon: Shapes },
   { href: '/tags', label: 'Tags', Icon: Tag },
   { href: '/jobs', label: 'Jobs', Icon: Activity },
   { href: '/settings', label: 'Settings', Icon: Settings },

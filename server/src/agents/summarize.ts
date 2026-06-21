@@ -6,7 +6,7 @@ import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 
 interface TaskRow {
-  id: number;
+  id: string;
   title: string;
   priority: number;
   due_at: string | null;
@@ -24,7 +24,7 @@ interface BlockRow {
 
 /** A concrete, clickable thing to act on — the briefing made actionable. */
 export interface FocusItem {
-  taskId: number;
+  taskId: string;
   title: string;
   reason: string;
 }
@@ -124,7 +124,7 @@ ${fmt(g.open)}`;
 /** Up to three concrete things to act on, most urgent first (deterministic). */
 function buildFocus(g: ReturnType<typeof gather>): FocusItem[] {
   const out: FocusItem[] = [];
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   const add = (t: TaskRow, reason: string) => {
     if (out.length >= 3 || seen.has(t.id)) return;
     seen.add(t.id);

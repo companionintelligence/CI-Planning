@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import {
   addDependency,
   setDependencies,
@@ -9,10 +10,10 @@ import {
 } from '../src/engine/deps.js';
 import { resetDb, startTestServer, api } from './helpers.js';
 
-function addTask(title: string): number {
+function addTask(title: string): string {
   return (
-    sqlite.prepare("INSERT INTO tasks (title, owner_id, status) VALUES (?, 1, 'open') RETURNING id").get(title) as {
-      id: number;
+    sqlite.prepare("INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), ?, ?, 'open') RETURNING id").get(title, SYSTEM_OWNER) as {
+      id: string;
     }
   ).id;
 }
@@ -65,8 +66,8 @@ describe('task dependencies', () => {
   it('returns 409 when a PATCH would create a cycle', async () => {
     const srv = await startTestServer();
     try {
-      const a = (await api<{ task: { id: number } }>(srv.url, '/api/tasks', { method: 'POST', json: { title: 'A' } })).body.task.id;
-      const b = (await api<{ task: { id: number } }>(srv.url, '/api/tasks', { method: 'POST', json: { title: 'B' } })).body.task.id;
+      const a = (await api<{ task: { id: string } }>(srv.url, '/api/tasks', { method: 'POST', json: { title: 'A' } })).body.task.id;
+      const b = (await api<{ task: { id: string } }>(srv.url, '/api/tasks', { method: 'POST', json: { title: 'B' } })).body.task.id;
 
       const ok = await api(srv.url, `/api/tasks/${a}`, { method: 'PATCH', json: { depends_on: [b] } });
       expect(ok.status).toBe(200);

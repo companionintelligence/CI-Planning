@@ -1,15 +1,15 @@
 import { sqlite } from '../db/index.js';
 
 export class DependencyCycleError extends Error {
-  constructor(taskId: number, dependsOnId: number) {
+  constructor(taskId: string, dependsOnId: string) {
     super(`Adding dependency ${taskId}→${dependsOnId} would create a cycle`);
     this.name = 'DependencyCycleError';
   }
 }
 
 /** Does `from` already reach `to` through depends_on edges? (cycle probe) */
-function reaches(from: number, to: number): boolean {
-  const seen = new Set<number>();
+function reaches(from: string, to: string): boolean {
+  const seen = new Set<string>();
   const stack = [from];
   const q = sqlite.prepare('SELECT depends_on_id AS d FROM task_dependencies WHERE task_id = ?');
   while (stack.length) {
@@ -17,13 +17,13 @@ function reaches(from: number, to: number): boolean {
     if (n === to) return true;
     if (seen.has(n)) continue;
     seen.add(n);
-    for (const r of q.all(n) as { d: number }[]) stack.push(r.d);
+    for (const r of q.all(n) as { d: string }[]) stack.push(r.d);
   }
   return false;
 }
 
 /** Add a single edge, rejecting self-edges and any edge that would close a cycle. */
-export function addDependency(taskId: number, dependsOnId: number): void {
+export function addDependency(taskId: string, dependsOnId: string): void {
   if (taskId === dependsOnId) throw new DependencyCycleError(taskId, dependsOnId);
   // If dependsOnId already reaches taskId, adding taskId→dependsOnId closes a loop.
   if (reaches(dependsOnId, taskId)) throw new DependencyCycleError(taskId, dependsOnId);
@@ -33,7 +33,7 @@ export function addDependency(taskId: number, dependsOnId: number): void {
 }
 
 /** Replace a task's full set of blockers (used by POST/PATCH). Atomic; cycle-checked. */
-export function setDependencies(taskId: number, dependsOnIds: number[]): void {
+export function setDependencies(taskId: string, dependsOnIds: string[]): void {
   const unique = [...new Set(dependsOnIds)].filter((d) => d !== taskId);
   const tx = sqlite.transaction(() => {
     sqlite.prepare('DELETE FROM task_dependencies WHERE task_id = ?').run(taskId);
@@ -43,16 +43,16 @@ export function setDependencies(taskId: number, dependsOnIds: number[]): void {
 }
 
 /** The blockers of a task (depends_on ids). */
-export function getDependencies(taskId: number): number[] {
+export function getDependencies(taskId: string): string[] {
   return (
     sqlite.prepare('SELECT depends_on_id AS d FROM task_dependencies WHERE task_id = ?').all(taskId) as {
-      d: number;
+      d: string;
     }[]
   ).map((r) => r.d);
 }
 
 /** Task ids that have at least one blocker not yet `done` — i.e. currently blocked. */
-export function blockedTaskIds(): Set<number> {
+export function blockedTaskIds(): Set<string> {
   return new Set(
     (
       sqlite
@@ -61,7 +61,7 @@ export function blockedTaskIds(): Set<number> {
            FROM task_dependencies d JOIN tasks b ON b.id = d.depends_on_id
            WHERE b.status <> 'done'`
         )
-        .all() as { id: number }[]
+        .all() as { id: string }[]
     ).map((r) => r.id)
   );
 }

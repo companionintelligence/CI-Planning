@@ -9,12 +9,12 @@ export interface PromoteResult {
 }
 
 interface PossibleRow {
-  id: number;
+  id: string;
   raw_title: string;
   raw_summary: string | null;
   proposed_due_at: string | null;
   proposed_priority: number | null;
-  proposed_owner_id: number | null;
+  proposed_owner_id: string | null;
   source_kind: string | null;
   source_ref: string | null;
   confidence: number | null;
@@ -42,8 +42,8 @@ export function promotePossibles(opts: { threshold?: number } = {}): PromoteResu
       }
       const task = sqlite
         .prepare(
-          `INSERT INTO tasks (title, description, due_at, priority, owner_id, source_kind, source_ref, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'open') RETURNING id`
+          `INSERT INTO tasks (id, title, description, due_at, priority, owner_id, source_kind, source_ref, status)
+           VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, 'open') RETURNING id`
         )
         .get(
           p.raw_title,
@@ -53,7 +53,7 @@ export function promotePossibles(opts: { threshold?: number } = {}): PromoteResu
           p.proposed_owner_id ?? currentOwnerId(),
           p.source_kind ?? 'agent',
           p.source_ref
-        ) as { id: number };
+        ) as { id: string };
 
       // Carry tags across: possible_task_tags → task_tags
       sqlite
@@ -101,11 +101,11 @@ export async function dedupePossibles(opts: { threshold?: number } = {}): Promis
   const threshold = opts.threshold ?? 0.92;
   const pending = sqlite
     .prepare("SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' ORDER BY id ASC")
-    .all() as { id: number; raw_title: string }[];
+    .all() as { id: string; raw_title: string }[];
 
   if (pending.length < 2) return { compared: 0, duplicates: 0, available: true };
 
-  let vectors: { id: number; vec: number[] }[];
+  let vectors: { id: string; vec: number[] }[];
   try {
     vectors = [];
     for (const p of pending) vectors.push({ id: p.id, vec: await embed(p.raw_title) });
@@ -116,7 +116,7 @@ export async function dedupePossibles(opts: { threshold?: number } = {}): Promis
 
   let duplicates = 0;
   let compared = 0;
-  const kept: number[] = [];
+  const kept: string[] = [];
   for (const v of vectors) {
     let isDup = false;
     for (const k of kept) {

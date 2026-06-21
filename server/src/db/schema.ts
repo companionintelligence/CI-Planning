@@ -1,14 +1,18 @@
 import { sqliteTable, text, integer, real, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+import { newId } from '../lib/ids.js';
+
+// CON-1: entity ids are TEXT UUIDv7 (see lib/ids.ts). Drizzle inserts mint via
+// $defaultFn(newId); raw-SQL inserts use the uuid7() function (db/index.ts).
 
 export const owners = sqliteTable('owners', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+  id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull(),
   email: text('email'),
 });
 
 export const tasks = sqliteTable('tasks', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+  id: text('id').primaryKey().$defaultFn(newId),
   title: text('title').notNull(),
   description: text('description'),        // short summary / legacy
   notes: text('notes'),                    // rich freeform notes
@@ -20,18 +24,19 @@ export const tasks = sqliteTable('tasks', {
   actualMinutes: integer('actual_minutes').notNull().default(0), // aggregate of finished time_entries
   priority: integer('priority').default(3), // 1 highest, 5 lowest
   status: text('status').default('open'),   // open | scheduled | in_progress | done | cancelled | deferred | recurring | skipped | missed
-  parentId: integer('parent_id'),          // null = top-level task; set = subtask
+  parentId: text('parent_id'),             // null = top-level task; set = subtask
   // --- Recurrence (Phase E). Template: recurrenceRule set, recurrenceParentId null.
   //     Instance: recurrenceParentId -> template, occurrenceDate set. ---
   recurrenceRule: text('recurrence_rule'),                 // RFC-5545 RRULE string; null = one-off
-  recurrenceParentId: integer('recurrence_parent_id'),     // -> tasks.id of the template (instances only)
+  recurrenceParentId: text('recurrence_parent_id'),        // -> tasks.id of the template (instances only)
   recurrenceDtstart: text('recurrence_dtstart'),           // UTC ISO anchor of the series
   recurrenceExdates: text('recurrence_exdates', { mode: 'json' }).$type<string[]>(), // skipped local YYYY-MM-DD
   occurrenceDate: text('occurrence_date'),                 // local YYYY-MM-DD of this instance
   isHabit: integer('is_habit', { mode: 'boolean' }).default(false),
   isFastTask: integer('is_fast_task', { mode: 'boolean' }).default(false), // ritual-local, hidden from the task list (0020)
+  subtype: text('subtype').default('standard'), // CON-2c canonical Task subtype: standard | habit | quick (is_habit/is_fast_task kept as in-sync runtime aliases)
   deferCount: integer('defer_count').notNull().default(0), // times rescheduled by the nightly review (0029)
-  ownerId: integer('owner_id').references(() => owners.id),
+  ownerId: text('owner_id').references(() => owners.id),
   sourceKind: text('source_kind').default('manual'), // manual | agent | gmail | gcal
   sourceRef: text('source_ref'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
@@ -42,36 +47,36 @@ export const tasks = sqliteTable('tasks', {
 export const taskDependencies = sqliteTable(
   'task_dependencies',
   {
-    taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
-    dependsOnId: integer('depends_on_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    dependsOnId: text('depends_on_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
     createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   },
   (t) => ({ pk: primaryKey({ columns: [t.taskId, t.dependsOnId] }) })
 );
 
 export const possibleTasks = sqliteTable('possible_tasks', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+  id: text('id').primaryKey().$defaultFn(newId),
   rawTitle: text('raw_title').notNull(),
   rawSummary: text('raw_summary'),
   proposedDueAt: text('proposed_due_at'),
   proposedPriority: integer('proposed_priority'),
-  proposedOwnerId: integer('proposed_owner_id').references(() => owners.id),
+  proposedOwnerId: text('proposed_owner_id').references(() => owners.id),
   sourceKind: text('source_kind'),
   sourceRef: text('source_ref'),
   sourcePayload: text('source_payload', { mode: 'json' }),
   confidence: real('confidence'),
   status: text('status').default('pending'),         // pending | promoted | dismissed | duplicate
-  promotedTaskId: integer('promoted_task_id').references(() => tasks.id),
+  promotedTaskId: text('promoted_task_id').references(() => tasks.id),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const timeBlocks = sqliteTable('time_blocks', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+  id: text('id').primaryKey().$defaultFn(newId),
+  taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
   blockKind: text('block_kind').default('task'),     // task | meeting | habit | focus | break | buffer | timeblock (container)
   tag: text('tag'),                                  // grouping tag for 'timeblock' containers (Phase G)
-  blockType: text('block_type'),                     // 'plan' | 'concept' for 'timeblock' containers (0019)
+  blockType: text('block_type'),                     // Time-Block state: 'scheduled' | 'someday' (0019; renamed CON-2/0031)
   goalStartDate: text('goal_start_date'),            // YYYY-MM-DD goal day for concepts (nullable = someday)
   durationMinutes: integer('duration_minutes'),      // concept duration (no start/end semantics)
   note: text('note'),                                // optional saved note on a Plan/Concept container (0021)
@@ -85,15 +90,15 @@ export const timeBlocks = sqliteTable('time_blocks', {
   status: text('status').default('planned'),         // planned | completed | skipped | overrun
   // Plan-as-container (PR-C / 0023): a task block's containing Plan. Self-ref FK,
   // ON DELETE SET NULL — deleting a Plan detaches members (they stay as loose blocks).
-  parentBlockId: integer('parent_block_id').references((): AnySQLiteColumn => timeBlocks.id, { onDelete: 'set null' }),
+  parentBlockId: text('parent_block_id').references((): AnySQLiteColumn => timeBlocks.id, { onDelete: 'set null' }),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
 // Reusable Time-Block templates (Phase G): a saved named/tagged container with a
 // default duration, re-instantiated onto a day as a 'timeblock' time_blocks row.
 export const blockTemplates = sqliteTable('block_templates', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  ownerId: integer('owner_id').references(() => owners.id),
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id),
   name: text('name').notNull(),
   tag: text('tag'),
   defaultMinutes: integer('default_minutes').default(60),
@@ -104,10 +109,10 @@ export const blockTemplates = sqliteTable('block_templates', {
 // Persisted real work per task. The single ended_at IS NULL row per owner is
 // the running-timer state (guarded by a partial unique index). UTC ISO text.
 export const timeEntries = sqliteTable('time_entries', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
-  ownerId: integer('owner_id').references(() => owners.id).notNull(),
-  blockId: integer('block_id').references(() => timeBlocks.id, { onDelete: 'set null' }), // if started from a block
+  id: text('id').primaryKey().$defaultFn(newId),
+  taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  blockId: text('block_id').references(() => timeBlocks.id, { onDelete: 'set null' }), // if started from a block
   startedAt: text('started_at').notNull(),           // UTC ISO
   endedAt: text('ended_at'),                          // UTC ISO; NULL = running
   source: text('source').default('timer'),           // timer | manual | block
@@ -115,8 +120,8 @@ export const timeEntries = sqliteTable('time_entries', {
 });
 
 export const schedulingPrefs = sqliteTable('scheduling_prefs', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  ownerId: integer('owner_id').references(() => owners.id),
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id),
   workdayStart: text('workday_start').default('09:00'),
   workdayEnd: text('workday_end').default('18:00'),
   deepWorkWindows: text('deep_work_windows', { mode: 'json' }).$type<{ start: string; end: string }[]>(),
@@ -159,15 +164,15 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
 });
 
 export const tags = sqliteTable('tags', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+  id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),
 });
 
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
 //     Ritual △ + user-defined). No own recurrence; tasks-only (no nesting) in V1. ---
 export const patternTypes = sqliteTable('pattern_types', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  ownerId: integer('owner_id').references(() => owners.id),
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id),
   name: text('name').notNull(),
   iconShape: text('icon_shape').notNull(),                       // square | circle | triangle | <custom>
   reminderConfig: text('reminder_config', { mode: 'json' }),     // opaque until Phase H
@@ -181,9 +186,9 @@ export const patternTypes = sqliteTable('pattern_types', {
 });
 
 export const patterns = sqliteTable('patterns', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  ownerId: integer('owner_id').references(() => owners.id),
-  typeId: integer('type_id').references(() => patternTypes.id),
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id),
+  typeId: text('type_id').references(() => patternTypes.id),
   name: text('name').notNull(),
   tag: text('tag'),
   notes: text('notes'),
@@ -198,8 +203,8 @@ export const patterns = sqliteTable('patterns', {
 export const patternTasks = sqliteTable(
   'pattern_tasks',
   {
-    patternId: integer('pattern_id').references(() => patterns.id, { onDelete: 'cascade' }).notNull(),
-    taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    patternId: text('pattern_id').references(() => patterns.id, { onDelete: 'cascade' }).notNull(),
+    taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
     position: integer('position').default(0),
   },
   (t) => ({ pk: primaryKey({ columns: [t.patternId, t.taskId] }) })
@@ -209,9 +214,9 @@ export const patternTasks = sqliteTable(
 export const flightPlan = sqliteTable(
   'flight_plan',
   {
-    ownerId: integer('owner_id').references(() => owners.id),
-    taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
-    sourcePatternId: integer('source_pattern_id').references(() => patterns.id, { onDelete: 'set null' }),
+    ownerId: text('owner_id').references(() => owners.id),
+    taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+    sourcePatternId: text('source_pattern_id').references(() => patterns.id, { onDelete: 'set null' }),
     selected: integer('selected', { mode: 'boolean' }).default(true),
     position: integer('position').default(0),
     addedAt: text('added_at').default(sql`CURRENT_TIMESTAMP`),
@@ -220,17 +225,17 @@ export const flightPlan = sqliteTable(
 );
 
 export const taskTags = sqliteTable('task_tags', {
-  taskId: integer('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
-  tagId: integer('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
+  tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
 });
 
 export const possibleTaskTags = sqliteTable('possible_task_tags', {
-  possibleTaskId: integer('possible_task_id').references(() => possibleTasks.id, { onDelete: 'cascade' }).notNull(),
-  tagId: integer('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  possibleTaskId: text('possible_task_id').references(() => possibleTasks.id, { onDelete: 'cascade' }).notNull(),
+  tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
 });
 
 export const scheduledJobs = sqliteTable('scheduled_jobs', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+  id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),
   kind: text('kind').notNull(),
   cron: text('cron').notNull(),
@@ -241,8 +246,8 @@ export const scheduledJobs = sqliteTable('scheduled_jobs', {
 });
 
 export const jobRuns = sqliteTable('job_runs', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  jobId: integer('job_id').references(() => scheduledJobs.id),
+  id: text('id').primaryKey().$defaultFn(newId),
+  jobId: text('job_id').references(() => scheduledJobs.id),
   startedAt: text('started_at').default(sql`CURRENT_TIMESTAMP`),
   finishedAt: text('finished_at'),
   status: text('status').default('running'),         // running | done | error

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
 /**
@@ -8,20 +9,20 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  * selected → place them, scoped to a Time-Block's window + tag when given).
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 
-function insertTask(title: string, est = 30, tag?: string): number {
-  const id = (sqlite.prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, priority) VALUES (?, ?, 'open', ?, 3) RETURNING id`).get(title, OWNER, est) as { id: number }).id;
+function insertTask(title: string, est = 30, tag?: string): string {
+  const id = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', ?, 3) RETURNING id`).get(title, OWNER, est) as { id: string }).id;
   if (tag) {
-    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: number } | undefined;
-    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (name) VALUES (?) RETURNING id`).get(tag) as { id: number };
+    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: string } | undefined;
+    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id`).get(tag) as { id: string };
     sqlite.prepare(`INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)`).run(id, tg.id);
   }
   return id;
 }
-function makePattern(name: string, taskIds: number[]): number {
-  const ht = sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Habit' AND owner_id = ?`).get(OWNER) as { id: number };
-  const pid = (sqlite.prepare(`INSERT INTO patterns (owner_id, type_id, name) VALUES (?, ?, ?) RETURNING id`).get(OWNER, ht.id, name) as { id: number }).id;
+function makePattern(name: string, taskIds: string[]): string {
+  const ht = sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Habit' AND owner_id = ?`).get(OWNER) as { id: string };
+  const pid = (sqlite.prepare(`INSERT INTO patterns (id, owner_id, type_id, name) VALUES (uuid7(), ?, ?, ?) RETURNING id`).get(OWNER, ht.id, name) as { id: string }).id;
   taskIds.forEach((tid, i) => sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(pid, tid, i));
   return pid;
 }

@@ -69,7 +69,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
          AND status NOT IN ('completed','skipped')
        RETURNING id`
     )
-    .all(dayLoISO, dayHiISO) as { id: number }[];
+    .all(dayLoISO, dayHiISO) as { id: string }[];
 
   // Fixed events (locked blocks + meetings) that overlap the workday window.
   const dayStartISO = new Date(dayStartMs).toISOString();
@@ -264,7 +264,7 @@ export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } 
 export function dayObstacles(
   windowStartMs: number,
   windowEndMs: number,
-  opts: { includePlans?: boolean; excludeBlockId?: number | null } = {}
+  opts: { includePlans?: boolean; excludeBlockId?: string | null } = {}
 ): { start: number; end: number }[] {
   const windowStartISO = new Date(windowStartMs).toISOString();
   const windowEndISO = new Date(windowEndMs).toISOString();
@@ -276,10 +276,10 @@ export function dayObstacles(
                is_locked = 1
             OR block_kind = 'meeting'
             OR (block_kind = 'task' AND status NOT IN ('completed','skipped','cancelled'))
-            OR (? = 1 AND block_kind = 'timeblock' AND block_type = 'plan')
+            OR (? = 1 AND block_kind = 'timeblock' AND block_type = 'scheduled')
           )`
     )
-    .all(windowEndISO, windowStartISO, opts.includePlans ? 1 : 0) as { id: number; start_at: string; end_at: string }[];
+    .all(windowEndISO, windowStartISO, opts.includePlans ? 1 : 0) as { id: string; start_at: string; end_at: string }[];
   return rows
     .filter((r) => r.id !== opts.excludeBlockId)
     .map((r) => ({ start: Date.parse(r.start_at), end: Date.parse(r.end_at) }));

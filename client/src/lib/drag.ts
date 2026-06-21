@@ -99,16 +99,16 @@ function dyPxToY(dyPx: number): number {
 // authoritative row arrives later on the `block:updated` SSE refetch and
 // supersedes the override (cleared, idempotently, by block id).
 
-const [overrides, setOverrides] = createSignal<Record<number, ResolvedGesture>>({});
+const [overrides, setOverrides] = createSignal<Record<string, ResolvedGesture>>({});
 export { overrides };
 
 /** Apply (or replace) the optimistic override for a block. */
-export function setOverride(id: number, patch: ResolvedGesture): void {
+export function setOverride(id: string, patch: ResolvedGesture): void {
   setOverrides((prev) => ({ ...prev, [id]: patch }));
 }
 
 /** Clear a block's override. Idempotent: clearing an absent id is a no-op. */
-export function clearOverride(id: number): void {
+export function clearOverride(id: string): void {
   setOverrides((prev) => {
     if (!(id in prev)) return prev;
     const next = { ...prev };
@@ -127,7 +127,7 @@ export function effectiveBlock(block: Block): Block {
 
 export interface CommitDeps {
   /** PATCH the block; defaults to the real API. Injectable for tests. */
-  update?: (id: number, body: Partial<Block>) => Promise<unknown>;
+  update?: (id: string, body: Partial<Block>) => Promise<unknown>;
   /** Surface an error (toast); injectable for tests. */
   onError?: (message: string) => void;
 }

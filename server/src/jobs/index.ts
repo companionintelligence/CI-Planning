@@ -83,10 +83,10 @@ export async function runJob(kind: string): Promise<void> {
   const startedAt = new Date().toISOString();
   const run = sqlite
     .prepare(
-      `INSERT INTO job_runs (job_id, started_at, status)
-       SELECT id, ?, 'running' FROM scheduled_jobs WHERE kind = ? RETURNING id`
+      `INSERT INTO job_runs (id, job_id, started_at, status)
+       SELECT uuid7(), id, ?, 'running' FROM scheduled_jobs WHERE kind = ? RETURNING id`
     )
-    .get(startedAt, kind) as { id: number } | undefined;
+    .get(startedAt, kind) as { id: string } | undefined;
 
   broadcast(currentOwnerId(), 'job:started', { kind, startedAt });
 
@@ -118,7 +118,7 @@ export async function runJob(kind: string): Promise<void> {
 export function startCronJobs() {
   const jobs = sqlite
     .prepare('SELECT id, kind, cron FROM scheduled_jobs WHERE enabled = 1')
-    .all() as { id: number; kind: string; cron: string }[];
+    .all() as { id: string; kind: string; cron: string }[];
 
   for (const job of jobs) {
     // Cron has no request context — bind the system owner for the job body.

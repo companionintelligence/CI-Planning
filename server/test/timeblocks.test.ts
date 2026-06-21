@@ -8,7 +8,7 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  * named/tagged container with a default duration and re-instantiate it onto a day.
  */
 
-const blockRow = (id: number) => sqlite.prepare(`SELECT * FROM time_blocks WHERE id = ?`).get(id) as any;
+const blockRow = (id: string) => sqlite.prepare(`SELECT * FROM time_blocks WHERE id = ?`).get(id) as any;
 const containerCount = () =>
   (sqlite.prepare(`SELECT COUNT(*) AS c FROM time_blocks WHERE block_kind = 'timeblock'`).get() as { c: number }).c;
 

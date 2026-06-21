@@ -16,7 +16,8 @@ describe('tasks / blocks / tags / possibles API', () => {
     });
     expect(created.status).toBe(201);
     const id = created.body.task.id;
-    expect(id).toBeGreaterThan(0);
+    expect(typeof id).toBe('string');
+    expect(id.length).toBeGreaterThan(0);
 
     const list = await api(server.url, '/api/tasks');
     expect(list.body.tasks.find((t: any) => t.id === id)?.tags).toEqual(expect.arrayContaining(['eng', 'docs']));
@@ -111,8 +112,8 @@ describe('tasks / blocks / tags / possibles API', () => {
     const { sqlite } = await import('../src/db/index.js');
     sqlite
       .prepare(
-        `INSERT INTO possible_tasks (raw_title, source_kind, source_ref, confidence, status)
-         VALUES ('Promote me', 'gmail', 'x#0', 0.9, 'pending'), ('Dismiss me', 'gmail', 'y#0', 0.4, 'pending')`
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status)
+         VALUES (uuid7(), 'Promote me', 'gmail', 'x#0', 0.9, 'pending'), (uuid7(), 'Dismiss me', 'gmail', 'y#0', 0.4, 'pending')`
       )
       .run();
 

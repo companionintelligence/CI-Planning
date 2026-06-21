@@ -5,10 +5,15 @@ import {
   flightPlan, refetchFlightPlan, refetchBlocks, patterns, showToast,
 } from '../stores/index.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
+import { useDraggable } from '../lib/draggable.js';
 
 /**
  * The Flight-plan (Phase G, G5 + G4): the persisted, owner-scoped staging area the
  * two-step Auto runs over, with **Auto Schedule** pinned at its top and a **Reset**.
+ *
+ * Manual placement (CON-5): each row is a drag source (`kind: 'flight-task'`) — drag
+ * one onto the Planner grid to schedule it at that time (the Planner is the drop
+ * target). A near-zero move falls through as a normal click (checkbox / multi-select).
  *
  *  - Auto with **nothing selected** → step 1: proposes candidates *into* the
  *    flight-plan and schedules nothing.
@@ -23,7 +28,7 @@ export function FlightPlan() {
   const selectedCount = () => items().filter((i) => i.selected).length;
 
   const patternName = createMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<string, string>();
     for (const p of patterns() ?? []) m.set(p.id, p.name);
     return m;
   });
@@ -31,7 +36,7 @@ export function FlightPlan() {
   // Group staged items by their source pattern — a staged routine/ritual reads as one
   // unit (header + members), not separated rows. Directly-added tasks stay solo.
   const grouped = createMemo(() => {
-    const groups = new Map<number, FlightPlanItem[]>();
+    const groups = new Map<string, FlightPlanItem[]>();
     const solo: FlightPlanItem[] = [];
     for (const it of items()) {
       if (it.source_pattern_id != null) {
@@ -76,11 +81,11 @@ export function FlightPlan() {
     }
   }
 
-  async function toggle(taskId: number, selected: boolean) {
+  async function toggle(taskId: string, selected: boolean) {
     try { await api.flightPlan.update(taskId, { selected }); refetchFlightPlan(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
-  async function remove(taskId: number) {
+  async function remove(taskId: string) {
     try { await api.flightPlan.remove(taskId); refetchFlightPlan(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -100,9 +105,13 @@ export function FlightPlan() {
   const FpRow = (props: { it: FlightPlanItem; inGroup?: boolean }) => {
     const p = () => Math.min(Math.max(props.it.priority ?? 3, 1), 5);
     const selected = () => isSelected({ kind: 'flight-plan-task', id: props.it.task_id });
+    // Drag source (CON-5): drop onto the Planner grid to schedule. The shared
+    // CLICK_PX threshold lets a clean click still reach the row/checkbox onClick.
+    const drag = useDraggable(() => ({ kind: 'flight-task', id: props.it.task_id }));
     return (
       <li
-        class="flex items-center gap-2.5 px-3 py-2 group rounded-md"
+        onPointerDown={drag.onPointerDown}
+        class="flex items-center gap-2.5 px-3 py-2 group rounded-md cursor-grab select-none touch-none"
         classList={{ 'pl-7': props.inGroup, 'ring-2 ring-chart-1 bg-chart-1/5': selected() }}
         // Cmd/Ctrl-click anywhere on the row toggles multi-select (Phase F).
         // The Auto-step-2 selection (the checkbox) is a separate axis, intentionally.
@@ -120,7 +129,7 @@ export function FlightPlan() {
   };
 
   // A staged pattern as one collapsible unit — its members travel together.
-  const FpGroup = (props: { patternId: number; its: FlightPlanItem[] }) => {
+  const FpGroup = (props: { patternId: string; its: FlightPlanItem[] }) => {
     const [open, setOpen] = createSignal(true);
     const allSelected = () => props.its.every((i) => i.selected);
     return (

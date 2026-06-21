@@ -25,7 +25,7 @@ const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
 
 export interface PlacePatternResult {
-  patternId: number;
+  patternId: string;
   date: string;                // local YYYY-MM-DD the placement targeted
   blocksCreated: number;       // task_blocks rows inserted
   placed: number;              // tasks with >= 1 session placed
@@ -42,12 +42,12 @@ interface PrefsRow {
 }
 
 interface MemberTask {
-  task_id: number;
+  task_id: string;
   title: string;
   estimated_minutes: number | null;
 }
 
-function tagsOf(taskId: number): string[] {
+function tagsOf(taskId: string): string[] {
   return (
     sqlite
       .prepare(`SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = ?`)
@@ -60,7 +60,7 @@ function tagsOf(taskId: number): string[] {
  * recurrence templates redirect to today's materialized instance when one
  * exists; completed/skipped/cancelled tasks are dropped.
  */
-function resolveMembers(patternId: number, date: string): MemberTask[] {
+function resolveMembers(patternId: string, date: string): MemberTask[] {
   const members = sqlite
     .prepare(
       `SELECT t.id AS task_id, t.title, t.estimated_minutes, t.status,
@@ -70,12 +70,12 @@ function resolveMembers(patternId: number, date: string): MemberTask[] {
         ORDER BY pt.position, pt.task_id`
     )
     .all(patternId) as {
-      task_id: number;
+      task_id: string;
       title: string;
       estimated_minutes: number | null;
       status: string;
       recurrence_rule: string | null;
-      recurrence_parent_id: number | null;
+      recurrence_parent_id: string | null;
     }[];
 
   const out: MemberTask[] = [];
@@ -85,7 +85,7 @@ function resolveMembers(patternId: number, date: string): MemberTask[] {
     if (m.recurrence_rule && m.recurrence_parent_id == null) {
       const inst = sqlite
         .prepare(`SELECT id, title, estimated_minutes FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ?`)
-        .get(m.task_id, date) as { id: number; title: string; estimated_minutes: number | null } | undefined;
+        .get(m.task_id, date) as { id: string; title: string; estimated_minutes: number | null } | undefined;
       if (inst) {
         out.push({ task_id: inst.id, title: inst.title, estimated_minutes: inst.estimated_minutes });
         continue;
@@ -106,9 +106,9 @@ function resolveMembers(patternId: number, date: string): MemberTask[] {
  * grouped-movement group — see PR-C).
  */
 export function placePatternOnDay(
-  owner: number,
-  patternId: number,
-  opts: { date?: string; blockId?: number | null } = {}
+  owner: string,
+  patternId: string,
+  opts: { date?: string; blockId?: string | null } = {}
 ): PlacePatternResult {
   const date = opts.date ?? localISODate();
 
@@ -122,7 +122,7 @@ export function placePatternOnDay(
     let windowStartMs: number;
     let windowEndMs: number;
     let blockTag: string | null = null;
-    let parentBlockId: number | null = opts.blockId ?? null;
+    let parentBlockId: string | null = opts.blockId ?? null;
     if (parentBlockId != null) {
       const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ?`).get(parentBlockId) as
         | { start_at: string; end_at: string; tag: string | null }
@@ -177,8 +177,8 @@ export function placePatternOnDay(
     const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
     const ins = sqlite.prepare(
-      `INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status, parent_block_id)
-       VALUES (?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?)`
+      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status, parent_block_id)
+       VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?)`
     );
     let blocksCreated = 0;
     let placed = 0;
@@ -206,7 +206,7 @@ export function placePatternOnDay(
 // ── Pattern recurrence + nightly auto-place (Phase D) ──────────────────────────
 
 interface RecurringPattern {
-  id: number;
+  id: string;
   name: string;
   type_name: string;
 }
@@ -216,7 +216,7 @@ interface RecurringPattern {
  * Ritual rows are excluded — the type is hidden behind a flag in V1. Patterns
  * with no rule are ignored.
  */
-export function patternsRecurringOnDate(owner: number, today: string): RecurringPattern[] {
+export function patternsRecurringOnDate(owner: string, today: string): RecurringPattern[] {
   const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
   const rows = sqlite
     .prepare(
@@ -226,7 +226,7 @@ export function patternsRecurringOnDate(owner: number, today: string): Recurring
         WHERE p.owner_id = ? AND p.recurrence_rule IS NOT NULL
           AND pt.name IN ('Habit', 'Routine')`
     )
-    .all(owner) as { id: number; name: string; recurrence_rule: string; recurrence_dtstart: string | null; type_name: string }[];
+    .all(owner) as { id: string; name: string; recurrence_rule: string; recurrence_dtstart: string | null; type_name: string }[];
 
   const out: RecurringPattern[] = [];
   for (const r of rows) {
@@ -255,7 +255,7 @@ export function patternsRecurringOnDate(owner: number, today: string): Recurring
  * mid-day appears on the board the moment that day is next read, without any
  * cron in the loop.
  */
-export function ensurePatternsForRange(owner: number, fromUtcISO: string, toUtcISO: string): { placed: number; blocksCreated: number } {
+export function ensurePatternsForRange(owner: string, fromUtcISO: string, toUtcISO: string): { placed: number; blocksCreated: number } {
   const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
   const today = localISODate(); // server-local day; recurrence days are compared as YYYY-MM-DD strings
   const days = localDaysInRange(fromUtcISO, toUtcISO, tz).filter((d) => d >= today);
