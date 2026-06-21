@@ -55,8 +55,15 @@ reserved)** and demotes everything else.
 - **Routine flavors:** routine · ritual (flagged off via `enable_rituals`).
   **Habit is a Task subtype** surfaced in the Routines menu — *not* a Routine
   flavor or a “pattern type”.
-- **Tag levels:** top-level (full match weight, dilution-immune) · second-level
-  (diluted: weight = `1 / #tags`).
+- **Tag levels (per-entity, dilution):** top-level (full match weight,
+  dilution-immune) · second-level (diluted: weight = `1 / #tags`). This is a weight on
+  a tag *as applied to an entity*.
+- **Tag taxonomy (per-tag, `tags.kind` — a separate axis from the levels above):**
+  **direction** (top-level category — brand-set **Home / Work / Community**,
+  `is_base` & undeletable, plus user-added) · **intention** (every other tag, grouped
+  under one or more directions via `tag_directions`; ungrouped = *Unsorted*). A tag may
+  be **muted** (a per-tag state, not a noun). Directions/intentions are Tag sub-levels,
+  **not** new nouns.
 
 ## Translation (old term → canonical)
 

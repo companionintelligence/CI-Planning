@@ -18,7 +18,7 @@
  */
 import { createSignal } from 'solid-js';
 
-export type DragKind = 'habit' | 'time-block' | 'flight-task';
+export type DragKind = 'habit' | 'time-block' | 'flight-task' | 'tag-chip';
 export interface DragPayload { kind: DragKind; id: string } // CON-1: ids are opaque UUIDv7 strings
 
 const [dragPayload, setDragPayload] = createSignal<DragPayload | null>(null);

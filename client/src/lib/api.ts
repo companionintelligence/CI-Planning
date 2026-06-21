@@ -213,7 +213,12 @@ export const api = {
 
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
-    create: (name: string) => request<{ tag: Tag }>('POST', '/tags', { name }),
+    create: (name: string, opts?: { kind?: 'direction' | 'intention'; directions?: string[] }) =>
+      request<{ tag: Tag }>('POST', '/tags', { name, ...opts }),
+    // PATCH directions REPLACES membership (drag-move = single target); muted toggles.
+    update: (id: string, body: { directions?: string[]; muted?: boolean }) =>
+      request<{ tag: Tag }>('PATCH', `/tags/${id}`, body),
+    remove: (id: string) => request<{ ok: boolean }>('DELETE', `/tags/${id}`),
   },
 
   prefs: {
@@ -347,7 +352,17 @@ export interface BlockTemplate {
   tasks?: TemplateTask[];
 }
 
-export interface Tag { id: string; name: string; count: number; }
+export interface Tag {
+  id: string; name: string; count: number;
+  // Tag taxonomy (0036): 'direction' = top-level category (brand-set home/work/community);
+  // 'intention' = grouped under one+ directions. `used` blocks delete. `directions` =
+  // member direction names (empty intention = Unsorted).
+  kind: 'direction' | 'intention';
+  muted: boolean;
+  is_base: boolean;
+  used: boolean;
+  directions: string[];
+}
 
 export interface Prefs {
   id: string; owner_id: string; workday_start: string; workday_end: string;
