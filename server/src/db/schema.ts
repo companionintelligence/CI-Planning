@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 export const owners = sqliteTable('owners', {
@@ -30,6 +30,7 @@ export const tasks = sqliteTable('tasks', {
   occurrenceDate: text('occurrence_date'),                 // local YYYY-MM-DD of this instance
   isHabit: integer('is_habit', { mode: 'boolean' }).default(false),
   isFastTask: integer('is_fast_task', { mode: 'boolean' }).default(false), // ritual-local, hidden from the task list (0020)
+  deferCount: integer('defer_count').notNull().default(0), // times rescheduled by the nightly review (0029)
   ownerId: integer('owner_id').references(() => owners.id),
   sourceKind: text('source_kind').default('manual'), // manual | agent | gmail | gcal
   sourceRef: text('source_ref'),
@@ -82,6 +83,9 @@ export const timeBlocks = sqliteTable('time_blocks', {
   sourceKind: text('source_kind').default('manual'),
   sourceRef: text('source_ref'),
   status: text('status').default('planned'),         // planned | completed | skipped | overrun
+  // Plan-as-container (PR-C / 0023): a task block's containing Plan. Self-ref FK,
+  // ON DELETE SET NULL — deleting a Plan detaches members (they stay as loose blocks).
+  parentBlockId: integer('parent_block_id').references((): AnySQLiteColumn => timeBlocks.id, { onDelete: 'set null' }),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -130,11 +134,17 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   planAlldayAlways: integer('plan_allday_always', { mode: 'boolean' }).default(false),
   planDaylongForPromoted: integer('plan_daylong_for_promoted', { mode: 'boolean' }).default(false),
   planAutofillGaps: integer('plan_autofill_gaps', { mode: 'boolean' }).default(true),
+  // Auto's secondary workday-window fallback (0028). Plans are filled first;
+  // this gates whether leftover tasks also fill open 9–6 time. Default ON.
+  autoFillWorkday: integer('auto_fill_workday', { mode: 'boolean' }).default(true),
   conceptDefaultMinutes: integer('concept_default_minutes').default(60),
   conceptAutosurface: integer('concept_autosurface', { mode: 'boolean' }).default(true),
   conceptHorizonDays: integer('concept_horizon_days').default(30),
   // Canonical, user-editable concept-tag list for the Block Wizard (0021).
   conceptTags: text('concept_tags', { mode: 'json' }).$type<{ name: string; minutes: number }[]>(),
+  // Per-owner feature flags (0024). Default OFF — V1 mental model is Routine /
+  // Habit / Plan-Block; Rituals are hidden until the user opts back in.
+  enableRituals: integer('enable_rituals', { mode: 'boolean' }).default(false),
   // Per-owner Ollama model overrides (null = use the env default). 0012.
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings
@@ -177,6 +187,11 @@ export const patterns = sqliteTable('patterns', {
   name: text('name').notNull(),
   tag: text('tag'),
   notes: text('notes'),
+  // Pattern-level recurrence (0025): RRULE + its UTC anchor. Only Habits +
+  // Routines respect it; Rituals are flagged off in V1. The 06:00 cron
+  // `place_patterns` expands these and runs `placePatternOnDay` idempotently.
+  recurrenceRule: text('recurrence_rule'),
+  recurrenceDtstart: text('recurrence_dtstart'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 

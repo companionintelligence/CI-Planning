@@ -2,6 +2,7 @@ import { Cron } from 'croner';
 import { sqlite } from '../db/index.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
 import { fillFlightPlanCandidates } from '../engine/autoplan.js';
+import { reviewAndReschedule } from '../engine/review.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
@@ -60,6 +61,16 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsCreated: r.created,
         itemsUpdated: r.missed,
         log: `Materialized ${r.created} instances across ${r.templates} templates; flagged ${r.missed} missed habits`,
+      };
+    }
+    case 'review_day': {
+      // 01:00 — review the day that just closed. Low-priority misses auto-defer
+      // (+1/3/7 backoff); high-priority misses are surfaced for the user.
+      const r = reviewAndReschedule();
+      return {
+        itemsCreated: 0,
+        itemsUpdated: r.deferred + r.surfaced,
+        log: `Reviewed ${r.missed} missed → ${r.deferred} auto-deferred, ${r.surfaced} surfaced for review`,
       };
     }
     default:

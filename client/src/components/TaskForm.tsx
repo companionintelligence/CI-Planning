@@ -14,7 +14,13 @@ interface Props {
 
 const priorityLabels = ['', 'Urgent', 'High', 'Normal', 'Low', 'Someday'];
 const priorityColors = ['', 'text-red-400', 'text-orange-400', 'text-yellow-400', 'text-blue-400', 'text-slate-400'];
-const repeatLabels: Record<RepeatPreset, string> = { none: 'Once', daily: 'Daily', weekly: 'Weekly', custom: 'Custom' };
+// TaskForm exposes the task-level subset (no monthly/yearly/specific-days
+// distinction here; those are pattern-level in the Patterns view). Full record
+// satisfies Record<RepeatPreset, string> after Phase D's preset extension.
+const repeatLabels: Record<RepeatPreset, string> = {
+  none: 'Once', daily: 'Daily', weekly: 'Weekly', custom: 'Custom',
+  'specific-days': 'Days', monthly: 'Monthly', yearly: 'Yearly',
+};
 const REPEAT_OPTS: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 
 export function TaskForm(props: Props) {
