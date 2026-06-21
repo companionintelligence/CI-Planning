@@ -6,7 +6,9 @@ import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
+import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
+import { localISODate } from '../lib/dates.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -47,6 +49,8 @@ export function blocksRouter() {
     // Idempotent via the marker on time_blocks → safe to call on every read.
     if (from && to && !state) {
       ensurePatternsForRange(currentOwnerId(), from, to);
+      // CON-4: materialize recurring Time-Block instances for the range (idempotent).
+      ensureRecurringBlocksForRange(currentOwnerId(), from, to);
     }
 
     const conditions = [];
@@ -54,9 +58,12 @@ export function blocksRouter() {
     if (to)   conditions.push(lte(timeBlocks.endAt, to));
     if (state) conditions.push(eq(timeBlocks.blockType, state));
 
-    const rows = conditions.length
+    const fetched = conditions.length
       ? await db.select().from(timeBlocks).where(and(...conditions))
       : await db.select().from(timeBlocks);
+    // CON-4: recurrence *templates* (rule set, no parent) are never rendered — only
+    // their materialized instances are. Drop them from the read surface.
+    const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
 
     // Phase 5: attach each block's secondary (level>1) tags from entity_tags.
     const blocks = toApiList(rows).map((b) => ({ ...b, secondary_tags: secondaryTagsOf(b.id as string) }));
@@ -79,6 +86,8 @@ export function blocksRouter() {
       end_at: string;
       is_locked?: boolean;
       all_day?: boolean;
+      recurrence_rule?: string;
+      recurrence_dtstart?: string;
     };
 
     if (!body.title || !body.start_at || !body.end_at) {
@@ -104,6 +113,10 @@ export function blocksRouter() {
         allDay: body.all_day ?? false,
         isAuto: false,
         sourceKind: 'manual',
+        // CON-4: a recurrence_rule makes this a template (anchor defaults to start_at).
+        // It is never rendered directly; GET materializes its instances.
+        recurrenceRule: body.recurrence_rule,
+        recurrenceDtstart: body.recurrence_rule ? (body.recurrence_dtstart ?? body.start_at) : undefined,
       })
       .returning();
 
@@ -137,6 +150,8 @@ export function blocksRouter() {
       all_day: boolean;
       parent_block_id: string | null;
       secondary_tags: string[];
+      recurrence_rule: string | null;
+      recurrence_dtstart: string | null;
     }>;
 
     const update: Partial<typeof timeBlocks.$inferInsert> = {};
@@ -153,6 +168,15 @@ export function blocksRouter() {
     if (body.all_day         !== undefined) update.allDay          = body.all_day;
     // Attach to / detach from a Plan (PR-C): a number attaches, null detaches.
     if (body.parent_block_id !== undefined) update.parentBlockId   = body.parent_block_id;
+    // CON-4 series edit: changing the rule on a template re-anchors + re-materializes.
+    if (body.recurrence_rule !== undefined) {
+      update.recurrenceRule = body.recurrence_rule;
+      update.recurrenceDtstart = body.recurrence_rule
+        ? (body.recurrence_dtstart ?? undefined)
+        : null; // clearing the rule turns the template back into a one-off
+    } else if (body.recurrence_dtstart !== undefined) {
+      update.recurrenceDtstart = body.recurrence_dtstart;
+    }
 
     // A tags-only PATCH (e.g. secondary_tags) has no column changes; drizzle
     // rejects an empty .set(), so fetch the row instead of updating it.
@@ -165,6 +189,17 @@ export function blocksRouter() {
     // omits `tag` or `secondary_tags` preserves that level (null/'' clears top).
     if (body.tag !== undefined || body.secondary_tags !== undefined) {
       applyBlockTagLevels(id, { tag: body.tag, secondary: body.secondary_tags });
+    }
+
+    // CON-4 series edit: a rule (or anchor) change drops future-or-today instances
+    // of this template + their tag rows; GET re-materializes under the new rule.
+    if (body.recurrence_rule !== undefined || body.recurrence_dtstart !== undefined) {
+      const today = localISODate();
+      for (const inst of sqlite
+        .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND occurrence_date >= ? RETURNING id`)
+        .all(id, today) as { id: string }[]) {
+        removeEntityTags('time_block', inst.id);
+      }
     }
 
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(id) };
@@ -243,6 +278,13 @@ export function blocksRouter() {
         .all(id) as { id: string }[];
       for (const m of members) removeEntityTags('time_block', m.id);
       sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(id);
+    }
+    // CON-4: deleting a recurring template also removes its materialized instances
+    // (+ their tag rows) — otherwise orphan instances would linger with a dead parent.
+    for (const inst of sqlite
+      .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? RETURNING id`)
+      .all(id) as { id: string }[]) {
+      removeEntityTags('time_block', inst.id);
     }
     const [block] = await db.delete(timeBlocks).where(eq(timeBlocks.id, id)).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }

@@ -60,6 +60,21 @@ export function zonedWallTimeToUTC(date: string, time: string, tz: string): stri
   return new Date(utc).toISOString();
 }
 
+/**
+ * The wall-clock `HH:MM` of a UTC instant in `tz` (CON-4). Used to read a recurring
+ * Time-Block template's time-of-day so each materialized instance lands at the same
+ * local wall time on its day (re-applied via `zonedWallTimeToUTC`, DST-correct).
+ */
+export function utcToZonedWallTime(utcISO: string, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(utcISO));
+  const p: Record<string, string> = {};
+  for (const part of parts) if (part.type !== 'literal') p[part.type] = part.value;
+  const hh = p.hour === '24' ? '00' : p.hour; // some engines render midnight as 24
+  return `${hh}:${p.minute}`;
+}
+
 /** [start, end) UTC ISO bounds of the local calendar day `date` in `tz`. */
 export function utcDayBounds(date: string, tz: string): { start: string; end: string } {
   const [y, m, d] = date.split('-').map(Number);
