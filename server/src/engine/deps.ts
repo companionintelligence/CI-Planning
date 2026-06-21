@@ -8,8 +8,8 @@ export class DependencyCycleError extends Error {
 }
 
 /** Does `from` already reach `to` through depends_on edges? (cycle probe) */
-function reaches(from: number, to: number): boolean {
-  const seen = new Set<number>();
+function reaches(from: string, to: string): boolean {
+  const seen = new Set<string>();
   const stack = [from];
   const q = sqlite.prepare('SELECT depends_on_id AS d FROM task_dependencies WHERE task_id = ?');
   while (stack.length) {
@@ -17,7 +17,7 @@ function reaches(from: number, to: number): boolean {
     if (n === to) return true;
     if (seen.has(n)) continue;
     seen.add(n);
-    for (const r of q.all(n) as { d: number }[]) stack.push(r.d);
+    for (const r of q.all(n) as { d: string }[]) stack.push(r.d);
   }
   return false;
 }
@@ -43,16 +43,16 @@ export function setDependencies(taskId: string, dependsOnIds: string[]): void {
 }
 
 /** The blockers of a task (depends_on ids). */
-export function getDependencies(taskId: string): number[] {
+export function getDependencies(taskId: string): string[] {
   return (
     sqlite.prepare('SELECT depends_on_id AS d FROM task_dependencies WHERE task_id = ?').all(taskId) as {
-      d: number;
+      d: string;
     }[]
   ).map((r) => r.d);
 }
 
 /** Task ids that have at least one blocker not yet `done` — i.e. currently blocked. */
-export function blockedTaskIds(): Set<number> {
+export function blockedTaskIds(): Set<string> {
   return new Set(
     (
       sqlite

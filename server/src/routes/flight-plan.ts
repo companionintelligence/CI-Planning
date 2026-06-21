@@ -98,7 +98,7 @@ export function flightPlanRouter() {
 
   // Two-step Auto: empty flight-plan → propose candidates; selected → place them.
   router.post('/api/auto/run', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as { block_id?: number; date?: string };
+    const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string };
     const result = runAuto({ blockId: body.block_id, date: body.date });
     ctx.body = { result, flight_plan: list(currentOwnerId()) };
   });

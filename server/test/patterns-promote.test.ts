@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
 /**
@@ -12,13 +13,13 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  * Each yields a new Routine-type pattern with the source's member tasks in order.
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 const DAY = '2026-06-22';
 
-function insertTask(title: string, est = 30): number {
+function insertTask(title: string, est = 30): string {
   return (sqlite
-    .prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, priority) VALUES (?, ?, 'open', ?, 3) RETURNING id`)
-    .get(title, OWNER, est) as { id: number }).id;
+    .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', ?, 3) RETURNING id`)
+    .get(title, OWNER, est) as { id: string }).id;
 }
 
 let srv: TestServer;
@@ -49,7 +50,7 @@ describe('POST /api/patterns/promote-from-tasks', () => {
   it('422 if a task id doesn’t belong to the current owner', async () => {
     const t = insertTask('A');
     // a "foreign" task by inserting with no owner
-    const foreign = (sqlite.prepare(`INSERT INTO tasks (title, status) VALUES ('X', 'open') RETURNING id`).get() as { id: number }).id;
+    const foreign = (sqlite.prepare(`INSERT INTO tasks (id, title, status) VALUES (uuid7(), 'X', 'open') RETURNING id`).get() as { id: string }).id;
     expect((await api(srv.url, '/api/patterns/promote-from-tasks', { method: 'POST', json: { task_ids: [t, foreign] } })).status).toBe(422);
   });
 });
@@ -63,9 +64,9 @@ describe('POST /api/patterns/promote-from-plan', () => {
     const a = insertTask('A');
     const b = insertTask('B');
     // Attach two task blocks to the plan (PR-C parent_block_id).
-    sqlite.prepare(`INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, parent_block_id, status) VALUES (?, 'A', 'task', ?, ?, ?, 'planned')`)
+    sqlite.prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, parent_block_id, status) VALUES (uuid7(), ?, 'A', 'task', ?, ?, ?, 'planned')`)
       .run(a, `${DAY}T14:00:00.000Z`, `${DAY}T15:00:00.000Z`, plan.id);
-    sqlite.prepare(`INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, parent_block_id, status) VALUES (?, 'B', 'task', ?, ?, ?, 'planned')`)
+    sqlite.prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, parent_block_id, status) VALUES (uuid7(), ?, 'B', 'task', ?, ?, ?, 'planned')`)
       .run(b, `${DAY}T15:00:00.000Z`, `${DAY}T16:00:00.000Z`, plan.id);
 
     const r = await api(srv.url, '/api/patterns/promote-from-plan', { method: 'POST', json: { plan_block_id: plan.id, name: 'Routine from Big Plan' } });
@@ -102,7 +103,7 @@ describe('POST /api/patterns/promote-from-plan-template', () => {
     expect(r.body.pattern.name).toBe('Workday Start');
     expect(r.body.pattern.task_ids.length).toBe(2);
     // Each task id is a freshly-created task.
-    const titles = r.body.pattern.task_ids.map((id: number) =>
+    const titles = r.body.pattern.task_ids.map((id: string) =>
       (sqlite.prepare(`SELECT title FROM tasks WHERE id = ?`).get(id) as { title: string }).title,
     );
     expect(titles).toEqual(['Plan the day', 'Deep focus']);

@@ -19,7 +19,7 @@
 import { createSignal } from 'solid-js';
 
 export type DragKind = 'habit' | 'plan-block';
-export interface DragPayload { kind: DragKind; id: number }
+export interface DragPayload { kind: DragKind; id: string }
 
 const [dragPayload, setDragPayload] = createSignal<DragPayload | null>(null);
 export { dragPayload };

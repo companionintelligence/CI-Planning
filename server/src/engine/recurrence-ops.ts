@@ -46,7 +46,7 @@ function parseExdates(raw: string | null): string[] {
  * The template id for a task: itself if it is a template, its parent if it is an
  * instance, else null (the task isn't part of a recurring series).
  */
-export function resolveTemplateId(id: string): number | null {
+export function resolveTemplateId(id: string): string | null {
   const t = getTask(id);
   if (!t) return null;
   if (t.recurrence_parent_id != null) return t.recurrence_parent_id; // instance → template

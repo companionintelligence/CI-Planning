@@ -108,7 +108,7 @@ function resolveMembers(patternId: string, date: string): MemberTask[] {
 export function placePatternOnDay(
   owner: string,
   patternId: string,
-  opts: { date?: string; blockId?: number | null } = {}
+  opts: { date?: string; blockId?: string | null } = {}
 ): PlacePatternResult {
   const date = opts.date ?? localISODate();
 

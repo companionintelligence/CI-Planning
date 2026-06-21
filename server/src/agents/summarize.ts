@@ -124,7 +124,7 @@ ${fmt(g.open)}`;
 /** Up to three concrete things to act on, most urgent first (deterministic). */
 function buildFocus(g: ReturnType<typeof gather>): FocusItem[] {
   const out: FocusItem[] = [];
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   const add = (t: TaskRow, reason: string) => {
     if (out.length >= 3 || seen.has(t.id)) return;
     seen.add(t.id);

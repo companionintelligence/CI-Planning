@@ -23,7 +23,7 @@ export function FlightPlan() {
   const selectedCount = () => items().filter((i) => i.selected).length;
 
   const patternName = createMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<string, string>();
     for (const p of patterns() ?? []) m.set(p.id, p.name);
     return m;
   });
@@ -31,7 +31,7 @@ export function FlightPlan() {
   // Group staged items by their source pattern — a staged routine/ritual reads as one
   // unit (header + members), not separated rows. Directly-added tasks stay solo.
   const grouped = createMemo(() => {
-    const groups = new Map<number, FlightPlanItem[]>();
+    const groups = new Map<string, FlightPlanItem[]>();
     const solo: FlightPlanItem[] = [];
     for (const it of items()) {
       if (it.source_pattern_id != null) {
@@ -76,11 +76,11 @@ export function FlightPlan() {
     }
   }
 
-  async function toggle(taskId: number, selected: boolean) {
+  async function toggle(taskId: string, selected: boolean) {
     try { await api.flightPlan.update(taskId, { selected }); refetchFlightPlan(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
-  async function remove(taskId: number) {
+  async function remove(taskId: string) {
     try { await api.flightPlan.remove(taskId); refetchFlightPlan(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -120,7 +120,7 @@ export function FlightPlan() {
   };
 
   // A staged pattern as one collapsible unit — its members travel together.
-  const FpGroup = (props: { patternId: number; its: FlightPlanItem[] }) => {
+  const FpGroup = (props: { patternId: string; its: FlightPlanItem[] }) => {
     const [open, setOpen] = createSignal(true);
     const allSelected = () => props.its.every((i) => i.selected);
     return (

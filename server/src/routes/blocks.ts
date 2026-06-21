@@ -39,7 +39,7 @@ export function blocksRouter() {
   // POST /api/blocks
   router.post('/api/blocks', async (ctx) => {
     const body = ctx.request.body as {
-      task_id?: number;
+      task_id?: string;
       title: string;
       block_kind?: string;
       tag?: string;

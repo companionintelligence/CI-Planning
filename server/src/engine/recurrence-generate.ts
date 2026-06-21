@@ -130,9 +130,9 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
 
   const ins = sqlite.prepare(
     `INSERT OR IGNORE INTO tasks
-       (title, scheduled_for, defer_until, task_time, due_at, estimated_minutes, priority,
+       (id, title, scheduled_for, defer_until, task_time, due_at, estimated_minutes, priority,
         status, owner_id, recurrence_parent_id, occurrence_date, is_habit, source_kind)
-     VALUES (@title, @sched, @defer, @time, @due, @est, @prio,
+     VALUES (uuid7(), @title, @sched, @defer, @time, @due, @est, @prio,
              'open', @owner, @parent, @day, @habit, 'recurrence')`
   );
 

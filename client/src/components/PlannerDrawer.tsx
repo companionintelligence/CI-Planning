@@ -63,7 +63,7 @@ export function PlannerDrawer() {
       .filter((t) => !q || t.title.toLowerCase().includes(q) || (t.tags ?? []).some((tag) => tag.toLowerCase().includes(q)))
       .slice(0, 50);
   };
-  async function stageTask(id: number) {
+  async function stageTask(id: string) {
     try { await api.flightPlan.addTask(id); refetchFlightPlan(); showToast('Added to flight-plan', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -81,7 +81,7 @@ export function PlannerDrawer() {
 
   // ── Pattern Wizard (Habits / Routines / Rituals as separate submenus) ─────────
   const typeIdByName = createMemo(() => {
-    const m = new Map<string, number>();
+    const m = new Map<string, string>();
     for (const t of patternTypes() ?? []) m.set(t.name, t.id);
     return m;
   });
@@ -99,13 +99,13 @@ export function PlannerDrawer() {
   /** Resolve a habit task to its Habit-type Pattern id (always exists once a task
    *  is flagged is_habit — `ensureHabitPattern` runs on promote-habit and on POST
    *  /api/tasks with is_habit=true). One pattern code path for both habits + bundles. */
-  function habitPatternIdFor(taskId: number): number | null {
+  function habitPatternIdFor(taskId: string): string | null {
     const habitTypeId = typeIdByName().get('Habit');
     if (habitTypeId == null) return null;
     const p = (patterns() ?? []).find((p) => p.type_id === habitTypeId && p.task_ids.includes(taskId));
     return p?.id ?? null;
   }
-  async function placeHabitToday(taskTitle: string, taskId: number) {
+  async function placeHabitToday(taskTitle: string, taskId: string) {
     const patternId = habitPatternIdFor(taskId);
     if (patternId == null) {
       showToast('Habit pattern not found yet — try again in a moment', 'error');
@@ -118,7 +118,7 @@ export function PlannerDrawer() {
       else showToast(`Placed "${taskTitle}" (${result.blocksCreated} block${result.blocksCreated === 1 ? '' : 's'})`, 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
-  async function placePatternToday(id: number, name: string) {
+  async function placePatternToday(id: string, name: string) {
     try {
       const { result } = await api.patterns.placeToday(id);
       refetchBlocks();
