@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2 } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -8,7 +8,7 @@ import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
-import { textureStyle } from '../lib/textures.js';
+import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
 import { BlockEditModal } from './BlockEditModal.js';
@@ -267,14 +267,33 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
 }
 
 // ── A draggable planner chip (name · tag · start–end, texture, next-up marker) ──
-function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; nested: boolean; group: GroupCtx }) {
+function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
   const b = () => props.placed.block;
   const task = () => taskOf(b().task_id);
   const pat = () => patternForTask(b().task_id);
   const tag = () => task()?.tags?.[0] ?? b().tag ?? undefined;
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
+  const completed = () => b().status === 'completed';
   const locked = () => isImmovable(b());
+
+  // Quick-complete (Update mode): a tap toggles done. The completed chip wears a
+  // tag-coloured diagonal hatch + a one-shot glow (set on the act of completing).
+  const [glow, setGlow] = createSignal(false);
+  async function setDone(next: boolean) {
+    const blk = b(); const t = task();
+    try {
+      if (next) {
+        await api.blocks.update(blk.id, { status: 'completed' });
+        if (t) await api.tasks.update(t.id, { completed: true });
+        setGlow(true);
+      } else {
+        await api.blocks.update(blk.id, { status: 'planned' });
+        if (t) await api.tasks.update(t.id, { status: 'open', completed_at: null });
+      }
+      refetchBlocks();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   // Drag/resize + click→menu via the shared hook.
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
@@ -333,11 +352,14 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     <div
       class="absolute z-10 rounded-md overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
       classList={{
-        'opacity-40': done(),
+        'opacity-40': b().status === 'skipped',
+        'opacity-70': completed(),
+        'anim-done-glow': glow(),
         'border-l-[3px] border-l-primary border-border': !props.isNextUp,
         'border-l-[3px] border-l-primary border-primary ring-2 ring-primary/70': props.isNextUp,
-        'cursor-grab': !locked(),
-        'cursor-default': locked(),
+        'cursor-grab': !locked() && !props.updateMode,
+        'cursor-pointer': props.updateMode,
+        'cursor-default': locked() && !props.updateMode,
         'z-30 cursor-grabbing shadow-lg': !!drag(),
         'ring-2 ring-chart-1 ring-offset-1 ring-offset-card': selectedBlock(),
       }}
@@ -346,9 +368,13 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         height: `${heightPx()}px`,
         left: `calc(${(props.placed.col / props.placed.cols) * 100}% + ${inset()}px)`,
         width: `calc(${100 / props.placed.cols}% - 3px - ${inset()}px)`,
+        ...(completed() ? doneHatchStyle(tag()) : {}),
+        ...(glow() ? { '--done-glow': `color-mix(in srgb, ${tagColorVar(tag())} 55%, transparent)` } : {}),
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
+      onAnimationEnd={() => setGlow(false)}
       onPointerDown={(e) => {
+        if (props.updateMode) return; // Update mode: a tap toggles done (onClick) — no drag.
         // Cmd/Ctrl-click toggles multi-select (Phase F) — don't start a drag.
         if ((e.metaKey || e.ctrlKey) && b().task_id != null) {
           e.preventDefault(); e.stopPropagation();
@@ -357,19 +383,37 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         }
         startGesture('move', e);
       }}
-      onClick={(e) => { if (locked()) setMenu({ x: e.clientX, y: e.clientY }); }}
+      onClick={(e) => {
+        if (props.updateMode) { void setDone(!completed()); return; }
+        if (locked()) setMenu({ x: e.clientX, y: e.clientY });
+      }}
     >
       {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
       <Show when={pat()}>
         {(p) => <div style={textureStyle(p().type?.icon_shape, p().pattern.tag ?? tag() ?? null)} />}
       </Show>
 
-      <Show when={!locked()}>
+      {/* Update-mode checkbox (top-left) — the explicit affordance; tapping the
+          chip body anywhere toggles too. */}
+      <Show when={props.updateMode}>
+        <button
+          class="absolute top-1 left-1 z-20 w-4 h-4 rounded-[4px] border flex items-center justify-center"
+          classList={{ 'bg-card border-muted-foreground': !completed(), 'border-transparent': completed() }}
+          style={completed() ? { background: tagColorVar(tag()) } : {}}
+          title={completed() ? 'Mark not done' : 'Mark done'}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); void setDone(!completed()); }}
+        >
+          <Show when={completed()}><Check size={11} class="text-background" /></Show>
+        </button>
+      </Show>
+
+      <Show when={!locked() && !props.updateMode}>
         <div class="absolute top-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }}
           onPointerDown={(e) => startGesture('resize-top', e)} />
       </Show>
 
-      <div class="relative px-1.5 py-0.5">
+      <div class="relative px-1.5 py-0.5" classList={{ 'pl-6': props.updateMode }}>
         <div class="flex items-center gap-1 font-medium text-foreground truncate">
           <Show when={props.isNextUp}><Play size={9} class="text-primary flex-shrink-0 fill-primary" /></Show>
           <Show when={b().is_locked}><Lock size={9} class="text-muted-foreground flex-shrink-0" /></Show>
@@ -387,7 +431,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         </Show>
       </div>
 
-      <Show when={!locked()}>
+      <Show when={!locked() && !props.updateMode}>
         <div class="absolute bottom-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }}
           onPointerDown={(e) => startGesture('resize-bottom', e)} />
       </Show>
@@ -435,6 +479,7 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
 export function Planner() {
   const day = () => localISODate();
   const [expanded, setExpanded] = createSignal(false);
+  const [updateMode, setUpdateMode] = createSignal(false);
   const [editBlock, setEditBlock] = createSignal<Block | null>(null);
   const [deletePlan, setDeletePlan] = createSignal<{ plan: Block; childCount: number } | null>(null);
 
@@ -543,15 +588,26 @@ export function Planner() {
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
           <span class="text-[10px] text-muted-foreground">{expanded() ? '24h' : '8h · scroll for more'}</span>
         </div>
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          title={expanded() ? 'Collapse to 8 hours' : 'Expand to 24 hours'}
-        >
-          <Show when={expanded()} fallback={<><Maximize2 size={12} /> Expand 24h</>}>
-            <Minimize2 size={12} /> Collapse
-          </Show>
-        </button>
+        <div class="flex items-center gap-3">
+          {/* Update mode — tap a task to mark it done (no need to have started it). */}
+          <button
+            onClick={() => setUpdateMode((v) => !v)}
+            class="inline-flex items-center gap-1 text-xs transition-colors"
+            classList={{ 'text-primary font-medium': updateMode(), 'text-muted-foreground hover:text-foreground': !updateMode() }}
+            title={updateMode() ? 'Done updating' : 'Update — tap tasks to mark them done'}
+          >
+            <CheckCircle2 size={12} /> {updateMode() ? 'Done' : 'Update'}
+          </button>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            title={expanded() ? 'Collapse to 8 hours' : 'Expand to 24 hours'}
+          >
+            <Show when={expanded()} fallback={<><Maximize2 size={12} /> Expand 24h</>}>
+              <Minimize2 size={12} /> Collapse
+            </Show>
+          </button>
+        </div>
       </div>
 
       {/* Header lane — all-day Plans + Concepts whose goal day is today (off the grid). */}
@@ -575,7 +631,7 @@ export function Planner() {
             <HourLines />
             <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={setEditBlock} onRequestDelete={requestDeletePlan} />}</For>
             <For each={placed()}>
-              {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={isNested(p.block)} group={groupCtx} />}
+              {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={isNested(p.block)} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <NowLine day={day()} now={nowISO()} />
             <Show when={chips().length === 0 && containers().length === 0}>
