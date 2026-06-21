@@ -1,7 +1,7 @@
 import { A } from '@solidjs/router';
 import { Show } from 'solid-js';
 import {
-  CalendarDays, CheckSquare, Inbox, Tag, Settings, Activity,
+  CheckSquare, Inbox, Tag, Settings, Activity,
   Sun, Cpu, Shapes,
 } from 'lucide-solid';
 import { possibles } from '../stores/index.js';
@@ -9,7 +9,6 @@ import { ThemeToggle } from './ThemeToggle.js';
 
 const links = [
   { href: '/',         label: 'Today',    Icon: Sun },
-  { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
   { href: '/inbox',    label: 'Inbox',    Icon: Inbox, badge: true },
   { href: '/tasks',    label: 'Tasks',    Icon: CheckSquare },
   { href: '/patterns', label: 'Routines', Icon: Shapes },
