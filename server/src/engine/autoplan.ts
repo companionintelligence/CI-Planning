@@ -39,7 +39,7 @@ export interface AutoResult {
 }
 
 interface StagedTask {
-  task_id: number;
+  task_id: string;
   title: string;
   estimated_minutes: number | null;
   priority: number;
@@ -55,13 +55,13 @@ interface PrefsRow {
   auto_fill_workday: number | null;
 }
 interface PlanRow {
-  id: number;
+  id: string;
   start_at: string;
   end_at: string;
   tag: string | null;
 }
 
-function tagsOf(taskId: number): string[] {
+function tagsOf(taskId: string): string[] {
   return (
     sqlite
       .prepare(`SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = ?`)
@@ -69,7 +69,7 @@ function tagsOf(taskId: number): string[] {
   ).map((r) => r.name);
 }
 
-function selectedStaged(owner: number): StagedTask[] {
+function selectedStaged(owner: string): StagedTask[] {
   const rows = sqlite
     .prepare(
       `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at
@@ -81,7 +81,7 @@ function selectedStaged(owner: number): StagedTask[] {
   return rows.map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
 }
 
-function prefsOf(owner: number): PrefsRow | undefined {
+function prefsOf(owner: string): PrefsRow | undefined {
   return sqlite
     .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
@@ -119,8 +119,8 @@ function orderForPlan(cands: StagedTask[]): StagedTask[] {
 
 const insBlock = () =>
   sqlite.prepare(
-    `INSERT INTO time_blocks (task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-     VALUES (?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?)`
+    `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
+     VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?)`
   );
 
 /** Clear our OWN prior agent placements for the local day (pattern blocks survive). */
@@ -181,7 +181,7 @@ function placeIntoWindow(
 }
 
 /** STEP 1: propose open-task candidates (not already staged) into the flight-plan. */
-export function fillFlightPlanCandidates(owner: number = currentOwnerId()): number {
+export function fillFlightPlanCandidates(owner: string = currentOwnerId()): number {
   const candidates = sqlite
     .prepare(
       `SELECT id FROM tasks
@@ -190,7 +190,7 @@ export function fillFlightPlanCandidates(owner: number = currentOwnerId()): numb
         ORDER BY priority, COALESCE(due_at, '9999-12-31'), id
         LIMIT ?`
     )
-    .all(owner, owner, CANDIDATE_LIMIT) as { id: number }[];
+    .all(owner, owner, CANDIDATE_LIMIT) as { id: string }[];
   const { m } = sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number };
   const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 0, ?)`);
   let pos = m + 1;
@@ -203,7 +203,7 @@ export function fillFlightPlanCandidates(owner: number = currentOwnerId()): numb
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
  */
-export function placeFlightPlan(owner: number = currentOwnerId(), opts: { date?: string; blockId?: number } = {}): AutoResult {
+export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?: string; blockId?: number } = {}): AutoResult {
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();

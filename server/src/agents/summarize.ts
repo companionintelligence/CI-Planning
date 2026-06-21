@@ -6,7 +6,7 @@ import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 
 interface TaskRow {
-  id: number;
+  id: string;
   title: string;
   priority: number;
   due_at: string | null;
@@ -24,7 +24,7 @@ interface BlockRow {
 
 /** A concrete, clickable thing to act on — the briefing made actionable. */
 export interface FocusItem {
-  taskId: number;
+  taskId: string;
   title: string;
   reason: string;
 }
