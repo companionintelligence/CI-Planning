@@ -20,36 +20,36 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 const OWNER = SYSTEM_OWNER;
 const TZ = 'America/Los_Angeles';
 
-function insertTemplate(o: { rule?: string; isHabit?: boolean; taskTime?: string | null } = {}): number {
+function insertTemplate(o: { rule?: string; isHabit?: boolean; taskTime?: string | null } = {}): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (title, status, owner_id, priority, task_time, is_habit,
+        `INSERT INTO tasks (id, title, status, owner_id, priority, task_time, is_habit,
                             recurrence_rule, recurrence_dtstart)
-         VALUES ('Tpl', 'recurring', ?, 3, ?, ?, ?, '2026-06-01T12:00:00.000Z') RETURNING id`
+         VALUES (uuid7(), 'Tpl', 'recurring', ?, 3, ?, ?, ?, '2026-06-01T12:00:00.000Z') RETURNING id`
       )
-      .get(OWNER, o.taskTime ?? null, o.isHabit ? 1 : 0, o.rule ?? 'FREQ=DAILY') as { id: number }
+      .get(OWNER, o.taskTime ?? null, o.isHabit ? 1 : 0, o.rule ?? 'FREQ=DAILY') as { id: string }
   ).id;
 }
 
-function insertInstance(templateId: number, day: string, status = 'open'): number {
+function insertInstance(templateId: string, day: string, status = 'open'): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (title, status, owner_id, priority, recurrence_parent_id, occurrence_date, source_kind)
-         VALUES ('Inst', ?, ?, 3, ?, ?, 'recurrence') RETURNING id`
+        `INSERT INTO tasks (id, title, status, owner_id, priority, recurrence_parent_id, occurrence_date, source_kind)
+         VALUES (uuid7(), 'Inst', ?, ?, 3, ?, ?, 'recurrence') RETURNING id`
       )
-      .get(status, OWNER, templateId, day) as { id: number }
+      .get(status, OWNER, templateId, day) as { id: string }
   ).id;
 }
 
-const statusOf = (id: number) =>
+const statusOf = (id: string) =>
   (sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(id) as { status: string }).status;
-const exdatesOf = (id: number): string[] => {
+const exdatesOf = (id: string): string[] => {
   const r = sqlite.prepare(`SELECT recurrence_exdates AS e FROM tasks WHERE id = ?`).get(id) as { e: string | null };
   return r.e ? (JSON.parse(r.e) as string[]) : [];
 };
-const countInstances = (tpl: number, status?: string): number =>
+const countInstances = (tpl: string, status?: string): number =>
   (
     sqlite
       .prepare(
@@ -67,12 +67,12 @@ describe('resolveTemplateId', () => {
   it('maps an instance to its template, a template to itself, a normal task to null', () => {
     const tpl = insertTemplate();
     const inst = insertInstance(tpl, '2026-06-10');
-    const normal = (sqlite.prepare(`INSERT INTO tasks (title, owner_id, status) VALUES ('n', ?, 'open') RETURNING id`).get(OWNER) as { id: number }).id;
+    const normal = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'n', ?, 'open') RETURNING id`).get(OWNER) as { id: string }).id;
 
     expect(resolveTemplateId(inst)).toBe(tpl);
     expect(resolveTemplateId(tpl)).toBe(tpl);
     expect(resolveTemplateId(normal)).toBeNull();
-    expect(resolveTemplateId(999999)).toBeNull();
+    expect(resolveTemplateId('999999')).toBeNull();
   });
 });
 
@@ -108,7 +108,7 @@ describe('skipInstance', () => {
   it('rejects a non-instance (template or normal task) and a missing id', () => {
     const tpl = insertTemplate();
     expect(skipInstance(tpl)).toEqual({ ok: false, reason: 'not_instance' });
-    expect(skipInstance(424242)).toEqual({ ok: false, reason: 'not_found' });
+    expect(skipInstance('424242')).toEqual({ ok: false, reason: 'not_found' });
   });
 });
 
@@ -142,7 +142,7 @@ describe('computeStreak', () => {
 
     expect(computeStreak(inst, '2026-06-10')?.current).toBe(2); // via the instance id
 
-    const normal = (sqlite.prepare(`INSERT INTO tasks (title, owner_id, status) VALUES ('n', ?, 'open') RETURNING id`).get(OWNER) as { id: number }).id;
+    const normal = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'n', ?, 'open') RETURNING id`).get(OWNER) as { id: string }).id;
     expect(computeStreak(normal, '2026-06-10')).toBeNull();
   });
 });
@@ -206,7 +206,7 @@ describe('routes — recurrence API', () => {
     const tplId = body.task.id;
     const inst = sqlite
       .prepare(`SELECT id, occurrence_date FROM tasks WHERE recurrence_parent_id = ? ORDER BY occurrence_date LIMIT 1`)
-      .get(tplId) as { id: number; occurrence_date: string };
+      .get(tplId) as { id: string; occurrence_date: string };
 
     const ok = await api(srv.url, `/api/tasks/${inst.id}/skip`, { method: 'POST' });
     expect(ok.status).toBe(200);
@@ -253,7 +253,7 @@ describe('routes — recurrence API', () => {
     // Instance-scoped edit touches only the one row, not the template.
     const inst = sqlite
       .prepare(`SELECT id FROM tasks WHERE recurrence_parent_id = ? AND status = 'open' ORDER BY occurrence_date LIMIT 1`)
-      .get(tplId) as { id: number };
+      .get(tplId) as { id: string };
     const ie = await api(srv.url, `/api/tasks/${inst.id}?scope=instance`, {
       method: 'PATCH',
       json: { title: 'Journal (just today)' },

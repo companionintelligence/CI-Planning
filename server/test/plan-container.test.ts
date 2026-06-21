@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
 /**
@@ -9,34 +10,34 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  * a Plan detaches members (SET NULL) by default, or removes them with ?children=delete.
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 const DAY = '2026-06-22';
 const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 
-function insertTask(title: string, est = 30, tag?: string): number {
-  const id = (sqlite.prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, priority) VALUES (?, ?, 'open', ?, 3) RETURNING id`).get(title, OWNER, est) as { id: number }).id;
+function insertTask(title: string, est = 30, tag?: string): string {
+  const id = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', ?, 3) RETURNING id`).get(title, OWNER, est) as { id: string }).id;
   if (tag) {
-    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: number } | undefined;
-    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (name) VALUES (?) RETURNING id`).get(tag) as { id: number };
+    let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: string } | undefined;
+    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id`).get(tag) as { id: string };
     sqlite.prepare(`INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)`).run(id, tg.id);
   }
   return id;
 }
 
 /** A Plan container (block_kind='timeblock', block_type='plan'). */
-function insertPlan(startISO: string, endISO: string, tag?: string): number {
+function insertPlan(startISO: string, endISO: string, tag?: string): string {
   return (sqlite
-    .prepare(`INSERT INTO time_blocks (title, block_kind, block_type, tag, start_at, end_at, is_auto, status) VALUES ('Plan', 'timeblock', 'plan', ?, ?, ?, 0, 'planned') RETURNING id`)
-    .get(tag ?? null, startISO, endISO) as { id: number }).id;
+    .prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, status) VALUES (uuid7(), 'Plan', 'timeblock', 'plan', ?, ?, ?, 0, 'planned') RETURNING id`)
+    .get(tag ?? null, startISO, endISO) as { id: string }).id;
 }
 /** A task block inside a Plan (parent_block_id set). */
-function insertChild(parentId: number | null, startISO: string, endISO: string, title = 'task'): number {
+function insertChild(parentId: string | null, startISO: string, endISO: string, title = 'task'): string {
   return (sqlite
-    .prepare(`INSERT INTO time_blocks (title, block_kind, start_at, end_at, is_auto, status, parent_block_id) VALUES (?, 'task', ?, ?, 1, 'planned', ?) RETURNING id`)
-    .get(title, startISO, endISO, parentId) as { id: number }).id;
+    .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, status, parent_block_id) VALUES (uuid7(), ?, 'task', ?, ?, 1, 'planned', ?) RETURNING id`)
+    .get(title, startISO, endISO, parentId) as { id: string }).id;
 }
-const row = (id: number) => sqlite.prepare(`SELECT * FROM time_blocks WHERE id = ?`).get(id) as
-  { id: number; start_at: string; end_at: string; parent_block_id: number | null } | undefined;
+const row = (id: string) => sqlite.prepare(`SELECT * FROM time_blocks WHERE id = ?`).get(id) as
+  { id: string; start_at: string; end_at: string; parent_block_id: string | null } | undefined;
 const ms = (iso: string) => Date.parse(iso);
 
 let srv: TestServer;
@@ -54,7 +55,7 @@ describe('Auto places members into a Plan', () => {
     await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: errand } });
 
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: DAY, block_id: planBlock.id } });
-    const placed = sqlite.prepare(`SELECT * FROM time_blocks WHERE title = 'Post office'`).get() as { parent_block_id: number };
+    const placed = sqlite.prepare(`SELECT * FROM time_blocks WHERE title = 'Post office'`).get() as { parent_block_id: string };
     expect(placed.parent_block_id).toBe(planBlock.id);
   });
 
@@ -62,7 +63,7 @@ describe('Auto places members into a Plan', () => {
     const t = insertTask('Deep work', 60);
     await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: t } });
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: DAY } });
-    const placed = sqlite.prepare(`SELECT * FROM time_blocks WHERE title = 'Deep work'`).get() as { parent_block_id: number | null };
+    const placed = sqlite.prepare(`SELECT * FROM time_blocks WHERE title = 'Deep work'`).get() as { parent_block_id: string | null };
     expect(placed.parent_block_id).toBeNull();
   });
 });
@@ -127,7 +128,7 @@ describe('move-group: atomic, offset-preserving shift', () => {
 
       const dMs = d * 60_000;
       for (const [k, before] of Object.entries(orig)) {
-        const after = row((before as { id: number }).id)!;
+        const after = row((before as { id: string }).id)!;
         expect(ms(after.start_at) - ms((before as any).start_at)).toBe(dMs); // every member shifted by exactly d
         expect(ms(after.end_at) - ms((before as any).end_at)).toBe(dMs);
         expect(k).toBeTruthy();

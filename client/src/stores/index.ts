@@ -47,8 +47,8 @@ export const [overlayTags, setOverlayTags] = createSignal<string[]>([]); // tag 
 export const [overlayPrio, setOverlayPrio] = createSignal<number[]>([]); // priorities 1–5; empty = all
 
 /** Build a task lookup by id from the current tasks resource. */
-const taskById = createMemo<Map<number, Task>>(() => {
-  const m = new Map<number, Task>();
+const taskById = createMemo<Map<string, Task>>(() => {
+  const m = new Map<string, Task>();
   for (const t of tasks() ?? []) m.set(t.id, t);
   return m;
 });
@@ -71,7 +71,7 @@ export const visibleBlocks = createMemo<Block[]>(() => {
 });
 
 /** Lookup the task linked to a block (for chip rendering / overlays). */
-export function taskOf(taskId?: number): Task | undefined {
+export function taskOf(taskId?: string): Task | undefined {
   return taskId ? taskById().get(taskId) : undefined;
 }
 
@@ -111,8 +111,8 @@ on('pattern_type:updated', () => refetchPatternTypes());
 on('pattern_type:deleted', () => refetchPatternTypes());
 
 /** Pattern types keyed by id — for resolving a pattern's icon shape. */
-const patternTypeById = createMemo<Map<number, PatternType>>(() => {
-  const m = new Map<number, PatternType>();
+const patternTypeById = createMemo<Map<string, PatternType>>(() => {
+  const m = new Map<string, PatternType>();
   for (const t of patternTypes() ?? []) m.set(t.id, t);
   return m;
 });
@@ -121,8 +121,8 @@ const patternTypeById = createMemo<Map<number, PatternType>>(() => {
  * The pattern a task belongs to (first by lowest position), for texture rendering.
  * Membership is many-to-many; V1 picks one pattern per task to choose the texture.
  */
-const patternByTaskId = createMemo<Map<number, Pattern>>(() => {
-  const m = new Map<number, Pattern>();
+const patternByTaskId = createMemo<Map<string, Pattern>>(() => {
+  const m = new Map<string, Pattern>();
   for (const p of patterns() ?? []) {
     for (const tid of p.task_ids) if (!m.has(tid)) m.set(tid, p);
   }
@@ -130,7 +130,7 @@ const patternByTaskId = createMemo<Map<number, Pattern>>(() => {
 });
 
 /** The pattern + its type for a task, if any — drives the PLANNER's pattern texture. */
-export function patternForTask(taskId?: number): { pattern: Pattern; type?: PatternType } | undefined {
+export function patternForTask(taskId?: string): { pattern: Pattern; type?: PatternType } | undefined {
   if (taskId == null) return undefined;
   const pattern = patternByTaskId().get(taskId);
   if (!pattern) return undefined;
@@ -172,5 +172,5 @@ export function showToast(message: string, kind: ToastKind = 'default', duration
 export const [taskModal, setTaskModal] = createSignal<{
   open: boolean;
   editTask?: import('../lib/api.js').Task;
-  parentId?: number;
+  parentId?: string;
 }>({ open: false });

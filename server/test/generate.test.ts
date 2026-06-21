@@ -32,14 +32,14 @@ interface TemplateOpts {
 }
 
 /** Insert a recurrence template (recurrence_rule set, no parent) and return its id. */
-function insertTemplate(o: TemplateOpts = {}): number {
+function insertTemplate(o: TemplateOpts = {}): string {
   return (
     sqlite
       .prepare(
         `INSERT INTO tasks
-           (title, status, owner_id, priority, estimated_minutes, task_time, is_habit,
+           (id, title, status, owner_id, priority, estimated_minutes, task_time, is_habit,
             recurrence_rule, recurrence_dtstart)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
       )
       .get(
         'Recurring thing',
@@ -51,7 +51,7 @@ function insertTemplate(o: TemplateOpts = {}): number {
         o.isHabit ? 1 : 0,
         o.rule ?? 'FREQ=DAILY',
         o.dtstart ?? '2026-06-01T12:00:00.000Z'
-      ) as { id: number }
+      ) as { id: string }
   ).id;
 }
 
@@ -59,7 +59,7 @@ const gen = (opts: { today?: string; horizonDays?: number }) =>
   runWithOwner(OWNER, () => generateRecurrences(opts));
 
 interface InstanceRow {
-  id: number;
+  id: string;
   status: string;
   occurrence_date: string;
   scheduled_for: string | null;
@@ -70,17 +70,17 @@ interface InstanceRow {
   is_habit: number;
 }
 
-const instances = (tpl: number): InstanceRow[] =>
+const instances = (tpl: string): InstanceRow[] =>
   sqlite
     .prepare(`SELECT * FROM tasks WHERE recurrence_parent_id = ? ORDER BY occurrence_date`)
     .all(tpl) as InstanceRow[];
 
-const instanceOn = (tpl: number, day: string): InstanceRow | undefined =>
+const instanceOn = (tpl: string, day: string): InstanceRow | undefined =>
   sqlite
     .prepare(`SELECT * FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ?`)
     .get(tpl, day) as InstanceRow | undefined;
 
-const statusOf = (id: number) =>
+const statusOf = (id: string) =>
   (sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(id) as { status: string }).status;
 
 beforeEach(() => {

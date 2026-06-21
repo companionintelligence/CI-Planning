@@ -32,13 +32,22 @@ export function runMigrations(db: Database): { applied: string[] } {
 
   for (const m of MIGRATIONS) {
     if (done.has(m.id)) continue;
-    // better-sqlite3 is synchronous, so the whole migration + its bookkeeping
-    // commit (or roll back) atomically.
-    const tx = db.transaction(() => {
+    if (m.manual) {
+      // A `manual` migration manages its own transaction so it can toggle
+      // `foreign_keys` (a PRAGMA that's a silent no-op inside a transaction).
+      // Required by the CON-1 table-rebuild, where DROP TABLE under FK-on would
+      // cascade-delete children. up() must be idempotent (it guards on re-run).
       m.up(db);
       record.run(m.id);
-    });
-    tx();
+    } else {
+      // better-sqlite3 is synchronous, so the whole migration + its bookkeeping
+      // commit (or roll back) atomically.
+      const tx = db.transaction(() => {
+        m.up(db);
+        record.run(m.id);
+      });
+      tx();
+    }
     applied.push(m.id);
     logger.info('migration applied', { id: m.id });
   }

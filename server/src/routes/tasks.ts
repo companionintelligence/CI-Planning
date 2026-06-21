@@ -29,7 +29,7 @@ export function tasksRouter() {
     // Build WHERE conditions
     const conditions = [];
     if (status)    conditions.push(eq(tasks.status, status));
-    if (owner_id)  conditions.push(eq(tasks.ownerId, Number(owner_id)));
+    if (owner_id)  conditions.push(eq(tasks.ownerId, owner_id));
     if (priority)  conditions.push(eq(tasks.priority, Number(priority)));
     if (due_before) conditions.push(lte(tasks.dueAt, due_before));
     if (q)         conditions.push(like(tasks.title, `%${q}%`));
@@ -74,10 +74,10 @@ export function tasksRouter() {
       task_time?: string;
       estimated_minutes?: number;
       priority?: number;
-      owner_id?: number;
-      parent_id?: number;
+      owner_id?: string;
+      parent_id?: string;
       tags?: string[];
-      depends_on?: number[];
+      depends_on?: string[];
       recurrence_rule?: string;
       recurrence_dtstart?: string;
       is_habit?: boolean;
@@ -119,7 +119,7 @@ export function tasksRouter() {
       // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
       if (body.is_habit) ensureHabitPattern(template.id, owner, template.title);
       const generated = generateRecurrences();
-      const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as number[], blocked: false };
+      const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
       broadcast(currentOwnerId(), 'recurrence:generated', generated);
       ctx.status = 201;
@@ -200,7 +200,7 @@ export function tasksRouter() {
 
   // GET /api/tasks/:id/subtasks
   router.get('/api/tasks/:id/subtasks', async (ctx) => {
-    const parentId = Number(ctx.params.id);
+    const parentId = ctx.params.id;
     const result = await db.select().from(tasks).where(eq(tasks.parentId, parentId)).orderBy(asc(tasks.priority));
     const withTags = result.map((t) => {
       const tagRows = sqlite
@@ -214,7 +214,7 @@ export function tasksRouter() {
   // POST /api/tasks/:id/skip — skip a recurring instance: mark it `skipped` and
   // add its day to the template's EXDATE so a regenerate won't resurrect it.
   router.post('/api/tasks/:id/skip', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const res = skipInstance(id);
     if (!res.ok) {
       ctx.status = res.reason === 'not_found' ? 404 : 400;
@@ -230,7 +230,7 @@ export function tasksRouter() {
   // GET /api/tasks/:id/streak — habit streak + last-7 occurrence strip for a
   // recurring task (pass a template or any instance id). 404 if not recurring.
   router.get('/api/tasks/:id/streak', async (ctx) => {
-    const res = computeStreak(Number(ctx.params.id));
+    const res = computeStreak(ctx.params.id);
     if (!res) { ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return; }
     ctx.body = res;
   });
@@ -239,7 +239,7 @@ export function tasksRouter() {
   // POST /api/tasks/:id/promote-habit — make a (possibly fast/ritual-local) task a
   // habit: flag it, drop fast-task hiding, and ensure its Habit-type pattern (G2).
   router.post('/api/tasks/:id/promote-habit', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const owner = currentOwnerId();
     const [task] = await db
       .update(tasks)
@@ -261,7 +261,7 @@ export function tasksRouter() {
   // out from today (the +1/+3/+7 buttons on the Missed review surface). Clears
   // 'missed', increments defer_count, drops stale blocks so it re-places cleanly.
   router.post('/api/tasks/:id/reschedule', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { days?: number };
     if (typeof body.days !== 'number') { ctx.status = 422; ctx.body = { error: 'days is required' }; return; }
@@ -280,7 +280,7 @@ export function tasksRouter() {
   });
 
   router.patch('/api/tasks/:id', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     // Accept both snake_case (client/API convention) and camelCase (drizzle) field names.
     const body = (ctx.request.body ?? {}) as {
       title?: string;
@@ -297,9 +297,9 @@ export function tasksRouter() {
       status?: string;
       completed?: boolean;
       completed_at?: string | null;
-      parent_id?: number | null;
+      parent_id?: string | null;
       tags?: string[];
-      depends_on?: number[];
+      depends_on?: string[];
       recurrence_rule?: string | null;
       recurrence_dtstart?: string | null;
       is_habit?: boolean;
@@ -383,7 +383,7 @@ export function tasksRouter() {
 
   // DELETE /api/tasks/:id  (soft delete)
   router.delete('/api/tasks/:id', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const [task] = await db
       .update(tasks)
       .set({ status: 'cancelled' })
@@ -399,7 +399,7 @@ export function tasksRouter() {
   // Stops any running timer first (one per owner); broadcasts the superseded
   // entry's stop, then the new start. 201 with the new entry.
   router.post('/api/tasks/:id/timer/start', async (ctx) => {
-    const taskId = Number(ctx.params.id);
+    const taskId = ctx.params.id;
     const blockId = (ctx.request.body as { block_id?: number } | undefined)?.block_id;
     const { entry, stopped } = startTimer(taskId, blockId);
     const owner = currentOwnerId();
@@ -434,7 +434,7 @@ export function tasksRouter() {
 }
 
 /** Replace a task's blockers; on a cycle, respond 409 and return false. */
-function applyDependencies(ctx: { status: number; body: unknown }, taskId: number, dependsOn: number[]): boolean {
+function applyDependencies(ctx: { status: number; body: unknown }, taskId: string, dependsOn: string[]): boolean {
   try {
     setDependencies(taskId, dependsOn);
     return true;
@@ -448,15 +448,15 @@ function applyDependencies(ctx: { status: number; body: unknown }, taskId: numbe
   }
 }
 
-async function attachTags(taskId: number, names: string[]) {
+async function attachTags(taskId: string, names: string[]) {
   for (const rawName of names) {
     const name = rawName.toLowerCase().replace(/\s+/g, '-').slice(0, 32);
-    const existing = sqlite.prepare('SELECT id FROM tags WHERE name = @name').get({ name }) as { id: number } | undefined;
-    let tagId: number;
+    const existing = sqlite.prepare('SELECT id FROM tags WHERE name = @name').get({ name }) as { id: string } | undefined;
+    let tagId: string;
     if (existing) {
       tagId = existing.id;
     } else {
-      const r = sqlite.prepare('INSERT INTO tags (name) VALUES (?) RETURNING id').get(name) as { id: number };
+      const r = sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string };
       tagId = r.id;
     }
     sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)').run(taskId, tagId);

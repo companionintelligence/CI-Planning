@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { patternsRecurringOnDate, ensurePatternsForRange } from '../src/engine/patterns-place.js';
 
@@ -9,20 +10,20 @@ import { patternsRecurringOnDate, ensurePatternsForRange } from '../src/engine/p
  * runs placePatternOnDay per. Rituals are excluded.
  */
 
-const OWNER = 1;
+const OWNER = SYSTEM_OWNER;
 
-function typeId(name: string): number {
-  return (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = ? AND owner_id = ?`).get(name, OWNER) as { id: number }).id;
+function typeId(name: string): string {
+  return (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = ? AND owner_id = ?`).get(name, OWNER) as { id: string }).id;
 }
-function insertTask(title: string, est = 30): number {
+function insertTask(title: string, est = 30): string {
   return (sqlite
-    .prepare(`INSERT INTO tasks (title, owner_id, status, estimated_minutes, priority) VALUES (?, ?, 'open', ?, 3) RETURNING id`)
-    .get(title, OWNER, est) as { id: number }).id;
+    .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', ?, 3) RETURNING id`)
+    .get(title, OWNER, est) as { id: string }).id;
 }
-function insertPattern(typeName: string, name: string, taskIds: number[], rule?: string, dtstart?: string): number {
+function insertPattern(typeName: string, name: string, taskIds: string[], rule?: string, dtstart?: string): string {
   const pid = (sqlite
-    .prepare(`INSERT INTO patterns (owner_id, type_id, name, recurrence_rule, recurrence_dtstart) VALUES (?, ?, ?, ?, ?) RETURNING id`)
-    .get(OWNER, typeId(typeName), name, rule ?? null, dtstart ?? null) as { id: number }).id;
+    .prepare(`INSERT INTO patterns (id, owner_id, type_id, name, recurrence_rule, recurrence_dtstart) VALUES (uuid7(), ?, ?, ?, ?, ?) RETURNING id`)
+    .get(OWNER, typeId(typeName), name, rule ?? null, dtstart ?? null) as { id: string }).id;
   taskIds.forEach((tid, i) =>
     sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(pid, tid, i),
   );

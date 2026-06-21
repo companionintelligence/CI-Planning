@@ -39,7 +39,7 @@ export function blocksRouter() {
   // POST /api/blocks
   router.post('/api/blocks', async (ctx) => {
     const body = ctx.request.body as {
-      task_id?: number;
+      task_id?: string;
       title: string;
       block_kind?: string;
       tag?: string;
@@ -87,7 +87,7 @@ export function blocksRouter() {
 
   // PATCH /api/blocks/:id
   router.patch('/api/blocks/:id', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const body = ctx.request.body as Partial<{
       title: string;
       start_at: string;
@@ -101,7 +101,7 @@ export function blocksRouter() {
       duration_minutes: number | null;
       note: string | null;
       all_day: boolean;
-      parent_block_id: number | null;
+      parent_block_id: string | null;
     }>;
 
     const update: Partial<typeof timeBlocks.$inferInsert> = {};
@@ -135,13 +135,13 @@ export function blocksRouter() {
   // so it is tz/DST-correct and matches the client's `instantFor` delta exactly —
   // relative offsets are preserved and delta 0 is a byte-identical no-op.
   router.post('/api/blocks/:id/move-group', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { delta_minutes?: number };
     const delta = Math.round(Number(body.delta_minutes ?? 0));
 
     const anchor = sqlite
       .prepare(`SELECT id, block_kind, parent_block_id FROM time_blocks WHERE id = ?`)
-      .get(id) as { id: number; block_kind: string; parent_block_id: number | null } | undefined;
+      .get(id) as { id: string; block_kind: string; parent_block_id: string | null } | undefined;
     if (!anchor) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     // The group's parent: the container itself, the member's parent, or (a loose
@@ -149,7 +149,7 @@ export function blocksRouter() {
     const parentId = anchor.block_kind === 'timeblock' ? anchor.id : anchor.parent_block_id ?? anchor.id;
     const members = sqlite
       .prepare(`SELECT id, start_at, end_at FROM time_blocks WHERE id = ? OR parent_block_id = ?`)
-      .all(parentId, parentId) as { id: number; start_at: string; end_at: string }[];
+      .all(parentId, parentId) as { id: string; start_at: string; end_at: string }[];
 
     const deltaMs = delta * 60_000;
     const shift = (iso: string) => new Date(Date.parse(iso) + deltaMs).toISOString();
@@ -168,7 +168,7 @@ export function blocksRouter() {
   // The client supplies the chosen start (and all_day for day-long Plans); end
   // defaults to start + the concept's duration_minutes.
   router.post('/api/blocks/:id/promote', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { start_at?: string; end_at?: string; all_day?: boolean };
     if (!body.start_at) { ctx.status = 422; ctx.body = { error: 'start_at is required to promote' }; return; }
     const [existing] = await db.select().from(timeBlocks).where(eq(timeBlocks.id, id));
@@ -190,7 +190,7 @@ export function blocksRouter() {
   // survive as loose task blocks. `?children=delete` removes the members too
   // (PR-C: the "remove tasks" choice in the delete-Plan confirm dialog).
   router.delete('/api/blocks/:id', async (ctx) => {
-    const id = Number(ctx.params.id);
+    const id = ctx.params.id;
     if ((ctx.query.children as string) === 'delete') {
       sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(id);
     }

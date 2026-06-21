@@ -25,8 +25,8 @@ export function shiftBlock(block: Pick<Block, 'start_at' | 'end_at'>, day: strin
 }
 
 /** Apply `deltaMin` to every member, keyed by block id — the optimistic group preview. */
-export function applyGroupDelta(members: Block[], day: string, deltaMin: number): Record<number, Move> {
-  const out: Record<number, Move> = {};
+export function applyGroupDelta(members: Block[], day: string, deltaMin: number): Record<string, Move> {
+  const out: Record<string, Move> = {};
   for (const m of members) out[m.id] = shiftBlock(m, day, deltaMin);
   return out;
 }
@@ -36,7 +36,7 @@ export function applyGroupDelta(members: Block[], day: string, deltaMin: number)
  * container OR any member. Returns the parent container + all its children. A loose
  * block (no parent, not a container) is its own singleton group.
  */
-export function resolveGroup(blocks: Block[], anchorId: number): Block[] {
+export function resolveGroup(blocks: Block[], anchorId: string): Block[] {
   const anchor = blocks.find((b) => b.id === anchorId);
   if (!anchor) return [];
   const parentId = anchor.block_kind === 'timeblock' ? anchor.id : anchor.parent_block_id ?? anchor.id;
@@ -48,7 +48,7 @@ export function resolveGroup(blocks: Block[], anchorId: number): Block[] {
  * drives attach-on-drop. Tag-agnostic: dropping into a Plan's window attaches it.
  * Ignores `excludeId` (the block being dropped) and only considers Plan containers.
  */
-export function containerAt(blocks: Block[], startMs: number, excludeId?: number): Block | undefined {
+export function containerAt(blocks: Block[], startMs: number, excludeId?: string): Block | undefined {
   return blocks.find((b) => {
     if (b.id === excludeId || b.block_kind !== 'timeblock') return false;
     const s = Date.parse(b.start_at), e = Date.parse(b.end_at);
