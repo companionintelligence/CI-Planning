@@ -86,3 +86,35 @@ export function removeEntityTags(kind: EntityKind, entityId: string): void {
 export function entityTagNames(kind: EntityKind, entityId: string): string[] {
   return (selectNames.all(kind, entityId) as { name: string }[]).map((r) => r.name);
 }
+
+const selectLevels = sqlite.prepare(
+  `SELECT tags.name AS name, entity_tags.level AS level FROM tags
+     JOIN entity_tags ON tags.id = entity_tags.tag_id
+    WHERE entity_tags.entity_kind = ? AND entity_tags.entity_id = ?
+    ORDER BY entity_tags.level, tags.name`,
+);
+
+/** An entity's tags with their levels (cockpit-v2 Phase 5: top=1, secondary>1). */
+export function entityTagLevels(kind: EntityKind, entityId: string): { name: string; level: number }[] {
+  return selectLevels.all(kind, entityId) as { name: string; level: number }[];
+}
+
+/**
+ * Replace an entity's tags across MULTIPLE levels in one shot (Phase 5). `groups`
+ * is processed in order, so pass the top level (1) FIRST: a tag named at two
+ * levels keeps its first (highest) level, since the PK makes the later INSERT a
+ * no-op. Empty `names` at a level contributes nothing.
+ */
+export function syncLeveledEntityTags(
+  kind: EntityKind,
+  entityId: string,
+  groups: { level: number; names: string[] }[],
+): void {
+  deleteEntity.run(kind, entityId);
+  for (const g of groups) {
+    for (const name of g.names) {
+      const norm = normalizeTagName(name);
+      if (norm) insertAssoc.run(kind, entityId, resolveTagId(norm), g.level);
+    }
+  }
+}

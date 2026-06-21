@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Maximize2, Minimize2, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2 } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -8,7 +8,7 @@ import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, showToast } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
@@ -40,7 +40,6 @@ import { BlockEditModal } from './BlockEditModal.js';
 
 type Placed = ReturnType<typeof layoutBlocks>[number];
 
-const VISIBLE_PX = VISIBLE_HOURS * 60 * PX_PER_MIN;
 /** Horizontal inset (px) for a member chip nested inside its Plan. */
 const NEST_INSET_PX = 12;
 /** Default duration (minutes) for click-to-create / drag-to-schedule when no estimate. */
@@ -487,8 +486,13 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
 }
 
 export function Planner() {
-  const day = () => localISODate();
-  const [expanded, setExpanded] = createSignal(false);
+  const day = () => selectedDay();
+  // Now-line, next-up pin, and auto-scroll are today-relative — gated off other days.
+  const isToday = () => day() === localISODate();
+  // Visible window height: 4 / 8 / 16 hours (cockpit-v2 Phase 2). The grid is always
+  // the full day tall and scrolls, so any block stays reachable at any window size.
+  const [windowHours, setWindowHours] = createSignal(VISIBLE_HOURS);
+  const visiblePx = () => windowHours() * 60 * PX_PER_MIN;
   const [updateMode, setUpdateMode] = createSignal(false);
   const [editBlock, setEditBlock] = createSignal<Block | null>(null);
   const [deletePlan, setDeletePlan] = createSignal<{ plan: Block; childCount: number } | null>(null);
@@ -636,12 +640,61 @@ export function Planner() {
 
   let scroller: HTMLDivElement | undefined;
   const repin = () => {
-    if (!scroller || expanded()) return;
+    if (!scroller || !isToday()) return;
     scroller.scrollTop = scrollTopForBlock(nextUp(), day());
   };
   onMount(repin);
   // Re-pin whenever the next-up item or the expand state changes.
-  createEffect(() => { nextUp(); expanded(); queueMicrotask(repin); });
+  createEffect(() => { nextUp(); windowHours(); queueMicrotask(repin); });
+
+  // Someday Time Blocks (was Concepts) render on their goal day in the header lane;
+  // clicking one opens a lightweight popover — Edit · Add to day · Delete (cockpit-v2
+  // Phase 4, replacing the ConceptLane). Local so it closes over setEditBlock + refetch.
+  function SomedayChip(props: { block: Block }) {
+    const [open, setOpen] = createSignal(false);
+    async function addToDay() {
+      setOpen(false);
+      try {
+        await api.blocks.promote(props.block.id, new Date(selectedDay() + 'T00:00:00').toISOString(), { all_day: true });
+        refetchConcepts(); refetchBlocks();
+        showToast(`"${props.block.title}" added to ${selectedDay()}`, 'success');
+      } catch (err) { showToast((err as Error).message, 'error'); }
+    }
+    async function del() {
+      setOpen(false);
+      try { await api.blocks.delete(props.block.id); refetchConcepts(); refetchBlocks(); showToast(`Deleted "${props.block.title}"`, 'default'); }
+      catch (err) { showToast((err as Error).message, 'error'); }
+    }
+    return (
+      <span class="relative">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] bg-card max-w-[180px] border-2 border-dotted border-muted-foreground hover:border-primary transition-colors"
+          title={props.block.title}
+        >
+          <Pentagon size={10} class="text-muted-foreground flex-shrink-0" />
+          <span class="text-foreground truncate">{props.block.title}</span>
+          <Show when={props.block.tag}>{(t) => <span class="text-primary flex-shrink-0">#{t()}</span>}</Show>
+        </button>
+        <Show when={open()}>
+          <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div class="absolute top-full left-0 mt-1 z-30 w-56 rounded-lg border border-border bg-popover shadow-xl p-3">
+            <div class="text-sm font-medium text-foreground truncate">{props.block.title}</div>
+            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Show when={props.block.tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
+              <Show when={props.block.goal_start_date}>{(d) => <span>· goal {d()}</span>}</Show>
+              <Show when={props.block.duration_minutes}>{(m) => <span>· {m()}m</span>}</Show>
+            </div>
+            <div class="mt-2 flex flex-col gap-1">
+              <button onClick={() => { setOpen(false); setEditBlock(props.block); }} class="btn-ghost text-xs px-2 py-1 justify-start"><Pencil size={12} /> Edit</button>
+              <button onClick={addToDay} class="btn-secondary text-xs px-2 py-1 justify-start"><ArrowUpRight size={12} /> Add to day</button>
+              <button onClick={del} class="btn-ghost text-xs px-2 py-1 justify-start hover:text-destructive"><Trash2 size={12} /> Delete</button>
+            </div>
+          </div>
+        </Show>
+      </span>
+    );
+  }
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
@@ -649,7 +702,7 @@ export function Planner() {
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <span class="text-[10px] text-muted-foreground">{expanded() ? '24h' : '8h · scroll for more'}</span>
+          <span class="text-[10px] text-muted-foreground">{windowHours()}h · scroll for more</span>
         </div>
         <div class="flex items-center gap-3">
           {/* Update mode — tap a task to mark it done (no need to have started it). */}
@@ -661,15 +714,19 @@ export function Planner() {
           >
             <CheckCircle2 size={12} /> {updateMode() ? 'Done' : 'Update'}
           </button>
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            title={expanded() ? 'Collapse to 8 hours' : 'Expand to 24 hours'}
-          >
-            <Show when={expanded()} fallback={<><Maximize2 size={12} /> Expand 24h</>}>
-              <Minimize2 size={12} /> Collapse
-            </Show>
-          </button>
+          <div class="inline-flex items-center rounded-md border border-border overflow-hidden text-xs" title="Visible hours">
+            <For each={[4, 8, 16]}>
+              {(h) => (
+                <button
+                  onClick={() => setWindowHours(h)}
+                  class="px-2 py-0.5 transition-colors"
+                  classList={{ 'text-foreground underline': windowHours() === h, 'text-muted-foreground hover:text-foreground': windowHours() !== h }}
+                >
+                  {h}h
+                </button>
+              )}
+            </For>
+          </div>
         </div>
       </div>
 
@@ -678,7 +735,7 @@ export function Planner() {
         <div class="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border bg-card/60 flex-shrink-0">
           <span class="text-[9px] uppercase tracking-wide text-muted-foreground mr-0.5">all-day</span>
           <For each={allDayPlans()}>{(b) => <HeaderChip block={b} />}</For>
-          <For each={todayConcepts()}>{(c) => <HeaderChip block={c} concept />}</For>
+          <For each={todayConcepts()}>{(c) => <SomedayChip block={c} />}</For>
         </div>
       </Show>
 
@@ -686,7 +743,7 @@ export function Planner() {
       <div
         ref={scroller}
         class="overflow-y-auto overflow-x-hidden relative"
-        style={{ height: `${expanded() ? DAY_HEIGHT_PX : VISIBLE_PX}px` }}
+        style={{ height: `${visiblePx()}px` }}
       >
         <div class="grid" style={{ 'grid-template-columns': '3.5rem 1fr' }}>
           <TimeGutter />
@@ -704,7 +761,7 @@ export function Planner() {
             <For each={placed()}>
               {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={isNested(p.block)} updateMode={updateMode()} group={groupCtx} />}
             </For>
-            <NowLine day={day()} now={nowISO()} />
+            <Show when={isToday()}><NowLine day={day()} now={nowISO()} /></Show>
             <Show when={chips().length === 0 && containers().length === 0}>
               <div class="absolute left-0 right-0 top-24 text-center text-sm text-muted-foreground px-4 pointer-events-none">
                 Nothing planned yet — <span class="text-primary font-medium">click an empty slot</span> to add a block,

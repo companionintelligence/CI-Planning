@@ -263,6 +263,58 @@ export function tasksRouter() {
     ctx.body = { task: out };
   });
 
+  // POST /api/tasks/:id/recall — clone a (usually shelved/Past) task to a brand-new
+  // task (new id): carries title/tags/estimate/notes/subtype + subtasks (recursively,
+  // reset to open); Routine membership only when prefs.recall_keeps_pattern. Fresh
+  // dates/status; no recurrence or history. cockpit-v2 Phase 6.
+  router.post('/api/tasks/:id/recall', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(ctx.params.id, owner)) {
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+    const keepPattern = !!(sqlite.prepare('SELECT recall_keeps_pattern AS v FROM scheduling_prefs WHERE owner_id = ?').get(owner) as { v: number } | undefined)?.v;
+
+    // Recursively clone a task + its subtree (better-sqlite3 is synchronous). The top
+    // clone is a fresh independent task (parent_id null); uuid7() mints each new id.
+    const cloneTree = (srcId: string, parentId: string | null): string => {
+      const s = sqlite.prepare(
+        'SELECT title, description, notes, estimated_minutes, priority, task_time, subtype, source_kind FROM tasks WHERE id = ?'
+      ).get(srcId) as {
+        title: string; description: string | null; notes: string | null;
+        estimated_minutes: number | null; priority: number | null; task_time: string | null;
+        subtype: string | null; source_kind: string | null;
+      };
+      const st = s.subtype ?? 'standard';
+      const newId = (sqlite.prepare(
+        `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, is_habit, is_fast_task, parent_id, owner_id, status, source_kind)
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`
+      ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, st === 'habit' ? 1 : 0, st === 'quick' ? 1 : 0, parentId, owner, s.source_kind ?? 'manual') as { id: string }).id;
+      // Carry tags; carry Routine membership only when the pref is on.
+      sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) SELECT ?, tag_id FROM task_tags WHERE task_id = ?').run(newId, srcId);
+      // CON-3: mirror the normalized store too (same tag ids + levels), so the
+      // clone is tagged for Phase 5 dilution / search — not just task_tags.
+      sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
+      if (keepPattern) {
+        sqlite.prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
+      }
+      for (const k of sqlite.prepare('SELECT id FROM tasks WHERE parent_id = ?').all(srcId) as { id: string }[]) {
+        cloneTree(k.id, newId);
+      }
+      return newId;
+    };
+
+    // Atomic: a partway failure must not leave a half-built clone subtree.
+    const newId = sqlite.transaction(() => cloneTree(ctx.params.id, null))();
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
+    const tagRows = sqlite
+      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
+      .all({ task_id: newId }) as { name: string }[];
+    const out = { ...toApi(task), tags: tagRows.map((r) => r.name), depends_on: [] as string[], blocked: false };
+    broadcast(owner, 'task:created', out);
+    ctx.status = 201;
+    ctx.body = { task: out };
+  });
+
   // POST /api/tasks/:id/reschedule { days } — bump a missed/planned task `days`
   // out from today (the +1/+3/+7 buttons on the Missed review surface). Clears
   // 'missed', increments defer_count, drops stale blocks so it re-places cleanly.

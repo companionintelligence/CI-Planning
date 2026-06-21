@@ -6,7 +6,30 @@ import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
-import { syncEntityTags, removeEntityTags, splitTagString } from '../services/tags.js';
+import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
+
+/**
+ * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
+ * top-level mirror; secondary tags live only in entity_tags at level 2. A field
+ * left `undefined` (a partial PATCH) preserves that level's existing tags.
+ */
+function applyBlockTagLevels(
+  blockId: string,
+  opts: { tag?: string | null; secondary?: string[] },
+): void {
+  const existing = entityTagLevels('time_block', blockId);
+  const top = opts.tag !== undefined ? splitTagString(opts.tag) : existing.filter((t) => t.level === 1).map((t) => t.name);
+  const secondary = opts.secondary !== undefined ? opts.secondary : existing.filter((t) => t.level > 1).map((t) => t.name);
+  syncLeveledEntityTags('time_block', blockId, [
+    { level: 1, names: top },
+    { level: 2, names: secondary },
+  ]);
+}
+
+/** A block's secondary (level>1) tag names, for the read surface. */
+function secondaryTagsOf(blockId: string): string[] {
+  return entityTagLevels('time_block', blockId).filter((t) => t.level > 1).map((t) => t.name);
+}
 
 export function blocksRouter() {
   const router = new Router();
@@ -35,7 +58,9 @@ export function blocksRouter() {
       ? await db.select().from(timeBlocks).where(and(...conditions))
       : await db.select().from(timeBlocks);
 
-    ctx.body = { blocks: toApiList(rows) };
+    // Phase 5: attach each block's secondary (level>1) tags from entity_tags.
+    const blocks = toApiList(rows).map((b) => ({ ...b, secondary_tags: secondaryTagsOf(b.id as string) }));
+    ctx.body = { blocks };
   });
 
   // POST /api/blocks
@@ -45,6 +70,7 @@ export function blocksRouter() {
       title: string;
       block_kind?: string;
       tag?: string;
+      secondary_tags?: string[];
       block_type?: string;
       goal_start_date?: string;
       duration_minutes?: number;
@@ -81,10 +107,13 @@ export function blocksRouter() {
       })
       .returning();
 
-    // CON-3: mirror the (denormalized) tag string into the normalized store.
-    if (body.tag !== undefined) syncEntityTags('time_block', block.id, splitTagString(body.tag));
+    // CON-3 + Phase 5: mirror the top-level tag string and any secondary tags
+    // into the normalized store.
+    if (body.tag !== undefined || body.secondary_tags !== undefined) {
+      applyBlockTagLevels(block.id, { tag: body.tag, secondary: body.secondary_tags });
+    }
 
-    const out = toApi(block);
+    const out = { ...toApi(block), secondary_tags: secondaryTagsOf(block.id) };
     broadcast(currentOwnerId(), 'block:created', out);
     ctx.status = 201;
     ctx.body = { block: out };
@@ -107,6 +136,7 @@ export function blocksRouter() {
       note: string | null;
       all_day: boolean;
       parent_block_id: string | null;
+      secondary_tags: string[];
     }>;
 
     const update: Partial<typeof timeBlocks.$inferInsert> = {};
@@ -124,14 +154,20 @@ export function blocksRouter() {
     // Attach to / detach from a Plan (PR-C): a number attaches, null detaches.
     if (body.parent_block_id !== undefined) update.parentBlockId   = body.parent_block_id;
 
-    const [block] = await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning();
+    // A tags-only PATCH (e.g. secondary_tags) has no column changes; drizzle
+    // rejects an empty .set(), so fetch the row instead of updating it.
+    const [block] = Object.keys(update).length
+      ? await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning()
+      : await db.select().from(timeBlocks).where(eq(timeBlocks.id, id));
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
-    // CON-3: keep the normalized store in sync when the tag string changes
-    // (null/'' clears). Replace semantics mirror the `time_blocks.tag` overwrite.
-    if (body.tag !== undefined) syncEntityTags('time_block', id, splitTagString(body.tag));
+    // CON-3 + Phase 5: keep the normalized store in sync. A partial PATCH that
+    // omits `tag` or `secondary_tags` preserves that level (null/'' clears top).
+    if (body.tag !== undefined || body.secondary_tags !== undefined) {
+      applyBlockTagLevels(id, { tag: body.tag, secondary: body.secondary_tags });
+    }
 
-    const out = toApi(block);
+    const out = { ...toApi(block), secondary_tags: secondaryTagsOf(id) };
     broadcast(currentOwnerId(), 'block:updated', out);
     ctx.body = { block: out };
   });

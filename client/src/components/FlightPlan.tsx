@@ -1,8 +1,8 @@
 import { For, Show, createSignal, createMemo } from 'solid-js';
-import { Zap, RotateCcw, X, ChevronDown, ChevronRight } from 'lucide-solid';
+import { Zap, RotateCcw, X, ChevronDown, ChevronRight, Clock } from 'lucide-solid';
 import { api, type FlightPlanItem } from '../lib/api.js';
 import {
-  flightPlan, refetchFlightPlan, refetchBlocks, patterns, showToast,
+  flightPlan, refetchFlightPlan, refetchBlocks, patterns, prefs, refetchPrefs, showToast, selectedDay,
 } from '../stores/index.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { useDraggable } from '../lib/draggable.js';
@@ -59,7 +59,8 @@ export function FlightPlan() {
   async function runAuto() {
     setRunning(true);
     try {
-      const { result } = await api.auto.run();
+      // Schedule into the day the cockpit is viewing, not always today (Phase 1 day-nav).
+      const { result } = await api.auto.run({ date: selectedDay() });
       if (result.step === 'fill') {
         showToast(
           result.candidatesAdded
@@ -91,6 +92,14 @@ export function FlightPlan() {
   }
   async function reset() {
     try { const r = await api.flightPlan.reset(); refetchFlightPlan(); showToast(`Cleared ${r.cleared}`, 'default'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // Fill-work-hours toggle (cockpit-v2 Phase 2): flips the auto_fill_workday pref —
+  // Auto's secondary pass that fills the workday with leftover tasks after Plans.
+  const fillWorkday = () => prefs()?.auto_fill_workday ?? true;
+  async function toggleFill() {
+    try { await api.prefs.update({ auto_fill_workday: !fillWorkday() }); refetchPrefs(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -166,10 +175,21 @@ export function FlightPlan() {
             <RotateCcw size={12} /> Reset
           </button>
         </Show>
-        <button onClick={runAuto} disabled={running()} class="btn-primary text-xs px-3 py-1.5"
-          title={selectedCount() > 0 ? 'Place the selected items into the day' : 'Propose candidates into the flight-plan'}>
-          <Zap size={13} />
-          {running() ? 'Running…' : selectedCount() > 0 ? `Auto Schedule (${selectedCount()})` : 'Auto · Propose'}
+        <button
+          onClick={toggleFill}
+          class="inline-flex items-center gap-1 text-xs transition-colors"
+          classList={{ 'text-primary': fillWorkday(), 'text-muted-foreground hover:text-foreground': !fillWorkday() }}
+          title="Fill the workday with leftover tasks after Plans (Auto's secondary pass)"
+        >
+          <Clock size={12} /> Fill work hours
+        </button>
+        <button
+          onClick={runAuto}
+          disabled={running()}
+          class="btn-primary !rounded-full !p-2 flex-shrink-0"
+          title={selectedCount() > 0 ? `Schedule ${selectedCount()} selected into the day` : 'Propose candidates into the flight-plan'}
+        >
+          <Zap size={15} classList={{ 'animate-pulse': running() }} />
         </button>
       </div>
 

@@ -23,6 +23,7 @@ import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
+import { entityTagLevels, splitTagString } from '../services/tags.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -103,17 +104,45 @@ function dayPlans(date: string, tz: string): PlanRow[] {
 }
 
 /**
- * Order candidates for a Plan: priority first, then tag-overlap "centrality"
- * (a task whose tags are shared by more of the other candidates clusters
- * related work together), then due date.
+ * Phase 5 dilution: a Plan's tag→weight map. A top-level tag (level 1) weighs
+ * 1.0; each secondary (level>1) weighs `1/totalTags`, so a task matching only via
+ * a secondary tag ranks below one matching the Plan's primary work (top-level is
+ * immune). Falls back to the `tag` mirror as top-level when the normalized store
+ * has no rows for this Plan (e.g. a row predating the backfill).
  */
-function orderForPlan(cands: StagedTask[]): StagedTask[] {
+function planTagWeights(planId: string, fallbackTag: string | null): Map<string, number> {
+  const levels = entityTagLevels('time_block', planId);
+  const w = new Map<string, number>();
+  if (levels.length === 0) {
+    for (const name of splitTagString(fallbackTag)) w.set(name, 1);
+    return w;
+  }
+  const total = levels.length;
+  for (const { name, level } of levels) w.set(name, level === 1 ? 1 : 1 / total);
+  return w;
+}
+
+/**
+ * Order candidates for a Plan: priority first, then — when Plan tag weights are
+ * given — the diluted match strength against the Plan (top-tag matches outrank
+ * secondary-tag matches), then tag-overlap "centrality" among the candidates
+ * (clusters related work), then due date. Without weights (or with a single
+ * top-level tag, where every matched candidate scores 1.0) the ordering is
+ * unchanged from the pre-Phase-5 behavior.
+ */
+function orderForPlan(cands: StagedTask[], weights?: Map<string, number>): StagedTask[] {
   const freq = new Map<string, number>();
   for (const c of cands) for (const t of c.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
   const overlap = (c: StagedTask) => c.tags.reduce((s, t) => s + ((freq.get(t) ?? 1) - 1), 0);
+  const planScore = (c: StagedTask) => (weights ? c.tags.reduce((s, t) => s + (weights.get(t) ?? 0), 0) : 0);
   const dueRank = (c: StagedTask) => (c.due_at ? Date.parse(c.due_at) : Number.POSITIVE_INFINITY);
   return [...cands].sort(
-    (a, b) => a.priority - b.priority || overlap(b) - overlap(a) || dueRank(a) - dueRank(b) || a.task_id.localeCompare(b.task_id)
+    (a, b) =>
+      a.priority - b.priority ||
+      planScore(b) - planScore(a) ||
+      overlap(b) - overlap(a) ||
+      dueRank(a) - dueRank(b) ||
+      a.task_id.localeCompare(b.task_id)
   );
 }
 
@@ -216,8 +245,12 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
       | undefined;
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
     clearPriorAutoInWindow(Date.parse(block.start_at), Date.parse(block.end_at));
-    const cands = block.tag ? staged.filter((t) => t.tags.includes(block.tag!)) : staged;
-    const r = placeIntoWindow(orderForPlan(cands), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId });
+    // Phase 5: match on ANY of the Plan's tags (top or secondary); dilute the
+    // secondary ones in the ordering. No tags → place everything (legacy).
+    const weights = planTagWeights(opts.blockId, block.tag);
+    const planTags = [...weights.keys()];
+    const cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
+    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId });
     broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     return { step: 'place', blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size, placedInPlans: r.placedTaskIds.size, placedInWorkday: 0 };
   }
@@ -228,10 +261,14 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   let blocksCreated = 0;
 
   // Pass 1 — fill each tagged Plan with its tag-matched, still-unplaced tasks.
+  // Phase 5: a task matches via ANY of the Plan's tags (top or secondary); the
+  // diluted weights bias ordering toward the Plan's primary work.
   for (const plan of dayPlans(date, tz)) {
-    const cands = staged.filter((t) => !placedIds.has(t.task_id) && plan.tag && t.tags.includes(plan.tag));
+    const weights = planTagWeights(plan.id, plan.tag);
+    const planTags = [...weights.keys()];
+    const cands = staged.filter((t) => !placedIds.has(t.task_id) && planTags.some((name) => t.tags.includes(name)));
     if (cands.length === 0) continue;
-    const r = placeIntoWindow(orderForPlan(cands), Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id });
+    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
