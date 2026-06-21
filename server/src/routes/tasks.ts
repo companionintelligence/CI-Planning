@@ -291,6 +291,9 @@ export function tasksRouter() {
       ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, st === 'habit' ? 1 : 0, st === 'quick' ? 1 : 0, parentId, owner, s.source_kind ?? 'manual') as { id: string }).id;
       // Carry tags; carry Routine membership only when the pref is on.
       sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) SELECT ?, tag_id FROM task_tags WHERE task_id = ?').run(newId, srcId);
+      // CON-3: mirror the normalized store too (same tag ids + levels), so the
+      // clone is tagged for Phase 5 dilution / search — not just task_tags.
+      sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
       if (keepPattern) {
         sqlite.prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
       }

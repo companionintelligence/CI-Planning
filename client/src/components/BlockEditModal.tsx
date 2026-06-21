@@ -19,6 +19,7 @@ function isoAt(dateStr: string, hhmm: string) {
 export function BlockEditModal(props: { block: Block | null; onClose: () => void }) {
   const [name, setName] = createSignal('');
   const [tags, setTags] = createSignal('');
+  const [secondary, setSecondary] = createSignal('');
   const [day, setDay] = createSignal('');
   const [time, setTime] = createSignal('');
   const [pD, setPD] = createSignal(0);
@@ -31,6 +32,7 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
     if (!b) return;
     setName(b.title);
     setTags((b.tag ?? '').split(',').filter(Boolean).map((t) => `#${t}`).join(' '));
+    setSecondary((b.secondary_tags ?? []).map((t) => `#${t}`).join(' '));
     setDay(toLocalDate(b.start_at));
     setTime(toLocalTime(b.start_at));
     const min = Math.max(Math.round((Date.parse(b.end_at) - Date.parse(b.start_at)) / 60000), 0);
@@ -41,13 +43,16 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
   async function save() {
     const b = props.block;
     if (!b) return;
-    const tagList = tags().split(/[\s,]+/).map((t) => t.replace(/^#/, '').trim()).filter(Boolean);
+    const parseTags = (s: string) => s.split(/[\s,]+/).map((t) => t.replace(/^#/, '').trim()).filter(Boolean);
+    const tagList = parseTags(tags());
+    const secondaryList = parseTags(secondary());
     const durMin = Math.max(pD() * 1440 + pH() * 60 + pM(), 15);
     const start = isoAt(day(), time());
     const end = new Date(Date.parse(start) + durMin * 60000).toISOString();
     try {
       await api.blocks.update(b.id, {
         title: name().trim() || 'Time Block', tag: tagList.join(',') || null,
+        secondary_tags: secondaryList,
         start_at: start, end_at: end, note: note().trim() || null,
       });
       refetchBlocks();
@@ -67,8 +72,10 @@ export function BlockEditModal(props: { block: Block | null; onClose: () => void
           <div class="p-4 flex flex-col gap-3">
             <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Title</span>
               <input class="input" value={name()} onInput={(e) => setName(e.currentTarget.value)} /></label>
-            <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Tags (space-separated)</span>
+            <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Primary tags (space-separated)</span>
               <input class="input" placeholder="#work #focus" value={tags()} onInput={(e) => setTags(e.currentTarget.value)} /></label>
+            <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Secondary tags — attract related work, weighted lower in Auto</span>
+              <input class="input" placeholder="#email #review" value={secondary()} onInput={(e) => setSecondary(e.currentTarget.value)} /></label>
             <div class="grid grid-cols-2 gap-2">
               <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Day</span>
                 <input type="date" class="input" value={day()} onInput={(e) => setDay(e.currentTarget.value)} /></label>

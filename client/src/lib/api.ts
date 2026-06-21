@@ -247,7 +247,8 @@ export const api = {
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface Block {
   id: string; task_id?: string; title: string; block_kind: string;
-  tag?: string | null; // container/grouping tag (G3); set on 'timeblock' containers
+  tag?: string | null; // top-level/grouping tag (G3); set on 'timeblock' containers
+  secondary_tags?: string[]; // Phase 5: diluted secondary tags (entity_tags level>1)
   // Plan/Concept container typing (0019). block_type is set on 'timeblock' containers.
   block_type?: 'scheduled' | 'someday' | null;
   goal_start_date?: string | null; // YYYY-MM-DD goal day for concepts (null = someday)
