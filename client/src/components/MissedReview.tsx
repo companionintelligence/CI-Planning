@@ -1,8 +1,8 @@
 import { createResource, For, Show, onCleanup } from 'solid-js';
-import { AlertTriangle } from 'lucide-solid';
+import { AlertTriangle, Check } from 'lucide-solid';
 import { api } from '../lib/api.js';
 import { on } from '../lib/sse.js';
-import { refetchBlocks, showToast } from '../stores/index.js';
+import { blocks, refetchBlocks, showToast } from '../stores/index.js';
 
 /**
  * Missed-task review surface (PR-C+, Workstream B). The nightly review marks
@@ -24,6 +24,20 @@ export function MissedReview() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // "Did it" — the task was actually done, the review just couldn't tell. Mark it
+  // done + complete its stale missed/planned blocks so the grid agrees.
+  async function markDone(id: number, title: string) {
+    try {
+      await api.tasks.update(id, { completed: true });
+      for (const b of (blocks() ?? []).filter((b) => b.task_id === id && ['missed', 'planned'].includes(b.status))) {
+        await api.blocks.update(b.id, { status: 'completed' });
+      }
+      refetch();
+      refetchBlocks();
+      showToast(`"${title}" — done`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   return (
     <Show when={(missed() ?? []).length > 0}>
       <div class="rounded-xl border border-destructive/40 bg-destructive/5 p-3">
@@ -37,6 +51,9 @@ export function MissedReview() {
           <For each={missed()}>
             {(t) => (
               <div class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5">
+                <button onClick={() => markDone(t.id, t.title)} class="btn-secondary text-xs px-2 py-0.5 inline-flex items-center gap-1" title="I did this — mark it done">
+                  <Check size={12} class="text-primary" /> Did it
+                </button>
                 <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
                 <Show when={t.tags?.length}><span class="text-primary text-xs">#{t.tags[0]}</span></Show>
                 <For each={[1, 3, 7]}>

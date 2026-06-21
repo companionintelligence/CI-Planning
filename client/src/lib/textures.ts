@@ -42,6 +42,30 @@ export function textureSeed(tag: string | null | undefined): number {
   return h >>> 0; // unsigned
 }
 
+/**
+ * The CI-Hub categorical hue token (`tag-1`…`tag-12`) for a tag string, picked
+ * deterministically from the same FNV seed — so a tag always maps to the same
+ * colour. Stays on the design system (the tokens are defined in index.css).
+ */
+export function tagHueToken(tag: string | null | undefined): string {
+  return `tag-${(textureSeed(tag) % 12) + 1}`;
+}
+
+/** CSS colour value for a tag's hue, e.g. `var(--tag-5)`. */
+export function tagColorVar(tag: string | null | undefined): string {
+  return `var(--${tagHueToken(tag)})`;
+}
+
+/**
+ * Background style for a *completed* item: a sparse diagonal hatch in the tag's
+ * hue at 60% alpha — 1px stroke / 8px gap, upper-left → lower-right ("\"). Reads
+ * as "done, and here's its tag" while staying legible (vs. just dimming it).
+ */
+export function doneHatchStyle(tag: string | null | undefined): Record<string, string> {
+  const c = `color-mix(in srgb, ${tagColorVar(tag)} 60%, transparent)`;
+  return { 'background-image': `repeating-linear-gradient(45deg, ${c} 0 1px, transparent 1px 9px)` };
+}
+
 /** The opaque inner SVG motif, centered in a `cell`×`cell` tile (mask uses its alpha). */
 function motifSvg(motif: Motif, cell: number, r: number): string {
   const c = cell / 2;
