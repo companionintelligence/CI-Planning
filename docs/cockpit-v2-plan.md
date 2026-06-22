@@ -1,5 +1,11 @@
 # Cockpit v2 — UI/UX batch plan (post-consolidation)
 
+> **⚠️ HISTORICAL — superseded, not the current plan.** The cockpit shipped (#77) and
+> then diverged from this doc — notably `/calendar` was **restored** (#92), reversing
+> the "Planner absorbs Calendar / retire `/calendar`" decision below. Retained for
+> history. Live plan:
+> [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md).
+
 > Status: **planning doc only — no implementation yet.** Branch off `main` after the
 > consolidation pass (CON-1 + CON-5 + CON-2, merged via #76). **Supersedes the
 > original cockpit-v2 plan (PR #71)**, which was written against `main`@#70 *before*
