@@ -378,9 +378,10 @@ export function tasksRouter() {
     // CON-2c: keep subtype ⇄ is_habit/is_fast_task in sync (engine still reads is_habit).
     const sw = subtypeWrite(body);
     if (sw) {
+      // subtype is canonical; write both aliases from it so the trio never drifts.
       update.subtype = sw.subtype;
-      if (sw.isHabit !== undefined) update.isHabit = sw.isHabit;
-      if (sw.isFastTask !== undefined) update.isFastTask = sw.isFastTask;
+      update.isHabit = sw.isHabit;
+      update.isFastTask = sw.isFastTask;
     }
     if (body.recurrence_dtstart !== undefined) update.recurrenceDtstart = body.recurrence_dtstart;
     if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
@@ -491,19 +492,18 @@ type Subtype = 'standard' | 'habit' | 'quick';
 /**
  * CON-2c: `subtype` is the canonical Task subtype; `is_habit`/`is_fast_task` are
  * kept as in-sync runtime aliases (the recurrence/streak engine reads `is_habit`).
- * A canonical `subtype` derives both booleans; a legacy `is_habit` derives subtype
- * and leaves `is_fast_task` untouched. Returns the drizzle columns to write, or
- * null when neither field was supplied.
+ * Both code paths derive the canonical `subtype` and then BOTH booleans from it, so
+ * the trio can never drift. Previously the legacy `is_habit` path left `is_fast_task`
+ * untouched, so toggling a quick task to a habit (via the legacy field) left a stale
+ * `is_fast_task=1` — a habit that was also a fast task. Returns the drizzle columns
+ * to write, or null when neither field was supplied.
  */
 function subtypeWrite(body: { subtype?: Subtype; is_habit?: boolean }):
-  { subtype: Subtype; isHabit?: boolean; isFastTask?: boolean } | null {
-  if (body.subtype !== undefined) {
-    return { subtype: body.subtype, isHabit: body.subtype === 'habit', isFastTask: body.subtype === 'quick' };
-  }
-  if (body.is_habit !== undefined) {
-    return { subtype: body.is_habit ? 'habit' : 'standard', isHabit: body.is_habit };
-  }
-  return null;
+  { subtype: Subtype; isHabit: boolean; isFastTask: boolean } | null {
+  const subtype: Subtype | undefined =
+    body.subtype !== undefined ? body.subtype : body.is_habit !== undefined ? (body.is_habit ? 'habit' : 'standard') : undefined;
+  if (subtype === undefined) return null;
+  return { subtype, isHabit: subtype === 'habit', isFastTask: subtype === 'quick' };
 }
 
 /** Replace a task's blockers; on a cycle, respond 409 and return false. */
