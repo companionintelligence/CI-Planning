@@ -1,5 +1,5 @@
 import { Route, Router, useLocation } from '@solidjs/router';
-import { Show } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { Plus, Cpu } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
 import { BottomNav } from './components/BottomNav.js';
@@ -12,10 +12,66 @@ import { Patterns } from './views/Patterns.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
-import { taskModal, setTaskModal } from './stores/index.js';
+import { taskModal, setTaskModal, blocks, taskOf, tags, patternPrefs } from './stores/index.js';
+import {
+  requestNotificationPermission,
+  scheduleTaskReminders,
+  type ReminderTask,
+} from './lib/notifications.js';
+
+/**
+ * T7 — wire browser reminders into the app root. Ask once for permission, then
+ * (re)schedule whenever the day's scheduled blocks / pattern prefs / tag taxonomy
+ * change, and again whenever the tab becomes visible (a `visibilitychange` tick the
+ * effect depends on). The block→ReminderTask mapping lives here so notifications.ts
+ * stays store-free: we resolve each block's task's kind='pattern' tag *names* to ids
+ * via the tags() resource, keep only future starts, and feed patternPrefs to the
+ * pure scheduler.
+ */
+function useTaskReminders() {
+  // Bumped on each tab-visible event so the scheduling effect re-runs on focus.
+  const [visibleTick, setVisibleTick] = createSignal(0);
+
+  onMount(() => {
+    requestNotificationPermission();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') setVisibleTick((n) => n + 1);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    onCleanup(() => document.removeEventListener('visibilitychange', onVisibility));
+  });
+
+  createEffect(() => {
+    visibleTick(); // re-run when the tab becomes visible
+
+    // Pattern-tag name → id, for blocks/tasks that carry tag names rather than ids.
+    const patternIdByName = new Map<string, string>();
+    for (const t of tags() ?? []) {
+      if (t.kind === 'pattern') patternIdByName.set(t.name, t.id);
+    }
+
+    const now = Date.now();
+    const reminders: ReminderTask[] = [];
+    for (const b of blocks() ?? []) {
+      const start = new Date(b.start_at);
+      if (Number.isNaN(start.getTime()) || start.getTime() <= now) continue; // past/invalid
+      const names = taskOf(b.task_id)?.tags ?? [];
+      const patternTagIds: string[] = [];
+      for (const name of names) {
+        const id = patternIdByName.get(name);
+        if (id) patternTagIds.push(id);
+      }
+      if (patternTagIds.length === 0) continue; // not pattern-tagged → no reminder
+      reminders.push({ title: b.title, scheduledAt: start, patternTagIds });
+    }
+
+    scheduleTaskReminders(reminders, patternPrefs()?.prefs ?? {});
+  });
+}
 
 function Shell(props: { children?: any }) {
   const location = useLocation();
+  useTaskReminders();
   return (
     <div class="flex h-screen overflow-hidden bg-surface-950">
       <Nav />
