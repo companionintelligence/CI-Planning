@@ -13,7 +13,7 @@ function seedDirections(): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (sqlite
-      .prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, 'direction', 1) RETURNING id`)
+      .prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, 'pattern', 1) RETURNING id`)
       .get(name) as { id: string }).id;
   }
   return ids;
@@ -68,7 +68,7 @@ describe('tags API — taxonomy', () => {
     const { tags } = (await api(srv.url, '/api/tags')).body;
     const work = tags.find((t: any) => t.name === 'work');
     const product = tags.find((t: any) => t.name === 'product');
-    expect(work).toMatchObject({ kind: 'direction', is_base: true });
+    expect(work).toMatchObject({ kind: 'pattern', is_base: true });
     expect(product).toMatchObject({ kind: 'intention', is_base: false, muted: false, used: false, directions: ['work'] });
   });
 

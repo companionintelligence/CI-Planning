@@ -178,10 +178,10 @@ export const tags = sqliteTable('tags', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),
   // Tag taxonomy (0036) — a SECOND axis, orthogonal to entity_tags.level (Phase-5
-  // per-entity dilution). `kind` is the taxonomy LEVEL: a 'direction' is a top-level
+  // per-entity dilution). `kind` is the taxonomy LEVEL: a 'pattern' is a top-level
   // category (brand-set Home/Work/Community + user-added), an 'intention' is grouped
-  // under one or more directions via tag_directions.
-  kind: text('kind').notNull().default('intention'),       // 'direction' | 'intention'
+  // under one or more patterns via tag_directions.
+  kind: text('kind').notNull().default('intention'),       // 'pattern' | 'intention'
   muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
   isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
 });
@@ -206,6 +206,20 @@ export const patternBlocks = sqliteTable('pattern_blocks', {
   dayType:       text('day_type').notNull(), // 'workday' | 'weekend'
   startTime:     text('start_time').notNull(), // 'HH:MM' wall-clock in owner's timezone
   endTime:       text('end_time').notNull(),
+});
+
+// 0039: per-owner, per-pattern-tag preferences — scheduling (auto_fill, reminder
+// offsets) AND pattern-block display config (icon_shape, color_token). The display
+// config lives here, keyed by pattern tag — NOT on pattern_types (which stays the
+// Habit/Routine/Ritual taxonomy).
+export const patternPrefs = sqliteTable('pattern_prefs', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  autoFill: integer('auto_fill', { mode: 'boolean' }).notNull().default(true),
+  reminderOffsets: text('reminder_offsets', { mode: 'json' }).$type<number[]>().notNull().default([]),
+  iconShape: text('icon_shape').notNull().default('circle'),     // circle | square | triangle
+  colorToken: text('color_token').notNull().default('primary'),  // CI-Hub token key (never hex)
 });
 
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /

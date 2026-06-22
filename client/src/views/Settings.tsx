@@ -1,8 +1,8 @@
 import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternBlocks, showToast } from '../stores/index.js';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X } from 'lucide-solid';
+import { prefs, refetchPrefs, tags, patternBlocks, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
-import { PatternTypeSettings } from '../components/PatternTypeSettings.js';
+import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { DEFAULT_CONCEPT_TAGS, type ConceptTag } from '../lib/pattern-meta.js';
 
 const BROWSER_TZ = (() => {
@@ -13,7 +13,6 @@ const ALL_TIMEZONES: string[] = (() => {
 })();
 
 interface SettingsForm {
-  workday_start: string; workday_end: string;
   auto_fill_workday: boolean;
   max_focus_block_minutes: number; min_break_minutes: number;
   max_time_block_minutes: number; min_time_block_minutes: number;
@@ -33,7 +32,6 @@ type BoolField =
   | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern';
 
 const DEFAULTS: SettingsForm = {
-  workday_start: '09:00', workday_end: '18:00',
   auto_fill_workday: true,
   max_focus_block_minutes: 90, min_break_minutes: 10,
   max_time_block_minutes: 240, min_time_block_minutes: 15,
@@ -92,8 +90,6 @@ export function Settings() {
     const p = prefs();
     if (!p) return;
     setForm({
-      workday_start:           p.workday_start ?? '09:00',
-      workday_end:             p.workday_end ?? '18:00',
       auto_fill_workday:       p.auto_fill_workday ?? true,
       max_focus_block_minutes: p.max_focus_block_minutes ?? 90,
       min_break_minutes:       p.min_break_minutes ?? 10,
@@ -122,6 +118,38 @@ export function Settings() {
   function setField<K extends keyof SettingsForm>(key: K, val: SettingsForm[K]) {
     setForm((f) => ({ ...f, [key]: val }));
   }
+
+  // ── Per-pattern fill toggle (pattern_prefs.auto_fill) ────────────────────────
+  const patternFill = (tagId: string) => patternPrefs()?.prefs?.[tagId]?.auto_fill ?? true;
+  async function togglePatternFill(tagId: string) {
+    try {
+      await api.patternPrefs.set(tagId, { auto_fill: !patternFill(tagId) });
+      refetchPatternPrefs();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // ── Reminder Defaults (pattern_prefs.reminder_offsets) ───────────────────────
+  const reminderOffsets = (tagId: string): number[] => patternPrefs()?.prefs?.[tagId]?.reminder_offsets ?? [];
+  const [reminderDraft, setReminderDraft] = createSignal<Record<string, string>>({});
+  async function addReminderOffset(tagId: string) {
+    const raw = reminderDraft()[tagId];
+    const n = Math.trunc(Number(raw));
+    if (raw == null || raw === '' || Number.isNaN(n) || n < 0) return;
+    try {
+      await api.patternPrefs.set(tagId, { reminder_offsets: [...reminderOffsets(tagId), n] });
+      refetchPatternPrefs();
+      setReminderDraft((d) => ({ ...d, [tagId]: '' }));
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function removeReminderOffset(tagId: string, idx: number) {
+    try {
+      await api.patternPrefs.set(tagId, { reminder_offsets: reminderOffsets(tagId).filter((_, i) => i !== idx) });
+      refetchPatternPrefs();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // ── Concept Tags collapse (show first 5 when collapsed) ──────────────────────
+  const [ctExpanded, setCtExpanded] = createSignal(false);
 
   // A small switch bound to a boolean form field.
   const Toggle = (props: { field: BoolField; label: string; hint?: string }) => (
@@ -231,33 +259,28 @@ export function Settings() {
         {/* Work hours */}
         <section class="card">
           <div class="section-label mb-3">Work Hours</div>
-          <div class="flex gap-4">
-            <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">Start</span>
-              <input type="time" class="input" value={form().workday_start}
-                onInput={e => setField('workday_start', e.currentTarget.value)} />
-            </label>
-            <label class="flex flex-col gap-1.5 flex-1">
-              <span class="text-xs text-slate-500">End</span>
-              <input type="time" class="input" value={form().workday_end}
-                onInput={e => setField('workday_end', e.currentTarget.value)} />
-            </label>
-          </div>
-          <div class="mt-4">
+          <div>
             <Toggle field="auto_fill_workday" label="Fill the workday with leftovers"
-              hint="Auto fills your tagged Plans first. With this on, tasks that match no Plan also fill open work hours. Off → Auto only fills the Plans you drew." />
+              hint="Also fill open work time with leftover untagged tasks (tasks with no pattern tag)." />
           </div>
           <div class="mt-4">
             <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
               hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
           </div>
           <label class="flex flex-col gap-1.5 mt-4">
-            <span class="text-xs text-slate-500">Timezone — work hours are wall-clock here</span>
+            <span class="text-xs text-slate-500">Default timezone for scheduling</span>
             <select class="input" value={form().timezone}
               onChange={e => setField('timezone', e.currentTarget.value)}>
               <For each={ALL_TIMEZONES}>{(tz) => <option value={tz}>{tz}</option>}</For>
             </select>
           </label>
+        </section>
+
+        {/* Pattern Block settings */}
+        <section class="card">
+          <div class="section-label mb-3 flex items-center gap-1.5"><Shapes size={12} /> Pattern Block Settings</div>
+          <p class="text-xs text-muted-foreground mb-3">Each pattern tag's display shape and colour. Colours come from the shared theme palette.</p>
+          <PatternBlockSettings />
         </section>
 
         {/* Schedule Patterns — per-direction availability windows */}
@@ -280,7 +303,7 @@ export function Settings() {
             </For>
           </div>
           <div class="flex flex-col gap-5">
-            <For each={(tags() ?? []).filter((t) => t.kind === 'direction')}>
+            <For each={(tags() ?? []).filter((t) => t.kind === 'pattern')}>
               {(dir) => (
                 <div class="flex flex-col gap-2">
                   <div class="text-sm font-medium text-foreground capitalize">{dir.name}</div>
@@ -309,6 +332,16 @@ export function Settings() {
                     onClick={() => addRange(dir.id)}>
                     <Plus size={12} /> Add window
                   </button>
+                  <label class="flex items-start gap-2 cursor-pointer select-none mt-1">
+                    <button type="button" role="switch" aria-checked={patternFill(dir.id)}
+                      onClick={() => togglePatternFill(dir.id)}
+                      class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                      classList={{ 'bg-primary': patternFill(dir.id), 'bg-muted border border-border': !patternFill(dir.id) }}>
+                      <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                        classList={{ 'translate-x-4': patternFill(dir.id) }} />
+                    </button>
+                    <div class="text-sm text-foreground leading-tight capitalize">Fill open {dir.name} windows with leftover tasks</div>
+                  </label>
                 </div>
               )}
             </For>
@@ -323,11 +356,11 @@ export function Settings() {
             {/* ── PLAN ── scheduled (set time + duration) */}
             <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-foreground">Plan</span>
+                <span class="text-sm font-semibold text-foreground">Scheduled Block</span>
                 <Star size={15} class="text-primary" />
               </div>
               <div class="border-t-[3px] border-primary" />
-              <p class="text-[11px] text-muted-foreground -mt-1.5">Scheduled — set time + duration.</p>
+              <p class="text-[11px] text-muted-foreground -mt-1.5">Fixed time + duration, placed on the calendar.</p>
 
               <div class="flex gap-3">
                 <label class="flex flex-col gap-1 flex-1">
@@ -372,11 +405,11 @@ export function Settings() {
             {/* ── CONCEPT ── unscheduled goal (start day + duration) */}
             <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-foreground">Concept</span>
+                <span class="text-sm font-semibold text-foreground">Someday Block</span>
                 <Pentagon size={15} class="text-muted-foreground" />
               </div>
               <div class="border-t-2 border-dashed border-muted-foreground" />
-              <p class="text-[11px] text-muted-foreground -mt-1.5">A goal — start day + duration, no set time.</p>
+              <p class="text-[11px] text-muted-foreground -mt-1.5">A goal with a start day + estimate; no set time until Auto places it.</p>
 
               <div>
                 <span class="text-[11px] text-muted-foreground">Default duration</span>
@@ -409,6 +442,43 @@ export function Settings() {
             </div>
 
           </div>
+
+          {/* Reminder Defaults — per-pattern reminder offsets (pattern_prefs) */}
+          <div class="pt-4 mt-4 border-t border-border">
+            <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Reminder Defaults</div>
+            <p class="text-xs text-muted-foreground mb-3">Reminders fire for tasks placed inside this pattern's windows.</p>
+            <div class="flex flex-col gap-3">
+              <For each={(tags() ?? []).filter((t) => t.kind === 'pattern')}>
+                {(t) => (
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-sm text-foreground capitalize w-24 flex-shrink-0">{t.name}</span>
+                    <For each={reminderOffsets(t.id)}>
+                      {(offset, i) => (
+                        <span class="badge-neutral text-[11px] flex items-center gap-1">
+                          {offset === 0 ? 'At start' : `${offset} min before`}
+                          <button type="button" class="hover:text-destructive transition-colors"
+                            onClick={() => removeReminderOffset(t.id, i())} title="Remove">
+                            <X size={11} />
+                          </button>
+                        </span>
+                      )}
+                    </For>
+                    <div class="flex items-center gap-1">
+                      <input type="number" min="0" placeholder="min before"
+                        class="input py-1 text-sm w-28"
+                        value={reminderDraft()[t.id] ?? ''}
+                        onInput={(e) => setReminderDraft((d) => ({ ...d, [t.id]: e.currentTarget.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addReminderOffset(t.id); } }} />
+                      <button type="button" class="btn-secondary text-xs px-2.5 py-1"
+                        onClick={() => addReminderOffset(t.id)}>
+                        <Plus size={12} /> Add
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
         </section>
 
         {/* Concept Tags — the canonical Block-Wizard list */}
@@ -418,23 +488,24 @@ export function Settings() {
           <div class="flex flex-col gap-2">
             <For each={form().concept_tags}>
               {(ct, i) => (
-                <div class="flex items-center gap-2">
-                  <input class="input py-1 text-sm flex-1" value={ct.name} onInput={(e) => updateCT(i(), { name: e.currentTarget.value })} />
-                  <input type="number" min="5" step="5" class="input py-1 text-sm w-20" value={ct.minutes} onInput={(e) => updateCT(i(), { minutes: Number(e.currentTarget.value) || 0 })} />
-                  <span class="text-[11px] text-muted-foreground">min</span>
-                  <button type="button" onClick={() => removeCT(i())} class="btn-icon hover:text-destructive" title="Remove"><Trash2 size={13} /></button>
-                </div>
+                <Show when={ctExpanded() || i() < 5}>
+                  <div class="flex items-center gap-2">
+                    <input class="input py-1 text-sm flex-1" value={ct.name} onInput={(e) => updateCT(i(), { name: e.currentTarget.value })} />
+                    <input type="number" min="5" step="5" class="input py-1 text-sm w-20" value={ct.minutes} onInput={(e) => updateCT(i(), { minutes: Number(e.currentTarget.value) || 0 })} />
+                    <span class="text-[11px] text-muted-foreground">min</span>
+                    <button type="button" onClick={() => removeCT(i())} class="btn-icon hover:text-destructive" title="Remove"><Trash2 size={13} /></button>
+                  </div>
+                </Show>
               )}
             </For>
           </div>
+          <Show when={form().concept_tags.length > 5}>
+            <button type="button" onClick={() => setCtExpanded((v) => !v)}
+              class="text-xs text-primary hover:text-primary/80 transition-colors mt-2 self-start">
+              {ctExpanded() ? 'Show less ▴' : `Show all ${form().concept_tags.length} ▾`}
+            </button>
+          </Show>
           <button type="button" onClick={addCT} class="btn-secondary text-xs px-2.5 py-1 mt-2"><Plus size={12} /> Add tag</button>
-        </section>
-
-        {/* Pattern settings */}
-        <section class="card">
-          <div class="section-label mb-3 flex items-center gap-1.5"><Shapes size={12} /> Pattern Settings</div>
-          <p class="text-xs text-muted-foreground mb-3">Each category's default shape, colour, estimate, and reminders. Colours come from the shared theme palette; reminders fire in a later phase.</p>
-          <PatternTypeSettings />
         </section>
 
         {/* Models */}

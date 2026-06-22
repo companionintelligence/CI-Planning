@@ -636,6 +636,18 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "id",
+      "owner_id",
+      "pattern_tag_id",
+      "auto_fill",
+      "reminder_offsets",
+      "icon_shape",
+      "color_token",
+    ],
+    "table": "pattern_prefs",
+  },
+  {
+    "columns": [
       "pattern_id",
       "task_id",
       "position",

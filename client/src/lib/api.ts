@@ -213,7 +213,7 @@ export const api = {
 
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
-    create: (name: string, opts?: { kind?: 'direction' | 'intention'; directions?: string[] }) =>
+    create: (name: string, opts?: { kind?: 'pattern' | 'intention'; directions?: string[] }) =>
       request<{ tag: Tag }>('POST', '/tags', { name, ...opts }),
     // PATCH directions REPLACES membership (drag-move = single target); muted toggles.
     update: (id: string, body: { directions?: string[]; muted?: boolean }) =>
@@ -254,6 +254,13 @@ export const api = {
     list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
     set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
             request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
+  },
+
+  patternPrefs: {
+    list: (): Promise<PatternPrefsResponse> =>
+      request<PatternPrefsResponse>('GET', '/pattern-prefs'),
+    set: (patternTagId: string, patch: Partial<PatternPref>): Promise<{ pref: PatternPref }> =>
+      request<{ pref: PatternPref }>('PUT', `/pattern-prefs/${patternTagId}`, patch),
   },
 };
 
@@ -360,10 +367,10 @@ export interface BlockTemplate {
 
 export interface Tag {
   id: string; name: string; count: number;
-  // Tag taxonomy (0036): 'direction' = top-level category (brand-set home/work/community);
-  // 'intention' = grouped under one+ directions. `used` blocks delete. `directions` =
-  // member direction names (empty intention = Unsorted).
-  kind: 'direction' | 'intention';
+  // Tag taxonomy (0036): 'pattern' = top-level category (brand-set home/work/community);
+  // 'intention' = grouped under one+ patterns. `used` blocks delete. `directions` =
+  // member pattern names (empty intention = Unsorted).
+  kind: 'pattern' | 'intention';
   muted: boolean;
   is_base: boolean;
   used: boolean;
@@ -425,3 +432,15 @@ export interface Integrations {
 // ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
 export interface PatternRange { id: string; start_time: string; end_time: string }
 export type PatternWindows = Record<string, PatternRange[]>; // dirTagId → ranges
+
+// ── Pattern-prefs (0039): per-pattern auto_fill + reminder offsets + block display ──
+export interface PatternPref {
+  auto_fill: boolean;
+  reminder_offsets: number[];  // minutes before scheduled start; 0 = at start time
+  icon_shape: string;          // circle | square | triangle — pattern-block display
+  color_token: string;         // CI-Hub token key (never hex)
+}
+
+export interface PatternPrefsResponse {
+  prefs: Record<string, PatternPref>;
+}
