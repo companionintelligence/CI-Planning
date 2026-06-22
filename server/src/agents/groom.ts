@@ -62,6 +62,15 @@ export function promotePossibles(opts: { threshold?: number } = {}): PromoteResu
            SELECT ?, tag_id FROM possible_task_tags WHERE possible_task_id = ?`
         )
         .run(task.id, p.id);
+      // CON-3: mirror into the normalized store (level 1) so a promoted task is
+      // tagged in entity_tags too — keeps the two stores in parity. (Matches the
+      // recall clone + 0033 backfill pattern.)
+      sqlite
+        .prepare(
+          `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level)
+           SELECT 'task', ?, tag_id, 1 FROM possible_task_tags WHERE possible_task_id = ?`
+        )
+        .run(task.id, p.id);
 
       sqlite
         .prepare("UPDATE possible_tasks SET status = 'promoted', promoted_task_id = ? WHERE id = ?")

@@ -288,24 +288,24 @@ exports[`behavior baseline — read API serialization > serializes the canonical
 {
   "tags": [
     {
-      "count": 0,
+      "count": 1,
       "directions": [],
       "id": "tag#1",
       "is_base": false,
       "kind": "intention",
       "muted": false,
       "name": "errands",
-      "used": false,
+      "used": true,
     },
     {
-      "count": 0,
+      "count": 1,
       "directions": [],
       "id": "tag#2",
       "is_base": false,
       "kind": "intention",
       "muted": false,
       "name": "work",
-      "used": false,
+      "used": true,
     },
   ],
 }
