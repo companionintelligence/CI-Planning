@@ -15,22 +15,117 @@ still falls back to fixtures until MCP wiring is finished).
 - **Client** — SolidJS + Tailwind PWA (`client/`), built by Vite into `server/public/`
 - **One process, one port** — the server serves both the API and the UI on **3848**
 
-Full v0.2 design: [ARCHITECTURE.md](ARCHITECTURE.md)
+**Source of truth for docs:** this README describes the running app;
+[docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative plan for future phases.
+SQLite is the single source of truth for data.
 
-**Source of truth for docs:** this README and [ARCHITECTURE.md](ARCHITECTURE.md)
-describe the running app; [docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative
-plan, with one spec per phase under [docs/](docs/). SQLite is the single source of
-truth for data (no markdown-on-disk model — that was an earlier, abandoned
-incarnation).
+## Architecture
 
-**Where TODAY is headed (Phase G).** Planning is moving to a **manual-or-Auto,
-flight-plan** model built on three primitives — **Time-Blocks** (tagged containers),
-**Patterns** (typed task collections: Routine ▢ / Habit ◯ / Ritual △), and the
-**Flight-plan** staging area. The old `auto`/`ritual` planning-mode toggle is being
-retired ("ritual" becomes a Pattern type). The TODAY-cockpit UX is canonical in
-[docs/design-today-cockpit.md](docs/design-today-cockpit.md); the phase plan is
-[docs/G-rituals-reflection.md](docs/G-rituals-reflection.md). Not built yet — A–F
-(scheduler, tasks, timers, recurrence/habits, calendar) are what ships today.
+```mermaid
+graph TB
+    subgraph Browser["Browser (SolidJS PWA)"]
+        UI[Eight Views<br/>Today · Calendar · Inbox<br/>Tasks · Routines · Tags · Jobs · Settings]
+        Store[Reactive Stores<br/>createResource / createSignal]
+        SW[Service Worker<br/>installable PWA]
+        BN[Browser Notifications<br/>pattern reminder offsets]
+    end
+
+    subgraph Server["Koa Server — port 3848"]
+        API[REST API<br/>16 route modules]
+        SSE[SSE /api/events<br/>real-time push]
+        Engine[Auto-scheduler<br/>engine/autoplan.ts]
+        Cron[Croner Jobs<br/>ingest · groom · schedule · patterns]
+        Migrate[Migration runner<br/>0001 → 0039 on boot]
+    end
+
+    subgraph Data["Data Layer"]
+        DB[(SQLite<br/>companion.db)]
+        Drizzle[Drizzle ORM<br/>+ raw better-sqlite3]
+    end
+
+    subgraph AI["AI — optional"]
+        Ollama[Ollama<br/>local LLM]
+        Small["qwen2.5:0.5b<br/>extraction / triage"]
+        Medium["gemma4:e4b<br/>briefings"]
+        Embed["nomic-embed-text<br/>dedupe embeddings"]
+    end
+
+    subgraph Sources["External Sources — fixture by default"]
+        Gmail[Gmail ingest]
+        GCal[Google Calendar ingest]
+    end
+
+    UI -->|"fetch /api/*"| API
+    Store -->|SSE stream| SSE
+    API --> Engine
+    API --> Drizzle
+    Cron --> Drizzle
+    Cron --> Ollama
+    Cron --> Gmail
+    Cron --> GCal
+    Drizzle --> DB
+    Migrate --> DB
+    Ollama --> Small
+    Ollama --> Medium
+    Ollama --> Embed
+    SSE -->|task / block / job events| Store
+    Store --> BN
+```
+
+### How the server finds and connects to the database
+
+`server/src/lib/config.ts` resolves `DB_PATH` at startup:
+
+1. If `DB_PATH` env var is set, use it as-is (Docker mounts `/data/companion.db`).
+2. Otherwise fall back to `~/Library/Application Support/CompanionPlanning/companion.db`
+   (macOS default). **On Linux or Windows, set `DB_PATH` explicitly.**
+3. `mkdirSync(..., { recursive: true })` creates the containing directory before the
+   file is opened — so a fresh install with no prior DB just works.
+
+`server/src/db/index.ts` then opens and configures the connection:
+
+```
+BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer, no pool
+  .pragma('foreign_keys = ON')      // enforced at the connection level
+  .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
+
+runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
+                                    // migrations from the 0001–0039 ordered list
+drizzle(sqlite, { schema })         // exports `db` used by all route handlers
+```
+
+The migration runner (`server/src/db/migrate.ts`) keeps a `_migrations` table. On
+every server start it compares the ordered `MIGRATIONS` array against that table and
+runs any missing ones inside a transaction. Migrations are plain TypeScript functions —
+no `.sql` files, no external tool.
+
+### Schema overview
+
+39 migrations produce the following tables (current head: `0039_pattern_prefs`):
+
+| Table | Purpose |
+|---|---|
+| `owners` | User identity (single-owner in v0.2) |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype |
+| `task_dependencies` | Blocked-by edges between tasks |
+| `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support |
+| `block_templates` | Reusable Time-Block templates with saved task lists |
+| `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` |
+| `possible_tasks` | Inbox queue — AI-proposed items pending promote / dismiss |
+| `tags` | Cross-cutting labels; `kind`: `pattern` (Home / Work / Community) or `intention` |
+| `tag_directions` | Many-to-many: intention tags grouped under pattern tags |
+| `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3) |
+| `possible_task_tags` | Tags proposed alongside an inbox item |
+| `task_tags` | Legacy per-task tag join (kept as denormalized mirror) |
+| `patterns` | Routines — typed, reusable task collections with optional recurrence |
+| `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
+| `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
+| `pattern_blocks` | Direction-scoped scheduling windows (`workday` / `weekend` time ranges) |
+| `pattern_prefs` | Per-owner × per-pattern config: `auto_fill`, `reminder_offsets`, `icon_shape`, `color_token` |
+| `flight_plan` | Staged task list for the two-step Auto (select → schedule) |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags |
+| `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
+| `job_runs` | Execution log per job run (status, items created/updated, log text) |
 
 ## See it in action
 
@@ -56,7 +151,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 | Today | Calendar |
 |---|---|
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
-| AI briefing, next blocks, open tasks, and overdue count at a glance | Week strip over a time-blocked day — locked meetings and auto-placed task blocks |
+| AI briefing, next blocks, open tasks, and overdue count at a glance | Standalone day / week / month view over the same time blocks |
 
 | Inbox | Tasks |
 |---|---|
@@ -66,19 +161,25 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 | Tags | Jobs |
 |---|---|
 | [![Tags view](docs/screenshots/tags.png)](docs/screenshots/tags.png) | [![Jobs view](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) |
-| Tag cloud sized by use, with a ranked usage breakdown | Background automations with their cron schedules — run any one on demand |
+| Direction + Intention taxonomy — group, mute, or delete | Background automations with their cron schedules — run any one on demand |
 
 | Settings |
 |---|
 | [![Settings view](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
-| Planning mode, work hours, focus/break preferences, and live integration health |
+| Work hours, per-pattern fill + reminder offsets, pattern block shape/color, time-block labels, concept tags, model overrides, memory sync |
 
 ## What you get
 
-- **Seven views** — Today · Calendar · Inbox · Tasks · Tags · Jobs · Settings
+- **Eight views** — Today · Calendar · Inbox · Tasks · Routines · Tags · Jobs · Settings
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
-  hours, locked meetings, and break preferences; reflows when you change the day
+  hours, pattern-block windows, locked meetings, and break preferences; reflows when you change the day
+- **Pattern blocks** — named availability windows (Home / Work / Community) that shade
+  the Planner and constrain auto-placement; per-pattern fill toggle and reminder offsets
+- **Routines** — typed task collections (Routine ▢ / Habit ◯) placed via a flight-plan
+  staging area; Ritual △ is feature-flagged
+- **Flight-plan staging** — two-step Auto: build a staged list, then schedule; lets you
+  curate before committing
 - **Inbox / review queue** — ingestion jobs propose "possible tasks" from email and
   calendar; each shows its source and a confidence score, and nothing becomes a real
   task until you promote it (one keystroke: `P` to add, `D` to dismiss)
@@ -87,6 +188,8 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   runnable from the Jobs view
 - **AI day briefing** — Ollama-authored when available, deterministic template
   otherwise; the UI labels it honestly ("AI Briefing" vs. "Day Overview")
+- **Browser notifications** — configurable reminder offsets per pattern tag fire via
+  the Web Notifications API; no push server required
 - **Live updates** — Server-Sent Events push task / block / job changes to every open
   client, so the UI stays in sync without polling
 - **Installable PWA** — manifest + standalone display; usable from a phone over your tailnet
@@ -103,9 +206,10 @@ with you in the loop at the one step that matters — what actually becomes a ta
 2. **Review** — extracted items land in the **Inbox** as *possible tasks*, each
    tagged with its source and a confidence score. You promote the good ones and
    dismiss the noise. Nothing reaches your task list without your say-so.
-3. **Plan** — the **auto-scheduler** packs open tasks into the open gaps of your
-   workday, honoring work hours, locked meetings, focus-block limits, and minimum
-   breaks. It's deterministic — same inputs, same plan — and re-runnable any time.
+3. **Plan** — build a **flight-plan** staging list, then run **Auto** to pack open
+   tasks into the open gaps of your workday, honoring work hours, pattern-block
+   windows, locked meetings, focus-block limits, and minimum breaks. Deterministic —
+   same inputs, same plan — and re-runnable any time.
 4. **Brief** — the **Today** view opens with an AI briefing that summarizes what's
    overdue, what's scheduled, and where to focus, generated on-device.
 5. **Groom** — a nightly job dedupes near-identical tasks using text embeddings and
@@ -119,25 +223,30 @@ it to back up, delete it to start over.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema for tasks, subtasks, time blocks, tags, possible tasks, scheduling
-  preferences, and job runs
-- All seven SolidJS views, with full task CRUD (tags, notes, priorities, due
+- SQLite schema (migrations 0001–0039): tasks, subtasks, time blocks, tags,
+  entity_tags, tag_directions, patterns, pattern_blocks, pattern_prefs, flight_plan,
+  possible_tasks, scheduling_prefs, time_entries, block_templates, jobs
+- All eight SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
-- Deterministic auto-scheduler (`/api/schedule/run`) honoring work hours, locked
-  meetings, and break preferences
+- Deterministic auto-scheduler (`/api/schedule/run`) honoring work hours, pattern
+  blocks, locked meetings, and break preferences; per-pattern auto-fill gating
+- Flight-plan staging area (two-step Auto)
+- Pattern blocks — direction-scoped scheduling windows with per-pattern shape, color,
+  fill toggle, and reminder offsets
+- Browser notifications via Web Notifications API (no push server)
 - Croner jobs: Gmail ingest, Calendar ingest, possible-task promotion, nightly
-  grooming/dedupe, and auto-schedule
+  grooming/dedupe, place-patterns, and auto-schedule
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
+- Tag taxonomy: pattern (direction) / intention hierarchy with many-to-many grouping
 
 **Intentionally partial:**
 
 - Google `live` mode is scaffolded but not yet connected to real MCP OAuth sessions
   (currently fixture-backed)
 - No auth layer yet — the expected deployment model is a private network / Tailscale
-- Later phases (rituals, notifications, auth, two-way sync, backups) in
-  [docs/ROADMAP.md](docs/ROADMAP.md) remain design-phase; the daily-ingestion
-  product plan lives in [docs/ingestion-plan.md](docs/ingestion-plan.md)
+- Later phases (two-way calendar sync, auth, backups, Web Push, multi-device sync) in
+  [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Run with Docker (CI Hub)
 
@@ -159,7 +268,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | Var | Default | Purpose |
 |---|---|---|
 | `PORT` | `3848` | HTTP port (API + UI) |
-| `DB_PATH` | `/data/companion.db` in the image; `~/Library/Application Support/CompanionPlanning/companion.db` in local dev | SQLite file. The containing directory is created automatically. |
+| `DB_PATH` | `/data/companion.db` in Docker; `~/Library/Application Support/CompanionPlanning/companion.db` on macOS; **set explicitly on Linux / Windows** | SQLite file path. The containing directory is created automatically. |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
 | `OLLAMA_SMALL` | `qwen2.5:0.5b` | Fast model for extraction/triage |
 | `OLLAMA_MEDIUM` | `gemma4:e4b` | Better model for briefings |
@@ -184,6 +293,11 @@ pnpm install
 pnpm dev          # server :3848 + Vite client :5173 (proxies /api)
 ```
 
+> **Note (Node 24):** `pnpm dev` uses `tsx watch` which silently crashes under
+> Node 24. If you can't upgrade, run the server without watch mode:
+> `cd server && PORT=3848 pnpm exec tsx src/index.ts`
+> and the Vite client separately: `cd client && pnpm dev`
+
 Production-style run (build client into `server/public`, serve everything on 3848):
 
 ```bash
@@ -206,15 +320,23 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | DELETE | `/api/tasks/:id` | Soft delete (status → `cancelled`) |
 | GET | `/api/tasks/:id/subtasks` | List subtasks |
 | GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range |
+| GET/POST/DELETE | `/api/block-templates` | Reusable Time-Block templates |
 | GET/POST | `/api/tags` | Tags with usage counts |
-| GET | `/api/possible-tasks` | Review queue |
+| PATCH/DELETE | `/api/tags/:id` | Update or delete a tag |
+| GET | `/api/possible-tasks` | Inbox review queue |
 | POST | `/api/possible-tasks/:id/promote` \| `/dismiss` | Accept/reject a proposal |
 | GET | `/api/summary?date=YYYY-MM-DD` | Day briefing (LLM or deterministic) |
 | POST | `/api/schedule/run` | Run the auto-scheduler for a date |
+| GET/POST/PATCH/DELETE | `/api/patterns` | Routines CRUD |
+| GET/PUT/DELETE | `/api/flight-plan` | Flight-plan staging area |
+| GET/POST/PATCH/DELETE | `/api/pattern-blocks` | Direction-scoped scheduling windows |
+| GET | `/api/pattern-prefs` | Per-pattern preferences (fill, reminders, shape, color) |
+| PUT | `/api/pattern-prefs/:patternTagId` | Update a single pattern's preferences |
 | GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs |
 | GET/PATCH | `/api/prefs` | Scheduling preferences |
+| GET/POST | `/api/memory` | Companion Memory sync state |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
-| GET | `/api/events` | SSE stream (task/block/job/possible events) |
+| GET | `/api/events` | SSE stream (task / block / job / possible events) |
 
 ## Tests
 
