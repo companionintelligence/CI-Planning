@@ -87,6 +87,55 @@ export function entityTagNames(kind: EntityKind, entityId: string): string[] {
   return (selectNames.all(kind, entityId) as { name: string }[]).map((r) => r.name);
 }
 
+// ── Task tag read-path (CON-3 finish, Wave 1) ────────────────────────────────
+// Tasks have no `.tag` mirror — their tags live in entity_tags. Read **level 1**
+// (top-level) so the result exactly matches the dropped `task_tags` set; secondary
+// (level>1) tags are Phase-5 only and must not leak into the primary tag list.
+// ORDER BY tag_id reproduces the OLD `task_tags` read order: that JOIN was driven by
+// the `task_tags` PRIMARY KEY (task_id, tag_id), so it returned tags in tag_id order.
+// Preserving it keeps `tags[0]` (the client's "primary" tag — persisted onto dropped
+// blocks / saved templates) stable across the read-flip. Do NOT order by name.
+const selectTaskNames = sqlite.prepare(
+  `SELECT tags.name FROM tags
+     JOIN entity_tags ON tags.id = entity_tags.tag_id
+    WHERE entity_tags.entity_kind = 'task' AND entity_tags.entity_id = ? AND entity_tags.level = 1
+    ORDER BY entity_tags.tag_id`,
+);
+/** A task's top-level tag names — the read replacing the `task_tags` JOIN. */
+export function taskTagNames(id: string): string[] {
+  return (selectTaskNames.all(id) as { name: string }[]).map((r) => r.name);
+}
+
+/** Bound-parameter chunk size — kept well under SQLITE_MAX_VARIABLE_NUMBER (even the legacy 999). */
+const TASK_TAG_CHUNK = 500;
+
+/**
+ * Batched variant for list endpoints (no N+1). Returns a Map keyed by task id; every
+ * requested id is present (empty array if untagged). The IN-list is **chunked** so an
+ * unbounded task list can't blow SQLite's bound-parameter limit. Per-task tag order
+ * matches `taskTagNames` (tag_id = old PK order).
+ */
+export function taskTagNamesByIds(ids: string[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const id of ids) out.set(id, []);
+  if (ids.length === 0) return out;
+  for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
+    const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = sqlite
+      .prepare(
+        `SELECT entity_tags.entity_id AS id, tags.name AS name
+           FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
+          WHERE entity_tags.entity_kind = 'task' AND entity_tags.level = 1
+            AND entity_tags.entity_id IN (${placeholders})
+          ORDER BY entity_tags.entity_id, entity_tags.tag_id`,
+      )
+      .all(...chunk) as { id: string; name: string }[];
+    for (const r of rows) out.get(r.id)?.push(r.name);
+  }
+  return out;
+}
+
 const selectLevels = sqlite.prepare(
   `SELECT tags.name AS name, entity_tags.level AS level FROM tags
      JOIN entity_tags ON tags.id = entity_tags.tag_id
