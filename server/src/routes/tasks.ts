@@ -1,7 +1,7 @@
 import Router from '@koa/router';
 import { eq, and, like, asc, lte } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { tasks, taskTags } from '../db/schema.js';
+import { tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -289,10 +289,7 @@ export function tasksRouter() {
         `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, is_habit, is_fast_task, parent_id, owner_id, status, source_kind)
          VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`
       ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, st === 'habit' ? 1 : 0, st === 'quick' ? 1 : 0, parentId, owner, s.source_kind ?? 'manual') as { id: string }).id;
-      // Carry tags; carry Routine membership only when the pref is on.
-      sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) SELECT ?, tag_id FROM task_tags WHERE task_id = ?').run(newId, srcId);
-      // CON-3: mirror the normalized store too (same tag ids + levels), so the
-      // clone is tagged for Phase 5 dilution / search — not just task_tags.
+      // Carry tags (entity_tags, all levels); Routine membership only when the pref is on.
       sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
       if (keepPattern) {
         sqlite.prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
@@ -407,8 +404,7 @@ export function tasksRouter() {
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     if (Array.isArray(body.tags)) {
-      sqlite.prepare('DELETE FROM task_tags WHERE task_id = ?').run(targetId);
-      await attachTags(targetId, body.tags);
+      await attachTags(targetId, body.tags); // setEntityTagIds replaces the set (delete + reinsert)
     }
 
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, targetId, body.depends_on)) return;
@@ -530,19 +526,13 @@ async function attachTags(taskId: string, names: string[]) {
   for (const rawName of names) {
     const name = normalizeTagName(rawName); // canonical: trim + strip leading '#' + lowercase + dashes + cap32 (matches blocks/routines/0033)
     const existing = sqlite.prepare('SELECT id FROM tags WHERE name = @name').get({ name }) as { id: string } | undefined;
-    let tagId: string;
-    if (existing) {
-      tagId = existing.id;
-    } else {
-      const r = sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string };
-      tagId = r.id;
-    }
-    sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)').run(taskId, tagId);
+    const tagId = existing
+      ? existing.id
+      : (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string }).id;
     tagIds.push(tagId);
   }
-  // CON-3: mirror the resolved set into the normalized store (replace semantics).
-  // Reuse the *same* tag ids so entity_tags is byte-consistent with task_tags. All
-  // callers pass the task's full tag set (create paths; PATCH first clears
-  // task_tags), so a replace here is correct — including clearing to empty.
+  // entity_tags is the sole task-tag store (CON-3 / migration 0041). Replace semantics:
+  // every caller passes the task's full tag set, so setEntityTagIds (delete + reinsert)
+  // is correct — including clearing to empty.
   setEntityTagIds('task', taskId, tagIds);
 }

@@ -786,13 +786,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
-      "task_id",
-      "tag_id",
-    ],
-    "table": "task_tags",
-  },
-  {
-    "columns": [
       "id",
       "title",
       "description",

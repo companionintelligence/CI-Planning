@@ -40,7 +40,6 @@ function insertTask(title: string, est = 30, dirTagId?: string): string {
       .get(title, OWNER, est) as { id: string }
   ).id;
   if (dirTagId) {
-    sqlite.prepare(`INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)`).run(id, dirTagId);
     sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(id, dirTagId);
   }
   return id;

@@ -26,7 +26,6 @@ export async function startTestServer(): Promise<TestServer> {
 export function resetDb(): void {
   sqlite.exec(`
     DELETE FROM task_dependencies;
-    DELETE FROM task_tags;
     DELETE FROM possible_task_tags;
     DELETE FROM entity_tags;
     DELETE FROM time_entries;
