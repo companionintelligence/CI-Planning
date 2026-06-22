@@ -15,13 +15,16 @@ const OWNER = SYSTEM_OWNER;
 const WEEKDAY = '2026-06-22';
 const WEEKEND = '2026-06-21';
 
-function seedDirections(): Record<string, string> {
+// Runtime code looks up pattern tags by kind='pattern' (post-0038 rename). The
+// 0037-migration-isolation test, however, runs up0037 directly — which predates the
+// rename and matches kind='direction' — so it seeds with that older value.
+function seedDirections(kind: string = 'pattern'): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (
       sqlite
-        .prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, 'direction', 1) RETURNING id`)
-        .get(name) as { id: string }
+        .prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, ?, 1) RETURNING id`)
+        .get(name, kind) as { id: string }
     ).id;
   }
   return ids;
@@ -78,7 +81,8 @@ describe('0037 migration', () => {
 
   it('seeds default windows for the base directions when an owner has none', () => {
     // resetDb cleared tags (cascading pattern_blocks). Re-insert directions then run migration.
-    const dirs = seedDirections();
+    // up0037 predates the 0038 rename, so it matches kind='direction'.
+    const dirs = seedDirections('direction');
     up0037(sqlite);
 
     const rows = sqlite

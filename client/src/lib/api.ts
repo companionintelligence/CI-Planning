@@ -255,6 +255,13 @@ export const api = {
     set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
             request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
   },
+
+  patternPrefs: {
+    list: (): Promise<PatternPrefsResponse> =>
+      request<PatternPrefsResponse>('GET', '/pattern-prefs'),
+    set: (patternTagId: string, patch: Partial<PatternPref>): Promise<{ pref: PatternPref }> =>
+      request<{ pref: PatternPref }>('PUT', `/pattern-prefs/${patternTagId}`, patch),
+  },
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -425,3 +432,15 @@ export interface Integrations {
 // ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
 export interface PatternRange { id: string; start_time: string; end_time: string }
 export type PatternWindows = Record<string, PatternRange[]>; // dirTagId → ranges
+
+// ── Pattern-prefs (0039): per-pattern auto_fill + reminder offsets + block display ──
+export interface PatternPref {
+  auto_fill: boolean;
+  reminder_offsets: number[];  // minutes before scheduled start; 0 = at start time
+  icon_shape: string;          // circle | square | triangle — pattern-block display
+  color_token: string;         // CI-Hub token key (never hex)
+}
+
+export interface PatternPrefsResponse {
+  prefs: Record<string, PatternPref>;
+}

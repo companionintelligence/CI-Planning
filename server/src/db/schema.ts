@@ -208,13 +208,18 @@ export const patternBlocks = sqliteTable('pattern_blocks', {
   endTime:       text('end_time').notNull(),
 });
 
-// 0040: per-owner, per-pattern-tag preferences (auto_fill, reminder offsets).
+// 0039: per-owner, per-pattern-tag preferences — scheduling (auto_fill, reminder
+// offsets) AND pattern-block display config (icon_shape, color_token). The display
+// config lives here, keyed by pattern tag — NOT on pattern_types (which stays the
+// Habit/Routine/Ritual taxonomy).
 export const patternPrefs = sqliteTable('pattern_prefs', {
   id: text('id').primaryKey().$defaultFn(newId),
   ownerId: text('owner_id').references(() => owners.id).notNull(),
   patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
   autoFill: integer('auto_fill', { mode: 'boolean' }).notNull().default(true),
   reminderOffsets: text('reminder_offsets', { mode: 'json' }).$type<number[]>().notNull().default([]),
+  iconShape: text('icon_shape').notNull().default('circle'),     // circle | square | triangle
+  colorToken: text('color_token').notNull().default('primary'),  // CI-Hub token key (never hex)
 });
 
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
@@ -232,8 +237,6 @@ export const patternTypes = sqliteTable('pattern_types', {
   texture: text('texture'),                                     // motif override; null = derive from tag
   defaultEstMinutes: integer('default_est_minutes'),            // default est for this category
   notify: integer('notify', { mode: 'boolean' }).default(false), // per-type reminder toggle (Phase H fires)
-  // 0039: link to the base pattern tag (kind='pattern') for this type.
-  tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }),
 });
 
 export const patterns = sqliteTable('patterns', {
