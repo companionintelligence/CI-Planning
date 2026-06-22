@@ -230,7 +230,7 @@ export function patternsRecurringOnDate(owner: string, today: string): Recurring
       `SELECT p.id, p.name, p.recurrence_rule AS rule, p.recurrence_dtstart AS dtstart, pt.name AS type_name
          FROM patterns p
          JOIN pattern_types pt ON pt.id = p.type_id
-        WHERE p.owner_id = ? AND pt.name = 'Routine' AND p.recurrence_rule IS NOT NULL
+        WHERE p.owner_id = ? AND pt.name IN ('Habit', 'Routine') AND p.recurrence_rule IS NOT NULL
        UNION ALL
        SELECT p.id, p.name, t.recurrence_rule AS rule, t.recurrence_dtstart AS dtstart, pt.name AS type_name
          FROM patterns p
@@ -243,15 +243,16 @@ export function patternsRecurringOnDate(owner: string, today: string): Recurring
     .all(owner, owner) as { id: string; name: string; rule: string; dtstart: string | null; type_name: string }[];
 
   const out: RecurringPattern[] = [];
+  const seen = new Set<string>();
   for (const r of rows) {
-    if (!r.dtstart) continue; // malformed; skip defensively
+    if (seen.has(r.id) || !r.dtstart) continue; // already matched, or malformed → skip
     try {
       const hits = occurrencesBetween(
         { recurrenceRule: r.rule, recurrenceDtstart: r.dtstart, taskTime: null, recurrenceExdates: [], timezone: tz },
         today,
         today,
       );
-      if (hits.length > 0) out.push({ id: r.id, name: r.name, type_name: r.type_name });
+      if (hits.length > 0) { seen.add(r.id); out.push({ id: r.id, name: r.name, type_name: r.type_name }); }
     } catch {
       // a malformed rule shouldn't take down the job — skip the pattern
     }
