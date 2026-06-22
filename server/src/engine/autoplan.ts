@@ -301,7 +301,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
       const ids = Object.keys(patWindows);
       const dirTags = sqlite
         .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
-        .all(ids) as { id: string; name: string }[];
+        .all(...ids) as { id: string; name: string }[];
       for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
     }
 
