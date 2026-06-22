@@ -21,7 +21,11 @@ on('task:updated', () => refetchTasks());
 // blocks fetch, header lane, and Day Overview all read it instead of calling
 // localISODate() directly; `blockRange` derives from it.
 export const [selectedDay, setSelectedDay] = createSignal(localISODate());
-export const blockRange = createMemo(() => dayRangeUTC(selectedDay()));
+// Multi-day override for the standalone /calendar view. When that page is mounted it
+// sets a wide range here; null (the default) falls back to the single selected day, so
+// the Planner is unaffected. The Calendar resets this to null on unmount.
+export const [calendarRange, setCalendarRange] = createSignal<{ from: string; to: string } | null>(null);
+export const blockRange = createMemo(() => calendarRange() ?? dayRangeUTC(selectedDay()));
 export const [blocks, { refetch: refetchBlocks }] = createResource(blockRange, (r) =>
   api.blocks.list(r.from, r.to).then((res) => res.blocks)
 );
