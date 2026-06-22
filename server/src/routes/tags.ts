@@ -6,7 +6,7 @@ import { normalizeTagName, tagIsUsed, setTagDirections, directionsOf } from '../
 /** Resolve direction NAMES to existing direction-tag ids (ignores unknown / non-directions). */
 function directionIds(names: string[]): string[] {
   const out: string[] = [];
-  const find = sqlite.prepare(`SELECT id FROM tags WHERE name = ? AND kind = 'direction'`);
+  const find = sqlite.prepare(`SELECT id FROM tags WHERE name = ? AND kind = 'pattern'`);
   for (const n of names) {
     const row = find.get(normalizeTagName(n)) as { id: string } | undefined;
     if (row) out.push(row.id);
@@ -50,7 +50,7 @@ export function tagsRouter() {
     if (!body.name?.trim()) { ctx.status = 400; ctx.body = { error: 'name is required' }; return; }
     const name = normalizeTagName(body.name);
     if (!name) { ctx.status = 400; ctx.body = { error: 'name is required' }; return; }
-    const kind = body.kind === 'direction' ? 'direction' : 'intention';
+    const kind = body.kind === 'pattern' ? 'pattern' : 'intention';
 
     let tag = sqlite.prepare('SELECT * FROM tags WHERE name = ?').get(name) as
       | { id: string; name: string; kind: string }
@@ -97,7 +97,7 @@ export function tagsRouter() {
       | { id: string; isBase: number }
       | undefined;
     if (!tag) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    if (tag.isBase) { ctx.status = 409; ctx.body = { error: 'base direction tags cannot be deleted' }; return; }
+    if (tag.isBase) { ctx.status = 409; ctx.body = { error: 'base pattern tags cannot be deleted' }; return; }
     if (tagIsUsed(id)) { ctx.status = 409; ctx.body = { error: 'tags in use cannot be deleted' }; return; }
     sqlite.prepare('DELETE FROM tags WHERE id = ?').run(id); // tag_directions cascade via FK
     ctx.body = { ok: true };

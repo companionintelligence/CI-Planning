@@ -38,7 +38,7 @@ export interface Grouped {
  * cards), split active vs muted, plus the Unsorted bucket (no direction).
  */
 export function groupByDirection(tags: Tag[]): Grouped {
-  const directions = sortDirections(tags.filter((t) => t.kind === 'direction'));
+  const directions = sortDirections(tags.filter((t) => t.kind === 'pattern'));
   const intentions = tags.filter((t) => t.kind === 'intention');
   const groups: DirGroup[] = directions.map((direction) => {
     const inDir = intentions.filter((t) => t.directions.includes(direction.name));
@@ -58,5 +58,5 @@ export function groupByDirection(tags: Tag[]): Grouped {
 
 /** Directions first (brand order), then everything else — for any tag list/cloud. */
 export function directionsFirst(tags: Tag[]): Tag[] {
-  return [...sortDirections(tags.filter((t) => t.kind === 'direction')), ...tags.filter((t) => t.kind !== 'direction')];
+  return [...sortDirections(tags.filter((t) => t.kind === 'pattern')), ...tags.filter((t) => t.kind !== 'pattern')];
 }

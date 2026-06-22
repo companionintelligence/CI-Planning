@@ -109,7 +109,7 @@ export function TaskForm(props: Props) {
   // revealed for the selected direction(s), with directions always pinned on top.
   const allTags = () => tags() ?? [];
   const existingTagNames = () => allTags().map((t) => t.name);
-  const directionTags = () => sortDirections(allTags().filter((t) => t.kind === 'direction'));
+  const directionTags = () => sortDirections(allTags().filter((t) => t.kind === 'pattern'));
   const selectedTags = () => tagsInput().split(',').map((s) => s.trim().replace(/^#/, '')).filter(Boolean);
   const selectedDirectionNames = () => directionTags().map((d) => d.name).filter((n) => selectedTags().includes(n));
   // Intentions to show below: those in a selected direction, plus any already selected.

@@ -280,7 +280,7 @@ export function Settings() {
             </For>
           </div>
           <div class="flex flex-col gap-5">
-            <For each={(tags() ?? []).filter((t) => t.kind === 'direction')}>
+            <For each={(tags() ?? []).filter((t) => t.kind === 'pattern')}>
               {(dir) => (
                 <div class="flex flex-col gap-2">
                   <div class="text-sm font-medium text-foreground capitalize">{dir.name}</div>
