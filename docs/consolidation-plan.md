@@ -1,5 +1,11 @@
 # Companion Planning — Consolidation Pass
 
+> **⚠️ HISTORICAL — superseded, not the current plan.** Stale where it counts: the
+> `is_habit`/`is_fast_task` booleans were **kept** (still authoritative in the
+> recurrence engine, not dropped as the "contract" step claims) and `/calendar` was
+> **restored** (#92). Retained for decision history. Live plan:
+> [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md).
+
 > **Status (2026-06-21):** SHIPPED. CON-1 (#74/#76), CON-2 (#75/#76; ConceptLane
 > removed in #77), CON-3 (#78), CON-5 (#73/#76), and **CON-4 (re-scoped — see
 > below)** are all merged to `main`, along with the cockpit-v2 UI batch (#77,
