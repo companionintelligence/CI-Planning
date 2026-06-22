@@ -85,8 +85,6 @@ function seedApiFixture(): void {
   const meditate = insert('tasks', { title: 'Meditate', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 10, is_habit: 1, subtype: 'habit' });
   insert('tasks', { title: 'Old task', owner_id: OWNER, status: 'done', priority: 4, completed_at: at('08:00') });
 
-  insertNoId('task_tags', { task_id: spec, tag_id: work });
-  insertNoId('task_tags', { task_id: post, tag_id: errands });
   insertNoId('entity_tags', { entity_kind: 'task', entity_id: spec, tag_id: work, level: 1 });
   insertNoId('entity_tags', { entity_kind: 'task', entity_id: post, tag_id: errands, level: 1 });
   insertNoId('task_dependencies', { task_id: post, depends_on_id: spec }); // Post office blocked by Write spec
@@ -137,8 +135,7 @@ describe('behavior baseline — Auto placement engine', () => {
     const code = insert('tasks', { title: 'Write code', owner_id: OWNER, status: 'open', estimated_minutes: 60, priority: 2 });
     const milk = insert('tasks', { title: 'Buy milk', owner_id: OWNER, status: 'open', estimated_minutes: 30, priority: 3 });
     const loose = insert('tasks', { title: 'Loose end', owner_id: OWNER, status: 'open', estimated_minutes: 45, priority: 4 });
-    insertNoId('task_tags', { task_id: code, tag_id: work }); // 'work' → routed into the Plan
-    insertNoId('entity_tags', { entity_kind: 'task', entity_id: code, tag_id: work, level: 1 });
+    insertNoId('entity_tags', { entity_kind: 'task', entity_id: code, tag_id: work, level: 1 }); // 'work' → routed into the Plan
     for (const t of [code, milk, loose]) insertNoId('flight_plan', { owner_id: OWNER, task_id: t, selected: 1, position: 0 });
 
     const result = placeFlightPlan(OWNER, { date: DAY });

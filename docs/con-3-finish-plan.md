@@ -87,6 +87,14 @@ Then fan out (independent — one owner each):
 
 ## Wave 2 — Stop writing `task_tags` & drop it *(fan-out by write site, then the migration)*
 
+> **✅ DONE 2026-06-22.** Landed as migration **`0041_drop_task_tags`** (`0040` was taken
+> by parallel work merged ahead of this). Every `task_tags` write removed (attachTags,
+> recall, PATCH, groom, seed); table dropped; `taskTags` removed from `schema.ts`; 12 test
+> files repointed to `entity_tags`; the parity test repurposed to a **sole-store + order
+> contract** guard; the 0033 backfill unit test retired (it read `task_tags` — the migration
+> runner still exercises it). **Greppable gate green** (no live `task_tags` SQL in `server/src`).
+> Server suite **324/324**; schema snapshot regenerated (only the `task_tags` table entry
+> removed). Line numbers in T2.1 below are pre-merge; the edits themselves are applied.
 Fan out (independent; each ensures `entity_tags` is the sole write):
 - **T2.1 — `routes/tasks.ts` writes.** Drop the `task_tags` INSERT in `attachTags` (559) — keep its `entity_tags` sync. Drop the **PATCH tag-replace** `DELETE FROM task_tags` (427) — `setEntityTagIds` already gives replace semantics — and the recall `task_tags` copy (304), keeping the `entity_tags` copy (307). (Single owner — same file as T1.1, so sequence after it.)
 - **T2.2 — `agents/groom.ts` promotion.** Already dual-writes `entity_tags` (added in W0) — in this wave just **drop its `task_tags` INSERT**, leaving the `entity_tags` mirror.

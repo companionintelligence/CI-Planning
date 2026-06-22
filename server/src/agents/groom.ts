@@ -55,16 +55,8 @@ export function promotePossibles(opts: { threshold?: number } = {}): PromoteResu
           p.source_ref
         ) as { id: string };
 
-      // Carry tags across: possible_task_tags → task_tags
-      sqlite
-        .prepare(
-          `INSERT OR IGNORE INTO task_tags (task_id, tag_id)
-           SELECT ?, tag_id FROM possible_task_tags WHERE possible_task_id = ?`
-        )
-        .run(task.id, p.id);
-      // CON-3: mirror into the normalized store (level 1) so a promoted task is
-      // tagged in entity_tags too — keeps the two stores in parity. (Matches the
-      // recall clone + 0033 backfill pattern.)
+      // Carry tags across: possible_task_tags → entity_tags (level 1). entity_tags is
+      // the sole task-tag store (CON-3 / migration 0041).
       sqlite
         .prepare(
           `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level)

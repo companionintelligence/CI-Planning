@@ -101,7 +101,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-39 migrations produce the following tables (current head: `0039_pattern_prefs`):
+Migrations (current head: `0041_drop_task_tags`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -116,7 +116,6 @@ no `.sql` files, no external tool.
 | `tag_directions` | Many-to-many: intention tags grouped under pattern tags |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3) |
 | `possible_task_tags` | Tags proposed alongside an inbox item |
-| `task_tags` | Legacy per-task tag join (kept as denormalized mirror) |
 | `patterns` | Routines — typed, reusable task collections with optional recurrence |
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |

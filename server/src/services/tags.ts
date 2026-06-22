@@ -8,9 +8,9 @@ import { sqlite } from '../db/index.js';
  * a tagged entity must call `removeEntityTags`** or its rows orphan. The
  * orphan-free tests are the gate.
  *
- * Behavior-preserving: this is written in parallel with the denormalized mirrors
- * (`task_tags`, `time_blocks.tag`, `patterns.tag`); no existing read consumes
- * `entity_tags` yet — Phase 5 (levels + dilution) is the first reader.
+ * As of CON-3 Wave 2, `entity_tags` is the **sole** task-tag store (`task_tags` was
+ * dropped in migration 0041) and the task read path (`taskTagNames`). `time_blocks.tag`
+ * / `patterns.tag` remain as denormalized top-level mirrors for blocks / routines.
  *
  * better-sqlite3 is synchronous; these are plain sync functions.
  */

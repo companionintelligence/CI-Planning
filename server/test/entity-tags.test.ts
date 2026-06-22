@@ -2,33 +2,20 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
-import { up as backfill0033 } from '../src/db/migrations/0033_entity_tags.js';
 import { syncEntityTags, normalizeTagName } from '../src/services/tags.js';
 
 /**
- * CON-3 — the normalized `entity_tags` store. Three gates:
- *  1. backfill from task_tags / time_blocks.tag / patterns.tag is correct;
- *  2. write paths keep entity_tags in sync (replace semantics);
- *  3. **no orphans** — every HARD delete of a tagged entity clears its rows.
- * Behavior-preserving: existing read surfaces are unchanged (they still read the
- * denormalized mirrors), so this lives alongside the baseline characterization test.
+ * CON-3 — the normalized `entity_tags` store, now the SOLE task-tag store
+ * (`task_tags` dropped in migration 0041). Two gates:
+ *  1. write paths keep entity_tags in sync (replace semantics) for tasks/blocks/routines;
+ *  2. **no orphans** — every HARD delete of a tagged entity clears its rows.
+ * (The 0033 task→entity backfill is exercised by the migration runner, not here —
+ * it reads task_tags, which no longer exists in the live schema.)
  */
 
 const OWNER = SYSTEM_OWNER;
 const DAY = '2026-06-22';
 const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
-
-function insert(table: string, row: Record<string, unknown>): string {
-  const keys = Object.keys(row);
-  const stmt = sqlite.prepare(
-    `INSERT INTO ${table} (id, ${keys.join(', ')}) VALUES (uuid7(), ${keys.map(() => '?').join(', ')}) RETURNING id`,
-  );
-  return (stmt.get(...keys.map((k) => row[k])) as { id: string }).id;
-}
-function insertNoId(table: string, row: Record<string, unknown>): void {
-  const keys = Object.keys(row);
-  sqlite.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).run(...keys.map((k) => row[k]));
-}
 
 const tagRows = (kind: string, id: string) =>
   (sqlite
@@ -66,44 +53,11 @@ describe('CON-3 normalizeTagName', () => {
   });
 });
 
-describe('CON-3 backfill (migration 0033, idempotent)', () => {
-  it('materializes entity_tags from task_tags + block/routine tag strings, creating missing tags', () => {
-    const work = insert('tags', { name: 'work' }); // pre-existing
-    const task = insert('tasks', { title: 'T', owner_id: OWNER, status: 'open', priority: 3 });
-    insertNoId('task_tags', { task_id: task, tag_id: work });
-    const block = insert('time_blocks', { title: 'B', block_kind: 'timeblock', block_type: 'scheduled', tag: 'health, #Fitness', start_at: at('09:00'), end_at: at('10:00'), source_kind: 'manual', status: 'planned' });
-    const routineType = (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Routine'`).get() as { id: string }).id;
-    const pattern = insert('patterns', { owner_id: OWNER, type_id: routineType, name: 'R', tag: 'morning' });
-
-    // entity_tags is empty before backfill (these inserts bypassed the write-sync).
-    expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM entity_tags`).get() as { c: number }).c).toBe(0);
-
-    backfill0033(sqlite);
-
-    expect(tagRows('task', task)).toEqual(['work']);
-    expect(tagRows('time_block', block)).toEqual(['fitness', 'health']); // split + normalized (# stripped)
-    expect(tagRows('routine', pattern)).toEqual(['morning']);
-    // backfill created the previously-undefined tag names.
-    const names = (sqlite.prepare(`SELECT name FROM tags`).all() as { name: string }[]).map((r) => r.name);
-    expect(names).toEqual(expect.arrayContaining(['work', 'health', 'fitness', 'morning']));
-
-    // idempotent: a second run changes nothing.
-    const before = (sqlite.prepare(`SELECT COUNT(*) AS c FROM entity_tags`).get() as { c: number }).c;
-    backfill0033(sqlite);
-    expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM entity_tags`).get() as { c: number }).c).toBe(before);
-    expect(orphanCount()).toBe(0);
-  });
-});
-
 describe('CON-3 write-sync (through the routes)', () => {
-  it('task create + tag-replace keeps entity_tags in lockstep with task_tags', async () => {
+  it('task create + tag-replace keeps entity_tags correct (the sole task-tag store)', async () => {
     const created = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'Tagged', tags: ['Work', 'Errands'] } });
     const id = created.body.task.id as string;
     expect(tagRows('task', id).sort()).toEqual(['errands', 'work']);
-    // the mirror uses the SAME tag ids as task_tags.
-    const fromTaskTags = (sqlite.prepare(`SELECT tag_id FROM task_tags WHERE task_id = ? ORDER BY tag_id`).all(id) as { tag_id: string }[]).map((r) => r.tag_id);
-    const fromEntity = (sqlite.prepare(`SELECT tag_id FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ? ORDER BY tag_id`).all(id) as { tag_id: string }[]).map((r) => r.tag_id);
-    expect(fromEntity).toEqual(fromTaskTags);
 
     // PATCH replaces the set; entity_tags follows (replace, not append).
     await api(srv.url, `/api/tasks/${id}`, { method: 'PATCH', json: { tags: ['focus'] } });
@@ -186,12 +140,12 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
   });
 });
 
-describe('CON-3 behavior-preserving reads', () => {
-  it('task + block read surfaces are unchanged by the mirror', async () => {
+describe('CON-3 reads come from entity_tags', () => {
+  it('the task list serializes tags from entity_tags', async () => {
     const t = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'Read me', tags: ['alpha'] } });
     const tId = t.body.task.id as string;
     const list = await api(srv.url, '/api/tasks');
     const got = (list.body.tasks as { id: string; tags: string[] }[]).find((x) => x.id === tId);
-    expect(got?.tags).toEqual(['alpha']); // still served from task_tags, not entity_tags
+    expect(got?.tags).toEqual(['alpha']); // served from entity_tags (task_tags dropped in 0041)
   });
 });

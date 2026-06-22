@@ -51,7 +51,8 @@ describe('jobs', () => {
     const row = sqlite
       .prepare(
         `SELECT t.title, tg.name FROM tasks t
-         JOIN task_tags tt ON tt.task_id = t.id JOIN tags tg ON tg.id = tt.tag_id
+         JOIN entity_tags et ON et.entity_kind = 'task' AND et.entity_id = t.id
+         JOIN tags tg ON tg.id = et.tag_id
          WHERE t.title = 'Tagged task'`
       )
       .get() as { name: string } | undefined;
