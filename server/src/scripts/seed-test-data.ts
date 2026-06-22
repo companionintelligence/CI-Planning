@@ -45,6 +45,7 @@ function resetData() {
   sqlite.exec(`
     DELETE FROM task_tags;
     DELETE FROM possible_task_tags;
+    DELETE FROM entity_tags;
     DELETE FROM time_blocks;
     DELETE FROM possible_tasks;
     DELETE FROM tasks;
@@ -174,6 +175,8 @@ async function main() {
       for (let i = 1; i <= n; i++) {
         const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), 15 + (i % 4) * 15) as { id: string };
         sqlite.prepare('INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)').run(r.id, fillerTagId);
+        // CON-3: mirror into the normalized store — the task-tag READ path is entity_tags now.
+        sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)").run(r.id, fillerTagId);
       }
     });
     tx(fillerNeeded);

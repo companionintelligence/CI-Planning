@@ -15,7 +15,7 @@ import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generat
 import { rescheduleTask } from '../engine/review.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { ensureHabitPattern } from '../services/patterns.js';
-import { setEntityTagIds } from '../services/tags.js';
+import { setEntityTagIds, taskTagNames, taskTagNamesByIds, normalizeTagName } from '../services/tags.js';
 import { utcDayBounds } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 
@@ -44,17 +44,13 @@ export function tasksRouter() {
 
     // Attach tags + dependency info, serialize to snake_case
     const blocked = blockedTaskIds();
-    const withTags = result.map((t) => {
-      const tagRows = sqlite
-        .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
-        .all({ task_id: t.id }) as { name: string }[];
-      return {
-        ...toApi(t),
-        tags: tagRows.map((r) => r.name),
-        depends_on: getDependencies(t.id),
-        blocked: blocked.has(t.id),
-      };
-    });
+    const tagsById = taskTagNamesByIds(result.map((t) => t.id));
+    const withTags = result.map((t) => ({
+      ...toApi(t),
+      tags: tagsById.get(t.id) ?? [],
+      depends_on: getDependencies(t.id),
+      blocked: blocked.has(t.id),
+    }));
 
     // Filter by tag after attachment (simple approach for v1)
     const filtered = tag
@@ -209,12 +205,8 @@ export function tasksRouter() {
   router.get('/api/tasks/:id/subtasks', async (ctx) => {
     const parentId = ctx.params.id;
     const result = await db.select().from(tasks).where(eq(tasks.parentId, parentId)).orderBy(asc(tasks.priority));
-    const withTags = result.map((t) => {
-      const tagRows = sqlite
-        .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
-        .all({ task_id: t.id }) as { name: string }[];
-      return { ...toApi(t), tags: tagRows.map((r) => r.name) };
-    });
+    const tagsById = taskTagNamesByIds(result.map((t) => t.id));
+    const withTags = result.map((t) => ({ ...toApi(t), tags: tagsById.get(t.id) ?? [] }));
     ctx.body = { subtasks: withTags };
   });
 
@@ -255,10 +247,7 @@ export function tasksRouter() {
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     ensureHabitPattern(id, task.ownerId ?? owner, task.title);
-    const tagRows = sqlite
-      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
-      .all({ task_id: id }) as { name: string }[];
-    const out = { ...toApi(task), tags: tagRows.map((r) => r.name), depends_on: getDependencies(id) };
+    const out = { ...toApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
@@ -317,10 +306,7 @@ export function tasksRouter() {
     // Atomic: a partway failure must not leave a half-built clone subtree.
     const newId = sqlite.transaction(() => cloneTree(ctx.params.id, null))();
     const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
-    const tagRows = sqlite
-      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
-      .all({ task_id: newId }) as { name: string }[];
-    const out = { ...toApi(task), tags: tagRows.map((r) => r.name), depends_on: [] as string[], blocked: false };
+    const out = { ...toApi(task), tags: taskTagNames(newId), depends_on: [] as string[], blocked: false };
     broadcast(owner, 'task:created', out);
     ctx.status = 201;
     ctx.body = { task: out };
@@ -339,10 +325,7 @@ export function tasksRouter() {
     }
     const { scheduled_for } = rescheduleTask(id, body.days);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-    const tagRows = sqlite
-      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
-      .all({ task_id: id }) as { name: string }[];
-    const out = { ...toApi(task), tags: tagRows.map((r) => r.name), depends_on: getDependencies(id) };
+    const out = { ...toApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'block:updated', { rescheduled: id });
     ctx.body = { task: out, scheduled_for };
@@ -443,9 +426,7 @@ export function tasksRouter() {
       generated = generateRecurrences();
     }
 
-    const currentTags = (sqlite
-      .prepare('SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = @task_id')
-      .all({ task_id: targetId }) as { name: string }[]).map((r) => r.name);
+    const currentTags = taskTagNames(targetId);
     const out = {
       ...toApi(task),
       tags: currentTags,
@@ -547,7 +528,7 @@ function applyDependencies(ctx: { status: number; body: unknown }, taskId: strin
 async function attachTags(taskId: string, names: string[]) {
   const tagIds: string[] = [];
   for (const rawName of names) {
-    const name = rawName.toLowerCase().replace(/\s+/g, '-').slice(0, 32);
+    const name = normalizeTagName(rawName); // canonical: trim + strip leading '#' + lowercase + dashes + cap32 (matches blocks/routines/0033)
     const existing = sqlite.prepare('SELECT id FROM tags WHERE name = @name').get({ name }) as { id: string } | undefined;
     let tagId: string;
     if (existing) {

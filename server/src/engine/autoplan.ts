@@ -21,6 +21,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
+import { taskTagNames } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
@@ -65,11 +66,7 @@ interface PlanRow {
 }
 
 function tagsOf(taskId: string): string[] {
-  return (
-    sqlite
-      .prepare(`SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = ?`)
-      .all(taskId) as { name: string }[]
-  ).map((r) => r.name);
+  return taskTagNames(taskId);
 }
 
 function selectedStaged(owner: string): StagedTask[] {

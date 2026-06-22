@@ -20,6 +20,7 @@ import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { occurrencesBetween, parseRule } from './recurrence.js';
+import { taskTagNames } from '../services/tags.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -48,11 +49,7 @@ interface MemberTask {
 }
 
 function tagsOf(taskId: string): string[] {
-  return (
-    sqlite
-      .prepare(`SELECT tags.name FROM tags JOIN task_tags ON tags.id = task_tags.tag_id WHERE task_tags.task_id = ?`)
-      .all(taskId) as { name: string }[]
-  ).map((r) => r.name);
+  return taskTagNames(taskId);
 }
 
 /**
