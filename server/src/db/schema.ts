@@ -278,10 +278,7 @@ export const flightPlan = sqliteTable(
   (t) => ({ pk: primaryKey({ columns: [t.ownerId, t.taskId] }) })
 );
 
-export const taskTags = sqliteTable('task_tags', {
-  taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
-  tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
-});
+// task_tags was dropped in migration 0041 (CON-3) — task tags live in entity_tags (level 1).
 
 // CON-3: the canonical normalized tag store. ONE polymorphic association table
 // for Task · Time Block · Routine, so Phase 5 (tag levels + dilution) has a
