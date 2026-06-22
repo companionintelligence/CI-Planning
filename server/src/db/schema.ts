@@ -178,10 +178,10 @@ export const tags = sqliteTable('tags', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),
   // Tag taxonomy (0036) — a SECOND axis, orthogonal to entity_tags.level (Phase-5
-  // per-entity dilution). `kind` is the taxonomy LEVEL: a 'direction' is a top-level
+  // per-entity dilution). `kind` is the taxonomy LEVEL: a 'pattern' is a top-level
   // category (brand-set Home/Work/Community + user-added), an 'intention' is grouped
-  // under one or more directions via tag_directions.
-  kind: text('kind').notNull().default('intention'),       // 'direction' | 'intention'
+  // under one or more patterns via tag_directions.
+  kind: text('kind').notNull().default('intention'),       // 'pattern' | 'intention'
   muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
   isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
 });
@@ -208,6 +208,15 @@ export const patternBlocks = sqliteTable('pattern_blocks', {
   endTime:       text('end_time').notNull(),
 });
 
+// 0040: per-owner, per-pattern-tag preferences (auto_fill, reminder offsets).
+export const patternPrefs = sqliteTable('pattern_prefs', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  autoFill: integer('auto_fill', { mode: 'boolean' }).notNull().default(true),
+  reminderOffsets: text('reminder_offsets', { mode: 'json' }).$type<number[]>().notNull().default([]),
+});
+
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
 //     Ritual △ + user-defined). No own recurrence; tasks-only (no nesting) in V1. ---
 export const patternTypes = sqliteTable('pattern_types', {
@@ -223,6 +232,8 @@ export const patternTypes = sqliteTable('pattern_types', {
   texture: text('texture'),                                     // motif override; null = derive from tag
   defaultEstMinutes: integer('default_est_minutes'),            // default est for this category
   notify: integer('notify', { mode: 'boolean' }).default(false), // per-type reminder toggle (Phase H fires)
+  // 0039: link to the base pattern tag (kind='pattern') for this type.
+  tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }),
 });
 
 export const patterns = sqliteTable('patterns', {
