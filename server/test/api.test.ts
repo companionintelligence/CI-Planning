@@ -30,6 +30,27 @@ describe('tasks / blocks / tags / possibles API', () => {
     expect(cancelled.body.task.status).toBe('cancelled');
   });
 
+  it('keeps subtype ⇄ is_habit/is_fast_task coherent across the legacy is_habit PATCH (CON-2c regression)', async () => {
+    // A quick task: is_fast_task derives from the canonical subtype.
+    const created = await api(server.url, '/api/tasks', { method: 'POST', json: { title: 'dash', subtype: 'quick' } });
+    expect(created.body.task.subtype).toBe('quick');
+    expect(created.body.task.is_fast_task).toBeTruthy();
+    const id = created.body.task.id;
+
+    // Flip to a habit via the LEGACY is_habit field. This path previously left
+    // is_fast_task=1 — a habit that was also a fast task. It must now be cleared.
+    const patched = await api(server.url, `/api/tasks/${id}`, { method: 'PATCH', json: { is_habit: true } });
+    expect(patched.body.task.subtype).toBe('habit');
+    expect(patched.body.task.is_habit).toBeTruthy();
+    expect(patched.body.task.is_fast_task).toBeFalsy(); // the fix
+
+    // Canonical subtype path clears both aliases symmetrically.
+    const back = await api(server.url, `/api/tasks/${id}`, { method: 'PATCH', json: { subtype: 'standard' } });
+    expect(back.body.task.subtype).toBe('standard');
+    expect(back.body.task.is_habit).toBeFalsy();
+    expect(back.body.task.is_fast_task).toBeFalsy();
+  });
+
   it('recall clones a shelved task + its subtree to fresh open tasks (cockpit-v2 Phase 6)', async () => {
     const parent = await api(server.url, '/api/tasks', {
       method: 'POST',
