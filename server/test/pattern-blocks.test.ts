@@ -52,6 +52,16 @@ function seedPatternBlock(dirTagId: string, dayType: string, start: string, end:
     .run(newId(), OWNER, dirTagId, dayType, start, end);
 }
 
+/** Insert a pattern_prefs row pinning a pattern's auto_fill toggle (other cols = defaults). */
+function seedPatternPref(dirTagId: string, autoFill: boolean): void {
+  sqlite
+    .prepare(
+      `INSERT INTO pattern_prefs (id, owner_id, pattern_tag_id, auto_fill, reminder_offsets, icon_shape, color_token)
+       VALUES (?, ?, ?, ?, '[]', 'circle', 'primary')`,
+    )
+    .run(newId(), OWNER, dirTagId, autoFill ? 1 : 0);
+}
+
 function stageTask(taskId: string): void {
   sqlite
     .prepare(`INSERT INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`)
@@ -305,5 +315,75 @@ describe('direction-aware Auto placement', () => {
     // Must be inside the WEEKEND window (10:00–12:00), not the wider workday window
     expect(wb.start_at >= `${WEEKEND}T10:00:00.000Z`).toBe(true);
     expect(wb.end_at <= `${WEEKEND}T12:00:00.000Z`).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass 2a per-pattern auto_fill gating (pattern_prefs / migration 0039+). A
+// direction-tagged task is only placed into a pattern's windows when that
+// pattern's auto_fill is true; a missing pref row defaults to true (legacy).
+describe('per-pattern auto_fill gating', () => {
+  it('gates per direction: Home(auto_fill=true) places, Work(auto_fill=false) does not', async () => {
+    const dirs = seedDirections();
+    seedPatternBlock(dirs.home, 'workday', '07:00', '08:00');
+    seedPatternBlock(dirs.work, 'workday', '09:00', '18:00');
+    seedPatternPref(dirs.home, true);
+    seedPatternPref(dirs.work, false);
+
+    const home = insertTask('Home chore', 30, dirs.home);
+    const work = insertTask('Work task', 30, dirs.work);
+    stageTask(home);
+    stageTask(work);
+
+    await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
+
+    const blocks = placedBlocks();
+    const hb = blocks.find((b) => b.title === 'Home chore');
+    expect(hb).toBeTruthy();
+    expect(hb!.start_at >= `${WEEKDAY}T07:00:00.000Z`).toBe(true);
+    expect(hb!.end_at <= `${WEEKDAY}T08:00:00.000Z`).toBe(true);
+
+    // Work pattern is gated off → its task is never placed (and never spills into
+    // the workday fallback: it carries a direction tag, so Pass 2b skips it).
+    expect(blocks.find((b) => b.title === 'Work task')).toBeUndefined();
+  });
+
+  it('untagged fallback is unaffected: all patterns auto_fill=false, untagged task still fills the workday', async () => {
+    const dirs = seedDirections();
+    // Pattern windows exist (so Pass 2 takes the direction-aware branch), but every
+    // pattern is gated off. Global auto_fill_workday stays 1 (resetDb baseline).
+    seedPatternBlock(dirs.home, 'workday', '07:00', '08:00');
+    seedPatternBlock(dirs.work, 'workday', '09:00', '18:00');
+    seedPatternPref(dirs.home, false);
+    seedPatternPref(dirs.work, false);
+
+    const t = insertTask('Untagged task', 30); // no direction tag
+    stageTask(t);
+
+    await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
+
+    const wb = placedBlocks().find((b) => b.title === 'Untagged task');
+    expect(wb).toBeTruthy();
+    // Lands in the classic workday window (09:00–18:00), via Pass 2b.
+    expect(wb!.start_at >= `${WEEKDAY}T09:00:00.000Z`).toBe(true);
+    expect(wb!.end_at <= `${WEEKDAY}T18:00:00.000Z`).toBe(true);
+  });
+
+  it('defaults are legacy: with NO pattern_prefs rows, a home-tagged task still lands in a Home window', async () => {
+    const dirs = seedDirections();
+    seedPatternBlock(dirs.home, 'workday', '07:00', '08:00');
+    seedPatternBlock(dirs.home, 'workday', '18:00', '23:00');
+    // Intentionally NO pattern_prefs rows → missing pref defaults to auto_fill=true.
+
+    const t = insertTask('Morning stretch', 30, dirs.home);
+    stageTask(t);
+
+    await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
+
+    const wb = placedBlocks().find((b) => b.title === 'Morning stretch');
+    expect(wb).toBeTruthy();
+    const inMorning = wb!.start_at >= `${WEEKDAY}T07:00:00.000Z` && wb!.end_at <= `${WEEKDAY}T08:00:00.000Z`;
+    const inEvening = wb!.start_at >= `${WEEKDAY}T18:00:00.000Z` && wb!.end_at <= `${WEEKDAY}T23:00:00.000Z`;
+    expect(inMorning || inEvening).toBe(true);
   });
 });
