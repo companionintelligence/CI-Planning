@@ -211,12 +211,15 @@ function placeIntoWindow(
   return { blocksCreated, placedTaskIds };
 }
 
-/** STEP 1: propose open-task candidates (not already staged) into the flight-plan. */
+/** STEP 1: propose open-task candidates (not already staged) into the flight-plan.
+ * Habits are excluded — they're auto-placed daily from their recurrence, so they
+ * shouldn't flood the flight-plan as one-off candidates. */
 export function fillFlightPlanCandidates(owner: string = currentOwnerId()): number {
   const candidates = sqlite
     .prepare(
       `SELECT id FROM tasks
         WHERE owner_id = ? AND status = 'open'
+          AND COALESCE(is_habit, 0) = 0
           AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)
         ORDER BY priority, COALESCE(due_at, '9999-12-31'), id
         LIMIT ?`

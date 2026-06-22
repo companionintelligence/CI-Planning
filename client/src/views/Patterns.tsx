@@ -1,6 +1,6 @@
 import { createSignal, createMemo, createResource, For, Show, onCleanup } from 'solid-js';
 import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowUpRight, Star, Play } from 'lucide-solid';
-import { patterns, patternTypes, prefs, refetchBlocks, refetchPatterns, showToast, setTaskModal } from '../stores/index.js';
+import { patterns, patternTypes, prefs, refetchBlocks, refetchPatterns, showToast, setElementModal } from '../stores/index.js';
 import { api, type BlockTemplate, type Pattern, type PatternType, type Task } from '../lib/api.js';
 import { buildRule, rulePresetForPattern, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { useDraggable, useDropZone, dragPayload } from '../lib/draggable.js';
@@ -326,7 +326,7 @@ export function Patterns() {
           <Show when={isHabit()} fallback={
             <button onClick={() => setCreating((v) => !v)} class="btn-secondary text-xs px-2.5 py-1"><Plus size={12} /> New {props.typeName}</button>
           }>
-            <button onClick={() => setTaskModal({ open: true })} class="btn-secondary text-xs px-2.5 py-1" title="Habits are recurring tasks"><Plus size={12} /> New Habit</button>
+            <button onClick={() => setElementModal({ open: true, mode: 'add', kind: 'habit' })} class="btn-secondary text-xs px-2.5 py-1" title="Habits are recurring tasks"><Plus size={12} /> New Habit</button>
           </Show>
         </div>
 
@@ -388,7 +388,7 @@ export function Patterns() {
                     <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
                     <Show when={t.tags?.length}><span class="text-primary text-xs">#{t.tags[0]}</span></Show>
                     <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground">{t.estimated_minutes}m</span></Show>
-                    <button onClick={(e) => { e.stopPropagation(); setTaskModal({ open: true, editTask: t }); }} class="btn-icon" title="Edit habit"><Pencil size={13} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); setElementModal({ open: true, mode: 'edit', kind: 'habit', editTarget: { kind: 'habit', id: t.id } }); }} class="btn-icon" title="Edit habit"><Pencil size={13} /></button>
                   </div>
                 );
               }}

@@ -4,7 +4,7 @@ import { Plus, Cpu } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
-import { TaskForm } from './components/TaskForm.js';
+import { ElementWizard } from './components/ElementWizard.js';
 import { Today }    from './views/Today.js';
 import { Calendar } from './views/Calendar.js';
 import { Inbox }    from './views/Inbox.js';
@@ -13,7 +13,7 @@ import { Patterns } from './views/Patterns.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
-import { taskModal, setTaskModal, blocks, taskOf, tags, patternPrefs } from './stores/index.js';
+import { setElementModal, blocks, taskOf, tags, patternPrefs } from './stores/index.js';
 import {
   requestNotificationPermission,
   scheduleTaskReminders,
@@ -100,26 +100,21 @@ function Shell(props: { children?: any }) {
       </main>
 
       {/* Floating Create TODO button — lifted above the bottom nav on mobile.
-          Hidden on Today, where the Day Overview + drawer own the new-task entry. */}
-      <Show when={location.pathname !== '/'}>
+          Only on Tasks, Calendar, Tags, and Jobs; every other view owns its own
+          create affordance (e.g. Today's Day Overview + drawer, the Planner grid). */}
+      <Show when={['/tasks', '/calendar', '/tags', '/jobs'].includes(location.pathname)}>
         <button
           class="fab bottom-20 md:bottom-6"
-          onClick={() => setTaskModal({ open: true })}
-          title="Create TODO (N)"
+          onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}
+          title="Add to calendar"
         >
           <Plus size={18} />
-          <span class="hidden sm:inline">New Task</span>
+          <span class="hidden sm:inline">Add</span>
         </button>
       </Show>
 
-      {/* Task creation / edit modal */}
-      <Show when={taskModal().open}>
-        <TaskForm
-          editTask={taskModal().editTask}
-          parentId={taskModal().parentId}
-          onClose={() => setTaskModal({ open: false })}
-        />
-      </Show>
+      {/* Unified Add/Edit Element wizard — self-driven by the elementModal signal. */}
+      <ElementWizard />
 
       <BottomNav />
       <ToastContainer />

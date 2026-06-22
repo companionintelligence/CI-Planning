@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { refetchTasks, showToast, setTaskModal } from '../stores/index.js';
+import { refetchTasks, showToast, setElementModal } from '../stores/index.js';
 
 const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
 const statusClass: Record<string, string> = {
@@ -94,18 +94,29 @@ export function TaskCard(props: Props) {
         class={`card group flex gap-3 ${props.task.status === 'done' ? 'opacity-40' : ''}`}
         style={{ 'margin-bottom': '6px' }}
       >
-        {/* Checkbox */}
-        <button
-          onClick={toggleDone}
-          class={`checkbox mt-0.5 flex-shrink-0 ${props.task.status === 'done' ? 'checkbox-checked' : ''}`}
-          title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
+        {/* Checkbox — habits aren't completed here; you mark occurrences done on the
+            planner. Show a non-interactive habit marker instead of a checkbox. */}
+        <Show
+          when={!props.task.is_habit}
+          fallback={
+            <span class="checkbox mt-0.5 flex-shrink-0 flex items-center justify-center cursor-default opacity-60"
+              title="Habit — mark occurrences done on the planner, not here">
+              <Repeat size={11} class="text-muted-foreground" />
+            </span>
+          }
         >
-          <Show when={props.task.status === 'done'}>
-            <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
-              <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </Show>
-        </button>
+          <button
+            onClick={toggleDone}
+            class={`checkbox mt-0.5 flex-shrink-0 ${props.task.status === 'done' ? 'checkbox-checked' : ''}`}
+            title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
+          >
+            <Show when={props.task.status === 'done'}>
+              <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
+                <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </Show>
+          </button>
+        </Show>
 
         {/* Content */}
         <div class="flex-1 min-w-0">
@@ -114,7 +125,10 @@ export function TaskCard(props: Props) {
             <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
               {props.task.title}
             </span>
-            <Show when={isInstance() || props.task.is_habit}>
+            <Show when={props.task.is_habit}>
+              <span class="badge-neutral text-[10px] flex-shrink-0 inline-flex items-center gap-0.5"><Repeat size={9} /> habit</span>
+            </Show>
+            <Show when={isInstance() && !props.task.is_habit}>
               <Repeat size={11} class="text-muted-foreground flex-shrink-0 mt-1" />
             </Show>
             {dueLabel()}
@@ -180,14 +194,14 @@ export function TaskCard(props: Props) {
           <button
             class="btn-icon"
             title="Add subtask"
-            onClick={() => setTaskModal({ open: true, parentId: props.task.id })}
+            onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}
           >
             <Plus size={13} />
           </button>
           <button
             class="btn-icon"
             title="Edit"
-            onClick={() => setTaskModal({ open: true, editTask: props.task })}
+            onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}
           >
             <Pencil size={13} />
           </button>
