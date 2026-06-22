@@ -6,10 +6,10 @@ import { groupByDirection, displayTag } from '../lib/tag-tax.js';
 import { useDraggable, useDropZone } from '../lib/draggable.js';
 
 /**
- * Tags page — the direction ▸ intention taxonomy. One card per direction (brand-set
+ * Tags page — the pattern ▸ intention taxonomy. One card per pattern (brand-set
  * Home/Work/Community + user-added) plus an Unsorted card. Drag an intention chip from
- * one card to another to MOVE its direction; mute a tag to drop it into the card's
- * collapsible muted section; a used tag can't be deleted (base directions never can).
+ * one card to another to MOVE its pattern; mute a tag to drop it into the card's
+ * collapsible muted section; a used tag can't be deleted (base patterns never can).
  */
 export function Tags() {
   const [newDir, setNewDir] = createSignal('');
@@ -24,7 +24,7 @@ export function Tags() {
   async function addDirection(e: Event) {
     e.preventDefault();
     if (!newDir().trim()) return;
-    await run(api.tags.create(newDir().trim(), { kind: 'direction' }), 'Direction added');
+    await run(api.tags.create(newDir().trim(), { kind: 'pattern' }), 'Pattern added');
     setNewDir('');
   }
   const move = (tag: Tag, toDirection: string | null) =>
@@ -43,9 +43,9 @@ export function Tags() {
       <form onSubmit={addDirection} class="flex gap-2 mb-6 max-w-sm">
         <div class="relative flex-1">
           <Hash size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <input class="input pl-8" placeholder="New direction…" value={newDir()} onInput={(e) => setNewDir(e.currentTarget.value)} />
+          <input class="input pl-8" placeholder="New pattern…" value={newDir()} onInput={(e) => setNewDir(e.currentTarget.value)} />
         </div>
-        <button type="submit" class="btn-primary"><Plus size={14} /> Direction</button>
+        <button type="submit" class="btn-primary"><Plus size={14} /> Pattern</button>
       </form>
 
       <div class="grid gap-4 md:grid-cols-3">
@@ -53,7 +53,7 @@ export function Tags() {
           {(g) => (
             <DirectionCard
               title={displayTag(g.direction.name)}
-              direction={g.direction.name}
+              pattern={g.direction.name}
               locked={g.direction.is_base}
               active={g.active}
               muted={g.muted}
@@ -61,14 +61,14 @@ export function Tags() {
               onMute={toggleMute}
               onDelete={del}
               onAddTag={(name) => run(api.tags.create(name, { kind: 'intention', directions: [g.direction.name] }), 'Tag added')}
-              onDeleteDirection={g.direction.is_base || g.direction.used ? undefined : () => del(g.direction)}
+              onDeletePattern={g.direction.is_base || g.direction.used ? undefined : () => del(g.direction)}
             />
           )}
         </For>
         <Show when={grouped().unsortedActive.length + grouped().unsortedMuted.length > 0}>
           <DirectionCard
             title="Unsorted"
-            direction={null}
+            pattern={null}
             locked
             active={grouped().unsortedActive}
             muted={grouped().unsortedMuted}
@@ -84,7 +84,7 @@ export function Tags() {
 
 function DirectionCard(props: {
   title: string;
-  direction: string | null;
+  pattern: string | null;
   locked: boolean;
   active: Tag[];
   muted: Tag[];
@@ -92,7 +92,7 @@ function DirectionCard(props: {
   onMute: (tag: Tag) => void;
   onDelete: (tag: Tag) => void;
   onAddTag?: (name: string) => void;
-  onDeleteDirection?: () => void;
+  onDeletePattern?: () => void;
 }): JSX.Element {
   const [showMuted, setShowMuted] = createSignal(false);
   const [adding, setAdding] = createSignal('');
@@ -100,7 +100,7 @@ function DirectionCard(props: {
     if (payload.kind !== 'tag-chip') return;
     const tag = [...props.active, ...props.muted].find((t) => t.id === payload.id) // same card → no-op
       ?? (tags() ?? []).find((t) => t.id === payload.id);
-    if (tag && !tag.directions.includes(props.direction ?? '')) props.onDrop(tag);
+    if (tag && !tag.directions.includes(props.pattern ?? '')) props.onDrop(tag);
   });
 
   function submitAdd(e: Event) {
@@ -119,8 +119,8 @@ function DirectionCard(props: {
           <Show when={props.locked}><Lock size={11} class="text-muted-foreground" /></Show>
           {props.title}
         </div>
-        <Show when={props.onDeleteDirection}>
-          <button onClick={() => props.onDeleteDirection!()} class="btn-icon" title="Delete direction"><Trash2 size={13} /></button>
+        <Show when={props.onDeletePattern}>
+          <button onClick={() => props.onDeletePattern!()} class="btn-icon" title="Delete pattern"><Trash2 size={13} /></button>
         </Show>
       </div>
 

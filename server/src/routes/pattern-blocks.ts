@@ -27,7 +27,7 @@ export function patternBlocksRouter() {
       .prepare(`SELECT kind FROM tags WHERE id = ?`)
       .get(dirTagId) as { kind: string } | undefined;
     if (!tag) { ctx.status = 404; ctx.body = { error: 'Tag not found' }; return; }
-    if (tag.kind !== 'direction') { ctx.status = 422; ctx.body = { error: 'Tag is not a direction' }; return; }
+    if (tag.kind !== 'pattern') { ctx.status = 422; ctx.body = { error: 'Tag is not a pattern' }; return; }
     if (!['workday', 'weekend'].includes(dayType)) { ctx.status = 422; ctx.body = { error: 'Invalid day_type' }; return; }
 
     const body = ctx.request.body as { ranges?: unknown };

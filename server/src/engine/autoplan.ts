@@ -293,7 +293,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     if (Object.keys(patWindows).length > 0) {
       const ids = Object.keys(patWindows);
       const dirTags = sqlite
-        .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'direction'`)
+        .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
         .all(ids) as { id: string; name: string }[];
       for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
     }

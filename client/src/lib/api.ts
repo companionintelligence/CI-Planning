@@ -213,7 +213,7 @@ export const api = {
 
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
-    create: (name: string, opts?: { kind?: 'direction' | 'intention'; directions?: string[] }) =>
+    create: (name: string, opts?: { kind?: 'pattern' | 'intention'; directions?: string[] }) =>
       request<{ tag: Tag }>('POST', '/tags', { name, ...opts }),
     // PATCH directions REPLACES membership (drag-move = single target); muted toggles.
     update: (id: string, body: { directions?: string[]; muted?: boolean }) =>
@@ -360,10 +360,10 @@ export interface BlockTemplate {
 
 export interface Tag {
   id: string; name: string; count: number;
-  // Tag taxonomy (0036): 'direction' = top-level category (brand-set home/work/community);
-  // 'intention' = grouped under one+ directions. `used` blocks delete. `directions` =
-  // member direction names (empty intention = Unsorted).
-  kind: 'direction' | 'intention';
+  // Tag taxonomy (0036): 'pattern' = top-level category (brand-set home/work/community);
+  // 'intention' = grouped under one+ patterns. `used` blocks delete. `directions` =
+  // member pattern names (empty intention = Unsorted).
+  kind: 'pattern' | 'intention';
   muted: boolean;
   is_base: boolean;
   used: boolean;
