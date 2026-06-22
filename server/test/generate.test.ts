@@ -27,6 +27,7 @@ interface TemplateOpts {
   dtstart?: string;
   taskTime?: string | null;
   isHabit?: boolean;
+  subtype?: string;
   status?: string;
   estimatedMinutes?: number | null;
   priority?: number;
@@ -38,9 +39,9 @@ function insertTemplate(o: TemplateOpts = {}): string {
     sqlite
       .prepare(
         `INSERT INTO tasks
-           (id, title, status, owner_id, priority, estimated_minutes, task_time, is_habit,
+           (id, title, status, owner_id, priority, estimated_minutes, task_time, is_habit, subtype,
             recurrence_rule, recurrence_dtstart)
-         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
       )
       .get(
         'Recurring thing',
@@ -50,6 +51,8 @@ function insertTemplate(o: TemplateOpts = {}): string {
         o.estimatedMinutes ?? null,
         o.taskTime ?? null,
         o.isHabit ? 1 : 0,
+        // Mirror the API's canonical state: a habit template carries subtype='habit'.
+        o.subtype ?? (o.isHabit ? 'habit' : 'standard'),
         o.rule ?? 'FREQ=DAILY',
         o.dtstart ?? '2026-06-01T12:00:00.000Z'
       ) as { id: string }
@@ -69,6 +72,7 @@ interface InstanceRow {
   due_at: string | null;
   source_kind: string;
   is_habit: number;
+  subtype: string;
 }
 
 const instances = (tpl: string): InstanceRow[] =>
@@ -212,6 +216,35 @@ describe('generateRecurrences — instance day-gating fields', () => {
     expect(inst.task_time).toBeNull();
     expect(inst.scheduled_for).toBe('2026-06-10');
     expect(inst.defer_until).toBe(utcDayBounds('2026-06-10', TZ).start);
+  });
+});
+
+describe('generateRecurrences — subtype propagation', () => {
+  // Regression: the generator copied is_habit but not the canonical subtype, so every
+  // instance fell back to the column default 'standard' — a habit template produced
+  // is_habit=1 / subtype='standard' instances, which then streamed to clients over SSE.
+  it("a habit template's instances inherit subtype='habit' (not the 'standard' default)", () => {
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY', isHabit: true });
+    gen({ today: '2026-06-10', horizonDays: 2 });
+
+    const all = instances(tpl);
+    expect(all.length).toBe(3);
+    expect(all.every((i) => i.subtype === 'habit')).toBe(true);
+    expect(all.every((i) => i.is_habit === 1)).toBe(true); // booleans stay coherent with subtype
+  });
+
+  it("a standard template's instances are subtype='standard'", () => {
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY', isHabit: false });
+    gen({ today: '2026-06-10', horizonDays: 1 });
+
+    expect(instances(tpl).every((i) => i.subtype === 'standard')).toBe(true);
+  });
+
+  it('propagates whatever subtype the template carries, verbatim', () => {
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'quick' });
+    gen({ today: '2026-06-10', horizonDays: 0 });
+
+    expect(instanceOn(tpl, '2026-06-10')!.subtype).toBe('quick');
   });
 });
 
