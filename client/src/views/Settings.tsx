@@ -2,7 +2,7 @@ import { createSignal, createEffect, Show, createResource, For } from 'solid-js'
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternBlocks, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
-import { PatternTypeSettings } from '../components/PatternTypeSettings.js';
+import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { DEFAULT_CONCEPT_TAGS, type ConceptTag } from '../lib/pattern-meta.js';
 
 const BROWSER_TZ = (() => {
@@ -430,11 +430,11 @@ export function Settings() {
           <button type="button" onClick={addCT} class="btn-secondary text-xs px-2.5 py-1 mt-2"><Plus size={12} /> Add tag</button>
         </section>
 
-        {/* Pattern settings */}
+        {/* Pattern Block settings */}
         <section class="card">
-          <div class="section-label mb-3 flex items-center gap-1.5"><Shapes size={12} /> Pattern Settings</div>
-          <p class="text-xs text-muted-foreground mb-3">Each category's default shape, colour, estimate, and reminders. Colours come from the shared theme palette; reminders fire in a later phase.</p>
-          <PatternTypeSettings />
+          <div class="section-label mb-3 flex items-center gap-1.5"><Shapes size={12} /> Pattern Block Settings</div>
+          <p class="text-xs text-muted-foreground mb-3">Each pattern tag's display shape and colour. Colours come from the shared theme palette.</p>
+          <PatternBlockSettings />
         </section>
 
         {/* Models */}
