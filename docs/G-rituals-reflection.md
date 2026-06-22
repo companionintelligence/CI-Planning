@@ -1,5 +1,12 @@
 # G — Time-Blocking, Patterns & the TODAY cockpit (implementation spec)
 
+> **⚠️ HISTORICAL — superseded, not the current plan.** This is the **old** design
+> (Routine/Habit/Ritual as `pattern_types`). In the shipped app "pattern" is the
+> **tag-category** axis (`tags.kind`), habits are **task-level** (`is_habit`), and the
+> Routine collection system is **kept** and being renamed off the word `pattern`
+> (→ `routine*`) to end the collision. Retained for history.
+> Live plan: [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md).
+
 Companion to [ROADMAP.md](ROADMAP.md). **Supersedes the old "Rituals & reflection"
 G.** UX source of truth: [design-today-cockpit.md](design-today-cockpit.md).
 Depends on **B0** (owner scoping), **C** (task semantics), **E** (task-level
