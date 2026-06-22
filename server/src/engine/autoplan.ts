@@ -216,7 +216,7 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
     .prepare(
       `SELECT id FROM tasks
         WHERE owner_id = ? AND status = 'open'
-          AND COALESCE(is_habit, 0) = 0
+          AND subtype IS NOT 'habit'
           AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)
         ORDER BY priority, COALESCE(due_at, '9999-12-31'), id
         LIMIT ?`
