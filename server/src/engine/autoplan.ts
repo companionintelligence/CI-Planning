@@ -25,6 +25,7 @@ import { localISODate } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
+import { getPatternPrefs } from '../services/pattern-prefs.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -285,15 +286,21 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   // When pattern_blocks are configured, direction-tagged tasks are constrained to
   // their direction's windows (union, earliest-first); direction-less tasks use the
   // classic workday_start/workday_end window (backward-compatible).
+  //
+  // Per-pattern gating (0040): each direction's auto_fill is checked against
+  // pattern_prefs. When all pattern_prefs rows default to auto_fill=1 AND
+  // auto_fill_workday=1, output is byte-identical to the pre-0040 behavior.
   if ((prefs?.auto_fill_workday ?? 1) === 1) {
     const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
     const patWindows = getPatternBlocks(owner, dayType);
+    // Load per-direction auto_fill prefs. Missing row → default { auto_fill: true }.
+    const dprefs = getPatternPrefs(owner);
     const dirNameToId = new Map<string, string>(); // direction tag name → id
 
     if (Object.keys(patWindows).length > 0) {
       const ids = Object.keys(patWindows);
       const dirTags = sqlite
-        .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'direction'`)
+        .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
         .all(ids) as { id: string; name: string }[];
       for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
     }
@@ -301,14 +308,18 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     const remaining = staged.filter((t) => !placedIds.has(t.task_id));
 
     if (dirNameToId.size > 0) {
-      // Pass 2a — direction-tagged tasks → their direction's windows (union, earliest-first)
+      // Pass 2a — direction-tagged tasks → their direction's windows (union, earliest-first).
+      // Per-pattern gating: skip a direction whose auto_fill pref is false.
       for (const t of remaining) {
         if (placedIds.has(t.task_id)) continue;
         const taskDirIds = t.tags
           .map((name) => dirNameToId.get(name))
           .filter((id): id is string => id !== undefined);
         if (taskDirIds.length === 0) continue;
-        const allRanges = taskDirIds
+        // Filter to directions whose auto_fill is enabled (missing row → default true).
+        const enabledDirIds = taskDirIds.filter((dirId) => (dprefs[dirId]?.auto_fill ?? true));
+        if (enabledDirIds.length === 0) continue;
+        const allRanges = enabledDirIds
           .flatMap((did) => patWindows[did] ?? [])
           .sort((a, b) => a.start_time.localeCompare(b.start_time));
         for (const range of allRanges) {
