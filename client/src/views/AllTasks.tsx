@@ -11,6 +11,12 @@ export function AllTasks() {
 
   const activeTaskCount = () => (tasks() ?? []).filter(t => t.status === 'open').length;
 
+  // Tasks vs Habits tabs. Both exclude subtasks + recurrence instances (a series
+  // collapses to its template); Habits are split out onto their own tab.
+  const [view, setView] = createSignal<'tasks' | 'habits'>('tasks');
+  const baseList = () => (tasks() ?? []).filter(t => !t.parent_id && !t.recurrence_parent_id);
+  const shownList = () => baseList().filter(t => (view() === 'habits' ? t.is_habit : !t.is_habit));
+
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
       {/* Header */}
@@ -65,12 +71,28 @@ export function AllTasks() {
         </div>
       </Show>
 
-      {/* Task list */}
+      {/* Tasks / Habits tabs */}
+      <div class="flex gap-2 mb-3">
+        <For each={[['tasks', 'Tasks'], ['habits', 'Habits']] as const}>
+          {([v, label]) => (
+            <button
+              onClick={() => setView(v)}
+              class="px-3 py-1 text-sm rounded-md transition-colors"
+              classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
+            >
+              {label} <span class="opacity-60 tabular-nums">{baseList().filter(t => (v === 'habits' ? t.is_habit : !t.is_habit)).length}</span>
+            </button>
+          )}
+        </For>
+      </div>
+
+      {/* List — top-level only; recurring series collapse to their template (instances
+          hidden so a habit shows once). Habits live on their own tab. */}
       <div class="flex flex-col gap-2">
-        <Show when={(tasks() ?? []).filter(t => !t.parent_id).length > 0} fallback={
-          <div class="card text-center text-slate-500 py-12 text-sm">No tasks found.</div>
+        <Show when={shownList().length > 0} fallback={
+          <div class="card text-center text-slate-500 py-12 text-sm">No {view() === 'habits' ? 'habits' : 'tasks'} found.</div>
         }>
-          <For each={(tasks() ?? []).filter(t => !t.parent_id)}>
+          <For each={shownList()}>
             {(task) => <TaskCard task={task} />}
           </For>
         </Show>

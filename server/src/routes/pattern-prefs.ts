@@ -29,6 +29,7 @@ export function patternPrefsRouter() {
       reminder_offsets?: unknown;
       icon_shape?: unknown;
       color_token?: unknown;
+      default_minutes?: unknown;
     };
 
     if (body.auto_fill !== undefined && typeof body.auto_fill !== 'boolean') {
@@ -56,11 +57,17 @@ export function patternPrefsRouter() {
       ctx.status = 422; ctx.body = { error: 'color_token must be a non-empty string' }; return;
     }
 
+    if (body.default_minutes !== undefined &&
+        !(Number.isInteger(body.default_minutes) && (body.default_minutes as number) > 0)) {
+      ctx.status = 422; ctx.body = { error: 'default_minutes must be a positive integer' }; return;
+    }
+
     const pref = setPatternPref(owner, patternTagId, {
       auto_fill: body.auto_fill as boolean | undefined,
       reminder_offsets: body.reminder_offsets as number[] | undefined,
       icon_shape: body.icon_shape as string | undefined,
       color_token: body.color_token as string | undefined,
+      default_minutes: body.default_minutes as number | undefined,
     });
     ctx.body = { pref };
   });

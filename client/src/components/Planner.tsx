@@ -8,13 +8,17 @@ import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setTaskModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
-import { BlockEditModal } from './BlockEditModal.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
+
+/** Open the unified Element wizard to edit a Time Block. */
+function editTimeBlock(id: string) {
+  setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id } });
+}
 
 /**
  * The PLANNER (Phase G, G6): the hour-by-hour view of TODAY. 8h visible by default,
@@ -322,7 +326,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   function edit() {
     setMenu(null);
     const t = task();
-    if (t) setTaskModal({ open: true, editTask: t });
+    if (t) setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } });
     else showToast('Nothing to edit on this block', 'default');
   }
   async function promoteHabit() {
@@ -495,7 +499,6 @@ export function Planner() {
   const [windowHours, setWindowHours] = createSignal(VISIBLE_HOURS);
   const visiblePx = () => windowHours() * 60 * PX_PER_MIN;
   const [updateMode, setUpdateMode] = createSignal(false);
-  const [editBlock, setEditBlock] = createSignal<Block | null>(null);
   const [deletePlan, setDeletePlan] = createSignal<{ plan: Block; childCount: number } | null>(null);
 
   // A minute ticker so "next up" (and the now line) advance over the day.
@@ -687,7 +690,7 @@ export function Planner() {
               <Show when={props.block.duration_minutes}>{(m) => <span>· {m()}m</span>}</Show>
             </div>
             <div class="mt-2 flex flex-col gap-1">
-              <button onClick={() => { setOpen(false); setEditBlock(props.block); }} class="btn-ghost text-xs px-2 py-1 justify-start"><Pencil size={12} /> Edit</button>
+              <button onClick={() => { setOpen(false); editTimeBlock(props.block.id); }} class="btn-ghost text-xs px-2 py-1 justify-start"><Pencil size={12} /> Edit</button>
               <button onClick={addToDay} class="btn-secondary text-xs px-2 py-1 justify-start"><ArrowUpRight size={12} /> Add to day</button>
               <button onClick={del} class="btn-ghost text-xs px-2 py-1 justify-start hover:text-destructive"><Trash2 size={12} /> Delete</button>
             </div>
@@ -759,7 +762,7 @@ export function Planner() {
           >
             <PatternBlockOverlay date={day()} />
             <HourLines />
-            <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={setEditBlock} onRequestDelete={requestDeletePlan} />}</For>
+            <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={(b) => editTimeBlock(b.id)} onRequestDelete={requestDeletePlan} />}</For>
             <For each={placed()}>
               {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={isNested(p.block)} updateMode={updateMode()} group={groupCtx} />}
             </For>
@@ -774,7 +777,6 @@ export function Planner() {
           </div>
         </div>
       </div>
-      <BlockEditModal block={editBlock()} onClose={() => setEditBlock(null)} />
       <Show when={deletePlan()}>
         {(d) => <DeletePlanDialog plan={d().plan} childCount={d().childCount} onClose={() => setDeletePlan(null)} />}
       </Show>

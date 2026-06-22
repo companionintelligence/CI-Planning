@@ -8,6 +8,7 @@ import {
   setOverlayTags,
   overlayPrio,
   setOverlayPrio,
+  setElementModal,
 } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
@@ -238,7 +239,14 @@ export function Calendar() {
       </Show>
 
       <div class="flex-1 overflow-hidden min-h-0">
-        <CalendarGrid view={view()} days={visibleDays()} blocksByDay={blocksByDay} />
+        <CalendarGrid
+          view={view()}
+          days={visibleDays()}
+          blocksByDay={blocksByDay}
+          onCreateAt={(day, hhmm) =>
+            setElementModal({ open: true, mode: 'add', kind: null, prefill: { day, start: hhmm } })
+          }
+        />
       </div>
     </div>
   );

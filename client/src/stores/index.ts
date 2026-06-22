@@ -186,9 +186,17 @@ export function showToast(message: string, kind: ToastKind = 'default', duration
   setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), durationMs);
 }
 
-// ── Task form modal ───────────────────────────────────────────────────────────
-export const [taskModal, setTaskModal] = createSignal<{
+// ── Element wizard modal ────────────────────────────────────────────────────────
+// The unified Add/Edit wizard for the calendar-addable Entities. "Element" is a
+// UI-only union (no DB noun) over Task / Habit / Routine / Time-Block. `kind: null`
+// shows the four-button type chooser first (Add mode); Edit mode passes a concrete
+// kind + editTarget so it jumps straight to that type's form.
+export type ElementKind = 'task' | 'habit' | 'routine' | 'timeblock';
+export const [elementModal, setElementModal] = createSignal<{
   open: boolean;
-  editTask?: import('../lib/api.js').Task;
-  parentId?: string;
-}>({ open: false });
+  mode: 'add' | 'edit';
+  kind: ElementKind | null;
+  prefill?: { day?: string; start?: string; durationMin?: number };
+  editTarget?: { kind: ElementKind; id: string };
+  parentId?: string; // when adding a subtask
+}>({ open: false, mode: 'add', kind: null });

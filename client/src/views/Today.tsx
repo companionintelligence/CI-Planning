@@ -1,12 +1,11 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-solid';
-import { blocks, tasks, taskOf, setTaskModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
+import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles } from '../stores/selection.js';
 import { api } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
-import { PlannerDrawer } from '../components/PlannerDrawer.js';
 import { MissedReview } from '../components/MissedReview.js';
 
 /**
@@ -104,8 +103,8 @@ export function Today() {
               </Show>
             </div>
           </div>
-          <button onClick={() => setTaskModal({ open: true })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0">
-            <Plus size={13} /> New Task
+          <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0">
+            <Plus size={13} /> Add
           </button>
         </div>
 
@@ -128,14 +127,13 @@ export function Today() {
       {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
       <MissedReview />
 
-      {/* Two-column workspace (cockpit-v2 Phase 3): Planner left · Flight-plan +
-          drawer right (≥ md); stacked on mobile. Someday Time Blocks now render on
-          their goal day in the Planner header lane (the ConceptLane is retired — CON-2d). */}
+      {/* Two-column workspace (cockpit-v2 Phase 3): Planner left · Flight-plan right
+          (≥ md); stacked on mobile. Someday Time Blocks now render on their goal day
+          in the Planner header lane (the ConceptLane is retired — CON-2d). */}
       <div class="grid gap-4 items-start md:grid-cols-[1fr_minmax(20rem,24rem)]">
         <Planner />
-        <div class="relative flex flex-col gap-4">
+        <div class="flex flex-col gap-4">
           <FlightPlan />
-          <PlannerDrawer />
         </div>
       </div>
 
