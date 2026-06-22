@@ -32,6 +32,10 @@ const kindColor: Record<string, string> = {
 // never altered, position math still uses the true minutes.
 const MIN_CHIP_PX = 18;
 
+const pad = (n: number) => String(n).padStart(2, '0');
+// A pointer move under this many px is treated as a click (open the add wizard).
+const CLICK_PX = 5;
+
 /** A block placed in the overlap layout: vertical extent + horizontal column slot. */
 interface Placed {
   block: Block;
@@ -284,10 +288,28 @@ interface Props {
   days: string[];
   /** Blocks already fetched for the visible range, grouped by local day. */
   blocksByDay: () => Record<string, Block[]>;
+  /** Click an empty slot → open the Add Element wizard at (day, HH:MM). */
+  onCreateAt?: (day: string, hhmm: string) => void;
 }
 
 export function CalendarGrid(props: Props) {
   const today = () => localISODate();
+
+  // Click-to-create on empty grid space. BlockChip gestures stopPropagation, so only
+  // empty space reaches here. A near-zero pointer move = a click; map Y → snapped time.
+  function clickToCreate(e: PointerEvent, day: string) {
+    if (!props.onCreateAt) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointerup', onUp);
+      if (Math.abs(ev.clientX - startX) >= CLICK_PX || Math.abs(ev.clientY - startY) >= CLICK_PX) return;
+      const mins = Math.max(0, Math.round((ev.clientY - rect.top) / PX_PER_MIN));
+      const snapped = Math.floor(mins / 15) * 15;
+      props.onCreateAt!(day, `${pad(Math.floor(snapped / 60))}:${pad(snapped % 60)}`);
+    };
+    window.addEventListener('pointerup', onUp);
+  }
 
   // Time-axis views (day + week) share the same renderer.
   const TimeAxis = () => (
@@ -348,7 +370,13 @@ export function CalendarGrid(props: Props) {
           {(day) => {
             const placed = createMemo(() => layoutBlocks(props.blocksByDay()[day] ?? [], day));
             return (
-              <div class="relative border-l border-surface-700/60" style={{ height: `${DAY_HEIGHT_PX}px` }}>
+              <div
+                class="relative border-l border-surface-700/60"
+                classList={{ 'cursor-pointer': !!props.onCreateAt }}
+                style={{ height: `${DAY_HEIGHT_PX}px` }}
+                title={props.onCreateAt ? 'Click an empty slot to add' : undefined}
+                onPointerDown={(e) => clickToCreate(e, day)}
+              >
                 <HourLines />
                 <For each={placed()}>
                   {(p) => <BlockChip placed={p} day={day} />}
@@ -395,7 +423,10 @@ export function CalendarGrid(props: Props) {
                 classList={{
                   'opacity-45': !inMonth(),
                   'border-t-0': i() < 7,
+                  'cursor-pointer': !!props.onCreateAt,
                 }}
+                title={props.onCreateAt ? 'Click to add' : undefined}
+                onClick={() => props.onCreateAt?.(day, '09:00')}
               >
                 <div class="flex items-center justify-between mb-1">
                   <span

@@ -71,6 +71,7 @@ describe('GET /api/pattern-prefs', () => {
       reminder_offsets: [10],
       icon_shape: 'square',
       color_token: 'chart-3',
+      default_minutes: 60,
     });
   });
 });
@@ -201,6 +202,7 @@ describe('pattern-prefs service', () => {
       reminder_offsets: [30],
       icon_shape: 'circle',
       color_token: 'primary',
+      default_minutes: 60,
     });
   });
 

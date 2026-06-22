@@ -643,6 +643,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "reminder_offsets",
       "icon_shape",
       "color_token",
+      "default_minutes",
     ],
     "table": "pattern_prefs",
   },
