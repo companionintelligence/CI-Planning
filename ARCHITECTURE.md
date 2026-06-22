@@ -410,7 +410,7 @@ Credentials live in macOS Keychain (or libsecret), never in a committed `.env`. 
 Design language: the **CI-Hub shared design system** (semantic tokens + primitives, Montserrat, dark-first with a light mode) — global styles first. SSE drives live updates.
 ---
 ## 14. Tagging System
-Many-to-many over `tasks`/`possible_tasks`. Names normalized on insert (lowercase, hyphenated, ≤32 chars). Tags survive promotion (`possible_task_tags` → `task_tags`). Agents may *suggest* tags but only surface them in the queue above a confidence threshold. Batching and day-theming key off tags.
+Many-to-many over `tasks`/`possible_tasks`. Names normalized on insert (lowercase, hyphenated, ≤32 chars). Tags survive promotion (`possible_task_tags` → `entity_tags`). Agents may *suggest* tags but only surface them in the queue above a confidence threshold. Batching and day-theming key off tags.
 ---
 ## 15. Deployment
 - Single Node process under `launchd`, bound to the Tailscale interface on a chosen port (e.g. 3848).
