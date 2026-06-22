@@ -81,12 +81,15 @@ function resolveMembers(patternId: string, date: string): MemberTask[] {
   const out: MemberTask[] = [];
   for (const m of members) {
     if (['completed', 'skipped', 'cancelled', 'missed'].includes(m.status)) continue;
-    // Recurrence template? Prefer today's instance if it exists; else the template stays.
+    // Recurrence template? Prefer this day's instance if it exists; else the template
+    // stays (placed for the day). Skip an instance already resolved (done/skipped/
+    // cancelled) so a completed occurrence isn't re-placed.
     if (m.recurrence_rule && m.recurrence_parent_id == null) {
       const inst = sqlite
-        .prepare(`SELECT id, title, estimated_minutes FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ?`)
-        .get(m.task_id, date) as { id: string; title: string; estimated_minutes: number | null } | undefined;
+        .prepare(`SELECT id, title, estimated_minutes, status FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ?`)
+        .get(m.task_id, date) as { id: string; title: string; estimated_minutes: number | null; status: string } | undefined;
       if (inst) {
+        if (['completed', 'done', 'skipped', 'cancelled', 'missed'].includes(inst.status)) continue;
         out.push({ task_id: inst.id, title: inst.title, estimated_minutes: inst.estimated_minutes });
         continue;
       }
@@ -218,22 +221,33 @@ interface RecurringPattern {
  */
 export function patternsRecurringOnDate(owner: string, today: string): RecurringPattern[] {
   const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+  // Routine patterns carry the recurrence on the PATTERN row. Habit patterns carry
+  // it on the member habit TASK (`tasks.is_habit` + recurrence on the task template) —
+  // `ensureHabitPattern` never copies a rule onto the pattern — so we read the habit's
+  // rule from its member task. Union both sources.
   const rows = sqlite
     .prepare(
-      `SELECT p.id, p.name, p.recurrence_rule, p.recurrence_dtstart, pt.name AS type_name
+      `SELECT p.id, p.name, p.recurrence_rule AS rule, p.recurrence_dtstart AS dtstart, pt.name AS type_name
          FROM patterns p
          JOIN pattern_types pt ON pt.id = p.type_id
-        WHERE p.owner_id = ? AND p.recurrence_rule IS NOT NULL
-          AND pt.name IN ('Habit', 'Routine')`
+        WHERE p.owner_id = ? AND pt.name = 'Routine' AND p.recurrence_rule IS NOT NULL
+       UNION ALL
+       SELECT p.id, p.name, t.recurrence_rule AS rule, t.recurrence_dtstart AS dtstart, pt.name AS type_name
+         FROM patterns p
+         JOIN pattern_types pt ON pt.id = p.type_id
+         JOIN pattern_tasks ptk ON ptk.pattern_id = p.id
+         JOIN tasks t ON t.id = ptk.task_id
+        WHERE p.owner_id = ? AND pt.name = 'Habit'
+          AND t.recurrence_rule IS NOT NULL AND t.recurrence_parent_id IS NULL`
     )
-    .all(owner) as { id: string; name: string; recurrence_rule: string; recurrence_dtstart: string | null; type_name: string }[];
+    .all(owner, owner) as { id: string; name: string; rule: string; dtstart: string | null; type_name: string }[];
 
   const out: RecurringPattern[] = [];
   for (const r of rows) {
-    if (!r.recurrence_dtstart) continue; // malformed; skip defensively
+    if (!r.dtstart) continue; // malformed; skip defensively
     try {
       const hits = occurrencesBetween(
-        { recurrenceRule: r.recurrence_rule, recurrenceDtstart: r.recurrence_dtstart, taskTime: null, recurrenceExdates: [], timezone: tz },
+        { recurrenceRule: r.rule, recurrenceDtstart: r.dtstart, taskTime: null, recurrenceExdates: [], timezone: tz },
         today,
         today,
       );

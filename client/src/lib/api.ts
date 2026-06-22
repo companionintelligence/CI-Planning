@@ -439,6 +439,7 @@ export interface PatternPref {
   reminder_offsets: number[];  // minutes before scheduled start; 0 = at start time
   icon_shape: string;          // circle | square | triangle — pattern-block display
   color_token: string;         // CI-Hub token key (never hex)
+  default_minutes: number;     // fallback estimate when a task has no intention tag
 }
 
 export interface PatternPrefsResponse {
