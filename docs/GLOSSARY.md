@@ -37,7 +37,7 @@ reserved)** and demotes everything else.
 |---|------|------------|
 | 5 | **Inbox** | Capture / triage queue. (internal: `possible_tasks`; promoting one creates a Task) |
 | 6 | **Flight-plan** | The day’s staging tray — what Auto runs over. |
-| 7 | **Planner** | The date-navigable board where Time Blocks live. (absorbs the old `/calendar` view once day-nav lands) |
+| 7 | **Planner** | The single-day, date-navigable cockpit board where Time Blocks live. The multi-day day/week/month view over the same Time Blocks is the **Calendar** (`/calendar`). |
 | 8 | **Pattern-block** | A named availability window tying a direction tag to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
 
 ## States, subtypes & kinds (demoted — not nouns)
@@ -85,4 +85,3 @@ reserved)** and demotes everything else.
 | Open Tasks | Task · *open* state |
 | Subtask | Task with a parent |
 | Concept-Tag | Tag (with a default duration) |
-| Calendar (view) | Planner (date-navigable) |

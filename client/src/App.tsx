@@ -6,6 +6,7 @@ import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
 import { TaskForm } from './components/TaskForm.js';
 import { Today }    from './views/Today.js';
+import { Calendar } from './views/Calendar.js';
 import { Inbox }    from './views/Inbox.js';
 import { AllTasks } from './views/AllTasks.js';
 import { Patterns } from './views/Patterns.js';
@@ -74,6 +75,7 @@ export function App() {
   return (
     <Router root={Shell}>
       <Route path="/"         component={Today} />
+      <Route path="/calendar" component={Calendar} />
       <Route path="/inbox"    component={Inbox} />
       <Route path="/tasks"    component={AllTasks} />
       <Route path="/patterns" component={Patterns} />
