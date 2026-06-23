@@ -1,6 +1,6 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-**Status (2026-06-20):** **A · B0 · C · D · E · F shipped & merged.** Settings (Ollama model picker + Companion Memory sync) and the responsive mobile shell are in review. **G has been reconceived** as *Time-Blocking, Patterns & the TODAY cockpit* and is the next build; it reframes A and pulls revision tickets into E (`E′` habit→pattern) and F (`F′` calendar→PLANNER).
+**Status (2026-06-22, migration head 0047):** **A · B0 · C · D · E · F · G · H · R shipped & merged.** Settings (Ollama model picker + Companion Memory sync) and the responsive mobile shell are shipped. G landed as *Time-Blocking, Patterns & the TODAY cockpit* (cockpit, PLANNER, flight-plan, pattern textures — #60–#65, #77); H (notifications + Web Push) and R (backups/restore + export/import + audit log) are merged. **Next build:** a short **Phase 0.5 contract cleanup** (collapse the doubled habit representation `is_habit`/`subtype`; see [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md) §5a) → then **Phase I** (identity/auth), the gate for the cloud track. The §3b `patterns`→`routines` rename is **deferred** (the as-built `patterns` naming stands; see GLOSSARY).
 
 > **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). Each phase has its own `docs/<id>-*.md` spec; the new G UX is canonical in [design-today-cockpit.md](design-today-cockpit.md).
 
@@ -38,19 +38,19 @@
 | 0 Foundation | **B0** Migrations + owner scoping (no auth) | A | S | ✅ done |
 | 1 Features | **C** Rich task semantics | B0 | M | ✅ done |
 | | **D** Time tracking & timers | B0 | S–M | ✅ done |
-| | **E** Recurring & habits | B0, C | M | ✅ done · **E′ habit→pattern** pending (under G) |
-| | **F** Calendar grid (2-D, drag/resize, overlays) | B0 | L | ✅ done · **F′ →PLANNER / overlap-flag / drag-reorder** pending (under G) |
-| | *Settings* — Ollama model picker + Companion Memory sync | E | S | 🔜 in review |
-| | *Responsive* — mobile shell (bottom nav, sheets, touch) | F | S | 🔜 in review |
-| | **G** **Time-Blocking, Patterns & the TODAY cockpit** | B0, C, E, F | **L** | 📋 spec'd — **next build** |
-| | **H** Notifications + service worker / Web Push | B0 (G for pattern-reminder content) | M | 📋 spec'd |
-| 2 Resilience | **R** Backups, restore, export/import | B0 | S–M | 📋 spec'd |
-| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | 📋 spec'd |
+| | **E** Recurring & habits | B0, C | M | ✅ done · habit kept **task-level** (`subtype`); §5a contract cleanup (drop `is_habit`/`is_fast_task`) pending — see [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md) |
+| | **F** Calendar grid (2-D, drag/resize, overlays) | B0 | L | ✅ done · **F′** (→PLANNER / overlap-flag / drag-reorder) **shipped under G** |
+| | *Settings* — Ollama model picker + Companion Memory sync | E | S | ✅ done |
+| | *Responsive* — mobile shell (bottom nav, sheets, touch) | F | S | ✅ done |
+| | **G** **Time-Blocking, Patterns & the TODAY cockpit** | B0, C, E, F | **L** | ✅ done (#60–#65, #77) — cockpit, PLANNER, flight-plan, textures all landed; drawer superseded by ElementWizard |
+| | **H** Notifications + service worker / Web Push | B0 (G for pattern-reminder content) | M | ✅ done (#100–#102) — live once VAPID keys are set |
+| 2 Resilience | **R** Backups, restore, export/import | B0 | S–M | ✅ done (#108–#110) — every mutating route writes an audit row |
+| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | 📋 spec'd — **next build** (after Phase 0.5 cleanup) |
 | | **J** Two-way calendar sync | I, F | L | 📋 spec'd |
 | | **K** Auto-defense (continuous re-plan) | A, F, J | M | 📋 spec'd |
 | | **L** Multi-device sync & offline writes | B0, I, H | L | 📋 spec'd |
 
-**G ticket order:** G1 patterns → G2/E′ habit→pattern → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures → G7 type/reminder settings → *(G-INT deferred)*. See [G-rituals-reflection.md](G-rituals-reflection.md) for each ticket's goal/acceptance/tests/state.
+**G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). Remaining: **G7** custom Routine-type management UI (in progress as W1-C); **G-INT** (timing intelligence) still deferred. The detailed spec [G-rituals-reflection.md](G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — kept for history only.
 
 ---
 

@@ -1,7 +1,12 @@
 # Phase 0 / 0.5 — Reconciliation Plan *(ratify-as-built)*
 
-> **Status: PLAN ONLY — no code has moved.** Draft for review. Produced 2026-06-22
-> against migration head `0039`. Companion to the divergence assessment.
+> **Status (updated 2026-06-22, migration head `0047`):** partially executed.
+> **§5b CON-3 done** (`task_tags` dropped in `0041`; `entity_tags` is the read path).
+> **§3c direction→pattern residue done** (`0043` renamed `tag_directions`→`tag_patterns`).
+> **§3b Routine rename DEFERRED** (the as-built `patterns` naming is ratified; not abandoned, not in-flight).
+> **§5a still open** — tracked as ticket **W1-A** (collapse `is_habit`/`is_fast_task`→`subtype`, then drop the booleans).
+> **§5c reclassified** — `planning_mode` is **kept** (dormant, pending a future AI-reorder UI), *not* dropped; doc-only relabel done.
+> Original draft (below) was produced against head `0039`. Companion to the divergence assessment.
 >
 > **Governing decision (with the user):** *Ratify the as-built code.* `tags.kind='pattern'`
 > is accepted as intended (the PR #83 rename stands). We make the **docs and the
@@ -53,7 +58,7 @@ Every `pattern` token gets classified by **which system it belongs to**:
 - Client: `PatternBlockSettings.tsx`, `PatternBlockOverlay.tsx`, the `patternBlocks` / `patternPrefs` stores + `api.patternBlocks` / `api.patternPrefs`.
 - Engine: the `kind='pattern'` matcher in `autoplan.ts:303`; the `kind='pattern'` lookup in `routes/tags.ts:9`.
 
-### 3b. RENAME — Routine collection system (`pattern* → routine*`)
+### 3b. RENAME — Routine collection system (`pattern* → routine*`)  *(⏸ DEFERRED — the as-built `patterns` naming is ratified; this table is the future-cleanup map if §3b is ever revived.)*
 | Now | Becomes | Kind |
 |---|---|---|
 | `pattern_types` (table) | `routine_types` | DB + schema |
@@ -108,7 +113,7 @@ Pure doc edits; can merge immediately, independent of the rename.
 
 These are the latent-bug sources. Each carries a recommendation; all are **behavior-preserving** if done as written.
 
-### 5a. Habit triplication → one source of truth  *(DECISION)*
+### 5a. Habit triplication → one source of truth  *(⏳ OPEN — ticket W1-A; recommended path below confirmed: make `subtype` canonical, then drop the booleans)*
 Today: `is_habit` (bool, **authoritative** — engine reads it at `recurrence-generate.ts:99,120,134,176,181`), `is_fast_task` (bool), `subtype` ('standard|habit|quick', **declared canonical but unread**).
 
 - **Recommended — make `subtype` canonical, finish the contract:**
@@ -127,8 +132,12 @@ Confirmed: written + cascaded by the tag-repo (`services/tags.ts`) and a few mut
 
 *Execution gate:* before removing, re-grep for any `SELECT … FROM entity_tags` read site to confirm zero readers (the audit in §6 step 1 produces this list).
 
-### 5c. Dead `planning_mode` column  *(low-risk cleanup)*
-`scheduling_prefs.planning_mode` (default `'ritual'`) is retired in the UI but still in the schema, defaulting to a retired concept. **Drop it in `0040`** (grep first: confirm no reader remains).
+### 5c. `planning_mode` column  *(✅ DECIDED: **KEEP** — reclassified, not dropped)*
+`scheduling_prefs.planning_mode` (default `'ritual'`) has **no UI** but is **still read** at
+[`agents/plan.ts`](../server/src/agents/plan.ts) — it gates the LLM task-reorder path (only runs when `'auto'`,
+which nothing currently sets, so it is dormant rather than dead). Decision: **keep** the column and the
+reader for a future AI-reorder toggle; relabel docs/comments from "retired" to "dormant, pending UI".
+Original "drop it" recommendation is **superseded** — do **not** drop. (Doc/comment relabel done in Wave 0.)
 
 ---
 
@@ -171,8 +180,9 @@ Order rationale: docs first (free, stops the bleed). Engine repoint (5a) **befor
 
 ---
 
-## 9. Open decisions for you to confirm before execution
-1. **§5a** — make `subtype` canonical (recommended) **or** ratify the booleans and drop `subtype`?
-2. ~~**§5b** — `entity_tags` keep or remove?~~ **✅ RESOLVED — finish CON-3** (entity_tags read path; drop `task_tags`). Wave plan: [con-3-finish-plan.md](con-3-finish-plan.md).
-3. **§3c** — do the "direction → pattern" residue rename in the same 0B pass (recommended) or as a fast follow-on?
-4. **Migration packaging** — one `0040` for rename + drops, or split `0040` (rename) / `0041` (drops)? (Recommend split.)
+## 9. Decisions (all resolved 2026-06-22)
+1. ~~**§5a** — make `subtype` canonical or ratify the booleans?~~ **✅ RESOLVED — `subtype` canonical**, then drop `is_habit`/`is_fast_task` (expand→contract). Tracked as ticket **W1-A**.
+2. ~~**§5b** — `entity_tags` keep or remove?~~ **✅ RESOLVED — finished CON-3** (entity_tags read path; `task_tags` dropped in `0041`). Wave plan: [con-3-finish-plan.md](con-3-finish-plan.md).
+3. ~~**§3c** — direction → pattern residue rename, same pass or follow-on?~~ **✅ DONE** in `0043` (`tag_directions`→`tag_patterns`, `direction_tag_id`→`pattern_tag_id`).
+4. ~~**Migration packaging** for the §3b rename + drops?~~ **N/A — §3b rename DEFERRED.** The only remaining drop (W1-A's booleans) lands as its own migration (`0048+`).
+5. *(added)* **§3b Routine rename** — **DEFERRED** (ratify as-built `patterns`); **§5c `planning_mode`** — **KEEP** (dormant, not dropped). See banner.
