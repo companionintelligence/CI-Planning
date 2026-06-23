@@ -3,6 +3,7 @@ import { sqlite } from '../db/index.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
 import { fillFlightPlanCandidates } from '../engine/autoplan.js';
 import { reviewAndReschedule } from '../engine/review.js';
+import { fireDueReminders } from '../engine/reminders.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
@@ -72,6 +73,12 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsUpdated: r.deferred + r.surfaced,
         log: `Reviewed ${r.missed} missed → ${r.deferred} auto-deferred, ${r.surfaced} surfaced for review`,
       };
+    }
+    case 'fire_reminders': {
+      // 1-minute tick (0044). Claim-by-UPDATE fires each due reminder exactly once;
+      // delivery is in-app SSE (per row owner) + Web Push, push-failure → in-app.
+      const fired = await fireDueReminders();
+      return { itemsCreated: 0, itemsUpdated: fired, log: `Fired ${fired} reminder(s)` };
     }
     default:
       return { itemsCreated: 0, itemsUpdated: 0, log: `Unknown job kind '${kind}'` };

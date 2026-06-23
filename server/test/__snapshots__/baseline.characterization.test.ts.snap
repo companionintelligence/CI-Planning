@@ -712,6 +712,31 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "id",
+      "owner_id",
+      "endpoint",
+      "p256dh",
+      "auth",
+      "user_agent",
+      "created_at",
+    ],
+    "table": "push_subscriptions",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "task_id",
+      "block_id",
+      "fire_at",
+      "status",
+      "fired_at",
+      "created_at",
+    ],
+    "table": "reminders",
+  },
+  {
+    "columns": [
+      "id",
       "name",
       "kind",
       "cron",
