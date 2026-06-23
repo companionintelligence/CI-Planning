@@ -35,7 +35,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan.ts]
         Cron[Croner Jobs<br/>ingest · groom · schedule · fire_reminders]
-        Migrate[Migration runner<br/>0001 → 0045 on boot]
+        Migrate[Migration runner<br/>0001 → 0047 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -91,7 +91,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0045 ordered list
+                                    // migrations from the 0001–0047 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -102,7 +102,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0045_reminder_source`) produce the following tables:
+Migrations (current head: `0047_snapshot_job`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -128,6 +128,7 @@ Migrations (current head: `0045_reminder_source`) produce the following tables:
 | `job_runs` | Execution log per job run (status, items created/updated, log text) |
 | `reminders` | Scheduled reminders (`fire_at`, task XOR block target, `source` manual/auto) fired by the 1-min dispatcher (Phase H, 0044/0045) |
 | `push_subscriptions` | Web Push endpoints per owner (VAPID), for backgrounded delivery (Phase H, 0044) |
+| `audit_log` | Append-only mutation log (owner, actor, action, entity) written by every mutating route (Phase R, 0046) |
 
 ## See it in action
 
@@ -219,18 +220,66 @@ with you in the loop at the one step that matters — what actually becomes a ta
 5. **Groom** — a nightly job dedupes near-identical tasks using text embeddings and
    tidies the backlog.
 
-Every step runs locally. The single SQLite file is the whole system of record — copy
-it to back up, delete it to start over.
+Every step runs locally. The single SQLite file is the whole system of record.
+See **[Backup and restore](#backup-and-restore)** below for safe copy and recovery options.
+
+## Backup and restore
+
+Everything lives in the single SQLite file at `DB_PATH`. Three safe options:
+
+### Option 1 — scheduled snapshots (built-in)
+
+A daily `snapshot_db` cron job (02:00) writes a point-in-time copy to
+`<DB_DIR>/backups/companion-<timestamp>.db` and keeps the newest `SNAPSHOT_RETAIN`
+files (default 7). Run one manually any time:
+
+```bash
+pnpm --filter server snapshot
+```
+
+To restore from a snapshot (server must be stopped first):
+
+```bash
+pnpm --filter server restore -- /data/backups/companion-2026-06-22T02-00-00-000Z.db
+```
+
+The restore script validates the source file, detects a running server, copies it to
+`DB_PATH`, and runs any forward migrations if the snapshot is from an older version.
+
+### Option 2 — Litestream (streaming replication)
+
+[Litestream](https://litestream.io) replicates the SQLite WAL to object storage
+continuously. Edit `ops/litestream.yml` with your replica URL, then run it alongside
+the server:
+
+```bash
+litestream replicate -config ops/litestream.yml
+```
+
+Point-in-time restore:
+
+```bash
+litestream restore -config ops/litestream.yml \
+  -timestamp 2026-06-22T14:00:00Z /data/companion.db
+```
+
+### ⚠ Syncthing / rsync warning
+
+**Do not sync the live `.db` file with a generic file-sync tool.** SQLite's WAL mode
+writes across multiple files (`.db`, `.db-wal`, `.db-shm`). A file-sync tool copies
+them at different moments and can produce a corrupt or inconsistent database. Use
+`pnpm snapshot` or Litestream — both open a proper SQLite connection and export a
+consistent snapshot.
 
 ## Project status (v0.2, 2026-06)
 
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0045): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0047): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   possible_tasks, scheduling_prefs, time_entries, block_templates, jobs, reminders,
-  push_subscriptions
+  push_subscriptions, audit_log
 - All eight SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler (`/api/schedule/run`) honoring work hours, pattern

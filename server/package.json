@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "migrate": "tsx src/scripts/migrate.ts"
+    "migrate": "tsx src/scripts/migrate.ts",
+    "snapshot": "tsx src/scripts/snapshot.ts",
+    "restore": "tsx src/scripts/restore.ts"
   },
   "dependencies": {
     "@koa/cors": "^5.0.0",
