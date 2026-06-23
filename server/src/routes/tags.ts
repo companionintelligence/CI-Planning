@@ -99,7 +99,7 @@ export function tagsRouter() {
     if (!tag) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     if (tag.isBase) { ctx.status = 409; ctx.body = { error: 'base pattern tags cannot be deleted' }; return; }
     if (tagIsUsed(id)) { ctx.status = 409; ctx.body = { error: 'tags in use cannot be deleted' }; return; }
-    sqlite.prepare('DELETE FROM tags WHERE id = ?').run(id); // tag_directions cascade via FK
+    sqlite.prepare('DELETE FROM tags WHERE id = ?').run(id); // tag_patterns cascade via FK
     ctx.body = { ok: true };
   });
 

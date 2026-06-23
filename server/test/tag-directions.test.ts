@@ -24,6 +24,12 @@ const tagByName = (name: string) =>
     | undefined;
 const memberDirs = (intentionId: string) =>
   (sqlite
+    .prepare(`SELECT d.name FROM tag_patterns tp JOIN tags d ON d.id = tp.pattern_tag_id WHERE tp.intention_tag_id = ? ORDER BY d.name`)
+    .all(intentionId) as { name: string }[]).map((r) => r.name);
+// Used only in the 0036 backfill test: backfill0036 creates a fresh tag_directions
+// table (0043 renamed it away) with the original direction_tag_id column name.
+const memberDirsLegacy = (intentionId: string) =>
+  (sqlite
     .prepare(`SELECT d.name FROM tag_directions td JOIN tags d ON d.id = td.direction_tag_id WHERE td.intention_tag_id = ? ORDER BY d.name`)
     .all(intentionId) as { name: string }[]).map((r) => r.name);
 
@@ -33,6 +39,12 @@ afterAll(async () => { await srv.close(); });
 beforeEach(() => resetDb()); // clears all tags incl. base directions
 
 describe('0036 migration backfill', () => {
+  // backfill0036 runs `CREATE TABLE IF NOT EXISTS tag_directions`, which RESURRECTS the
+  // pre-0043 table on the shared (already-migrated) DB — 0043 renamed it to tag_patterns.
+  // resetDb only deletes rows, so the stray table would otherwise linger and leak into a
+  // later file's schema snapshot (baseline.characterization). Drop it once this block ends.
+  afterAll(() => { sqlite.exec(`DROP TABLE IF EXISTS tag_directions`); });
+
   it('seeds the 3 base directions, heuristically assigns obvious tags, leaves the rest Unsorted', () => {
     // pre-existing intention tags (as if from before the migration)
     for (const n of ['yard-work', 'product', 'socialize', 'personal'])
@@ -43,10 +55,10 @@ describe('0036 migration backfill', () => {
     expect(tagByName('home')).toMatchObject({ kind: 'direction', isBase: 1 });
     expect(tagByName('work')).toMatchObject({ kind: 'direction', isBase: 1 });
     expect(tagByName('community')).toMatchObject({ kind: 'direction', isBase: 1 });
-    expect(memberDirs(tagByName('yard-work')!.id)).toEqual(['home']);
-    expect(memberDirs(tagByName('product')!.id)).toEqual(['work']);
-    expect(memberDirs(tagByName('socialize')!.id)).toEqual(['community']);
-    expect(memberDirs(tagByName('personal')!.id)).toEqual([]); // Unsorted
+    expect(memberDirsLegacy(tagByName('yard-work')!.id)).toEqual(['home']);
+    expect(memberDirsLegacy(tagByName('product')!.id)).toEqual(['work']);
+    expect(memberDirsLegacy(tagByName('socialize')!.id)).toEqual(['community']);
+    expect(memberDirsLegacy(tagByName('personal')!.id)).toEqual([]); // Unsorted
 
     // idempotent: a second run changes nothing
     backfill0036(sqlite);

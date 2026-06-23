@@ -627,7 +627,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "id",
       "owner_id",
-      "direction_tag_id",
+      "pattern_tag_id",
       "day_type",
       "start_time",
       "end_time",
@@ -762,9 +762,9 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "intention_tag_id",
-      "direction_tag_id",
+      "pattern_tag_id",
     ],
-    "table": "tag_directions",
+    "table": "tag_patterns",
   },
   {
     "columns": [

@@ -177,24 +177,25 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
 export const tags = sqliteTable('tags', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),
-  // Tag taxonomy (0036) — a SECOND axis, orthogonal to entity_tags.level (Phase-5
+  // Tag taxonomy (0036/0043) — a SECOND axis, orthogonal to entity_tags.level (Phase-5
   // per-entity dilution). `kind` is the taxonomy LEVEL: a 'pattern' is a top-level
   // category (brand-set Home/Work/Community + user-added), an 'intention' is grouped
-  // under one or more patterns via tag_directions.
+  // under one or more patterns via tag_patterns (renamed from tag_directions in 0043).
   kind: text('kind').notNull().default('intention'),       // 'pattern' | 'intention'
   muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
   isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
 });
 
-// 0036: intention→direction membership (many-to-many). An intention tag with no row
-// here is "Unsorted". Both sides FK tags(id) cascade.
-export const tagDirections = sqliteTable(
-  'tag_directions',
+// 0036/0043: intention→pattern-tag membership (many-to-many). An intention tag with
+// no row here is "Unsorted". Both sides FK tags(id) cascade. Renamed from
+// tag_directions/direction_tag_id → tag_patterns/pattern_tag_id (0043).
+export const tagPatterns = sqliteTable(
+  'tag_patterns',
   {
     intentionTagId: text('intention_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
-    directionTagId: text('direction_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
   },
-  (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.directionTagId] }) })
+  (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.patternTagId] }) })
 );
 
 // 0037: direction-scoped scheduling windows (Pattern-block, noun 8). Multiple rows
@@ -202,7 +203,7 @@ export const tagDirections = sqliteTable(
 export const patternBlocks = sqliteTable('pattern_blocks', {
   id:            text('id').primaryKey().$defaultFn(newId),
   ownerId:       text('owner_id').references(() => owners.id).notNull(),
-  directionTagId: text('direction_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
   dayType:       text('day_type').notNull(), // 'workday' | 'weekend'
   startTime:     text('start_time').notNull(), // 'HH:MM' wall-clock in owner's timezone
   endTime:       text('end_time').notNull(),
