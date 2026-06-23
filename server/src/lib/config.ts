@@ -14,6 +14,7 @@ export interface Config {
   vapidPublicKey: string;
   vapidPrivateKey: string;
   vapidSubject: string;
+  snapshotRetain: number;
 }
 
 // Default data dir (used only when DB_PATH is not set, e.g. local dev on macOS).
@@ -41,4 +42,5 @@ export const config: Config = {
   vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
   vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
   vapidSubject: process.env.VAPID_SUBJECT ?? 'mailto:admin@companion.local',
+  snapshotRetain: Number(process.env.SNAPSHOT_RETAIN ?? 7),
 };
