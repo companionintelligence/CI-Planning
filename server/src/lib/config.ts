@@ -11,6 +11,9 @@ export interface Config {
   ollamaMediumModel: string;
   ollamaEmbedModel: string;
   staticDir: string;
+  vapidPublicKey: string;
+  vapidPrivateKey: string;
+  vapidSubject: string;
 }
 
 // Default data dir (used only when DB_PATH is not set, e.g. local dev on macOS).
@@ -33,4 +36,9 @@ export const config: Config = {
   ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'gemma4:e4b',
   ollamaEmbedModel: process.env.OLLAMA_EMBED ?? 'nomic-embed-text',
   staticDir: join(packageRoot, 'public'),
+  // Web Push (Phase H). Generate once: `npx web-push generate-vapid-keys`.
+  // Absent keys ⇒ push disabled (in-app SSE still delivers). Never commit real keys.
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+  vapidSubject: process.env.VAPID_SUBJECT ?? 'mailto:admin@companion.local',
 };

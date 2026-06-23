@@ -15,6 +15,7 @@ import { flightPlanRouter } from './flight-plan.js';
 import { sseRouter } from './sse.js';
 import { patternBlocksRouter } from './pattern-blocks.js';
 import { patternPrefsRouter } from './pattern-prefs.js';
+import { notificationsRouter } from './notifications.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -34,6 +35,7 @@ export function mountRoutes(app: Koa) {
     flightPlanRouter(),
     patternBlocksRouter(),
     patternPrefsRouter(),
+    notificationsRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }
