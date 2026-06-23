@@ -33,7 +33,19 @@ export function buildApp(): Koa {
 
   // Serve built client in production; dev uses the Vite proxy.
   if (existsSync(config.staticDir)) {
-    app.use(serve(config.staticDir));
+    app.use(
+      serve(config.staticDir, {
+        // The service worker must control the root scope and never be stale-cached
+        // (a stale SW is the #1 PWA footgun). koa-static's setHeaders runs after its
+        // own Cache-Control, so setting them here reliably overrides the default.
+        setHeaders: (res, path) => {
+          if (path.replace(/\\/g, '/').endsWith('/sw.js')) {
+            res.setHeader('Service-Worker-Allowed', '/');
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        },
+      }),
+    );
     app.use(async (ctx) => {
       if (!ctx.path.startsWith('/api')) {
         ctx.type = 'html';
