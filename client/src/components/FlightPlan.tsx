@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createMemo } from 'solid-js';
-import { Zap, RotateCcw, X, ChevronDown, ChevronRight, Clock } from 'lucide-solid';
+import { Zap, RotateCcw, X, ChevronDown, ChevronRight, Clock, Undo2, ListOrdered } from 'lucide-solid';
 import { api, type FlightPlanItem } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, patterns, prefs, refetchPrefs, showToast, selectedDay,
@@ -24,8 +24,10 @@ import { useDraggable } from '../lib/draggable.js';
 export function FlightPlan() {
   const [running, setRunning] = createSignal(false);
   const [collapsed, setCollapsed] = createSignal(false);
+  const [canUndo, setCanUndo] = createSignal(false); // shown after a placement run
   const items = () => flightPlan() ?? [];
   const selectedCount = () => items().filter((i) => i.selected).length;
+  const mode = () => prefs()?.auto_mode ?? 'suggest';
 
   const patternName = createMemo(() => {
     const m = new Map<string, string>();
@@ -72,6 +74,7 @@ export function FlightPlan() {
         const bits = [`Scheduled ${result.placed ?? 0}`];
         if (result.unplaced) bits.push(`${result.unplaced} didn't fit`);
         showToast(bits.join(' · '), 'success');
+        if ((result.blocksCreated ?? 0) > 0) setCanUndo(true);
       }
       refetchFlightPlan();
       refetchBlocks();
@@ -79,6 +82,41 @@ export function FlightPlan() {
       showToast((err as Error).message, 'error');
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function setMode(m: 'suggest' | 'schedule') {
+    if (m === mode()) return;
+    try { await api.prefs.update({ auto_mode: m }); refetchPrefs(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // Tap 3 (D5): explicit priority top-up — fill non-matching workday capacity P1-first.
+  async function runPriority() {
+    setRunning(true);
+    try {
+      const { result } = await api.auto.priority({ date: selectedDay() });
+      showToast((result.blocksCreated ?? 0) > 0 ? `Filled ${result.placed ?? 0} by priority` : 'Nothing left to fill', 'success');
+      if ((result.blocksCreated ?? 0) > 0) setCanUndo(true);
+      refetchFlightPlan();
+      refetchBlocks();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  // Undo the last placement run (D2): no confirmation, one click.
+  async function undo() {
+    try {
+      const { result } = await api.auto.undo();
+      setCanUndo(false);
+      showToast(result.removed ? `Undid ${result.removed} block${result.removed === 1 ? '' : 's'}` : 'Nothing to undo', 'default');
+      refetchFlightPlan();
+      refetchBlocks();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
     }
   }
 
@@ -91,7 +129,7 @@ export function FlightPlan() {
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function reset() {
-    try { const r = await api.flightPlan.reset(); refetchFlightPlan(); showToast(`Cleared ${r.cleared}`, 'default'); }
+    try { const r = await api.flightPlan.reset(); setCanUndo(false); refetchFlightPlan(); showToast(`Cleared ${r.cleared}`, 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -126,7 +164,7 @@ export function FlightPlan() {
         // The Auto-step-2 selection (the checkbox) is a separate axis, intentionally.
         onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); toggleSelection({ kind: 'flight-plan-task', id: props.it.task_id }); } }}
       >
-        <button onClick={(e) => { if (e.metaKey || e.ctrlKey) return; toggle(props.it.task_id, !props.it.selected); }} class="checkbox flex-shrink-0" classList={{ 'checkbox-checked': props.it.selected }} title={props.it.selected ? 'Deselect' : 'Select for Auto'}>
+        <button onClick={(e) => { if (e.metaKey || e.ctrlKey) return; toggle(props.it.task_id, !props.it.selected); }} class="checkbox flex-shrink-0" classList={{ 'checkbox-checked': props.it.selected }} title={props.it.selected ? 'Deselect to exclude from Auto' : 'Include in Auto'}>
           <Check on={props.it.selected} />
         </button>
         <span class={`priority-dot p${p()} flex-shrink-0`} />
@@ -167,9 +205,21 @@ export function FlightPlan() {
           <Show when={collapsed()} fallback={<ChevronDown size={13} />}><ChevronRight size={13} /></Show>
           Flight-plan
           <Show when={items().length > 0}>
-            <span class="ml-1 normal-case font-normal tracking-normal text-muted-foreground">· {selectedCount()}/{items().length} selected</span>
+            <span class="ml-1 normal-case font-normal tracking-normal text-muted-foreground">· {selectedCount()}/{items().length} included</span>
           </Show>
         </button>
+
+        {/* Trust toggle (req 1, D1): Schedule = zero-click on ingest, Suggest = stepped taps. */}
+        <div class="inline-flex rounded-full border border-border overflow-hidden text-[11px]" role="group" title="Schedule: auto-place tag-matched work on ingest. Suggest: stage for review, you tap to place.">
+          <button onClick={() => setMode('suggest')} class="px-2 py-0.5 transition-colors" classList={{ 'bg-primary text-primary-foreground': mode() === 'suggest', 'text-muted-foreground hover:text-foreground': mode() !== 'suggest' }}>Suggest</button>
+          <button onClick={() => setMode('schedule')} class="px-2 py-0.5 transition-colors" classList={{ 'bg-primary text-primary-foreground': mode() === 'schedule', 'text-muted-foreground hover:text-foreground': mode() !== 'schedule' }}>Schedule</button>
+        </div>
+
+        <Show when={canUndo()}>
+          <button onClick={undo} class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors" title="Undo the last placement">
+            <Undo2 size={12} /> Undo
+          </button>
+        </Show>
         <Show when={items().length > 0}>
           <button onClick={reset} class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors" title="Clear the flight-plan">
             <RotateCcw size={12} /> Reset
@@ -179,15 +229,23 @@ export function FlightPlan() {
           onClick={toggleFill}
           class="inline-flex items-center gap-1 text-xs transition-colors"
           classList={{ 'text-primary': fillWorkday(), 'text-muted-foreground hover:text-foreground': !fillWorkday() }}
-          title="Fill the workday with leftover tasks after Plans (Auto's secondary pass)"
+          title="Allow the priority top-up to fill open workday time (gates the Priority tap)"
         >
           <Clock size={12} /> Fill work hours
+        </button>
+        <button
+          onClick={runPriority}
+          disabled={running() || !fillWorkday()}
+          class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+          title="Priority fill: pack leftover workday time with the highest-priority unplaced tasks (P1 first)"
+        >
+          <ListOrdered size={12} /> Priority
         </button>
         <button
           onClick={runAuto}
           disabled={running()}
           class="btn-primary !rounded-full !p-2 flex-shrink-0"
-          title={selectedCount() > 0 ? `Schedule ${selectedCount()} selected into the day` : 'Propose candidates into the flight-plan'}
+          title={items().length === 0 ? 'Propose candidates into the flight-plan' : `Place the ${selectedCount()} included task${selectedCount() === 1 ? '' : 's'} (tag-matched)`}
         >
           <Zap size={15} classList={{ 'animate-pulse': running() }} />
         </button>

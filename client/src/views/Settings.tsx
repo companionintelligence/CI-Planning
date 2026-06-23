@@ -586,6 +586,27 @@ export function Settings() {
           </div>
           <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
             hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
+
+          {/* Trust toggle (auto-scheduling req 1, D1) — mirrors the cockpit control. */}
+          <div class="mt-4 pt-3 border-t border-border">
+            <div class="text-sm text-foreground mb-1">Auto scheduling</div>
+            <p class="text-xs text-muted-foreground mb-2">
+              <span class="text-foreground">Schedule</span> auto-places tag-matched work as items arrive.
+              <span class="text-foreground"> Suggest</span> stages them for you to review and place.
+            </p>
+            <div class="inline-flex rounded-full border border-border overflow-hidden text-xs">
+              <button type="button" onClick={async () => { await api.prefs.update({ auto_mode: 'suggest' }); refetchPrefs(); }}
+                class="px-3 py-1 transition-colors"
+                classList={{ 'bg-primary text-primary-foreground': (prefs()?.auto_mode ?? 'suggest') === 'suggest', 'text-muted-foreground hover:text-foreground': (prefs()?.auto_mode ?? 'suggest') !== 'suggest' }}>
+                Suggest
+              </button>
+              <button type="button" onClick={async () => { await api.prefs.update({ auto_mode: 'schedule' }); refetchPrefs(); }}
+                class="px-3 py-1 transition-colors"
+                classList={{ 'bg-primary text-primary-foreground': prefs()?.auto_mode === 'schedule', 'text-muted-foreground hover:text-foreground': prefs()?.auto_mode !== 'schedule' }}>
+                Schedule
+              </button>
+            </div>
+          </div>
         </section>
 
         {/* Routine Types — create/edit/delete pattern type taxonomy */}
