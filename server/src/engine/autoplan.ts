@@ -23,6 +23,7 @@ import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { taskTagNames } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
+import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
@@ -79,6 +80,16 @@ function selectedStaged(owner: string): StagedTask[] {
     )
     .all(owner) as Omit<StagedTask, 'tags'>[];
   return rows.map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
+}
+
+/** How many tasks are staged in the flight-plan (selected or not). */
+function flightPlanCount(owner: string): number {
+  return (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(owner) as { n: number }).n;
+}
+
+/** Record the most recent placement run for the owner, so Undo can target it (D2). */
+function recordRun(owner: string, runId: string, blocksCreated: number): void {
+  if (blocksCreated > 0) sqlite.prepare(`UPDATE owners SET last_auto_run_id = ? WHERE id = ?`).run(runId, owner);
 }
 
 function prefsOf(owner: string): PrefsRow | undefined {
@@ -147,8 +158,8 @@ function orderForPlan(cands: StagedTask[], weights?: Map<string, number>): Stage
 
 const insBlock = () =>
   sqlite.prepare(
-    `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-     VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?)`
+    `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, auto_run_id)
+     VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?)`
   );
 
 /** Clear our OWN prior agent placements for the local day (pattern blocks survive). */
@@ -175,7 +186,7 @@ function placeIntoWindow(
   windowStartMs: number,
   windowEndMs: number,
   prefs: PrefsRow | undefined,
-  opts: { parentBlockId?: string | null; includePlans?: boolean }
+  opts: { parentBlockId?: string | null; includePlans?: boolean; runId?: string | null }
 ): { blocksCreated: number; placedTaskIds: Set<string> } {
   const placedTaskIds = new Set<string>();
   if (windowEndMs <= windowStartMs || tasks.length === 0) return { blocksCreated: 0, placedTaskIds };
@@ -198,7 +209,7 @@ function placeIntoWindow(
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null);
+      ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null);
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedAny = true;
@@ -223,7 +234,9 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
     )
     .all(owner, owner, CANDIDATE_LIMIT) as { id: string }[];
   const { m } = sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number };
-  const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 0, ?)`);
+  // Filled candidates arrive SELECTED (deselect-to-exclude model, req 8): manual
+  // staging already inserts selected = 1, so both paths now align.
+  const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
   let pos = m + 1;
   let added = 0;
   for (const c of candidates) if (ins.run(owner, c.id, pos++).changes > 0) added++;
@@ -245,6 +258,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
   const staged = selectedStaged(owner);
+  const runId = newId(); // stamps every block this run creates, so Undo can target it (D2)
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
@@ -258,7 +272,8 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     const weights = planTagWeights(opts.blockId, block.tag);
     const planTags = [...weights.keys()];
     const cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
-    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId });
+    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
+    recordRun(owner, runId, r.blocksCreated);
     broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     return { step: 'place', blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size, placedInPlans: r.placedTaskIds.size, placedInWorkday: 0 };
   }
@@ -276,86 +291,131 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     const planTags = [...weights.keys()];
     const cands = staged.filter((t) => !placedIds.has(t.task_id) && planTags.some((name) => t.tags.includes(name)));
     if (cands.length === 0) continue;
-    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id });
+    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
   const placedInPlans = placedIds.size;
 
-  // Pass 2 — workday fallback (secondary, toggleable). Flows around the Plans.
-  // When pattern_blocks are configured, direction-tagged tasks are constrained to
-  // their direction's windows (union, earliest-first); direction-less tasks use the
-  // classic workday_start/workday_end window (backward-compatible).
-  //
-  // Per-pattern gating (0040): each direction's auto_fill is checked against
-  // pattern_prefs. When all pattern_prefs rows default to auto_fill=1 AND
-  // auto_fill_workday=1, output is byte-identical to the pre-0040 behavior.
-  if ((prefs?.auto_fill_workday ?? 1) === 1) {
-    const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
-    const patWindows = getPatternBlocks(owner, dayType);
-    // Load per-direction auto_fill prefs. Missing row → default { auto_fill: true }.
+  // Pass 2a — direction-window placement (tag-matched). Runs UNCONDITIONALLY: this is
+  // part of tag-matched placement (tap 2), not the priority fill. Direction-tagged
+  // tasks are constrained to their direction's pattern windows (union, earliest-first),
+  // flowing around the Plans. Per-direction auto_fill (pattern_prefs) is still honored.
+  // Leftover capacity is left OPEN here — the workday/priority fill is the separate,
+  // explicit fillByPriority() step (tap 3, D5).
+  const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
+  const patWindows = getPatternBlocks(owner, dayType);
+  if (Object.keys(patWindows).length > 0) {
     const dprefs = getPatternPrefs(owner);
     const dirNameToId = new Map<string, string>(); // direction tag name → id
+    const ids = Object.keys(patWindows);
+    const dirTags = sqlite
+      .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
+      .all(...ids) as { id: string; name: string }[];
+    for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
 
-    if (Object.keys(patWindows).length > 0) {
-      const ids = Object.keys(patWindows);
-      const dirTags = sqlite
-        .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
-        .all(...ids) as { id: string; name: string }[];
-      for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
-    }
-
-    const remaining = staged.filter((t) => !placedIds.has(t.task_id));
-
-    if (dirNameToId.size > 0) {
-      // Pass 2a — direction-tagged tasks → their direction's windows (union, earliest-first).
-      // Per-pattern gating: skip a direction whose auto_fill pref is false.
-      for (const t of remaining) {
-        if (placedIds.has(t.task_id)) continue;
-        const taskDirIds = t.tags
-          .map((name) => dirNameToId.get(name))
-          .filter((id): id is string => id !== undefined);
-        if (taskDirIds.length === 0) continue;
-        // Filter to directions whose auto_fill is enabled (missing row → default true).
-        const enabledDirIds = taskDirIds.filter((dirId) => (dprefs[dirId]?.auto_fill ?? true));
-        if (enabledDirIds.length === 0) continue;
-        const allRanges = enabledDirIds
-          .flatMap((did) => patWindows[did] ?? [])
-          .sort((a, b) => a.start_time.localeCompare(b.start_time));
-        for (const range of allRanges) {
-          if (placedIds.has(t.task_id)) break;
-          const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
-          const winEnd   = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
-          const r = placeIntoWindow([t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true });
-          r.placedTaskIds.forEach((id) => placedIds.add(id));
-          blocksCreated += r.blocksCreated;
-        }
-      }
-      // Pass 2b — direction-less tasks → classic workday_start/workday_end
-      const undirected = remaining.filter(
-        (t) => !placedIds.has(t.task_id) && !t.tags.some((n) => dirNameToId.has(n))
-      );
-      if (undirected.length > 0) {
-        const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-        const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-        const r = placeIntoWindow(undirected, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true });
+    for (const t of staged.filter((s) => !placedIds.has(s.task_id))) {
+      const taskDirIds = t.tags
+        .map((name) => dirNameToId.get(name))
+        .filter((id): id is string => id !== undefined);
+      if (taskDirIds.length === 0) continue;
+      const enabledDirIds = taskDirIds.filter((dirId) => dprefs[dirId]?.auto_fill ?? true);
+      if (enabledDirIds.length === 0) continue;
+      const allRanges = enabledDirIds
+        .flatMap((did) => patWindows[did] ?? [])
+        .sort((a, b) => a.start_time.localeCompare(b.start_time));
+      for (const range of allRanges) {
+        if (placedIds.has(t.task_id)) break;
+        const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
+        const winEnd = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
+        const r = placeIntoWindow([t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
       }
-    } else {
-      // No pattern windows configured → classic single window (backward-compatible)
-      const windowStartMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-      const windowEndMs   = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-      const r = placeIntoWindow(remaining, windowStartMs, windowEndMs, prefs, { parentBlockId: null, includePlans: true });
-      r.placedTaskIds.forEach((id) => placedIds.add(id));
-      blocksCreated += r.blocksCreated;
     }
   }
 
+  recordRun(owner, runId, blocksCreated);
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
   broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
-  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday: placed - placedInPlans };
+  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday: 0 };
+}
+
+/**
+ * The explicit priority top-up (tap 3, D5). Tag-matched placement (placeFlightPlan)
+ * leaves leftover capacity OPEN; this fills the workday window with the highest-
+ * priority still-unplaced selected tasks (P1 first), flowing around everything already
+ * placed (Plans, meetings, prior auto/manual blocks). Never auto-runs — it is always an
+ * explicit tap, in both modes. Gated by the `auto_fill_workday` pref (off → no-op).
+ */
+export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: string } = {}): AutoResult {
+  const date = opts.date ?? localISODate();
+  const prefs = prefsOf(owner);
+  const tz = prefs?.timezone || serverTimezone();
+  if ((prefs?.auto_fill_workday ?? 1) !== 1) {
+    return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
+  }
+
+  const staged = selectedStaged(owner);
+  // Tasks already auto-placed today are not re-placed (this top-up runs AFTER tap 2,
+  // and must not clear or duplicate those placements).
+  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
+  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const placedTaskIds = new Set(
+    (sqlite
+      .prepare(
+        `SELECT DISTINCT task_id FROM time_blocks
+          WHERE is_auto = 1 AND source_kind = 'agent' AND block_kind = 'task' AND task_id IS NOT NULL
+            AND start_at < ? AND end_at > ?`,
+      )
+      .all(dayEndISO, dayStartISO) as { task_id: string }[]).map((r) => r.task_id),
+  );
+  const remaining = staged.filter((t) => !placedTaskIds.has(t.task_id));
+  if (remaining.length === 0) {
+    return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
+  }
+
+  const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
+  const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+  // orderForPlan with no weights sorts priority-first (P1 first). includePlans flows
+  // around Plans and the tag-matched blocks tap 2 already created.
+  const runId = newId();
+  const r = placeIntoWindow(orderForPlan(remaining), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
+  recordRun(owner, runId, r.blocksCreated);
+  const placed = r.placedTaskIds.size;
+  broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed });
+  return { step: 'place', blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
+}
+
+/**
+ * Undo the LAST placement run (D2 — single-step, no stack). Deletes only the blocks
+ * stamped with the owner's most recent run_id (never manual or meeting blocks, which
+ * carry no auto_run_id), re-stages those tasks onto the flight-plan (selected), and
+ * clears the pointer so a second undo is a no-op. Returns the counts.
+ */
+export function undoLastAuto(owner: string = currentOwnerId()): { removed: number; restaged: number } {
+  const runId = (sqlite.prepare(`SELECT last_auto_run_id FROM owners WHERE id = ?`).get(owner) as { last_auto_run_id: string | null } | undefined)?.last_auto_run_id;
+  if (!runId) return { removed: 0, restaged: 0 };
+
+  // The tasks this run placed (re-stage them so the user can re-place/adjust).
+  const taskIds = (sqlite.prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE auto_run_id = ? AND task_id IS NOT NULL`).all(runId) as { task_id: string }[]).map((r) => r.task_id);
+
+  const removed = sqlite.prepare(`DELETE FROM time_blocks WHERE auto_run_id = ?`).run(runId).changes;
+
+  let pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number }).m + 1;
+  const insFp = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
+  const selFp = sqlite.prepare(`UPDATE flight_plan SET selected = 1 WHERE owner_id = ? AND task_id = ?`);
+  let restaged = 0;
+  for (const taskId of taskIds) {
+    if (insFp.run(owner, taskId, pos).changes > 0) pos++;
+    else selFp.run(owner, taskId); // already staged → just re-select it
+    restaged++;
+  }
+
+  sqlite.prepare(`UPDATE owners SET last_auto_run_id = NULL WHERE id = ?`).run(owner); // single-step undo
+  broadcast(owner, 'auto:undone', { removed, restaged });
+  return { removed, restaged };
 }
 
 /** Clear prior agent placements overlapping a specific window (the single-Plan path). */
@@ -371,15 +431,40 @@ function clearPriorAutoInWindow(windowStartMs: number, windowEndMs: number): voi
 }
 
 /**
- * The two-step Auto entry point. No selected staged items → propose candidates;
- * some selected → place them. Never touches anything outside the flight-plan.
+ * The two-step Auto entry point. The step is keyed off whether the flight-plan is
+ * EMPTY (req 8): empty → propose candidates (all selected); non-empty → place the
+ * selected ones. Keying off selection count broke once fill marked everything
+ * selected (and again when the user deselected everything). Never touches anything
+ * outside the flight-plan.
  */
 export function runAuto(opts: { date?: string; blockId?: string } = {}): AutoResult {
   const owner = currentOwnerId();
-  if (selectedStaged(owner).length === 0) {
+  if (flightPlanCount(owner) === 0) {
     const added = fillFlightPlanCandidates(owner);
     broadcast(owner, 'flight_plan:filled', { added });
     return { step: 'fill', candidatesAdded: added };
   }
+  return placeFlightPlan(owner, opts);
+}
+
+/** The owner's trust mode (D1). Defaults to the safe 'suggest' if prefs are absent. */
+export function autoMode(owner: string = currentOwnerId()): 'suggest' | 'schedule' {
+  const row = sqlite.prepare(`SELECT auto_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { auto_mode?: string } | undefined;
+  return row?.auto_mode === 'schedule' ? 'schedule' : 'suggest';
+}
+
+/**
+ * Schedule-mode zero-click path (D1): on ingest, collapse taps 1+2 — fill candidates
+ * (all selected) and place tag-matched work in one pass. No-op in suggest mode (the
+ * user drives the taps). The explicit priority top-up (tap 3) is never silent and is
+ * NOT run here. Returns the place result, or null when suggest mode / nothing to do.
+ */
+export function autoScheduleOnIngest(
+  owner: string = currentOwnerId(),
+  opts: { date?: string } = {},
+): AutoResult | null {
+  if (autoMode(owner) !== 'schedule') return null;
+  fillFlightPlanCandidates(owner); // stage any new open tasks, all selected
+  if (selectedStaged(owner).length === 0) return null;
   return placeFlightPlan(owner, opts);
 }

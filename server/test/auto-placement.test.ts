@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
-import { placeFlightPlan, fillFlightPlanCandidates } from '../src/engine/autoplan.js';
+import { placeFlightPlan, fillByPriority, fillFlightPlanCandidates } from '../src/engine/autoplan.js';
 
 /**
- * Auto placement priority (PR-C+, Workstream A): Plans-first, then a toggleable
- * workday fallback, on a shared "don't double-book" obstacle set.
+ * Auto placement priority (PR-C+, Workstream A; D5 split): placeFlightPlan does
+ * tag-matched placement (Plans + direction windows) only — leftover capacity stays
+ * open. fillByPriority is the explicit priority top-up that fills the workday window
+ * P1-first, around everything already placed. Shared "don't double-book" obstacle set.
  */
 
 const OWNER = SYSTEM_OWNER;
@@ -61,18 +63,23 @@ describe('Plans-first placement', () => {
     expect(blk.start_at >= at('14:00') && blk.end_at <= at('16:00')).toBe(true);
   });
 
-  it('routes each task to the Plan whose tag it shares; untagged-by-plan tasks fall to the workday', async () => {
+  it('routes each task to the Plan whose tag it shares; tap 2 leaves untagged-by-plan tasks open until the priority tap', async () => {
     const work = await makePlan(srv, 'work', at('09:00'), at('12:00'));
     const errands = await makePlan(srv, 'errands', at('14:00'), at('16:00'));
     const t1 = insertTask('Write code', 60, 'work');
     const t2 = insertTask('Post office', 30, 'errands');
-    const t3 = insertTask('Untagged thing', 30); // no plan tag → workday fallback
+    const t3 = insertTask('Untagged thing', 30); // no plan tag → stays open at tap 2
     [t1, t2, t3].forEach(stage);
 
+    // Tap 2: only the tag-matched tasks land (in their Plans). The untagged one is left open.
     const r = placeFlightPlan(OWNER, { date: DAY });
-    expect(r.placed).toBe(3);
+    expect(r.placed).toBe(2);
     expect(r.placedInPlans).toBe(2);
-    expect(r.placedInWorkday).toBe(1);
+    expect(agentBlocks().some((b) => b.title === 'Untagged thing')).toBe(false);
+
+    // Tap 3 (explicit): the priority top-up fills the untagged one into the workday.
+    const pr = fillByPriority(OWNER, { date: DAY });
+    expect(pr.placedInWorkday).toBe(1);
     const byTitle = Object.fromEntries(agentBlocks().map((b) => [b.title, b]));
     expect(byTitle['Write code'].parent_block_id).toBe(work.id);
     expect(byTitle['Post office'].parent_block_id).toBe(errands.id);
@@ -100,7 +107,7 @@ describe('no double-booking (shared obstacle set)', () => {
     const t = insertTask('Auto task', 60);
     stage(t);
 
-    placeFlightPlan(OWNER, { date: DAY });
+    fillByPriority(OWNER, { date: DAY });
     const auto = agentBlocks().find((b) => b.title === 'Auto task')!;
     expect(auto).toBeTruthy();
     expect(overlaps(auto, { start_at: at('09:00'), end_at: at('10:00') })).toBe(false); // around the manual block
@@ -110,17 +117,17 @@ describe('no double-booking (shared obstacle set)', () => {
     const a = insertTask('A', 90);
     const b = insertTask('B', 90);
     stage(a); stage(b);
-    placeFlightPlan(OWNER, { date: DAY });
+    fillByPriority(OWNER, { date: DAY });
     const blocks = agentBlocks();
     expect(blocks.length).toBe(2);
     expect(overlaps(blocks[0], blocks[1])).toBe(false);
   });
 
-  it('workday fallback does not place inside a Plan window (Plans are reserved for their tag)', async () => {
+  it('priority fill does not place inside a Plan window (Plans are reserved for their tag)', async () => {
     const plan = await makePlan(srv, 'errands', at('09:00'), at('17:00')); // a big plan covering most of the day
     const t = insertTask('Unrelated', 30); // not tagged errands
     stage(t);
-    placeFlightPlan(OWNER, { date: DAY });
+    fillByPriority(OWNER, { date: DAY });
     const blk = agentBlocks().find((b) => b.title === 'Unrelated');
     // 09:00–17:00 is reserved; the only free workday time is 17:00–18:00.
     expect(blk).toBeTruthy();
@@ -129,9 +136,8 @@ describe('no double-booking (shared obstacle set)', () => {
   });
 });
 
-describe('auto_fill_workday toggle', () => {
-  it('OFF → tasks with no matching Plan are NOT placed (only Plans get filled)', async () => {
-    sqlite.prepare(`UPDATE scheduling_prefs SET auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
+describe('priority fill (tap 3) + auto_fill_workday gate', () => {
+  it('tap 2 never auto-fills leftover capacity by priority (D5)', async () => {
     await makePlan(srv, 'work', at('09:00'), at('12:00'));
     const inPlan = insertTask('Coding', 30, 'work');
     const loose = insertTask('Loose', 30); // no plan tag
@@ -139,17 +145,34 @@ describe('auto_fill_workday toggle', () => {
 
     const r = placeFlightPlan(OWNER, { date: DAY });
     expect(r.placedInPlans).toBe(1);
-    expect(r.placedInWorkday).toBe(0);
-    expect(r.unplaced).toBe(1); // 'Loose' had nowhere to go
+    expect(r.placedInWorkday).toBe(0); // tag-matched only
+    expect(agentBlocks().some((b) => b.title === 'Loose')).toBe(false); // left open
+  });
+
+  it('priority fill OFF (auto_fill_workday=0) → a no-op even on an explicit tap', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET auto_fill_workday = 0 WHERE owner_id = ?`).run(OWNER);
+    await makePlan(srv, 'work', at('09:00'), at('12:00'));
+    const inPlan = insertTask('Coding', 30, 'work');
+    const loose = insertTask('Loose', 30);
+    stage(inPlan); stage(loose);
+
+    placeFlightPlan(OWNER, { date: DAY }); // Coding → work Plan
+    const pr = fillByPriority(OWNER, { date: DAY });
+    expect(pr.placedInWorkday).toBe(0);
     expect(agentBlocks().some((b) => b.title === 'Loose')).toBe(false);
   });
 
-  it('ON (default) → the loose task lands in the workday', async () => {
+  it('priority fill ON → the loose task lands in the workday, P1 first', async () => {
     await makePlan(srv, 'work', at('09:00'), at('12:00'));
-    const loose = insertTask('Loose', 30);
-    stage(loose);
-    const r = placeFlightPlan(OWNER, { date: DAY });
-    expect(r.placedInWorkday).toBe(1);
+    const lo = insertTask('Low', 60, undefined, 5);
+    const hi = insertTask('High', 60, undefined, 1);
+    stage(lo); stage(hi);
+
+    placeFlightPlan(OWNER, { date: DAY }); // nothing tag-matched
+    const pr = fillByPriority(OWNER, { date: DAY });
+    expect(pr.placedInWorkday).toBe(2);
+    const blocks = agentBlocks();
+    expect(blocks[0].title).toBe('High'); // highest priority gets the earliest slot
   });
 });
 

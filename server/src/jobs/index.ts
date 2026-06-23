@@ -1,7 +1,7 @@
 import { Cron } from 'croner';
 import { sqlite } from '../db/index.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
-import { fillFlightPlanCandidates } from '../engine/autoplan.js';
+import { fillFlightPlanCandidates, autoScheduleOnIngest } from '../engine/autoplan.js';
 import { reviewAndReschedule } from '../engine/review.js';
 import { fireDueReminders } from '../engine/reminders.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
@@ -25,18 +25,20 @@ async function execute(kind: string): Promise<JobOutcome> {
   switch (kind) {
     case 'ingest_gmail': {
       const r = await ingestEmails();
+      const placed = autoScheduleOnIngest(); // D1: schedule mode places tag-matched in the background; no-op in suggest
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new, ${r.possiblesUpdated} updated possibles`,
+        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new, ${r.possiblesUpdated} updated possibles${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'ingest_gcal': {
       const r = await ingestEvents();
+      const placed = autoScheduleOnIngest(); // D1: schedule-mode zero-click placement
       return {
         itemsCreated: r.possiblesCreated + r.blocksCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} events → ${r.blocksCreated} meeting blocks, ${r.possiblesCreated} new possibles`,
+        log: `Processed ${r.itemsProcessed} events → ${r.blocksCreated} meeting blocks, ${r.possiblesCreated} new possibles${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'promote_possibles': {
