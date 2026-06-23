@@ -216,4 +216,22 @@ describe('recurring task indicator (item 6)', () => {
     expect(fp.find((x: any) => x.task_id === template)?.is_recurring).toBe(true);
     expect(fp.find((x: any) => x.task_id === normal)?.is_recurring).toBe(false);
   });
+
+  it('POST /api/flight-plan rejects staging a recurrence instance with 422', async () => {
+    const template = insertTemplate('Daily standup');
+    const instance = insertInstance(template, 'Daily standup');
+
+    const r = await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: instance } });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatch(/template/i);
+
+    // The instance must not have been added.
+    const fp = (await api(srv.url, '/api/flight-plan')).body.flight_plan;
+    expect(fp.find((x: any) => x.task_id === instance)).toBeUndefined();
+  });
+
+  it('POST /api/flight-plan 404s for an unknown task_id', async () => {
+    const r = await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: 'nonexistent-id' } });
+    expect(r.status).toBe(404);
+  });
 });
