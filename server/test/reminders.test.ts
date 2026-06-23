@@ -60,6 +60,9 @@ function setReminderOffsets(offsets: number[]): void {
 }
 const autoCount = (taskId: string) =>
   (sqlite.prepare(`SELECT COUNT(*) c FROM reminders WHERE task_id = ? AND source = 'auto'`).get(taskId) as { c: number }).c;
+const setTaskStatus = (id: string, status: string) => sqlite.prepare(`UPDATE tasks SET status = ? WHERE id = ?`).run(status, id);
+const reminderStatus = (taskId: string) =>
+  (sqlite.prepare(`SELECT status FROM reminders WHERE task_id = ? LIMIT 1`).get(taskId) as { status: string } | undefined)?.status;
 const FAR_FUTURE_DUE = '2999-01-01T12:00:00.000Z';
 const getReminder = (id: string) => sqlite.prepare(`SELECT * FROM reminders WHERE id = ?`).get(id) as
   { status: string; fired_at: string | null; fire_at: string } | undefined;
@@ -277,5 +280,35 @@ describe('auto-derive — syncTaskReminders (Phase H b)', () => {
     expect(autoCount(taskId)).toBe(1);
     expect((sqlite.prepare(`SELECT fire_at FROM reminders WHERE task_id = ? AND source = 'auto'`).get(taskId) as { fire_at: string }).fire_at)
       .toBe('2999-01-01T11:50:00.000Z'); // due − 10min
+  });
+});
+
+describe('reminder lifecycle vs task status (Phase H b)', () => {
+  it('does not fire a reminder once its task is terminal; fires again if re-opened', async () => {
+    const taskId = insertTask('Finish me');
+    insertReminder({ taskId, fireAt: PAST });
+    setTaskStatus(taskId, 'done');
+    expect(await fireDueReminders()).toBe(0);          // task is done → reminder withheld
+    expect(reminderStatus(taskId)).toBe('pending');     // not fired, still claimable
+    setTaskStatus(taskId, 'open');
+    expect(await fireDueReminders()).toBe(1);           // re-opened → fires
+  });
+
+  it('syncTaskReminders clears and stops deriving once a task is completed', () => {
+    setReminderOffsets([0]);
+    const taskId = insertTaskDue(FAR_FUTURE_DUE);
+    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1);
+    expect(autoCount(taskId)).toBe(1);
+    setTaskStatus(taskId, 'done');
+    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(0); // terminal → cleared, nothing derived
+    expect(autoCount(taskId)).toBe(0);
+  });
+
+  it('DELETE /api/tasks/:id drops the task’s auto reminders', async () => {
+    setReminderOffsets([10]);
+    const taskId = (await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'Temp', due_at: FAR_FUTURE_DUE } })).body.task.id as string;
+    expect(autoCount(taskId)).toBe(1);
+    expect((await api(srv.url, `/api/tasks/${taskId}`, { method: 'DELETE' })).status).toBe(200);
+    expect(autoCount(taskId)).toBe(0);
   });
 });
