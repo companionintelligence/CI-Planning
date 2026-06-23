@@ -325,3 +325,29 @@ export const jobRuns = sqliteTable('job_runs', {
   itemsUpdated: integer('items_updated').default(0),
   log: text('log'),
 });
+
+// --- Phase H (0044): Notifications + Web Push. Both owner-scoped. ---
+
+// One row per browser push endpoint. `endpoint` is unique → subscribe is an upsert.
+export const pushSubscriptions = sqliteTable('push_subscriptions', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  userAgent: text('user_agent'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+});
+
+// A single fire_at per row with exactly one target (task XOR block — enforced by a
+// CHECK in migration 0044). The dispatcher fires `pending` rows whose fire_at <= now.
+export const reminders = sqliteTable('reminders', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+  blockId: text('block_id').references(() => timeBlocks.id, { onDelete: 'cascade' }),
+  fireAt: text('fire_at').notNull(),                  // UTC ISO; tz-correct via lib/tz
+  status: text('status').notNull().default('pending'), // pending | fired | snoozed | cancelled
+  firedAt: text('fired_at'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+});
