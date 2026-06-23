@@ -11,7 +11,7 @@ function urlBase64ToBuffer(base64: string): ArrayBuffer {
   return buf;
 }
 
-export type PushState = 'unsupported' | 'denied' | 'subscribed' | 'unsubscribed';
+export type PushState = 'unsupported' | 'unconfigured' | 'denied' | 'subscribed' | 'unsubscribed';
 
 function supported(): boolean {
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -27,17 +27,20 @@ export async function pushState(): Promise<PushState> {
 }
 
 /**
- * Opt in: request permission, subscribe via the service worker, and register the
- * subscription server-side. Resolves to the resulting state ('denied' if the user
- * blocks, 'unsupported' if the platform or server VAPID config can't do push).
+ * Opt in: subscribe via the service worker and register the subscription server-side.
+ * Resolves to the resulting state — 'unconfigured' if the server has no VAPID keys,
+ * 'denied' if the user blocks the prompt, 'unsupported' if the platform can't do push.
+ * The server key is checked BEFORE prompting, so we never show a permission dialog we
+ * can't act on.
  */
 export async function enablePush(): Promise<PushState> {
   if (!supported()) return 'unsupported';
-  const perm = await Notification.requestPermission();
-  if (perm !== 'granted') return perm === 'denied' ? 'denied' : 'unsubscribed';
 
   const { key } = await api.push.vapidKey();
-  if (!key) return 'unsupported'; // server has no VAPID keys → push disabled
+  if (!key) return 'unconfigured'; // server has no VAPID keys → push dormant; don't prompt
+
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return perm === 'denied' ? 'denied' : 'unsubscribed';
 
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.subscribe({
