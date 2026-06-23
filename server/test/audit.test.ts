@@ -264,6 +264,24 @@ describe('pattern-prefs route', () => {
   });
 });
 
+// ── pattern-blocks ─────────────────────────────────────────────────────────────
+
+describe('pattern-blocks route', () => {
+  it('writes audit row on PUT /api/pattern-blocks/:tagId/workday (update)', async () => {
+    const tagId = (
+      sqlite
+        .prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), 'test-pattern-block', 'pattern', 0) RETURNING id`)
+        .get() as { id: string }
+    ).id;
+    const before = auditCount('update', `pattern-block:${tagId}:workday`);
+    await api(srv.url, `/api/pattern-blocks/${tagId}/workday`, {
+      method: 'PUT',
+      json: { ranges: [{ start_time: '09:00', end_time: '17:00' }] },
+    });
+    expect(auditCount('update', `pattern-block:${tagId}:workday`)).toBe(before + 1);
+  });
+});
+
 // ── patterns ──────────────────────────────────────────────────────────────────
 
 describe('patterns route', () => {
