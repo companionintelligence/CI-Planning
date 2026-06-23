@@ -1,7 +1,9 @@
 import { sqlite } from '../db/index.js';
 import { extractTasks, type ExtractedTask, type ExtractSource } from './extract.js';
 import { createGoogleClient, type GoogleClient, type CalendarEvent } from '../mcp/google.js';
-import { type ModelTier } from '../mcp/ollama.js';
+import { type ModelTier, OllamaUnavailable } from '../mcp/ollama.js';
+import { inferDirection } from './direction.js';
+import { currentOwnerId } from '../lib/context.js';
 import { logger } from '../lib/logger.js';
 
 export interface IngestResult {
@@ -24,6 +26,28 @@ function tagId(name: string): string {
   const existing = sqlite.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: string } | undefined;
   if (existing) return existing.id;
   return (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string }).id;
+}
+
+/** Resolve a direction tag id, ensuring it exists as a `pattern` tag (the kind the
+ *  Auto engine matches pattern windows against). Self-heals if a reset wiped the seed. */
+function directionTagId(name: string): string {
+  const existing = sqlite
+    .prepare(`SELECT id FROM tags WHERE name = ? AND kind = 'pattern'`)
+    .get(name) as { id: string } | undefined;
+  if (existing) return existing.id;
+  return (
+    sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), ?, 'pattern') RETURNING id`).get(name) as { id: string }
+  ).id;
+}
+
+/**
+ * Deterministic fallback used when Ollama is down: stage the raw item as a single
+ * possible-task so nothing is lost. No content tags (the LLM produced none) — the
+ * source-inferred direction still tags it downstream (always-on, D4).
+ */
+function fallbackTask(source: ExtractSource): ExtractedTask {
+  const title = (source.subject?.trim() || source.text.split('\n').map((l) => l.trim()).find(Boolean) || 'Review item').slice(0, 200);
+  return { title, summary: undefined, priority: 3, dueAt: source.at ?? null, estimatedMinutes: null, tags: [], confidence: 0.3 };
 }
 
 /**
@@ -66,13 +90,14 @@ export function upsertPossible(
         `INSERT INTO possible_tasks
          (id, raw_title, raw_summary, proposed_due_at, proposed_priority, proposed_owner_id,
           source_kind, source_ref, source_payload, confidence, status)
-         VALUES (uuid7(), ?, ?, ?, ?, 1, ?, ?, ?, ?, 'pending') RETURNING id`
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
       )
       .get(
         task.title,
         task.summary ?? null,
         task.dueAt ?? null,
         task.priority,
+        currentOwnerId(), // was a stale `1` literal — broke the owners FK after CON-1 (0030)
         sourceKind,
         sourceRef,
         JSON.stringify(payload),
@@ -82,13 +107,23 @@ export function upsertPossible(
     outcome = 'created';
   }
 
-  // Attach suggested tags (idempotent).
+  // Attach the LLM's free-form content tags (idempotent) — kept as secondary
+  // intention tags on promote.
   for (const raw of task.tags) {
     const id = tagId(normTag(raw));
     sqlite
       .prepare('INSERT OR IGNORE INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)')
       .run(possibleId, id);
   }
+
+  // Always attach exactly one direction (pattern) tag (D4) — source-inferred, so it
+  // is present even with Ollama down (task.tags empty ⇒ source decides). This is the
+  // placement-relevant tag the Auto engine matches pattern windows against.
+  const from = (payload as { from?: string } | null)?.from;
+  const direction = inferDirection({ sourceKind, from, contentTags: task.tags });
+  sqlite
+    .prepare('INSERT OR IGNORE INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)')
+    .run(possibleId, directionTagId(direction));
 
   return outcome;
 }
@@ -114,8 +149,17 @@ async function runExtraction(
   payload: unknown,
   result: IngestResult
 ): Promise<void> {
-  const tasks = await extractTasks(source, { tier });
   result.itemsProcessed++;
+  let tasks: ExtractedTask[];
+  try {
+    tasks = await extractTasks(source, { tier });
+  } catch (err) {
+    // Deterministic fallback (global constraint): when Ollama is down, don't drop the
+    // item — stage it raw so it still arrives, source-tagged. Re-throw anything else.
+    if (!(err instanceof OllamaUnavailable)) throw err;
+    logger.warn('extract fallback (Ollama unavailable)', { kind: source.kind, ref: source.ref });
+    tasks = [fallbackTask(source)];
+  }
   tasks.forEach((task, i) => {
     const outcome = upsertPossible(task, source.kind, `${source.ref}#${i}`, payload);
     if (outcome === 'created') result.possiblesCreated++;
