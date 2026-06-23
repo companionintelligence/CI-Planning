@@ -11,6 +11,7 @@ import { logger } from '../lib/logger.js';
 import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import { snapshot, pruneOldSnapshots, backupDir } from '../lib/backup.js';
+import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { config } from '../lib/config.js';
 import { join } from 'node:path';
 
@@ -85,6 +86,12 @@ async function execute(kind: string): Promise<JobOutcome> {
       // delivery is in-app SSE (per row owner) + Web Push, push-failure → in-app.
       const fired = await fireDueReminders();
       return { itemsCreated: 0, itemsUpdated: fired, log: `Fired ${fired} reminder(s)` };
+    }
+    case 'tag_tasks': {
+      // Hourly pass: tag every untagged top-level open task for the current owner.
+      // Shared code path with the AllTasks Auto-tag button so both stay in sync.
+      const r = await tagUntaggedTasks(currentOwnerId());
+      return { itemsCreated: 0, itemsUpdated: r.tagged, log: r.log };
     }
     case 'snapshot_db': {
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
