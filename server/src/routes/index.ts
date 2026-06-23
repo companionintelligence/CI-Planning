@@ -17,9 +17,11 @@ import { patternBlocksRouter } from './pattern-blocks.js';
 import { patternPrefsRouter } from './pattern-prefs.js';
 import { notificationsRouter } from './notifications.js';
 import { backupRouter } from './backup.js';
+import { healthRouter } from './health.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
+    healthRouter(),
     sseRouter(),
     tasksRouter(),
     blocksRouter(),
