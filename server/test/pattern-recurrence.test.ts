@@ -3,6 +3,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { patternsRecurringOnDate, ensurePatternsForRange } from '../src/engine/patterns-place.js';
+import { localISODate } from '../src/lib/dates.js';
 
 /**
  * Pattern-level recurrence + the nightly auto-place job (PR-C+, Phase D).
@@ -33,6 +34,11 @@ function insertPattern(typeName: string, name: string, taskIds: string[], rule?:
 const MONDAY = '2026-06-22';
 const TUESDAY = '2026-06-23';
 const noonUTC = (day: string) => `${day}T19:00:00.000Z`; // 12:00 in default LA tz (PDT/-7)
+// Lazy placement (ensurePatternsForRange) skips any day before the server-local "today"
+// (its own `d >= localISODate()` filter), so placement fixtures must target a current
+// day — a hardcoded date silently becomes a no-op once the wall clock passes it. TODAY
+// mirrors the engine's comparison basis so these tests are stable on any run date / TZ.
+const TODAY = localISODate();
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -69,15 +75,15 @@ describe('ensurePatternsForRange (lazy placement on GET)', () => {
   it('places every Habit/Routine firing inside the range; Rituals stay excluded', () => {
     const t1 = insertTask('A', 30);
     const t2 = insertTask('B', 30);
-    insertPattern('Routine', 'DailyTwo', [t1, t2], 'FREQ=DAILY', noonUTC(MONDAY));
-    insertPattern('Habit', 'HabitDaily', [t1], 'FREQ=DAILY', noonUTC(MONDAY));
-    insertPattern('Ritual', 'Skipped', [t1], 'FREQ=DAILY', noonUTC(MONDAY));
+    insertPattern('Routine', 'DailyTwo', [t1, t2], 'FREQ=DAILY', noonUTC(TODAY));
+    insertPattern('Habit', 'HabitDaily', [t1], 'FREQ=DAILY', noonUTC(TODAY));
+    insertPattern('Ritual', 'Skipped', [t1], 'FREQ=DAILY', noonUTC(TODAY));
 
-    const r = ensurePatternsForRange(OWNER, `${MONDAY}T00:00:00.000Z`, `${MONDAY}T23:59:59.999Z`);
+    const r = ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
     expect(r.placed).toBeGreaterThanOrEqual(1);
     expect(r.blocksCreated).toBeGreaterThanOrEqual(3); // 2 Routine + 1 Habit
     // marker-based idempotency: a 2nd call places nothing new.
-    expect(ensurePatternsForRange(OWNER, `${MONDAY}T00:00:00.000Z`, `${MONDAY}T23:59:59.999Z`).blocksCreated).toBe(0);
+    expect(ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`).blocksCreated).toBe(0);
     // Ritual was not placed.
     const ritualBlocks = sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number };
     expect(ritualBlocks.n).toBeGreaterThanOrEqual(3); // routine 2 + habit 1 placed; ritual not.
@@ -85,11 +91,11 @@ describe('ensurePatternsForRange (lazy placement on GET)', () => {
 
   it('GET /api/blocks lazy-places recurring patterns inside the requested window', async () => {
     const t = insertTask('A', 30);
-    insertPattern('Routine', 'DailyOne', [t], 'FREQ=DAILY', noonUTC(MONDAY));
+    insertPattern('Routine', 'DailyOne', [t], 'FREQ=DAILY', noonUTC(TODAY));
     // Before the GET, no pattern blocks exist.
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number }).n).toBe(0);
-    // The GET for Monday triggers lazy placement and returns the placed blocks.
-    const r = await api(srv.url, `/api/blocks?from=${MONDAY}T00:00:00.000Z&to=${MONDAY}T23:59:59.999Z`);
+    // The GET for today triggers lazy placement and returns the placed blocks.
+    const r = await api(srv.url, `/api/blocks?from=${TODAY}T00:00:00.000Z&to=${TODAY}T23:59:59.999Z`);
     expect(r.status).toBe(200);
     expect(r.body.blocks.some((b: any) => b.source_kind === 'pattern' && b.title === 'A')).toBe(true);
   });
