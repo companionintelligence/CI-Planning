@@ -24,6 +24,12 @@ const tagByName = (name: string) =>
     | undefined;
 const memberDirs = (intentionId: string) =>
   (sqlite
+    .prepare(`SELECT d.name FROM tag_patterns tp JOIN tags d ON d.id = tp.pattern_tag_id WHERE tp.intention_tag_id = ? ORDER BY d.name`)
+    .all(intentionId) as { name: string }[]).map((r) => r.name);
+// Used only in the 0036 backfill test: backfill0036 creates a fresh tag_directions
+// table (0043 renamed it away) with the original direction_tag_id column name.
+const memberDirsLegacy = (intentionId: string) =>
+  (sqlite
     .prepare(`SELECT d.name FROM tag_directions td JOIN tags d ON d.id = td.direction_tag_id WHERE td.intention_tag_id = ? ORDER BY d.name`)
     .all(intentionId) as { name: string }[]).map((r) => r.name);
 
@@ -43,10 +49,10 @@ describe('0036 migration backfill', () => {
     expect(tagByName('home')).toMatchObject({ kind: 'direction', isBase: 1 });
     expect(tagByName('work')).toMatchObject({ kind: 'direction', isBase: 1 });
     expect(tagByName('community')).toMatchObject({ kind: 'direction', isBase: 1 });
-    expect(memberDirs(tagByName('yard-work')!.id)).toEqual(['home']);
-    expect(memberDirs(tagByName('product')!.id)).toEqual(['work']);
-    expect(memberDirs(tagByName('socialize')!.id)).toEqual(['community']);
-    expect(memberDirs(tagByName('personal')!.id)).toEqual([]); // Unsorted
+    expect(memberDirsLegacy(tagByName('yard-work')!.id)).toEqual(['home']);
+    expect(memberDirsLegacy(tagByName('product')!.id)).toEqual(['work']);
+    expect(memberDirsLegacy(tagByName('socialize')!.id)).toEqual(['community']);
+    expect(memberDirsLegacy(tagByName('personal')!.id)).toEqual([]); // Unsorted
 
     // idempotent: a second run changes nothing
     backfill0036(sqlite);
