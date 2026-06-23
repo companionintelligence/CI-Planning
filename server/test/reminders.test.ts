@@ -14,7 +14,7 @@ vi.mock('../src/lib/push.js', () => ({
   pushEnabled: () => true,
 }));
 
-import { fireDueReminders } from '../src/engine/reminders.js';
+import { fireDueReminders, syncTaskReminders } from '../src/engine/reminders.js';
 import { sendPush } from '../src/lib/push.js';
 
 /**
@@ -47,6 +47,20 @@ function insertPushSub(owner: string, endpoint: string): void {
   sqlite.prepare(`INSERT INTO push_subscriptions (id, owner_id, endpoint, p256dh, auth) VALUES (?, ?, ?, 'p', 'a')`)
     .run(newId(), owner, endpoint);
 }
+function insertTaskDue(dueAt: string | null): string {
+  return (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status, due_at) VALUES (?, 'Due task', ?, 'open', ?) RETURNING id`)
+    .get(newId(), SYSTEM_OWNER, dueAt) as { id: string }).id;
+}
+/** Mimic Settings "Reminder Defaults": write the offsets onto a (fresh) pattern tag's prefs. */
+function setReminderOffsets(offsets: number[]): void {
+  const tagId = (sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (?, ?, 'pattern', 1) RETURNING id`)
+    .get(newId(), `pat-${newId().slice(0, 8)}`) as { id: string }).id;
+  sqlite.prepare(`INSERT INTO pattern_prefs (id, owner_id, pattern_tag_id, reminder_offsets) VALUES (?, ?, ?, ?)`)
+    .run(newId(), SYSTEM_OWNER, tagId, JSON.stringify(offsets));
+}
+const autoCount = (taskId: string) =>
+  (sqlite.prepare(`SELECT COUNT(*) c FROM reminders WHERE task_id = ? AND source = 'auto'`).get(taskId) as { c: number }).c;
+const FAR_FUTURE_DUE = '2999-01-01T12:00:00.000Z';
 const getReminder = (id: string) => sqlite.prepare(`SELECT * FROM reminders WHERE id = ?`).get(id) as
   { status: string; fired_at: string | null; fire_at: string } | undefined;
 
@@ -160,6 +174,14 @@ describe('routes — push subscriptions', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].p256dh).toBe('key2');
   });
+
+  it('DELETE /api/push/subscribe removes the endpoint (bodyparser reads the DELETE body)', async () => {
+    const endpoint = 'https://push.example/bye';
+    await api(srv.url, '/api/push/subscribe', { method: 'POST', json: { subscription: { endpoint, keys: { p256dh: 'p', auth: 'a' } } } });
+    const r = await api(srv.url, '/api/push/subscribe', { method: 'DELETE', json: { endpoint } });
+    expect(r.status).toBe(200);
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM push_subscriptions WHERE endpoint = ?`).get(endpoint) as { c: number }).c).toBe(0);
+  });
 });
 
 describe('routes — reminders', () => {
@@ -206,5 +228,54 @@ describe('routes — reminders', () => {
     expect(await fireDueReminders()).toBe(0); await tick();
     expect(fireCount(text())).toBe(1);
     off();
+  });
+});
+
+describe('auto-derive — syncTaskReminders (Phase H b)', () => {
+  it('derives one reminder per configured offset at due − offset (source=auto)', () => {
+    setReminderOffsets([0, 15]);
+    const taskId = insertTaskDue(FAR_FUTURE_DUE);
+    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(2);
+    const rows = sqlite.prepare(`SELECT fire_at, status, source FROM reminders WHERE task_id = ? ORDER BY fire_at`).all(taskId) as
+      { fire_at: string; status: string; source: string }[];
+    expect(rows.map((r) => r.fire_at)).toEqual(['2999-01-01T11:45:00.000Z', '2999-01-01T12:00:00.000Z']);
+    expect(rows.every((r) => r.status === 'pending' && r.source === 'auto')).toBe(true);
+  });
+
+  it('replaces only its own auto rows on re-sync; manual reminders survive', () => {
+    setReminderOffsets([0]);
+    const taskId = insertTaskDue(FAR_FUTURE_DUE);
+    insertReminder({ taskId, fireAt: FAR_FUTURE_DUE }); // manual (source defaults to 'manual')
+    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1);
+    expect(autoCount(taskId)).toBe(1);
+    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(1); // re-derive replaces the auto row
+    expect(autoCount(taskId)).toBe(1);
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM reminders WHERE task_id = ?`).get(taskId) as { c: number }).c).toBe(2); // manual + auto
+  });
+
+  it('creates nothing without a due_at, and clears stale auto rows', () => {
+    setReminderOffsets([0]);
+    const taskId = insertTaskDue(null);
+    expect(syncTaskReminders(SYSTEM_OWNER, taskId)).toBe(0);
+    expect(autoCount(taskId)).toBe(0);
+  });
+
+  it('creates nothing when no Reminder Defaults are configured', () => {
+    expect(syncTaskReminders(SYSTEM_OWNER, insertTaskDue(FAR_FUTURE_DUE))).toBe(0);
+  });
+
+  it('skips already-due fire times (no backfill)', () => {
+    setReminderOffsets([0]);
+    expect(syncTaskReminders(SYSTEM_OWNER, insertTaskDue(PAST))).toBe(0);
+  });
+
+  it('POST /api/tasks with a due date auto-creates reminders (route hook)', async () => {
+    setReminderOffsets([10]);
+    const r = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'Ship it', due_at: FAR_FUTURE_DUE } });
+    expect(r.status).toBe(201);
+    const taskId = r.body.task.id as string;
+    expect(autoCount(taskId)).toBe(1);
+    expect((sqlite.prepare(`SELECT fire_at FROM reminders WHERE task_id = ? AND source = 'auto'`).get(taskId) as { fire_at: string }).fire_at)
+      .toBe('2999-01-01T11:50:00.000Z'); // due − 10min
   });
 });

@@ -1,4 +1,4 @@
-import { For } from 'solid-js';
+import { For, Show } from 'solid-js';
 import { CheckCircle, XCircle, Info } from 'lucide-solid';
 import { toasts } from '../stores/index.js';
 
@@ -16,7 +16,11 @@ export function ToastContainer() {
             {t.kind === 'success' ? <CheckCircle size={15} class="text-green-400 flex-shrink-0" /> :
              t.kind === 'error'   ? <XCircle     size={15} class="text-red-400 flex-shrink-0"   /> :
                                     <Info        size={15} class="text-slate-400 flex-shrink-0" />}
-            {t.message}
+            <span>{t.message}</span>
+            <Show when={t.action}>
+              <button type="button" class="ml-2 underline underline-offset-2 hover:no-underline pointer-events-auto"
+                onClick={() => t.action!.run()}>{t.action!.label}</button>
+            </Show>
           </div>
         )}
       </For>
