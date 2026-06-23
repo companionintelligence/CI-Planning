@@ -30,3 +30,19 @@ export function fromApi<T = Record<string, unknown>>(obj: Record<string, unknown
 export function toApiList<T extends Record<string, unknown>>(rows: T[]): Record<string, unknown>[] {
   return rows.map(toApi);
 }
+
+/**
+ * Serialize a task row to API shape, deriving the legacy `is_habit` / `is_fast_task`
+ * booleans from the canonical `subtype` (CON-2c / W1-A §5a). Routing every task
+ * serialization through here makes `subtype` the single source of the API's habit/
+ * quick flags, so the `is_habit` / `is_fast_task` columns can be dropped (W1-A PR2)
+ * without changing any payload. While the columns still exist they are coherent with
+ * `subtype`, so this returns byte-identical output to a plain `toApi`.
+ */
+export function taskToApi<T extends Record<string, unknown>>(row: T): Record<string, unknown> {
+  const api = toApi(row);
+  const subtype = (row as { subtype?: string }).subtype ?? 'standard';
+  api.is_habit = subtype === 'habit';
+  api.is_fast_task = subtype === 'quick';
+  return api;
+}
