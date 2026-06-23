@@ -2,6 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { getPatternBlocks, setPatternBlockRanges } from '../services/pattern-blocks.js';
+import { writeAudit } from '../lib/audit.js';
 
 const TIME_RE = /^\d{2}:\d{2}$/;
 
@@ -44,6 +45,7 @@ export function patternBlocksRouter() {
 
     const ranges = (body.ranges as { start_time: string; end_time: string }[]);
     setPatternBlockRanges(owner, dirTagId, dayType, ranges);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `pattern-block:${dirTagId}:${dayType}` });
     ctx.body = { ranges: (getPatternBlocks(owner, dayType as 'workday' | 'weekend')[dirTagId] ?? []) };
   });
 

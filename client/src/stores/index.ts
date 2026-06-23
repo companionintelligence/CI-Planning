@@ -172,6 +172,13 @@ export const [jobs, { refetch: refetchJobs }] = createResource(() =>
 
 on('job:run', () => refetchJobs());
 
+// A full import replaces all owner data — refetch every core resource.
+on('data:imported', () => {
+  refetchTasks(); refetchBlocks(); refetchConcepts(); refetchPossibles();
+  refetchFlightPlan(); refetchPatterns(); refetchPatternTypes();
+  refetchTags(); refetchPrefs(); refetchPatternBlocks(); refetchPatternPrefs(); refetchJobs();
+});
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 export type ToastKind = 'default' | 'success' | 'error';
 export interface ToastAction { label: string; run: () => void; }
