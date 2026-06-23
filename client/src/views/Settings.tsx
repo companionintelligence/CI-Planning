@@ -200,6 +200,7 @@ export function Settings() {
       setPushOn(next === 'subscribed');
       if (next === 'subscribed') showToast('Push notifications enabled', 'success');
       else if (next === 'denied') showToast('Notifications are blocked in your browser settings', 'error');
+      else if (next === 'unconfigured') showToast('Push notifications aren’t set up on the server yet', 'error');
       else if (next === 'unsupported') showToast('Push isn’t supported on this device', 'error');
       else showToast('Push notifications disabled');
     } catch (err) {

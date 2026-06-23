@@ -1,6 +1,7 @@
 import Router from '@koa/router';
 import { status } from '../mcp/ollama.js';
 import { createGoogleClient } from '../mcp/google.js';
+import { pushEnabled } from '../lib/push.js';
 
 export function llmRouter() {
   const router = new Router();
@@ -23,6 +24,9 @@ export function llmRouter() {
         embedModel: ollama.embedModel,
       },
       google: { mode: google.mode },
+      // Phase H: whether Web Push can actually deliver (VAPID keys present). In-app
+      // SSE reminders work regardless; this lets the client/diagnostics show push status.
+      push: { configured: pushEnabled() },
     };
   });
 
