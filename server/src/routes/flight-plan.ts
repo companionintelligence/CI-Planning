@@ -61,6 +61,9 @@ export function flightPlanRouter() {
       let pos = nextPos(owner);
       for (const m of members) if (ins.run(owner, m.task_id, body.pattern_id, pos++).changes > 0) added++;
     } else if (body.task_id != null) {
+      const t = sqlite.prepare(`SELECT recurrence_parent_id FROM tasks WHERE id = ? AND owner_id = ?`).get(body.task_id, owner) as { recurrence_parent_id: string | null } | undefined;
+      if (!t) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
+      if (t.recurrence_parent_id) { ctx.status = 422; ctx.body = { error: 'stage the series template, not an instance' }; return; }
       if (ins.run(owner, body.task_id, null, nextPos(owner)).changes > 0) added++;
     } else {
       ctx.status = 422; ctx.body = { error: 'task_id or pattern_id is required' }; return;
