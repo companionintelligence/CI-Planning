@@ -448,6 +448,7 @@ export function tasksRouter() {
       .where(eq(tasks.id, id))
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    syncTaskReminders(currentOwnerId(), id); // Phase H (b): a cancelled task drops its auto reminders
     const out = { ...toApi(task), tags: [] as string[] };
     broadcast(currentOwnerId(), 'task:updated', out);
     ctx.body = { task: out };

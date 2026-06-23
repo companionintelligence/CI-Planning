@@ -62,10 +62,17 @@ async function deliver(r: DueReminder): Promise<void> {
  * `nowISO` is injectable for deterministic tests.
  */
 export async function fireDueReminders(nowISO: string = new Date().toISOString()): Promise<number> {
+  // A task-targeted reminder must NOT fire once its task is in a terminal state
+  // (done/cancelled/skipped/missed). Soft-delete only flips status (the row stays, so
+  // the FK CASCADE never runs), and completing/skipping never deletes the reminder —
+  // so this guard is the authoritative chokepoint covering every status-change path.
+  // Such rows stay 'pending' (never fired) until the task is hard-deleted or re-derived.
   const due = sqlite
     .prepare(
       `UPDATE reminders SET status = 'fired', fired_at = ?
          WHERE status = 'pending' AND fire_at <= ?
+           AND (task_id IS NULL OR task_id IN (
+                 SELECT id FROM tasks WHERE status NOT IN ('done','completed','cancelled','skipped','missed')))
        RETURNING id, owner_id, task_id, block_id`,
     )
     .all(nowISO, nowISO) as DueReminder[];
@@ -93,10 +100,13 @@ export async function fireDueReminders(nowISO: string = new Date().toISOString()
 export function syncTaskReminders(ownerId: string, taskId: string): number {
   sqlite.prepare(`DELETE FROM reminders WHERE task_id = ? AND source = 'auto'`).run(taskId);
 
-  const task = sqlite.prepare(`SELECT due_at FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, ownerId) as
-    | { due_at: string | null }
+  const task = sqlite.prepare(`SELECT due_at, status FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, ownerId) as
+    | { due_at: string | null; status: string }
     | undefined;
   if (!task?.due_at) return 0;
+  // A done/cancelled/skipped/missed task gets no reminders — clearing the auto rows
+  // above is the whole job (completing a task via PATCH flows through here).
+  if (['done', 'completed', 'cancelled', 'skipped', 'missed'].includes(task.status)) return 0;
   const dueMs = Date.parse(task.due_at);
   if (!Number.isFinite(dueMs)) return 0;
 
