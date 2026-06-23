@@ -61,7 +61,12 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Start container
-        run: docker run -d --name app -p 8080:${INTERNAL_PORT} ${{ steps.meta.outputs.sha_tag }}
+        # The image runs NODE_ENV=production, where AUTH_MODE=test is refused at boot
+        # (Phase I fail-closed guard). Run the smoke test in `standalone` — a valid
+        # production mode: `/` and `/sw.js` are static (ungated) so the SPA shell still
+        # renders for the screenshot; background /api calls 401 without a key, which the
+        # app-agnostic screenshot gate does not depend on.
+        run: docker run -d --name app -e AUTH_MODE=standalone -p 8080:${INTERNAL_PORT} ${{ steps.meta.outputs.sha_tag }}
 
       - name: Wait for HTTP
         run: |
