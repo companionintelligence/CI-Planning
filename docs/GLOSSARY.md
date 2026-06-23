@@ -70,11 +70,14 @@ reserved)** and demotes everything else.
   (a per-tag state, not a noun). Pattern-tags/intentions are Tag sub-levels,
   **not** new nouns.
 
-  > **Interim naming note:** the `tag_patterns` junction table and `tags.kind = 'pattern'`
+  > **Naming note:** the `tag_patterns` junction table and `tags.kind = 'pattern'`
   > refer to this tag-taxonomy axis. The separate `patterns` table is the Routine collection
-  > system (Habit / Routine / Ritual templates). The naming overlap is a known interim pending
-  > the §3b Routine rename (`patterns` → `routines`); until then, use table name and `kind`
-  > value as the disambiguator.
+  > system (Habit / Routine / Ritual templates). The §3b Routine rename (`patterns` → `routines`)
+  > that would have de-collided these is **deferred** — the as-built `patterns` naming is
+  > ratified for now (README marks `pattern_types` load-bearing). Until/unless §3b is revived,
+  > use the table name and the `kind` value as the disambiguator: `patterns`/`pattern_types`/
+  > `pattern_tasks` = the Routine collection system; `tags.kind='pattern'` + `pattern_blocks`/
+  > `pattern_prefs`/`tag_patterns` = the tag-category axis.
 
 ## Translation (old term → canonical)
 
