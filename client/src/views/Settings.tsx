@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, ChevronUp, ChevronDown } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, ChevronUp, ChevronDown, Database, AlertTriangle } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternBlocks, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
@@ -289,6 +289,22 @@ export function Settings() {
 
   const [integrations] = createResource(() => api.llm.integrations());
   const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
+  const [importBusy, setImportBusy] = createSignal(false);
+
+  async function handleImport(file: File) {
+    setImportBusy(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      const result = await api.backup.import(parsed);
+      const total = Object.values(result.imported).reduce((a, b) => a + b, 0);
+      showToast(`Import complete — ${total} rows restored`, 'success');
+    } catch (err) {
+      showToast(`Import failed: ${(err as Error).message}`, 'error');
+    } finally {
+      setImportBusy(false);
+    }
+  }
 
   const ollamaModels = () => integrations()?.ollama.models ?? [];
   const ollamaUp = () => integrations()?.ollama.available ?? false;
@@ -839,6 +855,40 @@ export function Settings() {
               </div>
             )}
           </Show>
+        </section>
+
+        {/* Backup / Restore / Export */}
+        <section class="card">
+          <div class="section-label flex items-center gap-1.5 mb-3"><Database size={12} /> Backup &amp; Export</div>
+          <div class="flex flex-col gap-4">
+            <div class="flex items-center gap-3 flex-wrap">
+              <a
+                href="/api/export"
+                download="companion-export.json"
+                class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
+              >
+                <Database size={12} /> Export JSON
+              </a>
+              <label class={`btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 cursor-pointer ${importBusy() ? 'opacity-50 pointer-events-none' : ''}`}>
+                {importBusy() ? 'Importing…' : 'Import JSON'}
+                <input
+                  type="file"
+                  accept=".json"
+                  class="sr-only"
+                  onChange={(e) => {
+                    const f = e.currentTarget.files?.[0];
+                    if (f) { e.currentTarget.value = ''; handleImport(f); }
+                  }}
+                />
+              </label>
+            </div>
+            <div class="flex items-start gap-1.5 text-[11px] text-amber-400/80">
+              <AlertTriangle size={11} class="mt-0.5 flex-shrink-0" />
+              <span>
+                Do not sync the live <code class="font-mono">.db</code> file with Syncthing or rsync — WAL mode writes across multiple files and a partial sync can corrupt the database. Use Export or <code class="font-mono">pnpm snapshot</code> instead.
+              </span>
+            </div>
+          </div>
         </section>
 
         <button type="submit" class="btn-primary self-start px-5">
