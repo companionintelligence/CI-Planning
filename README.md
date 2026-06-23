@@ -303,7 +303,7 @@ consistent snapshot.
 - No auth layer yet — the expected deployment model is a private network / Tailscale
 - Web Push delivery needs VAPID keys set in the env (see below); without them push is
   dormant but in-app SSE reminders still fire
-- Later phases (two-way calendar sync, auth, backups, multi-device sync) in
+- Later phases (two-way calendar sync, auth, multi-device sync) in
   [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Run with Docker (CI Hub)
@@ -336,6 +336,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset) | Web Push keys — generate once with `npx web-push generate-vapid-keys`. Unset ⇒ push disabled (in-app reminders still fire). Never commit them. |
 | `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push |
+| `SNAPSHOT_RETAIN` | `7` | Number of daily snapshots to keep in `<DB_DIR>/backups/` |
 
 **Persistence**: everything lives in the single SQLite file at `DB_PATH`. Mount a
 volume at `/data` (as above) and your tasks survive container recreation.
@@ -399,6 +400,8 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET/PATCH | `/api/prefs` | Scheduling preferences |
 | GET/POST | `/api/memory` | Companion Memory sync state |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
+| GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
+| POST | `/api/import` | Restore owner data from an export JSON body |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
 
 ## Tests
