@@ -12,6 +12,11 @@ type Prefs = InferSelectModel<typeof schedulingPrefs>;
  * AI touches scheduling — *placement* stays deterministic, so the plan is still
  * reproducible. Any failure (model down, bad JSON, partial list) falls back to
  * the deterministic ranking it was handed.
+ *
+ * DORMANT BY DESIGN: no UI currently sets planning_mode to 'auto' (default
+ * 'ritual'), so the guard below short-circuits and this reorder never runs in
+ * practice. This is intentional — the path is retained for a future AI-reorder
+ * toggle. Do not delete it as dead code; see schema.ts `planningMode`.
  */
 export async function orderForToday(ranked: Task[], prefs: Prefs): Promise<Task[]> {
   if (prefs.planningMode !== 'auto' || ranked.length < 2) return ranked;
