@@ -151,6 +151,14 @@ describe('SSO — fail closed', () => {
     expect((await api(srv.url, '/api/tasks', bearer(none))).status).toBe(401);
   });
 
+  it('401s when the issuer is not pinned (jose would otherwise skip the iss check)', async () => {
+    enableSso(true);
+    config.auth.issuer = undefined; // operator forgot AUTH_ISSUER
+    _resetJwksCache();
+    const token = await signToken({ sub: 'u', scope: 'planning:read' });
+    expect((await api(srv.url, '/api/tasks', bearer(token))).status).toBe(401);
+  });
+
   it('401s a tampered signature', async () => {
     enableSso(true);
     const token = await signToken({ sub: 'u', scope: 'planning:read' });

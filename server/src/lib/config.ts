@@ -86,3 +86,11 @@ if (config.auth.mode === 'test' && process.env.NODE_ENV === 'production') {
     'AUTH_MODE=test is forbidden in production — set AUTH_MODE=standalone or sso',
   );
 }
+
+// Fail closed: SSO mode must pin both the JWKS source and the issuer. `jose` only
+// checks `iss` when an issuer value is passed, so a missing AUTH_ISSUER would
+// silently disable issuer pinning and accept any token signed by a key in the
+// JWKS — cross-service token confusion. Refuse to boot without both.
+if (config.auth.mode === 'sso' && (!config.auth.jwksUrl || !config.auth.issuer)) {
+  throw new Error('AUTH_MODE=sso requires AUTH_JWKS_URL and AUTH_ISSUER');
+}

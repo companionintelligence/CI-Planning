@@ -69,6 +69,10 @@ function mapClaims(payload: JWTPayload): VerifiedClaims {
 }
 
 export async function verifyBearer(token: string): Promise<VerifiedClaims> {
+  // Defense in depth (the boot assertion in config.ts is the primary guard): never
+  // call jwtVerify without an issuer to pin — `jose` skips the `iss` check entirely
+  // when `issuer` is undefined, which would silently accept tokens for any service.
+  if (!config.auth.issuer) throw httpError(401, 'sso issuer not configured');
   // Pin issuer + audience so a rotated-but-valid key for the wrong service is still
   // rejected; restrict algorithms to the asymmetric set (never none / HS*).
   const { payload } = await jwtVerify(token, jwks(), {
