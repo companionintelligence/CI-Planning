@@ -26,7 +26,6 @@ interface TemplateOpts {
   rule?: string;
   dtstart?: string;
   taskTime?: string | null;
-  isHabit?: boolean;
   subtype?: string;
   status?: string;
   estimatedMinutes?: number | null;
@@ -39,9 +38,9 @@ function insertTemplate(o: TemplateOpts = {}): string {
     sqlite
       .prepare(
         `INSERT INTO tasks
-           (id, title, status, owner_id, priority, estimated_minutes, task_time, is_habit, subtype,
+           (id, title, status, owner_id, priority, estimated_minutes, task_time, subtype,
             recurrence_rule, recurrence_dtstart)
-         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
       )
       .get(
         'Recurring thing',
@@ -50,9 +49,7 @@ function insertTemplate(o: TemplateOpts = {}): string {
         o.priority ?? 3,
         o.estimatedMinutes ?? null,
         o.taskTime ?? null,
-        o.isHabit ? 1 : 0,
-        // Mirror the API's canonical state: a habit template carries subtype='habit'.
-        o.subtype ?? (o.isHabit ? 'habit' : 'standard'),
+        o.subtype ?? 'standard',
         o.rule ?? 'FREQ=DAILY',
         o.dtstart ?? '2026-06-01T12:00:00.000Z'
       ) as { id: string }
@@ -71,7 +68,6 @@ interface InstanceRow {
   task_time: string | null;
   due_at: string | null;
   source_kind: string;
-  is_habit: number;
   subtype: string;
 }
 
@@ -161,7 +157,7 @@ describe('generateRecurrences — templates skip the today-set', () => {
 
 describe('generateRecurrences — missed habits', () => {
   it('flags past, still-open habit instances as missed; leaves today/future open', () => {
-    const tpl = insertTemplate({ rule: 'FREQ=DAILY', isHabit: true });
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'habit' });
     gen({ today: '2026-06-08', horizonDays: 1 }); // creates 06-08, 06-09 (both open)
 
     const r = gen({ today: '2026-06-10', horizonDays: 1 }); // creates 06-10, 06-11; flags the past two
@@ -173,7 +169,7 @@ describe('generateRecurrences — missed habits', () => {
   });
 
   it('does not flag missed for a non-habit recurring template', () => {
-    const tpl = insertTemplate({ rule: 'FREQ=DAILY', isHabit: false });
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
     gen({ today: '2026-06-08', horizonDays: 1 });
     const r = gen({ today: '2026-06-10', horizonDays: 1 });
 
@@ -182,7 +178,7 @@ describe('generateRecurrences — missed habits', () => {
   });
 
   it('a completed past habit instance is not re-flagged missed', () => {
-    const tpl = insertTemplate({ rule: 'FREQ=DAILY', isHabit: true });
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'habit' });
     gen({ today: '2026-06-08', horizonDays: 1 }); // 06-08, 06-09
     sqlite.prepare(`UPDATE tasks SET status='done' WHERE id = ?`).run(instanceOn(tpl, '2026-06-08')!.id);
 
@@ -220,21 +216,17 @@ describe('generateRecurrences — instance day-gating fields', () => {
 });
 
 describe('generateRecurrences — subtype propagation', () => {
-  // Regression: the generator copied is_habit but not the canonical subtype, so every
-  // instance fell back to the column default 'standard' — a habit template produced
-  // is_habit=1 / subtype='standard' instances, which then streamed to clients over SSE.
-  it("a habit template's instances inherit subtype='habit' (not the 'standard' default)", () => {
-    const tpl = insertTemplate({ rule: 'FREQ=DAILY', isHabit: true });
+  it("a habit template's instances inherit subtype='habit'", () => {
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY', subtype: 'habit' });
     gen({ today: '2026-06-10', horizonDays: 2 });
 
     const all = instances(tpl);
     expect(all.length).toBe(3);
     expect(all.every((i) => i.subtype === 'habit')).toBe(true);
-    expect(all.every((i) => i.is_habit === 1)).toBe(true); // booleans stay coherent with subtype
   });
 
   it("a standard template's instances are subtype='standard'", () => {
-    const tpl = insertTemplate({ rule: 'FREQ=DAILY', isHabit: false });
+    const tpl = insertTemplate({ rule: 'FREQ=DAILY' });
     gen({ today: '2026-06-10', horizonDays: 1 });
 
     expect(instances(tpl).every((i) => i.subtype === 'standard')).toBe(true);
