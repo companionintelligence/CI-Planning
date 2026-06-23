@@ -26,16 +26,16 @@ graph TB
     subgraph Browser["Browser (SolidJS PWA)"]
         UI[Eight Views<br/>Today · Calendar · Inbox<br/>Tasks · Routines · Tags · Jobs · Settings]
         Store[Reactive Stores<br/>createResource / createSignal]
-        SW[Service Worker<br/>installable PWA]
-        BN[Browser Notifications<br/>pattern reminder offsets]
+        SW[Service Worker<br/>Web Push + installable PWA]
+        BN[Reminders<br/>in-app toast + Web Push]
     end
 
     subgraph Server["Koa Server — port 3848"]
-        API[REST API<br/>16 route modules]
+        API[REST API<br/>17 route modules]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan.ts]
-        Cron[Croner Jobs<br/>ingest · groom · schedule · patterns]
-        Migrate[Migration runner<br/>0001 → 0039 on boot]
+        Cron[Croner Jobs<br/>ingest · groom · schedule · fire_reminders]
+        Migrate[Migration runner<br/>0001 → 0045 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -68,8 +68,9 @@ graph TB
     Ollama --> Small
     Ollama --> Medium
     Ollama --> Embed
-    SSE -->|task / block / job events| Store
+    SSE -->|task / block / job / reminder events| Store
     Store --> BN
+    API -->|Web Push| SW
 ```
 
 ### How the server finds and connects to the database
@@ -90,7 +91,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0039 ordered list
+                                    // migrations from the 0001–0045 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -101,7 +102,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0041_drop_task_tags`) produce the following tables:
+Migrations (current head: `0045_reminder_source`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -113,18 +114,20 @@ Migrations (current head: `0041_drop_task_tags`) produce the following tables:
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` |
 | `possible_tasks` | Inbox queue — AI-proposed items pending promote / dismiss |
 | `tags` | Cross-cutting labels; `kind`: `pattern` (Home / Work / Community) or `intention` |
-| `tag_directions` | Many-to-many: intention tags grouped under pattern tags |
+| `tag_patterns` | Many-to-many: intention tags grouped under pattern tags (renamed from `tag_directions` in 0043) |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3) |
 | `possible_task_tags` | Tags proposed alongside an inbox item |
 | `patterns` | Routines — typed, reusable task collections with optional recurrence |
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
-| `pattern_blocks` | Direction-scoped scheduling windows (`workday` / `weekend` time ranges) |
-| `pattern_prefs` | Per-owner × per-pattern config: `auto_fill`, `reminder_offsets`, `icon_shape`, `color_token` |
+| `pattern_blocks` | Pattern-tag-scoped scheduling windows (`workday` / `weekend` time ranges) |
+| `pattern_prefs` | Per-owner × per-pattern config: `auto_fill`, `reminder_offsets`, `icon_shape`, `color_token`, `default_minutes` |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule) |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
 | `job_runs` | Execution log per job run (status, items created/updated, log text) |
+| `reminders` | Scheduled reminders (`fire_at`, task XOR block target, `source` manual/auto) fired by the 1-min dispatcher (Phase H, 0044/0045) |
+| `push_subscriptions` | Web Push endpoints per owner (VAPID), for backgrounded delivery (Phase H, 0044) |
 
 ## See it in action
 
@@ -187,8 +190,10 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   runnable from the Jobs view
 - **AI day briefing** — Ollama-authored when available, deterministic template
   otherwise; the UI labels it honestly ("AI Briefing" vs. "Day Overview")
-- **Browser notifications** — configurable reminder offsets per pattern tag fire via
-  the Web Notifications API; no push server required
+- **Reminders & Web Push** — per-pattern reminder offsets generate reminders that a
+  1-minute dispatcher fires **exactly once**: in-app via SSE (always) and, when VAPID
+  keys are set, via **Web Push** to subscribed devices (service worker + VAPID). Opt in
+  from Settings; snooze reschedules; completed / cancelled tasks never fire
 - **Live updates** — Server-Sent Events push task / block / job changes to every open
   client, so the UI stays in sync without polling
 - **Installable PWA** — manifest + standalone display; usable from a phone over your tailnet
@@ -222,9 +227,10 @@ it to back up, delete it to start over.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0039): tasks, subtasks, time blocks, tags,
-  entity_tags, tag_directions, patterns, pattern_blocks, pattern_prefs, flight_plan,
-  possible_tasks, scheduling_prefs, time_entries, block_templates, jobs
+- SQLite schema (migrations 0001–0045): tasks, subtasks, time blocks, tags,
+  entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
+  possible_tasks, scheduling_prefs, time_entries, block_templates, jobs, reminders,
+  push_subscriptions
 - All eight SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler (`/api/schedule/run`) honoring work hours, pattern
@@ -232,9 +238,11 @@ it to back up, delete it to start over.
 - Flight-plan staging area (two-step Auto)
 - Pattern blocks — direction-scoped scheduling windows with per-pattern shape, color,
   fill toggle, and reminder offsets
-- Browser notifications via Web Notifications API (no push server)
+- Notifications: a `reminders` store + 1-minute `fire_reminders` dispatcher (exactly-once),
+  delivered in-app via SSE and via Web Push (VAPID) to subscribed devices; reminders are
+  auto-derived from per-pattern reminder offsets, with a Settings opt-in toggle and snooze
 - Croner jobs: Gmail ingest, Calendar ingest, possible-task promotion, nightly
-  grooming/dedupe, place-patterns, and auto-schedule
+  grooming/dedupe, place-patterns, auto-schedule, and fire_reminders
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: pattern (direction) / intention hierarchy with many-to-many grouping
@@ -244,7 +252,9 @@ it to back up, delete it to start over.
 - Google `live` mode is scaffolded but not yet connected to real MCP OAuth sessions
   (currently fixture-backed)
 - No auth layer yet — the expected deployment model is a private network / Tailscale
-- Later phases (two-way calendar sync, auth, backups, Web Push, multi-device sync) in
+- Web Push delivery needs VAPID keys set in the env (see below); without them push is
+  dormant but in-app SSE reminders still fire
+- Later phases (two-way calendar sync, auth, backups, multi-device sync) in
   [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Run with Docker (CI Hub)
@@ -275,6 +285,8 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
 | `GOOGLE_MODE` | `fixture` | `fixture` (committed sample data) or `live` (currently placeholder path; falls back to fixtures) |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset) | Web Push keys — generate once with `npx web-push generate-vapid-keys`. Unset ⇒ push disabled (in-app reminders still fire). Never commit them. |
+| `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push |
 
 **Persistence**: everything lives in the single SQLite file at `DB_PATH`. Mount a
 volume at `/data` (as above) and your tasks survive container recreation.
@@ -331,11 +343,14 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET/POST/PATCH/DELETE | `/api/pattern-blocks` | Direction-scoped scheduling windows |
 | GET | `/api/pattern-prefs` | Per-pattern preferences (fill, reminders, shape, color) |
 | PUT | `/api/pattern-prefs/:patternTagId` | Update a single pattern's preferences |
+| GET | `/api/push/vapid-key` | Web Push public key (empty when VAPID unconfigured) |
+| POST/DELETE | `/api/push/subscribe` | Register / remove a browser push subscription |
+| GET/POST/DELETE | `/api/reminders` · POST `/api/reminders/:id/snooze` | Reminders CRUD + snooze |
 | GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs |
 | GET/PATCH | `/api/prefs` | Scheduling preferences |
 | GET/POST | `/api/memory` | Companion Memory sync state |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
-| GET | `/api/events` | SSE stream (task / block / job / possible events) |
+| GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
 
 ## Tests
 
