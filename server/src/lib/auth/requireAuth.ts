@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { runWithOwner, SYSTEM_OWNER } from '../context.js';
 import { verifyApiKey } from './apiKey.js';
 import { verifyBearer } from './jwks.js';
+import { checkAuthRateLimit } from './rateLimit.js';
 import { hasScope } from './scopes.js';
 import type { VerifiedClaims } from './types.js';
 
@@ -51,6 +52,10 @@ export function requireAuth(): Koa.Middleware {
     if (config.auth.mode === 'test') {
       return runWithOwner(SYSTEM_OWNER, () => next());
     }
+
+    // Rate-limit BEFORE any signature/hash work — the limiter must blunt (not
+    // amplify) a credential-grinding flood. Writes 429 + Retry-After on trip.
+    if (!checkAuthRateLimit(ctx)) return;
 
     let claims: VerifiedClaims;
     try {
