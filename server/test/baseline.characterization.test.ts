@@ -82,7 +82,7 @@ function seedApiFixture(): void {
   const post = insert('tasks', { title: 'Post office', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 30, due_at: at('17:00') });
   insert('tasks', { title: 'Spec subtask', owner_id: OWNER, status: 'open', priority: 3, parent_id: spec });
   insert('tasks', { title: 'Daily standup', owner_id: OWNER, status: 'open', priority: 3, recurrence_rule: 'FREQ=DAILY', recurrence_dtstart: at('09:30') });
-  const meditate = insert('tasks', { title: 'Meditate', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 10, is_habit: 1, subtype: 'habit' });
+  const meditate = insert('tasks', { title: 'Meditate', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 10, subtype: 'habit' });
   insert('tasks', { title: 'Old task', owner_id: OWNER, status: 'done', priority: 4, completed_at: at('08:00') });
 
   insertNoId('entity_tags', { entity_kind: 'task', entity_id: spec, tag_id: work, level: 1 });

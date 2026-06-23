@@ -74,8 +74,8 @@ function insertScheduledTask(o: { scheduledFor?: string; taskTime?: string; dueA
 }
 function insertTemplate(rule: string, taskTime: string | null, dtstart: string): string {
   return (sqlite.prepare(
-    `INSERT INTO tasks (id, title, owner_id, status, task_time, is_habit, subtype, recurrence_rule, recurrence_dtstart)
-     VALUES (?, 'Recurring habit', ?, 'open', ?, 1, 'habit', ?, ?) RETURNING id`,
+    `INSERT INTO tasks (id, title, owner_id, status, task_time, subtype, recurrence_rule, recurrence_dtstart)
+     VALUES (?, 'Recurring habit', ?, 'open', ?, 'habit', ?, ?) RETURNING id`,
   ).get(newId(), SYSTEM_OWNER, taskTime, rule, dtstart) as { id: string }).id;
 }
 const FAR_FUTURE_DUE = '2999-01-01T12:00:00.000Z';

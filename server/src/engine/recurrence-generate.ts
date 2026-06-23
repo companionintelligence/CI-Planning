@@ -56,7 +56,6 @@ interface TemplateRow {
   priority: number | null;
   status: string;
   owner_id: string;
-  is_habit: number;
   subtype: string | null;
   recurrence_rule: string;
   recurrence_dtstart: string | null;
@@ -119,7 +118,7 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
 
   const templates = sqlite
     .prepare(
-      `SELECT id, title, task_time, estimated_minutes, priority, status, owner_id, is_habit, subtype,
+      `SELECT id, title, task_time, estimated_minutes, priority, status, owner_id, subtype,
               recurrence_rule, recurrence_dtstart, recurrence_exdates
          FROM tasks
         WHERE recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL
@@ -133,9 +132,9 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
   const ins = sqlite.prepare(
     `INSERT OR IGNORE INTO tasks
        (id, title, scheduled_for, defer_until, task_time, due_at, estimated_minutes, priority,
-        status, owner_id, recurrence_parent_id, occurrence_date, is_habit, subtype, source_kind)
+        status, owner_id, recurrence_parent_id, occurrence_date, subtype, source_kind)
      VALUES (uuid7(), @title, @sched, @defer, @time, @due, @est, @prio,
-             'open', @owner, @parent, @day, @habit, @subtype, 'recurrence')
+             'open', @owner, @parent, @day, @subtype, 'recurrence')
      RETURNING id`
   );
 
@@ -176,11 +175,6 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
         owner: t.owner_id,
         parent: t.id,
         day,
-        habit: t.is_habit,
-        // Propagate the template's canonical subtype to each instance (CON-2c). Without
-        // this every generated instance fell back to the column default 'standard', so a
-        // habit template produced is_habit=1 / subtype='standard' instances — incoherent,
-        // and streamed to clients over SSE. Backfill 0042 corrects rows generated before this.
         subtype: t.subtype ?? 'standard',
       }) as { id: string } | undefined;
       // INSERT OR IGNORE → no row when the slot already exists, so this runs ONCE per

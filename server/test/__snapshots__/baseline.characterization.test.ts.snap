@@ -846,8 +846,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "recurrence_dtstart",
       "recurrence_exdates",
       "occurrence_date",
-      "is_habit",
-      "is_fast_task",
       "defer_count",
       "subtype",
     ],

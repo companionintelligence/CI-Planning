@@ -122,7 +122,7 @@ export function tasksRouter() {
         .returning();
       if (body.tags?.length) await attachTags(template.id, body.tags);
       // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
-      if (sw?.isHabit) ensureHabitPattern(template.id, owner, template.title);
+      if (sw?.subtype === 'habit') ensureHabitPattern(template.id, owner, template.title);
       const generated = generateRecurrences();
       const out = { ...taskToApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
@@ -251,7 +251,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const [task] = await db
       .update(tasks)
-      .set({ isHabit: true, isFastTask: false, subtype: 'habit' })
+      .set({ subtype: 'habit' })
       .where(eq(tasks.id, id))
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
@@ -296,9 +296,9 @@ export function tasksRouter() {
       };
       const st = s.subtype ?? 'standard';
       const newId = (sqlite.prepare(
-        `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, is_habit, is_fast_task, parent_id, owner_id, status, source_kind)
-         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`
-      ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, st === 'habit' ? 1 : 0, st === 'quick' ? 1 : 0, parentId, owner, s.source_kind ?? 'manual') as { id: string }).id;
+        `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, parent_id, owner_id, status, source_kind)
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`
+      ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, parentId, owner, s.source_kind ?? 'manual') as { id: string }).id;
       // Carry tags (entity_tags, all levels); Routine membership only when the pref is on.
       sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
       if (keepPattern) {
@@ -387,14 +387,8 @@ export function tasksRouter() {
     if (body.status !== undefined)            update.status = body.status;
     if (body.completed_at !== undefined)      update.completedAt = body.completed_at;
     if (body.parent_id !== undefined)         update.parentId = body.parent_id;
-    // CON-2c: keep subtype ⇄ is_habit/is_fast_task in sync (engine still reads is_habit).
     const sw = subtypeWrite(body);
-    if (sw) {
-      // subtype is canonical; write both aliases from it so the trio never drifts.
-      update.subtype = sw.subtype;
-      update.isHabit = sw.isHabit;
-      update.isFastTask = sw.isFastTask;
-    }
+    if (sw) update.subtype = sw.subtype;
     if (body.recurrence_dtstart !== undefined) update.recurrenceDtstart = body.recurrence_dtstart;
     if (body.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
 
@@ -508,20 +502,15 @@ export function tasksRouter() {
 type Subtype = 'standard' | 'habit' | 'quick';
 
 /**
- * CON-2c: `subtype` is the canonical Task subtype; `is_habit`/`is_fast_task` are
- * kept as in-sync runtime aliases (the recurrence/streak engine reads `is_habit`).
- * Both code paths derive the canonical `subtype` and then BOTH booleans from it, so
- * the trio can never drift. Previously the legacy `is_habit` path left `is_fast_task`
- * untouched, so toggling a quick task to a habit (via the legacy field) left a stale
- * `is_fast_task=1` — a habit that was also a fast task. Returns the drizzle columns
- * to write, or null when neither field was supplied.
+ * Resolve the canonical `subtype` from a PATCH/POST body. Accepts the legacy
+ * `is_habit` field for backward compat (clients can still send it; the column
+ * was dropped in 0048). Returns null when neither field was supplied.
  */
-function subtypeWrite(body: { subtype?: Subtype; is_habit?: boolean }):
-  { subtype: Subtype; isHabit: boolean; isFastTask: boolean } | null {
+function subtypeWrite(body: { subtype?: Subtype; is_habit?: boolean }): { subtype: Subtype } | null {
   const subtype: Subtype | undefined =
     body.subtype !== undefined ? body.subtype : body.is_habit !== undefined ? (body.is_habit ? 'habit' : 'standard') : undefined;
   if (subtype === undefined) return null;
-  return { subtype, isHabit: subtype === 'habit', isFastTask: subtype === 'quick' };
+  return { subtype };
 }
 
 /** Replace a task's blockers; on a cycle, respond 409 and return false. */

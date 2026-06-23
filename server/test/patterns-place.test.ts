@@ -106,7 +106,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
   it('redirects a recurrence template to today’s instance when one exists', async () => {
     // a habit task template + its materialized instance for today
     const template = (sqlite
-      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, recurrence_rule, recurrence_dtstart, is_habit) VALUES (uuid7(), 'Drink water', ?, 'recurring', 15, 'FREQ=DAILY', '2026-06-22T12:00:00Z', 1) RETURNING id`)
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, subtype, recurrence_rule, recurrence_dtstart) VALUES (uuid7(), 'Drink water', ?, 'recurring', 15, 'habit', 'FREQ=DAILY', '2026-06-22T12:00:00Z') RETURNING id`)
       .get(OWNER) as { id: string }).id;
     const instance = (sqlite
       .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, recurrence_parent_id, occurrence_date) VALUES (uuid7(), 'Drink water', ?, 'open', 15, ?, ?) RETURNING id`)

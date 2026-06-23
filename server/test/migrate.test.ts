@@ -3,7 +3,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
 import { runMigrations, rebuildTable } from '../src/db/migrate.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
-import * as m0042 from '../src/db/migrations/0042_fix_recurrence_subtype.js';
+
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 
 // Isolated in-memory DBs — these tests never touch the shared file DB.
@@ -112,33 +112,23 @@ describe('migration runner', () => {
   });
 });
 
-describe('0042 corrective subtype backfill', () => {
-  it("repairs habit rows stuck at subtype='standard', is idempotent, and leaves coherent rows alone", () => {
+describe('0048 drop habit boolean columns', () => {
+  // 0042 repaired is_habit/is_fast_task ↔ subtype coherence; 0048 drops the columns
+  // entirely. The incoherent state (is_habit=1, subtype='standard') can no longer be
+  // created — the schema enforces subtype as the sole source of truth.
+  it('removes is_habit and is_fast_task columns from tasks', () => {
     const db = fresh();
     runMigrations(db);
 
-    const ins = db.prepare(
-      `INSERT INTO tasks (id, title, status, owner_id, is_habit, is_fast_task, subtype)
-       VALUES (?, ?, 'open', ?, ?, ?, ?)`,
-    );
-    // The recurrence bug's footprint: is_habit=1 but subtype defaulted to 'standard'.
-    ins.run('00000000-0000-7000-8000-0000000000a1', 'habit inst', SYSTEM_OWNER_ID, 1, 0, 'standard');
-    // A coherent habit that ALSO carries a stale is_fast_task=1 (the bug-2 shape). The
-    // backfill must NOT touch its subtype='habit' — it must not fight the alias-coherence fix.
-    ins.run('00000000-0000-7000-8000-0000000000a2', 'habit ok', SYSTEM_OWNER_ID, 1, 1, 'habit');
-    // A plain non-habit task — untouched.
-    ins.run('00000000-0000-7000-8000-0000000000a3', 'standard', SYSTEM_OWNER_ID, 0, 0, 'standard');
+    const taskCols = cols(db, 'tasks');
+    expect(taskCols).not.toContain('is_habit');
+    expect(taskCols).not.toContain('is_fast_task');
+    expect(taskCols).toContain('subtype');
 
-    const sub = (id: string) =>
-      (db.prepare('SELECT subtype FROM tasks WHERE id = ?').get(id) as { subtype: string }).subtype;
-
-    m0042.up(db);
-    expect(sub('00000000-0000-7000-8000-0000000000a1')).toBe('habit'); // repaired
-    expect(sub('00000000-0000-7000-8000-0000000000a2')).toBe('habit'); // left as-is
-    expect(sub('00000000-0000-7000-8000-0000000000a3')).toBe('standard'); // untouched
-
-    m0042.up(db); // idempotent
-    expect(sub('00000000-0000-7000-8000-0000000000a1')).toBe('habit');
+    // Tasks can still be inserted and retrieved with just subtype.
+    db.prepare(`INSERT INTO tasks (id, title, status, owner_id, subtype) VALUES (?, 'Habit', 'open', ?, 'habit')`).run('00000000-0000-7000-8000-0000000000a1', SYSTEM_OWNER_ID);
+    const row = db.prepare('SELECT subtype FROM tasks WHERE id = ?').get('00000000-0000-7000-8000-0000000000a1') as { subtype: string };
+    expect(row.subtype).toBe('habit');
     db.close();
   });
 });
