@@ -23,6 +23,7 @@ import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { taskTagNames } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
+import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
@@ -84,6 +85,11 @@ function selectedStaged(owner: string): StagedTask[] {
 /** How many tasks are staged in the flight-plan (selected or not). */
 function flightPlanCount(owner: string): number {
   return (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(owner) as { n: number }).n;
+}
+
+/** Record the most recent placement run for the owner, so Undo can target it (D2). */
+function recordRun(owner: string, runId: string, blocksCreated: number): void {
+  if (blocksCreated > 0) sqlite.prepare(`UPDATE owners SET last_auto_run_id = ? WHERE id = ?`).run(runId, owner);
 }
 
 function prefsOf(owner: string): PrefsRow | undefined {
@@ -152,8 +158,8 @@ function orderForPlan(cands: StagedTask[], weights?: Map<string, number>): Stage
 
 const insBlock = () =>
   sqlite.prepare(
-    `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-     VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?)`
+    `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, auto_run_id)
+     VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?)`
   );
 
 /** Clear our OWN prior agent placements for the local day (pattern blocks survive). */
@@ -180,7 +186,7 @@ function placeIntoWindow(
   windowStartMs: number,
   windowEndMs: number,
   prefs: PrefsRow | undefined,
-  opts: { parentBlockId?: string | null; includePlans?: boolean }
+  opts: { parentBlockId?: string | null; includePlans?: boolean; runId?: string | null }
 ): { blocksCreated: number; placedTaskIds: Set<string> } {
   const placedTaskIds = new Set<string>();
   if (windowEndMs <= windowStartMs || tasks.length === 0) return { blocksCreated: 0, placedTaskIds };
@@ -203,7 +209,7 @@ function placeIntoWindow(
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null);
+      ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null);
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedAny = true;
@@ -252,6 +258,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
   const staged = selectedStaged(owner);
+  const runId = newId(); // stamps every block this run creates, so Undo can target it (D2)
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
@@ -265,7 +272,8 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     const weights = planTagWeights(opts.blockId, block.tag);
     const planTags = [...weights.keys()];
     const cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
-    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId });
+    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
+    recordRun(owner, runId, r.blocksCreated);
     broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     return { step: 'place', blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size, placedInPlans: r.placedTaskIds.size, placedInWorkday: 0 };
   }
@@ -283,7 +291,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     const planTags = [...weights.keys()];
     const cands = staged.filter((t) => !placedIds.has(t.task_id) && planTags.some((name) => t.tags.includes(name)));
     if (cands.length === 0) continue;
-    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id });
+    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -320,13 +328,14 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
         if (placedIds.has(t.task_id)) break;
         const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
         const winEnd = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
-        const r = placeIntoWindow([t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true });
+        const r = placeIntoWindow([t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
       }
     }
   }
 
+  recordRun(owner, runId, blocksCreated);
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
   broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
@@ -371,10 +380,42 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
   const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
   // orderForPlan with no weights sorts priority-first (P1 first). includePlans flows
   // around Plans and the tag-matched blocks tap 2 already created.
-  const r = placeIntoWindow(orderForPlan(remaining), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true });
+  const runId = newId();
+  const r = placeIntoWindow(orderForPlan(remaining), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
+  recordRun(owner, runId, r.blocksCreated);
   const placed = r.placedTaskIds.size;
   broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed });
   return { step: 'place', blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
+}
+
+/**
+ * Undo the LAST placement run (D2 — single-step, no stack). Deletes only the blocks
+ * stamped with the owner's most recent run_id (never manual or meeting blocks, which
+ * carry no auto_run_id), re-stages those tasks onto the flight-plan (selected), and
+ * clears the pointer so a second undo is a no-op. Returns the counts.
+ */
+export function undoLastAuto(owner: string = currentOwnerId()): { removed: number; restaged: number } {
+  const runId = (sqlite.prepare(`SELECT last_auto_run_id FROM owners WHERE id = ?`).get(owner) as { last_auto_run_id: string | null } | undefined)?.last_auto_run_id;
+  if (!runId) return { removed: 0, restaged: 0 };
+
+  // The tasks this run placed (re-stage them so the user can re-place/adjust).
+  const taskIds = (sqlite.prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE auto_run_id = ? AND task_id IS NOT NULL`).all(runId) as { task_id: string }[]).map((r) => r.task_id);
+
+  const removed = sqlite.prepare(`DELETE FROM time_blocks WHERE auto_run_id = ?`).run(runId).changes;
+
+  let pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number }).m + 1;
+  const insFp = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
+  const selFp = sqlite.prepare(`UPDATE flight_plan SET selected = 1 WHERE owner_id = ? AND task_id = ?`);
+  let restaged = 0;
+  for (const taskId of taskIds) {
+    if (insFp.run(owner, taskId, pos).changes > 0) pos++;
+    else selFp.run(owner, taskId); // already staged → just re-select it
+    restaged++;
+  }
+
+  sqlite.prepare(`UPDATE owners SET last_auto_run_id = NULL WHERE id = ?`).run(owner); // single-step undo
+  broadcast(owner, 'auto:undone', { removed, restaged });
+  return { removed, restaged };
 }
 
 /** Clear prior agent placements overlapping a specific window (the single-Plan path). */
