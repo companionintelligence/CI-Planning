@@ -10,6 +10,9 @@ import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
+import { snapshot, pruneOldSnapshots, backupDir } from '../lib/backup.js';
+import { config } from '../lib/config.js';
+import { join } from 'node:path';
 
 export interface JobOutcome {
   itemsCreated: number;
@@ -80,6 +83,13 @@ async function execute(kind: string): Promise<JobOutcome> {
       // delivery is in-app SSE (per row owner) + Web Push, push-failure → in-app.
       const fired = await fireDueReminders();
       return { itemsCreated: 0, itemsUpdated: fired, log: `Fired ${fired} reminder(s)` };
+    }
+    case 'snapshot_db': {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const dest = join(backupDir, `companion-${ts}.db`);
+      await snapshot(dest);
+      pruneOldSnapshots(backupDir, config.snapshotRetain);
+      return { itemsCreated: 1, itemsUpdated: 0, log: `snapshot → ${dest}` };
     }
     default:
       return { itemsCreated: 0, itemsUpdated: 0, log: `Unknown job kind '${kind}'` };
