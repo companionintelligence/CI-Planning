@@ -4,6 +4,7 @@ import { newId } from '../lib/ids.js';
 import { currentOwnerId } from '../lib/context.js';
 import { config } from '../lib/config.js';
 import { broadcast } from './sse.js';
+import { writeAudit } from '../lib/audit.js';
 import { zonedWallTimeToUTC, serverTimezone } from '../lib/tz.js';
 
 /** The owner's IANA timezone (falls back to the server zone). */
@@ -44,6 +45,7 @@ export function notificationsRouter() {
            auth = excluded.auth, user_agent = excluded.user_agent`,
       )
       .run(newId(), currentOwnerId(), sub.endpoint, sub.keys.p256dh, sub.keys.auth, ctx.get('user-agent') || null);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'subscribe', entity: 'push:subscribe' });
     ctx.status = 201; ctx.body = { ok: true };
   });
 
@@ -52,6 +54,7 @@ export function notificationsRouter() {
     const body = (ctx.request.body ?? {}) as { endpoint?: string };
     if (!body.endpoint) { ctx.status = 400; ctx.body = { error: 'endpoint is required' }; return; }
     sqlite.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ? AND owner_id = ?`).run(body.endpoint, currentOwnerId());
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'unsubscribe', entity: 'push:unsubscribe' });
     ctx.body = { ok: true };
   });
 
@@ -90,6 +93,7 @@ export function notificationsRouter() {
       )
       .get(newId(), currentOwnerId(), body.taskId ?? null, body.blockId ?? null, fireAt) as { id: string };
     broadcast(currentOwnerId(), 'reminder:created', { id: reminder.id });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `reminder:${reminder.id}` });
     ctx.status = 201; ctx.body = { reminder };
   });
 
@@ -100,6 +104,7 @@ export function notificationsRouter() {
       .get(ctx.params.id, currentOwnerId());
     if (!row) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'reminder:cancelled', { id: ctx.params.id });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `reminder:${ctx.params.id}` });
     ctx.body = { ok: true };
   });
 
@@ -119,6 +124,7 @@ export function notificationsRouter() {
       .get(fireAt, ctx.params.id, currentOwnerId());
     if (!reminder) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'reminder:snoozed', { id: ctx.params.id, fireAt });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'snooze', entity: `reminder:${ctx.params.id}` });
     ctx.body = { reminder };
   });
 

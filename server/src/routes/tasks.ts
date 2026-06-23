@@ -19,6 +19,7 @@ import { ensureHabitPattern } from '../services/patterns.js';
 import { setEntityTagIds, taskTagNames, taskTagNamesByIds, normalizeTagName } from '../services/tags.js';
 import { utcDayBounds } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
+import { writeAudit } from '../lib/audit.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -124,6 +125,7 @@ export function tasksRouter() {
       const generated = generateRecurrences();
       const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
+      writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${template.id}` });
       broadcast(currentOwnerId(), 'recurrence:generated', generated);
       ctx.status = 201;
       ctx.body = { task: out, generated };
@@ -159,6 +161,7 @@ export function tasksRouter() {
       blocked: blockedTaskIds().has(task.id),
     };
     broadcast(currentOwnerId(), 'task:created', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
     ctx.status = 201;
     ctx.body = { task: out };
   });
@@ -200,6 +203,7 @@ export function tasksRouter() {
 
     const out = { ...toApi(task), tags: enriched.tags, depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
     ctx.status = 201;
     ctx.body = { task: out, parsed: enriched, llm };
   });
@@ -226,6 +230,7 @@ export function tasksRouter() {
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
     const out = { ...toApi(task), tags: [] as string[], depends_on: [] as number[], blocked: false };
     broadcast(currentOwnerId(), 'task:updated', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'skip', entity: `task:${id}` });
     ctx.body = { task: out, skipped: res.date };
   });
 
@@ -252,6 +257,7 @@ export function tasksRouter() {
     ensureHabitPattern(id, task.ownerId ?? owner, task.title);
     const out = { ...toApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'promote', entity: `task:${id}` });
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
   });
@@ -308,6 +314,7 @@ export function tasksRouter() {
     const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
     const out = { ...toApi(task), tags: taskTagNames(newId), depends_on: [] as string[], blocked: false };
     broadcast(owner, 'task:created', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'recall', entity: `task:${newId}` });
     ctx.status = 201;
     ctx.body = { task: out };
   });
@@ -327,6 +334,7 @@ export function tasksRouter() {
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
     const out = { ...toApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `task:${id}` });
     broadcast(owner, 'block:updated', { rescheduled: id });
     ctx.body = { task: out, scheduled_for };
   });
@@ -435,6 +443,7 @@ export function tasksRouter() {
       blocked: blockedTaskIds().has(targetId),
     };
     broadcast(currentOwnerId(), 'task:updated', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `task:${targetId}` });
     if (generated) broadcast(currentOwnerId(), 'recurrence:generated', generated);
     ctx.body = { task: out, ...(generated ? { generated } : {}) };
   });
@@ -451,6 +460,7 @@ export function tasksRouter() {
     syncTaskReminders(currentOwnerId(), id); // Phase H (b): a cancelled task drops its auto reminders
     const out = { ...toApi(task), tags: [] as string[] };
     broadcast(currentOwnerId(), 'task:updated', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `task:${id}` });
     ctx.body = { task: out };
   });
 
@@ -464,6 +474,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     if (stopped) broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
     broadcast(owner, 'timer:started', entry);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:start', entity: `task:${taskId}` });
     ctx.status = 201;
     ctx.body = { entry };
   });
@@ -481,6 +492,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     broadcast(owner, 'timer:stopped', res.entry);
     broadcast(owner, 'task:updated', { id: res.taskId, actual_minutes: res.actualMinutes });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:stop', entity: `task:${res.taskId}` });
     ctx.body = { entry: res.entry, actual_minutes: res.actualMinutes };
   });
 
