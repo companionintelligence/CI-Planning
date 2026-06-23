@@ -116,17 +116,21 @@ describe('two-step Auto', () => {
     expect(next.body.flight_plan.every((x: any) => x.selected === false)).toBe(true);
   });
 
-  it('STEP 2: selected staged tasks → placed into the workday; non-staged are never placed', async () => {
+  it('STEP 2 + priority tap: an untagged staged task lands only on the explicit priority tap; non-staged is never placed', async () => {
     const staged = insertTask('Deep work', 60);
     const notStaged = insertTask('Unrelated', 60);
     await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: staged } }); // selected by default
 
+    // Tap 2 is tag-matched only: an untagged task with no Plan/window stays open.
     const r = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
     expect(r.body.result.step).toBe('place');
-    expect(r.body.result.blocksCreated).toBeGreaterThanOrEqual(1);
-    // only the staged task was placed
+    expect(blockTitles()).not.toContain('Deep work');
+
+    // Tap 3 (explicit priority): fills the workday window.
+    const p = await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: '2026-06-22' } });
+    expect(p.body.result.blocksCreated).toBeGreaterThanOrEqual(1);
     expect(blockTitles()).toContain('Deep work');
-    expect(blockTitles()).not.toContain('Unrelated');
+    expect(blockTitles()).not.toContain('Unrelated'); // never staged
     expect(notStaged).toBeTruthy();
   });
 

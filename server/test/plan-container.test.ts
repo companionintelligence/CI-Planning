@@ -63,6 +63,7 @@ describe('Auto places members into a Plan', () => {
     const t = insertTask('Deep work', 60);
     await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: t } });
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: DAY } });
+    await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: DAY } }); // D5: workday fill is the explicit tap
     const placed = sqlite.prepare(`SELECT * FROM time_blocks WHERE title = 'Deep work'`).get() as { parent_block_id: string | null };
     expect(placed.parent_block_id).toBeNull();
   });

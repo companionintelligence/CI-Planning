@@ -279,6 +279,7 @@ describe('direction-aware Auto placement', () => {
     stageTask(t);
 
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
+    await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: WEEKDAY } }); // D5: workday fill is the explicit tap
 
     const wb = placedBlocks().find((b) => b.title === 'Untagged work')!;
     expect(wb).toBeTruthy();
@@ -294,6 +295,7 @@ describe('direction-aware Auto placement', () => {
     stageTask(t);
 
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
+    await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: WEEKDAY } }); // D5: explicit workday fill
 
     const wb = placedBlocks().find((b) => b.title === 'Classic task')!;
     expect(wb).toBeTruthy();
@@ -363,10 +365,11 @@ describe('per-pattern auto_fill gating', () => {
     stageTask(t);
 
     await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: WEEKDAY } });
+    await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: WEEKDAY } }); // D5: explicit workday fill
 
     const wb = placedBlocks().find((b) => b.title === 'Untagged task');
     expect(wb).toBeTruthy();
-    // Lands in the classic workday window (09:00–18:00), via Pass 2b.
+    // Lands in the classic workday window (09:00–18:00), via the priority tap.
     expect(wb!.start_at >= `${WEEKDAY}T09:00:00.000Z`).toBe(true);
     expect(wb!.end_at <= `${WEEKDAY}T18:00:00.000Z`).toBe(true);
   });

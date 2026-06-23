@@ -2,7 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
-import { runAuto } from '../engine/autoplan.js';
+import { runAuto, fillByPriority } from '../engine/autoplan.js';
 import { writeAudit } from '../lib/audit.js';
 
 /**
@@ -106,6 +106,15 @@ export function flightPlanRouter() {
     const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string };
     const result = runAuto({ blockId: body.block_id, date: body.date });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:run' });
+    ctx.body = { result, flight_plan: list(currentOwnerId()) };
+  });
+
+  // Explicit priority top-up (tap 3, D5): fill non-matching workday capacity with the
+  // highest-priority still-unplaced tasks. Never silent — always an explicit tap.
+  router.post('/api/auto/priority', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as { date?: string };
+    const result = fillByPriority(currentOwnerId(), { date: body.date });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:priority' });
     ctx.body = { result, flight_plan: list(currentOwnerId()) };
   });
 
