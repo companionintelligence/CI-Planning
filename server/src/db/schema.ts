@@ -11,6 +11,21 @@ export const owners = sqliteTable('owners', {
   email: text('email'),
 });
 
+// Phase I (0049): standalone API keys. SHA-256 at rest; the raw key is shown once
+// and never stored. Queried via lib/auth/apiKey.ts (raw SQL, for the constant-time
+// hash compare); this table documents the shape + keeps Drizzle's schema complete.
+export const apiKeys = sqliteTable('api_keys', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  prefix: text('prefix').notNull(),
+  keyHash: text('key_hash').notNull(),
+  scopes: text('scopes').notNull().default('[]'),
+  expiresAt: text('expires_at'),
+  lastUsedAt: text('last_used_at'),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  revokedAt: text('revoked_at'),
+});
+
 export const tasks = sqliteTable('tasks', {
   id: text('id').primaryKey().$defaultFn(newId),
   title: text('title').notNull(),

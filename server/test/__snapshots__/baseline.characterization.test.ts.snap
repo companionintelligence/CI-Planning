@@ -561,6 +561,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "id",
       "owner_id",
+      "prefix",
+      "key_hash",
+      "scopes",
+      "expires_at",
+      "last_used_at",
+      "created_at",
+      "revoked_at",
+    ],
+    "table": "api_keys",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
       "actor",
       "action",
       "entity",
