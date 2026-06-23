@@ -26,6 +26,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Typecheck (client)
+        run: pnpm --filter client typecheck
+
       - name: Build
         run: pnpm build
 
