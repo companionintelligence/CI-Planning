@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createMemo } from 'solid-js';
-import { Zap, RotateCcw, X, ChevronDown, ChevronRight, Clock, Undo2, ListOrdered } from 'lucide-solid';
+import { Zap, RotateCcw, X, ChevronDown, ChevronRight, Clock, Undo2, ListOrdered, Repeat2 } from 'lucide-solid';
 import { api, type FlightPlanItem } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, patterns, prefs, refetchPrefs, showToast, selectedDay,
@@ -169,6 +169,7 @@ export function FlightPlan() {
         </button>
         <span class={`priority-dot p${p()} flex-shrink-0`} />
         <span class="flex-1 text-sm text-foreground truncate" classList={{ 'opacity-50': !props.it.selected }}>{props.it.title}</span>
+        <Show when={props.it.is_recurring}><Repeat2 size={11} class="text-muted-foreground flex-shrink-0" /></Show>
         <Show when={props.it.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground flex-shrink-0">{props.it.estimated_minutes}m</span></Show>
         <button onClick={(e) => { e.stopPropagation(); remove(props.it.task_id); }} class="btn-icon opacity-0 group-hover:opacity-100 flex-shrink-0" title="Remove from flight-plan"><X size={13} /></button>
       </li>

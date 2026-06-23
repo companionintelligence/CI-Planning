@@ -67,14 +67,14 @@ describe('no-overlap guarantee', () => {
     const locked = insertObstacle('Locked', 'task', at('09:00'), at('10:00'), 1);
     for (let i = 0; i < 3; i++) stage(insertTask(`Work ${i}`, 60, 'work'));
 
-    placeFlightPlan(OWNER, { date: DAY });
+    placeFlightPlan(OWNER, { date: DAY }); // first run: places blocks, removes tasks from flight plan (item 5)
     const first = agentBlocks();
-    placeFlightPlan(OWNER, { date: DAY }); // re-run
-    const second = agentBlocks();
+    expect(first.length).toBeGreaterThan(0);
+    for (const b of first) expect(overlaps(b, locked), `${b.title} overlaps locked block`).toBe(false);
 
-    expect(second.length).toBe(first.length); // not duplicated (prior auto cleared, re-packed)
-    expect(second.map((b) => b.title).filter((t) => t === 'Work 0').length).toBe(1);
-    for (const b of second) expect(overlaps(b, locked)).toBe(false);
+    placeFlightPlan(OWNER, { date: DAY }); // second run: clearPriorAuto removes first-run blocks; nothing staged → 0 placed
+    const second = agentBlocks();
+    expect(second.length).toBe(0); // tasks de-staged after first run; no duplicates
     expect(plan).toBeTruthy();
   });
 });

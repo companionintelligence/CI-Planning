@@ -74,11 +74,12 @@ async function execute(kind: string): Promise<JobOutcome> {
     case 'review_day': {
       // 01:00 — review the day that just closed. Low-priority misses auto-defer
       // (+1/3/7 backoff); high-priority misses are surfaced for the user.
+      // Open tasks with no future blocks are re-staged into the flight plan.
       const r = reviewAndReschedule();
       return {
-        itemsCreated: 0,
+        itemsCreated: r.restaged,
         itemsUpdated: r.deferred + r.surfaced,
-        log: `Reviewed ${r.missed} missed → ${r.deferred} auto-deferred, ${r.surfaced} surfaced for review`,
+        log: `Reviewed ${r.missed} missed → ${r.deferred} auto-deferred, ${r.surfaced} surfaced; re-staged ${r.restaged}`,
       };
     }
     case 'fire_reminders': {
