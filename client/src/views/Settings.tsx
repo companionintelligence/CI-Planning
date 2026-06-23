@@ -5,6 +5,7 @@ import { api } from '../lib/api.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { DEFAULT_CONCEPT_TAGS, PATTERN_COLORS, colorVar, type ConceptTag } from '../lib/pattern-meta.js';
+import { enablePush, disablePush, pushState } from '../lib/push.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -184,6 +185,28 @@ export function Settings() {
       refetchPatternPrefs();
       showToast('Reminder defaults saved', 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // ── Push notifications — opt-in browser delivery (Phase H). The toggle drives the
+  //    real Notification permission + SW push subscription, not a pref column.
+  const [pushOn, setPushOn] = createSignal(false);
+  const [pushBusy, setPushBusy] = createSignal(false);
+  void pushState().then((s) => setPushOn(s === 'subscribed'));
+  async function togglePush() {
+    if (pushBusy()) return;
+    setPushBusy(true);
+    try {
+      const next = pushOn() ? await disablePush() : await enablePush();
+      setPushOn(next === 'subscribed');
+      if (next === 'subscribed') showToast('Push notifications enabled', 'success');
+      else if (next === 'denied') showToast('Notifications are blocked in your browser settings', 'error');
+      else if (next === 'unsupported') showToast('Push isn’t supported on this device', 'error');
+      else showToast('Push notifications disabled');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setPushBusy(false);
+    }
   }
 
   // Intention Tags scroll (show CT_PAGE_SIZE at a time) ───────────────────────
@@ -488,8 +511,20 @@ export function Settings() {
               <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Reminder Defaults</div>
               <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
-            <p class="text-xs text-muted-foreground mb-3">Shared by Home, Community, and Work. (Notification delivery hooks up later.)</p>
+            <p class="text-xs text-muted-foreground mb-3">Shared by Home, Community, and Work. Reminders fire in-app; enable push below for backgrounded delivery.</p>
             <div class="flex flex-col gap-3">
+              {/* Push notifications — opt-in browser delivery (Phase H). */}
+              <label class="flex items-start gap-2 cursor-pointer select-none">
+                <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
+                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
+                  classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
+                </button>
+                <div>
+                  <div class="text-sm text-foreground leading-tight">Push notifications</div>
+                  <div class="text-[11px] text-muted-foreground">Deliver reminders to this device even when the app is closed.</div>
+                </div>
+              </label>
               {/* Start-time reminder */}
               <label class="flex items-start gap-2 cursor-pointer select-none">
                 <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}

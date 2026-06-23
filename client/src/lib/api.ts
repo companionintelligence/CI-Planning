@@ -226,6 +226,19 @@ export const api = {
     update: (body: Partial<Prefs>) => request<{ prefs: Prefs }>('PATCH', '/prefs', body),
   },
 
+  // ── Notifications + Web Push (Phase H) ───────────────────────────────────────
+  push: {
+    vapidKey: () => request<{ key: string }>('GET', '/push/vapid-key'),
+    subscribe: (subscription: PushSubscriptionJSON) => request<{ ok: boolean }>('POST', '/push/subscribe', { subscription }),
+    unsubscribe: (endpoint: string) => request<{ ok: boolean }>('DELETE', '/push/subscribe', { endpoint }),
+  },
+  reminders: {
+    list: () => request<{ reminders: Reminder[] }>('GET', '/reminders'),
+    create: (body: ReminderInput) => request<{ reminder: Reminder }>('POST', '/reminders', body),
+    remove: (id: string) => request<{ ok: boolean }>('DELETE', `/reminders/${id}`),
+    snooze: (id: string, minutes: number) => request<{ reminder: Reminder }>('POST', `/reminders/${id}/snooze`, { minutes }),
+  },
+
   memory: {
     status: () => request<MemoryStatus>('GET', '/memory/status'),
     sync: () => request<{ ok: boolean; syncedAt?: string }>('POST', '/memory/sync', {}),
@@ -404,6 +417,16 @@ export interface MemoryStatus {
   enabled: boolean; connected: boolean; account: string | null;
   lastSyncedAt: string | null; available: boolean;
   scopes: { completed: boolean; habits: boolean; reflections: boolean };
+}
+
+// ── Reminders (Phase H) ────────────────────────────────────────────────────────
+export interface Reminder {
+  id: string; task_id: string | null; block_id: string | null;
+  fire_at: string; status: string; fired_at?: string | null;
+}
+/** Create input: exactly one target (taskId|blockId) + `fireAt` (UTC ISO) or `date`+`time`. */
+export interface ReminderInput {
+  taskId?: string; blockId?: string; fireAt?: string; date?: string; time?: string;
 }
 
 export interface Job {
