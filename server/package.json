@@ -14,7 +14,8 @@
     "db:migrate": "drizzle-kit migrate",
     "migrate": "tsx src/scripts/migrate.ts",
     "snapshot": "tsx src/scripts/snapshot.ts",
-    "restore": "tsx src/scripts/restore.ts"
+    "restore": "tsx src/scripts/restore.ts",
+    "key:issue": "tsx src/cli/issue-key.ts"
   },
   "dependencies": {
     "@koa/cors": "^5.0.0",

@@ -133,6 +133,25 @@ describe('0048 drop habit boolean columns', () => {
   });
 });
 
+describe('0049 api_keys store', () => {
+  it('creates the api_keys table with a TEXT owner_id and a prefix index', () => {
+    const db = fresh();
+    runMigrations(db);
+
+    const keyCols = cols(db, 'api_keys');
+    expect(keyCols).toEqual(
+      expect.arrayContaining(['id', 'owner_id', 'prefix', 'key_hash', 'scopes', 'expires_at', 'last_used_at', 'created_at', 'revoked_at']),
+    );
+    // owner_id is TEXT (CON-1 UUIDv7 owners), not the INTEGER the I spec predates.
+    const ownerCol = (db.prepare(`PRAGMA table_info(api_keys)`).all() as { name: string; type: string }[]).find((c) => c.name === 'owner_id');
+    expect(ownerCol?.type).toBe('TEXT');
+
+    const indexes = (db.prepare(`PRAGMA index_list(api_keys)`).all() as { name: string }[]).map((i) => i.name);
+    expect(indexes).toContain('ix_api_keys_prefix');
+    db.close();
+  });
+});
+
 describe('rebuildTable helper', () => {
   it('rebuilds a table to a new shape, preserving rows and restoring foreign_keys', () => {
     const db = fresh();
