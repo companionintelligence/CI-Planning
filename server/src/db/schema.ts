@@ -349,5 +349,6 @@ export const reminders = sqliteTable('reminders', {
   fireAt: text('fire_at').notNull(),                  // UTC ISO; tz-correct via lib/tz
   status: text('status').notNull().default('pending'), // pending | fired | snoozed | cancelled
   firedAt: text('fired_at'),
+  source: text('source').notNull().default('manual'), // manual (explicit API) | auto (derived from Reminder Defaults)
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });

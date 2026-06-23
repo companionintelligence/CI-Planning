@@ -2,6 +2,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { sendPush, type PushSub } from '../lib/push.js';
 import { logger } from '../lib/logger.js';
+import { newId } from '../lib/ids.js';
 
 /**
  * Reminder dispatch (Phase H). The 1-minute `fire_reminders` cron calls
@@ -76,4 +77,51 @@ export async function fireDueReminders(nowISO: string = new Date().toISOString()
     }
   }
   return due.length;
+}
+
+/**
+ * Phase H (b) — auto-derive a task's reminders from the owner's Reminder Defaults.
+ * Called whenever a task is created/updated. Idempotent: it replaces only its OWN
+ * (`source='auto'`) rows, never the manual ones.
+ *
+ * Anchor = the task's `due_at`; offsets = the owner's `pattern_prefs.reminder_offsets`.
+ * Settings writes the SAME offsets to every pattern tag (one shared "Reminder Defaults"
+ * config), so we union them rather than resolving the task's specific tags. Already-due
+ * fire times are skipped (no backfill flood when a task with an old due date is saved).
+ * Returns the number of reminders created.
+ */
+export function syncTaskReminders(ownerId: string, taskId: string): number {
+  sqlite.prepare(`DELETE FROM reminders WHERE task_id = ? AND source = 'auto'`).run(taskId);
+
+  const task = sqlite.prepare(`SELECT due_at FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, ownerId) as
+    | { due_at: string | null }
+    | undefined;
+  if (!task?.due_at) return 0;
+  const dueMs = Date.parse(task.due_at);
+  if (!Number.isFinite(dueMs)) return 0;
+
+  const rows = sqlite.prepare(`SELECT reminder_offsets FROM pattern_prefs WHERE owner_id = ?`).all(ownerId) as
+    { reminder_offsets: string }[];
+  const offsets = new Set<number>();
+  for (const r of rows) {
+    try {
+      for (const o of JSON.parse(r.reminder_offsets) as number[]) if (Number.isFinite(o) && o >= 0) offsets.add(o);
+    } catch {
+      /* malformed JSON → skip this row */
+    }
+  }
+  if (offsets.size === 0) return 0;
+
+  const now = Date.now();
+  const ins = sqlite.prepare(
+    `INSERT INTO reminders (id, owner_id, task_id, fire_at, source) VALUES (?, ?, ?, ?, 'auto')`,
+  );
+  let n = 0;
+  for (const off of offsets) {
+    const fireMs = dueMs - off * 60_000;
+    if (fireMs <= now) continue; // don't create an already-due reminder (no backfill)
+    ins.run(newId(), ownerId, taskId, new Date(fireMs).toISOString());
+    n++;
+  }
+  return n;
 }

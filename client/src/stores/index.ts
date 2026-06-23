@@ -174,17 +174,27 @@ on('job:run', () => refetchJobs());
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 export type ToastKind = 'default' | 'success' | 'error';
-export interface Toast { id: number; message: string; kind: ToastKind; }
+export interface ToastAction { label: string; run: () => void; }
+export interface Toast { id: number; message: string; kind: ToastKind; action?: ToastAction; }
 
 const [_toasts, setToasts] = createSignal<Toast[]>([]);
 export const toasts = _toasts;
 
 let _tid = 0;
-export function showToast(message: string, kind: ToastKind = 'default', durationMs = 3000) {
+export function showToast(message: string, kind: ToastKind = 'default', durationMs = 3000, action?: ToastAction) {
   const id = ++_tid;
-  setToasts((prev) => [...prev, { id, message, kind }]);
+  setToasts((prev) => [...prev, { id, message, kind, action }]);
   setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), durationMs);
 }
+
+// ── Reminders (Phase H) — surface a fired reminder in-app with a quick snooze. The
+// server delivers via SSE first (push is the backgrounded channel), so this always runs.
+on('reminder:fire', (data) => {
+  const d = data as { id: string; taskId: string | null };
+  const title = (d.taskId ? (tasks() ?? []).find((t) => t.id === d.taskId)?.title : undefined) ?? 'Reminder';
+  showToast(`⏰ ${title}`, 'default', 8000, { label: 'Snooze 10m', run: () => void api.reminders.snooze(d.id, 10) });
+});
+on('reminder:snoozed', () => showToast('Reminder snoozed for 10 min', 'success'));
 
 // ── Element wizard modal ────────────────────────────────────────────────────────
 // The unified Add/Edit wizard for the calendar-addable Entities. "Element" is a
