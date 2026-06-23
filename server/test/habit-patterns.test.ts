@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { ensureHabitPattern } from '../src/services/patterns.js';
-import { up as backfillHabits } from '../src/db/migrations/0014_habit_patterns_backfill.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
 /**
- * Habit → Pattern bridge (G2 / E′). The migration backfills existing habits to
- * Habit-type patterns and the create path keeps new ones in sync; `is_habit` stays
- * the runtime flag (E behaviour unchanged — covered by the recurrence suites).
+ * Habit → Pattern bridge (G2 / E′). `ensureHabitPattern` keeps habit tasks in sync
+ * with Habit-type patterns; the create path calls it on every new habit recurring task.
+ * (The 0014 migration ran the bulk backfill; 0048 dropped is_habit so the migration
+ * can no longer be called directly against the current schema.)
  */
 
 const OWNER = SYSTEM_OWNER;
@@ -20,8 +20,8 @@ const insertHabitTemplate = (title: string): string =>
   (
     sqlite
       .prepare(
-        `INSERT INTO tasks (id, title, owner_id, status, is_habit, recurrence_rule, recurrence_dtstart)
-         VALUES (uuid7(), ?, ?, 'recurring', 1, 'FREQ=DAILY', '2026-06-01T12:00:00.000Z') RETURNING id`
+        `INSERT INTO tasks (id, title, owner_id, status, subtype, recurrence_rule, recurrence_dtstart)
+         VALUES (uuid7(), ?, ?, 'recurring', 'habit', 'FREQ=DAILY', '2026-06-01T12:00:00.000Z') RETURNING id`
       )
       .get(title, OWNER) as { id: string }
   ).id;
@@ -48,29 +48,30 @@ describe('habit → pattern bridge', () => {
     expect(habitPatternsFor(t).length).toBe(1); // no duplicate
   });
 
-  it('the 0014 backfill links existing habit templates, idempotently', () => {
+  it('ensureHabitPattern links multiple habit templates, idempotently', () => {
     const a = insertHabitTemplate('Stretch');
     const b = insertHabitTemplate('Read');
-    backfillHabits(sqlite);
+    ensureHabitPattern(a, OWNER, 'Stretch');
+    ensureHabitPattern(b, OWNER, 'Read');
     expect(habitPatternsFor(a).length).toBe(1);
     expect(habitPatternsFor(b).length).toBe(1);
-    backfillHabits(sqlite); // re-run is a no-op
+    ensureHabitPattern(a, OWNER, 'Stretch'); // re-run is a no-op
     expect(habitPatternsFor(a).length).toBe(1);
   });
 
-  it('backfills templates only, not instances', () => {
+  it('ensureHabitPattern does not affect unrelated instances', () => {
     const tpl = insertHabitTemplate('Walk');
     const inst = (
       sqlite
         .prepare(
-          `INSERT INTO tasks (id, title, owner_id, status, is_habit, recurrence_parent_id, occurrence_date)
-           VALUES (uuid7(), 'Walk', ?, 'open', 1, ?, '2026-06-10') RETURNING id`
+          `INSERT INTO tasks (id, title, owner_id, status, subtype, recurrence_parent_id, occurrence_date)
+           VALUES (uuid7(), 'Walk', ?, 'open', 'habit', ?, '2026-06-10') RETURNING id`
         )
         .get(OWNER, tpl) as { id: string }
     ).id;
-    backfillHabits(sqlite);
+    ensureHabitPattern(tpl, OWNER, 'Walk');
     expect(habitPatternsFor(tpl).length).toBe(1);
-    expect(habitPatternsFor(inst).length).toBe(0);
+    expect(habitPatternsFor(inst).length).toBe(0); // never called for instance
   });
 });
 

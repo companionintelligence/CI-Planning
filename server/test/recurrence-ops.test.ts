@@ -20,15 +20,15 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 const OWNER = SYSTEM_OWNER;
 const TZ = 'America/Los_Angeles';
 
-function insertTemplate(o: { rule?: string; isHabit?: boolean; taskTime?: string | null } = {}): string {
+function insertTemplate(o: { rule?: string; subtype?: string; taskTime?: string | null } = {}): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO tasks (id, title, status, owner_id, priority, task_time, is_habit,
+        `INSERT INTO tasks (id, title, status, owner_id, priority, task_time, subtype,
                             recurrence_rule, recurrence_dtstart)
          VALUES (uuid7(), 'Tpl', 'recurring', ?, 3, ?, ?, ?, '2026-06-01T12:00:00.000Z') RETURNING id`
       )
-      .get(OWNER, o.taskTime ?? null, o.isHabit ? 1 : 0, o.rule ?? 'FREQ=DAILY') as { id: string }
+      .get(OWNER, o.taskTime ?? null, o.subtype ?? 'standard', o.rule ?? 'FREQ=DAILY') as { id: string }
   ).id;
 }
 
@@ -114,7 +114,7 @@ describe('skipInstance', () => {
 
 describe('computeStreak', () => {
   it('counts consecutive done back from today; today-open is pending and does not break', () => {
-    const tpl = insertTemplate({ isHabit: true });
+    const tpl = insertTemplate({ subtype: 'habit' });
     insertInstance(tpl, '2026-06-07', 'done');
     insertInstance(tpl, '2026-06-08', 'done');
     insertInstance(tpl, '2026-06-09', 'done');
@@ -126,7 +126,7 @@ describe('computeStreak', () => {
   });
 
   it('a skipped or missed day breaks the streak', () => {
-    const tpl = insertTemplate({ isHabit: true });
+    const tpl = insertTemplate({ subtype: 'habit' });
     insertInstance(tpl, '2026-06-07', 'done');
     insertInstance(tpl, '2026-06-08', 'skipped');
     insertInstance(tpl, '2026-06-09', 'done');
@@ -136,7 +136,7 @@ describe('computeStreak', () => {
   });
 
   it('resolves the template when passed an instance id, and returns null for a non-recurring task', () => {
-    const tpl = insertTemplate({ isHabit: true });
+    const tpl = insertTemplate({ subtype: 'habit' });
     const inst = insertInstance(tpl, '2026-06-09', 'done');
     insertInstance(tpl, '2026-06-10', 'done');
 

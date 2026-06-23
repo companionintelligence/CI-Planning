@@ -32,9 +32,7 @@ export const tasks = sqliteTable('tasks', {
   recurrenceDtstart: text('recurrence_dtstart'),           // UTC ISO anchor of the series
   recurrenceExdates: text('recurrence_exdates', { mode: 'json' }).$type<string[]>(), // skipped local YYYY-MM-DD
   occurrenceDate: text('occurrence_date'),                 // local YYYY-MM-DD of this instance
-  isHabit: integer('is_habit', { mode: 'boolean' }).default(false),
-  isFastTask: integer('is_fast_task', { mode: 'boolean' }).default(false), // ritual-local, hidden from the task list (0020)
-  subtype: text('subtype').default('standard'), // CON-2c canonical Task subtype: standard | habit | quick (is_habit/is_fast_task kept as in-sync runtime aliases)
+  subtype: text('subtype').default('standard'), // CON-2c canonical Task subtype: standard | habit | quick (0032; booleans dropped 0048)
   deferCount: integer('defer_count').notNull().default(0), // times rescheduled by the nightly review (0029)
   ownerId: text('owner_id').references(() => owners.id),
   sourceKind: text('source_kind').default('manual'), // manual | agent | gmail | gcal

@@ -154,20 +154,18 @@ describe('auto_fill_workday toggle', () => {
 });
 
 describe('habit exclusion from flight-plan candidates', () => {
-  // Regression: the exclusion filter read COALESCE(is_habit,0)=0; after 2B it reads
-  // subtype IS NOT 'habit' so the canonical subtype drives the gate, not the alias.
-  function insertWithSubtype(title: string, subtype: string, isHabit: 0 | 1): string {
+  function insertWithSubtype(title: string, subtype: string): string {
     return (sqlite
       .prepare(
-        `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, subtype, is_habit)
-         VALUES (uuid7(), ?, ?, 'open', 30, ?, ?) RETURNING id`,
+        `INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, subtype)
+         VALUES (uuid7(), ?, ?, 'open', 30, ?) RETURNING id`,
       )
-      .get(title, OWNER, subtype, isHabit) as { id: string }).id;
+      .get(title, OWNER, subtype) as { id: string }).id;
   }
 
   it("a habit task (subtype='habit') is not added as a candidate", () => {
-    const standard = insertWithSubtype('Standard', 'standard', 0);
-    const habit = insertWithSubtype('Habit', 'habit', 1);
+    const standard = insertWithSubtype('Standard', 'standard');
+    const habit = insertWithSubtype('Habit', 'habit');
 
     const added = fillFlightPlanCandidates(OWNER);
 
@@ -179,19 +177,18 @@ describe('habit exclusion from flight-plan candidates', () => {
     expect(staged.some((r) => r.task_id === habit)).toBe(false);
   });
 
-  it('exclusion is driven by subtype, not the is_habit alias (coherence check)', () => {
-    // subtype='habit' wins regardless of the boolean alias value.
-    const subtypeHabitOnly = insertWithSubtype('SubtypeHabit', 'habit', 0); // alias disagrees
-    const subtypeStandardOnly = insertWithSubtype('SubtypeStd', 'standard', 1); // alias disagrees
+  it('exclusion is driven by subtype alone (columns dropped in 0048)', () => {
+    const habitTask = insertWithSubtype('Habit', 'habit');
+    const standardTask = insertWithSubtype('Standard', 'standard');
 
     const added = fillFlightPlanCandidates(OWNER);
-    expect(added).toBe(1); // only the standard-subtype task staged
+    expect(added).toBe(1);
 
     const staged = sqlite
       .prepare(`SELECT task_id FROM flight_plan WHERE owner_id = ?`)
       .all(OWNER) as { task_id: string }[];
-    expect(staged.some((r) => r.task_id === subtypeHabitOnly)).toBe(false);   // excluded by subtype
-    expect(staged.some((r) => r.task_id === subtypeStandardOnly)).toBe(true); // included by subtype
+    expect(staged.some((r) => r.task_id === habitTask)).toBe(false);
+    expect(staged.some((r) => r.task_id === standardTask)).toBe(true);
   });
 });
 
