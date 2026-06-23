@@ -1,0 +1,28 @@
+# Litestream — optional streaming SQLite replication.
+#
+# Runs alongside the server (separate process) and continuously replicates the
+# WAL to object storage for point-in-time recovery and cross-machine restore.
+#
+# Setup:
+#   1. Install: https://litestream.io/install/
+#   2. Edit the replica URL below (S3, GCS, SFTP, ABS, etc.).
+#   3. Start: litestream replicate -config ops/litestream.yml
+#      or add it to your process manager / Docker Compose alongside the app.
+#
+# Restore to a specific point in time:
+#   litestream restore -config ops/litestream.yml -timestamp 2026-06-22T14:00:00Z /data/companion.db
+#
+# ⚠ Syncthing / rsync WARNING:
+#   Syncing a live SQLite file with a generic file-sync tool WILL corrupt it.
+#   SQLite's WAL mode spreads a single logical write across multiple files
+#   (-wal, -shm). A file-sync tool captures them at different instants and
+#   can produce an unreadable database. Use `pnpm snapshot` or Litestream
+#   instead — both open the database connection properly and export a
+#   consistent snapshot.
+
+dbs:
+  - path: /data/companion.db
+    replicas:
+      - url: s3://your-bucket/companion-replica
+        # retention: 24h      # keep 24 h of WAL frames for point-in-time restore
+        # sync-interval: 10s  # default 1 s — increase to reduce cloud API calls
