@@ -2,8 +2,8 @@ import { sqlite } from '../db/index.js';
 
 /**
  * Habit → Pattern bridge (Phase G, G2 / E′). Ensure a habit task is represented as
- * a Habit-type Pattern, keeping the pattern model in sync with `tasks.is_habit`
- * (which remains the runtime flag). Idempotent; a no-op if the owner has no built-in
+ * a Habit-type Pattern, keeping the pattern model in sync with the task's
+ * `subtype='habit'`. Idempotent; a no-op if the owner has no built-in
  * Habit type or the task is already in a Habit pattern.
  */
 export function ensureHabitPattern(taskId: string, ownerId: string, name: string): void {
