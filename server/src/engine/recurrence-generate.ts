@@ -32,6 +32,7 @@ import { localISODate } from '../lib/dates.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { occurrencesBetween, instanceStartUTC, type Template } from './recurrence.js';
+import { syncTaskReminders } from './reminders.js';
 
 /** Bounded rolling window (days) — the scale-budget cap. */
 export const HORIZON_DAYS = 14;
@@ -134,7 +135,8 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
        (id, title, scheduled_for, defer_until, task_time, due_at, estimated_minutes, priority,
         status, owner_id, recurrence_parent_id, occurrence_date, is_habit, subtype, source_kind)
      VALUES (uuid7(), @title, @sched, @defer, @time, @due, @est, @prio,
-             'open', @owner, @parent, @day, @habit, @subtype, 'recurrence')`
+             'open', @owner, @parent, @day, @habit, @subtype, 'recurrence')
+     RETURNING id`
   );
 
   let created = 0;
@@ -163,7 +165,7 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
     }
 
     for (const day of days) {
-      const r = ins.run({
+      const row = ins.get({
         title: t.title,
         sched: day, // intent to work it that day
         defer: utcDayBounds(day, tz).start, // gates the instance to its occurrence day
@@ -180,8 +182,14 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
         // habit template produced is_habit=1 / subtype='standard' instances — incoherent,
         // and streamed to clients over SSE. Backfill 0042 corrects rows generated before this.
         subtype: t.subtype ?? 'standard',
-      });
-      if (r.changes > 0) created++; // INSERT OR IGNORE → 0 changes when the slot already exists
+      }) as { id: string } | undefined;
+      // INSERT OR IGNORE → no row when the slot already exists, so this runs ONCE per
+      // instance. A newly materialized instance derives its reminders from the owner's
+      // Reminder Defaults (Phase H b) — anchored on its occurrence start (task_time).
+      if (row) {
+        created++;
+        syncTaskReminders(t.owner_id, row.id);
+      }
     }
 
     if (t.is_habit) missed += flagMissedHabits(t.id, today);
