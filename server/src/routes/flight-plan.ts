@@ -2,7 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
-import { runAuto, fillByPriority } from '../engine/autoplan.js';
+import { runAuto, fillByPriority, undoLastAuto } from '../engine/autoplan.js';
 import { writeAudit } from '../lib/audit.js';
 
 /**
@@ -115,6 +115,14 @@ export function flightPlanRouter() {
     const body = (ctx.request.body ?? {}) as { date?: string };
     const result = fillByPriority(currentOwnerId(), { date: body.date });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:priority' });
+    ctx.body = { result, flight_plan: list(currentOwnerId()) };
+  });
+
+  // Undo the last placement run (req 2, D2): delete that run's blocks, re-stage its
+  // tasks. One click, no confirmation; a second undo is a no-op.
+  router.post('/api/auto/undo', async (ctx) => {
+    const result = undoLastAuto(currentOwnerId());
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'undo', entity: 'flight-plan:undo' });
     ctx.body = { result, flight_plan: list(currentOwnerId()) };
   });
 
