@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-06-20. The single source of truth for user-facing
+> **Status:** canonical, 2026-06-22 (updated: ratify `kind='pattern'`; tag-axis rename 0043). The single source of truth for user-facing
 > nouns. Companion to [consolidation-plan.md](consolidation-plan.md). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -38,12 +38,12 @@ reserved)** and demotes everything else.
 | 5 | **Inbox** | Capture / triage queue. (internal: `possible_tasks`; promoting one creates a Task) |
 | 6 | **Flight-plan** | The day’s staging tray — what Auto runs over. |
 | 7 | **Planner** | The single-day, date-navigable cockpit board where Time Blocks live. The multi-day day/week/month view over the same Time Blocks is the **Calendar** (`/calendar`). |
-| 8 | **Pattern-block** | A named availability window tying a direction tag to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
+| 8 | **Pattern-block** | A named availability window tying a pattern-tag to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
 
 ## States, subtypes & kinds (demoted — not nouns)
 
-- **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each direction tag has
-  0–N time ranges per day type. Direction-less tasks fall back to the general `workday_start`/
+- **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each pattern-tag has
+  0–N time ranges per day type. Pattern-tag-less tasks fall back to the general `workday_start`/
   `workday_end` window from scheduling\_prefs.
 
 - **Task states:** `open` · `TBD` (title + ≥1 tag, nothing else) · `scheduled` ·
@@ -63,11 +63,18 @@ reserved)** and demotes everything else.
   dilution-immune) · second-level (diluted: weight = `1 / #tags`). This is a weight on
   a tag *as applied to an entity*.
 - **Tag taxonomy (per-tag, `tags.kind` — a separate axis from the levels above):**
-  **direction** (top-level category — brand-set **Home / Work / Community**,
-  `is_base` & undeletable, plus user-added) · **intention** (every other tag, grouped
-  under one or more directions via `tag_directions`; ungrouped = *Unsorted*). A tag may
-  be **muted** (a per-tag state, not a noun). Directions/intentions are Tag sub-levels,
+  **pattern-tag** (top-level category — brand-set **Home / Work / Community**,
+  `is_base` & undeletable, plus user-added; canonical DB value: `tags.kind = 'pattern'`) ·
+  **intention** (every other tag, grouped under one or more pattern-tags via the
+  `tag_patterns` junction table; ungrouped = *Unsorted*). A tag may be **muted**
+  (a per-tag state, not a noun). Pattern-tags/intentions are Tag sub-levels,
   **not** new nouns.
+
+  > **Interim naming note:** the `tag_patterns` junction table and `tags.kind = 'pattern'`
+  > refer to this tag-taxonomy axis. The separate `patterns` table is the Routine collection
+  > system (Habit / Routine / Ritual templates). The naming overlap is a known interim pending
+  > the §3b Routine rename (`patterns` → `routines`); until then, use table name and `kind`
+  > value as the disambiguator.
 
 ## Translation (old term → canonical)
 
