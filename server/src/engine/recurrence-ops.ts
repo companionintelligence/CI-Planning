@@ -18,7 +18,6 @@ interface TaskRow {
   recurrence_parent_id: string | null;
   recurrence_exdates: string | null;
   occurrence_date: string | null;
-  is_habit: number;
   owner_id: string;
 }
 
@@ -26,7 +25,7 @@ function getTask(id: string): TaskRow | undefined {
   return sqlite
     .prepare(
       `SELECT id, status, recurrence_rule, recurrence_parent_id, recurrence_exdates,
-              occurrence_date, is_habit, owner_id
+              occurrence_date, owner_id
          FROM tasks WHERE id = ?`
     )
     .get(id) as TaskRow | undefined;

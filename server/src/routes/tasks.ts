@@ -1,9 +1,9 @@
 import Router from '@koa/router';
-import { eq, and, like, asc, lte } from 'drizzle-orm';
+import { eq, and, like, asc, lte, ne } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
-import { toApi } from '../lib/serialize.js';
+import { taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { setDependencies, getDependencies, blockedTaskIds, DependencyCycleError } from '../engine/deps.js';
 import { parseQuick } from '../engine/quickadd.js';
@@ -38,7 +38,8 @@ export function tasksRouter() {
     if (due_before) conditions.push(lte(tasks.dueAt, due_before));
     if (q)         conditions.push(like(tasks.title, `%${q}%`));
     // Fast tasks are ritual-local — hidden from the list unless explicitly requested.
-    if (include_fast !== '1') conditions.push(eq(tasks.isFastTask, false));
+    // Filter on the canonical subtype (W1-A); equivalent to the is_fast_task alias.
+    if (include_fast !== '1') conditions.push(ne(tasks.subtype, 'quick'));
 
     const result = conditions.length
       ? await rows.where(and(...conditions)).orderBy(asc(tasks.priority), asc(tasks.dueAt))
@@ -48,7 +49,7 @@ export function tasksRouter() {
     const blocked = blockedTaskIds();
     const tagsById = taskTagNamesByIds(result.map((t) => t.id));
     const withTags = result.map((t) => ({
-      ...toApi(t),
+      ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       depends_on: getDependencies(t.id),
       blocked: blocked.has(t.id),
@@ -123,7 +124,7 @@ export function tasksRouter() {
       // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
       if (sw?.isHabit) ensureHabitPattern(template.id, owner, template.title);
       const generated = generateRecurrences();
-      const out = { ...toApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
+      const out = { ...taskToApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
       writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${template.id}` });
       broadcast(currentOwnerId(), 'recurrence:generated', generated);
@@ -155,7 +156,7 @@ export function tasksRouter() {
     syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
 
     const out = {
-      ...toApi(task),
+      ...taskToApi(task),
       tags: body.tags ?? [],
       depends_on: getDependencies(task.id),
       blocked: blockedTaskIds().has(task.id),
@@ -201,7 +202,7 @@ export function tasksRouter() {
     if (enriched.tags.length) await attachTags(task.id, enriched.tags);
     syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): quick-add may parse a due date
 
-    const out = { ...toApi(task), tags: enriched.tags, depends_on: [] as number[], blocked: false, llm };
+    const out = { ...taskToApi(task), tags: enriched.tags, depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
     ctx.status = 201;
@@ -213,7 +214,7 @@ export function tasksRouter() {
     const parentId = ctx.params.id;
     const result = await db.select().from(tasks).where(eq(tasks.parentId, parentId)).orderBy(asc(tasks.priority));
     const tagsById = taskTagNamesByIds(result.map((t) => t.id));
-    const withTags = result.map((t) => ({ ...toApi(t), tags: tagsById.get(t.id) ?? [] }));
+    const withTags = result.map((t) => ({ ...taskToApi(t), tags: tagsById.get(t.id) ?? [] }));
     ctx.body = { subtasks: withTags };
   });
 
@@ -228,7 +229,7 @@ export function tasksRouter() {
       return;
     }
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-    const out = { ...toApi(task), tags: [] as string[], depends_on: [] as number[], blocked: false };
+    const out = { ...taskToApi(task), tags: [] as string[], depends_on: [] as number[], blocked: false };
     broadcast(currentOwnerId(), 'task:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'skip', entity: `task:${id}` });
     ctx.body = { task: out, skipped: res.date };
@@ -255,7 +256,7 @@ export function tasksRouter() {
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     ensureHabitPattern(id, task.ownerId ?? owner, task.title);
-    const out = { ...toApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
+    const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'promote', entity: `task:${id}` });
     broadcast(owner, 'pattern:updated', { id });
@@ -312,7 +313,7 @@ export function tasksRouter() {
     // Atomic: a partway failure must not leave a half-built clone subtree.
     const newId = sqlite.transaction(() => cloneTree(ctx.params.id, null))();
     const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
-    const out = { ...toApi(task), tags: taskTagNames(newId), depends_on: [] as string[], blocked: false };
+    const out = { ...taskToApi(task), tags: taskTagNames(newId), depends_on: [] as string[], blocked: false };
     broadcast(owner, 'task:created', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'recall', entity: `task:${newId}` });
     ctx.status = 201;
@@ -332,7 +333,7 @@ export function tasksRouter() {
     }
     const { scheduled_for } = rescheduleTask(id, body.days);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-    const out = { ...toApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
+    const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `task:${id}` });
     broadcast(owner, 'block:updated', { rescheduled: id });
@@ -437,7 +438,7 @@ export function tasksRouter() {
 
     const currentTags = taskTagNames(targetId);
     const out = {
-      ...toApi(task),
+      ...taskToApi(task),
       tags: currentTags,
       depends_on: getDependencies(targetId),
       blocked: blockedTaskIds().has(targetId),
@@ -458,7 +459,7 @@ export function tasksRouter() {
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     syncTaskReminders(currentOwnerId(), id); // Phase H (b): a cancelled task drops its auto reminders
-    const out = { ...toApi(task), tags: [] as string[] };
+    const out = { ...taskToApi(task), tags: [] as string[] };
     broadcast(currentOwnerId(), 'task:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `task:${id}` });
     ctx.body = { task: out };

@@ -328,10 +328,10 @@ export function patternsRouter() {
     // CON-3 cascade: these tasks + the routine itself are HARD-deleted — drop their
     // tag rows first (the fast-task ids must be read before the DELETE).
     const fastTasks = sqlite
-      .prepare(`SELECT id FROM tasks WHERE is_fast_task = 1 AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`)
+      .prepare(`SELECT id FROM tasks WHERE subtype = 'quick' AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`)
       .all(id) as { id: string }[];
     for (const t of fastTasks) removeEntityTags('task', t.id);
-    sqlite.prepare(`DELETE FROM tasks WHERE is_fast_task = 1 AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`).run(id);
+    sqlite.prepare(`DELETE FROM tasks WHERE subtype = 'quick' AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`).run(id);
     sqlite.prepare(`DELETE FROM patterns WHERE id = ?`).run(id); // pattern_tasks cascade; tasks untouched
     removeEntityTags('routine', id);
     broadcast(currentOwnerId(), 'pattern:deleted', { id });
@@ -408,7 +408,7 @@ export function patternsRouter() {
     }
     // Delete the underlying task only when it's genuinely a fast task (membership
     // cascades). A shared real task just loses its membership.
-    const isFast = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ? AND is_fast_task = 1`).get(taskId, owner);
+    const isFast = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ? AND subtype = 'quick'`).get(taskId, owner);
     if (isFast) {
       // CON-3 cascade: the fast task is HARD-deleted — drop its tag rows.
       removeEntityTags('task', taskId);

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { possibleTasks, tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
-import { toApi, toApiList } from '../lib/serialize.js';
+import { toApiList, taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 
@@ -50,7 +50,7 @@ export function possiblesRouter() {
       .set({ status: 'promoted', promotedTaskId: task.id })
       .where(eq(possibleTasks.id, id));
 
-    const out = toApi(task);
+    const out = taskToApi(task);
     broadcast(currentOwnerId(), 'possible:promoted', { id, task: out });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'promote', entity: `possible:${id}` });
     ctx.status = 201;
