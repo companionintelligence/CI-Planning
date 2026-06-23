@@ -10,6 +10,7 @@ const DEFAULT_PREF: PatternPref = {
   reminder_offsets: [],
   icon_shape: 'circle',
   color_token: 'primary',
+  default_minutes: 60, // matches the server's canonical default (services/pattern-prefs.ts)
 };
 
 /**
