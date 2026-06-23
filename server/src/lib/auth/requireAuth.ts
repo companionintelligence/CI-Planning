@@ -2,6 +2,7 @@ import type Koa from 'koa';
 import { config } from '../config.js';
 import { runWithOwner, SYSTEM_OWNER } from '../context.js';
 import { verifyApiKey } from './apiKey.js';
+import { verifyBearer } from './jwks.js';
 import { hasScope } from './scopes.js';
 import type { VerifiedClaims } from './types.js';
 
@@ -53,16 +54,23 @@ export function requireAuth(): Koa.Middleware {
 
     let claims: VerifiedClaims;
     try {
+      const bearer = ctx.get('authorization').replace(/^Bearer\s+/i, '');
       const apiKey = presentedApiKey(ctx);
-      if (!apiKey) {
+      if (bearer) {
+        claims = await verifyBearer(bearer); // SSO — JWKS-verified JWT
+      } else if (apiKey) {
+        claims = verifyApiKey(apiKey); // standalone — hashed key
+      } else {
         ctx.status = 401;
         ctx.body = { error: 'unauthenticated' };
         return;
       }
-      claims = verifyApiKey(apiKey); // SSO Bearer path is added in PR2
     } catch (e) {
-      ctx.status = (e as { status?: number }).status ?? 401;
-      ctx.body = { error: 'unauthenticated' };
+      // A verified-but-unprovisioned subject is 403 (forbidden); anything else
+      // about the credential itself is 401 (unauthenticated).
+      const status = (e as { status?: number }).status ?? 401;
+      ctx.status = status;
+      ctx.body = { error: status === 403 ? 'forbidden' : 'unauthenticated' };
       return;
     }
 

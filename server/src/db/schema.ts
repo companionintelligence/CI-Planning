@@ -9,6 +9,7 @@ export const owners = sqliteTable('owners', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull(),
   email: text('email'),
+  externalSubject: text('external_subject'), // SSO JWT `sub` → owner mapping (0050)
 });
 
 // Phase I (0049): standalone API keys. SHA-256 at rest; the raw key is shown once

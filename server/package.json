@@ -24,6 +24,7 @@
     "chrono-node": "^2.9.1",
     "croner": "^10.0.1",
     "drizzle-orm": "^0.45.2",
+    "jose": "^6.2.3",
     "koa": "^3.2.1",
     "koa-bodyparser": "^4.4.1",
     "koa-static": "^5.0.0",

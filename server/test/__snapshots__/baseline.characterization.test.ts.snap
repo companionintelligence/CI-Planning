@@ -645,6 +645,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "id",
       "name",
       "email",
+      "external_subject",
     ],
     "table": "owners",
   },

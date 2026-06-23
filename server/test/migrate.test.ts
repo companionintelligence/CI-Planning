@@ -152,6 +152,25 @@ describe('0049 api_keys store', () => {
   });
 });
 
+describe('0050 owner external_subject', () => {
+  it('adds external_subject to owners with a partial UNIQUE index', () => {
+    const db = fresh();
+    runMigrations(db);
+
+    expect(cols(db, 'owners')).toContain('external_subject');
+    const indexes = (db.prepare(`PRAGMA index_list(owners)`).all() as { name: string }[]).map((i) => i.name);
+    expect(indexes).toContain('ux_owners_external_subject');
+
+    // The partial index allows many NULLs (api-key-only owners) but one row per subject.
+    db.prepare(`INSERT INTO owners (id, name, external_subject) VALUES (?, 'A', 'sub-1')`).run('00000000-0000-7000-8000-0000000000c1');
+    expect(() =>
+      db.prepare(`INSERT INTO owners (id, name, external_subject) VALUES (?, 'B', 'sub-1')`).run('00000000-0000-7000-8000-0000000000c2'),
+    ).toThrow();
+    db.prepare(`INSERT INTO owners (id, name) VALUES (?, 'C')`).run('00000000-0000-7000-8000-0000000000c3'); // NULL subject ok
+    db.close();
+  });
+});
+
 describe('rebuildTable helper', () => {
   it('rebuilds a table to a new shape, preserving rows and restoring foreign_keys', () => {
     const db = fresh();
