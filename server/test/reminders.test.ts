@@ -15,6 +15,7 @@ vi.mock('../src/lib/push.js', () => ({
 }));
 
 import { fireDueReminders, syncTaskReminders } from '../src/engine/reminders.js';
+import { generateRecurrences } from '../src/engine/recurrence-generate.js';
 import { sendPush } from '../src/lib/push.js';
 
 /**
@@ -63,6 +64,20 @@ const autoCount = (taskId: string) =>
 const setTaskStatus = (id: string, status: string) => sqlite.prepare(`UPDATE tasks SET status = ? WHERE id = ?`).run(status, id);
 const reminderStatus = (taskId: string) =>
   (sqlite.prepare(`SELECT status FROM reminders WHERE task_id = ? LIMIT 1`).get(taskId) as { status: string } | undefined)?.status;
+const firstFireAt = (taskId: string) =>
+  (sqlite.prepare(`SELECT fire_at FROM reminders WHERE task_id = ? AND source = 'auto' ORDER BY fire_at LIMIT 1`).get(taskId) as
+    { fire_at: string } | undefined)?.fire_at;
+function insertScheduledTask(o: { scheduledFor?: string; taskTime?: string; dueAt?: string; status?: string }): string {
+  return (sqlite.prepare(
+    `INSERT INTO tasks (id, title, owner_id, status, scheduled_for, task_time, due_at) VALUES (?, 'Sched', ?, ?, ?, ?, ?) RETURNING id`,
+  ).get(newId(), SYSTEM_OWNER, o.status ?? 'open', o.scheduledFor ?? null, o.taskTime ?? null, o.dueAt ?? null) as { id: string }).id;
+}
+function insertTemplate(rule: string, taskTime: string | null, dtstart: string): string {
+  return (sqlite.prepare(
+    `INSERT INTO tasks (id, title, owner_id, status, task_time, is_habit, subtype, recurrence_rule, recurrence_dtstart)
+     VALUES (?, 'Recurring habit', ?, 'open', ?, 1, 'habit', ?, ?) RETURNING id`,
+  ).get(newId(), SYSTEM_OWNER, taskTime, rule, dtstart) as { id: string }).id;
+}
 const FAR_FUTURE_DUE = '2999-01-01T12:00:00.000Z';
 const getReminder = (id: string) => sqlite.prepare(`SELECT * FROM reminders WHERE id = ?`).get(id) as
   { status: string; fired_at: string | null; fire_at: string } | undefined;
@@ -310,5 +325,46 @@ describe('reminder lifecycle vs task status (Phase H b)', () => {
     expect(autoCount(taskId)).toBe(1);
     expect((await api(srv.url, `/api/tasks/${taskId}`, { method: 'DELETE' })).status).toBe(200);
     expect(autoCount(taskId)).toBe(0);
+  });
+});
+
+describe('auto-derive — scheduled-start anchor (PR A)', () => {
+  it('anchors on scheduled_for + task_time when there is no due_at', () => {
+    setReminderOffsets([15]);
+    const id = insertScheduledTask({ scheduledFor: '2999-01-01', taskTime: '09:00' });
+    expect(syncTaskReminders(SYSTEM_OWNER, id)).toBe(1);
+    expect(firstFireAt(id)).toBe('2999-01-01T08:45:00.000Z'); // 09:00 UTC − 15min
+  });
+
+  it('prefers the scheduled start over due_at when both are present', () => {
+    setReminderOffsets([0]);
+    const id = insertScheduledTask({ scheduledFor: '2999-01-01', taskTime: '09:00', dueAt: '2999-06-01T00:00:00.000Z' });
+    expect(syncTaskReminders(SYSTEM_OWNER, id)).toBe(1);
+    expect(firstFireAt(id)).toBe('2999-01-01T09:00:00.000Z'); // scheduled start, not the deadline
+  });
+
+  it('creates nothing for an untimed task (no task_time, no due_at)', () => {
+    setReminderOffsets([0]);
+    expect(syncTaskReminders(SYSTEM_OWNER, insertScheduledTask({ scheduledFor: '2999-01-01' }))).toBe(0);
+  });
+});
+
+describe('auto-derive — recurring instances (PR A: generateRecurrences hook)', () => {
+  it('derives reminders for each materialized instance, idempotently', () => {
+    setReminderOffsets([10]);
+    insertTemplate('FREQ=DAILY', '09:00', '2999-01-01T09:00:00.000Z');
+    const res = generateRecurrences({ today: '2999-01-01', horizonDays: 2 });
+    expect(res.created).toBeGreaterThanOrEqual(1);
+
+    const autos = sqlite.prepare(
+      `SELECT r.fire_at FROM reminders r JOIN tasks t ON t.id = r.task_id
+        WHERE t.recurrence_parent_id IS NOT NULL AND r.source = 'auto' ORDER BY r.fire_at`,
+    ).all() as { fire_at: string }[];
+    expect(autos.length).toBe(res.created);                              // one reminder per instance (offset 10)
+    expect(autos.map((a) => a.fire_at)).toContain('2999-01-01T08:50:00.000Z'); // 09:00 − 10min
+
+    // Idempotent: re-running materializes no new instances → no new reminders.
+    generateRecurrences({ today: '2999-01-01', horizonDays: 2 });
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM reminders WHERE source = 'auto'`).get() as { c: number }).c).toBe(autos.length);
   });
 });
