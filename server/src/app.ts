@@ -23,7 +23,7 @@ export function buildApp(): Koa {
   });
 
   app.use(cors({ origin: '*' }));
-  app.use(bodyParser());
+  app.use(bodyParser({ jsonLimit: '20mb' }));
 
   // Resolve the request owner and bind it for the handler chain. Single-owner
   // for now; Phase I swaps SYSTEM_OWNER for a verified-token resolver here.

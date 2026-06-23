@@ -16,6 +16,7 @@ import { sseRouter } from './sse.js';
 import { patternBlocksRouter } from './pattern-blocks.js';
 import { patternPrefsRouter } from './pattern-prefs.js';
 import { notificationsRouter } from './notifications.js';
+import { backupRouter } from './backup.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -36,6 +37,7 @@ export function mountRoutes(app: Koa) {
     patternBlocksRouter(),
     patternPrefsRouter(),
     notificationsRouter(),
+    backupRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }
