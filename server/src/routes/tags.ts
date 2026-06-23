@@ -2,6 +2,8 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { normalizeTagName, tagIsUsed, setTagDirections, directionsOf } from '../services/tags.js';
+import { currentOwnerId } from '../lib/context.js';
+import { writeAudit } from '../lib/audit.js';
 
 /** Resolve direction NAMES to existing direction-tag ids (ignores unknown / non-directions). */
 function directionIds(names: string[]): string[] {
@@ -63,6 +65,7 @@ export function tagsRouter() {
     if (tag.kind === 'intention' && Array.isArray(body.directions) && body.directions.length) {
       setTagDirections(tag.id, directionIds(body.directions));
     }
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `tag:${tag.id}` });
     ctx.status = 201;
     ctx.body = { tag: { ...tag, directions: tag.kind === 'intention' ? directionsOf(tag.id) : [] } };
   });
@@ -85,6 +88,7 @@ export function tagsRouter() {
     const out = sqlite
       .prepare('SELECT id, name, kind, is_base AS isBase, muted FROM tags WHERE id = ?')
       .get(id) as { id: string; name: string; kind: string; isBase: number; muted: number };
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `tag:${id}` });
     ctx.body = {
       tag: { ...out, is_base: !!out.isBase, muted: !!out.muted, directions: out.kind === 'intention' ? directionsOf(id) : [] },
     };
@@ -100,6 +104,7 @@ export function tagsRouter() {
     if (tag.isBase) { ctx.status = 409; ctx.body = { error: 'base pattern tags cannot be deleted' }; return; }
     if (tagIsUsed(id)) { ctx.status = 409; ctx.body = { error: 'tags in use cannot be deleted' }; return; }
     sqlite.prepare('DELETE FROM tags WHERE id = ?').run(id); // tag_patterns cascade via FK
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `tag:${id}` });
     ctx.body = { ok: true };
   });
 

@@ -352,3 +352,13 @@ export const reminders = sqliteTable('reminders', {
   source: text('source').notNull().default('manual'), // manual (explicit API) | auto (derived from Reminder Defaults)
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
+
+// --- Phase R (0046): Audit log. Append-only; every mutating route writes one row. ---
+export const auditLog = sqliteTable('audit_log', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  actor: text('actor').notNull(),    // 'owner' | 'system' | 'agent'
+  action: text('action').notNull(),  // 'create' | 'update' | 'delete' | 'timer:start' | ...
+  entity: text('entity').notNull(),  // 'task:<id>' | 'block:<id>' | 'import' | ...
+  at: text('at').default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).notNull(),
+});

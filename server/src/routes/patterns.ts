@@ -6,6 +6,7 @@ import { placePatternOnDay, validatePatternRule } from '../engine/patterns-place
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { syncEntityTags, removeEntityTags, splitTagString } from '../services/tags.js';
+import { writeAudit } from '../lib/audit.js';
 
 /**
  * Patterns (Phase G, ticket G1). Typed, reusable task collections — Routine ▢ /
@@ -173,6 +174,7 @@ export function patternsRouter() {
         ) as TypeRow;
       const out = serializeType(row);
       broadcast(currentOwnerId(), 'pattern_type:created', out);
+      writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `routine:${row.id}` });
       ctx.status = 201;
       ctx.body = { pattern_type: out };
     } catch (err) {
@@ -208,6 +210,7 @@ export function patternsRouter() {
       .get(name, iconShape, reminder, colorToken, texture, defaultEst, notify, id) as TypeRow;
     const out = serializeType(row);
     broadcast(currentOwnerId(), 'pattern_type:updated', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `routine:${id}` });
     ctx.body = { pattern_type: out };
   });
 
@@ -222,6 +225,7 @@ export function patternsRouter() {
     if (inUse.c > 0) { ctx.status = 409; ctx.body = { error: 'type is in use by patterns' }; return; }
     sqlite.prepare(`DELETE FROM pattern_types WHERE id = ?`).run(id);
     broadcast(currentOwnerId(), 'pattern_type:deleted', { id });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `routine:${id}` });
     ctx.body = { ok: true };
   });
 
@@ -270,6 +274,7 @@ export function patternsRouter() {
     if (body.tag !== undefined) syncEntityTags('routine', p.id, splitTagString(body.tag));
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
     ctx.status = 201;
     ctx.body = { pattern: out };
   });
@@ -308,6 +313,7 @@ export function patternsRouter() {
     if (body.tag !== undefined) syncEntityTags('routine', id, splitTagString(body.tag));
     const out = serializePattern(row);
     broadcast(owner, 'pattern:updated', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `routine:${id}` });
     ctx.body = { pattern: out };
   });
 
@@ -329,6 +335,7 @@ export function patternsRouter() {
     sqlite.prepare(`DELETE FROM patterns WHERE id = ?`).run(id); // pattern_tasks cascade; tasks untouched
     removeEntityTags('routine', id);
     broadcast(currentOwnerId(), 'pattern:deleted', { id });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `routine:${id}` });
     ctx.body = { ok: true };
   });
 
@@ -347,6 +354,7 @@ export function patternsRouter() {
       ctx.status = 400; ctx.body = { error: `could not add task: ${(err as Error).message}` }; return;
     }
     broadcast(currentOwnerId(), 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `routine:${patternId}` });
     ctx.body = { pattern_id: patternId, task_ids: taskIdsOf(patternId) };
   });
 
@@ -356,6 +364,7 @@ export function patternsRouter() {
     if (!owns) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, ctx.params.taskId);
     broadcast(currentOwnerId(), 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `routine:${patternId}` });
     ctx.body = { pattern_id: patternId, task_ids: taskIdsOf(patternId) };
   });
 
@@ -385,6 +394,7 @@ export function patternsRouter() {
     const pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM pattern_tasks WHERE pattern_id = ?`).get(patternId) as { m: number }).m + 1;
     sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(patternId, task.id, pos);
     broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `task:${task.id}` });
     ctx.status = 201;
     ctx.body = { task: { id: task.id, title: task.title, estimated_minutes: task.estimated_minutes, is_fast_task: true, subtype: 'quick' } };
   });
@@ -406,6 +416,7 @@ export function patternsRouter() {
     }
     else sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, taskId);
     broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `task:${taskId}` });
     ctx.body = { ok: true };
   });
 
@@ -440,6 +451,7 @@ export function patternsRouter() {
     const p = createRoutineWithTasks(body.name?.trim() || plan.title, taskIds);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
     ctx.status = 201;
     ctx.body = { pattern: out };
   });
@@ -468,6 +480,7 @@ export function patternsRouter() {
     const p = createRoutineWithTasks(body.name?.trim() || tpl.name, taskIds);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
     ctx.status = 201;
     ctx.body = { pattern: out };
   });
@@ -486,6 +499,7 @@ export function patternsRouter() {
     const p = createRoutineWithTasks(body.name?.trim() || 'New routine', ids);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
     ctx.status = 201;
     ctx.body = { pattern: out };
   });
@@ -512,6 +526,7 @@ export function patternsRouter() {
           ORDER BY start_at`
       )
       .all(String(id), `${result.date}T00:00:00`) as Record<string, unknown>[];
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'place', entity: `routine:${id}` });
     ctx.body = {
       result,
       blocks: blocks.map((b) => ({ ...b, is_locked: !!b.is_locked, is_auto: !!b.is_auto, all_day: !!b.all_day })),
