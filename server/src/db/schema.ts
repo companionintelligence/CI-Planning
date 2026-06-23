@@ -9,6 +9,7 @@ export const owners = sqliteTable('owners', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull(),
   email: text('email'),
+  lastAutoRunId: text('last_auto_run_id'), // most recent Auto placement run, for Undo (0052)
 });
 
 // Phase I (0049): standalone API keys. SHA-256 at rest; the raw key is shown once
@@ -113,6 +114,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   recurrenceDtstart: text('recurrence_dtstart'),     // UTC ISO anchor of the series
   recurrenceParentId: text('recurrence_parent_id'),  // template id on an instance (no FK: cleared by hand)
   occurrenceDate: text('occurrence_date'),           // YYYY-MM-DD local day of an instance
+  autoRunId: text('auto_run_id'),                    // the Auto placement run that created this block (0052; for Undo)
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -164,6 +166,8 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Auto's secondary workday-window fallback (0028). Plans are filled first;
   // this gates whether leftover tasks also fill open 9–6 time. Default ON.
   autoFillWorkday: integer('auto_fill_workday', { mode: 'boolean' }).default(true),
+  // Trust toggle (0052): 'suggest' (stepped taps) | 'schedule' (zero-click on ingest).
+  autoMode: text('auto_mode').notNull().default('suggest'),
   conceptDefaultMinutes: integer('concept_default_minutes').default(60),
   conceptAutosurface: integer('concept_autosurface', { mode: 'boolean' }).default(true),
   conceptHorizonDays: integer('concept_horizon_days').default(30),

@@ -152,6 +152,21 @@ describe('0049 api_keys store', () => {
   });
 });
 
+describe('0052 auto-scheduling columns', () => {
+  it('adds auto_mode, auto_run_id, and last_auto_run_id', () => {
+    const db = fresh();
+    runMigrations(db);
+    expect(cols(db, 'scheduling_prefs')).toContain('auto_mode');
+    expect(cols(db, 'time_blocks')).toContain('auto_run_id');
+    expect(cols(db, 'owners')).toContain('last_auto_run_id');
+
+    // auto_mode defaults to the safe 'suggest' on any seeded prefs row.
+    const seeded = db.prepare(`SELECT auto_mode FROM scheduling_prefs LIMIT 1`).get() as { auto_mode: string } | undefined;
+    if (seeded) expect(seeded.auto_mode).toBe('suggest');
+    db.close();
+  });
+});
+
 describe('rebuildTable helper', () => {
   it('rebuilds a table to a new shape, preserving rows and restoring foreign_keys', () => {
     const db = fresh();
