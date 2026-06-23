@@ -182,8 +182,10 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "added_at": "<ts>",
       "estimated_minutes": 10,
+      "is_recurring": false,
       "position": 1,
       "priority": 3,
+      "recurrence_rule": null,
       "selected": false,
       "source_pattern_id": "pattern#1",
       "status": "open",
@@ -193,8 +195,10 @@ exports[`behavior baseline — read API serialization > serializes the canonical
     {
       "added_at": "<ts>",
       "estimated_minutes": 30,
+      "is_recurring": false,
       "position": 0,
       "priority": 3,
+      "recurrence_rule": null,
       "selected": true,
       "source_pattern_id": null,
       "status": "open",

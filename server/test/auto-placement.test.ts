@@ -226,10 +226,10 @@ describe('idempotent re-place', () => {
     sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
       .run(at('16:00'), at('16:30'));
 
-    placeFlightPlan(OWNER, { date: DAY });
-    placeFlightPlan(OWNER, { date: DAY }); // re-run
+    placeFlightPlan(OWNER, { date: DAY }); // first run: places 'Coding', removes it from flight plan (item 5)
+    placeFlightPlan(OWNER, { date: DAY }); // second run: clearPriorAuto removes the prior block; not re-placed (de-staged)
     const titles = (sqlite.prepare(`SELECT title FROM time_blocks WHERE block_kind = 'task'`).all() as { title: string }[]).map((t) => t.title);
-    expect(titles.filter((t) => t === 'Coding').length).toBe(1); // not duplicated
+    expect(titles.filter((t) => t === 'Coding').length).toBe(0); // cleared on second run; never duplicated
     expect(titles).toContain('Routine task'); // pattern survived
     expect(titles).toContain('Manual');       // manual survived
     expect(plan.id).toBeTruthy();

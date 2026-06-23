@@ -155,3 +155,65 @@ describe('two-step Auto', () => {
     expect(placed.end_at <= '2026-06-22T18:00:00.000Z').toBe(true);
   });
 });
+
+describe('placed tasks are removed from the flight plan (item 5)', () => {
+  it('a task placed by the priority tap is removed from the flight plan', async () => {
+    const t = insertTask('Priority placed', 60);
+    await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: t } });
+
+    const r = await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: '2026-06-22' } });
+    expect(r.body.result.blocksCreated).toBeGreaterThanOrEqual(1);
+
+    const fp = (await api(srv.url, '/api/flight-plan')).body.flight_plan;
+    expect(fp.find((x: any) => x.task_id === t)).toBeUndefined();
+    expect(blockTitles()).toContain('Priority placed');
+  });
+
+  it('unplaced tasks remain in the flight plan after a tag-matched placement pass', async () => {
+    const t = insertTask('Untagged unplaced', 60);
+    await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: t } });
+
+    const r = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
+    expect(r.body.result.placed).toBe(0);
+
+    const fp = (await api(srv.url, '/api/flight-plan')).body.flight_plan;
+    expect(fp.find((x: any) => x.task_id === t)).toBeTruthy();
+  });
+});
+
+describe('recurring task indicator (item 6)', () => {
+  function insertTemplate(title: string): string {
+    return (sqlite.prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, priority, recurrence_rule) VALUES (uuid7(), ?, ?, 'open', 3, 'FREQ=DAILY') RETURNING id`
+    ).get(title, OWNER) as { id: string }).id;
+  }
+  function insertInstance(parentId: string, title: string): string {
+    return (sqlite.prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, priority, recurrence_parent_id, occurrence_date) VALUES (uuid7(), ?, ?, 'open', 3, ?, '2026-06-22') RETURNING id`
+    ).get(title, OWNER, parentId) as { id: string }).id;
+  }
+
+  it('fillFlightPlanCandidates includes templates but excludes recurrence instances', async () => {
+    const template = insertTemplate('Morning run');
+    const instance = insertInstance(template, 'Morning run');
+
+    const r = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
+    expect(r.body.result.step).toBe('fill');
+
+    const ids = r.body.flight_plan.map((x: any) => x.task_id);
+    expect(ids).toContain(template);
+    expect(ids).not.toContain(instance);
+  });
+
+  it('is_recurring is true for tasks with a recurrence_rule and false otherwise', async () => {
+    const template = insertTemplate('Weekly review');
+    const normal = insertTask('Normal task');
+
+    await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: template } });
+    await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: normal } });
+
+    const fp = (await api(srv.url, '/api/flight-plan')).body.flight_plan;
+    expect(fp.find((x: any) => x.task_id === template)?.is_recurring).toBe(true);
+    expect(fp.find((x: any) => x.task_id === normal)?.is_recurring).toBe(false);
+  });
+});

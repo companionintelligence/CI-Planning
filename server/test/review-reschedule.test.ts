@@ -119,3 +119,50 @@ describe('review_day job', () => {
     expect(rescheduleTask).toBeTypeOf('function');
   });
 });
+
+describe('re-stage into flight plan at review (item 5)', () => {
+  beforeEach(() => {
+    sqlite.exec(`DELETE FROM flight_plan`);
+  });
+
+  it('re-stages open tasks with no future blocks into the flight plan', () => {
+    const t = insertTask('Open no blocks', 3);
+    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    expect(r.restaged).toBe(1);
+    const fp = sqlite.prepare(`SELECT selected FROM flight_plan WHERE task_id = ?`).get(t) as { selected: number } | undefined;
+    expect(fp).toBeTruthy();
+    expect(fp!.selected).toBe(1);
+  });
+
+  it('habits (subtype=habit) are not re-staged', () => {
+    sqlite.prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, priority, subtype) VALUES (uuid7(), 'Morning run', ?, 'open', 3, 'habit')`
+    ).run(OWNER);
+    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    expect(r.restaged).toBe(0);
+  });
+
+  it('tasks already in the flight plan are not re-staged again', () => {
+    const t = insertTask('Already staged', 3);
+    sqlite.prepare(`INSERT INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`).run(OWNER, t);
+    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    expect(r.restaged).toBe(0);
+    const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE task_id = ?`).get(t) as { n: number }).n;
+    expect(n).toBe(1); // no duplicate
+  });
+
+  it('tasks with a future block are not re-staged', () => {
+    const t = insertTask('Has future block', 3);
+    insertBlock(t, +3); // ends 3h from now
+    const r = reviewAndReschedule({ nowISO: new Date().toISOString() });
+    expect(r.restaged).toBe(0);
+  });
+
+  it('re-staging is idempotent — two review runs do not double-stage', () => {
+    const t = insertTask('Idempotent task', 3);
+    reviewAndReschedule({ nowISO: new Date().toISOString() });
+    reviewAndReschedule({ nowISO: new Date().toISOString() });
+    const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE task_id = ?`).get(t) as { n: number }).n;
+    expect(n).toBe(1);
+  });
+});

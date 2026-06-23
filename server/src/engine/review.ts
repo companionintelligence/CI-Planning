@@ -34,6 +34,7 @@ export interface ReviewResult {
   missed: number;     // tasks found past-due + un-started
   deferred: number;   // low-priority, auto-rescheduled
   surfaced: number;   // high-priority, marked missed for user review
+  restaged: number;   // open tasks with no future blocks re-added to flight plan
 }
 
 interface MissedRow {
@@ -99,7 +100,49 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
   });
   tx();
 
-  return { missed: missed.length, deferred, surfaced };
+  // Re-stage open tasks that have no future blocks and aren't already in the
+  // flight plan, so the user sees them again at the start of the new day.
+  const ownerFilterClause = opts.owner != null ? `AND t.owner_id = @owner` : '';
+  const toRestage = sqlite
+    .prepare(
+      `SELECT t.id AS task_id, t.owner_id
+         FROM tasks t
+        WHERE t.status = 'open'
+          AND COALESCE(t.subtype, 'standard') != 'habit'
+          AND t.parent_id IS NULL
+          AND t.recurrence_parent_id IS NULL
+          AND (t.scheduled_for IS NULL OR t.scheduled_for <= date(@now))
+          AND NOT EXISTS (
+            SELECT 1 FROM time_blocks tb
+            WHERE tb.task_id = t.id AND tb.block_kind = 'task' AND tb.start_at > @now
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM flight_plan fp
+            WHERE fp.task_id = t.id AND fp.owner_id = t.owner_id
+          )
+          ${ownerFilterClause}`
+    )
+    .all({ now: nowISO, owner: opts.owner }) as { task_id: string; owner_id: string }[];
+
+  const byOwner = new Map<string, string[]>();
+  for (const row of toRestage) {
+    const arr = byOwner.get(row.owner_id) ?? [];
+    arr.push(row.task_id);
+    byOwner.set(row.owner_id, arr);
+  }
+
+  const getMax = sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`);
+  const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
+  let restaged = 0;
+  for (const [ownerId, taskIds] of byOwner) {
+    let pos = (getMax.get(ownerId) as { m: number }).m + 1;
+    for (const taskId of taskIds) {
+      if (ins.run(ownerId, taskId, pos).changes > 0) { pos++; restaged++; }
+    }
+    broadcast(ownerId, 'flight_plan:updated', { restaged: taskIds.length });
+  }
+
+  return { missed: missed.length, deferred, surfaced, restaged };
 }
 
 /**

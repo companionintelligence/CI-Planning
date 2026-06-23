@@ -20,18 +20,19 @@ interface FpRow {
   priority: number | null;
   estimated_minutes: number | null;
   status: string;
+  recurrence_rule: string | null;
 }
 
 function list(owner: string) {
   const rows = sqlite
     .prepare(
       `SELECT fp.task_id, fp.selected, fp.position, fp.source_pattern_id, fp.added_at,
-              t.title, t.priority, t.estimated_minutes, t.status
+              t.title, t.priority, t.estimated_minutes, t.status, t.recurrence_rule
          FROM flight_plan fp JOIN tasks t ON t.id = fp.task_id
         WHERE fp.owner_id = ? ORDER BY fp.position, fp.task_id`
     )
     .all(owner) as FpRow[];
-  return rows.map((r) => ({ ...r, selected: !!r.selected }));
+  return rows.map((r) => ({ ...r, selected: !!r.selected, is_recurring: !!r.recurrence_rule }));
 }
 
 function nextPos(owner: string): number {
