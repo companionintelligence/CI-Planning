@@ -275,6 +275,11 @@ export const api = {
     set: (patternTagId: string, patch: Partial<PatternPref>): Promise<{ pref: PatternPref }> =>
       request<{ pref: PatternPref }>('PUT', `/pattern-prefs/${patternTagId}`, patch),
   },
+
+  backup: {
+    import: (json: unknown) =>
+      request<{ imported: Record<string, number> }>('POST', '/import', json),
+  },
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
