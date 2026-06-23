@@ -450,6 +450,7 @@ export interface LLMStatus {
 export interface Integrations {
   ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
   google: { mode: string };
+  push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver
 }
 
 // ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
