@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, blob, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { newId } from '../lib/ids.js';
 
@@ -25,6 +25,20 @@ export const apiKeys = sqliteTable('api_keys', {
   lastUsedAt: text('last_used_at'),
   createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   revokedAt: text('revoked_at'),
+});
+
+// Phase I (0051): encrypted connector OAuth tokens. The token JSON is AES-256-GCM
+// sealed via lib/crypto; only iv/auth_tag/ciphertext persist. Written by Phase J.
+export const connectionTokens = sqliteTable('connection_tokens', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  provider: text('provider').notNull(),
+  account: text('account').notNull(),
+  iv: blob('iv').notNull(),
+  authTag: blob('auth_tag').notNull(),
+  ciphertext: blob('ciphertext').notNull(),
+  keyVersion: integer('key_version').notNull().default(1),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const tasks = sqliteTable('tasks', {

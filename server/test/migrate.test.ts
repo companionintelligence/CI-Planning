@@ -171,6 +171,29 @@ describe('0050 owner external_subject', () => {
   });
 });
 
+describe('0051 connection_tokens store', () => {
+  it('creates the connection_tokens table with BLOB columns and a unique connection', () => {
+    const db = fresh();
+    runMigrations(db);
+
+    const info = db.prepare(`PRAGMA table_info(connection_tokens)`).all() as { name: string; type: string }[];
+    const byName = Object.fromEntries(info.map((c) => [c.name, c.type]));
+    expect(byName.owner_id).toBe('TEXT');
+    expect(byName.iv).toBe('BLOB');
+    expect(byName.auth_tag).toBe('BLOB');
+    expect(byName.ciphertext).toBe('BLOB');
+
+    // One row per (owner, provider, account) — distinct PK ids, same connection.
+    db.prepare(`INSERT INTO owners (id, name) VALUES (?, 'O')`).run('00000000-0000-7000-8000-0000000000d1');
+    const ins = (rowId: string) =>
+      db.prepare(`INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext) VALUES (?, ?, 'google', 'me@x.io', x'00', x'00', x'00')`)
+        .run(rowId, '00000000-0000-7000-8000-0000000000d1');
+    ins('00000000-0000-7000-8000-0000000000d2');
+    expect(() => ins('00000000-0000-7000-8000-0000000000d3')).toThrow(); // duplicate connection rejected
+    db.close();
+  });
+});
+
 describe('rebuildTable helper', () => {
   it('rebuilds a table to a new shape, preserving rows and restoring foreign_keys', () => {
     const db = fresh();
