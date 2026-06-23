@@ -81,6 +81,11 @@ function selectedStaged(owner: string): StagedTask[] {
   return rows.map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
 }
 
+/** How many tasks are staged in the flight-plan (selected or not). */
+function flightPlanCount(owner: string): number {
+  return (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(owner) as { n: number }).n;
+}
+
 function prefsOf(owner: string): PrefsRow | undefined {
   return sqlite
     .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday FROM scheduling_prefs WHERE owner_id = ?`)
@@ -223,7 +228,9 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
     )
     .all(owner, owner, CANDIDATE_LIMIT) as { id: string }[];
   const { m } = sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number };
-  const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 0, ?)`);
+  // Filled candidates arrive SELECTED (deselect-to-exclude model, req 8): manual
+  // staging already inserts selected = 1, so both paths now align.
+  const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
   let pos = m + 1;
   let added = 0;
   for (const c of candidates) if (ins.run(owner, c.id, pos++).changes > 0) added++;
@@ -371,12 +378,15 @@ function clearPriorAutoInWindow(windowStartMs: number, windowEndMs: number): voi
 }
 
 /**
- * The two-step Auto entry point. No selected staged items → propose candidates;
- * some selected → place them. Never touches anything outside the flight-plan.
+ * The two-step Auto entry point. The step is keyed off whether the flight-plan is
+ * EMPTY (req 8): empty → propose candidates (all selected); non-empty → place the
+ * selected ones. Keying off selection count broke once fill marked everything
+ * selected (and again when the user deselected everything). Never touches anything
+ * outside the flight-plan.
  */
 export function runAuto(opts: { date?: string; blockId?: string } = {}): AutoResult {
   const owner = currentOwnerId();
-  if (selectedStaged(owner).length === 0) {
+  if (flightPlanCount(owner) === 0) {
     const added = fillFlightPlanCandidates(owner);
     broadcast(owner, 'flight_plan:filled', { added });
     return { step: 'fill', candidatesAdded: added };
