@@ -14,6 +14,7 @@ import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generate.js';
 import { rescheduleTask } from '../engine/review.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
+import { syncTaskReminders } from '../engine/reminders.js';
 import { ensureHabitPattern } from '../services/patterns.js';
 import { setEntityTagIds, taskTagNames, taskTagNamesByIds, normalizeTagName } from '../services/tags.js';
 import { utcDayBounds } from '../lib/tz.js';
@@ -149,6 +150,7 @@ export function tasksRouter() {
 
     if (body.tags?.length) await attachTags(task.id, body.tags);
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, task.id, body.depends_on)) return;
+    syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
 
     const out = {
       ...toApi(task),
@@ -194,6 +196,7 @@ export function tasksRouter() {
       .returning();
 
     if (enriched.tags.length) await attachTags(task.id, enriched.tags);
+    syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): quick-add may parse a due date
 
     const out = { ...toApi(task), tags: enriched.tags, depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
@@ -409,6 +412,7 @@ export function tasksRouter() {
     }
 
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, targetId, body.depends_on)) return;
+    syncTaskReminders(currentOwnerId(), targetId); // Phase H (b): re-derive if due_at changed
 
     // A series edit that changes the recurrence pattern or per-instance time drops
     // future un-actioned instances and re-materializes them under the new rule;

@@ -731,6 +731,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "status",
       "fired_at",
       "created_at",
+      "source",
     ],
     "table": "reminders",
   },
