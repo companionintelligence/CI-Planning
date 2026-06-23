@@ -9,6 +9,7 @@ const EXPORT_VERSION = '1';
 // Tables that require only the owner_id for a direct export query.
 const OWNER_TABLES = [
   'scheduling_prefs',
+  'daily_summaries',
   'pattern_types',
   'patterns',
   'tasks',
@@ -117,6 +118,7 @@ export function backupRouter() {
       possible_task_tags: possibleTaskTags,
       reminders: ownerData['reminders'],
       push_subscriptions: ownerData['push_subscriptions'],
+      daily_summaries: ownerData['daily_summaries'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -187,11 +189,13 @@ export function backupRouter() {
       // tags / tag_patterns have no owner_id — full wipe (v0.2 single-owner).
       sqlite.exec('DELETE FROM tag_patterns');
       sqlite.exec('DELETE FROM tags');
+      sqlite.prepare('DELETE FROM daily_summaries WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM scheduling_prefs WHERE owner_id = ?').run(ownerId);
 
       // ── Insert in FK-safe forward order ────────────────────────────────────
       const g = (key: string) => (Array.isArray(body[key]) ? (body[key] as Record<string, unknown>[]) : []);
       counts['scheduling_prefs'] = insertRows('scheduling_prefs', g('scheduling_prefs'));
+      counts['daily_summaries']  = insertRows('daily_summaries', g('daily_summaries'));
       counts['tags']             = insertRows('tags', g('tags'));
       counts['tag_patterns']     = insertRows('tag_patterns', g('tag_patterns'));
       counts['pattern_types']    = insertRows('pattern_types', g('pattern_types'));
