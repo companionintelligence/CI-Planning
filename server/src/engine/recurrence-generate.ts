@@ -98,7 +98,7 @@ export function flagMissedHabits(templateId: string, today: string): number {
   return sqlite
     .prepare(
       `UPDATE tasks SET status = 'missed'
-        WHERE recurrence_parent_id = ? AND is_habit = 1 AND status = 'open'
+        WHERE recurrence_parent_id = ? AND subtype = 'habit' AND status = 'open'
           AND occurrence_date IS NOT NULL AND occurrence_date < ?`
     )
     .run(templateId, today).changes;
@@ -192,7 +192,7 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
       }
     }
 
-    if (t.is_habit) missed += flagMissedHabits(t.id, today);
+    if (t.subtype === 'habit') missed += flagMissedHabits(t.id, today);
   }
 
   broadcast(owner, 'recurrence:generated', { created, missed, templates: templates.length });
