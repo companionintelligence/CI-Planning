@@ -1,11 +1,14 @@
 import { createSignal, Show, For } from 'solid-js';
-import { SlidersHorizontal, Search } from 'lucide-solid';
-import { tasks, tags, taskFilter, setTaskFilter, refetchTasks } from '../stores/index.js';
+import { SlidersHorizontal, Search, Sparkles } from 'lucide-solid';
+import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast } from '../stores/index.js';
+import { api } from '../lib/api.js';
+import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
 import { QuickAdd } from '../components/QuickAdd.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
+  const [tagging, setTagging] = createSignal(false);
 
   const statusOptions = ['', 'open', 'scheduled', 'in_progress', 'done', 'cancelled', 'deferred'];
 
@@ -17,6 +20,39 @@ export function AllTasks() {
   const baseList = () => (tasks() ?? []).filter(t => !t.parent_id && !t.recurrence_parent_id);
   const shownList = () => baseList().filter(t => (view() === 'habits' ? t.is_habit : !t.is_habit));
 
+  /**
+   * Auto-tag every untagged task in the CURRENT filter view (default = all untagged,
+   * stated in the PR). Reuses the suggest-tags endpoint (LLM, vocabulary-constrained)
+   * unioned with the offline heuristic, so it still tags when Ollama is down and never
+   * invents a tag. Additive: only untagged tasks are touched, so no user tag is removed.
+   * The PATCH apply path broadcasts task:updated, keeping other open clients in sync.
+   */
+  async function autoTagUntagged() {
+    const vocab = (tags() ?? []).map(t => t.name);
+    const untagged = shownList().filter(t => (t.tags?.length ?? 0) === 0);
+    if (vocab.length === 0) { showToast('No tags yet — create some first', 'default'); return; }
+    if (untagged.length === 0) { showToast('No untagged tasks in view', 'default'); return; }
+    setTagging(true);
+    let tagged = 0;
+    try {
+      for (const task of untagged) {
+        let llm: string[] = [];
+        try { llm = (await api.tasks.suggestTags(task.title)).tags; } catch { llm = []; } // never throws → degrades to heuristic
+        const merged = mergeSuggestedTags(llm, suggestTagsFromTitle(task.title, vocab), vocab);
+        if (merged.length) { await api.tasks.update(task.id, { tags: merged }); tagged++; }
+      }
+      refetchTasks();
+      showToast(
+        tagged ? `Tagged ${tagged} of ${untagged.length} task${untagged.length === 1 ? '' : 's'}` : 'No matching tags found',
+        tagged ? 'success' : 'default',
+      );
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setTagging(false);
+    }
+  }
+
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
       {/* Header */}
@@ -25,9 +61,19 @@ export function AllTasks() {
           <h1 class="text-2xl font-bold text-slate-100">Tasks</h1>
           <p class="text-slate-500 text-sm mt-0.5">{activeTaskCount()} open</p>
         </div>
-        <button onClick={() => setShowFilters(v => !v)} class="btn-secondary gap-2">
-          <SlidersHorizontal size={14} /> Filters
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            onClick={autoTagUntagged}
+            disabled={tagging()}
+            class="btn-secondary gap-2"
+            title="Tag untagged tasks in this view using your existing tag vocabulary"
+          >
+            <Sparkles size={14} classList={{ 'animate-pulse': tagging() }} /> {tagging() ? 'Tagging…' : 'Auto-tag'}
+          </button>
+          <button onClick={() => setShowFilters(v => !v)} class="btn-secondary gap-2">
+            <SlidersHorizontal size={14} /> Filters
+          </button>
+        </div>
       </div>
 
       {/* Natural-language quick add */}

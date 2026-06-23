@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { suggestTagsFromTitle, localDayPlus } from './tag-suggest.js';
+import { suggestTagsFromTitle, mergeSuggestedTags, localDayPlus } from './tag-suggest.js';
 
 describe('suggestTagsFromTitle', () => {
   const tags = ['email', 'lita', 'finance', 'deep-work', 'errands'];
@@ -21,6 +21,27 @@ describe('suggestTagsFromTitle', () => {
   it('returns nothing when no tag appears', () => {
     expect(suggestTagsFromTitle('Walk the dog', tags)).toEqual([]);
     expect(suggestTagsFromTitle('', tags)).toEqual([]);
+  });
+});
+
+describe('mergeSuggestedTags', () => {
+  const vocab = ['email', 'finance', 'deep-work', 'errands'];
+
+  it('unions LLM + heuristic, dedupes, and preserves LLM-first order', () => {
+    expect(mergeSuggestedTags(['finance'], ['email', 'finance'], vocab)).toEqual(['finance', 'email']);
+  });
+
+  it('never lets a non-vocabulary tag through (no invented tags)', () => {
+    expect(mergeSuggestedTags(['made-up'], ['email'], vocab)).toEqual(['email']);
+    expect(mergeSuggestedTags(['made-up'], ['also-fake'], vocab)).toEqual([]);
+  });
+
+  it('degrades to the heuristic when the LLM list is empty (Ollama down)', () => {
+    expect(mergeSuggestedTags([], ['email', 'deep-work'], vocab)).toEqual(['email', 'deep-work']);
+  });
+
+  it('returns nothing when both are empty', () => {
+    expect(mergeSuggestedTags([], [], vocab)).toEqual([]);
   });
 });
 
