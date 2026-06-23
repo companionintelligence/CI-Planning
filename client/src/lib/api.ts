@@ -191,6 +191,12 @@ export const api = {
   auto: {
     run: (body?: { block_id?: string; date?: string }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/run', body ?? {}),
+    // Explicit priority top-up (tap 3, D5): fill non-matching workday capacity P1-first.
+    priority: (body?: { date?: string }) =>
+      request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/priority', body ?? {}),
+    // Undo the last placement run (D2): delete its blocks, re-stage its tasks.
+    undo: () =>
+      request<{ result: { removed: number; restaged: number }; flight_plan: FlightPlanItem[] }>('POST', '/auto/undo', {}),
   },
 
   blockTemplates: {
@@ -397,7 +403,8 @@ export interface Tag {
 
 export interface Prefs {
   id: string; owner_id: string; workday_start: string; workday_end: string;
-  auto_fill_workday?: boolean; // Auto's secondary workday fallback (0028); default true
+  auto_fill_workday?: boolean; // gates the explicit priority fill (0028; D5 repurpose)
+  auto_mode?: 'suggest' | 'schedule'; // trust toggle (0052); default 'suggest'
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
   // Time-Block container duration bounds (0017).
