@@ -39,6 +39,12 @@ afterAll(async () => { await srv.close(); });
 beforeEach(() => resetDb()); // clears all tags incl. base directions
 
 describe('0036 migration backfill', () => {
+  // backfill0036 runs `CREATE TABLE IF NOT EXISTS tag_directions`, which RESURRECTS the
+  // pre-0043 table on the shared (already-migrated) DB — 0043 renamed it to tag_patterns.
+  // resetDb only deletes rows, so the stray table would otherwise linger and leak into a
+  // later file's schema snapshot (baseline.characterization). Drop it once this block ends.
+  afterAll(() => { sqlite.exec(`DROP TABLE IF EXISTS tag_directions`); });
+
   it('seeds the 3 base directions, heuristically assigns obvious tags, leaves the rest Unsorted', () => {
     // pre-existing intention tags (as if from before the migration)
     for (const n of ['yard-work', 'product', 'socialize', 'personal'])
