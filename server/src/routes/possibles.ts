@@ -5,6 +5,7 @@ import { possibleTasks, tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
+import { writeAudit } from '../lib/audit.js';
 
 export function possiblesRouter() {
   const router = new Router();
@@ -51,6 +52,7 @@ export function possiblesRouter() {
 
     const out = toApi(task);
     broadcast(currentOwnerId(), 'possible:promoted', { id, task: out });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'promote', entity: `possible:${id}` });
     ctx.status = 201;
     ctx.body = { task: out };
   });
@@ -65,6 +67,7 @@ export function possiblesRouter() {
       .returning();
     if (!possible) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'possible:dismissed', { id });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'dismiss', entity: `possible:${id}` });
     ctx.body = { ok: true };
   });
 

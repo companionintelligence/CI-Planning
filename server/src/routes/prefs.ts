@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { schedulingPrefs } from '../db/schema.js';
 import { toApi, fromApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
+import { writeAudit } from '../lib/audit.js';
 
 export function prefsRouter() {
   const router = new Router();
@@ -24,6 +25,7 @@ export function prefsRouter() {
       .set(update)
       .where(eq(schedulingPrefs.ownerId, currentOwnerId()))
       .returning();
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: 'prefs:owner' });
     ctx.body = { prefs: prefs ? toApi(prefs) : null };
   });
 

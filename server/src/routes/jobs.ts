@@ -3,6 +3,8 @@ import { eq, desc } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { scheduledJobs, jobRuns } from '../db/schema.js';
 import { runJob } from '../jobs/index.js';
+import { currentOwnerId } from '../lib/context.js';
+import { writeAudit } from '../lib/audit.js';
 
 export function jobsRouter() {
   const router = new Router();
@@ -29,6 +31,7 @@ export function jobsRouter() {
     if (!job) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     // Fire async; client listens on SSE for completion
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: `job:${job.kind}` });
     runJob(job.kind).catch(console.error);
     ctx.body = { ok: true, message: `Job ${job.name} triggered` };
   });

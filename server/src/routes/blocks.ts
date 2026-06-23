@@ -9,6 +9,7 @@ import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
+import { writeAudit } from '../lib/audit.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -128,6 +129,7 @@ export function blocksRouter() {
 
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(block.id) };
     broadcast(currentOwnerId(), 'block:created', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `block:${block.id}` });
     ctx.status = 201;
     ctx.body = { block: out };
   });
@@ -204,6 +206,7 @@ export function blocksRouter() {
 
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(id) };
     broadcast(currentOwnerId(), 'block:updated', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${id}` });
     ctx.body = { block: out };
   });
 
@@ -241,6 +244,7 @@ export function blocksRouter() {
     const ids = members.map((m) => m.id);
     const rows = ids.length ? await db.select().from(timeBlocks).where(inArray(timeBlocks.id, ids)) : [];
     broadcast(currentOwnerId(), 'block:updated', { moved_group: parentId, count: ids.length });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${parentId}` });
     ctx.body = { blocks: toApiList(rows) };
   });
 
@@ -262,6 +266,7 @@ export function blocksRouter() {
       .returning();
     const out = toApi(block);
     broadcast(currentOwnerId(), 'block:updated', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'promote', entity: `block:${id}` });
     ctx.body = { block: out };
   });
 
@@ -291,6 +296,7 @@ export function blocksRouter() {
     // CON-3 cascade: the block itself is HARD-deleted — drop its tag rows.
     removeEntityTags('time_block', id);
     broadcast(currentOwnerId(), 'block:deleted', { id });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block:${id}` });
     ctx.body = { ok: true };
   });
 

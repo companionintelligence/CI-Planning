@@ -2,6 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { getPatternPrefs, setPatternPref } from '../services/pattern-prefs.js';
+import { writeAudit } from '../lib/audit.js';
 
 export function patternPrefsRouter() {
   const router = new Router();
@@ -69,6 +70,7 @@ export function patternPrefsRouter() {
       color_token: body.color_token as string | undefined,
       default_minutes: body.default_minutes as number | undefined,
     });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `pattern-prefs:${patternTagId}` });
     ctx.body = { pref };
   });
 
