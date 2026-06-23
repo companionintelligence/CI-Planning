@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`behavior baseline — Auto placement engine > places Plans-first then the workday fallback, deterministically > agent blocks (placement order) 1`] = `
+exports[`behavior baseline — Auto placement engine > places Plans-first (tap 2), then the explicit priority fill, deterministically > agent blocks (placement order) 1`] = `
 [
   {
     "block_kind": "task",
@@ -35,14 +35,14 @@ exports[`behavior baseline — Auto placement engine > places Plans-first then t
 ]
 `;
 
-exports[`behavior baseline — Auto placement engine > places Plans-first then the workday fallback, deterministically > placeFlightPlan result 1`] = `
+exports[`behavior baseline — Auto placement engine > places Plans-first (tap 2), then the explicit priority fill, deterministically > placeFlightPlan result 1`] = `
 {
-  "blocksCreated": 3,
-  "placed": 3,
+  "blocksCreated": 1,
+  "placed": 1,
   "placedInPlans": 1,
-  "placedInWorkday": 2,
+  "placedInWorkday": 0,
   "step": "place",
-  "unplaced": 0,
+  "unplaced": 2,
 }
 `;
 

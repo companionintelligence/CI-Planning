@@ -289,80 +289,92 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   }
   const placedInPlans = placedIds.size;
 
-  // Pass 2 — workday fallback (secondary, toggleable). Flows around the Plans.
-  // When pattern_blocks are configured, direction-tagged tasks are constrained to
-  // their direction's windows (union, earliest-first); direction-less tasks use the
-  // classic workday_start/workday_end window (backward-compatible).
-  //
-  // Per-pattern gating (0040): each direction's auto_fill is checked against
-  // pattern_prefs. When all pattern_prefs rows default to auto_fill=1 AND
-  // auto_fill_workday=1, output is byte-identical to the pre-0040 behavior.
-  if ((prefs?.auto_fill_workday ?? 1) === 1) {
-    const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
-    const patWindows = getPatternBlocks(owner, dayType);
-    // Load per-direction auto_fill prefs. Missing row → default { auto_fill: true }.
+  // Pass 2a — direction-window placement (tag-matched). Runs UNCONDITIONALLY: this is
+  // part of tag-matched placement (tap 2), not the priority fill. Direction-tagged
+  // tasks are constrained to their direction's pattern windows (union, earliest-first),
+  // flowing around the Plans. Per-direction auto_fill (pattern_prefs) is still honored.
+  // Leftover capacity is left OPEN here — the workday/priority fill is the separate,
+  // explicit fillByPriority() step (tap 3, D5).
+  const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
+  const patWindows = getPatternBlocks(owner, dayType);
+  if (Object.keys(patWindows).length > 0) {
     const dprefs = getPatternPrefs(owner);
     const dirNameToId = new Map<string, string>(); // direction tag name → id
+    const ids = Object.keys(patWindows);
+    const dirTags = sqlite
+      .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
+      .all(...ids) as { id: string; name: string }[];
+    for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
 
-    if (Object.keys(patWindows).length > 0) {
-      const ids = Object.keys(patWindows);
-      const dirTags = sqlite
-        .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
-        .all(...ids) as { id: string; name: string }[];
-      for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
-    }
-
-    const remaining = staged.filter((t) => !placedIds.has(t.task_id));
-
-    if (dirNameToId.size > 0) {
-      // Pass 2a — direction-tagged tasks → their direction's windows (union, earliest-first).
-      // Per-pattern gating: skip a direction whose auto_fill pref is false.
-      for (const t of remaining) {
-        if (placedIds.has(t.task_id)) continue;
-        const taskDirIds = t.tags
-          .map((name) => dirNameToId.get(name))
-          .filter((id): id is string => id !== undefined);
-        if (taskDirIds.length === 0) continue;
-        // Filter to directions whose auto_fill is enabled (missing row → default true).
-        const enabledDirIds = taskDirIds.filter((dirId) => (dprefs[dirId]?.auto_fill ?? true));
-        if (enabledDirIds.length === 0) continue;
-        const allRanges = enabledDirIds
-          .flatMap((did) => patWindows[did] ?? [])
-          .sort((a, b) => a.start_time.localeCompare(b.start_time));
-        for (const range of allRanges) {
-          if (placedIds.has(t.task_id)) break;
-          const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
-          const winEnd   = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
-          const r = placeIntoWindow([t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true });
-          r.placedTaskIds.forEach((id) => placedIds.add(id));
-          blocksCreated += r.blocksCreated;
-        }
-      }
-      // Pass 2b — direction-less tasks → classic workday_start/workday_end
-      const undirected = remaining.filter(
-        (t) => !placedIds.has(t.task_id) && !t.tags.some((n) => dirNameToId.has(n))
-      );
-      if (undirected.length > 0) {
-        const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-        const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-        const r = placeIntoWindow(undirected, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true });
+    for (const t of staged.filter((s) => !placedIds.has(s.task_id))) {
+      const taskDirIds = t.tags
+        .map((name) => dirNameToId.get(name))
+        .filter((id): id is string => id !== undefined);
+      if (taskDirIds.length === 0) continue;
+      const enabledDirIds = taskDirIds.filter((dirId) => dprefs[dirId]?.auto_fill ?? true);
+      if (enabledDirIds.length === 0) continue;
+      const allRanges = enabledDirIds
+        .flatMap((did) => patWindows[did] ?? [])
+        .sort((a, b) => a.start_time.localeCompare(b.start_time));
+      for (const range of allRanges) {
+        if (placedIds.has(t.task_id)) break;
+        const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
+        const winEnd = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
+        const r = placeIntoWindow([t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
       }
-    } else {
-      // No pattern windows configured → classic single window (backward-compatible)
-      const windowStartMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
-      const windowEndMs   = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-      const r = placeIntoWindow(remaining, windowStartMs, windowEndMs, prefs, { parentBlockId: null, includePlans: true });
-      r.placedTaskIds.forEach((id) => placedIds.add(id));
-      blocksCreated += r.blocksCreated;
     }
   }
 
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
   broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
-  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday: placed - placedInPlans };
+  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday: 0 };
+}
+
+/**
+ * The explicit priority top-up (tap 3, D5). Tag-matched placement (placeFlightPlan)
+ * leaves leftover capacity OPEN; this fills the workday window with the highest-
+ * priority still-unplaced selected tasks (P1 first), flowing around everything already
+ * placed (Plans, meetings, prior auto/manual blocks). Never auto-runs — it is always an
+ * explicit tap, in both modes. Gated by the `auto_fill_workday` pref (off → no-op).
+ */
+export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: string } = {}): AutoResult {
+  const date = opts.date ?? localISODate();
+  const prefs = prefsOf(owner);
+  const tz = prefs?.timezone || serverTimezone();
+  if ((prefs?.auto_fill_workday ?? 1) !== 1) {
+    return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
+  }
+
+  const staged = selectedStaged(owner);
+  // Tasks already auto-placed today are not re-placed (this top-up runs AFTER tap 2,
+  // and must not clear or duplicate those placements).
+  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
+  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const placedTaskIds = new Set(
+    (sqlite
+      .prepare(
+        `SELECT DISTINCT task_id FROM time_blocks
+          WHERE is_auto = 1 AND source_kind = 'agent' AND block_kind = 'task' AND task_id IS NOT NULL
+            AND start_at < ? AND end_at > ?`,
+      )
+      .all(dayEndISO, dayStartISO) as { task_id: string }[]).map((r) => r.task_id),
+  );
+  const remaining = staged.filter((t) => !placedTaskIds.has(t.task_id));
+  if (remaining.length === 0) {
+    return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
+  }
+
+  const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
+  const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+  // orderForPlan with no weights sorts priority-first (P1 first). includePlans flows
+  // around Plans and the tag-matched blocks tap 2 already created.
+  const r = placeIntoWindow(orderForPlan(remaining), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true });
+  const placed = r.placedTaskIds.size;
+  broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed });
+  return { step: 'place', blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
 }
 
 /** Clear prior agent placements overlapping a specific window (the single-Plan path). */
