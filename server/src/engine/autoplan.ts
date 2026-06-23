@@ -228,6 +228,8 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
       `SELECT id FROM tasks
         WHERE owner_id = ? AND status = 'open'
           AND subtype IS NOT 'habit'
+          AND parent_id IS NULL
+          AND recurrence_parent_id IS NULL
           AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)
         ORDER BY priority, COALESCE(due_at, '9999-12-31'), id
         LIMIT ?`
@@ -275,6 +277,11 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
     recordRun(owner, runId, r.blocksCreated);
     broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
+    if (r.placedTaskIds.size > 0) {
+      const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
+      for (const id of r.placedTaskIds) del.run(owner, id);
+      broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
+    }
     return { step: 'place', blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size, placedInPlans: r.placedTaskIds.size, placedInWorkday: 0 };
   }
 
@@ -339,6 +346,11 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
   broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
+  if (placedIds.size > 0) {
+    const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
+    for (const id of placedIds) del.run(owner, id);
+    broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
+  }
   return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday: 0 };
 }
 
@@ -385,6 +397,11 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
   recordRun(owner, runId, r.blocksCreated);
   const placed = r.placedTaskIds.size;
   broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed });
+  if (r.placedTaskIds.size > 0) {
+    const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
+    for (const id of r.placedTaskIds) del.run(owner, id);
+    broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
+  }
   return { step: 'place', blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
 }
 

@@ -361,6 +361,7 @@ export interface FlightPlanItem {
   task_id: string; selected: boolean; position: number;
   source_pattern_id: string | null; added_at: string;
   title: string; priority: number | null; estimated_minutes: number | null; status: string;
+  is_recurring?: boolean;
 }
 
 /** Result of POST /api/auto/run — `fill` (step 1) proposes; `place` (step 2) schedules. */
