@@ -3,6 +3,7 @@ import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshC
 import { prefs, refetchPrefs, tags, patternBlocks, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
+import { RoutineTypeSettings } from '../components/RoutineTypeSettings.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { DEFAULT_CONCEPT_TAGS, PATTERN_COLORS, colorVar, type ConceptTag } from '../lib/pattern-meta.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
@@ -585,6 +586,13 @@ export function Settings() {
           </div>
           <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
             hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
+        </section>
+
+        {/* Routine Types — create/edit/delete pattern type taxonomy */}
+        <section class="card">
+          <div class="section-label mb-3">Routine Types</div>
+          <p class="text-xs text-muted-foreground mb-3">The categories your Routines, Habits, and custom types belong to. Built-in types can be edited but not deleted.</p>
+          <RoutineTypeSettings />
         </section>
 
         {/* Pattern Block settings — shape + colour per pattern tag; sits directly above Tag Settings */}
