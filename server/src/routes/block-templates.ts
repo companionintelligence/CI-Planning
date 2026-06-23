@@ -2,6 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
+import { writeAudit } from '../lib/audit.js';
 
 /**
  * Reusable Time-Block templates (Phase G, G3 + PR-B). Save a named, tagged Plan
@@ -63,6 +64,7 @@ export function blockTemplatesRouter() {
       .get(currentOwnerId(), body.name.trim(), body.tag ?? null, body.default_minutes ?? 60, tasksJson) as TemplateRow;
     const out = serializeTemplate(row);
     broadcast(currentOwnerId(), 'block_template:created', out);
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `block-template:${row.id}` });
     ctx.status = 201;
     ctx.body = { block_template: out };
   });
@@ -71,6 +73,7 @@ export function blockTemplatesRouter() {
     const r = sqlite.prepare(`DELETE FROM block_templates WHERE id = ? AND owner_id = ?`).run(ctx.params.id, currentOwnerId());
     if (r.changes === 0) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'block_template:deleted', { id: ctx.params.id });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block-template:${ctx.params.id}` });
     ctx.body = { ok: true };
   });
 
@@ -109,6 +112,7 @@ export function blockTemplatesRouter() {
 
     const out = serializeBlock(block);
     broadcast(owner, 'block:created', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `block-template:${ctx.params.id}` });
     ctx.status = 201;
     ctx.body = { block: out };
   });

@@ -3,6 +3,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { runAuto } from '../engine/autoplan.js';
+import { writeAudit } from '../lib/audit.js';
 
 /**
  * The flight-plan (Phase G, G4): a persisted, owner-scoped staging area + the
@@ -64,6 +65,7 @@ export function flightPlanRouter() {
       ctx.status = 422; ctx.body = { error: 'task_id or pattern_id is required' }; return;
     }
     broadcast(owner, 'flight_plan:updated', { added });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'stage', entity: 'flight-plan:stage' });
     ctx.status = 201;
     ctx.body = { flight_plan: list(owner), added };
   });
@@ -78,6 +80,7 @@ export function flightPlanRouter() {
     if (body.selected !== undefined) sqlite.prepare(`UPDATE flight_plan SET selected = ? WHERE owner_id = ? AND task_id = ?`).run(body.selected ? 1 : 0, owner, taskId);
     if (body.position !== undefined) sqlite.prepare(`UPDATE flight_plan SET position = ? WHERE owner_id = ? AND task_id = ?`).run(body.position, owner, taskId);
     broadcast(owner, 'flight_plan:updated', { task_id: taskId });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'toggle', entity: `flight-plan:${taskId}` });
     ctx.body = { flight_plan: list(owner) };
   });
 
@@ -85,6 +88,7 @@ export function flightPlanRouter() {
     const owner = currentOwnerId();
     sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, ctx.params.taskId);
     broadcast(owner, 'flight_plan:updated', { removed: ctx.params.taskId });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'remove', entity: `flight-plan:${ctx.params.taskId}` });
     ctx.body = { flight_plan: list(owner) };
   });
 
@@ -93,6 +97,7 @@ export function flightPlanRouter() {
     const owner = currentOwnerId();
     const r = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ?`).run(owner);
     broadcast(owner, 'flight_plan:reset', { cleared: r.changes });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'reset', entity: 'flight-plan:reset' });
     ctx.body = { ok: true, cleared: r.changes };
   });
 
@@ -100,6 +105,7 @@ export function flightPlanRouter() {
   router.post('/api/auto/run', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string };
     const result = runAuto({ blockId: body.block_id, date: body.date });
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:run' });
     ctx.body = { result, flight_plan: list(currentOwnerId()) };
   });
 

@@ -9,6 +9,7 @@ import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/gro
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
+import { writeAudit } from '../lib/audit.js';
 
 export interface JobOutcome {
   itemsCreated: number;
@@ -102,6 +103,7 @@ export async function runJob(kind: string): Promise<void> {
 
   try {
     outcome = await execute(kind);
+    writeAudit({ ownerId: SYSTEM_OWNER, actor: 'system', action: 'job', entity: `job:${kind}` });
   } catch (err) {
     status = 'error';
     outcome.log = (err as Error).message;
