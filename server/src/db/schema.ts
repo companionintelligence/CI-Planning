@@ -370,6 +370,46 @@ export const reminders = sqliteTable('reminders', {
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
+// --- Phase J (0050): Encrypted OAuth token store. One row per (owner, provider, account). ---
+// Token JSON is AES-256-GCM sealed via lib/crypto (KEK from CP_KEK_B64).
+export const connectionTokens = sqliteTable('connection_tokens', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  provider: text('provider').notNull(), // 'google' | 'outlook' | 'icloud'
+  account: text('account').notNull(),
+  iv: text('iv').notNull(),
+  authTag: text('auth_tag').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  keyVersion: integer('key_version').notNull().default(1),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// --- Phase J (0051): Sync identity map. Links provider events to local time_blocks. ---
+// Conflict identity: (provider, account, external_id) + etag. No embeddings here.
+export const externalEvents = sqliteTable('external_events', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  provider: text('provider').notNull(),
+  account: text('account').notNull(),
+  externalId: text('external_id').notNull(),
+  blockId: text('block_id').references(() => timeBlocks.id, { onDelete: 'cascade' }),
+  etag: text('etag'),
+  direction: text('direction').notNull().default('inbound'), // 'inbound' | 'outbound'
+  lastSyncedAt: text('last_synced_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+});
+
+// --- Phase J (0055): Outbound sync queue. One row per (block, provider, account) pending push. ---
+// ON CONFLICT(block_id, provider, account) DO UPDATE refreshes created_at so the latest mutation wins.
+export const outboundQueue = sqliteTable('outbound_queue', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  blockId: text('block_id').references(() => timeBlocks.id, { onDelete: 'cascade' }).notNull(),
+  provider: text('provider').notNull(),
+  account: text('account').notNull(),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 // --- Phase R (0046): Audit log. Append-only; every mutating route writes one row. ---
 export const auditLog = sqliteTable('audit_log', {
   id: text('id').primaryKey().$defaultFn(newId),

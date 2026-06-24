@@ -47,11 +47,13 @@ import * as m0046 from './0046_audit_log.js';
 import * as m0047 from './0047_snapshot_job.js';
 import * as m0048 from './0048_drop_habit_booleans.js';
 import * as m0049 from './0049_api_keys.js';
-// 0050–0051 are reserved for the in-flight Phase I (auth) stack; this Wave-3
-// feature takes the next free number to avoid colliding when both land.
+import * as m0050 from './0050_connection_tokens.js';
+import * as m0051 from './0051_external_events.js';
 import * as m0052 from './0052_auto_scheduling.js';
 import * as m0053 from './0053_tag_tasks_job.js';
 import * as m0054 from './0054_community_catchall.js';
+import * as m0056 from './0056_sync_calendar_job.js';
+import * as m0057 from './0057_outbound_queue.js';
 
 export interface Migration {
   id: string;
@@ -64,4 +66,4 @@ export interface Migration {
  * Ordered list of migrations. Explicit (not a glob / dynamic import) so order is
  * deterministic and the set is bundler-safe. Append new migrations to the end.
  */
-export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025, m0026, m0027, m0028, m0029, m0030, m0031, m0032, m0033, m0034, m0035, m0036, m0037, m0038, m0039, m0040, m0041, m0042, m0043, m0044, m0045, m0046, m0047, m0048, m0049, m0052, m0053, m0054];
+export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025, m0026, m0027, m0028, m0029, m0030, m0031, m0032, m0033, m0034, m0035, m0036, m0037, m0038, m0039, m0040, m0041, m0042, m0043, m0044, m0045, m0046, m0047, m0048, m0049, m0050, m0051, m0052, m0053, m0054, m0056, m0057];
