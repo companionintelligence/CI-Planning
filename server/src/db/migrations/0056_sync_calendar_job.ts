@@ -1,7 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import { newId } from '../../lib/ids.js';
 
-export const id = '0054_sync_calendar_job';
+export const id = '0056_sync_calendar_job';
 
 /**
  * Phase J (PR2) — seed the sync_calendar cron job. Runs every 15 minutes;
