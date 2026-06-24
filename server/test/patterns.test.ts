@@ -32,12 +32,13 @@ beforeEach(() => {
 });
 
 describe('pattern types', () => {
-  it('seeds the three built-in types, but hides Ritual by default (PR-C+: enable_rituals flag)', async () => {
+  it('seeds four built-in types; Ritual is hidden by default (PR-C+: enable_rituals flag)', async () => {
     // Default: enable_rituals=false (0024 migration), so the listing route filters Ritual out.
+    // Community (catch-all), Habit, and Routine are visible by default.
     const { status, body } = await api(srv.url, '/api/pattern-types');
     expect(status).toBe(200);
     const names = body.pattern_types.map((t: any) => t.name).sort();
-    expect(names).toEqual(['Habit', 'Routine']);
+    expect(names).toEqual(['Community', 'Habit', 'Routine']);
     const byName = Object.fromEntries(body.pattern_types.map((t: any) => [t.name, t]));
     expect(byName.Routine.icon_shape).toBe('square');
     expect(byName.Habit.icon_shape).toBe('circle');
