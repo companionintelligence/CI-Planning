@@ -82,12 +82,12 @@ afterEach(() => {
 
 // ── /start ────────────────────────────────────────────────────────────────────
 describe('GET /api/oauth/google/start', () => {
-  it('302s to Google with S256 + offline + consent and a verbatim redirect_uri', async () => {
+  it('returns { url } to Google with S256 + offline + consent and a verbatim redirect_uri', async () => {
     config.auth.mode = 'standalone';
-    const { status, location } = await rawGet('/api/oauth/google/start', authHeaders());
-    expect(status).toBe(302);
-    expect(location).toBeTruthy();
-    const url = new URL(location!);
+    const { status, body } = await realApi<{ url: string }>('/api/oauth/google/start', authHeaders());
+    expect(status).toBe(200);
+    expect(body.url).toBeTruthy();
+    const url = new URL(body.url);
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('code_challenge')).toBeTruthy();
     expect(url.searchParams.get('access_type')).toBe('offline');
@@ -109,7 +109,7 @@ describe('GET /api/oauth/google/start', () => {
     const verifier = String(rows[0].code_verifier);
     expect(verifier.length).toBeGreaterThanOrEqual(43);
     expect(verifier.length).toBeLessThanOrEqual(128);
-    expect(location).not.toContain(verifier);
+    expect(body.url).not.toContain(verifier);
   });
 
   it('refuses with 409 in test mode and writes no oauth_states row (I2)', async () => {
