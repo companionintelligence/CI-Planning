@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, For } from 'solid-js';
-import { X, ChevronLeft, Plus, ListTodo, Flame, Boxes, Clock } from 'lucide-solid';
+import { X, ChevronLeft, Plus, ListTodo, Flame, Boxes, Clock, Calendar } from 'lucide-solid';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, showToast,
   type ElementKind,
@@ -8,7 +8,7 @@ import {
   ELEMENT_KINDS, patternTagList, patternDefaultMinutes, rankedSecondaryTags,
   nextHalfHour, saveElement, type ElementForm,
 } from '../lib/element.js';
-import { localISODate, addDays } from '../lib/dates.js';
+import { localISODate } from '../lib/dates.js';
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { api } from '../lib/api.js';
 
@@ -286,8 +286,6 @@ export function ElementWizard() {
     </>
   );
 
-  const startPicks: [string, number][] = [['Today', 0], ['+1 day', 1], ['+1 week', 7]];
-
   return (
     <Show when={open()}>
       <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && close()}>
@@ -404,18 +402,18 @@ export function ElementWizard() {
 
                 {/* Scheduling (hidden for Someday capture) */}
                 <Show when={!someday()}>
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-[11px] text-muted-foreground w-12">Start</span>
-                    <For each={startPicks}>
-                      {([label, d]) => (
-                        <button type="button" onClick={() => setScheduledFor(addDays(localISODate(), d))}
-                          class="flex-1 py-1 rounded-md text-xs border transition-colors"
-                          classList={{ 'border-primary text-primary bg-primary/10': scheduledFor() === addDays(localISODate(), d), 'border-border text-muted-foreground hover:text-foreground': scheduledFor() !== addDays(localISODate(), d) }}>
-                          {label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
+                  <label class="flex items-center gap-1.5">
+                    <span class="text-[11px] text-muted-foreground w-12 shrink-0">Start</span>
+                    <div class="relative flex-1">
+                      <Calendar size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <input
+                        type="date"
+                        class="input py-1 text-sm pl-8"
+                        value={scheduledFor()}
+                        onInput={(e) => setScheduledFor(e.currentTarget.value)}
+                      />
+                    </div>
+                  </label>
                   <div class="grid grid-cols-3 gap-2">
                     <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Time</span>
                       <input type="time" class="input py-1 text-sm" value={taskTime()} onInput={(e) => setTaskTime(e.currentTarget.value)} /></label>

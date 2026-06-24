@@ -277,9 +277,19 @@
     to   { opacity: 1; transform: translateY(0) scale(1); }
   }
 
+  /* ── Z-index scale (update this table whenever you add a new layer) ──────
+       30   FAB, BottomNav bar, sticky calendar headers (.fab, z-30)
+       40   BottomNav "more" backdrop (z-40)
+       50   Toast notifications (.toast, Toast.tsx z-50)
+     [999]  Planner options popover — fixed, beats grid overflow-hidden (z-[999])
+    [1000]  Modal backdrop — must sit above every in-page layer, including the
+            Planner popover at z-[999]. Children use z-50 freely within this
+            stacking context (e.g. the tag-suggestion dropdown in ElementWizard).
+     ─────────────────────────────────────────────────────────────────────── */
+
   /* ── Modal ───────────────────────────────────────────────────── */
   .modal-backdrop {
-    @apply fixed inset-0 z-40 flex items-center justify-center p-4;
+    @apply fixed inset-0 z-[1000] flex items-center justify-center p-4;
     background: rgba(0,0,0,.7);
     backdrop-filter: blur(6px);
     animation: fadeIn 150ms ease both;
