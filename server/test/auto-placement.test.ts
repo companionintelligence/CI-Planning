@@ -215,6 +215,62 @@ describe('habit exclusion from flight-plan candidates', () => {
   });
 });
 
+describe('catch-all Plan (Community pattern type)', () => {
+  function makeCommunityPlan(start: string, end: string) {
+    return (sqlite
+      .prepare(
+        `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status)
+         VALUES (uuid7(), 'Community', 'timeblock', 'scheduled', 'Community', ?, ?, 0, 'manual', 'planned') RETURNING id`,
+      )
+      .get(start, end) as { id: string }).id;
+  }
+
+  it('accepts every staged task regardless of tag, placed in priority order', async () => {
+    makeCommunityPlan(at('10:00'), at('14:00'));
+    const tagged = insertTask('Work task', 60, 'work', 3);
+    const untagged = insertTask('Untagged task', 60, undefined, 2);
+    const otherTag = insertTask('Errands task', 60, 'errands', 1);
+    stage(tagged); stage(untagged); stage(otherTag);
+
+    const r = placeFlightPlan(OWNER, { date: DAY });
+    expect(r.placedInPlans).toBeGreaterThanOrEqual(2); // at least some placed
+    const titles = agentBlocks().map((b) => b.title);
+    // All three should land — Community accepts any tag (or no tag).
+    expect(titles).toContain('Work task');
+    expect(titles).toContain('Untagged task');
+    expect(titles).toContain('Errands task');
+  });
+
+  it('priority order: P1 gets the earliest slot inside a catch-all Plan', () => {
+    makeCommunityPlan(at('09:00'), at('12:00'));
+    const lo = insertTask('Low', 60, undefined, 5);
+    const hi = insertTask('High', 60, undefined, 1);
+    stage(lo); stage(hi);
+
+    placeFlightPlan(OWNER, { date: DAY });
+    const blocks = agentBlocks();
+    expect(blocks[0].title).toBe('High');
+    expect(blocks[1].title).toBe('Low');
+  });
+
+  it('a non-catch-all Plan (e.g. errands) still filters by tag', async () => {
+    makeCommunityPlan(at('10:00'), at('12:00'));
+    await makePlan(srv, 'errands', at('14:00'), at('16:00'));
+    const work = insertTask('Work task', 30, 'work');
+    const errand = insertTask('Errand task', 30, 'errands');
+    stage(work); stage(errand);
+
+    placeFlightPlan(OWNER, { date: DAY });
+    const comBlocks = agentBlocks().filter((b) => b.start_at >= at('10:00') && b.end_at <= at('12:00'));
+    const errBlocks = agentBlocks().filter((b) => b.start_at >= at('14:00') && b.end_at <= at('16:00'));
+    // Errands (non-catch-all) runs first, picks the errand-tagged task.
+    // Community (catch-all) runs after, absorbs whatever remains.
+    expect(comBlocks.length).toBeGreaterThanOrEqual(1);
+    expect(errBlocks.map((b) => b.title)).toContain('Errand task');
+    expect(errBlocks.map((b) => b.title)).not.toContain('Work task');
+  });
+});
+
 describe('idempotent re-place', () => {
   it('re-running Auto clears prior agent blocks but preserves pattern + manual blocks', async () => {
     const plan = await makePlan(srv, 'work', at('09:00'), at('12:00'));
