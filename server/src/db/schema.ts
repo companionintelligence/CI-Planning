@@ -240,6 +240,9 @@ export const patternPrefs = sqliteTable('pattern_prefs', {
   reminderOffsets: text('reminder_offsets', { mode: 'json' }).$type<number[]>().notNull().default([]),
   iconShape: text('icon_shape').notNull().default('circle'),     // circle | square | triangle
   colorToken: text('color_token').notNull().default('primary'),  // CI-Hub token key (never hex)
+  // 0040: fallback estimate (minutes) a pattern tag contributes when a task carries no
+  // intention tag. Migration adds it NOT NULL DEFAULT 60; the Drizzle def had drifted.
+  defaultMinutes: integer('default_minutes').notNull().default(60),
 });
 
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
