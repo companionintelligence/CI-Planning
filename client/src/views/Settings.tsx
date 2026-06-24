@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
+import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, ChevronUp, ChevronDown, Database, AlertTriangle } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternBlocks, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
@@ -7,6 +7,7 @@ import { RoutineTypeSettings } from '../components/RoutineTypeSettings.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { DEFAULT_CONCEPT_TAGS, PATTERN_COLORS, colorVar, type ConceptTag } from '../lib/pattern-meta.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
+import { on } from '../lib/sse.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -288,9 +289,57 @@ export function Settings() {
     doSave();
   }
 
-  const [integrations] = createResource(() => api.llm.integrations());
+  const [integrations, { refetch: refetchIntegrations }] = createResource(() => api.llm.integrations());
   const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
   const [importBusy, setImportBusy] = createSignal(false);
+
+  // WP7: live-refresh the connection health after a sync_calendar run completes.
+  // Registered once at component setup (NOT inside a reactive effect) so we never
+  // stack duplicate SSE subscriptions on re-render.
+  on('job:run', () => refetchIntegrations());
+
+  // After the OAuth callback redirects back to /settings?google=connected|error,
+  // surface a toast once and strip the query param so it doesn't re-fire on refresh.
+  onMount(() => {
+    const q = new URLSearchParams(window.location.search);
+    const g = q.get('google');
+    if (g === 'connected') { showToast('Google account connected', 'success'); refetchIntegrations(); }
+    else if (g === 'error') { showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
+    if (g) {
+      q.delete('google'); q.delete('reason');
+      const qs = q.toString();
+      window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+    }
+  });
+
+  // WP7: kick off the OAuth flow. GET /api/oauth/google/start returns { url }; we
+  // fetch it (credentialed) then navigate the browser to Google. Degrade on non-2xx.
+  async function connectGoogle() {
+    if (!integrations()?.google.liveEnabled) return;
+    try {
+      const res = await fetch('/api/oauth/google/start');
+      if (!res.ok) { showToast('Google connect is not available yet', 'default'); return; }
+      const data = await res.json().catch(() => ({} as { url?: string }));
+      if (data.url) { window.location.href = data.url; return; }
+      // Some flows redirect directly; if we landed here with a 2xx and no url, refetch.
+      refetchIntegrations();
+    } catch {
+      showToast('Could not start Google connect', 'error');
+    }
+  }
+
+  // WP7: disconnect one account. Contract (assumed): DELETE /api/oauth/google/accounts/:account.
+  async function disconnectGoogle(account: string) {
+    try {
+      const res = await fetch(`/api/oauth/google/accounts/${encodeURIComponent(account)}`, { method: 'DELETE' });
+      if (!res.ok) { showToast('Disconnect is not available yet', 'default'); return; }
+      showToast(`Disconnected ${account}`, 'success');
+    } catch {
+      showToast('Could not disconnect', 'error');
+    } finally {
+      refetchIntegrations();
+    }
+  }
 
   async function handleImport(file: File) {
     setImportBusy(true);
@@ -872,6 +921,70 @@ export function Settings() {
                       Mode: {i().google.mode} · Gmail + Google Calendar
                     </div>
                   </div>
+                </div>
+
+                {/* WP7: read-only Google connection health, live-updated on sync. */}
+                <div class="flex flex-col gap-2 pl-7">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="section-label">Connections</span>
+                    <Show when={i().google.connections.length === 0}>
+                      <button
+                        type="button"
+                        onClick={connectGoogle}
+                        disabled={!i().google.liveEnabled}
+                        title={i().google.liveEnabled ? 'Connect a Google account' : 'Set GOOGLE_MODE=live to connect a Google account'}
+                        class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Link2 size={12} /> Connect
+                      </button>
+                    </Show>
+                  </div>
+
+                  <Show
+                    when={i().google.connections.length > 0}
+                    fallback={<div class="text-xs text-slate-500">No Google accounts connected.</div>}
+                  >
+                    <For each={i().google.connections}>
+                      {(c) => (
+                        <div class="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
+                          <div class="flex items-center justify-between gap-2">
+                            <span class="text-xs text-slate-200 font-medium truncate">{c.account}</span>
+                            <div class="flex items-center gap-2 shrink-0">
+                              <span
+                                class="text-[10px] px-1.5 py-0.5 rounded-full"
+                                classList={{
+                                  'bg-green-500/15 text-green-400': c.status === 'connected',
+                                  'bg-amber-500/15 text-amber-400': c.status === 'expired',
+                                  'bg-slate-500/15 text-slate-400': c.status === 'inactive',
+                                }}
+                              >
+                                {c.status}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => disconnectGoogle(c.account)}
+                                disabled={!i().google.liveEnabled}
+                                title={i().google.liveEnabled ? 'Disconnect this account' : 'Set GOOGLE_MODE=live to manage connections'}
+                                class="btn-ghost text-xs px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                <Unlink size={12} /> Disconnect
+                              </button>
+                            </div>
+                          </div>
+                          <div class="flex items-center gap-3 text-[11px] text-slate-500">
+                            <span>{c.lastSyncAt ? `Last sync: ${new Date(c.lastSyncAt).toLocaleString()}` : 'Never synced'}</span>
+                            <span>·</span>
+                            <span>{c.mappedEventCount} mapped event{c.mappedEventCount === 1 ? '' : 's'}</span>
+                          </div>
+                          <Show when={c.lastError}>
+                            <div class="flex items-center gap-1.5 text-[11px] text-destructive">
+                              <AlertTriangle size={11} /> {c.lastError}
+                            </div>
+                          </Show>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
                 </div>
               </div>
             )}

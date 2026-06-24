@@ -37,6 +37,8 @@ export interface GoogleConfig {
   redirectUri: string;
   publicBaseUrl: string;
   scopes: { gmail: string[]; calendar: string[] };
+  /** When true, /start requests the Gmail scope in addition to Calendar. */
+  enableGmail: boolean;
   mcp: { command: string; timeoutMs: number; retries: number };
   mode: 'live' | 'fixture';
 }
@@ -130,6 +132,10 @@ export const config: Config = {
       gmail: ['https://www.googleapis.com/auth/gmail.readonly'],
       calendar: ['https://www.googleapis.com/auth/calendar.events'],
     },
+    // Gmail is a restricted scope (OAuth verification + CASA), so it's opt-in and
+    // gated separately from the calendar loop. Lives in the config singleton (not a
+    // raw process.env read in oauth.ts) so WP8's Gmail go-live consumes one flag.
+    enableGmail: process.env.CP_GOOGLE_ENABLE_GMAIL === 'true',
     mcp: {
       command: process.env.CP_MCP_COMMAND ?? '',
       timeoutMs: Number(process.env.CP_MCP_TIMEOUT_MS ?? 30_000),

@@ -2,6 +2,8 @@ import Router from '@koa/router';
 import { status } from '../mcp/ollama.js';
 import { createGoogleClient } from '../mcp/google.js';
 import { pushEnabled } from '../lib/push.js';
+import { connectionHealth } from '../lib/connections.js';
+import { currentOwnerId } from '../lib/context.js';
 
 export function llmRouter() {
   const router = new Router();
@@ -23,7 +25,14 @@ export function llmRouter() {
         mediumModel: ollama.mediumModel,
         embedModel: ollama.embedModel,
       },
-      google: { mode: google.mode },
+      // WP7: widen the google block with the live toggle + read-only connection
+      // health (one entry per connected account; [] when none). connectionHealth
+      // never throws on a bad token row, so this can't 500 the endpoint.
+      google: {
+        mode: google.mode,
+        liveEnabled: google.mode === 'live',
+        connections: connectionHealth(currentOwnerId()),
+      },
       // Phase H: whether Web Push can actually deliver (VAPID keys present). In-app
       // SSE reminders work regardless; this lets the client/diagnostics show push status.
       push: { configured: pushEnabled() },

@@ -42,6 +42,10 @@ reserved)** and demotes everything else.
 
 ## States, subtypes & kinds (demoted — not nouns)
 
+- **Connection / Integration (e.g. a connected Google account):** **not a noun** — it is a
+  **Setting** (managed under Settings → MCP connections). Connecting Google adds no new
+  glossary entity; its data surfaces as existing nouns (calendar events → **Time Block**
+  *meeting* mirrors; extracted action items → **Inbox** items). The noun budget stays at 8.
 - **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each pattern-tag has
   0–N time ranges per day type. Pattern-tag-less tasks fall back to the general `workday_start`/
   `workday_end` window from scheduling\_prefs.

@@ -106,13 +106,17 @@ describe('ingestion jobs (require Ollama)', () => {
   });
   beforeEach(() => resetDb());
 
-  it('ingest_gcal mirrors calendar fixtures into meeting blocks', async () => {
+  it('ingest_gcal produces possibles from calendar fixtures and creates NO meeting blocks (WP5)', async () => {
     if (!up) return;
     await runJob('ingest_gcal');
     const run = lastRun('ingest_gcal');
     expect(run?.status).toBe('done');
+    // WP5: the locked meeting mirror is now created exclusively by sync.ts applyInbound;
+    // ingest_gcal only mines possibles, so it must not create any meeting blocks.
     const meetings = sqlite.prepare("SELECT COUNT(*) AS n FROM time_blocks WHERE block_kind='meeting'").get() as { n: number };
-    expect(meetings.n).toBeGreaterThan(0);
+    expect(meetings.n).toBe(0);
+    const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gcal'").get() as { n: number };
+    expect(possibles.n).toBeGreaterThan(0);
   });
 
   it('ingest_gmail produces possible_tasks from email fixtures', async () => {
