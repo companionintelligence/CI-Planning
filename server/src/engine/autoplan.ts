@@ -64,6 +64,7 @@ interface PlanRow {
   start_at: string;
   end_at: string;
   tag: string | null;
+  catch_all: number;
 }
 
 function tagsOf(taskId: string): string[] {
@@ -104,11 +105,14 @@ function dayPlans(date: string, tz: string): PlanRow[] {
   const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
   return sqlite
     .prepare(
-      `SELECT id, start_at, end_at, tag FROM time_blocks
-        WHERE block_kind = 'timeblock' AND block_type = 'scheduled' AND tag IS NOT NULL
-          AND COALESCE(all_day, 0) = 0
-          AND start_at < ? AND end_at > ?
-        ORDER BY start_at`
+      `SELECT tb.id, tb.start_at, tb.end_at, tb.tag,
+              COALESCE((SELECT pt.catch_all FROM pattern_types pt
+                         WHERE pt.name = tb.tag AND pt.catch_all = 1 LIMIT 1), 0) AS catch_all
+         FROM time_blocks tb
+        WHERE tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled' AND tb.tag IS NOT NULL
+          AND COALESCE(tb.all_day, 0) = 0
+          AND tb.start_at < ? AND tb.end_at > ?
+        ORDER BY tb.start_at`
     )
     .all(dayEndISO, dayStartISO) as PlanRow[];
 }
@@ -269,12 +273,23 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
       | undefined;
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
     clearPriorAutoInWindow(Date.parse(block.start_at), Date.parse(block.end_at));
-    // Phase 5: match on ANY of the Plan's tags (top or secondary); dilute the
-    // secondary ones in the ordering. No tags → place everything (legacy).
-    const weights = planTagWeights(opts.blockId, block.tag);
-    const planTags = [...weights.keys()];
-    const cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
-    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
+    const catchAll = !!(sqlite
+      .prepare(`SELECT 1 FROM pattern_types WHERE name = ? AND catch_all = 1 LIMIT 1`)
+      .get(block.tag) as {} | undefined);
+    let cands: StagedTask[];
+    let ordered: StagedTask[];
+    if (catchAll) {
+      // Catch-all Plan: accept every staged task, sorted by priority only.
+      cands = staged;
+      ordered = [...staged].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
+    } else {
+      // Phase 5: match on ANY of the Plan's tags; dilute secondaries in ordering.
+      const weights = planTagWeights(opts.blockId, block.tag);
+      const planTags = [...weights.keys()];
+      cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
+      ordered = orderForPlan(cands, weights);
+    }
+    const r = placeIntoWindow(ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
     recordRun(owner, runId, r.blocksCreated);
     broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     if (r.placedTaskIds.size > 0) {
@@ -290,15 +305,29 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   const placedIds = new Set<string>();
   let blocksCreated = 0;
 
-  // Pass 1 — fill each tagged Plan with its tag-matched, still-unplaced tasks.
-  // Phase 5: a task matches via ANY of the Plan's tags (top or secondary); the
-  // diluted weights bias ordering toward the Plan's primary work.
-  for (const plan of dayPlans(date, tz)) {
-    const weights = planTagWeights(plan.id, plan.tag);
-    const planTags = [...weights.keys()];
-    const cands = staged.filter((t) => !placedIds.has(t.task_id) && planTags.some((name) => t.tags.includes(name)));
+  // Pass 1 — fill each tagged Plan with its matching tasks. Tag-matched Plans run
+  // first (so they get first pick of their candidates); catch-all Plans run last
+  // and absorb whatever's left. Within each group, Plans run earliest-first.
+  const allPlans = dayPlans(date, tz);
+  const orderedPlans = [
+    ...allPlans.filter((p) => !p.catch_all),
+    ...allPlans.filter((p) => p.catch_all),
+  ];
+  for (const plan of orderedPlans) {
+    let cands: StagedTask[];
+    let ordered: StagedTask[];
+    if (plan.catch_all) {
+      // Catch-all Plan: accept every unplaced staged task, sorted by priority only.
+      cands = staged.filter((t) => !placedIds.has(t.task_id));
+      ordered = [...cands].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
+    } else {
+      const weights = planTagWeights(plan.id, plan.tag);
+      const planTags = [...weights.keys()];
+      cands = staged.filter((t) => !placedIds.has(t.task_id) && planTags.some((name) => t.tags.includes(name)));
+      ordered = orderForPlan(cands, weights);
+    }
     if (cands.length === 0) continue;
-    const r = placeIntoWindow(orderForPlan(cands, weights), Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
+    const r = placeIntoWindow(ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
