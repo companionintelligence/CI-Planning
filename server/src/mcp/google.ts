@@ -2,6 +2,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../lib/logger.js';
+import { McpGoogleSession, McpUnavailable, type McpConnectionFactory } from './client.js';
+import { config } from '../lib/config.js';
 
 /** Normalized Gmail message — shape the ingestion agent consumes. */
 export interface EmailMessage {
@@ -73,22 +75,61 @@ export function createFixtureGoogleClient(): GoogleClient {
   };
 }
 
+/** Options for the live client (tests inject the MCP account + a fake transport). */
+export interface LiveGoogleClientOpts {
+  /** Connected Google account (the connection_tokens.account). Defaults to env. */
+  account?: string;
+  /** Inject a fake MCP connection (no spawn/network in CI). Defaults to a real stdio spawn. */
+  connectionFactory?: McpConnectionFactory;
+  /** Override the MCP command (defaults to config.google.mcp.command). */
+  command?: string;
+}
+
 /**
- * Live client placeholder. In production this connects to the Gmail / Google Calendar
- * MCP servers via the MCP TypeScript SDK (StreamableHTTP or stdio) and maps their
- * responses into EmailMessage / CalendarEvent. Until wired, it falls back to fixtures
- * so callers have a stable contract.
+ * Live client over a real MCP session (Gmail + Google Calendar MCP servers via the MCP
+ * TypeScript SDK, stdio transport). Maps MCP results into EmailMessage / CalendarEvent.
  *
- * TODO(phase-2): replace fixture fallback with real MCP client sessions + OAuth token
- * from the Keychain. See ARCHITECTURE.md §12.
+ * Fail-closed: on ANY transport failure it throws McpUnavailable — there is NO silent
+ * fixture fallback in live mode (a degraded live connector that quietly serves stale
+ * fixtures is worse than a loud failure callers can catch and degrade explicitly).
  */
-export function createLiveGoogleClient(): GoogleClient {
-  logger.warn('Live Google MCP client not yet wired; using fixtures. See ARCHITECTURE.md §12.');
-  const fb = createFixtureGoogleClient();
-  return { ...fb, mode: 'live' };
+export function createLiveGoogleClient(opts: LiveGoogleClientOpts = {}): GoogleClient {
+  const account = opts.account ?? process.env.CP_GOOGLE_ACCOUNT ?? 'primary';
+  const session = new McpGoogleSession({
+    account,
+    connectionFactory: opts.connectionFactory,
+    command: opts.command,
+  });
+  return {
+    mode: 'live',
+    async listEmails(o = {}) {
+      const rows = await session.listEmails({ since: o.since, limit: o.limit });
+      return rows.map((m) => ({
+        id: m.id,
+        from: m.from,
+        subject: m.subject,
+        body: m.body,
+        receivedAt: m.receivedAt,
+        ...(m.labels ? { labels: m.labels } : {}),
+      }));
+    },
+    async listEvents(o = {}) {
+      const { events } = await session.listEvents({ from: o.from, to: o.to });
+      const mapped: CalendarEvent[] = events.map((e) => ({
+        id: e.id,
+        title: e.title,
+        description: '',
+        start: e.start,
+        end: e.end,
+      }));
+      return o.limit ? mapped.slice(0, o.limit) : mapped;
+    },
+  };
 }
 
 /** Factory: honors GOOGLE_MODE env ("live" | "fixture"), defaults to fixture. */
 export function createGoogleClient(): GoogleClient {
-  return process.env.GOOGLE_MODE === 'live' ? createLiveGoogleClient() : createFixtureGoogleClient();
+  return config.google.mode === 'live' ? createLiveGoogleClient() : createFixtureGoogleClient();
 }
+
+export { McpUnavailable } from './client.js';
