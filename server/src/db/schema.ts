@@ -401,7 +401,6 @@ export const oauthStates = sqliteTable('oauth_states', {
   codeVerifier: text('code_verifier').notNull(),
   nonce: text('nonce'),
   redirectUri: text('redirect_uri'),
-  scopes: text('scopes'), // JSON string[]
   createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   expiresAt: text('expires_at'),
 });
@@ -415,8 +414,6 @@ export const syncState = sqliteTable('sync_state', {
   account: text('account').notNull(),
   resource: text('resource').notNull(),
   cursor: text('cursor'),
-  windowFrom: text('window_from'),
-  windowTo: text('window_to'),
   updatedAt: text('updated_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
 });
 

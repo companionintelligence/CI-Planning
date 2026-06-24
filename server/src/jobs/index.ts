@@ -35,12 +35,14 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'ingest_gcal': {
+      // WP5: ingest no longer creates meeting blocks or auto-places. It only produces
+      // possibles; the locked meeting mirror + placement live in sync_calendar now (so
+      // placement packs around freshly-synced meeting obstacles, not stale ones).
       const r = await ingestEvents();
-      const placed = autoScheduleOnIngest(); // D1: schedule-mode zero-click placement
       return {
-        itemsCreated: r.possiblesCreated + r.blocksCreated,
+        itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} events → ${r.blocksCreated} meeting blocks, ${r.possiblesCreated} new possibles${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
+        log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles`,
       };
     }
     case 'promote_possibles': {
@@ -106,10 +108,13 @@ async function execute(kind: string): Promise<JobOutcome> {
         }),
         { created: 0, updated: 0, deleted: 0, conflicts: 0 },
       );
+      // WP5: place AFTER inbound so the Auto engine packs around the freshly-synced meeting
+      // obstacles (the locked inbound blocks applyInbound just created). D1: no-op in suggest.
+      const placed = autoScheduleOnIngest();
       return {
         itemsCreated: totals.created,
         itemsUpdated: totals.updated + totals.deleted,
-        log: `Synced ${results.length} connector(s): ${totals.created} created, ${totals.updated} updated, ${totals.deleted} deleted, ${totals.conflicts} conflicts`,
+        log: `Synced ${results.length} connector(s): ${totals.created} created, ${totals.updated} updated, ${totals.deleted} deleted, ${totals.conflicts} conflicts${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'snapshot_db': {

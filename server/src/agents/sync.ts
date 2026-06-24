@@ -82,20 +82,44 @@ export async function pushOutboundDeletes(blockId: string): Promise<void> {
 // ─── Inbound reconcile ────────────────────────────────────────────────────────
 
 /**
- * Mirror remote events as locked meeting blocks.
- * Identity: (provider, account, external_id) + etag.
- * Remote-deleted events: inbound mappings absent from this cycle → local block deleted
- * (ON DELETE CASCADE on external_events.block_id removes the mapping row too).
+ * Mirror remote events as locked meeting blocks. Identity: (provider, account, external_id)
+ * + etag. This is the SINGLE canonical inbound path (ingest.ts no longer mirrors events).
+ *
+ * `cycle` gates how deletes are detected:
+ *  - 'incremental' — a syncToken page carries explicit tombstones ({ deleted:true }). We
+ *    delete exactly the tombstoned inbound blocks (their external_events mapping cascades).
+ *  - 'full' — a full (no-token) listing. I8: we DO NOT run an absence-based delete sweep.
+ *    An event merely absent from this page (e.g. filtered out by the window, or paged) is
+ *    NOT a delete signal; only an incremental tombstone deletes. A full cycle never removes
+ *    an inbound mapping.
  */
 function applyInbound(
   connector: CalendarConnector,
   remoteEvents: RemoteEvent[],
   ownerId: string,
   result: SyncResult,
+  cycle: 'full' | 'incremental',
 ): void {
-  const seenIds = new Set(remoteEvents.map((e) => e.id));
-
   for (const event of remoteEvents) {
+    // ── Tombstone (incremental delete signal) ──────────────────────────────
+    if (event.deleted) {
+      // I8: only an INCREMENTAL cycle deletes. A full cycle never carries tombstones, but
+      // guard anyway so an absent/stale event can never trigger a delete on a full re-init.
+      if (cycle !== 'incremental') continue;
+      const mapping = sqlite
+        .prepare(
+          `SELECT block_id FROM external_events
+           WHERE provider = ? AND account = ? AND external_id = ? AND direction = 'inbound' AND owner_id = ?`,
+        )
+        .get(connector.provider, connector.account, event.id, ownerId) as { block_id: string } | undefined;
+      if (mapping) {
+        // Deleting the block cascades the external_events mapping (ON DELETE CASCADE).
+        sqlite.prepare('DELETE FROM time_blocks WHERE id = ?').run(mapping.block_id);
+        result.deleted++;
+      }
+      continue;
+    }
+
     // Fetch any existing mapping for this external_id regardless of direction.
     // Outbound rows mean we pushed this event — skip creating an inbound mirror.
     const mapping = sqlite
@@ -107,48 +131,41 @@ function applyInbound(
       | undefined;
 
     if (!mapping) {
+      // Atomic: the block mirror and its identity mapping must commit together. A
+      // partial commit (block without mapping) would orphan the block AND let the next
+      // cycle re-insert a duplicate — the 0027 unique index covers only 'gmail'/'gcal',
+      // not the 'google' source_kind used here, so nothing else dedupes it.
       const blockId = newId();
-      sqlite
-        .prepare(
-          `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-           VALUES (?, NULL, ?, 'meeting', ?, ?, 1, 0, ?, ?, 'planned')`,
-        )
-        .run(blockId, event.title, event.start, event.end, connector.provider, event.id);
-      sqlite
-        .prepare(
-          `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id, etag, direction, last_synced_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-        )
-        .run(newId(), ownerId, connector.provider, connector.account, event.id, blockId, event.etag ?? null);
+      sqlite.transaction(() => {
+        sqlite
+          .prepare(
+            `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+             VALUES (?, NULL, ?, 'meeting', ?, ?, 1, 0, ?, ?, 'planned')`,
+          )
+          .run(blockId, event.title, event.start, event.end, connector.provider, event.id);
+        sqlite
+          .prepare(
+            `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id, etag, direction, last_synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+          )
+          .run(newId(), ownerId, connector.provider, connector.account, event.id, blockId, event.etag ?? null);
+      })();
       result.created++;
     } else if (mapping.direction === 'inbound' && event.etag !== mapping.etag) {
-      // Inbound event changed remotely — update the local mirror.
-      sqlite
-        .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ?`)
-        .run(event.title, event.start, event.end, mapping.block_id);
-      sqlite
-        .prepare(
-          `UPDATE external_events SET etag = ?, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
-        )
-        .run(event.etag ?? null, mapping.id);
+      // Inbound event changed remotely — update the local mirror + its etag atomically.
+      sqlite.transaction(() => {
+        sqlite
+          .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ?`)
+          .run(event.title, event.start, event.end, mapping.block_id);
+        sqlite
+          .prepare(
+            `UPDATE external_events SET etag = ?, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
+          )
+          .run(event.etag ?? null, mapping.id);
+      })();
       result.updated++;
     }
     // direction='outbound' or etag unchanged → no-op
-  }
-
-  // Remote deletes: inbound mappings not present in this cycle
-  const allInbound = sqlite
-    .prepare(
-      `SELECT block_id, external_id FROM external_events
-       WHERE provider = ? AND account = ? AND direction = 'inbound' AND owner_id = ?`,
-    )
-    .all(connector.provider, connector.account, ownerId) as { block_id: string; external_id: string }[];
-
-  for (const row of allInbound) {
-    if (!seenIds.has(row.external_id)) {
-      sqlite.prepare('DELETE FROM time_blocks WHERE id = ?').run(row.block_id);
-      result.deleted++;
-    }
   }
 }
 
@@ -243,9 +260,70 @@ async function applyOutbound(
   }
 }
 
+// ─── Calendar incremental cursor (sync_state, resource='calendar_synctoken') ──
+
+const CALENDAR_SYNCTOKEN = 'calendar_synctoken';
+
+/** Read the stored incremental syncToken for (owner, provider, account), or null. */
+function readCalendarCursor(connector: CalendarConnector, ownerId: string): string | null {
+  const row = sqlite
+    .prepare(
+      `SELECT cursor FROM sync_state
+       WHERE owner_id = ? AND provider = ? AND account = ? AND resource = ?`,
+    )
+    .get(ownerId, connector.provider, connector.account, CALENDAR_SYNCTOKEN) as
+    | { cursor: string | null }
+    | undefined;
+  return row?.cursor ?? null;
+}
+
+/** Persist the next incremental syncToken (advance-after-commit). Null clears it. */
+function writeCalendarCursor(
+  connector: CalendarConnector,
+  ownerId: string,
+  cursor: string | null,
+): void {
+  sqlite
+    .prepare(
+      `INSERT INTO sync_state (id, owner_id, provider, account, resource, cursor)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_id, provider, account, resource) DO UPDATE SET
+         cursor = excluded.cursor,
+         updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    )
+    .run(
+      newId(),
+      ownerId,
+      connector.provider,
+      connector.account,
+      CALENDAR_SYNCTOKEN,
+      cursor,
+    );
+}
+
+/** Clear the stored cursor (e.g. after the provider rejects it as expired). */
+function clearCalendarCursor(connector: CalendarConnector, ownerId: string): void {
+  sqlite
+    .prepare(
+      `DELETE FROM sync_state
+       WHERE owner_id = ? AND provider = ? AND account = ? AND resource = ?`,
+    )
+    .run(ownerId, connector.provider, connector.account, CALENDAR_SYNCTOKEN);
+}
+
 // ─── Public sync API ──────────────────────────────────────────────────────────
 
-/** Run a full sync cycle for a single connector. */
+/**
+ * Run one sync cycle for a single connector.
+ *
+ * Inbound mode is chosen by the stored cursor:
+ *  - cursor present → INCREMENTAL: listEvents({ syncToken }). If the provider reports the
+ *    token expired (HTTP 410 → { expired:true }), clear it and re-list FULL, treated as a
+ *    full cycle (I8: no deletes on the re-init).
+ *  - no cursor → FULL: listEvents({ from, to }) over the bounded window.
+ * The returned nextSyncToken is persisted only after applyInbound succeeds (advance-after-
+ * commit), so a mid-cycle throw replays the same window/token next time.
+ */
 export async function syncConnector(connector: CalendarConnector): Promise<SyncResult> {
   const result: SyncResult = {
     provider: connector.provider,
@@ -258,11 +336,39 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
   };
 
   const ownerId = currentOwnerId();
-  const { from, to } = syncWindow();
+  const window = syncWindow();
 
   try {
-    const { events } = await connector.listEvents({ from, to });
-    applyInbound(connector, events, ownerId, result);
+    const storedCursor = readCalendarCursor(connector, ownerId);
+
+    let cycle: 'full' | 'incremental';
+    let page: Awaited<ReturnType<CalendarConnector['listEvents']>>;
+
+    if (storedCursor) {
+      page = await connector.listEvents({ syncToken: storedCursor });
+      if (page.expired) {
+        // Provider rejected the stale token — drop it and re-init with a full window.
+        clearCalendarCursor(connector, ownerId);
+        page = await connector.listEvents({ from: window.from, to: window.to });
+        cycle = 'full';
+      } else {
+        cycle = 'incremental';
+      }
+    } else {
+      page = await connector.listEvents({ from: window.from, to: window.to });
+      cycle = 'full';
+    }
+
+    applyInbound(connector, page.events, ownerId, result, cycle);
+
+    // Persist the new cursor only after applyInbound committed (advance-after-commit). A
+    // full re-init that itself returned no token leaves the cursor cleared → next cycle
+    // re-inits full again. We never persist a null/undefined over a good token here because
+    // the only path that nulls it is the explicit clearCalendarCursor above.
+    if (page.nextSyncToken != null) {
+      writeCalendarCursor(connector, ownerId, page.nextSyncToken);
+    }
+
     await applyOutbound(connector, ownerId, result);
   } catch (err) {
     result.errors.push((err as Error).message);

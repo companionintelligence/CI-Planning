@@ -37,6 +37,17 @@ function outboundQueue() {
   return sqlite.prepare('SELECT * FROM outbound_queue').all();
 }
 
+/** The persisted calendar incremental cursor for the sync-test connector, or undefined. */
+function calendarCursor(): string | null | undefined {
+  const row = sqlite
+    .prepare(
+      `SELECT cursor FROM sync_state
+       WHERE provider = 'google' AND account = 'sync-test@example.com' AND resource = 'calendar_synctoken'`,
+    )
+    .get() as { cursor: string | null } | undefined;
+  return row?.cursor;
+}
+
 describe('calendar sync — fixture mode (offline)', () => {
   let connector: FixtureConnector;
 
@@ -98,17 +109,46 @@ describe('calendar sync — fixture mode (offline)', () => {
       expect(blocks()[0]!.title).toBe(titleBefore);
     });
 
-    it('deletes the local block when the remote event disappears', async () => {
+    it('deletes the local block when the remote event is tombstoned on an incremental cycle', async () => {
+      // I8: deletion is tombstone-driven, NOT absence-driven. The first sync is FULL (no
+      // cursor) and persists a calendar_synctoken; deleting the event then re-syncing reads
+      // that cursor → INCREMENTAL → the fixture returns a { deleted:true } tombstone, which
+      // is what removes the local block.
       connector.seed({ id: 'evt-1', title: 'Gone', start: futureDate(1), end: futureDate(1, 1), etag: 'v1' });
       await sync(connector);
       expect(blocks()).toHaveLength(1);
+      expect(calendarCursor()).toBeTruthy(); // a cursor was persisted → next cycle is incremental
 
       await connector.deleteEvent('evt-1', null);
-      const r = await sync(connector);
+      const r = await sync(connector); // incremental: tombstone for evt-1
 
       expect(r.deleted).toBe(1);
       expect(blocks()).toHaveLength(0);
       expect(externalEvents()).toHaveLength(0);
+    });
+
+    it('I8: a FULL cycle does NOT delete an inbound block merely absent from the page', async () => {
+      // Mirror an event, then wipe the persisted cursor so the next cycle is FULL again.
+      connector.seed({ id: 'evt-1', title: 'Stays', start: futureDate(1), end: futureDate(1, 1), etag: 'v1' });
+      await sync(connector);
+      expect(blocks()).toHaveLength(1);
+
+      // Remove the event from the connector's LIVE set WITHOUT a tombstone visible to a full
+      // listing, and force a full cycle by clearing the cursor. A full listing simply omits
+      // the event (no deleted:true). I8 forbids treating that absence as a delete.
+      await connector.deleteEvent('evt-1', null);
+      sqlite
+        .prepare(
+          `DELETE FROM sync_state WHERE provider = 'google' AND account = 'sync-test@example.com'
+             AND resource = 'calendar_synctoken'`,
+        )
+        .run();
+
+      const r = await sync(connector); // FULL: evt-1 simply absent
+
+      expect(r.deleted).toBe(0);
+      expect(blocks()).toHaveLength(1); // the inbound block survives
+      expect(externalEvents()).toHaveLength(1);
     });
 
     it('produces no duplicates or orphans after 3 sync cycles (steady state)', async () => {
@@ -137,7 +177,8 @@ describe('calendar sync — fixture mode (offline)', () => {
       expect(blocks()[0]!.title).toBe('Renamed');
       expect(externalEvents()).toHaveLength(1);
 
-      // Cycle 3: event removed remotely
+      // Cycle 3: event removed remotely. Cycles 1+2 each persisted a cursor, so this cycle
+      // is INCREMENTAL and the delete arrives as a tombstone (I8: not absence-driven).
       await connector.deleteEvent('evt-1', null);
       const r = await sync(connector);
       expect(r.deleted).toBe(1);

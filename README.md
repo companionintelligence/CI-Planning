@@ -7,9 +7,15 @@ auto-scheduling. No cloud, no account, no telemetry — everything runs on your
 hardware and stays there.
 
 Companion Planning is currently in **v0.2 active development**. The core app is
-fully local and usable today; Google ingestion currently defaults to fixture data
-unless explicitly switched to `GOOGLE_MODE=live` (the live-mode contract exists but
-still falls back to fixtures until MCP wiring is finished).
+fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
+Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
+Google Calendar sync** are built in, gated behind `GOOGLE_MODE=live` plus
+`CP_GOOGLE_CLIENT_ID` / `CP_GOOGLE_CLIENT_SECRET` and a 32-byte `CP_KEK_B64` key that
+encrypts stored tokens. With `GOOGLE_MODE=fixture` (the default) the app runs fully
+offline on committed sample data. Outbound calendar write-back stays behind a second
+flag, `CP_SYNC_WRITEBACK` (off by default — inbound read-only is the safe posture).
+See **[docs/google-cloud-setup.md](docs/google-cloud-setup.md)** to provision a Google
+client and turn live mode on.
 
 - **Server** — Koa + TypeScript (`server/`), SQLite via better-sqlite3 + Drizzle, cron jobs via croner
 - **Client** — SolidJS + Tailwind PWA (`client/`), built by Vite into `server/public/`
@@ -35,7 +41,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan.ts]
         Cron[Croner Jobs<br/>ingest · groom · schedule · fire_reminders]
-        Migrate[Migration runner<br/>0001 → 0047 on boot]
+        Migrate[Migration runner<br/>0001 → 0061 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -91,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0047 ordered list
+                                    // migrations from the 0001–0061 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -102,7 +108,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0047_snapshot_job`) produce the following tables:
+Migrations (current head: `0061_drop_unused_sync_columns`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -129,6 +135,12 @@ Migrations (current head: `0047_snapshot_job`) produce the following tables:
 | `reminders` | Scheduled reminders (`fire_at`, task XOR block target, `source` manual/auto) fired by the 1-min dispatcher (Phase H, 0044/0045) |
 | `push_subscriptions` | Web Push endpoints per owner (VAPID), for backgrounded delivery (Phase H, 0044) |
 | `audit_log` | Append-only mutation log (owner, actor, action, entity) written by every mutating route (Phase R, 0046) |
+| `api_keys` | Hashed `x-api-key` credentials for `AUTH_MODE=standalone` (0049) |
+| `connection_tokens` | Encrypted OAuth tokens per `(owner, provider, account)` — AES-256-GCM sealed with `CP_KEK_B64`; `status` ∈ `active`/`revoked`/`error` (Phase J 0050; `status` 0058) |
+| `external_events` | Sync identity map linking provider events ↔ local `time_blocks` by `(provider, account, external_id)` + etag/direction (Phase J 0051) |
+| `outbound_queue` | Local blocks pending push to a provider — one row per `(block, provider, account)`, drained by the sync agent when `CP_SYNC_WRITEBACK` is on (Phase J 0057) |
+| `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at the callback (0058) |
+| `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` — calendar syncToken, Gmail watermark, dead-letter (0060) |
 
 ## See it in action
 
@@ -206,8 +218,9 @@ with you in the loop at the one step that matters — what actually becomes a ta
 
 1. **Ingest** — scheduled jobs read your sources (Gmail + Calendar; fixtures by
    default). Unstructured email/event text is mined by a local LLM for action items,
-   with a deterministic fallback if Ollama is down. Calendar events are mirrored as
-   locked meeting blocks.
+   with a deterministic fallback if Ollama is down. Calendar **meeting blocks** are
+   mirrored by the dedicated calendar sync path (one canonical inbound reconciler keyed
+   on event identity + etag), not by ingest — `ingest_gcal` now only extracts tasks.
 2. **Review** — extracted items land in the **Inbox** as *possible tasks*, each
    tagged with its source and a confidence score. You promote the good ones and
    dismiss the noise. Nothing reaches your task list without your say-so.
@@ -276,7 +289,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0047): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0061): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   possible_tasks, scheduling_prefs, time_entries, block_templates, jobs, reminders,
   push_subscriptions, audit_log
@@ -298,13 +311,17 @@ consistent snapshot.
 
 **Intentionally partial:**
 
-- Google `live` mode is scaffolded but not yet connected to real MCP OAuth sessions
-  (currently fixture-backed)
-- No auth layer yet — the expected deployment model is a private network / Tailscale
+- Google `live` mode (standalone OAuth + two-way calendar sync) is implemented but
+  **opt-in**: it stays dormant until you set `GOOGLE_MODE=live`, `CP_GOOGLE_CLIENT_ID` /
+  `CP_GOOGLE_CLIENT_SECRET`, and `CP_KEK_B64`. The default `GOOGLE_MODE=fixture` runs on
+  committed sample data with no network calls. See
+  [docs/google-cloud-setup.md](docs/google-cloud-setup.md).
+- Calendar write-back (pushing local blocks to Google) is behind `CP_SYNC_WRITEBACK`,
+  **off by default** — until you flip it on, sync is inbound read-only. `CP_SYNC_DISABLED`
+  is a master kill switch for the whole sync agent.
 - Web Push delivery needs VAPID keys set in the env (see below); without them push is
   dormant but in-app SSE reminders still fire
-- Later phases (two-way calendar sync, auth, multi-device sync) in
-  [docs/ROADMAP.md](docs/ROADMAP.md)
+- Later phases (auth, multi-device sync) in [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Run with Docker (CI Hub)
 
@@ -332,7 +349,27 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `OLLAMA_MEDIUM` | `gemma4:e4b` | Better model for briefings |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
-| `GOOGLE_MODE` | `fixture` | `fixture` (committed sample data) or `live` (currently placeholder path; falls back to fixtures) |
+| `GOOGLE_MODE` | `fixture` | `fixture` (committed sample data, fully offline) or `live` (real Google OAuth + Calendar sync). `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
+| `CP_GOOGLE_CLIENT_ID` | (unset) | Google OAuth client ID. Required when `GOOGLE_MODE=live`. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md). |
+| `CP_GOOGLE_CLIENT_SECRET` | (unset) | Google OAuth client secret. Needed for a **Web** client (ts.net HTTPS deploy); a **Desktop/installed** client with a loopback redirect can run without one. Never commit it. |
+| `PUBLIC_BASE_URL` | `http://localhost:3848` | Externally reachable base URL. Used to derive the default OAuth redirect URI. |
+| `CP_OAUTH_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/oauth/google/callback` | Exact redirect URI; **must match** what you register in the Google client. |
+| `CP_GOOGLE_AUTH_URI` | `https://accounts.google.com/o/oauth2/v2/auth` | Authorization endpoint (override only to point tests at a stub). |
+| `CP_GOOGLE_TOKEN_URI` | `https://oauth2.googleapis.com/token` | Token endpoint (override only for tests). |
+| `CP_GOOGLE_REVOKE_URI` | `https://oauth2.googleapis.com/revoke` | Token-revocation endpoint (override only for tests). |
+| `CP_GOOGLE_JWKS_URI` | `https://www.googleapis.com/oauth2/v3/certs` | JWKS used to verify the Google `id_token` signature at the callback (override only for tests). |
+| `CP_GOOGLE_ENABLE_GMAIL` | `false` | When `true`, `/start` also requests the Gmail scope. Gmail is a Google **restricted** scope (needs OAuth verification + a CASA assessment), so it is opt-in and gated separately from the calendar loop. |
+| `CP_GOOGLE_ACCOUNT` | `primary` | Account key the live Google client binds its MCP session to (until in-app multi-account selection lands). |
+| `CP_KEK_B64` | (unset) | Base64 of a **32-byte** key-encryption key (AES-256-GCM) for the encrypted `connection_tokens` store. Generate with `openssl rand -base64 32`. Required for live token storage/refresh — loaded lazily, so a live deploy without it fails on the first token operation (not at boot). Never commit it. |
+| `CP_KEK_VERSION` | `1` | KEK version a fresh token seal is written under (drives rotation). |
+| `CP_KEK_B64_V{n}` | (unset) | Historical KEK for version `{n}`, used while rotating (e.g. `CP_KEK_B64_V2`). The current version may live in plain `CP_KEK_B64`. |
+| `CP_SYNC_WRITEBACK` | `false` | When `true`, sync pushes local block changes back to the provider. Off ⇒ inbound read-only. |
+| `CP_SYNC_DISABLED` | `false` | `true` is a master kill switch — disables the sync agent entirely. |
+| `CP_MCP_COMMAND` | (unset) | Command that launches the Gmail / Calendar MCP child process the connector talks to. |
+| `CP_MCP_TIMEOUT_MS` | `30000` | Per-call timeout for MCP requests. |
+| `CP_MCP_RETRIES` | `3` | Retry budget for MCP requests. |
+| `CP_MCP_BREAKER_THRESHOLD` | `5` | Consecutive MCP failures before the circuit breaker opens. |
+| `CP_MCP_BREAKER_COOLDOWN_MS` | `30000` | How long the MCP circuit breaker stays open before it half-opens and retries. |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset) | Web Push keys — generate once with `npx web-push generate-vapid-keys`. Unset ⇒ push disabled (in-app reminders still fire). Never commit them. |
 | `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push |
@@ -400,6 +437,10 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET/PATCH | `/api/prefs` | Scheduling preferences |
 | GET/POST | `/api/memory` | Companion Memory sync state |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
+| GET | `/api/oauth/google/start` | Begin the standalone Google OAuth flow (Auth Code + PKCE); returns `{ url }` for the SPA to navigate to. Gated; refused under `AUTH_MODE=test`. |
+| GET | `/api/oauth/google/callback` | Public OAuth redirect target; verifies the `id_token`, exchanges the code, seals tokens into `connection_tokens`. |
+| GET | `/api/oauth/google/accounts` | List connected Google accounts (status only, no secrets). |
+| DELETE | `/api/oauth/google/accounts/:account` | Disconnect an account (revoke at Google + drop its tokens and queued pushes). |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
