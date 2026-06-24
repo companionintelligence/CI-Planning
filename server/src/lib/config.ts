@@ -22,6 +22,39 @@ export interface AuthConfig {
   rateLimit: { windowMs: number; max: number; issueMax: number };
 }
 
+/**
+ * Google connector config (Wave 0). The SINGLE source of truth for OAuth endpoints,
+ * scopes, MCP transport, and live/fixture mode — later WPs consume this block; they
+ * do NOT re-derive these values from env. `mode: 'fixture'` (the default) keeps the
+ * test suite + local dev fully offline.
+ */
+export interface GoogleConfig {
+  clientId?: string;
+  clientSecret?: string;
+  authUri: string;
+  tokenUri: string;
+  revokeUri: string;
+  redirectUri: string;
+  publicBaseUrl: string;
+  scopes: { gmail: string[]; calendar: string[] };
+  mcp: { command: string; timeoutMs: number; retries: number };
+  mode: 'live' | 'fixture';
+}
+
+/** Sync engine toggles (Wave 0). */
+export interface SyncConfig {
+  /** When false, the sync layer never pushes local changes back to providers. */
+  writeback: boolean;
+  /** Master kill switch for the sync agent. */
+  disabled: boolean;
+}
+
+/** Key-encryption-key versioning (Wave 0) — drives crypto.loadKek/rotateKek. */
+export interface KekConfig {
+  /** The version a fresh seal() writes; loadKek() with no arg returns this key. */
+  currentVersion: number;
+}
+
 export interface Config {
   port: number;
   dbPath: string;
@@ -35,6 +68,9 @@ export interface Config {
   vapidSubject: string;
   snapshotRetain: number;
   auth: AuthConfig;
+  google: GoogleConfig;
+  sync: SyncConfig;
+  kek: KekConfig;
 }
 
 // Default data dir (used only when DB_PATH is not set, e.g. local dev on macOS).
@@ -47,6 +83,10 @@ const packageRoot = join(_dir, '..', '..'); // server/src/lib → server/src →
 const dbPath = process.env.DB_PATH ?? join(defaultDataDir, 'companion.db');
 // Ensure the directory containing the DB exists (better-sqlite3 won't create it).
 mkdirSync(dirname(dbPath), { recursive: true });
+
+// Derived once so the redirect-uri default can reference it.
+const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3848';
+const googleMode: 'live' | 'fixture' = process.env.GOOGLE_MODE === 'live' ? 'live' : 'fixture';
 
 export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
@@ -77,6 +117,34 @@ export const config: Config = {
       issueMax: Number(process.env.AUTH_RATE_ISSUE_MAX ?? 5),
     },
   },
+  google: {
+    clientId: process.env.CP_GOOGLE_CLIENT_ID,
+    clientSecret: process.env.CP_GOOGLE_CLIENT_SECRET,
+    // Real Google endpoints, but env-overridable so tests can point them at a stub.
+    authUri: process.env.CP_GOOGLE_AUTH_URI ?? 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUri: process.env.CP_GOOGLE_TOKEN_URI ?? 'https://oauth2.googleapis.com/token',
+    revokeUri: process.env.CP_GOOGLE_REVOKE_URI ?? 'https://oauth2.googleapis.com/revoke',
+    redirectUri: process.env.CP_OAUTH_REDIRECT_URI ?? `${publicBaseUrl}/api/oauth/google/callback`,
+    publicBaseUrl,
+    scopes: {
+      gmail: ['https://www.googleapis.com/auth/gmail.readonly'],
+      calendar: ['https://www.googleapis.com/auth/calendar.events'],
+    },
+    mcp: {
+      command: process.env.CP_MCP_COMMAND ?? '',
+      timeoutMs: Number(process.env.CP_MCP_TIMEOUT_MS ?? 30_000),
+      retries: Number(process.env.CP_MCP_RETRIES ?? 3),
+    },
+    mode: googleMode,
+  },
+  sync: {
+    // Outbound write-back is OFF by default — pull-only is the safe posture (Phase J).
+    writeback: process.env.CP_SYNC_WRITEBACK === 'true',
+    disabled: process.env.CP_SYNC_DISABLED === 'true',
+  },
+  kek: {
+    currentVersion: Number(process.env.CP_KEK_VERSION ?? 1),
+  },
 };
 
 // Fail closed: the credential-free `test` owner path must never run in production.
@@ -84,5 +152,26 @@ export const config: Config = {
 if (config.auth.mode === 'test' && process.env.NODE_ENV === 'production') {
   throw new Error(
     'AUTH_MODE=test is forbidden in production — set AUTH_MODE=standalone or sso',
+  );
+}
+
+// Fail closed (Wave 0): GOOGLE_MODE=live without OAuth credentials would silently fall
+// back to broken auth flows. Require the client id + redirect uri up front. These guards
+// never fire under the test harness (default mode is 'fixture').
+if (config.google.mode === 'live' && (!config.google.clientId || !config.google.redirectUri)) {
+  throw new Error(
+    'GOOGLE_MODE=live requires CP_GOOGLE_CLIENT_ID and a redirect URI (CP_OAUTH_REDIRECT_URI or PUBLIC_BASE_URL)',
+  );
+}
+
+// A live Google connector behind the credential-free `test` owner in production is the
+// same silent-bypass hazard as the AUTH_MODE guard above — refuse to boot.
+if (
+  config.google.mode === 'live' &&
+  config.auth.mode === 'test' &&
+  process.env.NODE_ENV === 'production'
+) {
+  throw new Error(
+    'GOOGLE_MODE=live with AUTH_MODE=test is forbidden in production — set AUTH_MODE=standalone or sso',
   );
 }

@@ -383,8 +383,38 @@ export const connectionTokens = sqliteTable('connection_tokens', {
   authTag: text('auth_tag').notNull(),
   ciphertext: text('ciphertext').notNull(),
   keyVersion: integer('key_version').notNull().default(1),
+  status: text('status').notNull().default('active'), // 'active' | 'revoked' | 'error' (0058)
   createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// --- Wave 0 (0058): OAuth authorization-code/PKCE state store. One short-lived row per
+// in-flight authorize redirect; `state` is the CSRF nonce, `code_verifier` the PKCE secret. ---
+export const oauthStates = sqliteTable('oauth_states', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  provider: text('provider').notNull().default('google'),
+  state: text('state').notNull().unique(),
+  codeVerifier: text('code_verifier').notNull(),
+  nonce: text('nonce'),
+  redirectUri: text('redirect_uri'),
+  scopes: text('scopes'), // JSON string[]
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  expiresAt: text('expires_at'),
+});
+
+// --- Wave 0 (0060): Per-(owner, provider, account, resource) sync cursor store. ---
+// `resource` distinguishes 'calendar_synctoken' vs 'gmail_history'; `cursor` is opaque.
+export const syncState = sqliteTable('sync_state', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  provider: text('provider').notNull(),
+  account: text('account').notNull(),
+  resource: text('resource').notNull(),
+  cursor: text('cursor'),
+  windowFrom: text('window_from'),
+  windowTo: text('window_to'),
+  updatedAt: text('updated_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
 });
 
 // --- Phase J (0051): Sync identity map. Links provider events to local time_blocks. ---

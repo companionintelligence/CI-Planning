@@ -261,8 +261,8 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
   const { from, to } = syncWindow();
 
   try {
-    const remoteEvents = await connector.listEvents({ from, to });
-    applyInbound(connector, remoteEvents, ownerId, result);
+    const { events } = await connector.listEvents({ from, to });
+    applyInbound(connector, events, ownerId, result);
     await applyOutbound(connector, ownerId, result);
   } catch (err) {
     result.errors.push((err as Error).message);
