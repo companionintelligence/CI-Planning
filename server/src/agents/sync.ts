@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
+import { config } from '../lib/config.js';
 import { newId } from '../lib/ids.js';
 import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
@@ -34,9 +35,17 @@ function syncWindow(): { from: string; to: string } {
 /**
  * Enqueue a block for outbound push to every active connector for this owner.
  * ON CONFLICT refreshes created_at so a rapid edit doesn't add duplicate rows.
- * No-op when the owner has no registered connectors.
+ * No-op when writeback is disabled (CP_SYNC_WRITEBACK off) or when the block is
+ * an inbound calendar mirror — we never push meeting mirrors back (I9).
  */
 export function enqueueOutbound(blockId: string): void {
+  if (!config.sync.writeback) return;
+  // I9: inbound-mirrored blocks must never be pushed back to the provider. Checked
+  // inside this function (not only at call sites) so future callers can't bypass it.
+  const isInbound = sqlite
+    .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND direction = 'inbound'`)
+    .get(blockId);
+  if (isInbound) return;
   const ownerId = currentOwnerId();
   for (const c of getConnectors()) {
     sqlite
@@ -183,6 +192,7 @@ async function applyOutbound(
   ownerId: string,
   result: SyncResult,
 ): Promise<void> {
+  if (!config.sync.writeback) return;
   const queued = sqlite
     .prepare(
       `SELECT oq.id AS queue_id, oq.block_id,
@@ -201,7 +211,8 @@ async function applyOutbound(
     }>;
 
   for (const row of queued) {
-    const input = { title: row.title, start: row.start_at, end: row.end_at, allDay: row.all_day === 1 };
+    // I7: stable idempotency key → connector derives cp+base32hex(blockId) provider event id
+    const input = { title: row.title, start: row.start_at, end: row.end_at, allDay: row.all_day === 1, idempotencyKey: row.block_id };
     const existing = sqlite
       .prepare(
         `SELECT id, external_id, etag FROM external_events
@@ -234,15 +245,18 @@ async function applyOutbound(
       sqlite.prepare('DELETE FROM outbound_queue WHERE id = ?').run(row.queue_id);
     } catch (err) {
       if (err instanceof EtagConflictError) {
-        // Remote changed since last sync — record fresh etag; retry next cycle with it.
+        // Remote changed since last sync — record fresh etag, remove from queue.
+        // I12: clear the incremental cursor so the next sync cycle does a full re-pull
+        // and overwrites the local block with the authoritative remote state.
         result.conflicts++;
         if (existing && err.freshEtag !== null) {
           sqlite
             .prepare(`UPDATE external_events SET etag = ? WHERE id = ?`)
             .run(err.freshEtag, existing.id);
         }
+        clearCalendarCursor(connector, ownerId);
         sqlite.prepare('DELETE FROM outbound_queue WHERE id = ?').run(row.queue_id);
-        logger.warn('outbound etag conflict — remote wins', {
+        logger.warn('outbound etag conflict — remote wins; cursor cleared for re-pull', {
           provider: connector.provider,
           externalId: existing?.external_id,
           freshEtag: err.freshEtag,

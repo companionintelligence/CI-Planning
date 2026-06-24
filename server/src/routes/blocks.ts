@@ -158,6 +158,20 @@ export function blocksRouter() {
       recurrence_dtstart: string | null;
     }>;
 
+    // I10: inbound calendar mirrors are authoritative — the owner may not directly
+    // edit their title or time. The next sync cycle will overwrite any local change
+    // anyway; rejecting here prevents silent drift and a confusing UX.
+    if (body.title !== undefined || body.start_at !== undefined || body.end_at !== undefined) {
+      const isInboundBlock = sqlite
+        .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND direction = 'inbound'`)
+        .get(id);
+      if (isInboundBlock) {
+        ctx.status = 422;
+        ctx.body = { error: 'Calendar meeting blocks are read-only — edit the event in Google Calendar' };
+        return;
+      }
+    }
+
     const update: Partial<typeof timeBlocks.$inferInsert> = {};
     if (body.title           !== undefined) update.title           = body.title;
     if (body.start_at        !== undefined) update.startAt         = body.start_at;
@@ -212,11 +226,7 @@ export function blocksRouter() {
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(id) };
     broadcast(currentOwnerId(), 'block:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${id}` });
-    // Only enqueue outbound push for user-owned blocks, not inbound calendar mirrors.
-    const isInbound = sqlite
-      .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND direction = 'inbound'`)
-      .get(id);
-    if (!isInbound) enqueueOutbound(id);
+    enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
     ctx.body = { block: out };
   });
 
