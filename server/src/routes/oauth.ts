@@ -7,6 +7,7 @@ import { newId } from '../lib/ids.js';
 import { currentOwnerId, runWithOwner } from '../lib/context.js';
 import { loadKek, open } from '../lib/crypto/index.js';
 import { BaseOAuth2Client, revoke } from '../connectors/index.js';
+import { buildGoogleScopes } from '../mcp/gmail-flag.js';
 
 /**
  * WP2 — standalone Google OAuth 2.1 (Authorization Code + PKCE/S256). Auth-only:
@@ -185,9 +186,7 @@ export function oauthRouter() {
     const state = base64url(randomBytes(32));
     const nonce = base64url(randomBytes(32));
 
-    // Calendar scopes always; Gmail only when explicitly enabled via env.
-    const scopes = [...config.google.scopes.calendar];
-    if (config.google.enableGmail) scopes.push(...config.google.scopes.gmail);
+    const scopes = buildGoogleScopes({ gmail: true });
 
     const now = Date.now();
     sqlite

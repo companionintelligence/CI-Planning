@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { config } from '../src/lib/config.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { runJob } from '../src/jobs/index.js';
@@ -126,5 +127,19 @@ describe('ingestion jobs (require Ollama)', () => {
     expect(run?.status).toBe('done');
     const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gmail'").get() as { n: number };
     expect(possibles.n).toBeGreaterThan(0);
+  });
+
+  it('ingest_gmail skips without running when live mode and enableGmail is false', async () => {
+    config.google.mode = 'live';
+    config.google.enableGmail = false;
+    try {
+      await runJob('ingest_gmail');
+      const run = lastRun('ingest_gmail');
+      expect(run?.log).toContain('skipped');
+      const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gmail'").get() as { n: number };
+      expect(possibles.n).toBe(0);
+    } finally {
+      config.google.mode = 'fixture';
+    }
   });
 });
