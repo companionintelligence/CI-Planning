@@ -10,6 +10,7 @@ import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
+import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -130,6 +131,7 @@ export function blocksRouter() {
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(block.id) };
     broadcast(currentOwnerId(), 'block:created', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `block:${block.id}` });
+    enqueueOutbound(block.id);
     ctx.status = 201;
     ctx.body = { block: out };
   });
@@ -207,6 +209,11 @@ export function blocksRouter() {
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(id) };
     broadcast(currentOwnerId(), 'block:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${id}` });
+    // Only enqueue outbound push for user-owned blocks, not inbound calendar mirrors.
+    const isInbound = sqlite
+      .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND direction = 'inbound'`)
+      .get(id);
+    if (!isInbound) enqueueOutbound(id);
     ctx.body = { block: out };
   });
 
@@ -276,6 +283,8 @@ export function blocksRouter() {
   // (PR-C: the "remove tasks" choice in the delete-Plan confirm dialog).
   router.delete('/api/blocks/:id', async (ctx) => {
     const id = ctx.params.id;
+    // Push remote deletes before the block (and its external_events rows) are CASCADE-removed.
+    await pushOutboundDeletes(id);
     if ((ctx.query.children as string) === 'delete') {
       // CON-3 cascade: members are HARD-deleted here — drop their tag rows first.
       const members = sqlite
