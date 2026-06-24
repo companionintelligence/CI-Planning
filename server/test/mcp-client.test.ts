@@ -17,6 +17,7 @@ import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { newId } from '../src/lib/ids.js';
 import { logger } from '../src/lib/logger.js';
 import { GoogleCalendarConnector } from '../src/connectors/google.js';
+import { config } from '../src/lib/config.js';
 import { resetDb } from './helpers.js';
 
 const KEY = randomBytes(32).toString('base64');
@@ -148,15 +149,40 @@ describe('McpGoogleSession', () => {
 
   it('throws McpUnavailable naming a missing tool (contract pin)', async () => {
     seedToken('miss@x.io', 'tok', FAR_FUTURE());
-    const { factory } = makeFactory({
-      tools: ALL_TOOLS.filter((t) => t !== REQUIRED_TOOLS.gmail.modifyLabels),
-      onCall: async () => ({}),
-    });
-    const session = new McpGoogleSession({ account: 'miss@x.io', connectionFactory: factory });
-    await expect(run(() => session.listEmails())).rejects.toMatchObject({
-      name: 'McpUnavailable',
-    });
-    await expect(run(() => session.listEmails())).rejects.toThrow(REQUIRED_TOOLS.gmail.modifyLabels);
+    const savedGmail = config.google.enableGmail;
+    config.google.enableGmail = true; // the Gmail contract is only pinned when Gmail is enabled
+    try {
+      const { factory } = makeFactory({
+        tools: ALL_TOOLS.filter((t) => t !== REQUIRED_TOOLS.gmail.modifyLabels),
+        onCall: async () => ({}),
+      });
+      const session = new McpGoogleSession({ account: 'miss@x.io', connectionFactory: factory });
+      await expect(run(() => session.listEmails())).rejects.toMatchObject({
+        name: 'McpUnavailable',
+      });
+      await expect(run(() => session.listEmails())).rejects.toThrow(REQUIRED_TOOLS.gmail.modifyLabels);
+    } finally {
+      config.google.enableGmail = savedGmail;
+    }
+  });
+
+  it('spawns calendar-only (no Gmail tools) when enableGmail is false', async () => {
+    seedToken('cal-only@x.io', 'tok', FAR_FUTURE());
+    const savedGmail = config.google.enableGmail;
+    config.google.enableGmail = false; // calendar-only deployment — the recommended first live rung
+    try {
+      // The MCP server exposes ONLY the 4 calendar tools (Gmail not approved / CASA pending).
+      const { factory } = makeFactory({
+        tools: Object.values(REQUIRED_TOOLS.calendar),
+        onCall: async () => ({ structuredContent: { events: [] } }),
+      });
+      const session = new McpGoogleSession({ account: 'cal-only@x.io', connectionFactory: factory });
+      // Must NOT throw "Required MCP tool missing: gmail_*" — calendar sync works without Gmail.
+      const page = await run(() => session.listEvents());
+      expect(page.events).toEqual([]);
+    } finally {
+      config.google.enableGmail = savedGmail;
+    }
   });
 
   it('aborts a slow call via the per-call timeout → McpUnavailable', async () => {
