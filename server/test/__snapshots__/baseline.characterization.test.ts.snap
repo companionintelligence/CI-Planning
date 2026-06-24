@@ -603,6 +603,21 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "id",
+      "owner_id",
+      "provider",
+      "account",
+      "iv",
+      "auth_tag",
+      "ciphertext",
+      "key_version",
+      "created_at",
+      "updated_at",
+    ],
+    "table": "connection_tokens",
+  },
+  {
+    "columns": [
       "owner_id",
       "date",
       "prose",
@@ -623,6 +638,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "level",
     ],
     "table": "entity_tags",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "provider",
+      "account",
+      "external_id",
+      "block_id",
+      "etag",
+      "direction",
+      "last_synced_at",
+    ],
+    "table": "external_events",
   },
   {
     "columns": [
