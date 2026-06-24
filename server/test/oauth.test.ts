@@ -142,8 +142,8 @@ describe('GET /api/oauth/google/callback', () => {
     const state = `state-${newId()}`;
     sqlite
       .prepare(
-        `INSERT INTO oauth_states (id, owner_id, provider, state, code_verifier, nonce, redirect_uri, scopes, expires_at)
-         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO oauth_states (id, owner_id, provider, state, code_verifier, nonce, redirect_uri, expires_at)
+         VALUES (?, ?, 'google', ?, ?, ?, ?, ?)`,
       )
       .run(
         newId(),
@@ -152,7 +152,6 @@ describe('GET /api/oauth/google/callback', () => {
         'verifier-1234567890abcdefghij',
         opts?.nonce ?? null,
         config.google.redirectUri,
-        JSON.stringify(['https://www.googleapis.com/auth/calendar.events']),
         opts?.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
       );
     return state;

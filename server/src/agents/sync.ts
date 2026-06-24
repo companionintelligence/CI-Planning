@@ -282,16 +282,13 @@ function writeCalendarCursor(
   connector: CalendarConnector,
   ownerId: string,
   cursor: string | null,
-  window: { from: string; to: string },
 ): void {
   sqlite
     .prepare(
-      `INSERT INTO sync_state (id, owner_id, provider, account, resource, cursor, window_from, window_to)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO sync_state (id, owner_id, provider, account, resource, cursor)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_id, provider, account, resource) DO UPDATE SET
          cursor = excluded.cursor,
-         window_from = excluded.window_from,
-         window_to = excluded.window_to,
          updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
     )
     .run(
@@ -301,8 +298,6 @@ function writeCalendarCursor(
       connector.account,
       CALENDAR_SYNCTOKEN,
       cursor,
-      window.from,
-      window.to,
     );
 }
 
@@ -371,7 +366,7 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
     // re-inits full again. We never persist a null/undefined over a good token here because
     // the only path that nulls it is the explicit clearCalendarCursor above.
     if (page.nextSyncToken != null) {
-      writeCalendarCursor(connector, ownerId, page.nextSyncToken, window);
+      writeCalendarCursor(connector, ownerId, page.nextSyncToken);
     }
 
     await applyOutbound(connector, ownerId, result);
