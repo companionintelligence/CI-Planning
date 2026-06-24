@@ -136,6 +136,32 @@ export function taskTagNamesByIds(ids: string[]): Map<string, string[]> {
   return out;
 }
 
+/**
+ * Batched secondary (level>1) task tags for list endpoints (no N+1) — the
+ * companion to `taskTagNamesByIds` (level 1). Same chunking + Map shape: every
+ * requested id is present (empty array if none). Ordered level-then-name.
+ */
+export function taskSecondaryTagNamesByIds(ids: string[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const id of ids) out.set(id, []);
+  if (ids.length === 0) return out;
+  for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
+    const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = sqlite
+      .prepare(
+        `SELECT entity_tags.entity_id AS id, tags.name AS name
+           FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
+          WHERE entity_tags.entity_kind = 'task' AND entity_tags.level > 1
+            AND entity_tags.entity_id IN (${placeholders})
+          ORDER BY entity_tags.entity_id, entity_tags.level, tags.name`,
+      )
+      .all(...chunk) as { id: string; name: string }[];
+    for (const r of rows) out.get(r.id)?.push(r.name);
+  }
+  return out;
+}
+
 const selectLevels = sqlite.prepare(
   `SELECT tags.name AS name, entity_tags.level AS level FROM tags
      JOIN entity_tags ON tags.id = entity_tags.tag_id

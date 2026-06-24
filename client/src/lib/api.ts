@@ -31,7 +31,8 @@ export interface Task {
   source_kind: string;
   created_at: string;
   completed_at?: string;
-  tags: string[];
+  tags: string[];                 // primary tags (entity_tags level 1) — incl. the home/work/community direction
+  secondary_tags?: string[];      // Phase 5: secondary tags (entity_tags level>1)
   depends_on?: string[];
   blocked?: boolean;
   // Recurrence (Phase E): a template has recurrence_rule set + no parent; an
@@ -57,6 +58,7 @@ export interface TaskInput {
   parent_id?: string;
   owner_id?: string;
   tags?: string[];
+  secondary_tags?: string[];
   depends_on?: string[];
   recurrence_rule?: string | null;
   is_habit?: boolean;
