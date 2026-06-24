@@ -147,17 +147,45 @@ contradict the implementation:
 
 ---
 
-## 7. Staged enablement order
+## 7. The calendar MCP server (`CP_MCP_COMMAND`)
+
+CP is an MCP **client** — it does not call Google directly. For each connected account it
+spawns a Google **MCP server** child process and injects that account's OAuth access token
+into the child via the `GOOGLE_ACCESS_TOKEN` env var (the only secret in the child's env).
+**Live mode does nothing until `CP_MCP_COMMAND` points at a server**: left unset,
+`GOOGLE_MODE=live` fails fast on the first sync with `McpUnavailable: No MCP command
+configured`.
+
+CP ships a calendar MCP server (`server/src/scripts/mcp-google-server.ts`) that fulfils the
+4 calendar tools against the Google Calendar REST API. Point `CP_MCP_COMMAND` at it under
+`tsx`, mirroring how the app itself runs (the server has no build step):
+
+```
+CP_MCP_COMMAND="node_modules/.bin/tsx src/scripts/mcp-google-server.ts"
+```
+
+Run the CP server process with the `server/` directory as its working directory so both
+`node_modules/.bin/tsx` and the relative script path resolve.
+
+- **Calendar-only by default.** The shipped server exposes only the 4 calendar tools. CP
+  requires the Gmail tools only when `CP_GOOGLE_ENABLE_GMAIL=true`, so a calendar-only
+  deployment connects cleanly. Gmail (the RESTRICTED scope) is rung 4 of the staged order
+  below.
+- **Primary calendar.** The server operates on the connected account's `primary` calendar.
+
+---
+
+## 8. Staged enablement order
 
 Walk live mode up one rung at a time; verify at each step before advancing.
 
 1. **Fixture (default).** `GOOGLE_MODE=fixture`. Fully offline; confirm the app and the
    sync reconciler behave on committed sample data.
 2. **Live inbound, read-only.** Set `GOOGLE_MODE=live`, `CP_GOOGLE_CLIENT_ID`
-   (+ secret for a Web client), `CP_KEK_B64`, and a matching `CP_OAUTH_REDIRECT_URI`.
-   Keep `CP_SYNC_WRITEBACK` **off**. Connect an account
-   *(via the assumed-WP2 route `GET /api/oauth/google/start`)* and confirm Calendar events
-   mirror inbound as locked meeting blocks. Nothing is written back to Google.
+   (+ secret for a Web client), `CP_KEK_B64`, a matching `CP_OAUTH_REDIRECT_URI`, and
+   `CP_MCP_COMMAND` (§7). Keep `CP_SYNC_WRITEBACK` **off**. Connect an account via
+   `GET /api/oauth/google/start` and confirm Calendar events mirror inbound as locked
+   meeting blocks. Nothing is written back to Google.
 3. **Enable write-back.** Set `CP_SYNC_WRITEBACK=true` once inbound is trusted; local block
    changes now push to Google (etag-guarded; remote wins on conflict).
 4. **Add Gmail last.** Gmail's `gmail.readonly` is the RESTRICTED scope (see §3). Add it
