@@ -18,6 +18,7 @@ import { patternPrefsRouter } from './pattern-prefs.js';
 import { notificationsRouter } from './notifications.js';
 import { backupRouter } from './backup.js';
 import { healthRouter } from './health.js';
+import { oauthRouter } from './oauth.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -40,6 +41,7 @@ export function mountRoutes(app: Koa) {
     patternPrefsRouter(),
     notificationsRouter(),
     backupRouter(),
+    oauthRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

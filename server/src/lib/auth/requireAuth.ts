@@ -19,8 +19,10 @@ import type { VerifiedClaims } from './types.js';
  */
 
 // Reachable without authentication: liveness + the auth-bootstrap config a client
-// needs *before* it has a credential. Everything else under /api is gated.
-const PUBLIC_PREFIXES = ['/api/health', '/api/auth/config'];
+// needs *before* it has a credential, plus the Google OAuth callback — Google's
+// redirect arrives with no app credential and the owner is resolved SOLELY from the
+// matched oauth_states row (I2). Everything else under /api is gated.
+const PUBLIC_PREFIXES = ['/api/health', '/api/auth/config', '/api/oauth/google/callback'];
 
 function isPublic(path: string): boolean {
   return PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
