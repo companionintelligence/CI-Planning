@@ -103,7 +103,8 @@ export function Today() {
               </Show>
             </div>
           </div>
-          <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0">
+          {/* Right column: Add button (Suggest/Schedule toggle moved to top bar) */}
+          <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0 self-start">
             <Plus size={13} /> Add
           </button>
         </div>

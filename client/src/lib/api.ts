@@ -187,13 +187,14 @@ export const api = {
     reset: () => request<{ ok: boolean; cleared: number }>('POST', '/flight-plan/reset', {}),
   },
 
-  // Two-step Auto: empty/unselected flight-plan → fill candidates; selected → place.
+  // Explicit two-path Auto: fill proposes candidates; run places them + workday fill.
   auto: {
+    // Fill Flight Plan: propose open-task candidates into the staging area. Never places.
+    fill: (body?: { date?: string }) =>
+      request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/fill', body ?? {}),
+    // Auto Schedule: place selected staged items (Plans → direction windows → workday fill).
     run: (body?: { block_id?: string; date?: string }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/run', body ?? {}),
-    // Explicit priority top-up (tap 3, D5): fill non-matching workday capacity P1-first.
-    priority: (body?: { date?: string }) =>
-      request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/priority', body ?? {}),
     // Undo the last placement run (D2): delete its blocks, re-stage its tasks.
     undo: () =>
       request<{ result: { removed: number; restaged: number }; flight_plan: FlightPlanItem[] }>('POST', '/auto/undo', {}),
@@ -404,8 +405,9 @@ export interface Tag {
 
 export interface Prefs {
   id: string; owner_id: string; workday_start: string; workday_end: string;
-  auto_fill_workday?: boolean; // gates the explicit priority fill (0028; D5 repurpose)
+  auto_fill_workday?: boolean; // gates the workday fallback fill (0028)
   auto_mode?: 'suggest' | 'schedule'; // trust toggle (0052); default 'suggest'
+  fill_order?: 'priority' | 'overdue'; // leftover fill ordering (0055); default 'priority'
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
   // Time-Block container duration bounds (0017).
