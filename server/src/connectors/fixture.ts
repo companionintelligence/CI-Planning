@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CalendarConnector, RemoteEvent, RemoteEventInput } from './base.js';
+import type { CalendarConnector, RemoteEvent, RemoteEventInput, ListEventsResult, ListEventsOpts } from './base.js';
 import { EtagConflictError } from './base.js';
 
 /**
@@ -25,11 +25,11 @@ export class FixtureConnector implements CalendarConnector {
     this.events.set(event.id, { ...event });
   }
 
-  async listEvents(opts?: { from?: string; to?: string }): Promise<RemoteEvent[]> {
+  async listEvents(opts?: ListEventsOpts): Promise<ListEventsResult> {
     let events = [...this.events.values()];
     if (opts?.from) events = events.filter((e) => e.start >= opts.from!);
     if (opts?.to)   events = events.filter((e) => e.start <= opts.to!);
-    return events;
+    return { events };
   }
 
   async createEvent(input: RemoteEventInput): Promise<RemoteEvent> {

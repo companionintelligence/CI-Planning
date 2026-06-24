@@ -7,7 +7,7 @@ export { BaseOAuth2Client } from './base.js';
 export { GoogleCalendarConnector } from './google.js';
 export { FixtureConnector } from './fixture.js';
 export { EtagConflictError } from './base.js';
-export type { CalendarConnector, RemoteEvent, RemoteEventInput } from './base.js';
+export type { CalendarConnector, RemoteEvent, RemoteEventInput, ListEventsResult, ListEventsOpts } from './base.js';
 
 /**
  * Return all active connectors for the current owner, one per connection_tokens row.

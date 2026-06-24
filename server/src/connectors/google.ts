@@ -1,4 +1,4 @@
-import type { RemoteEvent, RemoteEventInput } from './base.js';
+import type { RemoteEvent, RemoteEventInput, ListEventsResult, ListEventsOpts } from './base.js';
 import { BaseOAuth2Client } from './base.js';
 
 /**
@@ -15,7 +15,7 @@ export class GoogleCalendarConnector extends BaseOAuth2Client {
     this.account = account;
   }
 
-  async listEvents(_opts?: { from?: string; to?: string }): Promise<RemoteEvent[]> {
+  async listEvents(_opts?: ListEventsOpts): Promise<ListEventsResult> {
     await this.getAccessToken();
     throw new Error('GoogleCalendarConnector.listEvents not yet wired — see mcp/google.ts TODO(phase-2)');
   }

@@ -11,6 +11,12 @@ export interface RemoteEvent {
   end: string;     // ISO UTC
   etag: string | null;
   allDay?: boolean;
+  /**
+   * Set by listEvents when the provider reports this event as cancelled/deleted in an
+   * incremental (syncToken) page. The reconciler treats a `deleted` event as a tombstone
+   * (remove the local mirror) rather than an upsert. Absent/false on full listings.
+   */
+  deleted?: boolean;
 }
 
 export interface RemoteEventInput {
@@ -18,6 +24,34 @@ export interface RemoteEventInput {
   start: string;
   end: string;
   allDay?: boolean;
+  /**
+   * Caller-supplied stable key for createEvent (the local block id). The connector MUST
+   * derive a DETERMINISTIC provider event id from it — `'cp' + base32(blockId)` — so a
+   * retried create lands on the SAME provider event instead of duplicating it (the I7
+   * idempotency invariant). When the provider returns 409 (already exists), createEvent
+   * MUST read the event back and return its canonical { id, etag } (the echo-guard
+   * invariant) rather than throwing. These are contracts WP4 implements.
+   */
+  idempotencyKey?: string;
+}
+
+/**
+ * Result envelope for listEvents. `events` is the page; `nextSyncToken` is the opaque
+ * cursor to pass back as opts.syncToken next cycle (incremental sync); `expired` is true
+ * when the provider rejected a stale syncToken (HTTP 410) and the caller must restart with
+ * a full window (no syncToken). WP1 fixture returns only `events`.
+ */
+export interface ListEventsResult {
+  events: RemoteEvent[];
+  nextSyncToken?: string | null;
+  expired?: boolean;
+}
+
+/** Options for listEvents. `syncToken` selects incremental mode; `from`/`to` bound a full window. */
+export interface ListEventsOpts {
+  from?: string;
+  to?: string;
+  syncToken?: string;
 }
 
 /** Thrown by updateEvent/deleteEvent when the remote etag doesn't match ifMatch. */
@@ -35,7 +69,14 @@ export interface CalendarConnector {
   readonly provider: string;
   readonly account: string;
   readonly mode: 'fixture' | 'live';
-  listEvents(opts?: { from?: string; to?: string }): Promise<RemoteEvent[]>;
+  /** Returns a page envelope (events + optional incremental cursor / expiry signal). */
+  listEvents(opts?: ListEventsOpts): Promise<ListEventsResult>;
+  /**
+   * Create a provider event. MUST derive a deterministic provider id from
+   * input.idempotencyKey and, on a 409 conflict, read the event back and return its
+   * canonical { id, etag } (the I7 + echo-guard invariants). Always returns the canonical
+   * RemoteEvent so the caller can persist the mapping.
+   */
   createEvent(input: RemoteEventInput): Promise<RemoteEvent>;
   /** Throws EtagConflictError if ifMatch is non-null and doesn't match the remote etag. */
   updateEvent(externalId: string, input: RemoteEventInput, ifMatch: string | null): Promise<RemoteEvent>;
@@ -55,11 +96,30 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
   abstract readonly account: string;
   readonly mode = 'live' as const;
 
-  abstract listEvents(opts?: { from?: string; to?: string }): Promise<RemoteEvent[]>;
+  abstract listEvents(opts?: ListEventsOpts): Promise<ListEventsResult>;
   abstract createEvent(input: RemoteEventInput): Promise<RemoteEvent>;
   abstract updateEvent(externalId: string, input: RemoteEventInput, ifMatch: string | null): Promise<RemoteEvent>;
   abstract deleteEvent(externalId: string, ifMatch: string | null): Promise<void>;
   protected abstract refreshToken(refreshToken: string): Promise<{ accessToken: string; expiresAt: string }>;
+
+  /**
+   * In-process refresh single-flight. Keyed by (owner, provider, account): concurrent
+   * getAccessToken() calls that all see the same expired token share ONE _refreshAndStore
+   * promise, so the provider's refresh endpoint is hit exactly once (no refresh-token
+   * stampede / race on the stored row). The entry is cleared in finally.
+   */
+  private static refreshInFlight = new Map<string, Promise<string>>();
+
+  /**
+   * Reconcile a refresh token across a refresh response. Google omits refresh_token on
+   * subsequent refreshes, so an empty incoming value means "keep the existing one". Never
+   * persist an empty refresh token (the I4 contract): throws if BOTH are empty.
+   */
+  static mergeRefreshToken(existing: string | null | undefined, incoming: string | null | undefined): string {
+    if (incoming) return incoming;
+    if (existing) return existing;
+    throw new Error('mergeRefreshToken: refusing to persist an empty refresh token (I4)');
+  }
 
   protected async getAccessToken(): Promise<string> {
     const ownerId = currentOwnerId();
@@ -78,7 +138,15 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
       expiresAt: string;
     };
     if (new Date(tok.expiresAt) <= new Date()) {
-      return this._refreshAndStore(tok.refreshToken);
+      const key = `${ownerId}:${this.provider}:${this.account}`;
+      let inflight = BaseOAuth2Client.refreshInFlight.get(key);
+      if (!inflight) {
+        inflight = this._refreshAndStore(tok.refreshToken).finally(() => {
+          BaseOAuth2Client.refreshInFlight.delete(key);
+        });
+        BaseOAuth2Client.refreshInFlight.set(key, inflight);
+      }
+      return inflight;
     }
     return tok.accessToken;
   }
