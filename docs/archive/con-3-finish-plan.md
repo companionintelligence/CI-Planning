@@ -1,6 +1,6 @@
 # Finish CON-3 — make `entity_tags` the tag read-path (wave plan)
 
-> **Status: PLAN ONLY — no code moved.** Draft for review, 2026-06-22. Sub-plan of
+> **Status: ✅ DONE 2026-06-22.** All waves (W0 parity · W1 read-flip · W2 drop `task_tags`) shipped — migrations `0033`→`0041`. *(Header corrected to match the body's per-wave "✅ DONE" entries.)* Sub-plan of
 > [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md) §5b.
 >
 > **Decision (with the user):** finish CON-3. `entity_tags` becomes the **read path**

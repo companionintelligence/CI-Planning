@@ -1,7 +1,7 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
 > **Status:** canonical, 2026-06-22 (updated: ratify `kind='pattern'`; tag-axis rename 0043). The single source of truth for user-facing
-> nouns. Companion to [consolidation-plan.md](consolidation-plan.md). Every label
+> nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
 ## Why this exists

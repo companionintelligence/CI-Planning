@@ -1,6 +1,6 @@
 # CON-1 — UUIDv7 identity (design)
 
-> **Status:** design doc — no implementation yet. First PR of the consolidation
+> **Status:** ✅ **shipped** — CON-1 landed (PRs #74/#76, migration `0030_uuidv7_identity`, 2026-06-21). *Archived; kept for the design rationale.* First PR of the consolidation
 > pass ([consolidation-plan.md](consolidation-plan.md)). The riskiest single
 > change in the plan; it gets its own PR and is proven by the behavior baseline
 > ([server/test/baseline.characterization.test.ts](../server/test/baseline.characterization.test.ts)).
