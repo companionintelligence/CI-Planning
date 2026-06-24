@@ -349,6 +349,15 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `OLLAMA_MEDIUM` | `gemma4:e4b` | Better model for briefings |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
+| `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (JWKS-signed Bearer JWT). |
+| `AUTH_JWKS_URL` | (unset) | JWKS endpoint for JWT public-key verification. Required when `AUTH_MODE=sso`. |
+| `AUTH_ISSUER` | (unset) | Expected JWT `iss` claim. Required when `AUTH_MODE=sso`. |
+| `AUTH_AUDIENCE` | `companion-planning` | Expected JWT `aud` claim (`AUTH_MODE=sso`). |
+| `AUTH_CONTRACT_VERSION` | `1` | Pinned contract version asserted in incoming JWT claims (`AUTH_MODE=sso`). |
+| `AUTH_AUTO_PROVISION` | `false` | When `true`, an unknown SSO `sub` automatically provisions a new owner row instead of returning 403. |
+| `AUTH_RATE_WINDOW_MS` | `60000` | Rate-limit sliding window in milliseconds. |
+| `AUTH_RATE_MAX` | `60` | Max requests per window per IP across all endpoints. |
+| `AUTH_RATE_ISSUE_MAX` | `5` | Max token-issue operations (login / key exchange) per window per IP. |
 | `GOOGLE_MODE` | `fixture` | `fixture` (committed sample data, fully offline) or `live` (real Google OAuth + Calendar sync). `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
 | `CP_GOOGLE_CLIENT_ID` | (unset) | Google OAuth client ID. Required when `GOOGLE_MODE=live`. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md). |
 | `CP_GOOGLE_CLIENT_SECRET` | (unset) | Google OAuth client secret. Needed for a **Web** client (ts.net HTTPS deploy); a **Desktop/installed** client with a loopback redirect can run without one. Never commit it. |
