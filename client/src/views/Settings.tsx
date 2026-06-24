@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, createResource, For } from 'solid-js';
+import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, ChevronUp, ChevronDown, Database, AlertTriangle } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternBlocks, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
@@ -298,8 +298,22 @@ export function Settings() {
   // stack duplicate SSE subscriptions on re-render.
   on('job:run', () => refetchIntegrations());
 
-  // WP7: kick off the assumed-WP2 OAuth flow; the server redirects to Google.
-  // Contract (assumed): GET /api/oauth/google/start. Degrade gracefully on non-2xx.
+  // After the OAuth callback redirects back to /settings?google=connected|error,
+  // surface a toast once and strip the query param so it doesn't re-fire on refresh.
+  onMount(() => {
+    const q = new URLSearchParams(window.location.search);
+    const g = q.get('google');
+    if (g === 'connected') { showToast('Google account connected', 'success'); refetchIntegrations(); }
+    else if (g === 'error') { showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
+    if (g) {
+      q.delete('google'); q.delete('reason');
+      const qs = q.toString();
+      window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+    }
+  });
+
+  // WP7: kick off the OAuth flow. GET /api/oauth/google/start returns { url }; we
+  // fetch it (credentialed) then navigate the browser to Google. Degrade on non-2xx.
   async function connectGoogle() {
     if (!integrations()?.google.liveEnabled) return;
     try {

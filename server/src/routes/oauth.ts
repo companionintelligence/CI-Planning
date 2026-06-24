@@ -15,7 +15,7 @@ import { BaseOAuth2Client, revoke } from '../connectors/index.js';
  * MCP / calendar calls here (WP4).
  *
  * Routes (all under /api/oauth/google):
- *   GET    /start              → 302 to Google's consent screen (refused in test mode)
+ *   GET    /start              → returns { url } for the SPA to navigate to (refused in test mode)
  *   GET    /callback           → exchanges the code, stores tokens, 302 to the SPA
  *   GET    /accounts           → list connected accounts (status only, no secrets)
  *   DELETE /accounts/:account  → revoke + delete the connection
@@ -188,7 +188,7 @@ export function oauthRouter() {
 
     // Calendar scopes always; Gmail only when explicitly enabled via env.
     const scopes = [...config.google.scopes.calendar];
-    if (process.env.CP_GOOGLE_ENABLE_GMAIL === 'true') scopes.push(...config.google.scopes.gmail);
+    if (config.google.enableGmail) scopes.push(...config.google.scopes.gmail);
 
     const now = Date.now();
     sqlite
@@ -226,8 +226,11 @@ export function oauthRouter() {
     params.set('nonce', nonce);
 
     // The code_verifier is NEVER placed in the URL or logged — only the challenge.
+    // Return the authorize URL as JSON rather than a 302: /start is credentialed
+    // (x-api-key), so the SPA fetches it with the key, then does a top-level browser
+    // navigation to Google. A 302 here would be followed by fetch() and fail to parse.
     logger.info('OAuth start', { provider: 'google', owner: ownerId });
-    ctx.redirect(authUrl.toString());
+    ctx.body = { url: authUrl.toString() };
   });
 
   // ── GET /api/oauth/google/callback ──────────────────────────────────────────
