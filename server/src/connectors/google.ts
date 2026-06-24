@@ -61,6 +61,7 @@ function statusOf(err: unknown): number {
   if (err && typeof err === 'object') {
     const o = err as Record<string, unknown>;
     if (typeof o.status === 'number') return o.status;
+    if (typeof o.httpStatus === 'number') return o.httpStatus; // mirror client.ts classifyStatus
     const msg = typeof o.message === 'string' ? o.message : '';
     const m = msg.match(/\b(4\d\d|5\d\d)\b/);
     if (m) return Number(m[1]);

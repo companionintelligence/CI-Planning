@@ -131,30 +131,38 @@ function applyInbound(
       | undefined;
 
     if (!mapping) {
+      // Atomic: the block mirror and its identity mapping must commit together. A
+      // partial commit (block without mapping) would orphan the block AND let the next
+      // cycle re-insert a duplicate — the 0027 unique index covers only 'gmail'/'gcal',
+      // not the 'google' source_kind used here, so nothing else dedupes it.
       const blockId = newId();
-      sqlite
-        .prepare(
-          `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-           VALUES (?, NULL, ?, 'meeting', ?, ?, 1, 0, ?, ?, 'planned')`,
-        )
-        .run(blockId, event.title, event.start, event.end, connector.provider, event.id);
-      sqlite
-        .prepare(
-          `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id, etag, direction, last_synced_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-        )
-        .run(newId(), ownerId, connector.provider, connector.account, event.id, blockId, event.etag ?? null);
+      sqlite.transaction(() => {
+        sqlite
+          .prepare(
+            `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+             VALUES (?, NULL, ?, 'meeting', ?, ?, 1, 0, ?, ?, 'planned')`,
+          )
+          .run(blockId, event.title, event.start, event.end, connector.provider, event.id);
+        sqlite
+          .prepare(
+            `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id, etag, direction, last_synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'inbound', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+          )
+          .run(newId(), ownerId, connector.provider, connector.account, event.id, blockId, event.etag ?? null);
+      })();
       result.created++;
     } else if (mapping.direction === 'inbound' && event.etag !== mapping.etag) {
-      // Inbound event changed remotely — update the local mirror.
-      sqlite
-        .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ?`)
-        .run(event.title, event.start, event.end, mapping.block_id);
-      sqlite
-        .prepare(
-          `UPDATE external_events SET etag = ?, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
-        )
-        .run(event.etag ?? null, mapping.id);
+      // Inbound event changed remotely — update the local mirror + its etag atomically.
+      sqlite.transaction(() => {
+        sqlite
+          .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ?`)
+          .run(event.title, event.start, event.end, mapping.block_id);
+        sqlite
+          .prepare(
+            `UPDATE external_events SET etag = ?, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
+          )
+          .run(event.etag ?? null, mapping.id);
+      })();
       result.updated++;
     }
     // direction='outbound' or etag unchanged → no-op
