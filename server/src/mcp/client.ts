@@ -348,14 +348,16 @@ export class McpGoogleSession {
     }
     const tools = new Set(listed.tools.map((t) => t.name));
 
-    // Assert the contract once per process and cache the descriptor.
-    for (const name of Object.values(REQUIRED_TOOLS.calendar)) {
-      if (!tools.has(name)) {
-        await this.safeClose(conn);
-        throw new McpUnavailable(`Required MCP tool missing: ${name}`);
-      }
-    }
-    for (const name of Object.values(REQUIRED_TOOLS.gmail)) {
+    // Calendar tools are ALWAYS required. Gmail tools are required ONLY when Gmail
+    // ingest is enabled (config.google.enableGmail). The recommended first live rung is
+    // calendar-only (Gmail's restricted scope needs a CASA assessment — see the runbook),
+    // and that deployment's MCP server exposes only the 4 calendar tools. Asserting the
+    // Gmail tools unconditionally would reject it and break calendar sync entirely.
+    const requiredTools = [
+      ...Object.values(REQUIRED_TOOLS.calendar),
+      ...(config.google.enableGmail ? Object.values(REQUIRED_TOOLS.gmail) : []),
+    ];
+    for (const name of requiredTools) {
       if (!tools.has(name)) {
         await this.safeClose(conn);
         throw new McpUnavailable(`Required MCP tool missing: ${name}`);
