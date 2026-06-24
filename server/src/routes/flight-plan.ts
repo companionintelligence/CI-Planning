@@ -2,7 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
-import { runAuto, fillByPriority, undoLastAuto } from '../engine/autoplan.js';
+import { runAuto, fillByPriority, undoLastAuto, fillFlightPlanCandidates, placeFlightPlan } from '../engine/autoplan.js';
 import { writeAudit } from '../lib/audit.js';
 
 /**
@@ -105,10 +105,20 @@ export function flightPlanRouter() {
     ctx.body = { ok: true, cleared: r.changes };
   });
 
-  // Two-step Auto: empty flight-plan → propose candidates; selected → place them.
+  // Fill Flight Plan: propose open-task candidates into the staging area. Never places.
+  router.post('/api/auto/fill', async (ctx) => {
+    const owner = currentOwnerId();
+    const added = fillFlightPlanCandidates(owner);
+    broadcast(owner, 'flight_plan:filled', { added });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'fill', entity: 'flight-plan:fill' });
+    ctx.body = { result: { step: 'fill', candidatesAdded: added }, flight_plan: list(owner) };
+  });
+
+  // Auto Schedule: place the selected staged items (tag-matched Plans → direction windows
+  // → workday fallback ordered by fill_order). Never proposes candidates.
   router.post('/api/auto/run', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string };
-    const result = runAuto({ blockId: body.block_id, date: body.date });
+    const result = placeFlightPlan(currentOwnerId(), { blockId: body.block_id, date: body.date });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:run' });
     ctx.body = { result, flight_plan: list(currentOwnerId()) };
   });

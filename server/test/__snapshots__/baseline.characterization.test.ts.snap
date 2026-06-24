@@ -37,12 +37,12 @@ exports[`behavior baseline — Auto placement engine > places Plans-first (tap 2
 
 exports[`behavior baseline — Auto placement engine > places Plans-first (tap 2), then the explicit priority fill, deterministically > placeFlightPlan result 1`] = `
 {
-  "blocksCreated": 1,
-  "placed": 1,
+  "blocksCreated": 3,
+  "placed": 3,
   "placedInPlans": 1,
-  "placedInWorkday": 0,
+  "placedInWorkday": 2,
   "step": "place",
-  "unplaced": 2,
+  "unplaced": 0,
 }
 `;
 
@@ -830,6 +830,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "auto_fill_workday",
       "recall_keeps_pattern",
       "auto_mode",
+      "fill_order",
     ],
     "table": "scheduling_prefs",
   },
