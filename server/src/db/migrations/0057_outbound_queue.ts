@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
 
-export const id = '0055_outbound_queue';
+export const id = '0057_outbound_queue';
 
 /**
  * Phase J (PR3) — outbound sync queue. Each row marks a local block that needs
