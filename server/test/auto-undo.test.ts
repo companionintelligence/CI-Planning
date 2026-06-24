@@ -63,17 +63,17 @@ describe('undoLastAuto', () => {
     expect(second).toEqual({ removed: 0, restaged: 0 });
   });
 
-  it('targets only the LAST run — undoing the priority fill keeps the tag-matched placement', () => {
+  it('undo removes all blocks from the combined run (Plans + workday fill share one run_id)', () => {
     makePlan('work', at('09:00'), at('12:00'));
-    stage(insertTask('Code', 60, 'work')); // tag-matched → Plan (run A)
-    stage(insertTask('Loose', 30));         // untagged → priority fill (run B)
+    stage(insertTask('Code', 60, 'work')); // tag-matched → Plan
+    stage(insertTask('Loose', 30));         // untagged → workday fill
 
-    placeFlightPlan(OWNER, { date: DAY });   // run A
-    fillByPriority(OWNER, { date: DAY });    // run B (the last run)
+    // placeFlightPlan now covers Plans + workday fill in a single run.
+    placeFlightPlan(OWNER, { date: DAY });
     expect(agentTaskBlocks().sort()).toEqual(['Code', 'Loose']);
 
-    undoLastAuto(OWNER); // removes run B only
-    expect(agentTaskBlocks()).toEqual(['Code']); // tag-matched placement survives
+    undoLastAuto(OWNER); // removes all blocks from the combined run
+    expect(agentTaskBlocks()).toEqual([]); // both blocks gone — they share the same run_id
   });
 
   it('never touches manual or meeting blocks', () => {

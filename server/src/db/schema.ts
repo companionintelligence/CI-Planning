@@ -168,6 +168,8 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   autoFillWorkday: integer('auto_fill_workday', { mode: 'boolean' }).default(true),
   // Trust toggle (0052): 'suggest' (stepped taps) | 'schedule' (zero-click on ingest).
   autoMode: text('auto_mode').notNull().default('suggest'),
+  // Leftover-fill ordering (0055): 'priority' (P1 first) | 'overdue' (due_at ASC first).
+  fillOrder: text('fill_order').notNull().default('priority'),
   conceptDefaultMinutes: integer('concept_default_minutes').default(60),
   conceptAutosurface: integer('concept_autosurface', { mode: 'boolean' }).default(true),
   conceptHorizonDays: integer('concept_horizon_days').default(30),
