@@ -157,12 +157,19 @@ describe('tag_tasks scheduled job', () => {
     const runRes = await api(srv.url, `/api/jobs/${job.id}/run`, { method: 'POST' });
     expect(runRes.status).toBe(200);
 
-    // Confirm the task got tagged (the job ran synchronously from our perspective
-    // since runJob awaits execute() before updating job_runs)
-    const after = await api(srv.url, '/api/jobs');
-    const updated = (after.body.jobs as { kind: string; last_status: string; items_updated: number }[]).find(
-      (j) => j.kind === 'tag_tasks',
-    )!;
+    // The run route is fire-and-forget: POST returns 200 immediately and the job
+    // finishes in the background (clients learn of completion over SSE). Poll
+    // GET /api/jobs until the run reaches a terminal status rather than assuming
+    // it already finished — otherwise the read races the background job.
+    let updated!: { kind: string; last_status: string; items_updated: number };
+    for (let i = 0; i < 100; i++) {
+      const after = await api(srv.url, '/api/jobs');
+      updated = (after.body.jobs as { kind: string; last_status: string; items_updated: number }[]).find(
+        (j) => j.kind === 'tag_tasks',
+      )!;
+      if (updated.last_status === 'done' || updated.last_status === 'error') break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
     expect(updated.last_status).toBe('done');
     expect(updated.items_updated).toBe(1);
   });
