@@ -14,6 +14,7 @@ import { snapshot, pruneOldSnapshots, backupDir } from '../lib/backup.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { syncAll } from '../agents/sync.js';
 import { config } from '../lib/config.js';
+import { gmailLiveAllowed } from '../mcp/gmail-flag.js';
 import { join } from 'node:path';
 
 export interface JobOutcome {
@@ -26,6 +27,9 @@ export interface JobOutcome {
 async function execute(kind: string): Promise<JobOutcome> {
   switch (kind) {
     case 'ingest_gmail': {
+      if (!gmailLiveAllowed()) {
+        return { itemsCreated: 0, itemsUpdated: 0, log: 'Gmail ingest skipped — set CP_GOOGLE_ENABLE_GMAIL=true to enable in live mode' };
+      }
       const r = await ingestEmails();
       const placed = autoScheduleOnIngest(); // D1: schedule mode places tag-matched in the background; no-op in suggest
       return {
