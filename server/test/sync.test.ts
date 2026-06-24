@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { FixtureConnector } from '../src/connectors/fixture.js';
 import { syncConnector } from '../src/agents/sync.js';
+import { config } from '../src/lib/config.js';
 import { resetDb } from './helpers.js';
 
 // All sync calls run inside SYSTEM_OWNER context (matches cron scheduler behavior).
@@ -209,6 +210,11 @@ describe('calendar sync — fixture mode (offline)', () => {
   // ── Outbound push ──────────────────────────────────────────────────────────
 
   describe('outbound', () => {
+    // Outbound path is gated by CP_SYNC_WRITEBACK (off by default). Enable it for
+    // this group only; restore after each test so other suites are unaffected.
+    beforeEach(() => { config.sync.writeback = true; });
+    afterEach(() => { config.sync.writeback = false; });
+
     it('creates a remote event for a queued block and clears the queue', async () => {
       const { id: blockId } = sqlite
         .prepare(
@@ -321,6 +327,7 @@ describe('calendar sync — fixture mode (offline)', () => {
     });
 
     it('counts mixed inbound + outbound operations correctly', async () => {
+      config.sync.writeback = true;
       // Two inbound events
       connector.seed({ id: 'in-1', title: 'Meeting A', start: futureDate(1), end: futureDate(1, 1), etag: 'ea' });
       connector.seed({ id: 'in-2', title: 'Meeting B', start: futureDate(2), end: futureDate(2, 1), etag: 'eb' });
@@ -341,6 +348,7 @@ describe('calendar sync — fixture mode (offline)', () => {
       expect(r.updated).toBe(0);
       expect(r.deleted).toBe(0);
       expect(r.errors).toHaveLength(0);
+      config.sync.writeback = false;
     });
   });
 
