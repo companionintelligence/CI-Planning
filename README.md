@@ -374,7 +374,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CP_KEK_B64_V{n}` | (unset) | Historical KEK for version `{n}`, used while rotating (e.g. `CP_KEK_B64_V2`). The current version may live in plain `CP_KEK_B64`. |
 | `CP_SYNC_WRITEBACK` | `false` | When `true`, sync pushes local block changes back to the provider. Off ⇒ inbound read-only. |
 | `CP_SYNC_DISABLED` | `false` | `true` is a master kill switch — disables the sync agent entirely. |
-| `CP_MCP_COMMAND` | (unset) | Command that launches the Gmail / Calendar MCP child process the connector talks to. |
+| `CP_MCP_COMMAND` | (unset) | Command that launches the Calendar MCP server child the connector drives over stdio. **Required for `GOOGLE_MODE=live`** (unset ⇒ live sync fails with `McpUnavailable`). CP ships one: `node_modules/.bin/tsx src/scripts/mcp-google-server.ts` (run from `server/`). See [docs/google-cloud-setup.md](docs/google-cloud-setup.md) §7. |
 | `CP_MCP_TIMEOUT_MS` | `30000` | Per-call timeout for MCP requests. |
 | `CP_MCP_RETRIES` | `3` | Retry budget for MCP requests. |
 | `CP_MCP_BREAKER_THRESHOLD` | `5` | Consecutive MCP failures before the circuit breaker opens. |
