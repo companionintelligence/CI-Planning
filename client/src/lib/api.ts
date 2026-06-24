@@ -462,9 +462,23 @@ export interface LLMStatus {
   smallModel: string; mediumModel: string; embedModel: string;
 }
 
+// ── Connections (WP7) — read-only Google connection health ─────────────────────
+// Mirrors the server's ConnectionHealth (server/src/lib/connections.ts) EXACTLY.
+// Token material (accessToken/refreshToken/ciphertext/iv/auth_tag/key_version) is
+// never present — by design.
+export interface ConnectionHealth {
+  provider: string;
+  account: string;
+  status: 'connected' | 'expired' | 'inactive';
+  expiresAt: string | null;
+  mappedEventCount: number;
+  lastSyncAt: string | null;
+  lastError: string | null;
+}
+
 export interface Integrations {
   ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
-  google: { mode: string };
+  google: { mode: string; liveEnabled: boolean; connections: ConnectionHealth[] };
   push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver
 }
 
