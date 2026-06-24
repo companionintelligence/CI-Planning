@@ -96,12 +96,14 @@ function applyInbound(
   const seenIds = new Set(remoteEvents.map((e) => e.id));
 
   for (const event of remoteEvents) {
+    // Fetch any existing mapping for this external_id regardless of direction.
+    // Outbound rows mean we pushed this event — skip creating an inbound mirror.
     const mapping = sqlite
       .prepare(
-        'SELECT id, block_id, etag FROM external_events WHERE provider = ? AND account = ? AND external_id = ?',
+        'SELECT id, block_id, etag, direction FROM external_events WHERE provider = ? AND account = ? AND external_id = ?',
       )
       .get(connector.provider, connector.account, event.id) as
-      | { id: string; block_id: string; etag: string | null }
+      | { id: string; block_id: string; etag: string | null; direction: string }
       | undefined;
 
     if (!mapping) {
@@ -119,7 +121,8 @@ function applyInbound(
         )
         .run(newId(), ownerId, connector.provider, connector.account, event.id, blockId, event.etag ?? null);
       result.created++;
-    } else if (event.etag !== mapping.etag) {
+    } else if (mapping.direction === 'inbound' && event.etag !== mapping.etag) {
+      // Inbound event changed remotely — update the local mirror.
       sqlite
         .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ?`)
         .run(event.title, event.start, event.end, mapping.block_id);
@@ -130,7 +133,7 @@ function applyInbound(
         .run(event.etag ?? null, mapping.id);
       result.updated++;
     }
-    // etag unchanged → no-op
+    // direction='outbound' or etag unchanged → no-op
   }
 
   // Remote deletes: inbound mappings not present in this cycle
