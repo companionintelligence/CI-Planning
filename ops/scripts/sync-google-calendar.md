@@ -1,3 +1,18 @@
+> # ⚠️ STALE / SUPERSEDED
+>
+> **This document describes the OLD agent-bridge model** (an external agent POSTs events
+> to `/api/calendar/events`; **no OAuth in the server**). That model is **replaced** by a
+> native **standalone Google OAuth 2.1** flow built into the app, with tokens encrypted in
+> the `connection_tokens` store and a single canonical inbound calendar reconciler.
+>
+> **Current docs:**
+> - Setup runbook → [docs/google-cloud-setup.md](../../docs/google-cloud-setup.md)
+> - Architecture → [ARCHITECTURE.md §12 — MCP Integration](../../ARCHITECTURE.md#12-mcp-integration)
+>
+> The original text is kept below for historical reference only — do not follow it.
+
+---
+
 # Connecting Google Calendar
 
 Companion Planning's server runs as a standalone local process with **no Google
