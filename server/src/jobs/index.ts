@@ -12,6 +12,7 @@ import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import { snapshot, pruneOldSnapshots, backupDir } from '../lib/backup.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
+import { syncAll } from '../agents/sync.js';
 import { config } from '../lib/config.js';
 import { join } from 'node:path';
 
@@ -93,6 +94,23 @@ async function execute(kind: string): Promise<JobOutcome> {
       // Shared code path with the AllTasks Auto-tag button so both stay in sync.
       const r = await tagUntaggedTasks(currentOwnerId());
       return { itemsCreated: 0, itemsUpdated: r.tagged, log: r.log };
+    }
+    case 'sync_calendar': {
+      const results = await syncAll();
+      const totals = results.reduce(
+        (acc, r) => ({
+          created: acc.created + r.created,
+          updated: acc.updated + r.updated,
+          deleted: acc.deleted + r.deleted,
+          conflicts: acc.conflicts + r.conflicts,
+        }),
+        { created: 0, updated: 0, deleted: 0, conflicts: 0 },
+      );
+      return {
+        itemsCreated: totals.created,
+        itemsUpdated: totals.updated + totals.deleted,
+        log: `Synced ${results.length} connector(s): ${totals.created} created, ${totals.updated} updated, ${totals.deleted} deleted, ${totals.conflicts} conflicts`,
+      };
     }
     case 'snapshot_db': {
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
