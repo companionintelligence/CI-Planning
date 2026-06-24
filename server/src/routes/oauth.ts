@@ -164,7 +164,6 @@ interface OAuthStateRow {
   code_verifier: string;
   nonce: string | null;
   redirect_uri: string | null;
-  scopes: string | null;
 }
 
 export function oauthRouter() {
@@ -193,8 +192,8 @@ export function oauthRouter() {
     const now = Date.now();
     sqlite
       .prepare(
-        `INSERT INTO oauth_states (id, owner_id, provider, state, code_verifier, nonce, redirect_uri, scopes, created_at, expires_at)
-         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO oauth_states (id, owner_id, provider, state, code_verifier, nonce, redirect_uri, created_at, expires_at)
+         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         newId(),
@@ -203,7 +202,6 @@ export function oauthRouter() {
         codeVerifier,
         nonce,
         config.google.redirectUri,
-        JSON.stringify(scopes),
         new Date(now).toISOString(),
         new Date(now + STATE_TTL_MS).toISOString(),
       );
@@ -258,7 +256,7 @@ export function oauthRouter() {
     const row = sqlite
       .prepare(
         `DELETE FROM oauth_states WHERE state = ? AND provider = 'google'
-         RETURNING id, owner_id, code_verifier, nonce, redirect_uri, scopes, expires_at`,
+         RETURNING id, owner_id, code_verifier, nonce, redirect_uri, expires_at`,
       )
       .get(state) as (OAuthStateRow & { expires_at: string | null }) | undefined;
 
