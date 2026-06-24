@@ -393,10 +393,58 @@ stateDiagram-v2
 ## 12. MCP Integration
 | Server | Use | Auth |
 |---|---|---|
-| Gmail MCP | List recent messages, fetch bodies, label processed. | OAuth, token in Keychain. |
-| Google Calendar MCP | Read events (rolling window); **optional** write-back of task blocks (v2 flag). | OAuth. |
+| Gmail MCP | List recent messages, fetch bodies, extract action items. | Standalone OAuth (token in the encrypted `connection_tokens` store). |
+| Google Calendar MCP | Read events (rolling window); **optional** write-back of task blocks (behind `CP_SYNC_WRITEBACK`, v2-flag posture). | Standalone OAuth (same store). |
 | Ollama (HTTP) | Local generation + embeddings. | none (localhost). |
-Credentials live in macOS Keychain (or libsecret), never in a committed `.env`. Lock Ollama to `127.0.0.1` and firewall port 11434.
+
+### 12.1 Authentication — standalone OAuth, not the Keychain
+Companion Planning runs its **own** Google OAuth 2.1 flow in-process (Authorization Code
++ **PKCE/S256**); there is no dependency on macOS Keychain, libsecret, or an external
+agent bridge. Access + refresh tokens are encrypted with **AES-256-GCM** and stored in
+the `connection_tokens` table — never in a committed `.env`. The key-encryption key (KEK)
+is a 32-byte value supplied as base64 via `CP_KEK_B64` (`server/src/lib/crypto`); each
+sealed row records the `key_version` it was sealed under so keys can be rotated without
+re-authenticating (see §16). Lock Ollama to `127.0.0.1` and firewall port 11434.
+
+> **OAuth routes** (`/api/oauth/google/start`, `/callback`, `/accounts`,
+> `DELETE /accounts/:account`) are an **assumed, in-flight contract** (a separate work
+> package) and are not asserted as merged here. Token sealing/opening, refresh
+> single-flight, and the `connection_tokens` store *are* in place
+> (`server/src/connectors/base.ts`).
+
+### 12.2 CP as an MCP client
+CP is an **MCP client** (`@modelcontextprotocol/sdk`) to a Gmail MCP server and a Google
+Calendar MCP server. A single `McpGoogleSession` owns the MCP child process and **injects
+the per-account access token** (fetched/refreshed from the `connection_tokens` store) into
+each MCP call, so the child never persists credentials of its own. *(This session +
+live MCP wiring is the in-flight architecture; the as-built connector currently throws a
+`TODO(phase-2)` until the MCP layer lands — see `server/src/connectors/google.ts`.)*
+
+### 12.3 The GoogleClient ↔ CalendarConnector bridge
+Two thin views sit over the same `McpGoogleSession`:
+- **`GoogleClient`** — the *ingest* view (Gmail + Calendar read for task extraction).
+- **`CalendarConnector`** — the *sync* view (`server/src/connectors/base.ts`): typed
+  `listEvents` / `createEvent` / `updateEvent` / `deleteEvent`, all carrying **etag** so
+  optimistic concurrency flows end-to-end. `EtagConflictError` surfaces a stale-etag write
+  so the reconciler can let **remote win** and retry.
+
+### 12.4 One canonical inbound path
+Calendar meeting blocks are mirrored by a **single** inbound reconciler
+(`applyInbound` in `server/src/agents/sync.ts`), keyed on the
+`(provider, account, external_id)` identity in `external_events` plus **etag** for
+change detection; events that vanish from a cycle are tombstoned (local block deleted).
+`ingest_gcal` **no longer mirrors meeting blocks** — it does task extraction only — so
+there is exactly one writer of calendar mirrors and no double-mirroring.
+
+### 12.5 Staged enablement flags
+| Flag | Default | Effect |
+|---|---|---|
+| `GOOGLE_MODE` | `fixture` | `fixture` = offline sample data; `live` = real OAuth + MCP. |
+| `CP_SYNC_WRITEBACK` | off | Off ⇒ inbound read-only (the v2-flag, read-only-first posture from §17 Q2). On ⇒ local block changes push back to Google. |
+| `CP_SYNC_DISABLED` | off | Master kill switch for the sync agent. |
+
+The runbook **[docs/google-cloud-setup.md](docs/google-cloud-setup.md)** is the operator
+guide for provisioning the Google client and walking these flags up in order.
 ---
 ## 13. Frontend (SolidJS) — Views
 1. **Today (the cockpit, Phase G)** — Day Overview (date + today's tag set) · Summary (overdue/blocked/open + the `+ New Task` button) · the **PLANNER** (hour-by-hour, 8h/expand-24, "next up" pinned to row 2, drag-reorder, overlap-flagged) · the **Flight-plan** staging area (with `Auto Schedule` on top) · a never-closing lower **drawer** `[+ Block] [+ Pattern] [+ Open Task]`. *(Today the view is a simpler briefing + next-up + open-tasks; the cockpit is the G build — see [docs/design-today-cockpit.md](docs/design-today-cockpit.md).)*
@@ -424,6 +472,21 @@ Many-to-many over `tasks`/`possible_tasks`. Names normalized on insert (lowercas
 - **Auth:** single user; bearer token over TLS.
 - **Data:** local SQLite; all inference local; outbound limited to Google OAuth refresh + MCP-mediated reads.
 - **Audit:** every row records `source_kind` / `source_ref` / timestamps; agent edits append to `job_runs.log`; locked blocks are immutable to the scheduler.
+- **Token storage:** OAuth access/refresh tokens are sealed with AES-256-GCM in the
+  `connection_tokens` table under a base64 `CP_KEK_B64` key — never plaintext, never in a
+  committed `.env`, never the macOS Keychain (see §12.1).
+- **Centralized log redaction:** `server/src/lib/logger.ts` runs a **recursive** redactor
+  over every log payload before serialization — object keys matching the secret pattern
+  (access/refresh/id tokens, `client_secret`, `authorization`, `code`, `code_verifier`,
+  `kek`, `iv`, `auth_tag`, `ciphertext`, …) are masked at any depth, and **URL query
+  params** carrying `token` / `access_token` / `code` / `client_secret` are scrubbed even
+  inside string values. The walk is cycle-safe and depth-guarded so a hostile/looping
+  structure can't hang the logger.
+- **KEK rotation:** keys are versioned. Each `connection_tokens` row stores the
+  `key_version` it was sealed under; `rotateKek(newVersion)` opens every row with its
+  historical key (`CP_KEK_B64_V{n}`, falling back to `CP_KEK_B64` for the current version)
+  and re-seals it under the new key with a fresh IV, atomically (one transaction,
+  idempotent, refuses downgrades). Operators rotate without re-authenticating any account.
 ---
 ## 17. Open Questions
 1. **Date My Day integration.** Shared SQLite file, a read API CP exposes, or fully independent? *Recommendation:* CP exposes a read API; Date My Day consumes blocks/tasks and owns reflection. **(Needs your call before scaffolding.)**
