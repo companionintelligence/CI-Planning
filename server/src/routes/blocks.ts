@@ -160,6 +160,9 @@ export function blocksRouter() {
     if (body.title           !== undefined) update.title           = body.title;
     if (body.start_at        !== undefined) update.startAt         = body.start_at;
     if (body.end_at          !== undefined) update.endAt           = body.end_at;
+    // A manual timing change promotes an auto block to manual so clearPriorAuto
+    // won't reclaim it on the next Auto Schedule run.
+    if (body.start_at !== undefined || body.end_at !== undefined) update.isAuto = false;
     if (body.is_locked       !== undefined) update.isLocked        = body.is_locked;
     if (body.status          !== undefined) update.status          = body.status;
     if (body.block_kind      !== undefined) update.blockKind       = body.block_kind;

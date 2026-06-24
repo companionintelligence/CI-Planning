@@ -86,20 +86,20 @@ describe('flight-plan CRUD + persistence', () => {
 });
 
 describe('two-step Auto', () => {
-  it('STEP 1: empty flight-plan → proposes candidates (all selected), schedules nothing', async () => {
+  it('STEP 1: Fill adds candidates without scheduling anything', async () => {
     insertTask('Write spec');
     insertTask('Fix bug');
-    const r = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
+    const r = await api(srv.url, '/api/auto/fill', { method: 'POST', json: {} });
     expect(r.body.result.step).toBe('fill');
     expect(r.body.result.candidatesAdded).toBe(2);
     expect(taskBlocks()).toBe(0); // nothing scheduled
     expect(r.body.flight_plan.every((x: any) => x.selected === true)).toBe(true); // proposed, selected (deselect-to-exclude)
   });
 
-  it('step rule keys off emptiness: a non-empty flight-plan places (no re-fill), even if all deselected', async () => {
+  it('Fill and Run are independent: deselecting all then running places nothing', async () => {
     insertTask('A');
     insertTask('B');
-    const fill = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
+    const fill = await api(srv.url, '/api/auto/fill', { method: 'POST', json: {} });
     expect(fill.body.result.step).toBe('fill');
     expect(fill.body.flight_plan.every((x: any) => x.selected === true)).toBe(true);
 
@@ -108,28 +108,23 @@ describe('two-step Auto', () => {
       await api(srv.url, `/api/flight-plan/${x.task_id}`, { method: 'PATCH', json: { selected: false } });
     }
 
-    // Next tap must PLACE (non-empty), not silently re-FILL. Nothing selected → nothing placed.
-    const next = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
-    expect(next.body.result.step).toBe('place');
+    // Run must PLACE (never re-FILL). Nothing selected → nothing placed.
+    const run = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
+    expect(run.body.result.step).toBe('place');
     expect(taskBlocks()).toBe(0);
-    expect(next.body.flight_plan).toHaveLength(2); // not re-filled / duplicated
-    expect(next.body.flight_plan.every((x: any) => x.selected === false)).toBe(true);
+    expect(run.body.flight_plan).toHaveLength(2); // not re-filled / duplicated
+    expect(run.body.flight_plan.every((x: any) => x.selected === false)).toBe(true);
   });
 
-  it('STEP 2 + priority tap: an untagged staged task lands only on the explicit priority tap; non-staged is never placed', async () => {
+  it('Auto Schedule places staged tasks via workday fill; non-staged tasks are never placed', async () => {
     const staged = insertTask('Deep work', 60);
     const notStaged = insertTask('Unrelated', 60);
     await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: staged } }); // selected by default
 
-    // Tap 2 is tag-matched only: an untagged task with no Plan/window stays open.
+    // Auto Schedule includes workday fill for untagged staged tasks.
     const r = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
     expect(r.body.result.step).toBe('place');
-    expect(blockTitles()).not.toContain('Deep work');
-
-    // Tap 3 (explicit priority): fills the workday window.
-    const p = await api(srv.url, '/api/auto/priority', { method: 'POST', json: { date: '2026-06-22' } });
-    expect(p.body.result.blocksCreated).toBeGreaterThanOrEqual(1);
-    expect(blockTitles()).toContain('Deep work');
+    expect(blockTitles()).toContain('Deep work'); // placed via workday fill
     expect(blockTitles()).not.toContain('Unrelated'); // never staged
     expect(notStaged).toBeTruthy();
   });
@@ -169,15 +164,15 @@ describe('placed tasks are removed from the flight plan (item 5)', () => {
     expect(blockTitles()).toContain('Priority placed');
   });
 
-  it('unplaced tasks remain in the flight plan after a tag-matched placement pass', async () => {
-    const t = insertTask('Untagged unplaced', 60);
+  it('tasks placed by workday fill are removed from the flight plan', async () => {
+    const t = insertTask('Untagged', 60);
     await api(srv.url, '/api/flight-plan', { method: 'POST', json: { task_id: t } });
 
     const r = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
-    expect(r.body.result.placed).toBe(0);
+    expect(r.body.result.placed).toBeGreaterThanOrEqual(1);
 
     const fp = (await api(srv.url, '/api/flight-plan')).body.flight_plan;
-    expect(fp.find((x: any) => x.task_id === t)).toBeTruthy();
+    expect(fp.find((x: any) => x.task_id === t)).toBeUndefined(); // removed after workday fill
   });
 });
 
@@ -197,7 +192,7 @@ describe('recurring task indicator (item 6)', () => {
     const template = insertTemplate('Morning run');
     const instance = insertInstance(template, 'Morning run');
 
-    const r = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: '2026-06-22' } });
+    const r = await api(srv.url, '/api/auto/fill', { method: 'POST', json: {} });
     expect(r.body.result.step).toBe('fill');
 
     const ids = r.body.flight_plan.map((x: any) => x.task_id);

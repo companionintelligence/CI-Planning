@@ -771,7 +771,7 @@ export function Planner() {
               <div class="absolute left-0 right-0 top-24 text-center text-sm text-muted-foreground px-4 pointer-events-none">
                 Nothing planned yet — <span class="text-primary font-medium">click an empty slot</span> to add a block,
                 drag a flight-plan task onto a time, or stage items and hit
-                <span class="text-primary font-medium"> Auto Schedule</span>.
+                <span class="text-primary font-medium"> Schedule</span>.
               </div>
             </Show>
           </div>

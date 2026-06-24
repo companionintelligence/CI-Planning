@@ -52,6 +52,7 @@ export function resetDb(): void {
       workday_start = '09:00',
       workday_end = '18:00',
       auto_fill_workday = 1,
+      fill_order = 'priority',
       enable_rituals = 0,
       max_focus_block_minutes = 90,
       min_break_minutes = 10,

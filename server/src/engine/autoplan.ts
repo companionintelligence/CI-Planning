@@ -58,6 +58,7 @@ interface PrefsRow {
   min_break_minutes: number | null;
   max_focus_block_minutes: number | null;
   auto_fill_workday: number | null;
+  fill_order: string | null;
 }
 interface PlanRow {
   id: string;
@@ -95,7 +96,7 @@ function recordRun(owner: string, runId: string, blocksCreated: number): void {
 
 function prefsOf(owner: string): PrefsRow | undefined {
   return sqlite
-    .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
 }
 
@@ -158,6 +159,22 @@ function orderForPlan(cands: StagedTask[], weights?: Map<string, number>): Stage
       dueRank(a) - dueRank(b) ||
       a.task_id.localeCompare(b.task_id)
   );
+}
+
+/**
+ * Order candidates for the workday leftover fill by overdue-ness: tasks with a
+ * due_at come first, sorted oldest-due first (most overdue = earliest slot);
+ * tasks with no due date follow, sorted by priority then id. Never throws when
+ * no tasks are overdue — undated tasks still get placed, just last.
+ */
+function orderByOverdue(cands: StagedTask[]): StagedTask[] {
+  const dated = [...cands.filter((c) => c.due_at != null)].sort(
+    (a, b) => a.due_at!.localeCompare(b.due_at!) || a.priority - b.priority || a.task_id.localeCompare(b.task_id),
+  );
+  const undated = [...cands.filter((c) => c.due_at == null)].sort(
+    (a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id),
+  );
+  return [...dated, ...undated];
 }
 
 const insBlock = () =>
@@ -341,6 +358,8 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   // explicit fillByPriority() step (tap 3, D5).
   const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
   const patWindows = getPatternBlocks(owner, dayType);
+  // Track tasks gated off by per-direction auto_fill=false so Pass 2b skips them too.
+  const directionGatedOffIds = new Set<string>();
   if (Object.keys(patWindows).length > 0) {
     const dprefs = getPatternPrefs(owner);
     const dirNameToId = new Map<string, string>(); // direction tag name → id
@@ -356,7 +375,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
         .filter((id): id is string => id !== undefined);
       if (taskDirIds.length === 0) continue;
       const enabledDirIds = taskDirIds.filter((dirId) => dprefs[dirId]?.auto_fill ?? true);
-      if (enabledDirIds.length === 0) continue;
+      if (enabledDirIds.length === 0) { directionGatedOffIds.add(t.task_id); continue; }
       const allRanges = enabledDirIds
         .flatMap((did) => patWindows[did] ?? [])
         .sort((a, b) => a.start_time.localeCompare(b.start_time));
@@ -371,6 +390,24 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     }
   }
 
+  // Pass 2b — workday fallback fill (gated by auto_fill_workday; ordered by fill_order).
+  // Runs inside placeFlightPlan so it shares the same runId (Undo reverts everything).
+  // Skips tasks that have a direction tag with auto_fill=false (directionGatedOffIds).
+  let placedInWorkday = 0;
+  if ((prefs?.auto_fill_workday ?? 1) === 1) {
+    const remaining = staged.filter((t) => !placedIds.has(t.task_id) && !directionGatedOffIds.has(t.task_id));
+    if (remaining.length > 0) {
+      const fillOrder = prefs?.fill_order ?? 'priority';
+      const ordered = fillOrder === 'overdue' ? orderByOverdue(remaining) : orderForPlan(remaining);
+      const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
+      const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+      const r = placeIntoWindow(ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
+      r.placedTaskIds.forEach((id) => placedIds.add(id));
+      blocksCreated += r.blocksCreated;
+      placedInWorkday = r.placedTaskIds.size;
+    }
+  }
+
   recordRun(owner, runId, blocksCreated);
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
@@ -380,7 +417,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     for (const id of placedIds) del.run(owner, id);
     broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
   }
-  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday: 0 };
+  return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday };
 }
 
 /**
@@ -477,11 +514,9 @@ function clearPriorAutoInWindow(windowStartMs: number, windowEndMs: number): voi
 }
 
 /**
- * The two-step Auto entry point. The step is keyed off whether the flight-plan is
- * EMPTY (req 8): empty → propose candidates (all selected); non-empty → place the
- * selected ones. Keying off selection count broke once fill marked everything
- * selected (and again when the user deselected everything). Never touches anything
- * outside the flight-plan.
+ * Legacy combined entry point — retained for any callers that haven't migrated
+ * to the explicit fill/place split. The UI now calls fillFlightPlanCandidates
+ * and placeFlightPlan directly through separate endpoints.
  */
 export function runAuto(opts: { date?: string; blockId?: string } = {}): AutoResult {
   const owner = currentOwnerId();
