@@ -625,6 +625,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "key_version",
       "created_at",
       "updated_at",
+      "status",
     ],
     "table": "connection_tokens",
   },
@@ -688,6 +689,21 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "log",
     ],
     "table": "job_runs",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "provider",
+      "state",
+      "code_verifier",
+      "nonce",
+      "redirect_uri",
+      "scopes",
+      "created_at",
+      "expires_at",
+    ],
+    "table": "oauth_states",
   },
   {
     "columns": [
@@ -873,6 +889,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "fill_order",
     ],
     "table": "scheduling_prefs",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "provider",
+      "account",
+      "resource",
+      "cursor",
+      "window_from",
+      "window_to",
+      "updated_at",
+    ],
+    "table": "sync_state",
   },
   {
     "columns": [
