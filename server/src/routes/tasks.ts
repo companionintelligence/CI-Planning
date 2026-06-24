@@ -16,7 +16,7 @@ import { rescheduleTask } from '../engine/review.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
 import { ensureHabitPattern } from '../services/patterns.js';
-import { setEntityTagIds, taskTagNames, taskTagNamesByIds, normalizeTagName } from '../services/tags.js';
+import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, entityTagLevels, syncLeveledEntityTags } from '../services/tags.js';
 import { utcDayBounds } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
@@ -47,10 +47,13 @@ export function tasksRouter() {
 
     // Attach tags + dependency info, serialize to snake_case
     const blocked = blockedTaskIds();
-    const tagsById = taskTagNamesByIds(result.map((t) => t.id));
+    const ids = result.map((t) => t.id);
+    const tagsById = taskTagNamesByIds(ids);
+    const secondaryById = taskSecondaryTagNamesByIds(ids);
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
+      secondary_tags: secondaryById.get(t.id) ?? [],
       depends_on: getDependencies(t.id),
       blocked: blocked.has(t.id),
     }));
@@ -78,6 +81,7 @@ export function tasksRouter() {
       owner_id?: string;
       parent_id?: string;
       tags?: string[];
+      secondary_tags?: string[];
       depends_on?: string[];
       recurrence_rule?: string;
       recurrence_dtstart?: string;
@@ -120,11 +124,12 @@ export function tasksRouter() {
           ...(sw ?? {}),
         })
         .returning();
-      if (body.tags?.length) await attachTags(template.id, body.tags);
+      if (body.tags !== undefined || body.secondary_tags !== undefined)
+        applyTaskTagLevels(template.id, { tags: body.tags, secondary: body.secondary_tags });
       // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
       if (sw?.subtype === 'habit') ensureHabitPattern(template.id, owner, template.title);
       const generated = generateRecurrences();
-      const out = { ...taskToApi(template), tags: body.tags ?? [], depends_on: [] as string[], blocked: false };
+      const out = { ...taskToApi(template), tags: body.tags ?? [], secondary_tags: taskSecondaryTags(template.id), depends_on: [] as string[], blocked: false };
       broadcast(currentOwnerId(), 'task:created', out);
       writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${template.id}` });
       broadcast(currentOwnerId(), 'recurrence:generated', generated);
@@ -151,13 +156,15 @@ export function tasksRouter() {
       })
       .returning();
 
-    if (body.tags?.length) await attachTags(task.id, body.tags);
+    if (body.tags !== undefined || body.secondary_tags !== undefined)
+      applyTaskTagLevels(task.id, { tags: body.tags, secondary: body.secondary_tags });
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, task.id, body.depends_on)) return;
     syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
 
     const out = {
       ...taskToApi(task),
       tags: body.tags ?? [],
+      secondary_tags: taskSecondaryTags(task.id),
       depends_on: getDependencies(task.id),
       blocked: blockedTaskIds().has(task.id),
     };
@@ -199,10 +206,10 @@ export function tasksRouter() {
       })
       .returning();
 
-    if (enriched.tags.length) await attachTags(task.id, enriched.tags);
+    if (enriched.tags.length) applyTaskTagLevels(task.id, { tags: enriched.tags });
     syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): quick-add may parse a due date
 
-    const out = { ...taskToApi(task), tags: enriched.tags, depends_on: [] as number[], blocked: false, llm };
+    const out = { ...taskToApi(task), tags: enriched.tags, secondary_tags: taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
     ctx.status = 201;
@@ -213,8 +220,10 @@ export function tasksRouter() {
   router.get('/api/tasks/:id/subtasks', async (ctx) => {
     const parentId = ctx.params.id;
     const result = await db.select().from(tasks).where(eq(tasks.parentId, parentId)).orderBy(asc(tasks.priority));
-    const tagsById = taskTagNamesByIds(result.map((t) => t.id));
-    const withTags = result.map((t) => ({ ...taskToApi(t), tags: tagsById.get(t.id) ?? [] }));
+    const ids = result.map((t) => t.id);
+    const tagsById = taskTagNamesByIds(ids);
+    const secondaryById = taskSecondaryTagNamesByIds(ids);
+    const withTags = result.map((t) => ({ ...taskToApi(t), tags: tagsById.get(t.id) ?? [], secondary_tags: secondaryById.get(t.id) ?? [] }));
     ctx.body = { subtasks: withTags };
   });
 
@@ -313,7 +322,7 @@ export function tasksRouter() {
     // Atomic: a partway failure must not leave a half-built clone subtree.
     const newId = sqlite.transaction(() => cloneTree(ctx.params.id, null))();
     const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
-    const out = { ...taskToApi(task), tags: taskTagNames(newId), depends_on: [] as string[], blocked: false };
+    const out = { ...taskToApi(task), tags: taskTagNames(newId), secondary_tags: taskSecondaryTags(newId), depends_on: [] as string[], blocked: false };
     broadcast(owner, 'task:created', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'recall', entity: `task:${newId}` });
     ctx.status = 201;
@@ -360,6 +369,7 @@ export function tasksRouter() {
       completed_at?: string | null;
       parent_id?: string | null;
       tags?: string[];
+      secondary_tags?: string[];
       depends_on?: string[];
       recurrence_rule?: string | null;
       recurrence_dtstart?: string | null;
@@ -410,8 +420,9 @@ export function tasksRouter() {
       : await db.select().from(tasks).where(eq(tasks.id, targetId));
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
-    if (Array.isArray(body.tags)) {
-      await attachTags(targetId, body.tags); // setEntityTagIds replaces the set (delete + reinsert)
+    if (Array.isArray(body.tags) || Array.isArray(body.secondary_tags)) {
+      // Partial: an omitted level is preserved (mirrors the block PATCH semantics).
+      applyTaskTagLevels(targetId, { tags: body.tags, secondary: body.secondary_tags });
     }
 
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, targetId, body.depends_on)) return;
@@ -434,6 +445,7 @@ export function tasksRouter() {
     const out = {
       ...taskToApi(task),
       tags: currentTags,
+      secondary_tags: taskSecondaryTags(targetId),
       depends_on: getDependencies(targetId),
       blocked: blockedTaskIds().has(targetId),
     };
@@ -528,18 +540,24 @@ function applyDependencies(ctx: { status: number; body: unknown }, taskId: strin
   }
 }
 
-async function attachTags(taskId: string, names: string[]) {
-  const tagIds: string[] = [];
-  for (const rawName of names) {
-    const name = normalizeTagName(rawName); // canonical: trim + strip leading '#' + lowercase + dashes + cap32 (matches blocks/routines/0033)
-    const existing = sqlite.prepare('SELECT id FROM tags WHERE name = @name').get({ name }) as { id: string } | undefined;
-    const tagId = existing
-      ? existing.id
-      : (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string }).id;
-    tagIds.push(tagId);
-  }
-  // entity_tags is the sole task-tag store (CON-3 / migration 0041). Replace semantics:
-  // every caller passes the task's full tag set, so setEntityTagIds (delete + reinsert)
-  // is correct — including clearing to empty.
-  setEntityTagIds('task', taskId, tagIds);
+/**
+ * Sync a task's leveled tags (Phase 5): primary tags (the home/work/community
+ * direction + any intention tags) at level 1, secondary tags at level 2. A field
+ * left `undefined` (a partial PATCH) preserves that level's existing tags. Names
+ * are resolve-or-created + normalized by syncLeveledEntityTags. Mirrors
+ * applyBlockTagLevels in routes/blocks.ts so tasks + blocks behave identically.
+ */
+function applyTaskTagLevels(taskId: string, opts: { tags?: string[]; secondary?: string[] }): void {
+  const existing = entityTagLevels('task', taskId);
+  const top = opts.tags !== undefined ? opts.tags : existing.filter((t) => t.level === 1).map((t) => t.name);
+  const secondary = opts.secondary !== undefined ? opts.secondary : existing.filter((t) => t.level > 1).map((t) => t.name);
+  syncLeveledEntityTags('task', taskId, [
+    { level: 1, names: top },
+    { level: 2, names: secondary },
+  ]);
+}
+
+/** A task's secondary (level>1) tag names — the read surface (mirrors blocks). */
+function taskSecondaryTags(taskId: string): string[] {
+  return entityTagLevels('task', taskId).filter((t) => t.level > 1).map((t) => t.name);
 }

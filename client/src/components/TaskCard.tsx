@@ -141,10 +141,22 @@ export function TaskCard(props: Props) {
             </p>
           </Show>
 
-          <Show when={props.task.tags.length > 0}>
+          <Show when={props.task.tags.length > 0 || (props.task.secondary_tags?.length ?? 0) > 0}>
             <div class="flex flex-wrap gap-1 mt-1.5 ml-4">
+              {/* Primary tags (level 1) — solid badge; includes the home/work/community direction. */}
               <For each={props.task.tags}>
                 {(t) => <span class="badge-neutral text-[11px]">#{t}</span>}
+              </For>
+              {/* Secondary tags (level>1) — ghost/outline badge to read as secondary. */}
+              <For each={props.task.secondary_tags ?? []}>
+                {(t) => (
+                  <span
+                    class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80"
+                    title="secondary tag"
+                  >
+                    {t}
+                  </span>
+                )}
               </For>
             </div>
           </Show>
