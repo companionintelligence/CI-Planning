@@ -680,6 +680,17 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "id",
+      "owner_id",
+      "block_id",
+      "provider",
+      "account",
+      "created_at",
+    ],
+    "table": "outbound_queue",
+  },
+  {
+    "columns": [
+      "id",
       "name",
       "email",
       "last_auto_run_id",

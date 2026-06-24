@@ -399,6 +399,17 @@ export const externalEvents = sqliteTable('external_events', {
   lastSyncedAt: text('last_synced_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
 });
 
+// --- Phase J (0055): Outbound sync queue. One row per (block, provider, account) pending push. ---
+// ON CONFLICT(block_id, provider, account) DO UPDATE refreshes created_at so the latest mutation wins.
+export const outboundQueue = sqliteTable('outbound_queue', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  blockId: text('block_id').references(() => timeBlocks.id, { onDelete: 'cascade' }).notNull(),
+  provider: text('provider').notNull(),
+  account: text('account').notNull(),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 // --- Phase R (0046): Audit log. Append-only; every mutating route writes one row. ---
 export const auditLog = sqliteTable('audit_log', {
   id: text('id').primaryKey().$defaultFn(newId),
