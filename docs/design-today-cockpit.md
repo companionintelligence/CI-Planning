@@ -1,10 +1,10 @@
 # Design — the TODAY cockpit, Time-Blocks & Patterns
 
 > **Status:** design canonical, 2026-06-20. This is the UX source of truth for
-> **Phase G** ([G-rituals-reflection.md](G-rituals-reflection.md)) and the
+> **Phase G** ([archive/G-rituals-reflection.md](archive/G-rituals-reflection.md)) and the
 > revisions it pulls into **E** (habits → patterns) and **F** (calendar →
 > PLANNER). Built on the CI-Hub design system (see
-> [design-brief-recurrence-settings.md](design-brief-recurrence-settings.md)) —
+> [design-brief-recurrence-settings.md](archive/design-brief-recurrence-settings.md)) —
 > semantic tokens + primitives, global styles first.
 
 ## 1. The planning model (the big shift)

@@ -4,7 +4,7 @@
 > **§5b CON-3 done** (`task_tags` dropped in `0041`; `entity_tags` is the read path).
 > **§3c direction→pattern residue done** (`0043` renamed `tag_directions`→`tag_patterns`).
 > **§3b Routine rename DEFERRED** (the as-built `patterns` naming is ratified; not abandoned, not in-flight).
-> **§5a still open** — tracked as ticket **W1-A** (collapse `is_habit`/`is_fast_task`→`subtype`, then drop the booleans).
+> **§5a done** — W1-A shipped (PRs #113/#114, migration `0048_drop_habit_booleans`, 2026-06-23): reads repointed to `subtype`, the boolean columns dropped. *(Was "still open" at head 0047; now 4/5 items complete, only §3b deferred.)*
 > **§5c reclassified** — `planning_mode` is **kept** (dormant, pending a future AI-reorder UI), *not* dropped; doc-only relabel done.
 > Original draft (below) was produced against head `0039`. Companion to the divergence assessment.
 >

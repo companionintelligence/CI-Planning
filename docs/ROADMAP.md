@@ -1,10 +1,10 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-**Status (2026-06-22, migration head 0047):** **A · B0 · C · D · E · F · G · H · R shipped & merged.** Settings (Ollama model picker + Companion Memory sync) and the responsive mobile shell are shipped. G landed as *Time-Blocking, Patterns & the TODAY cockpit* (cockpit, PLANNER, flight-plan, pattern textures — #60–#65, #77); H (notifications + Web Push) and R (backups/restore + export/import + audit log) are merged. **Next build:** a short **Phase 0.5 contract cleanup** (collapse the doubled habit representation `is_habit`/`subtype`; see [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md) §5a) → then **Phase I** (identity/auth), the gate for the cloud track. The §3b `patterns`→`routines` rename is **deferred** (the as-built `patterns` naming stands; see GLOSSARY).
+**Status (2026-06-24, migration head 0061):** **A · B0 · C · D · E · F · G · H · R · I · J shipped & merged**, plus a standalone **Google-connector track** (OAuth 2.1 + MCP + live Calendar/Gmail — #130–#139) and a **tag-driven autoplan engine** (#121–#129). The Phase-0.5 cleanup is **done** (W1-A dropped the habit booleans — #113/#114, `0048`; G7 Routine-Types UI — #115). Identity/auth (**I** — JWKS verify-only · API-key store · encrypted token store · rate-limiting · threat model — #116–#120) and inbound calendar sync (**J** — #128, `external_events` `0051`) are merged. **Next build:** **Phase M — AI scheduler** ([M-ai-scheduler.md](M-ai-scheduler.md)): make LLM planning real, add the Phase-K reactive reflow (**M absorbs K**), and back the stubbed claims. Still future: **L** (multi-device sync & offline writes). The §3b `patterns`→`routines` rename stays **deferred** (the as-built `patterns` naming stands; see GLOSSARY). *Superseded planning docs now live in [archive/](archive/); see [archive/README.md](archive/README.md).*
 
 > **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). Each phase has its own `docs/<id>-*.md` spec; the new G UX is canonical in [design-today-cockpit.md](design-today-cockpit.md).
 
-> **Phase G reconception (2026-06-20).** The old "Rituals & reflection / wire `planning_mode` / AI-ordering" G is **replaced**. Planning is now **manual-or-Auto, flight-plan-centric**: you drag, or **Auto** schedules *only staged flight-plan items* per **Time-Block** (tag) or **Pattern** rules. The `planning_mode` (`auto | ritual`) toggle is **retired** — "ritual" becomes a **Pattern type** (Routine ▢ / Habit ◯ / Ritual △, user-extensible). A's deterministic scheduler is **reframed** as that Auto engine (no longer auto-packs the whole backlog), and **overlap becomes allowed-but-flagged**. The "before work" relative-timing / proximity / learned-ordering intelligence is **deferred** (`G-INT`). Full spec: [G-rituals-reflection.md](G-rituals-reflection.md).
+> **Phase G reconception (2026-06-20).** The old "Rituals & reflection / wire `planning_mode` / AI-ordering" G is **replaced**. Planning is now **manual-or-Auto, flight-plan-centric**: you drag, or **Auto** schedules *only staged flight-plan items* per **Time-Block** (tag) or **Pattern** rules. The `planning_mode` (`auto | ritual`) toggle is **retired** — "ritual" becomes a **Pattern type** (Routine ▢ / Habit ◯ / Ritual △, user-extensible). A's deterministic scheduler is **reframed** as that Auto engine (no longer auto-packs the whole backlog), and **overlap becomes allowed-but-flagged**. The "before work" relative-timing / proximity / learned-ordering intelligence is **deferred** (`G-INT`). Full spec: [G-rituals-reflection.md](archive/G-rituals-reflection.md).
 
 ## What changed from v1
 - **Value-first sequencing.** The features that make it "best-in-class" (task semantics, time tracking, recurrence, calendar grid, rituals, notifications) no longer wait on auth. They need a data-model foundation, not identity.
@@ -38,19 +38,21 @@
 | 0 Foundation | **B0** Migrations + owner scoping (no auth) | A | S | ✅ done |
 | 1 Features | **C** Rich task semantics | B0 | M | ✅ done |
 | | **D** Time tracking & timers | B0 | S–M | ✅ done |
-| | **E** Recurring & habits | B0, C | M | ✅ done · habit kept **task-level** (`subtype`); §5a contract cleanup (drop `is_habit`/`is_fast_task`) pending — see [phase-0-reconciliation-plan.md](phase-0-reconciliation-plan.md) |
+| | **E** Recurring & habits | B0, C | M | ✅ done · habit kept **task-level** (`subtype`); §5a cleanup **done** (booleans dropped — `0048`, #113/#114) — see [archive/phase-0-reconciliation-plan.md](archive/phase-0-reconciliation-plan.md) |
 | | **F** Calendar grid (2-D, drag/resize, overlays) | B0 | L | ✅ done · **F′** (→PLANNER / overlap-flag / drag-reorder) **shipped under G** |
 | | *Settings* — Ollama model picker + Companion Memory sync | E | S | ✅ done |
 | | *Responsive* — mobile shell (bottom nav, sheets, touch) | F | S | ✅ done |
 | | **G** **Time-Blocking, Patterns & the TODAY cockpit** | B0, C, E, F | **L** | ✅ done (#60–#65, #77) — cockpit, PLANNER, flight-plan, textures all landed; drawer superseded by ElementWizard |
 | | **H** Notifications + service worker / Web Push | B0 (G for pattern-reminder content) | M | ✅ done (#100–#102) — live once VAPID keys are set |
 | 2 Resilience | **R** Backups, restore, export/import | B0 | S–M | ✅ done (#108–#110) — every mutating route writes an audit row |
-| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | 📋 spec'd — **next build** (after Phase 0.5 cleanup) |
-| | **J** Two-way calendar sync | I, F | L | 📋 spec'd |
-| | **K** Auto-defense (continuous re-plan) | A, F, J | M | 📋 spec'd |
-| | **L** Multi-device sync & offline writes | B0, I, H | L | 📋 spec'd |
+| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | ✅ done (#116–#120) — JWKS verify-only · API-key store · encrypted tokens (`0049`/`0050`) · rate-limit · threat model |
+| | **J** Two-way calendar sync | I, F | L | ✅ done (#128, `external_events` `0051`) — inbound; extended by the Connectors track below |
+| | **Connectors** Google OAuth 2.1 + MCP + live Calendar/Gmail | I, J | L | ✅ done (#130–#139, migrations `0058`–`0061`) |
+| | **K** Auto-defense (continuous re-plan) | A, F, J | M | ↪ **folded into M** — see [M-ai-scheduler.md](M-ai-scheduler.md) |
+| | **L** Multi-device sync & offline writes | B0, I, H | L | 📋 spec'd (not started) |
+| | **M** AI scheduler — real LLM planning · reactive reflow (absorbs K) · back stubbed claims | A, F, G, J | L | 📋 spec'd — **next build** ([M-ai-scheduler.md](M-ai-scheduler.md)) |
 
-**G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). Remaining: **G7** custom Routine-type management UI (in progress as W1-C); **G-INT** (timing intelligence) still deferred. The detailed spec [G-rituals-reflection.md](G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — kept for history only.
+**G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). **G7** custom Routine-type management UI is **shipped** (#115, W1-C); **G-INT** (timing intelligence) remains deferred. The detailed spec [archive/G-rituals-reflection.md](archive/G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — archived for history only.
 
 ---
 
@@ -128,7 +130,7 @@ Time-Block's tag filter or a Pattern's rules.
   (calendar grid → PLANNER: 8h/expand-24, next-up pin, drag-reorder, overlap-flag,
   block outlines, pattern textures).
 - **Tickets, acceptance, tests, and per-ticket state:**
-  [G-rituals-reflection.md](G-rituals-reflection.md) · UX:
+  [G-rituals-reflection.md](archive/G-rituals-reflection.md) · UX:
   [design-today-cockpit.md](design-today-cockpit.md).
 - **Acceptance (phase):** cockpit renders (Day Overview · Summary+NewTask · PLANNER ·
   Flight-plan · never-closing drawer); Time-Blocks + Patterns exist end-to-end;
@@ -160,6 +162,8 @@ Time-Block's tag filter or a Pattern's rules.
 ## Track 3 — Multi-user & cloud *(gated on a real driver: a multi-seat deployment or the public image shipping)*
 
 ### I — Identity, auth & connector infrastructure (ci-server-aligned, **revised**)
+
+> ✅ **Shipped** (#116–#120; migrations `0049_api_keys`, `0050_connection_tokens`). Standalone API-key auth + `requireAuth`, SSO verify-only JWKS path, rate-limited credential validation, AES-256-GCM connection-token store; threat model + security-review sign-off in #120 (W2-I5).
 **Goal:** real identity + the encrypted token store, matching CI's **security semantics and a versioned contract** — not its framework or internals.
 
 **Deployment modes**
@@ -179,6 +183,8 @@ Time-Block's tag filter or a Pattern's rules.
 **Acceptance:** Planning verifies but cannot mint tokens; one guard accepts Bearer-JWT or `x-api-key`; secrets never stored plaintext; auth endpoints rate-limited; owner isolation proven on REST **and** SSE; **threat model reviewed** (below). **Effort: L.**
 
 ### J — Two-way calendar sync (Google/Outlook/iCloud)
+
+> ✅ **Shipped** (#128; `external_events` `0051`, sync-calendar job `0056`, outbound queue `0057`). Extended by the standalone **Google-connector track** (#130–#139, migrations `0058`–`0061`): live OAuth 2.1, MCP transport, calendar connector + inbound unification, incremental sync, Gmail scope flag.
 **Goal:** push planned blocks out, pull external events in.
 - **Infra:** `connectors/` (`BaseOAuth2Client` pattern); encrypted token store (from I); `external_events(provider, account, external_id, block_id, etag)`.
 - **Engine:** outbound (task-blocks→events), inbound (events→read-only meeting blocks). **Conflict identity is `external_id` + `etag` only — never embeddings** (a sync layer must be exact and deterministic; embeddings stay confined to the ingest→task heuristic).
@@ -186,16 +192,32 @@ Time-Block's tag filter or a Pattern's rules.
 - **Acceptance:** a planned block reaches the real calendar within one cycle; new external meetings appear as locked blocks; deterministic conflict resolution; fixture mode still works offline.
 
 ### K — Auto-defense (continuous re-plan)
+
+> ↪ **Folded into Phase M.** The reactive reflow is now specified, code-accurately, as **Workstream B** of [M-ai-scheduler.md](M-ai-scheduler.md) — it wraps the live `placeFlightPlan` engine (the "auto_schedule cron calls `runScheduler`" line below is stale; the cron calls `fillFlightPlanCandidates`). This section is retained for the anti-thrash rules M reuses.
 **Goal:** re-plan when meetings appear or blocks are missed — **without thrashing**.
 - **Engine:** triggers — inbound sync (J), missed-block detection, task changes. Reflow only auto/unlocked blocks. **Anti-thrash is the feature, not a footnote:** never move the block the user is currently in, never move locked/meeting/completed, cap displacement per run, require a minimum stability window before re-moving the same block. Debounce on top.
 - **Tests:** a new meeting reflows overlapping auto-blocks, never moves locked/meeting/in-progress; missed block re-queues its task; identical input is a no-op; in-progress block never displaced; reflow idempotent.
 - **Acceptance:** conflicting meeting triggers a bounded reflow; nothing locked/active/completed moves; missed work rescheduled not lost; no reflow storms.
 
 ### L — Multi-device sync & offline writes (D3, **revised**)
+
+> 📋 **Not started** — still future; no offline op-log / IndexedDB client code exists yet.
 **Goal:** PWA offline write path; converge across a single owner's devices.
 - **Infra:** client offline op-log (IndexedDB); server apply with a **monotonic per-record version** and **field-level merge** (not whole-record LWW); **completions are monotonic** — a concurrent edit can't silently un-complete a task. SSE pushes authoritative state; genuine conflicts surface a banner.
 - **Tests:** offline create/edit/complete replays on reconnect; two devices editing different fields of one task converge without loss; a completion is never lost to a concurrent non-completion edit; SSE catch-up after disconnect.
 - **Acceptance:** offline edits appear after reconnect with no data loss; concurrent edits converge predictably; **no lost completions** (now actually achievable, vs v1's LWW which contradicted this).
+
+---
+
+### M — AI scheduler (real LLM planning + reactive reflow + stub-backing) *(new — absorbs K)*
+
+> 📋 **Spec'd — next build.** Full implementation spec: [M-ai-scheduler.md](M-ai-scheduler.md). Renamed from the draft `L-ai-scheduler-plan.md` (L is Multi-device sync). Dependencies A/F/G/J are all shipped, so it is buildable now; it builds on the autoplan engine (#121–#129).
+
+**Goal:** close the gap between the marketed "local-LLM auto-block" and the code. The LLM **authors** a durable day order once per day (into a `daily_plan` table); placement and reflow **execute it deterministically**; a Phase-K reactive reflow defends the day without thrash. Also backs three stubbed claims (`overrun`, `day_theme`, `sqlite-vec`).
+- **Workstream A — real LLM planning** behind the §A0 generate→evaluate→iterate harness (generator ≠ judge, deterministic-gated rubric, bounded recursion, append-only `audit_log`, escape hatch on stall).
+- **Workstream B — Phase-K reactive reflow** over the frozen `daily_plan`: deterministic, anti-thrash, with a **nudge-first** LLM re-author escalation (B4) behind explicit user accept.
+- **Workstream C — back the stubs:** set `overrun` status, apply `day_theme` placement bias, `sqlite-vec` KNN dedupe (cosine fallback).
+- **Migrations** `0062`–`0064` (renumbered from the doc's original 0058–0060, which the Connectors track took). **Effort: L** (~3–3.5 weeks across ~10 PRs).
 
 ---
 
