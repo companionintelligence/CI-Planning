@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight, Sparkles } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight, Sparkles, Eraser } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -521,6 +521,11 @@ export function Planner() {
   const chips = () => dayBlocks().filter((b) => !['timeblock', 'break', 'buffer'].includes(b.block_kind) && !isAllDay(b));
   const placed = createMemo(() => layoutBlocks(chips(), day()));
   const nextUp = createMemo(() => pickNextUp(chips(), nowISO()));
+  // T-PLAN-2: the day's earliest grid block — the scroll anchor (1h of lead-in above it).
+  const firstChip = createMemo(() => {
+    const cs = chips();
+    return cs.length ? [...cs].sort((a, b) => a.start_at.localeCompare(b.start_at))[0] : undefined;
+  });
 
   // Header lane (off the minute axis): all-day Plans/events ★ + today's Concepts ⬟.
   const allDayPlans = () => dayBlocks().filter(isAllDay);
@@ -649,14 +654,31 @@ export function Planner() {
     setDeletePlan({ plan, childCount });
   }
 
+  // T-PLAN-1: clear the day's auto-placed blocks (server keeps locked, calendar
+  // meetings, and habit/pattern placements — see POST /api/days/:date/clear).
+  async function clearDay() {
+    if (!confirm(`Clear auto-placed blocks for ${day()}? Locked, calendar, and habit blocks are kept.`)) return;
+    try {
+      const r = await api.blocks.clearDay(day());
+      refetchBlocks();
+      showToast(
+        r.cleared ? `Cleared ${r.cleared} auto-placed block${r.cleared === 1 ? '' : 's'}` : 'Nothing auto-placed to clear',
+        'default',
+      );
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   let scroller: HTMLDivElement | undefined;
+  // T-PLAN-2: open each day scrolled to ~1h before its first scheduled block
+  // (scrollTopForBlock keeps SLOT_MIN=60 of lead-in above it). Re-pins on day /
+  // blocks / zoom change — NOT on the minute tick, so it never yanks the user's
+  // scroll as time passes. Empty day → top.
   const repin = () => {
-    if (!scroller || !isToday()) return;
-    scroller.scrollTop = scrollTopForBlock(nextUp(), day());
+    if (!scroller) return;
+    scroller.scrollTop = scrollTopForBlock(firstChip(), day());
   };
   onMount(repin);
-  // Re-pin whenever the next-up item or the expand state changes.
-  createEffect(() => { nextUp(); windowHours(); queueMicrotask(repin); });
+  createEffect(() => { firstChip(); day(); windowHours(); queueMicrotask(repin); });
 
   // Someday Time Blocks (was Concepts) render on their goal day in the header lane;
   // clicking one opens a lightweight popover — Edit · Add to day · Delete (cockpit-v2
@@ -716,6 +738,14 @@ export function Planner() {
           <span class="text-[10px] text-muted-foreground">{windowHours()}h · scroll for more</span>
         </div>
         <div class="flex items-center gap-3">
+          {/* T-PLAN-1: clear this day's auto-placed blocks (keeps locked/calendar/habit). */}
+          <button
+            onClick={clearDay}
+            class="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+            title="Clear auto-placed blocks for this day (keeps locked, calendar, and habit blocks)"
+          >
+            <Eraser size={12} /> Clear
+          </button>
           {/* Update mode — tap a task to mark it done (no need to have started it). */}
           <button
             onClick={() => setUpdateMode((v) => !v)}
