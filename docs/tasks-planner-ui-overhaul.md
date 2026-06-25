@@ -1,8 +1,10 @@
 # Tasks / Planner / Nav UI Overhaul — Ticketed Plan
 
-> **Status:** PLAN ONLY — no code written yet. Migration head `0061`. Each ticket is a
-> self-contained agent prompt. Built to fan out across worktree agents by **strict file
-> ownership** (no two tickets in the same wave edit the same file).
+> **Status (reconciled 2026-06-25).** Migration head is now **`0066`**. **Shipped:** Wave 0
+> (T-CORE-1…5, **PR #147**, on `main`) and **Phase M** (the AI scheduler, **PR #146**, migrations
+> `0062–0066`). Phase M also lands most of **T-FP-2** (deadline-first scheduling order). Everything
+> else below is still **open**. Each ticket is a self-contained agent prompt; the wave fans out
+> across worktree agents by **strict file ownership** (no two tickets in the same wave edit the same file).
 >
 > Companion to [README.md](../README.md) and [GLOSSARY.md](GLOSSARY.md). Every label below
 > uses the canonical vocabulary: **Task** · **Time Block** · **Routine** · **Tag /
@@ -18,9 +20,11 @@
    ticket's stated goal **without explicit consent**. If a goal appears to require a new
    dependency, a new DB migration, a new SSE event, or a change to scheduler/grooming
    behavior, **stop and ask** — flag it in the PR, do not proceed.
-3. **No new migrations in this wave** unless a ticket explicitly says so and consent is
-   recorded. Head stays `0061`. (Phase M reserves `0062–0064`; plan-import also wants
-   `0062` — any migration here would collide and must be coordinated.)
+3. **Exactly ONE migration in this wave**, in **T-SCHED-3** (custom day types + per-date
+   assignment — consent recorded 2026-06-25). Every other ticket stays migration-free. `main` is at
+   head `0066`, but **Phase M's open PR #148** (restart-durable nudge / `replan_suggestions`) already
+   claims **`0067`** — so T-SCHED-3 takes the **next free number, likely `0068`**; coordinate before
+   numbering. No other ticket may add a migration without fresh consent.
 4. **Glossary fidelity.** User-facing labels map to a glossary noun/state/subtype. New
    labels that aren't in the glossary are bugs — raise them.
 5. **Local-first, owner-in-the-loop.** Nothing auto-creates a Task without the owner's
@@ -35,11 +39,11 @@
 
 | ID | Group | Title | Depends on |
 |----|-------|-------|-----------|
-| T-CORE-1 | Foundation | Shared SortControl + sort comparators | — |
-| T-CORE-2 | Foundation | `directionColorForTask` helper | — |
-| T-CORE-3 | Foundation | `activeTask` selection signal | — |
-| T-CORE-4 | Foundation | Clear-day endpoint + `api.blocks.clearDay` | — |
-| T-CORE-5 | Foundation | `SchedulePatternEditor` shared component + api | — |
+| T-CORE-1 | Foundation | Shared SortControl + sort comparators | ✅ shipped #147 |
+| T-CORE-2 | Foundation | `directionColorForTask` helper | ✅ shipped #147 |
+| T-CORE-3 | Foundation | `activeTask` selection signal | ✅ shipped #147 |
+| T-CORE-4 | Foundation | Clear-day endpoint + `api.blocks.clearDay` | ✅ shipped #147 |
+| T-CORE-5 | Foundation | `SchedulePatternEditor` shared component + api | ✅ shipped #147 |
 | **T-TASKS-1** | **Tasks view** | **Tab restructure: Routines tab + Patterns "Coming Soon" stub** | T-NAV-1 |
 | **T-TASKS-2** | **Tasks view** | **Task-card right rail: priority toggle + Due + Start** | T-CORE-2 |
 | **T-TASKS-3** | **Tasks view** | **Direction-color container outline** | T-CORE-2 |
@@ -53,11 +57,14 @@
 | T-PLAN-4 | Planner | Replace block-click pop-up with selection | T-CORE-3, T-PLAN-3 |
 | T-PLAN-5 | Planner | Constrain Planner/Flight-plan width to header | — |
 | T-FP-1 | Flight-plan | Fill ⇄ Clear toggle | — |
-| T-FP-2 | Flight-plan | Priority ⇄ Due-Date order (near→far, real placement) | T-CORE-1 |
-| T-SCHED-1 | Schedule | Edit pattern-blocks per day from Today + Calendar | T-CORE-5 |
+| T-FP-2 | Flight-plan | Priority ⇄ Due-Date order — ⚠ server order shipped by Phase M; client relabel only | T-CORE-1 |
+| T-SCHED-1 | Schedule | Assign day types + edit windows per day (Today + Calendar) | T-SCHED-3, T-CORE-5 |
 | T-SCHED-2 | Schedule | Schedule-mode horizon control + apply N days ahead | — |
+| T-SCHED-3 | Schedule | Custom day types + per-date assignment (model + resolver + **migration**) | — |
+| T-SCHED-4 | Schedule | Manage custom day types in Settings (CRUD) | T-SCHED-3 |
 | T-SET-1 | Settings | Remove Routine-type creation | — |
 | T-TB-1 | Time Block menu | Weekly recurrence day-of-week picker | — |
+| T-DEP-1 | Task menu | "Depends on" task-search field (not a multi-select) | — |
 | T-RTN-1 | Routine menu | Add existing + new-by-name tasks at create | T-TASKS-1 |
 | T-RTN-2 | Routine menu | Edit-task affordance in Routines tab | T-TASKS-1 |
 | T-DOCS-1 | Cross-cutting | Update README / GLOSSARY / screenshots | all Wave-1 |
@@ -66,6 +73,11 @@
 ---
 
 ## Foundation tickets (land first, sequential)
+
+> ✅ **ALL SHIPPED** — Wave 0 merged to `main` (PR #147). T-CORE-1…5 are live: `lib/sort.ts`,
+> `components/SortControl.tsx`, `directionColorForTask` in `lib/pattern-meta.ts`, `activeTask` in
+> `stores/selection.ts`, `POST /api/days/:date/clear` + `api.blocks.clearDay`, and
+> `components/SchedulePatternEditor.tsx`. The Wave-1 tickets below consume them.
 
 ### T-CORE-1 — Shared SortControl + comparators
 **Goal:** One reusable control + pure comparators shared by the Tasks view (T-TASKS-4) and
@@ -381,46 +393,49 @@ existing `reset()` (`FlightPlan.tsx:129-136` → `POST /api/flight-plan/reset`);
 **Expected state:** the one button flips label+action by fullness.
 **Definition of done:** both states behave correctly; tsc + build clean; browser proof.
 
-### T-FP-2 — Priority ⇄ Due-Date order (near→far, real placement)
-**Goal:** Rename the **Over-Due** option to **Due Date** and change the **actual scheduling
-order** so Due-Date places **nearest-due → furthest** (not overdue-first).
+### T-FP-2 — Priority ⇄ Due-Date order (near→far)
+> **⚠ Mostly SHIPPED by Phase M.** The **server scheduling order is done**: migration `0065`
+> flips the default `fill_order` to `'overdue'`, `orderByOverdue` (`autoplan.ts:176-185`) already
+> sorts dated tasks **ascending by `due_at`** (nearest/most-overdue first, undated last), and
+> Phase M made the authored day order **theme → due → priority → id** (`fill_order` now maps onto
+> deterministic authoring, `plan.ts`). **Do NOT re-implement server ordering** — only the client
+> remnant remains. Re-scope against Phase M before building.
+
+**Goal (remaining):** the **client** label/control only — surface the now-default deadline ordering
+as **Priority ⇄ Due Date** using the shared `SortControl`.
 **Acceptance criteria**
-- Replace the inline toggle (`FlightPlan.tsx:207-223`) with `SortControl` (T-CORE-1); label is
-  **Priority ⇄ Due Date**.
-- Server: in `server/src/engine/autoplan.ts`, the Due-Date fill order sorts by `due_at`
-  **ascending (nearest first)**, undated last. Migrate the `fill_order` pref value
-  `'overdue'` → `'due'` with a **back-compat read** (treat legacy `'overdue'` as `'due'`); update
-  the `Prefs` type (`api.ts:412`). **No DB migration** — `fill_order` is a free-text/string pref;
-  confirm before touching the column.
-- This is the **one** ticket that intentionally changes scheduling order (consent recorded here).
-**Files impacted:** `client/src/components/FlightPlan.tsx`, `server/src/engine/autoplan.ts`, `client/src/lib/api.ts` (Prefs type).
-**Connections:** `PATCH /api/prefs { fill_order }`; autoplan fill ordering.
-**Expected state:** "Due Date" mode schedules nearest-due tasks first; "Priority" mode unchanged.
-**Definition of done:** server test asserting near→far placement under `'due'` and back-compat for
-`'overdue'`; existing priority-order tests stay green; tsc + build clean.
-**Depends on:** T-CORE-1.
+- Replace the inline toggle (`FlightPlan.tsx:207-223`) with `SortControl` (T-CORE-1, shipped);
+  relabel "Over-Due" → **"Due Date"** (the value stays the existing `fill_order='overdue'`, or
+  alias to `'due'` for display — **do not change the server default or `orderByOverdue`**).
+- Confirm the toggle still drives Phase M's authoring path (`fill_order` → `daily_plan` order).
+**Files impacted:** `client/src/components/FlightPlan.tsx` (+ `client/src/lib/api.ts` Prefs type label only).
+**Connections:** `PATCH /api/prefs { fill_order }` → Phase M authoring.
+**Expected state:** the toggle reads "Priority ⇄ Due Date"; behavior matches Phase M's deadline-first default.
+**Definition of done:** label correct; no server-order change; existing Phase M scheduling tests stay green; tsc + build clean.
+**Depends on:** T-CORE-1 (shipped). **Re-scope first** — most of this is already live.
 
 ---
 
 ## Schedule patterns
 
-### T-SCHED-1 — Edit Pattern-blocks per day from Today + Calendar
-**Goal:** Let the owner adjust the day's **Pattern-blocks** (availability windows) from the
-Today and Calendar surfaces, not only Settings.
+### T-SCHED-1 — Assign day types + edit windows per day (Today + Calendar)
+**Goal:** Let the owner, from Today and Calendar, **(a)** assign a day type to a specific date
+("this Monday is a Holiday, not a Workday") and edit the per-day-of-week defaults for the week,
+and **(b)** edit that day type's availability windows — building on the richer model in T-SCHED-3.
+
 **Acceptance criteria**
-- Mount `SchedulePatternEditor` (T-CORE-5) from Today (`Today.tsx`) and Calendar
-  (`Calendar.tsx`), scoped to the selected date's **day type** (Workday/Weekend).
-- **Confirmed (migration-free):** editing a day edits its **day-type template** (the existing
-  Pattern-block model). **Per-date overrides are NOT built** — they would require a new table +
-  migration + reconciler and **explicit consent** (flagged, not done).
-**Files impacted:** `client/src/views/Today.tsx` (Today mount), `client/src/views/Calendar.tsx` (Calendar mount). *(Editor + api are T-CORE-5.)*
-**Connections:** `api.patternBlocks` (GET/PATCH `/api/pattern-blocks`).
-**Expected state:** owner can open the schedule-pattern editor for a day from Today/Calendar; edits
-persist to the day-type template and shade the Planner accordingly.
-**Definition of done:** edits round-trip and reflect in the Planner shading; Settings editor still
-works; tsc + build clean; browser proof.
-**Depends on:** T-CORE-5. **Note:** Today.tsx is also touched by T-PLAN-3/5 — assign Today.tsx to one
-owner in the wave (see file-ownership matrix).
+- From Today (`Today.tsx`) and Calendar (`Calendar.tsx`): a control to **assign the selected
+  date's day type** (per-date override via `api.dayTypes.assign(date, dayTypeKey)`), and to edit
+  the **day-of-week defaults** for the week (`api.dayTypes.weekMap`).
+- Mount the **extended** `SchedulePatternEditor` (now N day types, not just Workday/Weekend — see
+  T-SCHED-3/T-SCHED-4) scoped to the resolved day type for that date.
+- Behavior with no overrides is unchanged (Mon–Fri = Workday, Sat–Sun = Weekend).
+
+**Files impacted:** `client/src/views/Today.tsx`, `client/src/views/Calendar.tsx`, `client/src/components/SchedulePatternEditor.tsx` (extend to N day types).
+**Connections:** `api.dayTypes.*` + `api.patternBlocks.*` (T-SCHED-3).
+**Expected state:** the owner sets, per day, which day type applies and what its windows are; the Planner shades + Auto plans accordingly.
+**Definition of done:** a per-date override changes that day's windows + placement; the week-defaults editor round-trips; Settings editor still works; tsc + build clean; browser proof.
+**Depends on:** T-SCHED-3, T-CORE-5. **Note:** `Today.tsx` is also touched by T-PLAN-3/5 — one owner (W-PLANNER).
 
 ### T-SCHED-2 — Schedule-mode horizon control + apply N days ahead
 **Goal:** Let the owner set **how many days ahead** "Schedule" mode plans, in the Schedule
@@ -441,6 +456,57 @@ Patterns area of Settings, and have Schedule mode apply Pattern-blocks/placement
 **Definition of done:** server test: N-day apply places across N days and is idempotent per day;
 single-day behavior preserved at N=1; tsc + build clean.
 **Note:** if T-FP-2 and this both end up editing `autoplan.ts`, sequence this after T-FP-2.
+
+### T-SCHED-3 — Custom day types + per-date assignment (model + resolver + migration)
+**Goal:** Replace the hardcoded two-day-type model (Workday Mon–Fri / Weekend Sat–Sun) with
+user-defined day types and a per-date assignment, so "not every Monday is a Workday" works.
+
+**Background:** today the only date→day-type mapping is `isWeekendDate()` →
+`dayType = isWeekendDate(date) ? 'weekend' : 'workday'` (`autoplan.ts:270-271,359`), feeding
+`getPatternBlocks(owner, dayType)`. `pattern_blocks.day_type` is a free-text column
+(`schema.ts:226`, no CHECK), so extra values are storable — but nothing *defines* or *resolves* them.
+
+**Acceptance criteria**
+- **Migration (the wave's only one — `0065` after Phase M, see working-agreement 3):**
+  - `day_types(id, owner_id, key, name, is_builtin)` — seed builtins `key='workday'`/`'weekend'`
+    (the keys already in `pattern_blocks.day_type`), `is_builtin=1` (rename-able, not deletable).
+  - `day_of_week_map(owner_id, dow 0–6, day_type_key)` — the recurring default; **seeded
+    Mon–Fri→workday, Sat–Sun→weekend** so existing behavior is byte-identical until changed.
+  - `day_assignments(owner_id, date 'YYYY-MM-DD', day_type_key)` — per-date overrides (one row per assigned date).
+- **Resolver** `resolveDayType(owner, date)`: per-date assignment → else day-of-week map → else
+  `'workday'`. Replaces `isWeekendDate`/the literal at `autoplan.ts:359` and **every other
+  date→day-type site** (audit `getPatternBlocks` callers; also `patterns-place.ts`).
+  - Day-of-week uses the owner's tz (today `isWeekendDate` uses UTC noon — fix or preserve deliberately; note in the PR).
+- **API** (new `routes/day-types.ts`): CRUD day types; GET/PUT week map; GET/PUT/DELETE a date assignment. Audit-logged.
+- **Behavior-preservation:** with no custom types and the seeded map, `resolveDayType` returns
+  exactly what `isWeekendDate` did — existing scheduler/patterns-place/autoplan tests stay green (pin `TZ=UTC`).
+
+**Files impacted:** new migration in `server/src/db/migrations/`, `server/src/db/schema.ts`,
+new `server/src/routes/day-types.ts` (+ register), `server/src/engine/autoplan.ts` (swap the
+`isWeekendDate` seam for `resolveDayType`), `server/src/engine/patterns-place.ts` (if it derives a
+day type), `client/src/lib/api.ts` (`api.dayTypes.*`).
+**Connections:** scheduler/autoplan placement; pattern_blocks lookup; new day-types routes.
+**Expected state:** a date resolves to a user-assigned day type; Auto places against that type's windows.
+**Definition of done:** resolver unit tests (override > week-map > default; UTC-pinned); a per-date
+override flips placement for that date only; the no-config case matches today's output exactly; existing engine tests green.
+**Depends on:** none. **⚠ Builds on merged Phase M:** Phase M is shipped (head `0066`), so
+`autoplan.ts`/`patterns-place.ts` now carry daily_plan authoring + reflow — `resolveDayType` must
+slot into that path (the day type still selects the pattern-block windows the authored order is
+placed into). Take the **next free migration number** (`main` head `0066`; Phase M's open PR #148
+claims `0067` → likely **`0068`**; coordinate). No longer an engine race — just integrate against current `main`.
+
+### T-SCHED-4 — Manage custom day types in Settings
+**Goal:** A Settings surface to create / rename / delete custom day types (builtins protected) and
+edit the per-day-of-week default map.
+**Acceptance criteria**
+- In the Schedule Patterns area of Settings (`Settings.tsx:411-486`): list day types with add /
+  rename / delete (`day_types` builtins are rename-only); a Mon–Sun → day-type picker for the week map.
+- The extended `SchedulePatternEditor` shows a tab/selector per day type (not just two).
+**Files impacted:** `client/src/views/Settings.tsx`, `client/src/components/SchedulePatternEditor.tsx`.
+**Connections:** `api.dayTypes.*` (T-SCHED-3).
+**Expected state:** the owner manages their own day types + the weekly default mapping from Settings.
+**Definition of done:** CRUD + week-map round-trip; builtins can't be deleted; tsc + build clean; browser proof.
+**Depends on:** T-SCHED-3.
 
 ---
 
@@ -463,6 +529,33 @@ single-day behavior preserved at N=1; tsc + build clean.
 removes the create affordance.
 
 ---
+
+## New Task / Edit Task menu
+
+### T-DEP-1 — "Depends on" task-search field
+**Goal:** Make the **Depends on (won't schedule until done)** field a search-and-add control over
+existing Tasks, correctly prefilled in edit mode.
+
+**Background:** today it's a native `<select multiple>` listing **every** open task except self
+(`ElementWizard.tsx:489-495`; candidates at `:70`), prefilled via `setDependsOn(t.depends_on ?? [])`
+(`:129`). A bare multi-select of the whole backlog is unusable at scale and reads as "wrong data."
+
+**Acceptance criteria**
+- Replace the `<select multiple>` with a **typeahead**: type to search existing Tasks by title,
+  pick one to add it as a **removable chip**; the field's value stays `depends_on` (task ids), written
+  via the existing `dependsOn()` signal (`:198`). Exclude self and (sensibly) done/cancelled tasks.
+- **Fix the edit-mode prefill** so it shows the task's *actual current* dependencies: confirm
+  `GET /tasks` (or the edit fetch) returns `depends_on`; if it doesn't, that's the "prefilled with the
+  wrong data" bug — load the real dependency ids before seeding (`:129`).
+- No backend change expected (depends_on already round-trips via `api.tasks` create/update); if the
+  Task payload lacks `depends_on`, surfacing it is the only server touch — **flag before adding**.
+
+**Files impacted:** `client/src/components/ElementWizard.tsx` (+ a small task-search helper if useful).
+**Connections:** `api.tasks` create/update `depends_on`; the tasks resource for search candidates.
+**Expected state:** dependencies are added by searching, shown as chips, removable, and correct on reopen.
+**Definition of done:** add/remove a dependency by search; edit mode shows the real current deps;
+no regression to defer/recurrence fields in the same panel; tsc + build clean; browser proof.
+**Owner:** W-WIZARD (same as T-TB-1 — both own `ElementWizard.tsx`).
 
 ## New Time Block menu
 
@@ -559,6 +652,10 @@ unchanged; tsc + build clean; browser proof.
   tabs. No noun-budget change. Keep `pattern_types` "load-bearing, do not rename".
 - **Screenshots:** refresh `docs/screenshots/tasks.png` (new tabs + card right rail) and `today.png`
   (Selected Task Summary, width frame); note any others that drift.
+- **Phase M drift to fold in too** (already on `main`, not yet in these docs): the `planning_mode`
+  rename **`ritual`→`basic` / `auto`→`smart`** (migration `0063`), the **AI day-ordering** Settings
+  toggle (A5), deadline-first default (`fill_order`), and per-block "why now" rationale. Reconcile
+  GLOSSARY/README wording for these as part of this ticket.
 **Files impacted:** `README.md`, `docs/GLOSSARY.md`, `docs/screenshots/*`.
 **Connections:** none (docs).
 **Expected state:** docs match the shipped UI; no stale "Routines view" references.
@@ -597,33 +694,42 @@ test-harness gotchas (pin `TZ=UTC` for date-sensitive specs; shared sequential D
 |----------|---------|------------------|
 | W-TASKS-CARD | T-TASKS-2, T-TASKS-3, T-TASKS-5 | `TaskCard.tsx` |
 | W-TASKS-VIEW | T-TASKS-1, T-TASKS-4, T-TASKS-6, T-RTN-1, T-RTN-2 | `AllTasks.tsx`, `Patterns.tsx`, `RoutinesPanel.tsx`, `TimeBlocksPanel.tsx` |
-| W-WIZARD | T-TB-1 | `ElementWizard.tsx` |
+| W-WIZARD | T-TB-1, T-DEP-1 | `ElementWizard.tsx` |
 | W-NAV | T-NAV-1 | `BottomNav.tsx`, `Nav.tsx`, `App.tsx` |
-| W-PLANNER | T-PLAN-1…5, T-SCHED-1 (Today/Calendar mounts) | `Planner.tsx`, `planner.ts`, `Today.tsx`, `Calendar.tsx`, `SelectedTaskSummary.tsx` |
+| W-PLANNER | T-PLAN-1…5 | `Planner.tsx`, `planner.ts`, `Today.tsx`, `Calendar.tsx`, `SelectedTaskSummary.tsx` |
 | W-FLIGHT | T-FP-1, T-FP-2 | `FlightPlan.tsx`, `autoplan.ts` |
 | W-SETTINGS | T-SET-1, T-SCHED-2 | `RoutineTypeSettings.tsx`, `Settings.tsx`, `scheduler.ts`/`patterns-place.ts` |
 
 **Disjointness:** the only shared files (`api.ts`, `pattern-meta.ts`, `selection.ts`) are
-**Wave-0-only**. `Today.tsx` is owned solely by **W-PLANNER** (it absorbs the T-SCHED-1 Today mount).
-`ElementWizard.tsx` is owned solely by **W-WIZARD** (T-RTN-2 only *invokes* it via `setElementModal`).
-`Patterns.tsx` / `RoutinesPanel.tsx` are owned solely by **W-TASKS-VIEW** (it absorbs the Routine-menu tickets).
-If **W-FLIGHT** (autoplan.ts) and **W-SETTINGS** (scheduler/patterns-place) both reach into
-`autoplan.ts`, sequence W-SETTINGS after W-FLIGHT.
+**Wave-0-only**. `Today.tsx` is owned solely by **W-PLANNER**. `ElementWizard.tsx` is owned solely
+by **W-WIZARD** (T-RTN-2 only *invokes* it via `setElementModal`). `Patterns.tsx` / `RoutinesPanel.tsx`
+are owned solely by **W-TASKS-VIEW**. If **W-FLIGHT** (autoplan.ts) and **W-SETTINGS**
+(scheduler/patterns-place) both reach into `autoplan.ts`, sequence W-SETTINGS after W-FLIGHT.
 
-**Wave 2 (sequential, after Wave 1 integrates):** **T-DOCS-1** and **T-QA-1** land last — they
+**Wave 1b — Day-types feature (T-SCHED-1, T-SCHED-3, T-SCHED-4): a dedicated SEQUENTIAL phase, not
+a parallel worktree.** It is too cross-cutting to parallelize — it adds **a migration (next free; `main`
+head `0066`, PR #148 claims `0067` → likely `0068`)** and edits
+the engine (`autoplan.ts`, `patterns-place.ts`), `Today.tsx`, `Calendar.tsx`, `Settings.tsx`, and
+`SchedulePatternEditor.tsx`, all of which other Wave-1 worktrees own. **Phase M is already merged**, so
+this builds on its daily_plan/reflow engine rather than racing it — but it still touches those files,
+so run it as one focused effort **after** the rest of Wave 1 integrates. Order within it: T-SCHED-3
+(model/resolver/migration) → T-SCHED-1 + T-SCHED-4 (UI).
+
+**Wave 2 (sequential, after Wave 1 + 1b integrate):** **T-DOCS-1** and **T-QA-1** land last — they
 describe and test the *final* integrated UI, so they must follow everything else. T-QA-1's CI change
 is consent-gated (see ticket).
 
 **Integrate → adversarial review → browser-verify each surface → squash to main.**
-Base Wave-1 agents on the Wave-0 tip (not `main`) and tell each its head + owned files.
+Wave 0 is merged, so **base Wave-1 agents on current `main`** (which already has Wave 0 + Phase M, head `0066`) and tell each its owned files.
 
-## Consent items — RESOLVED (2026-06-24)
-1. **T-CORE-4 clear-day scope:** ✅ clear **only auto-placed** blocks; preserve calendar/meeting mirrors, user-placed/locked blocks, and habits.
-2. **T-NAV-1 `/patterns`:** ✅ **redirect** to `/tasks`.
-3. **T-SCHED-1 per-day model:** ✅ **day-type template editing** (migration-free). Per-date overrides not built.
-4. **T-SCHED-2 horizon pref:** ✅ **reuse `planning_horizon_days`** (migration-free).
-5. **T-TASKS-2 scope:** ✅ apply the right rail to **all `TaskCard` usages**.
+## Consent items — RESOLVED
+1. **T-CORE-4 clear-day scope** (2026-06-24): ✅ clear **only auto-placed** blocks; preserve calendar/meeting mirrors, user-placed/locked blocks, and habits.
+2. **T-NAV-1 `/patterns`** (2026-06-24): ✅ **redirect** to `/tasks`.
+3. **Schedule-pattern model** (2026-06-25, **supersedes the earlier "template-only" choice**): ✅ **per-date assignment + custom day types** — T-SCHED-3 adds **one migration** (`day_types` / `day_of_week_map` / `day_assignments`) and a `resolveDayType` engine change. "Not every Monday is a Workday" is in scope.
+4. **T-SCHED-2 horizon pref** (2026-06-24): ✅ **reuse `planning_horizon_days`** (migration-free).
+5. **T-TASKS-2 scope** (2026-06-24): ✅ apply the right rail to **all `TaskCard` usages**.
 
-**Result: the entire wave is migration-free (head stays `0061`) and adds no new dependencies.**
-Remaining consent gates are *optional enhancements only* (T-TB-1 shared `<WeekdayPicker>` extraction;
-T-SET-1 server-side create refusal; per-date schedule overrides / dedicated horizon pref).
+**Result: the wave is migration-free EXCEPT T-SCHED-3** (one migration — `main` head `0066`, Phase M's
+open PR #148 claims `0067`, so likely **`0068`**; consent recorded). No new dependencies. Remaining *optional* gates: T-TB-1 shared
+`<WeekdayPicker>` extraction; T-SET-1 server-side create refusal; T-DEP-1 surfacing `depends_on` on
+the Task payload (the Task type now includes `depends_on` on `main`, so the edit-prefill bug is fixable client-side).
