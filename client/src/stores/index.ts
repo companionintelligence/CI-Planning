@@ -1,6 +1,6 @@
 import { createSignal, createMemo, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
-import type { Block, Task, Pattern, PatternType } from '../lib/api.js';
+import type { Block, Task, Pattern, PatternType, ReplanSuggestion } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
@@ -48,7 +48,6 @@ on('schedule:done', (data) => {
 // reads this signal) PLUS a transient actionable toast. Accepting calls the LLM
 // re-author; dismissing clears it. The server clears it server-side too, broadcasting
 // 'replan:dismissed' so other tabs drop the banner.
-export interface ReplanSuggestion { date: string; reason?: string; summary?: string }
 export const [replanSuggestion, setReplanSuggestion] = createSignal<ReplanSuggestion | null>(null);
 
 on('replan:suggested', (data) => {

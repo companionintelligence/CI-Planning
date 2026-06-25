@@ -195,3 +195,32 @@ describe('POST /api/plan/reauthor/dismiss', () => {
     expect(eventCount('replan:dismissed')).toBe(1);
   });
 });
+
+describe('GET /api/plan/suggestion (reload-durable nudge)', () => {
+  it('returns null when there is no outstanding suggestion', async () => {
+    const res = await api(srv.url, '/api/plan/suggestion');
+    expect(res.status).toBe(200);
+    expect(res.body.suggestion).toBeNull();
+  });
+
+  it('returns the outstanding suggestion after a big disruption, and null after dismiss', async () => {
+    vi.useFakeTimers();
+    setAutoDefense(true);
+    const p1 = insertTask('Crunch', 1);
+    seedDailyPlan(p1, 0);
+    fullDayMeeting();
+    requestReplan('task:updated', OWNER, DATE);
+    vi.advanceTimersByTime(1500);
+    vi.useRealTimers();
+
+    const got = await api(srv.url, '/api/plan/suggestion');
+    expect(got.status).toBe(200);
+    expect(got.body.suggestion).toBeTruthy();
+    expect(got.body.suggestion.date).toBe(DATE);
+    expect(got.body.suggestion.summary).toContain('priority task');
+
+    await api(srv.url, '/api/plan/reauthor/dismiss', { method: 'POST', json: { date: DATE } });
+    const after = await api(srv.url, '/api/plan/suggestion');
+    expect(after.body.suggestion).toBeNull();
+  });
+});

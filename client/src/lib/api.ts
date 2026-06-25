@@ -205,6 +205,9 @@ export const api = {
   // Phase M B4 — escalation accept/dismiss. reauthor forces an AI re-author of the day
   // (the only reactive LLM path); dismiss drops the outstanding nudge.
   plan: {
+    // The outstanding nudge (or null) — the ReplanBanner hydrates from this on mount
+    // so a reload re-surfaces a still-open suggestion.
+    suggestion: () => request<{ suggestion: ReplanSuggestion | null }>('GET', '/plan/suggestion'),
     reauthor: (date: string) => request<{ ok: boolean; date: string }>('POST', '/plan/reauthor', { date }),
     dismiss: (date: string) => request<{ ok: boolean }>('POST', '/plan/reauthor/dismiss', { date }),
   },
@@ -399,6 +402,13 @@ export interface ReplanDiff {
   removed: { block_id: string; task_id: string }[];
   added: { block_id: string; task_id: string }[];
   unplaced: string[];
+}
+
+/** Phase M B4: an outstanding "re-plan with AI?" nudge (the `replan:suggested` payload). */
+export interface ReplanSuggestion {
+  date: string;
+  reason?: string;
+  summary?: string;
 }
 
 /** Result of POST /api/patterns/:id/place-today (PR-C+, Phase C). */
