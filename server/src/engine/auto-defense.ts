@@ -354,8 +354,9 @@ export function sweepMissedBlocks(
 
 interface Suggestion { date: string; reason: string; summary: string; atRisk: number }
 
-/** One outstanding suggestion per owner (keyed by ownerId; a new day overwrites). */
-const outstanding = new Map<string, Suggestion>();
+// One outstanding suggestion per owner — persisted in `replan_suggestions` (migration
+// 0067) so the nudge survives a server restart, not just a page reload. PK owner_id +
+// INSERT OR REPLACE gives "one per owner; a new day overwrites".
 
 /**
  * The high-priority (P≤2) task ids that a reflow left at risk — dropped (`removed`)
@@ -384,11 +385,13 @@ export function isBigDisruption(diff: ReflowDiff): boolean {
 function maybeSuggestReauthor(owner: string, date: string, diff: ReflowDiff, reason: string): Suggestion | null {
   const atRisk = highPriorityAtRisk(diff);
   if (atRisk.length === 0) return null;
-  const existing = outstanding.get(owner);
+  const existing = sqlite.prepare(`SELECT date FROM replan_suggestions WHERE owner_id = ?`).get(owner) as { date: string } | undefined;
   if (existing && existing.date === date) return null; // anti-spam: one per (owner, day)
   const k = atRisk.length;
   const sug: Suggestion = { date, reason, summary: `${k} priority task${k === 1 ? '' : 's'} at risk`, atRisk: k };
-  outstanding.set(owner, sug);
+  sqlite
+    .prepare(`INSERT OR REPLACE INTO replan_suggestions (owner_id, date, reason, summary, at_risk) VALUES (?, ?, ?, ?, ?)`)
+    .run(owner, date, reason, sug.summary, k);
   return sug;
 }
 
@@ -406,12 +409,15 @@ async function pushReplanNudge(owner: string, summary: string): Promise<void> {
 
 /** The outstanding suggestion for an owner (B4 — read by routes/tests). */
 export function outstandingSuggestion(owner: string): Suggestion | undefined {
-  return outstanding.get(owner);
+  const row = sqlite
+    .prepare(`SELECT date, reason, summary, at_risk FROM replan_suggestions WHERE owner_id = ?`)
+    .get(owner) as { date: string; reason: string; summary: string; at_risk: number } | undefined;
+  return row ? { date: row.date, reason: row.reason, summary: row.summary, atRisk: row.at_risk } : undefined;
 }
 
 /** Clear the outstanding suggestion (on accept/dismiss). */
 export function clearSuggestion(owner: string): void {
-  outstanding.delete(owner);
+  sqlite.prepare(`DELETE FROM replan_suggestions WHERE owner_id = ?`).run(owner);
 }
 
 /** Test-only: clear pending debounce timers, the re-entrancy guard, and suggestions. */
@@ -419,5 +425,5 @@ export function _resetReplanState(): void {
   for (const t of pendingReplans.values()) clearTimeout(t);
   pendingReplans.clear();
   reflowing.clear();
-  outstanding.clear();
+  sqlite.exec(`DELETE FROM replan_suggestions`);
 }
