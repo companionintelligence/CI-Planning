@@ -136,13 +136,16 @@ export function todayThemeTag(dayTheme: Record<string, string> | null | undefine
 /**
  * Produce a deterministic ordering of tasks as indices.
  *
- * `fillOrder` selects the primary key (maps the user-facing `fill_order` pref
- * onto authoring — Phase M §0 follow-up):
- *   • 'overdue' (default) → deadline-first: due_at → §C2 theme → priority → id
- *   • 'priority'          → priority-first: priority → §C2 theme → due_at → id
+ * §C2 theme is the **primary** key: on a themed weekday, theme-tagged tasks lead
+ * the day outright ("today is deep-work day"), ahead of deadline and priority.
+ * After theme, `fillOrder` selects the deadline/priority ordering *within* each
+ * theme band (maps the user-facing `fill_order` pref onto authoring):
+ *   • 'overdue' (default) → theme → due_at → priority → id
+ *   • 'priority'          → theme → priority → due_at → id
  *
- * In both modes the §C2 theme bias slots between the primary and secondary keys
- * (themed tasks first within the same band), and task_id is the stable tiebreaker.
+ * `checkOrder` is theme-aware so this lead is not flagged as a priority/deadline
+ * inversion (a themed task may legitimately precede a higher-priority or
+ * earlier-due unthemed one).
  */
 export function deterministicIndices(
   tasks: PlanTask[],
@@ -163,10 +166,10 @@ export function deterministicIndices(
   return tasks
     .map((_, i) => i)
     .sort((a, b) => {
-      const primary = priorityFirst ? priCmp(a, b) : dueCmp(a, b);
-      if (primary !== 0) return primary;
       const theme = themeCmp(a, b);
       if (theme !== 0) return theme;
+      const primary = priorityFirst ? priCmp(a, b) : dueCmp(a, b);
+      if (primary !== 0) return primary;
       const secondary = priorityFirst ? dueCmp(a, b) : priCmp(a, b);
       if (secondary !== 0) return secondary;
       return tasks[a].task_id.localeCompare(tasks[b].task_id);
@@ -256,19 +259,25 @@ export function tagGroupPostPass(indices: number[], tasks: PlanTask[]): number[]
 
 // ─── Deterministic rubric checks (the hard gate) ─────────────────────────────
 
-export function checkOrder(order: number[], tasks: PlanTask[], today: string): Defect[] {
+export function checkOrder(order: number[], tasks: PlanTask[], today: string, themeTag?: string | null): Defect[] {
   const defects: Defect[] = [];
   const todayMs = Date.parse(today + 'T00:00:00Z');
+  const themed = (t: PlanTask): boolean => (themeTag ? t.tags.includes(themeTag) : false);
 
   for (let i = 0; i < order.length && defects.length < 5; i++) {
     const a = tasks[order[i]];
     const aPrio = a.priority;
     const aDue = a.due_at ? Date.parse(a.due_at) : Infinity;
+    const aThemed = themed(a);
 
     for (let j = i + 1; j < order.length && defects.length < 5; j++) {
       const b = tasks[order[j]];
       const bPrio = b.priority;
       const bDue = b.due_at ? Date.parse(b.due_at) : Infinity;
+
+      // §C2: a themed task (earlier) legitimately leads an unthemed one (later) on a
+      // themed day — theme is the primary key, so this is not a priority/deadline inversion.
+      if (aThemed && !themed(b)) continue;
 
       // Priority inversion: b (later) has higher priority (lower number) than a (earlier),
       // and a does not have an earlier deadline to justify being placed first.
@@ -394,7 +403,7 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
     // Deterministic path: apply theme bias, then §A2 post-pass
     const detIndices = deterministicIndices(staged, themeTag, fillOrder);
     const postPassed = tagGroupPostPass(detIndices, staged);
-    const defects = checkOrder(postPassed, staged, date);
+    const defects = checkOrder(postPassed, staged, date, themeTag);
     const final = defects.length === 0 ? postPassed : detIndices;
     persistOrder(owner, date, staged, final, 'deterministic');
     return;
@@ -422,7 +431,7 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
       check: (order) => {
         // §A2: apply post-pass before checking
         const postPassed = tagGroupPostPass(order, staged);
-        return checkOrder(postPassed, staged, date);
+        return checkOrder(postPassed, staged, date, themeTag);
       },
 
       judge: async (order): Promise<JudgeScore> => {
@@ -468,7 +477,7 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
 
   // §A2: apply post-pass to the final LLM result
   const finalCandidate = tagGroupPostPass(result.candidate, staged);
-  const finalDefects = checkOrder(finalCandidate, staged, date);
+  const finalDefects = checkOrder(finalCandidate, staged, date, themeTag);
   const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
 
   persistOrder(owner, date, staged, finalIndices, result.passed ? 'llm' : 'deterministic');

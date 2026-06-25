@@ -125,6 +125,17 @@ describe('§A2 tagGroupPostPass', () => {
     const defects = checkOrder([1, 2, 0], tasks, '2026-06-24');
     expect(defects.length).toBeGreaterThan(0);
   });
+
+  it('checkOrder is theme-aware: a themed task leading an unthemed one is not a defect', () => {
+    // B(P3-deep-work, themed) before A(P1-email, unthemed), same due → normally an
+    // inversion, but the theme justifies B leading on a deep-work day.
+    const tasks: PlanTask[] = [
+      { task_id: 'A', title: 'P1-email', priority: 1, due_at: '2026-06-24', estimated_minutes: 30, tags: ['email'] },
+      { task_id: 'B', title: 'P3-deep', priority: 3, due_at: '2026-06-24', estimated_minutes: 30, tags: ['deep-work'] },
+    ];
+    expect(checkOrder([1, 0], tasks, '2026-06-24')).toHaveLength(1); // no theme → defect
+    expect(checkOrder([1, 0], tasks, '2026-06-24', 'deep-work')).toHaveLength(0); // themed → allowed
+  });
 });
 
 // ─── §A2 integration: authorPlanOrder clusters tags ──────────────────────────
@@ -270,21 +281,22 @@ describe('§C2 deterministicIndices with themeTag', () => {
     expect(posC).toBeLessThan(posA);
   });
 
-  it('deadline still beats theme bias', () => {
+  it('theme beats deadline (theme is the primary key)', () => {
+    // theme → due → priority → id: a themed task leads even an urgent unthemed one.
     const tasks: PlanTask[] = [
       { task_id: 'A', title: 'Themed, no deadline', priority: 3, due_at: null, estimated_minutes: 30, tags: ['deep-work'] },
       { task_id: 'B', title: 'Not themed, urgent due', priority: 3, due_at: '2026-06-22T09:00:00Z', estimated_minutes: 30, tags: ['admin'] },
     ];
     const indices = deterministicIndices(tasks, 'deep-work');
-    expect(indices[0]).toBe(1); // B (urgent deadline) first
-    expect(indices[1]).toBe(0); // A (themed but no deadline) second
+    expect(indices[0]).toBe(0); // A (themed) leads despite no deadline
+    expect(indices[1]).toBe(1); // B (urgent but unthemed) second
   });
 
-  it('theme bias is between deadline and priority (theme beats priority, deadline beats theme)', () => {
-    // Sort key: due → themeTag → priority → id
+  it('theme is primary; deadline then priority order within a theme band', () => {
+    // Sort key: themeTag → due → priority → id
     // A: P3 deep-work (themed) due=null
     // B: P1 admin (not themed) due=null
-    // Both same due_at → tie broken by theme: A (themed=0) before B (themed=1)
+    // Theme is primary → A (themed) before B (P1 but unthemed).
     const tasks: PlanTask[] = [
       { task_id: 'A', title: 'P3 themed', priority: 3, due_at: null, estimated_minutes: 30, tags: ['deep-work'] },
       { task_id: 'B', title: 'P1 not themed', priority: 1, due_at: null, estimated_minutes: 30, tags: ['admin'] },
