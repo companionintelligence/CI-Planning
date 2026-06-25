@@ -1,15 +1,32 @@
 # Tasks / Planner / Nav UI Overhaul — Ticketed Plan
 
-> **Status (reconciled 2026-06-25).** Migration head is now **`0066`**. **Shipped:** Wave 0
-> (T-CORE-1…5, **PR #147**, on `main`) and **Phase M** (the AI scheduler, **PR #146**, migrations
-> `0062–0066`). Phase M also lands most of **T-FP-2** (deadline-first scheduling order). Everything
-> else below is still **open**. Each ticket is a self-contained agent prompt; the wave fans out
-> across worktree agents by **strict file ownership** (no two tickets in the same wave edit the same file).
+> **Status (refreshed 2026-06-25).** Migration head **`0067`** (Phase M #146 + #148 merged).
 >
-> Companion to [README.md](../README.md) and [GLOSSARY.md](GLOSSARY.md). Every label below
-> uses the canonical vocabulary: **Task** · **Time Block** · **Routine** · **Tag /
-> pattern-tag (direction = Home/Work/Community)** · **Inbox** · **Flight-plan** ·
-> **Planner / Calendar** · **Pattern-block** (availability window).
+> **✅ Shipped to `main`:** Wave 0 foundation (T-CORE-1…5, #147); Phase M AI scheduler (#146/#148);
+> the **task card** right rail + direction outline + one-click-to-Flight-plan (T-TASKS-2/3/5, #150);
+> **Planner** clear-day + first-block scroll (T-PLAN-1/2, #151) and the **Selected Task Summary** that
+> replaced the block click pop-up, now a strip inside the Planner card (T-PLAN-3/4/5, #155);
+> **Flight-plan** Fill⇄Clear + Due-Date relabel (T-FP-1/2, #152); the **wizard** weekly day-picker +
+> Depends-on task search (T-TB-1 / T-DEP-1, #153); **Routine-type creation removed** (T-SET-1, #154).
+>
+> **🔄 In flight:** Tasks **sort + Archive** — T-TASKS-4 plus the Completed / Thrown-away collapsible
+> archive (**PR #156, open**).
+>
+> **⬜ Remaining — the only work left (3 groups):**
+> 1. **Tasks tabs + nav restructure** — **T-TASKS-1** (Routines / Time-Blocks / Patterns tabs),
+>    **T-TASKS-6** (functional Time-Blocks tab), **T-NAV-1** (Calendar → 4th nav button, drop Routines
+>    from nav, redirect `/patterns`), and the Routine-menu tickets **T-RTN-1/2**. Needs extracting the
+>    Routines/Time-Blocks panels out of the closure-heavy `Patterns.tsx` (deferred from #156 for this reason).
+> 2. **Day-types** — **T-SCHED-3** ("not every Monday is a Workday": custom day types + per-date
+>    assignment) is the wave's **one migration (`0068`)** + a `resolveDayType` engine change; then
+>    **T-SCHED-1/4** (UI) and **T-SCHED-2** (schedule-mode horizon). Run as a sequential phase.
+> 3. **Wave 2 cross-cutting** — **T-DOCS-1** (README/GLOSSARY/screenshots) + **T-QA-1** (e2e coverage +
+>    enable client tests in CI).
+>
+> Each ticket is a self-contained agent prompt; the wave fans out by **strict file ownership**.
+> Companion to [README.md](../README.md) and [GLOSSARY.md](GLOSSARY.md); canonical vocabulary:
+> **Task · Time Block · Routine · Tag/pattern-tag (Home/Work/Community) · Inbox · Flight-plan ·
+> Planner/Calendar · Pattern-block**.
 
 ## Working agreements (apply to EVERY ticket — non-negotiable)
 
@@ -21,10 +38,9 @@
    dependency, a new DB migration, a new SSE event, or a change to scheduler/grooming
    behavior, **stop and ask** — flag it in the PR, do not proceed.
 3. **Exactly ONE migration in this wave**, in **T-SCHED-3** (custom day types + per-date
-   assignment — consent recorded 2026-06-25). Every other ticket stays migration-free. `main` is at
-   head `0066`, but **Phase M's open PR #148** (restart-durable nudge / `replan_suggestions`) already
-   claims **`0067`** — so T-SCHED-3 takes the **next free number, likely `0068`**; coordinate before
-   numbering. No other ticket may add a migration without fresh consent.
+   assignment — consent recorded 2026-06-25). Every other shipped ticket was migration-free. `main`
+   is at head **`0067`** (Phase M #148's `replan_suggestions` merged), so **T-SCHED-3 takes `0068`**.
+   No other ticket may add a migration without fresh consent.
 4. **Glossary fidelity.** User-facing labels map to a glossary noun/state/subtype. New
    labels that aren't in the glossary are bugs — raise them.
 5. **Local-first, owner-in-the-loop.** Nothing auto-creates a Task without the owner's
@@ -37,38 +53,37 @@
 
 ## Ticket index
 
-| ID | Group | Title | Depends on |
-|----|-------|-------|-----------|
-| T-CORE-1 | Foundation | Shared SortControl + sort comparators | ✅ shipped #147 |
-| T-CORE-2 | Foundation | `directionColorForTask` helper | ✅ shipped #147 |
-| T-CORE-3 | Foundation | `activeTask` selection signal | ✅ shipped #147 |
-| T-CORE-4 | Foundation | Clear-day endpoint + `api.blocks.clearDay` | ✅ shipped #147 |
-| T-CORE-5 | Foundation | `SchedulePatternEditor` shared component + api | ✅ shipped #147 |
-| **T-TASKS-1** | **Tasks view** | **Tab restructure: Routines tab + Patterns "Coming Soon" stub** | T-NAV-1 |
-| **T-TASKS-2** | **Tasks view** | **Task-card right rail: priority toggle + Due + Start** | T-CORE-2 |
-| **T-TASKS-3** | **Tasks view** | **Direction-color container outline** | T-CORE-2 |
-| **T-TASKS-4** | **Tasks view** | **Sort controls (date / priority / direction)** | T-CORE-1 |
-| **T-TASKS-5** | **Tasks view** | **One-click send to Flight-plan** | — |
-| **T-TASKS-6** | **Tasks view** | **Functional Time Blocks tab (saved templates)** | T-TASKS-1 |
-| T-NAV-1 | Navigation | Calendar → 4th primary; remove Routines from nav | — |
-| T-PLAN-1 | Planner | Clear-day button in Planner header | T-CORE-4 |
-| T-PLAN-2 | Planner | Scroll to 1h before first scheduled block | — |
-| T-PLAN-3 | Planner | Selected Task Summary panel | T-CORE-2, T-CORE-3 |
-| T-PLAN-4 | Planner | Replace block-click pop-up with selection | T-CORE-3, T-PLAN-3 |
-| T-PLAN-5 | Planner | Constrain Planner/Flight-plan width to header | — |
-| T-FP-1 | Flight-plan | Fill ⇄ Clear toggle | — |
-| T-FP-2 | Flight-plan | Priority ⇄ Due-Date order — ⚠ server order shipped by Phase M; client relabel only | T-CORE-1 |
-| T-SCHED-1 | Schedule | Assign day types + edit windows per day (Today + Calendar) | T-SCHED-3, T-CORE-5 |
-| T-SCHED-2 | Schedule | Schedule-mode horizon control + apply N days ahead | — |
-| T-SCHED-3 | Schedule | Custom day types + per-date assignment (model + resolver + **migration**) | — |
-| T-SCHED-4 | Schedule | Manage custom day types in Settings (CRUD) | T-SCHED-3 |
-| T-SET-1 | Settings | Remove Routine-type creation | — |
-| T-TB-1 | Time Block menu | Weekly recurrence day-of-week picker | — |
-| T-DEP-1 | Task menu | "Depends on" task-search field (not a multi-select) | — |
-| T-RTN-1 | Routine menu | Add existing + new-by-name tasks at create | T-TASKS-1 |
-| T-RTN-2 | Routine menu | Edit-task affordance in Routines tab | T-TASKS-1 |
-| T-DOCS-1 | Cross-cutting | Update README / GLOSSARY / screenshots | all Wave-1 |
-| T-QA-1 | Cross-cutting | E2E coverage + enable client tests in CI | all Wave-1 |
+_Status legend: ✅ merged · 🔄 open PR · ⬜ not started._
+
+| ID | Group | Title | Status |
+|----|-------|-------|--------|
+| T-CORE-1…5 | Foundation | SortControl, comparators, `directionColorForTask`, `activeTask`, clear-day, `SchedulePatternEditor` | ✅ #147 |
+| T-TASKS-2 | Tasks view | Task-card right rail: priority toggle + Due + Start | ✅ #150 |
+| T-TASKS-3 | Tasks view | Direction-color container outline | ✅ #150 |
+| T-TASKS-5 | Tasks view | One-click send to Flight-plan | ✅ #150 |
+| T-PLAN-1 | Planner | Clear-day button in Planner header | ✅ #151 |
+| T-PLAN-2 | Planner | Scroll to 1h before first scheduled block | ✅ #151 |
+| T-PLAN-3 | Planner | Selected Task Summary panel (strip inside the Planner card) | ✅ #155 |
+| T-PLAN-4 | Planner | Block click selects → summary (no pop-up) | ✅ #155 |
+| T-PLAN-5 | Planner | Width frame | ✅ #155 |
+| T-FP-1 | Flight-plan | Fill ⇄ Clear toggle | ✅ #152 |
+| T-FP-2 | Flight-plan | Priority ⇄ Due-Date relabel (server order shipped w/ Phase M) | ✅ #152 |
+| T-TB-1 | Time Block menu | Weekly recurrence day-of-week picker | ✅ #153 |
+| T-DEP-1 | Task menu | "Depends on" task-search field | ✅ #153 |
+| T-SET-1 | Settings | Remove Routine-type creation | ✅ #154 |
+| T-TASKS-4 | Tasks view | Sort controls (priority / due / direction) | 🔄 PR #156 |
+| Archive | Tasks view | Archive view — Completed + Thrown-away, collapsible | 🔄 PR #156 |
+| **T-TASKS-1** | **Tasks view** | **Routines / Time-Blocks / Patterns tabs** (extract from `Patterns.tsx`) | ⬜ pairs w/ T-NAV-1 |
+| **T-TASKS-6** | **Tasks view** | **Functional Time Blocks tab (saved templates)** | ⬜ after T-TASKS-1 |
+| **T-NAV-1** | **Navigation** | **Calendar → 4th nav button; remove Routines from nav; redirect `/patterns`** | ⬜ pairs w/ T-TASKS-1 |
+| **T-RTN-1** | **Routine menu** | **Add existing + new-by-name tasks at create** | ⬜ after T-TASKS-1 |
+| **T-RTN-2** | **Routine menu** | **Edit-task affordance in Routines tab** | ⬜ after T-TASKS-1 |
+| **T-SCHED-3** | **Schedule** | **Custom day types + per-date assignment (model + resolver + migration `0068`)** | ⬜ the wave's only migration |
+| **T-SCHED-1** | **Schedule** | **Assign day types + edit windows per day (Today + Calendar)** | ⬜ after T-SCHED-3 |
+| **T-SCHED-4** | **Schedule** | **Manage custom day types in Settings (CRUD)** | ⬜ after T-SCHED-3 |
+| **T-SCHED-2** | **Schedule** | **Schedule-mode horizon control + apply N days ahead** | ⬜ |
+| **T-DOCS-1** | **Cross-cutting** | **Update README / GLOSSARY / screenshots** | ⬜ Wave 2 |
+| **T-QA-1** | **Cross-cutting** | **E2E coverage + enable client tests in CI** | ⬜ Wave 2 |
 
 ---
 
