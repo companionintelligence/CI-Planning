@@ -115,6 +115,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   recurrenceParentId: text('recurrence_parent_id'),  // template id on an instance (no FK: cleared by hand)
   occurrenceDate: text('occurrence_date'),           // YYYY-MM-DD local day of an instance
   autoRunId: text('auto_run_id'),                    // the Auto placement run that created this block (0052; for Undo)
+  lastMovedAt: text('last_moved_at'),               // B1: UTC ISO when reflow last moved this block (anti-thrash stability window)
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
