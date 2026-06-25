@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight, Sparkles } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -123,16 +123,23 @@ function useBlockDrag(opts: {
 interface MenuItem { label: string; icon: any; onClick: () => void; danger?: boolean }
 
 /** The options popover (Edit / Remove / …) — fixed-positioned + z-999 so it's never clipped. */
-function BlockMenu(props: { pos: { x: number; y: number }; title: string; items: MenuItem[]; onClose: () => void }) {
+function BlockMenu(props: { pos: { x: number; y: number }; title: string; rationale?: string | null; items: MenuItem[]; onClose: () => void }) {
   return (
     <>
       <div class="fixed inset-0 z-[998]" onClick={props.onClose} onPointerDown={(e) => e.stopPropagation()} />
       <div
-        class="fixed z-[999] rounded-md border border-border bg-popover shadow-2xl text-xs overflow-hidden min-w-[150px]"
+        class="fixed z-[999] rounded-md border border-border bg-popover shadow-2xl text-xs overflow-hidden min-w-[150px] max-w-[260px]"
         style={{ left: `${Math.min(props.pos.x, window.innerWidth - 160)}px`, top: `${Math.min(props.pos.y, window.innerHeight - 120)}px` }}
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div class="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-border truncate">{props.title}</div>
+        {/* §A3: AI "why now" rationale, when this placement was AI-authored. */}
+        <Show when={props.rationale}>
+          <div class="px-2.5 py-1.5 text-[10px] text-primary border-b border-border flex items-start gap-1.5">
+            <Sparkles size={10} class="flex-shrink-0 mt-0.5" />
+            <span class="leading-snug">{props.rationale}</span>
+          </div>
+        </Show>
         <For each={props.items}>
           {(it) => (
             <button onClick={it.onClick} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent"
@@ -452,7 +459,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
 
       {/* Options popover (click the chip) — fixed/z-999 so the chip's overflow never clips it. */}
       <Show when={menu()}>
-        {(pos) => <BlockMenu pos={pos()} title={b().title} onClose={() => setMenu(null)} items={menuItems()} />}
+        {(pos) => <BlockMenu pos={pos()} title={b().title} rationale={b().rationale} onClose={() => setMenu(null)} items={menuItems()} />}
       </Show>
     </div>
   );
