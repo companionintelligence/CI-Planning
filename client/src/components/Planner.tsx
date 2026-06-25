@@ -6,7 +6,7 @@ import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } 
 import { resolveGroup, containerAt } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
-import { isSelected, toggleSelection } from '../stores/selection.js';
+import { isSelected, toggleSelection, setActiveTask } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
@@ -14,6 +14,7 @@ import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
+import { SelectedTaskSummary } from './SelectedTaskSummary.js';
 
 /** Open the unified Element wizard to edit a Time Block. */
 function editTimeBlock(id: string) {
@@ -321,7 +322,9 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
     block: b, day: props.day, locked,
     baseTop: () => props.placed.top, baseHeight: () => props.placed.height,
-    onClick: (x, y) => setMenu({ x, y }),
+    // T-PLAN-4: a task chip click SELECTS it (drives the Selected Task Summary);
+    // non-task blocks (meetings/focus/etc.) keep the inline options menu.
+    onClick: (x, y) => { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setMenu({ x, y }); },
     onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
     onMoveEnd: () => props.group.onMoveEnd(),
     onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
@@ -406,7 +409,8 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
       }}
       onClick={(e) => {
         if (props.updateMode) { void setDone(!completed()); return; }
-        if (locked()) setMenu({ x: e.clientX, y: e.clientY });
+        // Locked chips don't drag, so the click lands here: select tasks, menu otherwise.
+        if (locked()) { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setMenu({ x: e.clientX, y: e.clientY }); }
       }}
     >
       {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
@@ -770,6 +774,10 @@ export function Planner() {
           </div>
         </div>
       </div>
+
+      {/* Selected Task Summary (T-PLAN-3) — a strip at the top of the board showing the
+          clicked task's quick actions; replaces the old block click pop-up. */}
+      <SelectedTaskSummary />
 
       {/* Header lane — all-day Plans + Concepts whose goal day is today (off the grid). */}
       <Show when={hasHeaderLane()}>
