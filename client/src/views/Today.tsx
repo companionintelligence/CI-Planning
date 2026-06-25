@@ -7,6 +7,7 @@ import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { MissedReview } from '../components/MissedReview.js';
+import { ReplanBanner } from '../components/ReplanBanner.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
@@ -125,6 +126,8 @@ export function Today() {
         </div>
       </div>
 
+      {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
+      <ReplanBanner />
       {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
       <MissedReview />
 

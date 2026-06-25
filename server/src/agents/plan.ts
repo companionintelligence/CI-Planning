@@ -382,7 +382,12 @@ function revisePrompt(lines: string[], order: number[], defects: Defect[], criti
  * - Never throws: Ollama failures always fall back to the deterministic order.
  * - Does NOT place blocks. Placement reads `daily_plan.position` independently.
  */
-export async function authorPlanOrder(owner: string, date: string): Promise<void> {
+export async function authorPlanOrder(owner: string, date: string, opts: { force?: boolean } = {}): Promise<void> {
+  // B4 accept (`force`): drop the prior authored order so the author-once guard
+  // re-opens and the day is freshly re-authored (LLM if smart+Ollama up, else
+  // deterministic). The only reactive path that re-runs authoring, behind explicit
+  // user accept — reflow itself never calls this.
+  if (opts.force) sqlite.prepare(`DELETE FROM daily_plan WHERE owner_id = ? AND date = ?`).run(owner, date);
   if (dailyPlanAuthored(owner, date)) return;
 
   const prefs = loadPlanningPrefs(owner);

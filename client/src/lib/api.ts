@@ -202,6 +202,13 @@ export const api = {
       request<{ result: { removed: number; restaged: number }; flight_plan: FlightPlanItem[] }>('POST', '/auto/undo', {}),
   },
 
+  // Phase M B4 — escalation accept/dismiss. reauthor forces an AI re-author of the day
+  // (the only reactive LLM path); dismiss drops the outstanding nudge.
+  plan: {
+    reauthor: (date: string) => request<{ ok: boolean; date: string }>('POST', '/plan/reauthor', { date }),
+    dismiss: (date: string) => request<{ ok: boolean }>('POST', '/plan/reauthor/dismiss', { date }),
+  },
+
   blockTemplates: {
     list: () => request<{ block_templates: BlockTemplate[] }>('GET', '/block-templates'),
     create: (body: { name: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[] }) =>

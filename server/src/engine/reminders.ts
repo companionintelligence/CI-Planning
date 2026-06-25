@@ -32,8 +32,9 @@ interface SubRow {
   auth: string;
 }
 
-/** An owner's push subscriptions, each shaped for `web-push`. */
-function subsFor(ownerId: string): { id: string; sub: PushSub }[] {
+/** An owner's push subscriptions, each shaped for `web-push`. Exported so other
+ *  notifiers (B4 replan nudge) reuse the same query + shape. */
+export function subsFor(ownerId: string): { id: string; sub: PushSub }[] {
   const rows = sqlite
     .prepare(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE owner_id = ?`)
     .all(ownerId) as SubRow[];
