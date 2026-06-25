@@ -53,20 +53,32 @@ interface PlanningPrefs {
   workday_end: string;
   /** §C2 — day-of-week → theme tag map. Null/undefined = no theming. */
   day_theme?: Record<string, string> | null;
+  /**
+   * Controls the deterministic authoring sort (and the no-daily_plan workday fill):
+   *   'overdue'  → deadline-first (due_at → priority). The Phase-M default.
+   *   'priority' → priority-first (priority → due_at). Legacy opt-in.
+   */
+  fill_order?: string;
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────────────────
 
 function loadPlanningPrefs(owner: string): PlanningPrefs {
   const row = sqlite
-    .prepare(`SELECT planning_mode, workday_start, workday_end, day_theme FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as (PlanningPrefs & { day_theme: string | null }) | undefined;
-  if (!row) return { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00' };
+    .prepare(`SELECT planning_mode, workday_start, workday_end, day_theme, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as (PlanningPrefs & { day_theme: string | null; fill_order: string | null }) | undefined;
+  if (!row) return { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00', fill_order: 'overdue' };
   let day_theme: Record<string, string> | null = null;
   if (row.day_theme) {
     try { day_theme = JSON.parse(row.day_theme) as Record<string, string>; } catch { /* ignore malformed */ }
   }
-  return { planning_mode: row.planning_mode, workday_start: row.workday_start, workday_end: row.workday_end, day_theme };
+  return {
+    planning_mode: row.planning_mode,
+    workday_start: row.workday_start,
+    workday_end: row.workday_end,
+    day_theme,
+    fill_order: row.fill_order ?? 'overdue',
+  };
 }
 
 function dailyPlanAuthored(owner: string, date: string): boolean {
@@ -124,30 +136,39 @@ export function todayThemeTag(dayTheme: Record<string, string> | null | undefine
 /**
  * Produce a deterministic ordering of tasks as indices.
  *
- * Sort key:
- *   1. due_at (sooner first; null = far future)
- *   2. §C2 themeTag: themed tasks before non-themed (within same deadline band)
- *   3. priority (lower number = higher priority → first)
- *   4. task_id (stable tiebreaker)
+ * `fillOrder` selects the primary key (maps the user-facing `fill_order` pref
+ * onto authoring — Phase M §0 follow-up):
+ *   • 'overdue' (default) → deadline-first: due_at → §C2 theme → priority → id
+ *   • 'priority'          → priority-first: priority → §C2 theme → due_at → id
+ *
+ * In both modes the §C2 theme bias slots between the primary and secondary keys
+ * (themed tasks first within the same band), and task_id is the stable tiebreaker.
  */
-export function deterministicIndices(tasks: PlanTask[], themeTag?: string | null): number[] {
+export function deterministicIndices(
+  tasks: PlanTask[],
+  themeTag?: string | null,
+  fillOrder?: string,
+): number[] {
+  const priorityFirst = fillOrder === 'priority';
+  const themeCmp = (a: number, b: number): number => {
+    if (!themeTag) return 0;
+    const themA = tasks[a].tags.includes(themeTag) ? 0 : 1;
+    const themB = tasks[b].tags.includes(themeTag) ? 0 : 1;
+    return themA - themB;
+  };
+  const dueCmp = (a: number, b: number): number =>
+    (tasks[a].due_at ?? '9999').localeCompare(tasks[b].due_at ?? '9999');
+  const priCmp = (a: number, b: number): number => tasks[a].priority - tasks[b].priority;
+
   return tasks
     .map((_, i) => i)
     .sort((a, b) => {
-      const dueA = tasks[a].due_at ?? '9999';
-      const dueB = tasks[b].due_at ?? '9999';
-      const dueCmp = dueA.localeCompare(dueB);
-      if (dueCmp !== 0) return dueCmp;
-
-      // §C2: theme bias between deadline and priority
-      if (themeTag) {
-        const themA = tasks[a].tags.includes(themeTag) ? 0 : 1;
-        const themB = tasks[b].tags.includes(themeTag) ? 0 : 1;
-        if (themA !== themB) return themA - themB;
-      }
-
-      const priCmp = tasks[a].priority - tasks[b].priority;
-      if (priCmp !== 0) return priCmp;
+      const primary = priorityFirst ? priCmp(a, b) : dueCmp(a, b);
+      if (primary !== 0) return primary;
+      const theme = themeCmp(a, b);
+      if (theme !== 0) return theme;
+      const secondary = priorityFirst ? dueCmp(a, b) : priCmp(a, b);
+      if (secondary !== 0) return secondary;
       return tasks[a].task_id.localeCompare(tasks[b].task_id);
     });
 }
@@ -365,11 +386,13 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
 
   // §C2: resolve today's theme tag (null = no theming today)
   const themeTag = todayThemeTag(prefs.day_theme, date);
+  // fill_order maps onto the deterministic authoring sort (default deadline-first).
+  const fillOrder = prefs.fill_order ?? 'overdue';
 
   const aiEnabled = prefs.planning_mode === 'smart';
   if (!aiEnabled || !(await isAvailable())) {
     // Deterministic path: apply theme bias, then §A2 post-pass
-    const detIndices = deterministicIndices(staged, themeTag);
+    const detIndices = deterministicIndices(staged, themeTag, fillOrder);
     const postPassed = tagGroupPostPass(detIndices, staged);
     const defects = checkOrder(postPassed, staged, date);
     const final = defects.length === 0 ? postPassed : detIndices;
@@ -428,7 +451,7 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
         return safeOrder(raw, staged);
       },
 
-      baseline: () => deterministicIndices(staged, themeTag),
+      baseline: () => deterministicIndices(staged, themeTag, fillOrder),
     },
     {
       onEscape: (ownerId, stage, info) => {

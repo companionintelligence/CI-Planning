@@ -188,7 +188,8 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Eight views** — Today · Calendar · Inbox · Tasks · Routines · Tags · Jobs · Settings
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
-  hours, pattern-block windows, locked meetings, and break preferences; reflows when you change the day
+  hours, pattern-block windows, locked meetings, and break preferences; re-packs on demand,
+  protecting in-progress and recently-moved blocks (automatic reflow on day changes is in progress)
 - **Pattern blocks** — named availability windows (Home / Work / Community) that shade
   the Planner and constrain auto-placement; per-pattern fill toggle and reminder offsets
 - **Routines** — typed task collections (Routine ▢ / Habit ◯) placed via a flight-plan

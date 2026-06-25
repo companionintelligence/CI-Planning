@@ -318,6 +318,9 @@ Deterministic reflow handles *placement* perfectly but can't *re-triage* — whe
 - **Files changing.** `agents/plan.ts` / `engine/autoplan.ts` authoring (theme bias in the ordering comparator), `routes/prefs.ts` + Settings UI to edit the map.
 - **Tests.** Themed weekday biases matching tags; non-matching unaffected; empty/missing theme = no change; weekday boundary correct under tz.
 - **DoD.** `day_theme` demonstrably affects ordering; the claim becomes true. **Effort: ~1 day.**
+- **Shipped decisions (accepted, not bugs).**
+  - **Theme outranks priority within a deadline band.** `deterministicIndices` orders `primary(due|priority) → theme → secondary`, so a *themed* low-priority task can lead an *unthemed* higher-priority one when both share a deadline band. This is intended — theming is a deliberate "do this kind of work today" override. A themed task can never jump a *strictly earlier* deadline (the primary key wins first).
+  - **Weekday derives from the server tz.** `todayThemeTag` reads the weekday from the `date` string at UTC-noon (boundary-safe for the *string*), but the date itself is `localISODate()` (server tz) — the same single-user/`launchd` assumption the rest of the scheduler makes. A non-server-tz owner near midnight could see the prior/next day's theme. Revisit when multi-tz (Phase L multi-device) lands; until then it's documented, not fixed.
 
 ### C3 — `sqlite-vec` for dedupe
 - **Goal.** Replace the O(n²) cosine loop with a `vec0` KNN query; keep cosine as fallback.
@@ -378,6 +381,6 @@ New endpoints: `POST /api/plan/instruct` (A4), `POST /api/plan/reauthor` + `/dis
 ## Known issues (not fixed by this plan)
 These survive the v2 revision and should be decided while building, not discovered later:
 1. **No whole-feature eval / ROI.** Nothing yet shows LLM ordering beats the deterministic priority/due sort. Add a cheap **offline A/B** (LLM order vs deterministic, scored or measured against actual completion) *before* committing the full §A0 loop — otherwise weeks of local-inference cost may buy indistinguishable plans.
-2. **CI can't exercise the AI path** (no Ollama) — the loop/judge/reviser run only their fallback in CI. Needs a **mock-LLM harness** or the most novel code ships least-tested.
+2. ~~**CI can't exercise the AI path** (no Ollama) — the loop/judge/reviser run only their fallback in CI.~~ **Resolved:** `loop.test.ts` mocks the harness contract and `authoring-llm.test.ts` mocks `mcp/ollama.js` (branching on generate tier) to drive `authorPlanOrder`'s LLM path — `source='llm'` permutation, Ollama-down fallback, and `safeOrder` append-missing are all exercised in CI.
 3. **In-memory B2/B4 state** (debounce + outstanding-nudge maps) is lost on a laptop restart — for this local/`launchd` deployment the "optional" persistence migration is closer to required.
 4. **Four overlapping reschedulers** (once-a-day authoring, deterministic reflow, nightly `review_day`, manual Fill/Place) — v2 improves the mental model ("AI plans when you ask; the system defends deterministically"), but the composition still needs a single user-facing explanation.
