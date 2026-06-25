@@ -1,9 +1,13 @@
 # plan-import — additive task import with in-queue dedup
 
-> **Status:** design, 2026-06-24. Implements the **`compare_and_merge`** grooming
-> step named in [ingestion-plan.md §5–6](ingestion-plan.md) for the *generic*
-> "tasks coming in" case (not just Gmail/Calendar). Companion to
-> [GLOSSARY.md](GLOSSARY.md) (canonical nouns) and the README pipeline. Authoritative
+> **Status:** design, rev. 2026-06-24 — reflects merges through migration head **0061**:
+> #140 merged this doc to `main`, and the **live Calendar/Gmail MCP** shipped (#141,
+> `GOOGLE_MODE=live`), so real items now flow into the Inbox — the dedup gap this plan
+> closes is **live, not hypothetical**. Implements the **`compare_and_merge`** grooming
+> step named in [ingestion-plan.md §5–6](ingestion-plan.md) for the *generic* "tasks
+> coming in" case (not just Gmail/Calendar). Companion to [GLOSSARY.md](GLOSSARY.md)
+> (canonical nouns) and the README pipeline; the optional semantic tier aligns with
+> **Phase M** ([M-ai-scheduler.md](M-ai-scheduler.md), Workstream C). Authoritative
 > future-phase list remains [ROADMAP.md](ROADMAP.md).
 
 ---
@@ -33,15 +37,18 @@ subtasks) are out of scope — see Non-goals.
   Community) vs intention; `level` 1 (top) vs >1 (secondary). *Subtask* = Task with `parent_id`.
 - **Match the existing API surface; don't invent endpoints** (ingestion-plan §1).
   Reuse `GET /api/possible-tasks` and `POST /api/possible-tasks/:id/promote|dismiss`.
-- **Behavior-preservation is the contract** (consolidation-plan): every step is
+- **Behavior-preservation is the contract** ([consolidation-plan](archive/consolidation-plan.md), now archived): every step is
   additive; existing tests stay green; *changing* a test expectation is a red flag.
   `dedupePossibles` (the existing embedding dedupe) is **not** modified — new code
   is added alongside it.
 - **Deterministic-first; AI optional.** Fuzzy match is deterministic and runs with
   Ollama down; the embedding tier is "LLM only for the ambiguous middle" and
-  degrades to a no-op when embeddings are unavailable (README: "dedupe off").
+  degrades to a no-op when embeddings are unavailable (README: "dedupe off"). When
+  **Phase M** lands `sqlite-vec` KNN dedupe (cosine fallback)
+  ([M-ai-scheduler.md](M-ai-scheduler.md) Workstream C), the semantic tier **reuses
+  that** instead of adding a parallel embedding path.
 - **Migrations** are numbered TS functions, additive + idempotent, registered in
-  `db/migrations/index.ts` (live head **0057**; next free **0058** — confirm at
+  `db/migrations/index.ts` (live head **0061**; next free **0062** — confirm at
   build time). **Audit**: every new mutating path calls `writeAudit(...)`.
 - **Verification ritual** (per PR): Node `>=26 <27`; `pnpm --filter server test`,
   client typecheck, and `migrate.test.ts` green; run grooming tests with `TZ=UTC`.
@@ -89,7 +96,7 @@ survivor, so dedup is lossless and auditable ("one review item per real action,
 linking every place it appeared" — ingestion-plan §5).
 
 **In-points.**
-- Migration runner on boot (`runMigrations` in `db/index.ts`) applies `0058`.
+- Migration runner on boot (`runMigrations` in `db/index.ts`) applies `0062`.
 - Drizzle `schema.ts` gains the new column(s) + table for typed reads/writes.
 
 **Out-points.**
@@ -100,7 +107,7 @@ linking every place it appeared" — ingestion-plan §5).
 - One backfilled provenance row per existing Inbox item (from its own `source_kind`/`source_ref`/`account`).
 
 **Files impacted.**
-- `server/src/db/migrations/0058_inbox_provenance.ts` (new)
+- `server/src/db/migrations/0062_inbox_provenance.ts` (new)
 - `server/src/db/migrations/index.ts` (register)
 - `server/src/db/schema.ts` (columns + `possibleTaskSources` table)
 - `server/test/migrate.test.ts` (or new `inbox-provenance.test.ts`)
@@ -112,7 +119,7 @@ linking every place it appeared" — ingestion-plan §5).
 - FK/PK integrity holds (`foreign_key_check` clean post-migrate).
 
 **Definition of done.**
-- `0058` registered; `schema.ts` matches DB; `migrate.test.ts` green on a fixture 0.x DB; full server suite + client typecheck green; no behavior change observable in the app.
+- `0062` registered; `schema.ts` matches DB; `migrate.test.ts` green on a fixture 0.x DB; full server suite + client typecheck green; no behavior change observable in the app.
 
 ---
 
@@ -135,7 +142,7 @@ linking every place it appeared" — ingestion-plan §5).
 
 **Files impacted.**
 - `server/src/agents/ingest.ts` (extend `upsertPossible` to write/refresh provenance + `account`; add `stageIncomingTasks`)
-- `server/src/jobs/index.ts` (+ a job kind, if cron/Jobs-runnable) and `0058`/seed (only if registering a job row)
+- `server/src/jobs/index.ts` (+ a job kind, if cron/Jobs-runnable) and `0062`/seed (only if registering a job row)
 - `server/src/lib/audit.ts` (reuse)
 - `server/test/ingest-stage.test.ts` (new)
 
@@ -191,7 +198,7 @@ band; skip cleanly when Ollama is down. **Never** writes to `tasks`; **never** m
 into a terminal-state Task.
 
 **In-points.**
-- `compareAndMerge(opts?): CompareMergeResult` in `agents/groom.ts` (uses `services/dedup.ts` + `embed()` from `mcp/ollama.ts` for the mid band only).
+- `compareAndMerge(opts?): CompareMergeResult` in `agents/groom.ts` (uses `services/dedup.ts` + `embed()` from `mcp/ollama.ts` for the mid band only — **interim**; switch to Phase M's `sqlite-vec` KNN when it lands).
 - Invoked by the existing **grooming** Job (and manually runnable from the Jobs view). Candidate set = pending `possible_tasks` (+ tags/due) and the owner's **non-terminal** Tasks (`open/TBD/scheduled/deferred`).
 
 **Out-points.**
@@ -204,7 +211,7 @@ into a terminal-state Task.
 - `server/src/services/dedup.ts` (consume)
 - `server/src/jobs/index.ts` (wire into the grooming job; ensure manual run) — **shared with PI-2** (see fan-out contention)
 - `server/test/compare-and-merge.test.ts` (new)
-- **No migration** — `duplicate_of_task_id` ships in PI-1's `0058`.
+- **No migration** — `duplicate_of_task_id` ships in PI-1's `0062`.
 
 **Acceptance criteria.**
 - Two near-identical pending items collapse to one survivor; loser is `duplicate` + linked; survivor provenance contains both sources.
@@ -251,7 +258,9 @@ the no-auto-write confirm step.
 ## 4. Risks / notes
 
 - **Title-only matching is weak** — PI-3 deliberately matches on title **+ due + tags** to cut false-collapses; thresholds are first guesses and must be tuned against real Inbox data (track false-merge rate via `audit_log`).
-- **Embedding non-determinism** — outcomes differ with Ollama on vs off; `CompareMergeResult.embeddingTierUsed` records which ran, and the fuzzy tier is the deterministic floor. Embeddings on short titles are noisy → they only adjudicate the ambiguous band, never override exact/fuzzy.
+- **Embedding non-determinism** — outcomes differ with Ollama on vs off; `CompareMergeResult.embeddingTierUsed` records which ran, and the fuzzy tier is the deterministic floor. Embeddings on short titles are noisy → they only adjudicate the ambiguous band, never override exact/fuzzy. When Phase M's `sqlite-vec` KNN dedupe lands
+  ([M-ai-scheduler.md](M-ai-scheduler.md) Workstream C), this tier reuses it (cosine
+  fallback) instead of a bespoke embedding loop.
 - **App-enforced integrity** — `possible_task_sources` and any new links must be cleaned on Inbox-item delete/dismiss (mirror the tag-repo discipline; the orphan-free test is the gate).
 - **Idempotency** — keyed on `(source_kind, source_ref)` at stage and on `status='duplicate'` skip at groom; re-import and re-groom are both no-ops on settled data.
 - **Scope creep guard** — if only PI-2+PI-4 are needed to ship value, PI-5 can follow; PI-3 is split out purely so the matcher is unit-tested in isolation.
@@ -275,7 +284,7 @@ schema.
 **DAG.**
 
 ```
-        ┌──────────── PI-1 (schema 0058) ───────────┐
+        ┌──────────── PI-1 (schema 0062) ───────────┐
         │                  │                          │
    PI-3 (matcher)          ▼            ▼             ▼
         │             PI-2 (stage)  PI-4 (groom)  PI-5 (Inbox UI)
@@ -300,14 +309,14 @@ collapse the five-PR line into roughly **two waves**.
   (grooming wiring). Keep each edit to its own job block; if both land in the same
   window, expect a trivial merge. Mitigation: have PI-4 wire `compareAndMerge` inside
   `agents/groom.ts`'s grooming entry and minimize `jobs/index.ts` churn.
-- All schema is in **PI-1's `0058`** (incl. PI-4's `duplicate_of_task_id`), so no two
+- All schema is in **PI-1's `0062`** (incl. PI-4's `duplicate_of_task_id`), so no two
   tickets add migrations — avoids migration-number races in `db/migrations/index.ts`.
 - PI-5 may ship before PI-4; it just shows no duplicate flags until PI-4 populates
   them. That's intended graceful degradation, not a dependency.
 
 ## 6. Suggested PR sequence (waves)
 
-1. **Wave A — parallel:** **PI-1** (schema `0058`, no behavior change) ‖ **PI-3**
+1. **Wave A — parallel:** **PI-1** (schema `0062`, no behavior change) ‖ **PI-3**
    (pure matcher, fully unit-tested).
 2. **Wave B — parallel, after PI-1:** **PI-4** (`compare_and_merge`, the core) ‖
    **PI-2** (staging entry) ‖ **PI-5** (Inbox provenance + flag UI).
