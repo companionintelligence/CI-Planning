@@ -1,5 +1,5 @@
 import { For, Show, createSignal } from 'solid-js';
-import { Check, X, Pencil, Trash2, Plus, Lock } from 'lucide-solid';
+import { Check, X, Pencil, Trash2, Lock } from 'lucide-solid';
 import { patternTypes, refetchPatternTypes, showToast } from '../stores/index.js';
 import { api, type PatternType } from '../lib/api.js';
 import { ShapeIcon } from './ShapeIcon.js';
@@ -24,7 +24,7 @@ function toEditState(t?: PatternType): EditState {
 }
 
 export function RoutineTypeSettings() {
-  const [editingId, setEditingId] = createSignal<string | 'new' | null>(null);
+  const [editingId, setEditingId] = createSignal<string | null>(null);
   const [editForm, setEditForm] = createSignal<EditState>(toEditState());
   const [confirmDelete, setConfirmDelete] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
@@ -32,12 +32,6 @@ export function RoutineTypeSettings() {
   function startEdit(t: PatternType) {
     setEditingId(t.id);
     setEditForm(toEditState(t));
-    setConfirmDelete(null);
-  }
-
-  function startNew() {
-    setEditingId('new');
-    setEditForm(toEditState());
     setConfirmDelete(null);
   }
 
@@ -60,14 +54,10 @@ export function RoutineTypeSettings() {
         default_est_minutes: f.default_est_minutes || null,
         notify: f.notify,
       };
-      if (id === 'new') {
-        await api.patternTypes.create(body);
-      } else {
-        await api.patternTypes.update(id, body);
-      }
+      await api.patternTypes.update(id, body);
       refetchPatternTypes();
       setEditingId(null);
-      showToast(id === 'new' ? 'Type created' : 'Type saved', 'success');
+      showToast('Type saved', 'success');
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
@@ -161,29 +151,6 @@ export function RoutineTypeSettings() {
         )}
       </For>
 
-      {/* New-type form */}
-      <Show when={editingId() === 'new'}>
-        <div class="rounded-lg border border-primary/40 bg-card overflow-hidden">
-          <div class="px-3 pt-2.5 text-xs font-medium text-muted-foreground">New type</div>
-          <TypeEditForm
-            form={editForm()}
-            onChange={setEditForm}
-            onSave={saveEdit}
-            onCancel={cancelEdit}
-            saving={saving()}
-          />
-        </div>
-      </Show>
-
-      <Show when={editingId() !== 'new'}>
-        <button
-          type="button"
-          onClick={startNew}
-          class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-1 py-1 self-start"
-        >
-          <Plus size={12} /> Add custom type
-        </button>
-      </Show>
     </div>
   );
 }

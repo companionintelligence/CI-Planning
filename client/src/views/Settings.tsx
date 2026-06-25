@@ -681,10 +681,10 @@ export function Settings() {
 
           {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
 
-          {/* Routine Types — create/edit/delete pattern type taxonomy */}
+          {/* Routine Types — edit the built-in pattern-type taxonomy (creation removed, T-SET-1) */}
           <div class="border-t border-border pt-4 mt-4">
             <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Routine Types</div>
-            <p class="text-xs text-muted-foreground mb-3">The categories your Routines, Habits, and custom types belong to. Built-in types can be edited but not deleted.</p>
+            <p class="text-xs text-muted-foreground mb-3">The built-in categories your Routines and Habits belong to. You can edit their shape, colour, and defaults — they can't be created or deleted.</p>
             <RoutineTypeSettings />
           </div>
         </section>
