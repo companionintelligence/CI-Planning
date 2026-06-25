@@ -14,6 +14,7 @@ import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
+import { SelectedTaskSummary } from './SelectedTaskSummary.js';
 
 /** Open the unified Element wizard to edit a Time Block. */
 function editTimeBlock(id: string) {
@@ -743,6 +744,10 @@ export function Planner() {
           </div>
         </div>
       </div>
+
+      {/* Selected Task Summary (T-PLAN-3) — a strip at the top of the board showing the
+          clicked task's quick actions; replaces the old block click pop-up. */}
+      <SelectedTaskSummary />
 
       {/* Header lane — all-day Plans + Concepts whose goal day is today (off the grid). */}
       <Show when={hasHeaderLane()}>

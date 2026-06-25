@@ -73,7 +73,7 @@ export function SelectedTaskSummary() {
   return (
     <Show when={task()}>
       {(t) => (
-        <div class="rounded-xl border border-border bg-card p-3 flex items-center gap-3">
+        <div class="flex items-center gap-3 px-3 py-2 border-b border-border bg-card/60 flex-shrink-0">
           <div style={{ color: dirColor() }} class="flex-shrink-0">
             <ShapeIcon shape={dirShape()} size={16} strokeWidth={1.75} />
           </div>
