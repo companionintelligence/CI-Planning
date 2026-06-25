@@ -29,6 +29,7 @@
     "koa-bodyparser": "^4.4.1",
     "koa-static": "^5.0.0",
     "rrule": "^2.8.1",
+    "sqlite-vec": "^0.1.9",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
