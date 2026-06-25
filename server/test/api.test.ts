@@ -183,12 +183,14 @@ describe('tasks / blocks / tags / possibles API', () => {
     expect(after.body.possibles.length).toBe(0);
   });
 
-  it('runs the scheduler for a day via POST /api/schedule/run', async () => {
-    await api(server.url, '/api/tasks', { method: 'POST', json: { title: 'Deep work', priority: 1, estimated_minutes: 60 } });
+  it('runs the reflow for a day via POST /api/schedule/run', async () => {
+    // B1: /api/schedule/run now drives deterministic reflow and returns a ReflowDiff.
     const res = await api(server.url, '/api/schedule/run', { method: 'POST', json: { date: '2026-06-01' } });
     expect(res.status).toBe(200);
-    expect(res.body.date).toBe('2026-06-01');
-    expect(res.body.blocksCreated).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(res.body.moved)).toBe(true);
+    expect(Array.isArray(res.body.removed)).toBe(true);
+    expect(Array.isArray(res.body.added)).toBe(true);
+    expect(Array.isArray(res.body.unplaced)).toBe(true);
   });
 
   it('serves a day summary via GET /api/summary', async () => {
