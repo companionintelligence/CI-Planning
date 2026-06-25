@@ -238,6 +238,7 @@ Follows [K-auto-defense.md](archive/K-auto-defense.md) with **one substitution t
 - **Files changing.** `engine/auto-defense.ts` (`requestReplan`, `scheduleDebounced`). **Migration 0063**: `scheduling_prefs.auto_defense_enabled` (recommend default **on** — reflow is bounded + nudge-gated). Wire `agents/ingest.ts`, `routes/tasks.ts`, and the missed-block sweep (also kept in the `auto_schedule` cron body as a safety net).
 - **Tests.** 5 calls/DEBOUNCE_MS ⇒ one reflow; prefs-off ⇒ no reflow/broadcast; missed block → `skipped` + task re-queued; no reflow-storm; trigger paths swallow errors.
 - **DoD.** Reflows fire reactively, bounded, gated, loop-safe. **Effort: ~1.5 days.**
+- **✅ Shipped (as-built).** `requestReplan(reason, owner?, date?)` + `sweepMissedBlocks(owner?, date?, now?)` in [auto-defense.ts](../server/src/engine/auto-defense.js); per-owner 1.5 s trailing debounce (`unref`'d), `auto_defense_enabled` gate, re-entrancy guard, errors swallowed; the debounced fire broadcasts `schedule:done` with the diff (B3 seam). Wired into `routes/tasks.ts` create/update/delete; the `auto_schedule` cron pairs `sweepMissedBlocks` + `requestReplan('missed')`; the `sync_calendar` cron fires `requestReplan('calendar')` on any inbound change. **Note vs plan:** the calendar trigger lives in the `sync_calendar` cron (after `syncAll`) rather than `ingestEvents`, because the meeting mirror moved into the connector reconciler ([agents/sync.ts](../server/src/agents/sync.js)) post-WP5. Tests: [replan.test.ts](../server/test/replan.test.ts) (9) — debounce collapse, toggle-off no-op, missed-block sweep (skip/requeue/in-progress/completed), HTTP trigger wiring on/off.
 
 ### B3 — Client toast + diff
 - **Goal.** A one-line "Re-planned: N blocks moved" toast on real change only.
@@ -351,15 +352,19 @@ Shared sequential DB; migration-on-import; snapshot pollution from resurrected t
 - **Eval tests can't assert exact model output.** Rubric tests assert the *harness* (separation, deterministic-gate, median, cap, escape hatch, log) — not specific generations; gate on Ollama availability like [plan.test.ts](../server/test/plan.test.ts) already does.
 
 ### Migrations & new endpoints summary
-| # | Change | Workstream |
-|---|---|---|
-| 0062 | `time_blocks.last_moved_at` | B1 |
-| 0063 | `scheduling_prefs.auto_defense_enabled` | B2 |
-| 0064 | `daily_plan` table (durable day plan: order, rationale, source, block_id) | §0 / A1 / A3 |
-| — (init) | `vec0` virtual table (guarded, not numbered) | C3 |
-| — | none — revision log reuses `audit_log`; `overrun` enum / `day_theme` / `planning_mode` already exist | §A0 / C1 / C2 / A5 |
+> **As-built note.** Migration numbers drifted from the original plan because the §0/A1/A2/C2 batch and an audit fix landed first. Actual head sequence: **0062** `daily_plan` (§0/A1/A3) · **0063** rename `planning_mode` values (basic/smart) · **0064** `time_blocks.last_moved_at` (B1) · **0065** flip `fill_order` default → `'overdue'` (deadline-first) · **0066** `scheduling_prefs.auto_defense_enabled` (B2, default on).
 
-New endpoints: `POST /api/plan/instruct` (A4), `POST /api/plan/reauthor` + `/dismiss` (B4). `POST /api/schedule/run` re-pointed to drive reflow (B1).
+| # | Change | Workstream | Status |
+|---|---|---|---|
+| 0062 | `daily_plan` table (durable day plan: order, rationale, source, block_id) | §0 / A1 / A3 | ✅ shipped |
+| 0063 | rename `planning_mode` values `ritual→basic`, `auto→smart` | A5 follow-up | ✅ shipped |
+| 0064 | `time_blocks.last_moved_at` | B1 | ✅ shipped |
+| 0065 | `fill_order` default → `'overdue'` (deadline-first; maps onto authoring) | §0 follow-up | ✅ shipped |
+| 0066 | `scheduling_prefs.auto_defense_enabled` (default on) | B2 | ✅ shipped |
+| — (init) | `vec0` virtual table (guarded, not numbered) | C3 | pending |
+| — | none — revision log reuses `audit_log`; `overrun` enum / `day_theme` / `planning_mode` already exist | §A0 / C1 / C2 / A5 | ✅ shipped |
+
+New endpoints: `POST /api/plan/instruct` (A4, pending), `POST /api/plan/reauthor` + `/dismiss` (B4, pending). `POST /api/schedule/run` re-pointed to drive reflow (B1, ✅).
 
 ### Recommended sequence
 1. **§0 seam + `daily_plan`** — add the durable day table; relocate the LLM hook to author into it; confirm Option A.

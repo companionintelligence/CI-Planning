@@ -2,6 +2,7 @@ import { Cron } from 'croner';
 import { sqlite } from '../db/index.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
 import { fillFlightPlanCandidates, autoScheduleOnIngest } from '../engine/autoplan.js';
+import { sweepMissedBlocks, requestReplan } from '../engine/auto-defense.js';
 import { reviewAndReschedule } from '../engine/review.js';
 import { fireDueReminders } from '../engine/reminders.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
@@ -68,7 +69,16 @@ async function execute(kind: string): Promise<JobOutcome> {
       // to *propose* open-task candidates into the flight-plan; placement is
       // user-triggered via POST /api/auto/run. See engine/autoplan.ts.
       const added = fillFlightPlanCandidates();
-      return { itemsCreated: added, itemsUpdated: 0, log: `Proposed ${added} candidates into the flight-plan (auto-pack retired)` };
+      // B2 safety net: sweep blocks whose planned time passed without being started,
+      // mark them missed, re-stage the work, and request a reactive reflow (debounced,
+      // toggle-gated) so the missed task gets re-placed into the remaining day.
+      const swept = sweepMissedBlocks();
+      if (swept.skipped > 0) requestReplan('missed');
+      return {
+        itemsCreated: added,
+        itemsUpdated: swept.skipped,
+        log: `Proposed ${added} candidates into the flight-plan; swept ${swept.skipped} missed block(s) (re-queued ${swept.requeued})`,
+      };
     }
     case 'generate_recurrences': {
       const r = generateRecurrences();
@@ -115,6 +125,9 @@ async function execute(kind: string): Promise<JobOutcome> {
       // WP5: place AFTER inbound so the Auto engine packs around the freshly-synced meeting
       // obstacles (the locked inbound blocks applyInbound just created). D1: no-op in suggest.
       const placed = autoScheduleOnIngest();
+      // B2: a calendar change shifts the day's obstacles — request a reactive reflow so
+      // existing task blocks re-pack around the new meetings (debounced, toggle-gated).
+      if (totals.created + totals.updated + totals.deleted > 0) requestReplan('calendar');
       return {
         itemsCreated: totals.created,
         itemsUpdated: totals.updated + totals.deleted,

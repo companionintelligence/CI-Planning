@@ -64,7 +64,8 @@ export function resetDb(): void {
       planning_horizon_days = 7,
       recall_keeps_pattern = 0,
       day_theme = NULL,
-      planning_mode = 'basic';
+      planning_mode = 'basic',
+      auto_defense_enabled = 0;
   `);
 }
 

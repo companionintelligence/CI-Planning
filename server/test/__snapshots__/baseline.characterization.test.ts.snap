@@ -909,6 +909,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "recall_keeps_pattern",
       "auto_mode",
       "fill_order",
+      "auto_defense_enabled",
     ],
     "table": "scheduling_prefs",
   },
