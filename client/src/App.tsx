@@ -1,4 +1,4 @@
-import { Route, Router, useLocation } from '@solidjs/router';
+import { Navigate, Route, Router, useLocation } from '@solidjs/router';
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { Plus, Cpu } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
@@ -9,7 +9,6 @@ import { Today }    from './views/Today.js';
 import { Calendar } from './views/Calendar.js';
 import { Inbox }    from './views/Inbox.js';
 import { AllTasks } from './views/AllTasks.js';
-import { Patterns } from './views/Patterns.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
@@ -155,7 +154,8 @@ export function App() {
       <Route path="/calendar" component={Calendar} />
       <Route path="/inbox"    component={Inbox} />
       <Route path="/tasks"    component={AllTasks} />
-      <Route path="/patterns" component={Patterns} />
+      {/* Routines moved into the Tasks screen as tabs (T-TASKS-1); redirect stale deep-links. */}
+      <Route path="/patterns" component={() => <Navigate href="/tasks" />} />
       <Route path="/tags"     component={Tags} />
       <Route path="/settings" component={Settings} />
       <Route path="/jobs"     component={Jobs} />
