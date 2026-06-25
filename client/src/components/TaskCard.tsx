@@ -1,7 +1,8 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { refetchTasks, showToast, setElementModal } from '../stores/index.js';
+import { refetchTasks, showToast, setElementModal, tags, patternPrefs } from '../stores/index.js';
+import { directionColorForTask } from '../lib/pattern-meta.js';
 
 const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
 const statusClass: Record<string, string> = {
@@ -11,6 +12,61 @@ const statusClass: Record<string, string> = {
   cancelled: 'text-slate-600 line-through',
   deferred:  'text-yellow-500',
 };
+
+// Priority selector options (T-TASKS-2). Four buckets over the 1–5 model: P1/P2/P3
+// map to 1/2/3; "Later" stores 4 and displays for any priority >= 4. Fill colours
+// mirror index.css .p1/.p2/.p3/.p5; fg picked for contrast on each.
+const PRIO: { label: string; value: number; bg: string; fg: string }[] = [
+  { label: 'P1',    value: 1, bg: '#ef4444', fg: '#fff' },
+  { label: 'P2',    value: 2, bg: '#f97316', fg: '#fff' },
+  { label: 'P3',    value: 3, bg: '#58ebbf', fg: '#0b1220' },
+  { label: 'Later', value: 4, bg: '#244859', fg: '#fff' },
+];
+
+function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
+  const isSel = (optVal: number) => (optVal === 4 ? props.value >= 4 : props.value === optVal);
+  return (
+    <div class="inline-flex rounded-md border border-border overflow-hidden text-[10px] font-semibold flex-shrink-0" role="group" title="Priority">
+      <For each={PRIO}>
+        {(o) => (
+          <button
+            type="button"
+            onClick={() => props.onPick(o.value)}
+            class="px-1.5 py-0.5 transition-colors"
+            classList={{ 'text-muted-foreground hover:text-foreground': !isSel(o.value) }}
+            style={isSel(o.value) ? { background: o.bg, color: o.fg } : {}}
+          >
+            {o.label}
+          </button>
+        )}
+      </For>
+    </div>
+  );
+}
+
+// Compact inline date field: a calendar icon + formatted date that reveals a native
+// date picker (transparent overlay), matching the Today/Settings "pick a day" pattern.
+function DateField(props: { label: string; value?: string | null; overdue?: boolean; onSet: (v: string) => void }) {
+  const ymd = () => (props.value ? props.value.slice(0, 10) : '');
+  const display = () => {
+    const v = ymd();
+    if (!v) return '—';
+    const d = new Date(v + 'T00:00:00');
+    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+  return (
+    <label class="relative flex items-center gap-1 text-[11px] cursor-pointer hover:text-foreground" title={`Set ${props.label.toLowerCase()} date`}>
+      <CalendarDays size={11} class="flex-shrink-0 text-muted-foreground" />
+      <span class={props.overdue ? 'text-red-400' : 'text-muted-foreground'}>{props.label} {display()}</span>
+      <input
+        type="date"
+        class="absolute inset-0 opacity-0 cursor-pointer"
+        value={ymd()}
+        onChange={(e) => props.onSet(e.currentTarget.value)}
+      />
+    </label>
+  );
+}
 
 interface Props {
   task: Task;
@@ -70,16 +126,38 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  const dueLabel = () => {
-    if (!props.task.due_at) return null;
-    const d = new Date(props.task.due_at);
-    const isOverdue = d < new Date() && props.task.status !== 'done';
-    return (
-      <span class={`font-mono text-xs ${isOverdue ? 'text-red-400' : 'text-slate-500'}`}>
-        {d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-        {props.task.task_time && <span class="ml-1 text-slate-600">{props.task.task_time}</span>}
-      </span>
-    );
+  // T-TASKS-2: inline priority / due / start edits, written straight through.
+  async function setPriority(v: number) {
+    try { await api.tasks.update(props.task.id, { priority: v }); refetchTasks(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function setDue(v: string) {
+    try { await api.tasks.update(props.task.id, { due_at: v || undefined }); refetchTasks(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  async function setStart(v: string) {
+    try { await api.tasks.update(props.task.id, { scheduled_for: v || undefined }); refetchTasks(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // T-TASKS-5: stage this task into the Flight-plan in one click (never schedules).
+  async function sendToFlightPlan() {
+    try {
+      const r = await api.flightPlan.addTask(props.task.id);
+      showToast(r.added ? 'Added to Flight-plan' : 'Already in Flight-plan', 'default');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  const dueOverdue = () =>
+    !!props.task.due_at && new Date(props.task.due_at) < new Date() && props.task.status !== 'done';
+
+  // T-TASKS-3: outline the card in its direction (pattern-tag) colour. Only when the
+  // task actually has a pattern-tag — undirected tasks keep the default border.
+  const dirColor = (): string | null => {
+    const defs = tags() ?? [];
+    const names = props.task.tags ?? [];
+    const hasDir = defs.some((t) => t.kind === 'pattern' && names.includes(t.name));
+    return hasDir ? directionColorForTask(props.task, defs, patternPrefs()?.prefs ?? {}) : null;
   };
 
   const est = () => props.task.estimated_minutes
@@ -92,7 +170,14 @@ export function TaskCard(props: Props) {
 
       <div
         class={`card group flex gap-3 ${props.task.status === 'done' ? 'opacity-40' : ''}`}
-        style={{ 'margin-bottom': '6px' }}
+        style={{
+          'margin-bottom': '6px',
+          // Uniform 3px left accent for every card (no relative shift); coloured by
+          // direction when the task has a pattern-tag, default border otherwise.
+          'border-left-style': 'solid',
+          'border-left-width': '3px',
+          'border-left-color': dirColor() ?? 'var(--border)',
+        }}
       >
         {/* Checkbox — habits aren't completed here; you mark occurrences done on the
             planner. Show a non-interactive habit marker instead of a checkbox. */}
@@ -118,7 +203,7 @@ export function TaskCard(props: Props) {
           </button>
         </Show>
 
-        {/* Content */}
+        {/* Content (unchanged: dot, title, description, tags, streak) */}
         <div class="flex-1 min-w-0">
           <div class="flex items-start gap-2">
             <span class={`priority-dot mt-[5px] ${priorityDot[p()]}`} />
@@ -131,8 +216,6 @@ export function TaskCard(props: Props) {
             <Show when={isInstance() && !props.task.is_habit}>
               <Repeat size={11} class="text-muted-foreground flex-shrink-0 mt-1" />
             </Show>
-            {dueLabel()}
-            {est()}
           </div>
 
           <Show when={props.task.notes || props.task.description}>
@@ -191,35 +274,48 @@ export function TaskCard(props: Props) {
           </Show>
         </div>
 
-        {/* Actions (visible on hover) */}
-        <div class="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity duration-100 flex-shrink-0">
-          <Show when={isInstance()}>
-            <button onClick={skip} class="btn-icon" title="Skip this occurrence">
-              <SkipForward size={13} />
-            </button>
-          </Show>
-          <button onClick={toggleSubs} class="btn-icon" title="Subtasks">
-            <Show when={showSubs()} fallback={<ChevronRight size={13} />}>
-              <ChevronDown size={13} />
-            </Show>
-          </button>
-          <button
-            class="btn-icon"
-            title="Add subtask"
-            onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}
-          >
-            <Plus size={13} />
-          </button>
-          <button
-            class="btn-icon"
-            title="Edit"
-            onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}
-          >
-            <Pencil size={13} />
-          </button>
-          <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task">
-            <Trash2 size={13} />
-          </button>
+        {/* Right rail (T-TASKS-2/5): hover actions + estimate on top, then the
+            always-visible priority toggle and Due / Start date fields. */}
+        <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
+          <div class="flex items-center gap-1 min-h-[18px]">
+            <div class="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity duration-100">
+              <button onClick={sendToFlightPlan} class="btn-icon hover:text-primary" title="Send to Flight-plan">
+                <Rocket size={13} />
+              </button>
+              <Show when={isInstance()}>
+                <button onClick={skip} class="btn-icon" title="Skip this occurrence">
+                  <SkipForward size={13} />
+                </button>
+              </Show>
+              <button onClick={toggleSubs} class="btn-icon" title="Subtasks">
+                <Show when={showSubs()} fallback={<ChevronRight size={13} />}>
+                  <ChevronDown size={13} />
+                </Show>
+              </button>
+              <button
+                class="btn-icon"
+                title="Add subtask"
+                onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}
+              >
+                <Plus size={13} />
+              </button>
+              <button
+                class="btn-icon"
+                title="Edit"
+                onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}
+              >
+                <Pencil size={13} />
+              </button>
+              <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task">
+                <Trash2 size={13} />
+              </button>
+            </div>
+            {est()}
+          </div>
+
+          <PriorityToggle value={p()} onPick={setPriority} />
+          <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
+          <DateField label="Start" value={props.task.scheduled_for} onSet={setStart} />
         </div>
       </div>
 
