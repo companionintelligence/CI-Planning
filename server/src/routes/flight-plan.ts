@@ -3,6 +3,8 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { runAuto, fillByPriority, undoLastAuto, fillFlightPlanCandidates, placeFlightPlan } from '../engine/autoplan.js';
+import { authorPlanOrder } from '../agents/plan.js';
+import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
 
 /**
@@ -115,12 +117,16 @@ export function flightPlanRouter() {
   });
 
   // Auto Schedule: place the selected staged items (tag-matched Plans → direction windows
-  // → workday fallback ordered by fill_order). Never proposes candidates.
+  // → workday fallback ordered by fill_order). Authors the day's plan order once before
+  // placing (no-op if already authored today; always falls back to deterministic if AI off).
   router.post('/api/auto/run', async (ctx) => {
+    const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string };
-    const result = placeFlightPlan(currentOwnerId(), { blockId: body.block_id, date: body.date });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:run' });
-    ctx.body = { result, flight_plan: list(currentOwnerId()) };
+    const date = body.date ?? localISODate();
+    await authorPlanOrder(owner, date);
+    const result = placeFlightPlan(owner, { blockId: body.block_id, date });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: 'flight-plan:run' });
+    ctx.body = { result, flight_plan: list(owner) };
   });
 
   // Explicit priority top-up (tap 3, D5): fill non-matching workday capacity with the
