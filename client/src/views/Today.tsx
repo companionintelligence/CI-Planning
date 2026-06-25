@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
+import { SelectedTaskSummary } from '../components/SelectedTaskSummary.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { PlanInstruct } from '../components/PlanInstruct.js';
@@ -126,6 +127,10 @@ export function Today() {
           <Pill icon={ListTodo}    value={open()}    label="open"    tone="foreground" />
         </div>
       </div>
+
+      {/* Selected Task Summary (T-PLAN-3) — a full-width sibling that matches the
+          Day Overview header width; visible only when a Planner task chip is selected. */}
+      <SelectedTaskSummary />
 
       {/* Natural-language planning instruction — pins become blocks, hints are noted (A4) */}
       <PlanInstruct />
