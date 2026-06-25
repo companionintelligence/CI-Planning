@@ -97,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0061 ordered list
+                                    // migrations from the 0001–0067 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -188,8 +188,18 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Eight views** — Today · Calendar · Inbox · Tasks · Routines · Tags · Jobs · Settings
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
-  hours, pattern-block windows, locked meetings, and break preferences; re-packs on demand,
-  protecting in-progress and recently-moved blocks (automatic reflow on day changes is in progress)
+  hours, pattern-block windows, locked meetings, and break preferences. Placement is always
+  deterministic and reproducible
+- **Reactive reflow** — when the day shifts (a task edited, a meeting synced, a block missed),
+  the schedule re-packs automatically around what's fixed: in-progress and recently-moved
+  blocks are protected, churn is bounded, and a debounce collapses bursts into one pass. A
+  low-noise toast reports what moved. Opt-out per owner (`auto_defense_enabled`)
+- **AI planning (optional, Ollama)** — with "AI day ordering" on, a local LLM orders the day
+  **once** (deadline / priority / momentum) into a durable plan; **placement stays
+  deterministic**. Each AI-placed block carries a one-line "why now" rationale. A natural-language
+  box turns "dentist 2–3pm" into pinned blocks the planner works around. On a big disruption the
+  reflow never silently re-plans — it surfaces a single **"re-plan with AI?" nudge**, and the LLM
+  re-author runs only if you accept
 - **Pattern blocks** — named availability windows (Home / Work / Community) that shade
   the Planner and constrain auto-placement; per-pattern fill toggle and reminder offsets
 - **Routines** — typed task collections (Routine ▢ / Habit ◯) placed via a flight-plan
@@ -228,11 +238,18 @@ with you in the loop at the one step that matters — what actually becomes a ta
 3. **Plan** — build a **flight-plan** staging list, then run **Auto** to pack open
    tasks into the open gaps of your workday, honoring work hours, pattern-block
    windows, locked meetings, focus-block limits, and minimum breaks. Deterministic —
-   same inputs, same plan — and re-runnable any time.
-4. **Brief** — the **Today** view opens with an AI briefing that summarizes what's
+   same inputs, same plan — and re-runnable any time. With **AI day ordering** on, a
+   local LLM decides the *order* once (frozen into a durable day plan); the packing
+   stays deterministic. Two clocks: the LLM is slow/async and only orders or re-triages;
+   the deterministic placer is fast and defends the day.
+4. **Defend** — as the day shifts (edits, synced meetings, missed blocks), the schedule
+   **reflows** automatically and deterministically around what's fixed. It never calls
+   the LLM in this hot path; on a big disruption it raises a single **"re-plan with AI?"**
+   nudge instead, and re-authors only if you accept.
+5. **Brief** — the **Today** view opens with an AI briefing that summarizes what's
    overdue, what's scheduled, and where to focus, generated on-device.
-5. **Groom** — a nightly job dedupes near-identical tasks using text embeddings and
-   tidies the backlog.
+6. **Groom** — a nightly job dedupes near-identical tasks using text embeddings
+   (`sqlite-vec` KNN when available, an exact cosine pass otherwise) and tidies the backlog.
 
 Every step runs locally. The single SQLite file is the whole system of record.
 See **[Backup and restore](#backup-and-restore)** below for safe copy and recovery options.
@@ -290,14 +307,22 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0061): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0067): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
-  possible_tasks, scheduling_prefs, time_entries, block_templates, jobs, reminders,
-  push_subscriptions, audit_log
+  daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
+  reminders, push_subscriptions, replan_suggestions, audit_log
 - All eight SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
-- Deterministic auto-scheduler (`/api/schedule/run`) honoring work hours, pattern
-  blocks, locked meetings, and break preferences; per-pattern auto-fill gating
+- Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
+  and break preferences; per-pattern auto-fill gating
+- Reactive reflow (`POST /api/schedule/run`) — re-packs the day deterministically
+  around protected (in-progress / recently-moved) blocks; debounced reactive triggers
+  on task / calendar / missed-block changes, gated by `auto_defense_enabled`
+- AI planning (optional, Ollama): "AI day ordering" authors a durable `daily_plan`
+  order once with per-block "why now" rationale; placement stays deterministic.
+  `POST /api/plan/instruct` parses NL into pinned blocks; a big-disruption reflow
+  raises a "re-plan with AI?" nudge (`/api/plan/reauthor` · `/dismiss` · `/suggestion`)
+  that re-authors only on accept
 - Flight-plan staging area (two-step Auto)
 - Pattern blocks — direction-scoped scheduling windows with per-pattern shape, color,
   fill toggle, and reminder offsets
