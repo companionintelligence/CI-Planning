@@ -479,7 +479,10 @@ export function tasksRouter() {
     const blockId = (ctx.request.body as { block_id?: number } | undefined)?.block_id;
     const { entry, stopped } = startTimer(taskId, blockId);
     const owner = currentOwnerId();
-    if (stopped) broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
+    if (stopped) {
+      broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
+      if (stopped.overran) broadcast(owner, 'block:updated', { id: stopped.entry.block_id });
+    }
     broadcast(owner, 'timer:started', entry);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:start', entity: `task:${taskId}` });
     ctx.status = 201;
@@ -499,6 +502,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     broadcast(owner, 'timer:stopped', res.entry);
     broadcast(owner, 'task:updated', { id: res.taskId, actual_minutes: res.actualMinutes });
+    if (res.overran) broadcast(owner, 'block:updated', { id: res.entry.block_id });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:stop', entity: `task:${res.taskId}` });
     ctx.body = { entry: res.entry, actual_minutes: res.actualMinutes };
   });
