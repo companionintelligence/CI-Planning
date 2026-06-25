@@ -1,5 +1,7 @@
 /**
  * Phase M §0 / A1 — AI-in-the-loop day-plan authoring.
+ * §A2 — same-tag batching post-pass.
+ * §C2 — day_theme bias.
  *
  * `authorPlanOrder` is the single entry point for day authoring. It:
  *  - Is called ONCE per (owner, date) — the author-once guard makes every
@@ -35,7 +37,8 @@ import { logger } from '../lib/logger.js';
 type Task = InferSelectModel<typeof tasks>;
 type Prefs = InferSelectModel<typeof schedulingPrefs>;
 
-interface PlanTask {
+/** A staged task as seen by the authoring loop. Exported for tests. */
+export interface PlanTask {
   task_id: string;
   title: string;
   priority: number;
@@ -48,14 +51,22 @@ interface PlanningPrefs {
   planning_mode: string;
   workday_start: string;
   workday_end: string;
+  /** §C2 — day-of-week → theme tag map. Null/undefined = no theming. */
+  day_theme?: Record<string, string> | null;
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────────────────
 
 function loadPlanningPrefs(owner: string): PlanningPrefs {
-  return (sqlite
-    .prepare(`SELECT planning_mode, workday_start, workday_end FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as PlanningPrefs | undefined) ?? { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00' };
+  const row = sqlite
+    .prepare(`SELECT planning_mode, workday_start, workday_end, day_theme FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as (PlanningPrefs & { day_theme: string | null }) | undefined;
+  if (!row) return { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00' };
+  let day_theme: Record<string, string> | null = null;
+  if (row.day_theme) {
+    try { day_theme = JSON.parse(row.day_theme) as Record<string, string>; } catch { /* ignore malformed */ }
+  }
+  return { planning_mode: row.planning_mode, workday_start: row.workday_start, workday_end: row.workday_end, day_theme };
 }
 
 function dailyPlanAuthored(owner: string, date: string): boolean {
@@ -92,17 +103,53 @@ function persistOrder(
   })();
 }
 
+// ─── §C2 — day_theme helpers ─────────────────────────────────────────────────
+
+/**
+ * §C2 — Return the theme tag for a given YYYY-MM-DD date, or null if none.
+ * Weekday is derived under UTC noon to avoid midnight boundary ambiguity.
+ * Keys are short weekday names: mon/tue/wed/thu/fri/sat/sun.
+ */
+export function todayThemeTag(dayTheme: Record<string, string> | null | undefined, date: string): string | null {
+  if (!dayTheme) return null;
+  const weekday = new Date(date + 'T12:00:00Z')
+    .toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
+    .toLowerCase()
+    .slice(0, 3);
+  return dayTheme[weekday] ?? null;
+}
+
 // ─── Ordering helpers ────────────────────────────────────────────────────────
 
-function deterministicIndices(tasks: PlanTask[]): number[] {
+/**
+ * Produce a deterministic ordering of tasks as indices.
+ *
+ * Sort key:
+ *   1. due_at (sooner first; null = far future)
+ *   2. §C2 themeTag: themed tasks before non-themed (within same deadline band)
+ *   3. priority (lower number = higher priority → first)
+ *   4. task_id (stable tiebreaker)
+ */
+export function deterministicIndices(tasks: PlanTask[], themeTag?: string | null): number[] {
   return tasks
     .map((_, i) => i)
-    .sort(
-      (a, b) =>
-        (tasks[a].due_at ?? '9999').localeCompare(tasks[b].due_at ?? '9999') ||
-        tasks[a].priority - tasks[b].priority ||
-        tasks[a].task_id.localeCompare(tasks[b].task_id),
-    );
+    .sort((a, b) => {
+      const dueA = tasks[a].due_at ?? '9999';
+      const dueB = tasks[b].due_at ?? '9999';
+      const dueCmp = dueA.localeCompare(dueB);
+      if (dueCmp !== 0) return dueCmp;
+
+      // §C2: theme bias between deadline and priority
+      if (themeTag) {
+        const themA = tasks[a].tags.includes(themeTag) ? 0 : 1;
+        const themB = tasks[b].tags.includes(themeTag) ? 0 : 1;
+        if (themA !== themB) return themA - themB;
+      }
+
+      const priCmp = tasks[a].priority - tasks[b].priority;
+      if (priCmp !== 0) return priCmp;
+      return tasks[a].task_id.localeCompare(tasks[b].task_id);
+    });
 }
 
 /**
@@ -143,9 +190,52 @@ function orderedTitles(indices: number[], tasks: PlanTask[]): string {
   return indices.map((i) => `"${tasks[i].title}"`).join(', ');
 }
 
+// ─── §A2 — Tag-group post-pass ───────────────────────────────────────────────
+
+/**
+ * §A2 — Cluster tasks sharing their primary tag contiguously (stable group-by).
+ *
+ * Algorithm:
+ *   1. Assign each task a "group key" = its first tag (or '' for untagged).
+ *   2. Walk the current order to find the first position each group appears.
+ *   3. Sort indices by (group's first position, position within group).
+ *
+ * This is a pure deterministic transform that never skips or duplicates indices.
+ * Falls back to the original order if the result fails checkOrder.
+ */
+export function tagGroupPostPass(indices: number[], tasks: PlanTask[]): number[] {
+  if (indices.length < 2) return indices;
+
+  const groupKey = (idx: number): string => tasks[idx].tags[0] ?? '';
+
+  // Determine the first-seen position for each group
+  const groupFirstPos = new Map<string, number>();
+  for (let pos = 0; pos < indices.length; pos++) {
+    const key = groupKey(indices[pos]);
+    if (!groupFirstPos.has(key)) groupFirstPos.set(key, pos);
+  }
+
+  // Assign each task its ordinal within its group (for stable sort)
+  const groupMemberIdx = new Map<number, number>();
+  const groupCounts = new Map<string, number>();
+  for (const idx of indices) {
+    const key = groupKey(idx);
+    const cnt = groupCounts.get(key) ?? 0;
+    groupMemberIdx.set(idx, cnt);
+    groupCounts.set(key, cnt + 1);
+  }
+
+  return [...indices].sort((a, b) => {
+    const gfA = groupFirstPos.get(groupKey(a))!;
+    const gfB = groupFirstPos.get(groupKey(b))!;
+    if (gfA !== gfB) return gfA - gfB;
+    return (groupMemberIdx.get(a) ?? 0) - (groupMemberIdx.get(b) ?? 0);
+  });
+}
+
 // ─── Deterministic rubric checks (the hard gate) ─────────────────────────────
 
-function checkOrder(order: number[], tasks: PlanTask[], today: string): Defect[] {
+export function checkOrder(order: number[], tasks: PlanTask[], today: string): Defect[] {
   const defects: Defect[] = [];
   const todayMs = Date.parse(today + 'T00:00:00Z');
 
@@ -189,13 +279,20 @@ function genSystem(): string {
   );
 }
 
-function genPrompt(lines: string[], capacityMin: number): string {
+/**
+ * Build the generator prompt.
+ * §C2: when themeTag is provided, append a theme line after the capacity line.
+ */
+export function genPrompt(lines: string[], capacityMin: number, themeTag?: string | null): string {
+  const themeLine = themeTag
+    ? `\nToday's theme: ${themeTag} — favour ${themeTag}-tagged tasks earlier.`
+    : '';
   return (
     `Order today's tasks from first to last. Weigh, in this order:\n` +
     `1) hard deadlines (sooner due = earlier); 2) priority (P1 highest);\n` +
     `3) momentum — group related work, minimize context switches;\n` +
     `4) front-load demanding work while focus is fresh.\n` +
-    `Capacity today: ~${capacityMin} focused minutes.\n\n` +
+    `Capacity today: ~${capacityMin} focused minutes.${themeLine}\n\n` +
     `Tasks (index: [priority] title (due) ~estimate tags):\n${lines.join('\n')}\n\n` +
     `Reply with ONLY a JSON array containing every index exactly once, in your chosen order. Example: [3,0,1,2]`
   );
@@ -247,6 +344,10 @@ function revisePrompt(lines: string[], order: number[], defects: Defect[], criti
  *
  * - Runs the §A0 generate→evaluate→iterate loop when planning_mode='smart'
  *   and Ollama is up; otherwise writes a deterministic priority/deadline order.
+ * - §A2: applies tagGroupPostPass after obtaining the candidate order (LLM or
+ *   deterministic). Falls back to pre-post-pass order if checkOrder detects defects.
+ * - §C2: reads day_theme from prefs and injects a theme bias into deterministic
+ *   ordering and into the LLM prompt.
  * - Author-once: a second call for the same (owner, date) is a no-op.
  * - Never throws: Ollama failures always fall back to the deterministic order.
  * - Does NOT place blocks. Placement reads `daily_plan.position` independently.
@@ -262,9 +363,17 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
     return;
   }
 
+  // §C2: resolve today's theme tag (null = no theming today)
+  const themeTag = todayThemeTag(prefs.day_theme, date);
+
   const aiEnabled = prefs.planning_mode === 'smart';
   if (!aiEnabled || !(await isAvailable())) {
-    persistOrder(owner, date, staged, deterministicIndices(staged), 'deterministic');
+    // Deterministic path: apply theme bias, then §A2 post-pass
+    const detIndices = deterministicIndices(staged, themeTag);
+    const postPassed = tagGroupPostPass(detIndices, staged);
+    const defects = checkOrder(postPassed, staged, date);
+    const final = defects.length === 0 ? postPassed : detIndices;
+    persistOrder(owner, date, staged, final, 'deterministic');
     return;
   }
 
@@ -277,7 +386,8 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
       ownerId: owner,
 
       generate: async () => {
-        const raw = await generateJson<unknown>(genPrompt(lines, capacityMin), {
+        // §C2: pass theme tag to prompt
+        const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag), {
           tier: 'small',
           system: genSystem(),
           temperature: 0.2,
@@ -286,7 +396,11 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
         return safeOrder(raw, staged);
       },
 
-      check: (order) => checkOrder(order, staged, date),
+      check: (order) => {
+        // §A2: apply post-pass before checking
+        const postPassed = tagGroupPostPass(order, staged);
+        return checkOrder(postPassed, staged, date);
+      },
 
       judge: async (order): Promise<JudgeScore> => {
         const raw = await generateJson<Record<string, unknown>>(judgePrompt(lines, order, staged), {
@@ -314,7 +428,7 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
         return safeOrder(raw, staged);
       },
 
-      baseline: () => deterministicIndices(staged),
+      baseline: () => deterministicIndices(staged, themeTag),
     },
     {
       onEscape: (ownerId, stage, info) => {
@@ -329,7 +443,12 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
     },
   );
 
-  persistOrder(owner, date, staged, result.candidate, result.passed ? 'llm' : 'deterministic');
+  // §A2: apply post-pass to the final LLM result
+  const finalCandidate = tagGroupPostPass(result.candidate, staged);
+  const finalDefects = checkOrder(finalCandidate, staged, date);
+  const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
+
+  persistOrder(owner, date, staged, finalIndices, result.passed ? 'llm' : 'deterministic');
 }
 
 // ─── Legacy (kept for runScheduler / plan.test.ts; do not add new callers) ───
