@@ -197,6 +197,7 @@ Reply with ONLY a JSON array containing every index exactly once, in the improve
 - **Files changing.** No new migration (uses `daily_plan.rationale` from 0064). `agents/plan.ts` writes `daily_plan.rationale`; block detail joins `daily_plan` on `block_id` to display it (`autoplan.ts` sets `block_id` on placement). Client block-detail + `api.ts` type.
 - **Tests.** Rationale authored → linked via `block_id` → shown on the block; null when AI off; survives reflow (block id churns, `block_id` re-linked).
 - **DoD.** Rationale visible on AI-authored blocks, absent otherwise, no UI break when null. **Effort: ~1 day.**
+- **✅ Shipped (as-built).** `generateRationales` ([plan.ts](../server/src/agents/plan.js)) makes ONE batch LLM call (small tier) after a passing authoring loop, keyed by task position; `sanitizeRationale` collapses to a single line, trims, and caps at 140 chars; failures/blanks → null (best-effort, never throws). Written into `daily_plan.rationale` by `persistOrder` **only** on `source='llm'` — basic mode, Ollama-down, and escape-hatch fallbacks all leave it null. The blocks API attaches `rationale` per block via a `daily_plan WHERE block_id` join ([routes/blocks.ts](../server/src/routes/blocks.js), mirroring `secondaryTagsOf`); `placeFlightPlan` already links `block_id`, and a reflow re-links it (rationale survives the churn). Client: `Block.rationale` type + a "why now" line (✨ `Sparkles`) in the chip's `BlockMenu` popover ([Planner.tsx](../client/src/components/Planner.js)), hidden when null. **Simplification:** the spec's per-block §A0 loop with an LLM-judge truthfulness pass is **not** built — a single batch call + deterministic sanitization is the gate; the truthfulness judge is a future enhancement. Tests: [authoring-llm.test.ts](../server/test/authoring-llm.test.ts) +3 — rationale per position on the LLM path, null on the deterministic fallback, sanitization (blank→null, whitespace-collapse, >140 truncation), and the blocks-API `block_id` join surviving a reflow. 80 server files / 695 passed; 137 client; both `tsc` clean.
 
 ### A4 — NL planning constraints (stretch)
 - **Goal.** `POST /api/plan/instruct { text }` → LLM parses free text ("no deep work after 3pm, batch errands") into **structured pins / ordering hints** the deterministic placer consumes — never free placement.
@@ -206,6 +207,7 @@ Reply with ONLY a JSON array containing every index exactly once, in the improve
 - **Files changing.** New `routes/plan.ts` (`/api/plan/instruct`), `agents/plan.ts` (constraint parser → typed schema), `engine/autoplan.ts` (apply hints in authoring), client command-bar entry.
 - **Tests.** Each constraint type → expected pins/hints; adversarial/empty rejected; deterministic placement given hints; Ollama-down handled.
 - **DoD.** NL text yields only bounded, structured inputs to the deterministic placer. **Effort: ~2 days (ship after A1–A3).**
+- **✅ Shipped (pins-first MVP; tag-window enforcement deferred).** `POST /api/plan/instruct { text, date? }` ([routes/plan.ts](../server/src/routes/plan.js)) → `parseInstruction` ([plan.ts](../server/src/agents/plan.js)) makes ONE small-tier LLM call → `validateInstruction` (pure-schema rubric, no judge): pins need a title + valid `HH:MM` start<end and **no two pins overlap**; hints need a known `kind` (`tag_before`/`tag_after`/`batch`) + an existing tag (+ valid time for before/after); empty parse ⇒ invalid. Errors map to **422** (invalid) / **503** (`InstructError('unavailable')`), and validation completes BEFORE any write so there are **no partial applies**. Valid **time pins** are created as locked, non-auto `'meeting'` blocks (`source_kind='instruct'`) the deterministic placer already routes around (via `dayObstacles`); the parse converts `HH:MM`→UTC via the owner tz. **Tag/ordering HINTS are parsed, validated, and returned but NOT yet wired into placement** — that's the invasive autoplan change deferred per the agreed MVP scope (a clean follow-up: per-tag transient day-windows, like direction windows). Client: `api.plan.instruct`, a one-line [PlanInstruct.tsx](../client/src/components/PlanInstruct.js) command-bar entry mounted on Today (Wand2 icon; toasts "N pinned · M hints noted"). Tests: [instruct.test.ts](../server/test/instruct.test.ts) (8) — pins→locked blocks + hints returned; 422 on overlap / bad time / unknown tag / unknown kind / nothing-actionable / empty text; **no-partial-write** (a valid pin alongside an invalid hint writes nothing); 503 + no writes when Ollama down. 81 server files / 703 passed; 137 client; both `tsc` clean.
 
 ### A5 — Prefs + UI toggle
 - **Goal.** Turn dormant `planningMode` into a real Settings control; default `ritual` (deterministic); `auto` enables A1–A3. Makes "AI auto-block" honest.
@@ -238,6 +240,7 @@ Follows [K-auto-defense.md](archive/K-auto-defense.md) with **one substitution t
 - **Files changing.** `engine/auto-defense.ts` (`requestReplan`, `scheduleDebounced`). **Migration 0063**: `scheduling_prefs.auto_defense_enabled` (recommend default **on** — reflow is bounded + nudge-gated). Wire `agents/ingest.ts`, `routes/tasks.ts`, and the missed-block sweep (also kept in the `auto_schedule` cron body as a safety net).
 - **Tests.** 5 calls/DEBOUNCE_MS ⇒ one reflow; prefs-off ⇒ no reflow/broadcast; missed block → `skipped` + task re-queued; no reflow-storm; trigger paths swallow errors.
 - **DoD.** Reflows fire reactively, bounded, gated, loop-safe. **Effort: ~1.5 days.**
+- **✅ Shipped (as-built).** `requestReplan(reason, owner?, date?)` + `sweepMissedBlocks(owner?, date?, now?)` in [auto-defense.ts](../server/src/engine/auto-defense.js); per-owner 1.5 s trailing debounce (`unref`'d), `auto_defense_enabled` gate, re-entrancy guard, errors swallowed; the debounced fire broadcasts `schedule:done` with the diff (B3 seam). Wired into `routes/tasks.ts` create/update/delete; the `auto_schedule` cron pairs `sweepMissedBlocks` + `requestReplan('missed')`; the `sync_calendar` cron fires `requestReplan('calendar')` on any inbound change. **Note vs plan:** the calendar trigger lives in the `sync_calendar` cron (after `syncAll`) rather than `ingestEvents`, because the meeting mirror moved into the connector reconciler ([agents/sync.ts](../server/src/agents/sync.js)) post-WP5. Tests: [replan.test.ts](../server/test/replan.test.ts) (9) — debounce collapse, toggle-off no-op, missed-block sweep (skip/requeue/in-progress/completed), HTTP trigger wiring on/off.
 
 ### B3 — Client toast + diff
 - **Goal.** A one-line "Re-planned: N blocks moved" toast on real change only.
@@ -246,6 +249,7 @@ Follows [K-auto-defense.md](archive/K-auto-defense.md) with **one substitution t
 - **Files changing.** `stores/index.ts` (extend handler), `lib/api.ts` (`ReplanDiff` type), optional diff-list component.
 - **Tests.** Toast iff `moved+added>0`; refetch always; no toast on empty diff.
 - **DoD.** Honest, low-noise reflow feedback. **Effort: ~0.5 day.**
+- **✅ Shipped (as-built).** Decision logic extracted to a pure, unit-tested helper `replanToastMessage(payload)` in [client/src/lib/replan.ts](../client/src/lib/replan.ts) — returns the message (`"Re-planned: N block(s) moved"`, singular/plural; generic `"Re-planned"` when only add/remove) or `null` when nothing changed. A second `on('schedule:done', …)` in [stores/index.ts](../client/src/stores/index.ts) calls `showToast(msg, 'default')` only when the helper returns non-null; the pre-existing `on('schedule:done', () => refetchBlocks())` already repaints the day (and `auto:placed`/`flight_plan:updated` from the inner `placeFlightPlan` also refetch), so no extra fetch was added. `ReplanDiff` + `BlockMove` types in [lib/api.ts](../client/src/lib/api.ts). **Robustness:** the helper tolerates a diff-less payload — `schedule:done` was historically also emitted by the (now caller-less) `runScheduler` with a `ScheduleResult` shape — so a missing-array payload counts as "no change" and never throws. Tests: [replan.test.ts](../client/src/lib/replan.test.ts) (8) — singular/plural, generic, unplaced-only, legacy `ScheduleResult`, null/garbage. No diff-list expander (deferred; the count is enough for low-noise). 137 client tests green; client `tsc` clean.
 
 ### B4 — Escalation hook: reflow → async LLM re-author (nudge-first)
 
@@ -296,6 +300,14 @@ Deterministic reflow handles *placement* perfectly but can't *re-triage* — whe
   - Standing suites green (no overlaps / no lost minutes; B1–B3 idempotency unaffected).
 
 - **Definition of done.** Reflow stays deterministic and LLM-free; the only added LLM invocation sits behind explicit user accept; a big disruption surfaces a single actionable nudge (toast + durable Today banner); the day is never silently re-authored; accept re-authors via the existing authoring path; dismiss suppresses re-nudge; degrades cleanly when Ollama is down; all new + standing tests pass under `TZ=UTC`; `tsc --noEmit` clean; docs describe the two-clock model. **Effort: S–M, ~1.5–2 days** (assumes B1 diff + §0/A1 authoring in place).
+- **✅ Shipped (as-built).**
+  - **Suggestion lives in `fireReplan`, not `reflow()`** — `reflow()` stays a pure, LLM-free, side-effect-light placement engine. The accept route calls `reflow()` *directly* (not via `fireReplan`), so an accepted re-author can never raise another nudge. This achieves the "re-author never emits `replan:suggested`" invariant *by construction* rather than via a flag.
+  - **`isBigDisruption(diff)` = a high-priority (P≤2) task is at risk** — dropped (`removed`) or unplaceable (`unplaced`), via a DB priority lookup (`highPriorityAtRisk`). The spec's `deferred`-rose and `MAX_MOVES_PER_RUN`-saturated signals are **N/A** — the B1 reflow tracks neither. I also tightened the spec's bare `unplaced>0` to *high-priority* unplaced, so a routine over-full day of low-priority backlog doesn't nag.
+  - **Accept does a FULL force re-author**, not `scope='dirty'`: `authorPlanOrder(owner, date, { force: true })` deletes the day's `daily_plan` rows (re-opening the author-once guard) → re-authors (LLM if smart+Ollama up, else deterministic; never throws) → `reflow()` re-places → broadcast `schedule:done`. The targeted dirty-set rerun is **deferred** (it overlaps the A-workstream's re-tagging machinery, which isn't built); a full re-author is the honest available behavior.
+  - **In-memory state** (`Map<ownerId, {date,reason,summary}>`, one per owner; new day overwrites) — no migration, as planned. `subsFor` was exported from [reminders.ts](../server/src/engine/reminders.js) so the push nudge reuses the same query.
+  - **Reload-durable nudge:** `GET /api/plan/suggestion` returns the owner's outstanding suggestion (or null); `ReplanBanner` hydrates from it `onMount` (without clobbering a fresher live signal), because the `replan:suggested` SSE event fires once and isn't replayed on reconnect. State is still in-memory, so a *server* restart clears it — acceptable for the single-user/`launchd` deploy.
+  - Files: [auto-defense.ts](../server/src/engine/auto-defense.js) (`isBigDisruption`, `outstandingSuggestion`, `clearSuggestion`, `maybeSuggestReauthor`, `pushReplanNudge`, hooked in `fireReplan`); new [routes/plan.ts](../server/src/routes/plan.js); [agents/plan.ts](../server/src/agents/plan.js) (`force` opt); client [api.ts](../client/src/lib/api.js) (`api.plan`), [stores/index.ts](../client/src/stores/index.js) (`replanSuggestion` signal + `on('replan:suggested')` toast + `on('replan:dismissed')`), new [ReplanBanner.tsx](../client/src/components/ReplanBanner.js), mounted in [Today.tsx](../client/src/views/Today.js).
+  - Tests: [reauthor.test.ts](../server/test/reauthor.test.ts) (9) — predicate (high vs low priority, empty), one-nudge-per-day de-dup, **nudge-first invariant** (reflow leaves `daily_plan` untouched while surfacing a nudge), no-nudge on low-priority-only, accept force-re-author + Ollama-down deterministic fallback + clear + refresh, dismiss clears + broadcasts. 80 server files / 690 passed; 14 client files / 137 passed; both `tsc` clean.
 
 **Workstream B effort: ~3–4 days (B1–B3, M) + ~1.5–2 days (B4).**
 
@@ -318,6 +330,9 @@ Deterministic reflow handles *placement* perfectly but can't *re-triage* — whe
 - **Files changing.** `agents/plan.ts` / `engine/autoplan.ts` authoring (theme bias in the ordering comparator), `routes/prefs.ts` + Settings UI to edit the map.
 - **Tests.** Themed weekday biases matching tags; non-matching unaffected; empty/missing theme = no change; weekday boundary correct under tz.
 - **DoD.** `day_theme` demonstrably affects ordering; the claim becomes true. **Effort: ~1 day.**
+- **Shipped decisions (accepted, not bugs).**
+  - **Theme is the primary sort key — it outranks both deadline and priority.** `deterministicIndices` orders `theme → due → priority → id` (or `theme → priority → due → id` under `fill_order='priority'`), so on a themed weekday every theme-tagged task leads the day, ahead of even an overdue unthemed task. This is a deliberate "today is deep-work day" override. `checkOrder` is theme-aware: a themed task leading a higher-priority / earlier-due *unthemed* task is **not** flagged as an inversion, so A2 batching and the LLM rubric still operate on themed days. Within a theme band, deadline (default) or priority (`fill_order`) orders as usual.
+  - **Weekday derives from the server tz.** `todayThemeTag` reads the weekday from the `date` string at UTC-noon (boundary-safe for the *string*), but the date itself is `localISODate()` (server tz) — the same single-user/`launchd` assumption the rest of the scheduler makes. A non-server-tz owner near midnight could see the prior/next day's theme. Revisit when multi-tz (Phase L multi-device) lands; until then it's documented, not fixed.
 
 ### C3 — `sqlite-vec` for dedupe
 - **Goal.** Replace the O(n²) cosine loop with a `vec0` KNN query; keep cosine as fallback.
@@ -348,15 +363,19 @@ Shared sequential DB; migration-on-import; snapshot pollution from resurrected t
 - **Eval tests can't assert exact model output.** Rubric tests assert the *harness* (separation, deterministic-gate, median, cap, escape hatch, log) — not specific generations; gate on Ollama availability like [plan.test.ts](../server/test/plan.test.ts) already does.
 
 ### Migrations & new endpoints summary
-| # | Change | Workstream |
-|---|---|---|
-| 0062 | `time_blocks.last_moved_at` | B1 |
-| 0063 | `scheduling_prefs.auto_defense_enabled` | B2 |
-| 0064 | `daily_plan` table (durable day plan: order, rationale, source, block_id) | §0 / A1 / A3 |
-| — (init) | `vec0` virtual table (guarded, not numbered) | C3 |
-| — | none — revision log reuses `audit_log`; `overrun` enum / `day_theme` / `planning_mode` already exist | §A0 / C1 / C2 / A5 |
+> **As-built note.** Migration numbers drifted from the original plan because the §0/A1/A2/C2 batch and an audit fix landed first. Actual head sequence: **0062** `daily_plan` (§0/A1/A3) · **0063** rename `planning_mode` values (basic/smart) · **0064** `time_blocks.last_moved_at` (B1) · **0065** flip `fill_order` default → `'overdue'` (deadline-first) · **0066** `scheduling_prefs.auto_defense_enabled` (B2, default on).
 
-New endpoints: `POST /api/plan/instruct` (A4), `POST /api/plan/reauthor` + `/dismiss` (B4). `POST /api/schedule/run` re-pointed to drive reflow (B1).
+| # | Change | Workstream | Status |
+|---|---|---|---|
+| 0062 | `daily_plan` table (durable day plan: order, rationale, source, block_id) | §0 / A1 / A3 | ✅ shipped |
+| 0063 | rename `planning_mode` values `ritual→basic`, `auto→smart` | A5 follow-up | ✅ shipped |
+| 0064 | `time_blocks.last_moved_at` | B1 | ✅ shipped |
+| 0065 | `fill_order` default → `'overdue'` (deadline-first; maps onto authoring) | §0 follow-up | ✅ shipped |
+| 0066 | `scheduling_prefs.auto_defense_enabled` (default on) | B2 | ✅ shipped |
+| — (init) | `vec0` virtual table (guarded, not numbered) | C3 | pending |
+| — | none — revision log reuses `audit_log`; `overrun` enum / `day_theme` / `planning_mode` already exist | §A0 / C1 / C2 / A5 | ✅ shipped |
+
+New endpoints (all in `routes/plan.ts`): `POST /api/plan/instruct` (A4 pins-first, ✅); `GET /api/plan/suggestion` + `POST /api/plan/reauthor` + `POST /api/plan/reauthor/dismiss` (B4, ✅); `POST /api/schedule/run` re-pointed to drive reflow (B1, ✅).
 
 ### Recommended sequence
 1. **§0 seam + `daily_plan`** — add the durable day table; relocate the LLM hook to author into it; confirm Option A.
@@ -378,6 +397,6 @@ New endpoints: `POST /api/plan/instruct` (A4), `POST /api/plan/reauthor` + `/dis
 ## Known issues (not fixed by this plan)
 These survive the v2 revision and should be decided while building, not discovered later:
 1. **No whole-feature eval / ROI.** Nothing yet shows LLM ordering beats the deterministic priority/due sort. Add a cheap **offline A/B** (LLM order vs deterministic, scored or measured against actual completion) *before* committing the full §A0 loop — otherwise weeks of local-inference cost may buy indistinguishable plans.
-2. **CI can't exercise the AI path** (no Ollama) — the loop/judge/reviser run only their fallback in CI. Needs a **mock-LLM harness** or the most novel code ships least-tested.
+2. ~~**CI can't exercise the AI path** (no Ollama) — the loop/judge/reviser run only their fallback in CI.~~ **Resolved:** `loop.test.ts` mocks the harness contract and `authoring-llm.test.ts` mocks `mcp/ollama.js` (branching on generate tier) to drive `authorPlanOrder`'s LLM path — `source='llm'` permutation, Ollama-down fallback, and `safeOrder` append-missing are all exercised in CI.
 3. **In-memory B2/B4 state** (debounce + outstanding-nudge maps) is lost on a laptop restart — for this local/`launchd` deployment the "optional" persistence migration is closer to required.
 4. **Four overlapping reschedulers** (once-a-day authoring, deterministic reflow, nightly `review_day`, manual Fill/Place) — v2 improves the mental model ("AI plans when you ask; the system defends deterministically"), but the composition still needs a single user-facing explanation.

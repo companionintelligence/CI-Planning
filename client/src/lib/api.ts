@@ -202,6 +202,18 @@ export const api = {
       request<{ result: { removed: number; restaged: number }; flight_plan: FlightPlanItem[] }>('POST', '/auto/undo', {}),
   },
 
+  // Phase M B4 — escalation accept/dismiss. reauthor forces an AI re-author of the day
+  // (the only reactive LLM path); dismiss drops the outstanding nudge.
+  plan: {
+    // The outstanding nudge (or null) — the ReplanBanner hydrates from this on mount
+    // so a reload re-surfaces a still-open suggestion.
+    suggestion: () => request<{ suggestion: ReplanSuggestion | null }>('GET', '/plan/suggestion'),
+    reauthor: (date: string) => request<{ ok: boolean; date: string }>('POST', '/plan/reauthor', { date }),
+    dismiss: (date: string) => request<{ ok: boolean }>('POST', '/plan/reauthor/dismiss', { date }),
+    // §A4 (pins-first): parse a natural-language instruction → pinned blocks + surfaced hints.
+    instruct: (text: string, date?: string) => request<InstructResponse>('POST', '/plan/instruct', { text, date }),
+  },
+
   blockTemplates: {
     list: () => request<{ block_templates: BlockTemplate[] }>('GET', '/block-templates'),
     create: (body: { name: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[] }) =>
@@ -308,6 +320,7 @@ export interface Block {
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)
   parent_block_id?: string | null; // the containing Plan for a member task block (PR-C / 0023)
+  rationale?: string | null; // §A3 "why now" — joined from daily_plan via block_id (AI-authored placements only)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
@@ -373,6 +386,38 @@ export interface AutoResult {
   candidatesAdded?: number;              // step 1
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
 }
+
+/** Phase M B1/B3: one block a reactive reflow moved (its before/after windows). */
+export interface BlockMove {
+  block_id: string;
+  task_id: string;
+  before: { start_at: string; end_at: string };
+  after: { start_at: string; end_at: string };
+}
+
+/**
+ * Phase M B3: the `schedule:done` SSE payload — what a reactive reflow changed.
+ * Mirrors the server's ReflowDiff (auto-defense.ts) plus the trigger `reason`.
+ */
+export interface ReplanDiff {
+  reason?: string;
+  moved: BlockMove[];
+  removed: { block_id: string; task_id: string }[];
+  added: { block_id: string; task_id: string }[];
+  unplaced: string[];
+}
+
+/** Phase M B4: an outstanding "re-plan with AI?" nudge (the `replan:suggested` payload). */
+export interface ReplanSuggestion {
+  date: string;
+  reason?: string;
+  summary?: string;
+}
+
+/** Phase M A4: a parsed NL planning instruction. Pins are applied; hints are surfaced only (MVP). */
+export interface PlanPin { title: string; start_at: string; end_at: string }
+export interface PlanHint { kind: 'tag_before' | 'tag_after' | 'batch'; tag: string; time?: string }
+export interface InstructResponse { ok: boolean; date: string; pins: PlanPin[]; hints: PlanHint[]; created: number }
 
 /** Result of POST /api/patterns/:id/place-today (PR-C+, Phase C). */
 export interface PlacePatternResult {

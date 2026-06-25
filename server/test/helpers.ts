@@ -42,6 +42,7 @@ export function resetDb(): void {
     DELETE FROM tags;
     DELETE FROM job_runs;
     DELETE FROM daily_summaries;
+    DELETE FROM daily_plan;
   `);
   // Pin the scheduling prefs that drive Auto placement / recurrence / recall back to
   // a deterministic baseline. resetDb keeps the prefs ROW, and files run in a
@@ -61,7 +62,10 @@ export function resetDb(): void {
       max_focus_block_minutes = 90,
       min_break_minutes = 10,
       planning_horizon_days = 7,
-      recall_keeps_pattern = 0;
+      recall_keeps_pattern = 0,
+      day_theme = NULL,
+      planning_mode = 'basic',
+      auto_defense_enabled = 0;
   `);
 }
 
@@ -95,3 +99,4 @@ export async function ollamaAvailable(): Promise<boolean> {
   }
   return _ollamaUp;
 }
+

@@ -8,15 +8,15 @@ const task = (id: number, priority: number) =>
 const prefs = (planningMode: string) => ({ planningMode }) as never;
 
 describe('orderForToday (AI ordering)', () => {
-  it('returns the deterministic order unchanged when planning_mode is not auto', async () => {
+  it('returns the deterministic order unchanged when planning_mode is not smart', async () => {
     const ranked = [task(1, 1), task(2, 2), task(3, 3)];
-    const out = await orderForToday(ranked, prefs('ritual'));
+    const out = await orderForToday(ranked, prefs('basic'));
     expect(out).toBe(ranked); // same reference — no reordering attempted, no model call
   });
 
-  it('no-ops on a trivial (single-item) list even in auto mode', async () => {
+  it('no-ops on a trivial (single-item) list even in smart mode', async () => {
     const ranked = [task(1, 1)];
-    const out = await orderForToday(ranked, prefs('auto'));
+    const out = await orderForToday(ranked, prefs('smart'));
     expect(out).toBe(ranked);
   });
 });

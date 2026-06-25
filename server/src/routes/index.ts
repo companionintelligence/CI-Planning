@@ -19,6 +19,7 @@ import { notificationsRouter } from './notifications.js';
 import { backupRouter } from './backup.js';
 import { healthRouter } from './health.js';
 import { oauthRouter } from './oauth.js';
+import { planRouter } from './plan.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -42,6 +43,7 @@ export function mountRoutes(app: Koa) {
     notificationsRouter(),
     backupRouter(),
     oauthRouter(),
+    planRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

@@ -1,10 +1,11 @@
 import { createSignal, createMemo, createResource } from 'solid-js';
 import { api } from '../lib/api.js';
-import type { Block, Task, Pattern, PatternType } from '../lib/api.js';
+import type { Block, Task, Pattern, PatternType, ReplanSuggestion } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
 import { blockPasses } from '../lib/overlay.js';
+import { replanToastMessage } from '../lib/replan.js';
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export const [taskFilter, setTaskFilter] = createSignal<Record<string, string>>({});
@@ -34,6 +35,30 @@ on('block:created', () => refetchBlocks());
 on('block:updated', () => refetchBlocks());
 on('block:deleted', () => refetchBlocks());
 on('schedule:done',  () => refetchBlocks());
+// Phase M B3: a reactive reflow (auto-defense) emits schedule:done with a diff.
+// The refetch above repaints the day; this surfaces a low-noise toast ONLY when
+// something actually moved, so background reflows aren't silent but aren't noisy.
+on('schedule:done', (data) => {
+  const msg = replanToastMessage(data);
+  if (msg) showToast(msg, 'default');
+});
+
+// ── Replan suggestion (Phase M B4) ──────────────────────────────────────────────
+// A big-disruption reflow surfaces a nudge: a persistent Today banner (ReplanBanner
+// reads this signal) PLUS a transient actionable toast. Accepting calls the LLM
+// re-author; dismissing clears it. The server clears it server-side too, broadcasting
+// 'replan:dismissed' so other tabs drop the banner.
+export const [replanSuggestion, setReplanSuggestion] = createSignal<ReplanSuggestion | null>(null);
+
+on('replan:suggested', (data) => {
+  const s = data as ReplanSuggestion;
+  setReplanSuggestion(s);
+  showToast(s.summary ? `${s.summary} — re-plan with AI?` : 'Re-plan your day with AI?', 'default', 8000, {
+    label: 'Re-plan',
+    run: () => { void api.plan.reauthor(s.date).then(() => setReplanSuggestion(null)).catch(() => {}); },
+  });
+});
+on('replan:dismissed', () => setReplanSuggestion(null));
 
 // ── Concepts (Phase G, Step 2b) ────────────────────────────────────────────────
 // Unscheduled goal Time-Blocks — owner-scoped, off the minute grid (a goal day +

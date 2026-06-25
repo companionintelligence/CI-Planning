@@ -72,15 +72,26 @@ function tagsOf(taskId: string): string[] {
   return taskTagNames(taskId);
 }
 
-function selectedStaged(owner: string): StagedTask[] {
+/**
+ * Selected staged tasks, ordered by `daily_plan.position` when an authored day plan
+ * exists for `date` (Phase M §0 / A1). Tasks with no `daily_plan` row (e.g. added
+ * after authoring) fall through to the original `fp.position` ordering so nothing
+ * is ever silently dropped.
+ */
+function selectedStaged(owner: string, date: string): StagedTask[] {
   const rows = sqlite
     .prepare(
       `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at
-         FROM flight_plan fp JOIN tasks t ON t.id = fp.task_id
+         FROM flight_plan fp
+         JOIN tasks t ON t.id = fp.task_id
+         LEFT JOIN daily_plan dp
+           ON dp.owner_id = fp.owner_id AND dp.task_id = fp.task_id AND dp.date = ?
         WHERE fp.owner_id = ? AND fp.selected = 1
-        ORDER BY fp.position, t.priority, fp.task_id`
+        ORDER BY CASE WHEN dp.position IS NULL THEN 1 ELSE 0 END,
+                 COALESCE(dp.position, fp.position),
+                 t.priority, fp.task_id`
     )
-    .all(owner) as Omit<StagedTask, 'tags'>[];
+    .all(date, owner) as Omit<StagedTask, 'tags'>[];
   return rows.map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
 }
 
@@ -280,7 +291,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
-  const staged = selectedStaged(owner);
+  const staged = selectedStaged(owner, date);
   const runId = newId(); // stamps every block this run creates, so Undo can target it (D2)
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
@@ -397,8 +408,17 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   if ((prefs?.auto_fill_workday ?? 1) === 1) {
     const remaining = staged.filter((t) => !placedIds.has(t.task_id) && !directionGatedOffIds.has(t.task_id));
     if (remaining.length > 0) {
+      // When a daily_plan has been authored for today, it already encodes the
+      // preferred sequence (LLM or deterministic) — preserve that order so placement
+      // faithfully executes what authoring decided. Without a daily_plan, fall back
+      // to the fill_order pref (pre-Phase-M backward-compatible behaviour).
+      const hasDailyPlan = !!(sqlite
+        .prepare(`SELECT 1 FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`)
+        .get(owner, date));
       const fillOrder = prefs?.fill_order ?? 'priority';
-      const ordered = fillOrder === 'overdue' ? orderByOverdue(remaining) : orderForPlan(remaining);
+      const ordered = hasDailyPlan
+        ? remaining // selectedStaged already ordered by daily_plan.position
+        : fillOrder === 'overdue' ? orderByOverdue(remaining) : orderForPlan(remaining);
       const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
       const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
       const r = placeIntoWindow(ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
@@ -409,6 +429,22 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   }
 
   recordRun(owner, runId, blocksCreated);
+
+  // Link block_id in daily_plan for every placed task (Phase M §0 / A3: the block
+  // detail view joins daily_plan on block_id to display the per-task rationale).
+  if (placedIds.size > 0) {
+    const linkBlk = sqlite.prepare(
+      `UPDATE daily_plan
+          SET block_id = (
+            SELECT id FROM time_blocks
+             WHERE task_id = ? AND is_auto = 1 AND auto_run_id = ? AND block_kind = 'task'
+             ORDER BY start_at LIMIT 1
+          )
+        WHERE owner_id = ? AND date = ? AND task_id = ?`
+    );
+    for (const taskId of placedIds) linkBlk.run(taskId, runId, owner, date, taskId);
+  }
+
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
   broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
@@ -435,7 +471,7 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
     return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
   }
 
-  const staged = selectedStaged(owner);
+  const staged = selectedStaged(owner, date);
   // Tasks already auto-placed today are not re-placed (this top-up runs AFTER tap 2,
   // and must not clear or duplicate those placements).
   const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
@@ -546,6 +582,7 @@ export function autoScheduleOnIngest(
 ): AutoResult | null {
   if (autoMode(owner) !== 'schedule') return null;
   fillFlightPlanCandidates(owner); // stage any new open tasks, all selected
-  if (selectedStaged(owner).length === 0) return null;
+  const date = opts.date ?? localISODate();
+  if (selectedStaged(owner, date).length === 0) return null;
   return placeFlightPlan(owner, opts);
 }
