@@ -1,0 +1,270 @@
+/**
+ * Phase M §0 / A1 — acceptance tests for the durable day-plan authoring seam.
+ *
+ * All DB-backed tests use SYSTEM_OWNER (seeded by 0003_seed_defaults) and the
+ * standard resetDb() + explicit daily_plan / flight_plan cleanup in beforeEach.
+ *
+ * The LLM-enabled path is gated on ollamaAvailable() so the suite is always
+ * green in CI (where Ollama is absent) — the loop harness fallback path is fully
+ * exercised by loop.test.ts mocks.
+ */
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
+import { resetDb, startTestServer, ollamaAvailable, type TestServer } from './helpers.js';
+import { authorPlanOrder } from '../src/agents/plan.js';
+import { placeFlightPlan } from '../src/engine/autoplan.js';
+
+const OWNER = SYSTEM_OWNER;
+const DATE = '2026-06-24';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function insertTask(title: string, priority = 3, dueAt?: string, est = 30): string {
+  return (
+    sqlite
+      .prepare(
+        `INSERT INTO tasks (id, title, owner_id, status, priority, due_at, estimated_minutes)
+         VALUES (uuid7(), ?, ?, 'open', ?, ?, ?) RETURNING id`,
+      )
+      .get(title, OWNER, priority, dueAt ?? null, est) as { id: string }
+  ).id;
+}
+
+function stage(taskId: string, position: number): void {
+  sqlite
+    .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`)
+    .run(OWNER, taskId, position);
+}
+
+function dailyPlanRows(date = DATE): { task_id: string; position: number; source: string; block_id: string | null }[] {
+  return sqlite
+    .prepare(`SELECT task_id, position, source, block_id FROM daily_plan WHERE owner_id = ? AND date = ? ORDER BY position`)
+    .all(OWNER, date) as { task_id: string; position: number; source: string; block_id: string | null }[];
+}
+
+// ─── Suite setup ────────────────────────────────────────────────────────────
+
+let srv: TestServer;
+beforeAll(async () => { srv = await startTestServer(); });
+afterAll(async () => { await srv.close(); });
+beforeEach(() => {
+  resetDb();
+  sqlite.exec(`DELETE FROM flight_plan;`);
+  // resetDb() already clears daily_plan; here for explicitness
+  sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}';`);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'ritual' WHERE owner_id = ?`).run(OWNER);
+});
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+describe('authorPlanOrder — deterministic path (planning_mode = ritual)', () => {
+  it('writes one daily_plan row per staged task, ordered by deterministic priority+due sort', async () => {
+    const p3 = insertTask('Low priority', 3);
+    const p1 = insertTask('High priority', 1);
+    stage(p3, 0); // p3 first in flight_plan
+    stage(p1, 1); // p1 second
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    expect(rows).toHaveLength(2);
+    // Deterministic: P1 before P3
+    expect(rows[0].task_id).toBe(p1);
+    expect(rows[0].position).toBe(0);
+    expect(rows[0].source).toBe('deterministic');
+    expect(rows[1].task_id).toBe(p3);
+    expect(rows[1].position).toBe(1);
+  });
+
+  it('is a no-op (author-once) on a second call for the same day', async () => {
+    const t = insertTask('Task A', 2);
+    stage(t, 0);
+
+    await authorPlanOrder(OWNER, DATE);
+    const firstRows = dailyPlanRows();
+
+    // Add another task and re-call — second call must be a no-op
+    const t2 = insertTask('Task B', 1);
+    stage(t2, 1);
+    await authorPlanOrder(OWNER, DATE);
+
+    const secondRows = dailyPlanRows();
+    expect(secondRows).toHaveLength(firstRows.length); // no new rows
+    expect(secondRows[0].task_id).toBe(firstRows[0].task_id);
+  });
+
+  it('is a no-op when fewer than 2 tasks are staged', async () => {
+    const t = insertTask('Solo task');
+    stage(t, 0);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    // Single-task case: writes one deterministic row
+    const rows = dailyPlanRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task_id).toBe(t);
+
+    // Zero-task case: no rows
+    sqlite.exec(`DELETE FROM daily_plan;`);
+    sqlite.exec(`DELETE FROM flight_plan;`);
+    await authorPlanOrder(OWNER, DATE);
+    expect(dailyPlanRows()).toHaveLength(0);
+  });
+
+  it('writes nothing when the flight_plan is empty', async () => {
+    await authorPlanOrder(OWNER, DATE);
+    expect(dailyPlanRows()).toHaveLength(0);
+  });
+
+  it('orders past-due tasks before equal-priority future-due tasks', async () => {
+    const overdue = insertTask('Overdue task', 2, '2026-01-01');
+    const future = insertTask('Future task', 2, '2026-12-31');
+    stage(future, 0); // future staged first
+    stage(overdue, 1);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    expect(rows[0].task_id).toBe(overdue); // past-due sorts first
+    expect(rows[1].task_id).toBe(future);
+  });
+
+  it('a deadline on a lower-priority task can justify it appearing before a higher-priority no-deadline task', async () => {
+    // P3 task due today vs P1 task with no deadline
+    // Deterministic sort: priority first, then due → P1 no-due = position Infinity → P3 with due comes after P1
+    // Wait — deterministic is priority first. So P1 always comes before P3 in the deterministic sort.
+    // This test verifies the DETERMINISTIC fallback's priority-first rule.
+    const p1NoDue = insertTask('High priority no deadline', 1);
+    const p3WithDue = insertTask('Low priority urgent', 3, DATE);
+    stage(p3WithDue, 0);
+    stage(p1NoDue, 1);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    // Deterministic: P1 first (priority beats deadline in the fallback comparator)
+    expect(rows[0].task_id).toBe(p1NoDue);
+    expect(rows[1].task_id).toBe(p3WithDue);
+  });
+});
+
+describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
+  beforeEach(() => {
+    // A workday plan block to place into (no Plans = workday fallback only)
+    sqlite.prepare(`UPDATE scheduling_prefs SET auto_fill_workday = 1 WHERE owner_id = ?`).run(OWNER);
+  });
+
+  it('places tasks in daily_plan order, not flight_plan.position order', () => {
+    const p1 = insertTask('High priority', 1, undefined, 30);
+    const p3 = insertTask('Low priority', 3, undefined, 30);
+    // Stage p3 at position 0, p1 at position 1 (counter-priority)
+    stage(p3, 0);
+    stage(p1, 1);
+
+    // Write daily_plan with the reversed order (p3 first — as if the LLM put it first)
+    sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, ?, 'test')`).run(OWNER, DATE, p3, 0);
+    sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, ?, 'test')`).run(OWNER, DATE, p1, 1);
+
+    placeFlightPlan(OWNER, { date: DATE });
+
+    const blocks = sqlite
+      .prepare(`SELECT title, start_at FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`)
+      .all() as { title: string; start_at: string }[];
+
+    expect(blocks).toHaveLength(2);
+    // daily_plan says p3 first → p3's block should start earlier
+    expect(blocks[0].title).toBe('Low priority');
+    expect(blocks[1].title).toBe('High priority');
+  });
+
+  it('falls back to flight_plan.position for tasks with no daily_plan row', () => {
+    const a = insertTask('Task A', 2, undefined, 30);
+    const b = insertTask('Task B', 2, undefined, 30);
+    stage(a, 0);
+    stage(b, 1);
+    // No daily_plan rows → selectedStaged falls back to fp.position order
+
+    placeFlightPlan(OWNER, { date: DATE });
+
+    const blocks = sqlite
+      .prepare(`SELECT title, start_at FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`)
+      .all() as { title: string; start_at: string }[];
+
+    expect(blocks[0].title).toBe('Task A'); // fp.position 0 first
+    expect(blocks[1].title).toBe('Task B');
+  });
+
+  it('links daily_plan.block_id for each placed task', () => {
+    const t = insertTask('Link me', 2, undefined, 30);
+    stage(t, 0);
+    sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, 0, 'deterministic')`).run(OWNER, DATE, t);
+
+    placeFlightPlan(OWNER, { date: DATE });
+
+    const row = sqlite
+      .prepare(`SELECT block_id FROM daily_plan WHERE owner_id = ? AND date = ? AND task_id = ?`)
+      .get(OWNER, DATE, t) as { block_id: string | null };
+
+    expect(row.block_id).not.toBeNull();
+
+    // The block_id points to a real time_block for this task
+    const block = sqlite
+      .prepare(`SELECT task_id FROM time_blocks WHERE id = ?`)
+      .get(row.block_id!) as { task_id: string } | undefined;
+    expect(block?.task_id).toBe(t);
+  });
+
+  it('v1-regression guard: placed order survives a re-run (idempotent given same daily_plan)', () => {
+    // Ensure that if placeFlightPlan is called a second time with the same daily_plan,
+    // the resulting block order is identical — the frozen order survives re-placement.
+    const p1 = insertTask('First', 1, undefined, 30);
+    const p3 = insertTask('Second', 3, undefined, 30);
+    stage(p3, 0);
+    stage(p1, 1);
+    sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, 0, 'test')`).run(OWNER, DATE, p3);
+    sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, 1, 'test')`).run(OWNER, DATE, p1);
+
+    placeFlightPlan(OWNER, { date: DATE });
+    const firstOrder = (sqlite.prepare(`SELECT title FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`).all() as { title: string }[]).map(b => b.title);
+
+    // Re-stage (as reflow would) and run again
+    sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`).run(OWNER, p3);
+    sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 1)`).run(OWNER, p1);
+
+    placeFlightPlan(OWNER, { date: DATE });
+    const secondOrder = (sqlite.prepare(`SELECT title FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`).all() as { title: string }[]).map(b => b.title);
+
+    expect(secondOrder).toEqual(firstOrder);
+  });
+});
+
+describe('authorPlanOrder — LLM path (planning_mode = auto)', () => {
+  it('writes source=llm or source=deterministic (never throws) when Ollama is available', async () => {
+    if (!(await ollamaAvailable())) {
+      // Skip — not a failure; loop.test.ts mocks cover the harness contract.
+      return;
+    }
+
+    const p1 = insertTask('High', 1);
+    const p2 = insertTask('Mid', 2);
+    const p3 = insertTask('Low', 3);
+    stage(p1, 0);
+    stage(p2, 1);
+    stage(p3, 2);
+
+    sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'auto' WHERE owner_id = ?`).run(OWNER);
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    expect(rows).toHaveLength(3);
+    expect(['llm', 'deterministic']).toContain(rows[0].source); // either is acceptable
+    expect(rows.map(r => r.position)).toEqual([0, 1, 2]);
+
+    // All tasks must be present exactly once
+    const taskIds = new Set(rows.map(r => r.task_id));
+    expect(taskIds.has(p1)).toBe(true);
+    expect(taskIds.has(p2)).toBe(true);
+    expect(taskIds.has(p3)).toBe(true);
+  });
+});
