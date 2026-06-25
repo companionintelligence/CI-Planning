@@ -5,6 +5,7 @@ import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
 import { blockPasses } from '../lib/overlay.js';
+import { replanToastMessage } from '../lib/replan.js';
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export const [taskFilter, setTaskFilter] = createSignal<Record<string, string>>({});
@@ -34,6 +35,13 @@ on('block:created', () => refetchBlocks());
 on('block:updated', () => refetchBlocks());
 on('block:deleted', () => refetchBlocks());
 on('schedule:done',  () => refetchBlocks());
+// Phase M B3: a reactive reflow (auto-defense) emits schedule:done with a diff.
+// The refetch above repaints the day; this surfaces a low-noise toast ONLY when
+// something actually moved, so background reflows aren't silent but aren't noisy.
+on('schedule:done', (data) => {
+  const msg = replanToastMessage(data);
+  if (msg) showToast(msg, 'default');
+});
 
 // ── Concepts (Phase G, Step 2b) ────────────────────────────────────────────────
 // Unscheduled goal Time-Blocks — owner-scoped, off the minute grid (a goal day +
