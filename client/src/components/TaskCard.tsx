@@ -1,5 +1,5 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
 import { refetchTasks, showToast, setElementModal, tags, patternPrefs } from '../stores/index.js';
 import { directionColorForTask } from '../lib/pattern-meta.js';
@@ -44,8 +44,9 @@ function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
   );
 }
 
-// Compact inline date field: a calendar icon + formatted date that reveals a native
-// date picker (transparent overlay), matching the Today/Settings "pick a day" pattern.
+// Compact inline date field: a calendar-icon BUTTON that opens the native date
+// picker, plus a clear (×) button to reset the date. Matches the Today/Settings
+// "pick a day" pattern but with an explicit trigger + reset.
 function DateField(props: { label: string; value?: string | null; overdue?: boolean; onSet: (v: string) => void }) {
   const ymd = () => (props.value ? props.value.slice(0, 10) : '');
   const display = () => {
@@ -54,17 +55,30 @@ function DateField(props: { label: string; value?: string | null; overdue?: bool
     const d = new Date(v + 'T00:00:00');
     return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
+  let inputRef: HTMLInputElement | undefined;
+  const openPicker = () => {
+    // showPicker() needs a user gesture (this click) and an in-DOM, non-hidden input.
+    try { inputRef?.showPicker(); } catch { inputRef?.focus(); }
+  };
   return (
-    <label class="relative flex items-center gap-1 text-[11px] cursor-pointer hover:text-foreground" title={`Set ${props.label.toLowerCase()} date`}>
-      <CalendarDays size={11} class="flex-shrink-0 text-muted-foreground" />
-      <span class={props.overdue ? 'text-red-400' : 'text-muted-foreground'}>{props.label} {display()}</span>
+    <div class="relative flex items-center gap-1 text-[11px]">
+      <button type="button" class="flex items-center gap-1 hover:text-foreground" title={`Set ${props.label.toLowerCase()} date`} onClick={openPicker}>
+        <CalendarDays size={11} class="flex-shrink-0 text-muted-foreground" />
+        <span class={props.overdue ? 'text-red-400' : 'text-muted-foreground'}>{props.label} {display()}</span>
+      </button>
+      <Show when={ymd()}>
+        <button type="button" class="text-muted-foreground hover:text-red-400" title={`Clear ${props.label.toLowerCase()} date`} onClick={() => props.onSet('')}>
+          <X size={11} />
+        </button>
+      </Show>
       <input
+        ref={inputRef}
         type="date"
-        class="absolute inset-0 opacity-0 cursor-pointer"
+        class="absolute bottom-0 right-0 w-0 h-0 opacity-0 pointer-events-none"
         value={ymd()}
         onChange={(e) => props.onSet(e.currentTarget.value)}
       />
-    </label>
+    </div>
   );
 }
 
@@ -126,16 +140,22 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  // T-TASKS-2: inline priority / due / start edits, written straight through.
+  // T-TASKS-2: inline priority / due / start edits. Each asks for confirmation
+  // before writing (per request), then writes straight through.
   async function setPriority(v: number) {
+    if (v === props.task.priority) return;
+    const label = PRIO.find((o) => o.value === v)?.label ?? `P${v}`;
+    if (!confirm(`Change priority to ${label}?`)) return;
     try { await api.tasks.update(props.task.id, { priority: v }); refetchTasks(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function setDue(v: string) {
+    if (!confirm(v ? `Set the due date to ${v}?` : 'Clear the due date?')) return;
     try { await api.tasks.update(props.task.id, { due_at: v || undefined }); refetchTasks(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function setStart(v: string) {
+    if (!confirm(v ? `Set the start date to ${v}?` : 'Clear the start date?')) return;
     try { await api.tasks.update(props.task.id, { scheduled_for: v || undefined }); refetchTasks(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -169,7 +189,7 @@ export function TaskCard(props: Props) {
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
-        class={`card group flex gap-3 ${props.task.status === 'done' ? 'opacity-40' : ''}`}
+        class={`card group flex gap-3 ${props.task.status === 'cancelled' ? 'opacity-40' : ''}`}
         style={{
           'margin-bottom': '6px',
           // Uniform 3px left accent for every card (no relative shift); coloured by
