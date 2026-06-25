@@ -1,4 +1,4 @@
-import { Show } from 'solid-js';
+import { Show, onMount } from 'solid-js';
 import { Sparkles } from 'lucide-solid';
 import { api } from '../lib/api.js';
 import { replanSuggestion, setReplanSuggestion, showToast, refetchBlocks } from '../stores/index.js';
@@ -12,6 +12,16 @@ import { replanSuggestion, setReplanSuggestion, showToast, refetchBlocks } from 
  * SSE event re-arrives — the server holds the outstanding state in memory.
  */
 export function ReplanBanner() {
+  // Reload-durable: the 'replan:suggested' SSE event fires once and isn't replayed on
+  // reconnect, so hydrate from the server's in-memory outstanding state on mount.
+  // Don't clobber a fresher live signal (an event that arrived before this resolved).
+  onMount(() => {
+    void api.plan
+      .suggestion()
+      .then((r) => { if (r.suggestion && !replanSuggestion()) setReplanSuggestion(r.suggestion); })
+      .catch(() => {});
+  });
+
   async function reauthor() {
     const s = replanSuggestion();
     if (!s) return;

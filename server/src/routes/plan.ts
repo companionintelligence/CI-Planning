@@ -4,7 +4,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import { broadcast } from './sse.js';
 import { authorPlanOrder } from '../agents/plan.js';
-import { reflow, clearSuggestion } from '../engine/auto-defense.js';
+import { reflow, clearSuggestion, outstandingSuggestion } from '../engine/auto-defense.js';
 
 /**
  * Phase M B4 — the escalation accept/dismiss endpoints. These are the ONLY reactive
@@ -13,6 +13,13 @@ import { reflow, clearSuggestion } from '../engine/auto-defense.js';
  */
 export function planRouter() {
   const router = new Router();
+
+  // GET /api/plan/suggestion — the owner's outstanding re-plan nudge (or null).
+  // The banner fetches this on mount so a reload re-surfaces a still-open suggestion
+  // (the SSE 'replan:suggested' event is fire-once and isn't replayed on reconnect).
+  router.get('/api/plan/suggestion', async (ctx) => {
+    ctx.body = { suggestion: outstandingSuggestion(currentOwnerId()) ?? null };
+  });
 
   // POST /api/plan/reauthor { date? } — accept the nudge: force an AI re-author of the
   // day, then re-place deterministically. authorPlanOrder uses the LLM only when
