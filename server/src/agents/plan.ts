@@ -31,6 +31,7 @@ import { generateJson, isAvailable } from '../mcp/ollama.js';
 import { taskTagNames } from '../services/tags.js';
 import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
+import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -545,6 +546,121 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const source = result.passed ? 'llm' : 'deterministic';
   const rationales = source === 'llm' ? await generateRationales(staged, finalIndices, themeTag) : undefined;
   persistOrder(owner, date, staged, finalIndices, source, rationales);
+}
+
+// ─── §A4 — NL planning constraints (pins-first MVP) ──────────────────────────
+//
+// `POST /api/plan/instruct` → parse free text into a TYPED, validated constraint
+// set the deterministic placer consumes. The rubric is pure schema validation (no
+// LLM judge): malformed/unknown/contradictory ⇒ `invalid` (the route returns 422,
+// never a partial apply); Ollama down ⇒ `unavailable` (503). Time PINS are applied
+// as locked obstacle blocks; tag/ordering HINTS are parsed + returned but not yet
+// wired into placement (deferred — see the doc's A4 "as-built").
+
+export interface PlanPin { title: string; start_at: string; end_at: string }
+export interface PlanHint { kind: 'tag_before' | 'tag_after' | 'batch'; tag: string; time?: string }
+export interface InstructResult { pins: PlanPin[]; hints: PlanHint[] }
+
+export class InstructError extends Error {
+  constructor(public code: 'unavailable' | 'invalid', message: string) {
+    super(message);
+    this.name = 'InstructError';
+  }
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const HINT_KINDS = new Set(['tag_before', 'tag_after', 'batch']);
+
+function ownerTimezone(owner: string): string {
+  const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined;
+  return row?.timezone || serverTimezone();
+}
+function allTagNames(): Set<string> {
+  return new Set((sqlite.prepare(`SELECT name FROM tags`).all() as { name: string }[]).map((r) => r.name));
+}
+
+function instructSystem(): string {
+  return (
+    'You convert ONE scheduling instruction into structured JSON for a deterministic planner. ' +
+    'Output ONLY {"pins":[{"title","start","end"}],"hints":[{"kind","tag","time"}]}. ' +
+    'A pin is a fixed appointment; start/end are "HH:MM" (24h). A hint constrains tasks by tag: ' +
+    'kind is "tag_before" or "tag_after" (with "time" "HH:MM"), or "batch" (no time). ' +
+    'Use ONLY tags from the provided list. Invent nothing; omit anything uncertain. Reply with JSON only.'
+  );
+}
+function instructPrompt(text: string, date: string, ws: string, we: string, tags: string[]): string {
+  return (
+    `Date: ${date}. Workday: ${ws}–${we}. Available tags: ${tags.length ? tags.join(', ') : '(none)'}.\n` +
+    `Instruction: "${text}"\n\nReturn ONLY the JSON object.`
+  );
+}
+
+/** Validate the raw LLM output into a typed InstructResult (pins converted to UTC ISO). Throws InstructError('invalid'). */
+export function validateInstruction(raw: unknown, date: string, tz: string, tagSet: Set<string>): InstructResult {
+  if (!raw || typeof raw !== 'object') throw new InstructError('invalid', 'Could not understand the instruction');
+  const r = raw as { pins?: unknown; hints?: unknown };
+  const pinsRaw = Array.isArray(r.pins) ? r.pins : [];
+  const hintsRaw = Array.isArray(r.hints) ? r.hints : [];
+
+  const pins: PlanPin[] = [];
+  for (const p of pinsRaw) {
+    const o = (p ?? {}) as { title?: unknown; start?: unknown; end?: unknown };
+    const title = typeof o.title === 'string' ? o.title.trim() : '';
+    const start = typeof o.start === 'string' ? o.start : '';
+    const end = typeof o.end === 'string' ? o.end : '';
+    if (!title) throw new InstructError('invalid', 'A pinned appointment is missing a title');
+    if (!HHMM.test(start) || !HHMM.test(end)) throw new InstructError('invalid', `"${title}" has an invalid time`);
+    if (start >= end) throw new InstructError('invalid', `"${title}" ends before it starts`);
+    pins.push({ title, start_at: zonedWallTimeToUTC(date, start, tz), end_at: zonedWallTimeToUTC(date, end, tz) });
+  }
+  // "No contradictory pins": no two pinned appointments may overlap.
+  const sorted = [...pins].sort((a, b) => a.start_at.localeCompare(b.start_at));
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].start_at < sorted[i - 1].end_at) throw new InstructError('invalid', 'Two pinned appointments overlap');
+  }
+
+  const hints: PlanHint[] = [];
+  for (const h of hintsRaw) {
+    const o = (h ?? {}) as { kind?: unknown; tag?: unknown; time?: unknown };
+    const kind = typeof o.kind === 'string' ? o.kind : '';
+    const tag = typeof o.tag === 'string' ? o.tag : '';
+    if (!HINT_KINDS.has(kind)) throw new InstructError('invalid', `Unknown hint kind "${kind}"`);
+    if (!tagSet.has(tag)) throw new InstructError('invalid', `Unknown tag "#${tag}"`);
+    let time: string | undefined;
+    if (kind === 'tag_before' || kind === 'tag_after') {
+      time = typeof o.time === 'string' ? o.time : '';
+      if (!HHMM.test(time)) throw new InstructError('invalid', `The hint for #${tag} needs a valid time`);
+    }
+    hints.push({ kind: kind as PlanHint['kind'], tag, time });
+  }
+
+  if (pins.length === 0 && hints.length === 0) throw new InstructError('invalid', 'No actionable constraints found');
+  return { pins, hints };
+}
+
+/**
+ * §A4 — parse a natural-language instruction into a validated constraint set.
+ * Ollama-down ⇒ InstructError('unavailable'); malformed/unknown/contradictory ⇒
+ * InstructError('invalid'). Performs NO writes — the caller applies pins only after
+ * a clean parse, so there are never partial writes.
+ */
+export async function parseInstruction(owner: string, date: string, text: string): Promise<InstructResult> {
+  if (!(await isAvailable())) throw new InstructError('unavailable', 'AI is unavailable');
+  const prefs = loadPlanningPrefs(owner);
+  const tz = ownerTimezone(owner);
+  const tagSet = allTagNames();
+  let raw: unknown;
+  try {
+    raw = await generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {
+      tier: 'small',
+      system: instructSystem(),
+      temperature: 0.1,
+      timeoutMs: 25_000,
+    });
+  } catch {
+    throw new InstructError('unavailable', 'AI request failed');
+  }
+  return validateInstruction(raw, date, tz, tagSet);
 }
 
 // ─── Legacy (kept for runScheduler / plan.test.ts; do not add new callers) ───
