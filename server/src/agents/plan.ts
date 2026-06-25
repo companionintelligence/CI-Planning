@@ -103,14 +103,16 @@ function persistOrder(
   tasks: PlanTask[],
   indices: number[],
   source: 'llm' | 'deterministic',
+  rationales?: Map<string, string>,
 ): void {
   const ins = sqlite.prepare(
     `INSERT OR IGNORE INTO daily_plan (owner_id, date, task_id, position, rationale, source)
-     VALUES (?, ?, ?, ?, NULL, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?)`,
   );
   sqlite.transaction(() => {
     for (let pos = 0; pos < indices.length; pos++) {
-      ins.run(owner, date, tasks[indices[pos]].task_id, pos, source);
+      const taskId = tasks[indices[pos]].task_id;
+      ins.run(owner, date, taskId, pos, rationales?.get(taskId) ?? null, source);
     }
   })();
 }
@@ -328,6 +330,59 @@ export function genPrompt(lines: string[], capacityMin: number, themeTag?: strin
   );
 }
 
+// ─── §A3 — per-task "why now" rationale (LLM path only) ──────────────────────
+
+function rationaleSystem(): string {
+  return (
+    'You explain a finished day plan. For each task give ONE short reason (≤120 chars) it sits where it does — ' +
+    'cite its deadline, priority, theme, or grouping. Invent nothing; if unsure, state the priority. Reply with JSON only.'
+  );
+}
+
+function rationalePrompt(lines: string[], themeTag?: string | null): string {
+  const theme = themeTag ? `\nToday's theme: ${themeTag}.` : '';
+  return (
+    `Tasks in their planned order (number: [priority] title (due) ~estimate tags):\n${lines.join('\n')}${theme}\n\n` +
+    `Return ONLY a JSON object mapping each task number to a concise one-line reason. Example: {"0":"Due today — most urgent","1":"High priority, batched with #email"}`
+  );
+}
+
+/** Sanitize one rationale: single line, trimmed, ≤140 chars, or null if unusable. */
+function sanitizeRationale(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const oneLine = v.replace(/\s+/g, ' ').trim();
+  if (!oneLine) return null;
+  return oneLine.length > 140 ? `${oneLine.slice(0, 139)}…` : oneLine;
+}
+
+/**
+ * §A3 — generate one "why now" line per task for an LLM-authored order. ONE batch
+ * call (small tier), keyed by the task's position. Best-effort: any failure (Ollama
+ * down, bad JSON) yields an empty map → those tasks keep a null rationale, so the UI
+ * degrades silently. Never throws.
+ */
+async function generateRationales(tasks: PlanTask[], order: number[], themeTag?: string | null): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const lines = order.map((idx, pos) => `${pos}: ${taskLine(tasks[idx], idx).replace(/^\d+:\s*/, '')}`);
+    const raw = await generateJson<Record<string, unknown>>(rationalePrompt(lines, themeTag), {
+      tier: 'small',
+      system: rationaleSystem(),
+      temperature: 0.3,
+      timeoutMs: 25_000,
+    });
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      for (let pos = 0; pos < order.length; pos++) {
+        const r = sanitizeRationale((raw as Record<string, unknown>)[String(pos)]);
+        if (r) out.set(tasks[order[pos]].task_id, r);
+      }
+    }
+  } catch {
+    // best-effort — a missing rationale just renders nothing on the block.
+  }
+  return out;
+}
+
 function judgeSystem(): string {
   return (
     'You are a strict planning reviewer. You did NOT create this plan. ' +
@@ -485,7 +540,11 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const finalDefects = checkOrder(finalCandidate, staged, date, themeTag);
   const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
 
-  persistOrder(owner, date, staged, finalIndices, result.passed ? 'llm' : 'deterministic');
+  // §A3: only an LLM-authored order carries per-task rationales; an escape-hatch
+  // fallback (source='deterministic') leaves them null, like the basic-mode path.
+  const source = result.passed ? 'llm' : 'deterministic';
+  const rationales = source === 'llm' ? await generateRationales(staged, finalIndices, themeTag) : undefined;
+  persistOrder(owner, date, staged, finalIndices, source, rationales);
 }
 
 // ─── Legacy (kept for runScheduler / plan.test.ts; do not add new callers) ───
