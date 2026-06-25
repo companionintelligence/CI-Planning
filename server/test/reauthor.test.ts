@@ -23,6 +23,7 @@ import {
   isBigDisruption,
   requestReplan,
   outstandingSuggestion,
+  clearSuggestion,
   _resetReplanState,
   type ReflowDiff,
 } from '../src/engine/auto-defense.js';
@@ -193,6 +194,33 @@ describe('POST /api/plan/reauthor/dismiss', () => {
     expect(res.status).toBe(200);
     expect(outstandingSuggestion(OWNER)).toBeUndefined();
     expect(eventCount('replan:dismissed')).toBe(1);
+  });
+});
+
+describe('restart-durable nudge (replan_suggestions table)', () => {
+  it('persists the outstanding suggestion to the DB, so it survives a server restart', () => {
+    vi.useFakeTimers();
+    setAutoDefense(true);
+    const p1 = insertTask('Crunch', 1);
+    seedDailyPlan(p1, 0);
+    fullDayMeeting();
+    requestReplan('task:updated', OWNER, DATE);
+    vi.advanceTimersByTime(1500);
+    vi.useRealTimers();
+
+    // The suggestion is a row in replan_suggestions (not an in-memory Map) — a fresh
+    // process reads it back via outstandingSuggestion, so a restart doesn't drop it.
+    const row = sqlite
+      .prepare(`SELECT date, summary, at_risk FROM replan_suggestions WHERE owner_id = ?`)
+      .get(OWNER) as { date: string; summary: string; at_risk: number } | undefined;
+    expect(row).toBeTruthy();
+    expect(row!.date).toBe(DATE);
+    expect(row!.at_risk).toBeGreaterThanOrEqual(1);
+    expect(outstandingSuggestion(OWNER)).toEqual({ date: DATE, reason: 'task:updated', summary: row!.summary, atRisk: row!.at_risk });
+
+    // Clearing removes the row.
+    clearSuggestion(OWNER);
+    expect(sqlite.prepare(`SELECT 1 FROM replan_suggestions WHERE owner_id = ?`).get(OWNER)).toBeUndefined();
   });
 });
 
