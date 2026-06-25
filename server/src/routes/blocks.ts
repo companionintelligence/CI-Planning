@@ -9,6 +9,7 @@ import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
+import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 
@@ -320,6 +321,38 @@ export function blocksRouter() {
     broadcast(currentOwnerId(), 'block:deleted', { id });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block:${id}` });
     ctx.body = { ok: true };
+  });
+
+  // POST /api/days/:date/clear — clear the day's AUTO-PLACED task blocks only.
+  // The predicate mirrors clearPriorAuto (engine/autoplan.ts) exactly: only our
+  // own agent auto placements (`is_auto=1 AND is_locked=0 AND block_kind='task'
+  // AND source_kind='agent'`). It therefore preserves — by construction —
+  // user-placed blocks (is_auto=0 / source 'manual'), locked blocks, calendar
+  // meeting mirrors (block_kind!='task'), pattern/habit placements
+  // (source_kind!='agent'), and completed/skipped occurrences. Keep this WHERE
+  // in sync with autoplan.ts:187.
+  router.post('/api/days/:date/clear', async (ctx) => {
+    const owner = currentOwnerId();
+    const date = ctx.params.date;
+    const tzRow = sqlite
+      .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
+      .get(owner) as { timezone?: string } | undefined;
+    const tz = tzRow?.timezone || serverTimezone();
+    const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
+    const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+    const removed = sqlite
+      .prepare(
+        `DELETE FROM time_blocks
+          WHERE is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
+            AND status NOT IN ('completed','skipped')
+            AND start_at < ? AND end_at > ?
+          RETURNING id`,
+      )
+      .all(dayEndISO, dayStartISO) as { id: string }[];
+    for (const r of removed) removeEntityTags('time_block', r.id);
+    if (removed.length) broadcast(owner, 'block:deleted', { cleared: removed.length, date });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'clear-day', entity: `day:${date}` });
+    ctx.body = { ok: true, cleared: removed.length };
   });
 
   return router;
