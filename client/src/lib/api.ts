@@ -294,6 +294,21 @@ export const api = {
             request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
   },
 
+  // Day types (T-SCHED-3): the catalog, the weekly default map (dow→key), and
+  // per-date overrides. resolveDayType picks which pattern_blocks windows Auto uses.
+  dayTypes: {
+    list: () => request<{ day_types: DayType[] }>('GET', '/day-types'),
+    create: (key: string, name: string) => request<{ day_type: DayType }>('POST', '/day-types', { key, name }),
+    rename: (id: string, name: string) => request<{ day_type: DayType }>('PATCH', `/day-types/${id}`, { name }),
+    remove: (id: string) => request<{ ok: boolean }>('DELETE', `/day-types/${id}`),
+    weekMap: () => request<{ map: Record<number, string> }>('GET', '/day-types/week-map'),
+    setWeekMap: (map: Record<number, string>) => request<{ map: Record<number, string> }>('PUT', '/day-types/week-map', { map }),
+    assignments: () => request<{ assignments: Record<string, string> }>('GET', '/day-types/assignments'),
+    assign: (date: string, dayTypeKey: string) =>
+      request<{ date: string; day_type_key: string }>('PUT', `/day-types/assignments/${date}`, { day_type_key: dayTypeKey }),
+    clearAssignment: (date: string) => request<{ ok: boolean }>('DELETE', `/day-types/assignments/${date}`),
+  },
+
   patternPrefs: {
     list: (): Promise<PatternPrefsResponse> =>
       request<PatternPrefsResponse>('GET', '/pattern-prefs'),
@@ -536,6 +551,10 @@ export interface Integrations {
 // ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
 export interface PatternRange { id: string; start_time: string; end_time: string }
 export type PatternWindows = Record<string, PatternRange[]>; // dirTagId → ranges
+
+// ── Day types (0068, T-SCHED-3): a date resolves to one of these keys, selecting
+// the pattern_blocks windows Auto places into. Builtins workday/weekend are rename-only.
+export interface DayType { id: string; key: string; name: string; is_builtin: boolean }
 
 // ── Pattern-prefs (0039): per-pattern auto_fill + reminder offsets + block display ──
 export interface PatternPref {
