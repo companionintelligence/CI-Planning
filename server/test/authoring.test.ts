@@ -53,7 +53,9 @@ beforeEach(() => {
   sqlite.exec(`DELETE FROM flight_plan;`);
   // resetDb() already clears daily_plan; here for explicitness
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}';`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'basic' WHERE owner_id = ?`).run(OWNER);
+  // fill_order='overdue' = deadline-first (the Phase-M default); the deterministic
+  // ordering tests below assert deadline-first behaviour explicitly.
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'basic', fill_order = 'overdue' WHERE owner_id = ?`).run(OWNER);
 });
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -144,6 +146,22 @@ describe('authorPlanOrder — deterministic path (planning_mode = basic)', () =>
     // Deadline beats priority: p3WithDue comes first.
     expect(rows[0].task_id).toBe(p3WithDue);
     expect(rows[1].task_id).toBe(p1NoDue);
+  });
+
+  it('fill_order=priority flips the authored order to priority-first', async () => {
+    // The fill_order pref maps onto authoring: 'priority' → priority beats deadline.
+    sqlite.prepare(`UPDATE scheduling_prefs SET fill_order = 'priority' WHERE owner_id = ?`).run(OWNER);
+    const p1NoDue = insertTask('High priority no deadline', 1);
+    const p3WithDue = insertTask('Low priority urgent', 3, DATE);
+    stage(p3WithDue, 0);
+    stage(p1NoDue, 1);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    // Priority-first: P1 (no deadline) now precedes the urgent P3.
+    expect(rows[0].task_id).toBe(p1NoDue);
+    expect(rows[1].task_id).toBe(p3WithDue);
   });
 });
 
