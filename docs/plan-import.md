@@ -9,6 +9,12 @@
 > (canonical nouns) and the README pipeline; the optional semantic tier aligns with
 > **Phase M** ([M-ai-scheduler.md](M-ai-scheduler.md), Workstream C). Authoritative
 > future-phase list remains [ROADMAP.md](ROADMAP.md).
+>
+> **DB-compatibility review folded in (2026-06-25, verified against source):** corrected the
+> terminal-status set (no `TBD`/`past`; `cancelled` is a *live* soft-delete), the dedup path vs the
+> baseline `UNIQUE(source_kind, source_ref)`, the net-new `possible:updated` event + `dedupePossibles`
+> coexistence, the `account` backfill reality, the **0062 number collision with Phase M**, and the
+> baseline-snapshot test carve-out — all inline below.
 
 ---
 
@@ -31,16 +37,23 @@ subtasks) are out of scope — see Non-goals.
 - **Noun budget = 8** ([GLOSSARY.md](GLOSSARY.md)). This plan adds **no noun**:
   the surface is the existing **Inbox** (`possible_tasks`); the work is a **Groom**
   step (`compare_and_merge`) and a staging entry — operations, not nouns.
-- **Canonical vocabulary.** *Inbox* = `possible_tasks`. *Task* states are
-  `open · TBD · scheduled · deferred · done · missed · past`; *terminal* = `done`/`past`
-  (and the legacy `cancelled` soft-delete). *Tag* axes: `kind` pattern (Home/Work/
-  Community) vs intention; `level` 1 (top) vs >1 (secondary). *Subtask* = Task with `parent_id`.
+- **Canonical vocabulary.** *Inbox* = `possible_tasks`. *Task* `status` is **free-text (no DB
+  enum/CHECK)**; the live values are `open · scheduled · deferred · done · missed`, plus `cancelled`
+  as the **active** soft-delete set by `DELETE /api/tasks/:id` (`routes/tasks.ts:463`) — *not* legacy.
+  There is **no `TBD` or `past` status** (grep-confirmed: zero occurrences in `server/src`).
+  **Terminal/excluded = `done · cancelled · missed`** (matches `review.ts:66`, `auto-tag.ts:49`).
+  *Tag* axes: `kind` pattern (Home/Work/Community) vs intention; `level` 1 (top) vs >1 (secondary).
+  *Subtask* = Task with `parent_id`.
 - **Match the existing API surface; don't invent endpoints** (ingestion-plan §1).
   Reuse `GET /api/possible-tasks` and `POST /api/possible-tasks/:id/promote|dismiss`.
 - **Behavior-preservation is the contract** ([consolidation-plan](archive/consolidation-plan.md), now archived): every step is
-  additive; existing tests stay green; *changing* a test expectation is a red flag.
-  `dedupePossibles` (the existing embedding dedupe) is **not** modified — new code
-  is added alongside it.
+  additive; existing assertion *logic* stays green; *changing* a test expectation is a red flag.
+  **Carve-out (expected, reviewed regenerations):** two golden snapshots *must* change —
+  `baseline.characterization.test.ts:153-163` snapshots every table+column (regenerates for PI-1's
+  new column/table) and `:121` snapshots `GET /api/possible-tasks` (regenerates for PI-5's additive
+  fields). Also extend the Drizzle `possible_tasks` object so `schema-parity.test.ts` (which today
+  guards only `pattern_prefs`) doesn't silently miss ORM-vs-DB drift. `dedupePossibles` (the existing
+  embedding dedupe) is **not** modified — new code is added alongside it.
 - **Deterministic-first; AI optional.** Fuzzy match is deterministic and runs with
   Ollama down; the embedding tier is "LLM only for the ambiguous middle" and
   degrades to a no-op when embeddings are unavailable (README: "dedupe off"). When
@@ -48,10 +61,19 @@ subtasks) are out of scope — see Non-goals.
   ([M-ai-scheduler.md](M-ai-scheduler.md) Workstream C), the semantic tier **reuses
   that** instead of adding a parallel embedding path.
 - **Migrations** are numbered TS functions, additive + idempotent, registered in
-  `db/migrations/index.ts` (live head **0061**; next free **0062** — confirm at
-  build time). **Audit**: every new mutating path calls `writeAudit(...)`.
+  `db/migrations/index.ts` (live head **0061**). **Do not hardcode `0062`.** **Phase M**
+  ([M-ai-scheduler.md](M-ai-scheduler.md)) already reserves **0062–0064** (0062 →
+  `time_blocks.last_moved_at`; `ROADMAP.md` repeats this). Take the next free number *after
+  coordinating with the Phase M track*, confirmed at branch time — whichever merges first takes
+  0062, the other rebases (expect a baseline-snapshot merge conflict between the two branches,
+  resolved by regenerating after both land). **Audit**: every new mutating path calls
+  `writeAudit({ ownerId, actor, action, entity })` — all four required, **no free `detail` column**
+  (`lib/audit.ts:7`), so encode merge provenance into `entity` (e.g. `merge:<dup>-><survivor>`).
 - **Verification ritual** (per PR): Node `>=26 <27`; `pnpm --filter server test`,
-  client typecheck, and `migrate.test.ts` green; run grooming tests with `TZ=UTC`.
+  client typecheck, and `migrate.test.ts` green; pin `TZ=UTC` **per grooming test** (e.g.
+  `UPDATE scheduling_prefs SET timezone='UTC'`, mirroring `baseline.characterization.test.ts:71-73`) —
+  there is no global `TZ` env. **Caveat:** CI's `setup-node` is pinned to `22` (`.github/workflows/ci.yml:20`)
+  despite `engines >=26 <27`, so "verify under Node ≥26" won't match CI — worth flagging to maintainers.
 
 ## 2. Where it sits in the pipeline
 
@@ -104,7 +126,7 @@ linking every place it appeared" — ingestion-plan §5).
 - `possible_tasks.account` (TEXT, origin account; ingestion-plan calls for this).
 - `possible_tasks.duplicate_of_task_id` (TEXT, ref to a `tasks.id`; populated by **PI-4** when an Inbox item matches an existing open Task; null otherwise). **Lives here, not in PI-4** — so PI-4 carries no migration and can fan out after PI-1.
 - New table `possible_task_sources(possible_task_id, source_kind, source_ref, account, seen_at, PK(possible_task_id, source_kind, source_ref))` — the provenance list.
-- One backfilled provenance row per existing Inbox item (from its own `source_kind`/`source_ref`/`account`).
+- One backfilled provenance row per existing Inbox item. **`source_kind`/`source_ref` are real and populated** — copy them. But **`account` does not exist on `possible_tasks` today** (it's a new column, never persisted by ingest — `account` currently lives only on the `sync_state` watermark), so backfilled provenance `account` is **NULL** for every legacy row. Make `possible_task_sources.account` **nullable**; only new staged rows (PI-2) thread a real account.
 
 **Files impacted.**
 - `server/src/db/migrations/0062_inbox_provenance.ts` (new)
@@ -116,7 +138,7 @@ linking every place it appeared" — ingestion-plan §5).
 - Migration is additive + idempotent (re-running applies nothing; guarded by `PRAGMA table_info`).
 - Every pre-existing `possible_tasks` row has exactly one backfilled `possible_task_sources` row; no row count drift elsewhere.
 - Existing Inbox reads return identical data (new fields are additive, default null/empty).
-- FK/PK integrity holds (`foreign_key_check` clean post-migrate).
+- FK/PK integrity holds (`foreign_key_check` clean post-migrate). **There is no `foreign_key_check`/`integrity_check` test in `server/test` to inherit** — PI-1 adds its own gate (in-migration like `0030`, or a new test). `PRAGMA foreign_keys` is ON connection-wide (`db/index.ts:10`), and a NULL-default `ALTER TABLE … ADD COLUMN … REFERENCES` yields a real enforced FK with **no table rebuild** (precedent `0023_block_parent.ts`). Declare `merged_into_id … REFERENCES possible_tasks(id) ON DELETE SET NULL` + a covering index (mirror `0023`). In `:memory:` test DBs the `uuid7()` UDF is absent (registered only on the live connection, `db/index.ts:14`) — any id-generating backfill must use literal UUIDv7-shaped strings.
 
 **Definition of done.**
 - `0062` registered; `schema.ts` matches DB; `migrate.test.ts` green on a fixture 0.x DB; full server suite + client typecheck green; no behavior change observable in the app.
@@ -126,8 +148,14 @@ linking every place it appeared" — ingestion-plan §5).
 ### PI-2 — Staging entry: additive ingest of incoming tasks → Inbox
 
 **Goal.** A reusable entry that stages a batch of flat tasks into the Inbox as
-`pending`, exact-deduped on `(source_kind, source_ref)`, recording provenance —
-**never** writing to `tasks` (no-auto-write).
+`pending`, deduped on `(source_kind, source_ref)`, recording provenance —
+**never** writing to `tasks` (no-auto-write). **Must route through `upsertPossible`'s
+SELECT-first upsert** (`agents/ingest.ts:64-66`) — **not a blind `INSERT`**: `possible_tasks`
+carries a baseline table-level `UNIQUE(source_kind, source_ref)` (`0001_baseline.ts:50`, preserved
+verbatim through the `0030` UUID rebuild), so a repeat-key INSERT **throws** — the dedup is
+DB-enforced first, app-level second. Match ingest's composite-key convention `${ref}#${i}`
+(`ingest.ts:226`) so staging doesn't silently diverge. (NULL keys are distinct under SQLite UNIQUE,
+so untracked/source-less rows don't collide — but real ingest rows always carry the key.)
 
 **In-points.**
 - `stageIncomingTasks(items: IncomingTask[]): { created: number; updated: number }`
@@ -199,12 +227,13 @@ into a terminal-state Task.
 
 **In-points.**
 - `compareAndMerge(opts?): CompareMergeResult` in `agents/groom.ts` (uses `services/dedup.ts` + `embed()` from `mcp/ollama.ts` for the mid band only — **interim**; switch to Phase M's `sqlite-vec` KNN when it lands).
-- Invoked by the existing **grooming** Job (and manually runnable from the Jobs view). Candidate set = pending `possible_tasks` (+ tags/due) and the owner's **non-terminal** Tasks (`open/TBD/scheduled/deferred`).
+- Invoked by the existing **grooming** Job (and manually runnable from the Jobs view). Candidate set = pending `possible_tasks` (+ tags/due) and the owner's **non-terminal** Tasks — selected as `status NOT IN ('done','cancelled','missed')` (there is no `TBD`/`past` status; `cancelled` is a *live* soft-delete and must be excluded).
 
 **Out-points.**
 - Collapsed dup: loser → `status='duplicate'`, `merged_into_id=<survivor>`; survivor gains the loser's `possible_task_sources` rows (provenance union).
 - Queue-vs-existing match: survivor flagged with a `duplicate_of_task_id` reference (additive column or a marker row) — surfaced, **not** promoted/merged.
-- `CompareMergeResult { compared, merged, flaggedExisting, embeddingTierUsed: boolean }`; `writeAudit` per merge; SSE `possible:updated` so the Inbox refreshes.
+- `CompareMergeResult { compared, merged, flaggedExisting, embeddingTierUsed: boolean }`; `writeAudit` per merge; SSE `possible:updated` so the Inbox refreshes. **`possible:updated` is net-new** — only `possible:promoted`/`possible:dismissed` exist today (`possibles.ts:77,92`; client `stores/index.ts:91-92`), so PI-4 must add **both** the server `broadcast(ownerId,'possible:updated',…)` at each merge site **and** a client `on('possible:updated', refetchPossibles)`.
+- **Coexistence with `dedupePossibles` (do not skip):** both run on `status='pending'` and both write `status='duplicate'` (`groom.ts:101-138`), at *different* thresholds (`dedupePossibles` collapses at **0.92**; PI-3's band is 0.90 auto / 0.75–0.90 ambiguous). Pin `compareAndMerge`'s order in the grooming job — recommend it runs **before** `dedupePossibles` (or supersedes it) so the richer, provenance-aware merge is authoritative. Note `dedupePossibles` already writes `duplicate` with **`merged_into_id=NULL`** and no provenance, so "`duplicate` ⇒ non-null `merged_into_id`" is **not** an invariant; every duplicate-row reader (incl. PI-5) must be null-safe.
 
 **Files impacted.**
 - `server/src/agents/groom.ts` (add `compareAndMerge`; **do not alter** `dedupePossibles`/`promotePossibles`)
@@ -216,7 +245,7 @@ into a terminal-state Task.
 **Acceptance criteria.**
 - Two near-identical pending items collapse to one survivor; loser is `duplicate` + linked; survivor provenance contains both sources.
 - A pending item matching an existing **open** Task is flagged, **not** merged, **not** promoted.
-- **No** `tasks` write occurs; **no** merge into a `done`/`past`/`cancelled` Task (terminal tasks excluded from candidates).
+- **No** `tasks` write occurs; **no** merge into a `done`/`cancelled`/`missed` Task (terminal tasks excluded; `past` is not a real status).
 - Deterministic with Ollama **down** (fuzzy tier only; `embeddingTierUsed=false`) and still correct; with Ollama up, the ambiguous band may additionally collapse.
 - **Idempotent**: a second run makes no further changes (no oscillation; already-`duplicate` rows are skipped).
 - **Behavior-preserving**: existing `dedupePossibles`/grooming tests unchanged and green.
@@ -309,8 +338,9 @@ collapse the five-PR line into roughly **two waves**.
   (grooming wiring). Keep each edit to its own job block; if both land in the same
   window, expect a trivial merge. Mitigation: have PI-4 wire `compareAndMerge` inside
   `agents/groom.ts`'s grooming entry and minimize `jobs/index.ts` churn.
-- All schema is in **PI-1's `0062`** (incl. PI-4's `duplicate_of_task_id`), so no two
-  tickets add migrations — avoids migration-number races in `db/migrations/index.ts`.
+- All schema is in **PI-1's single migration** (incl. PI-4's `duplicate_of_task_id`), so no two
+  *internal* tickets add migrations. **External race:** the number is **not** guaranteed `0062` —
+  Phase M reserves `0062–0064` (see §1), so coordinate and take the next free slot at branch time.
 - PI-5 may ship before PI-4; it just shows no duplicate flags until PI-4 populates
   them. That's intended graceful degradation, not a dependency.
 
