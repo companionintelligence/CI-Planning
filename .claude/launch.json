@@ -11,7 +11,7 @@
     {
       "name": "Koa API server",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "server", "dev"],
+      "runtimeArgs": ["--filter", "server", "start"],
       "port": 3848
     },
     {

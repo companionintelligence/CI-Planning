@@ -132,6 +132,10 @@ export const api = {
     // Promote a Concept into a scheduled Plan at the chosen start (end ⇐ duration).
     promote: (id: string, start_at: string, opts?: { end_at?: string; all_day?: boolean }) =>
       request<{ block: Block }>('POST', `/blocks/${id}/promote`, { start_at, ...opts }),
+    // Clear ONLY auto-placed task blocks for a local day (T-CORE-4). Preserves
+    // user-placed, locked, calendar meetings, and habit/pattern placements.
+    clearDay: (date: string) =>
+      request<{ ok: boolean; cleared: number }>('POST', `/days/${date}/clear`, {}),
   },
 
   // ── Patterns (Phase G, G1) — typed, reusable task collections ────────────────

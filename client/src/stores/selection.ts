@@ -33,6 +33,23 @@ export function clearSelection(): void {
 }
 
 /**
+ * The single "focused" Task (T-CORE-3) — independent of the multi-select `Map`
+ * above. A plain task id, or null when nothing is focused. Drives the Selected
+ * Task Summary panel under the Planner header (T-PLAN-3/4); a Planner block click
+ * sets it instead of opening the old pop-up menu.
+ */
+const [activeTask, setActiveTaskId] = createSignal<string | null>(null);
+
+export { activeTask };
+
+export function setActiveTask(id: string | null): void {
+  setActiveTaskId(id);
+}
+export function clearActiveTask(): void {
+  if (activeTask() !== null) setActiveTaskId(null);
+}
+
+/**
  * Resolve the selection to a deduped, ordered list of task ids — what the
  * `POST /api/patterns/promote-from-tasks` endpoint expects. The caller passes
  * in the current `blocks` list so the block→task_id lookup works.
