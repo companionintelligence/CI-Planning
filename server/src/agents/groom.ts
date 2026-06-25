@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { sqlite, vecAvailable } from '../db/index.js';
 import { embed } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -88,6 +88,50 @@ function cosine(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
 }
 
+// Phase M C3: test override for the sqlite-vec path. null = use the real `vecAvailable`.
+let vecOverride: boolean | null = null;
+/** Test-only: force the vec0 KNN path (true), the cosine fallback (false), or auto (null). */
+export function _setVecForTest(v: boolean | null): void { vecOverride = v; }
+
+/**
+ * Phase M C3 — the greedy dedupe via a transient `vec0` KNN index. Reproduces the
+ * cosine loop's semantics EXACTLY: tasks are processed id-ASC, a task is a duplicate
+ * iff it is ≥ threshold (by the SAME `cosine()`) to an earlier *kept* task. vec0 only
+ * accelerates "find the nearest kept vector"; the keep/drop decision still uses
+ * `cosine()`, so results are identical to the fallback. Throws on any vec error (the
+ * caller then falls back to cosine); always drops its temp table.
+ */
+function dedupeIdsViaVec(vectors: { id: string; vec: number[] }[], threshold: number): { dupIds: string[]; compared: number } {
+  const D = vectors[0].vec.length;
+  sqlite.exec(`DROP TABLE IF EXISTS vec_dedupe_tmp`);
+  sqlite.exec(`CREATE VIRTUAL TABLE vec_dedupe_tmp USING vec0(embedding float[${D}] distance_metric=cosine)`);
+  try {
+    const ins = sqlite.prepare(`INSERT INTO vec_dedupe_tmp(rowid, embedding) VALUES (?, ?)`);
+    const knn = sqlite.prepare(`SELECT rowid FROM vec_dedupe_tmp WHERE embedding MATCH ? ORDER BY distance LIMIT 1`);
+    const dupIds: string[] = [];
+    let compared = 0;
+    let kept = 0;
+    for (let i = 0; i < vectors.length; i++) {
+      const v = vectors[i];
+      if (v.vec.length !== D) throw new Error('embedding dimension mismatch'); // bail → cosine fallback
+      const f = new Float32Array(v.vec);
+      if (kept > 0) {
+        const near = knn.get(f) as { rowid: number | bigint } | undefined;
+        if (near) {
+          compared++;
+          const otherIdx = Number(near.rowid); // rowid is the kept vector's index
+          if (cosine(v.vec, vectors[otherIdx].vec) >= threshold) { dupIds.push(v.id); continue; }
+        }
+      }
+      ins.run(BigInt(i), f); // keep: rowid = this vector's index
+      kept++;
+    }
+    return { dupIds, compared };
+  } finally {
+    sqlite.exec(`DROP TABLE IF EXISTS vec_dedupe_tmp`);
+  }
+}
+
 export interface DedupeResult {
   compared: number;
   duplicates: number;
@@ -98,8 +142,11 @@ export interface DedupeResult {
  * Mark near-duplicate pending possibles using embeddings (best-effort).
  * If Ollama embeddings are unavailable, returns { available: false } without throwing.
  */
-export async function dedupePossibles(opts: { threshold?: number } = {}): Promise<DedupeResult> {
+export async function dedupePossibles(
+  opts: { threshold?: number; embedFn?: (text: string) => Promise<number[]> } = {},
+): Promise<DedupeResult> {
   const threshold = opts.threshold ?? 0.92;
+  const embedFn = opts.embedFn ?? embed; // injectable for tests (avoids cross-file module mocks)
   const pending = sqlite
     .prepare("SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' ORDER BY id ASC")
     .all() as { id: string; raw_title: string }[];
@@ -109,10 +156,26 @@ export async function dedupePossibles(opts: { threshold?: number } = {}): Promis
   let vectors: { id: string; vec: number[] }[];
   try {
     vectors = [];
-    for (const p of pending) vectors.push({ id: p.id, vec: await embed(p.raw_title) });
+    for (const p of pending) vectors.push({ id: p.id, vec: await embedFn(p.raw_title) });
   } catch (err) {
     logger.warn('dedupePossibles: embeddings unavailable, skipping', { err: (err as Error).message });
     return { compared: 0, duplicates: 0, available: false };
+  }
+
+  const markDup = sqlite.prepare("UPDATE possible_tasks SET status = 'duplicate' WHERE id = ?");
+
+  // C3: fast path — vec0 KNN when the extension is loaded. Identical decisions to the
+  // cosine loop (the keep/drop still uses cosine()); any vec error falls through below.
+  if ((vecOverride ?? vecAvailable) && vectors.length >= 2) {
+    try {
+      const { dupIds, compared } = dedupeIdsViaVec(vectors, threshold);
+      for (const id of dupIds) markDup.run(id);
+      logger.info('dedupePossibles done (vec0 KNN)', { compared, duplicates: dupIds.length });
+      return { compared, duplicates: dupIds.length, available: true };
+    } catch (err) {
+      logger.warn('dedupePossibles: vec0 path failed, using cosine fallback', { err: (err as Error).message });
+      // fall through to the deterministic cosine loop
+    }
   }
 
   let duplicates = 0;
@@ -124,7 +187,7 @@ export async function dedupePossibles(opts: { threshold?: number } = {}): Promis
       compared++;
       const other = vectors.find((x) => x.id === k)!;
       if (cosine(v.vec, other.vec) >= threshold) {
-        sqlite.prepare("UPDATE possible_tasks SET status = 'duplicate' WHERE id = ?").run(v.id);
+        markDup.run(v.id);
         duplicates++;
         isDup = true;
         break;
