@@ -141,7 +141,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
   // Build free windows AFTER pinning so the packer avoids pinned appointments too.
   const gaps = buildGaps(dayStartMs, dayEndMs, fixed, breakMs);
 
-  // Optional AI pass (planning_mode === 'auto'): reorder the flexible work most-
+  // Optional AI pass (planning_mode === 'smart'): reorder the flexible work most-
   // important-first. Placement below stays deterministic, so plans are still
   // reproducible; orderForToday returns the input unchanged when AI is off/down.
   const rankedFlexible = candidates.filter((t) => !isPinned(t));

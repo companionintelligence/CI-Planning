@@ -115,6 +115,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   recurrenceParentId: text('recurrence_parent_id'),  // template id on an instance (no FK: cleared by hand)
   occurrenceDate: text('occurrence_date'),           // YYYY-MM-DD local day of an instance
   autoRunId: text('auto_run_id'),                    // the Auto placement run that created this block (0052; for Undo)
+  lastMovedAt: text('last_moved_at'),               // B1: UTC ISO when reflow last moved this block (anti-thrash stability window)
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -152,7 +153,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   maxFocusBlockMinutes: integer('max_focus_block_minutes').default(90),
   minBreakMinutes: integer('min_break_minutes').default(10),
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
-  planningMode: text('planning_mode').default('ritual'), // dormant (no UI sets it); default 'ritual' disables the AI-reorder path at agents/plan.ts. Retained for a future AI-reorder UI — not dead code, do not drop.
+  planningMode: text('planning_mode').default('basic'), // 'basic' (deterministic deadline→priority sort) | 'smart' (§A0 LLM loop). No UI yet (A5); do not drop.
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
   planningHorizonDays: integer('planning_horizon_days').default(7), // "today set" lookahead for auto-scheduling
   // Time-Block container duration bounds (0017). Distinct from the Auto engine's

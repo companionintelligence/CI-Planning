@@ -13,6 +13,7 @@ import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generate.js';
 import { rescheduleTask } from '../engine/review.js';
+import { requestReplan } from '../engine/auto-defense.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
 import { ensureHabitPattern } from '../services/patterns.js';
@@ -170,6 +171,7 @@ export function tasksRouter() {
     };
     broadcast(currentOwnerId(), 'task:created', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
+    requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
     ctx.status = 201;
     ctx.body = { task: out };
   });
@@ -452,6 +454,7 @@ export function tasksRouter() {
     broadcast(currentOwnerId(), 'task:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `task:${targetId}` });
     if (generated) broadcast(currentOwnerId(), 'recurrence:generated', generated);
+    requestReplan('task:updated'); // B2: edits to priority/due/estimate can re-order the day
     ctx.body = { task: out, ...(generated ? { generated } : {}) };
   });
 
@@ -468,6 +471,7 @@ export function tasksRouter() {
     const out = { ...taskToApi(task), tags: [] as string[] };
     broadcast(currentOwnerId(), 'task:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `task:${id}` });
+    requestReplan('task:deleted'); // B2: a cancelled task frees its slot — re-pack the day
     ctx.body = { task: out };
   });
 
@@ -479,7 +483,10 @@ export function tasksRouter() {
     const blockId = (ctx.request.body as { block_id?: number } | undefined)?.block_id;
     const { entry, stopped } = startTimer(taskId, blockId);
     const owner = currentOwnerId();
-    if (stopped) broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
+    if (stopped) {
+      broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
+      if (stopped.overran) broadcast(owner, 'block:updated', { id: stopped.entry.block_id });
+    }
     broadcast(owner, 'timer:started', entry);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:start', entity: `task:${taskId}` });
     ctx.status = 201;
@@ -499,6 +506,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     broadcast(owner, 'timer:stopped', res.entry);
     broadcast(owner, 'task:updated', { id: res.taskId, actual_minutes: res.actualMinutes });
+    if (res.overran) broadcast(owner, 'block:updated', { id: res.entry.block_id });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:stop', entity: `task:${res.taskId}` });
     ctx.body = { entry: res.entry, actual_minutes: res.actualMinutes };
   });

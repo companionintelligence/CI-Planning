@@ -35,6 +35,14 @@ function secondaryTagsOf(blockId: string): string[] {
   return entityTagLevels('time_block', blockId).filter((t) => t.level > 1).map((t) => t.name);
 }
 
+/** §A3: the "why now" rationale for a placed block, joined from daily_plan via block_id (null when none). */
+function rationaleOf(blockId: string): string | null {
+  const row = sqlite.prepare(`SELECT rationale FROM daily_plan WHERE block_id = ? LIMIT 1`).get(blockId) as
+    | { rationale: string | null }
+    | undefined;
+  return row?.rationale ?? null;
+}
+
 export function blocksRouter() {
   const router = new Router();
 
@@ -68,7 +76,12 @@ export function blocksRouter() {
     const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
 
     // Phase 5: attach each block's secondary (level>1) tags from entity_tags.
-    const blocks = toApiList(rows).map((b) => ({ ...b, secondary_tags: secondaryTagsOf(b.id as string) }));
+    // §A3: attach the per-task rationale joined from daily_plan via block_id.
+    const blocks = toApiList(rows).map((b) => ({
+      ...b,
+      secondary_tags: secondaryTagsOf(b.id as string),
+      rationale: rationaleOf(b.id as string),
+    }));
     ctx.body = { blocks };
   });
 
