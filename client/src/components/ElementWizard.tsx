@@ -59,15 +59,32 @@ export function ElementWizard() {
   // time-block: note + recurrence + preserved secondary tags
   const [note, setNote] = createSignal('');
   const [tbRepeat, setTbRepeat] = createSignal<RepeatPreset>('none');
+  const [tbWeekdays, setTbWeekdays] = createSignal<string[]>([]);
   const [tbCustomRule, setTbCustomRule] = createSignal('');
   const [secondaryTags, setSecondaryTags] = createSignal<string[]>([]);
+  const [depDraft, setDepDraft] = createSignal('');
   const [saving, setSaving] = createSignal(false);
 
   // Habit implies recurrence — default a freshly-chosen habit to daily.
   createEffect(() => { if (kind() === 'habit' && taskRepeat() === 'none') setTaskRepeat('daily'); });
   const currentTaskRule = () => buildRule(taskRepeat(), taskWeekdays(), taskCustomRule());
   const toggleWeekday = (d: string) => setTaskWeekdays((ws) => (ws.includes(d) ? ws.filter((x) => x !== d) : [...ws, d]));
+  // T-TB-1: Time-Block weekly recurrence — its own weekday set, mirroring the task path.
+  const currentTbRule = () => buildRule(tbRepeat(), tbWeekdays(), tbCustomRule());
+  const toggleTbWeekday = (d: string) => setTbWeekdays((ws) => (ws.includes(d) ? ws.filter((x) => x !== d) : [...ws, d]));
   const candidateTasks = () => (tasks() ?? []).filter((t) => t.status === 'open' && t.id !== m().editTarget?.id);
+
+  // T-DEP-1: "Depends on" task search — typeahead over open tasks (excludes self +
+  // anything already picked); selections render as removable chips.
+  const taskById = (id: string) => (tasks() ?? []).find((t) => t.id === id);
+  const depSuggestions = () => {
+    const q = depDraft().trim().toLowerCase();
+    if (!q) return [];
+    const taken = new Set(dependsOn());
+    return candidateTasks().filter((t) => !taken.has(t.id) && t.title.toLowerCase().includes(q)).slice(0, 6);
+  };
+  const addDep = (id: string) => { if (!dependsOn().includes(id)) setDependsOn([...dependsOn(), id]); setDepDraft(''); };
+  const removeDep = (id: string) => setDependsOn(dependsOn().filter((x) => x !== id));
 
   function close() {
     setElementModal({ open: false, mode: 'add', kind: null });
@@ -87,8 +104,8 @@ export function ElementWizard() {
       setSomeday(false); setGoalDay(localISODate());
       setScheduledFor(localISODate()); setEstimate(30); setDueAt(''); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule(''); setTaskTime('');
-      setDeferUntil(''); setDependsOn([]); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
-      setNote(''); setTbRepeat('none'); setTbCustomRule(''); setSecondaryTags([]);
+      setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
+      setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]);
       if (st.mode === 'edit' && st.editTarget) loadForEdit(st.editTarget.kind, st.editTarget.id);
     }
     wasOpen = st.open;
@@ -105,6 +122,7 @@ export function ElementWizard() {
       setSecondaryTags(b.secondary_tags ?? []);
       const ps = rulePreset(b.recurrence_rule);
       setTbRepeat(TB_REPEAT.includes(ps.preset) ? ps.preset : 'custom');
+      setTbWeekdays(ps.weekdays);
       setTbCustomRule(b.recurrence_rule ?? '');
       if (b.block_type === 'someday') {
         setSomeday(true); setGoalDay(b.goal_start_date ?? localISODate());
@@ -199,7 +217,7 @@ export function ElementWizard() {
         editScope: editScope(), parentId: m().parentId,
         recurrenceRule:
           (k === 'task' || k === 'habit') ? (currentTaskRule() || null)
-          : (k === 'timeblock' && !someday()) ? (buildRule(tbRepeat(), [], tbCustomRule()) || null)
+          : (k === 'timeblock' && !someday()) ? (currentTbRule() || null)
           : undefined,
       };
       const msg = await saveElement(k, m().mode, form, m().editTarget?.id);
@@ -369,8 +387,24 @@ export function ElementWizard() {
                       )}
                     </For>
                   </div>
+                  <Show when={tbRepeat() === 'weekly'}>
+                    <div class="flex gap-1 mt-1.5">
+                      <For each={WEEKDAYS}>
+                        {(d) => (
+                          <button type="button" onClick={() => toggleTbWeekday(d)} title={d}
+                            class="flex-1 h-7 rounded-md text-xs font-semibold border transition-colors"
+                            classList={{ 'border-primary text-primary bg-primary/10': tbWeekdays().includes(d), 'border-border text-muted-foreground hover:text-foreground': !tbWeekdays().includes(d) }}>
+                            {DAY_INITIAL[d]}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                   <Show when={tbRepeat() === 'custom'}>
                     <input class="input py-1 text-sm font-mono" placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR" value={tbCustomRule()} onInput={(e) => setTbCustomRule(e.currentTarget.value)} />
+                  </Show>
+                  <Show when={currentTbRule()}>
+                    <span class="text-[11px] text-muted-foreground">{describeRule(currentTbRule()!)}</span>
                   </Show>
                 </Show>
                 <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Note</span>
@@ -485,15 +519,37 @@ export function ElementWizard() {
                 }>
                   <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Defer until</span>
                     <input type="date" class="input py-1 text-sm" value={deferUntil()} onInput={(e) => setDeferUntil(e.currentTarget.value)} /></label>
-                  <Show when={candidateTasks().length > 0}>
-                    <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Depends on (won't schedule until done)</span>
-                      <select multiple class="input text-sm min-h-[64px]"
-                        onChange={(e) => setDependsOn(Array.from(e.currentTarget.selectedOptions).map((o) => o.value))}>
-                        <For each={candidateTasks()}>
-                          {(t) => <option value={t.id} selected={dependsOn().includes(t.id)}>{t.title}</option>}
+                  <div class="flex flex-col gap-1.5">
+                    <span class="text-[11px] text-muted-foreground">Depends on (won't schedule until done)</span>
+                    <Show when={dependsOn().length > 0}>
+                      <div class="flex flex-wrap gap-1.5">
+                        <For each={dependsOn()}>
+                          {(id) => (
+                            <span class="text-xs px-2 py-0.5 rounded-full border border-border text-foreground inline-flex items-center gap-1 max-w-full">
+                              <span class="truncate">{taskById(id)?.title ?? id}</span>
+                              <button type="button" onClick={() => removeDep(id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
+                            </span>
+                          )}
                         </For>
-                      </select></label>
-                  </Show>
+                      </div>
+                    </Show>
+                    <div class="relative">
+                      <input class="input py-1 text-sm" placeholder="Search tasks to depend on…" value={depDraft()}
+                        onInput={(e) => setDepDraft(e.currentTarget.value)} />
+                      <Show when={depSuggestions().length > 0}>
+                        <div class="absolute z-50 left-0 right-0 mt-1 rounded-md border border-border bg-popover shadow-xl max-h-40 overflow-y-auto">
+                          <For each={depSuggestions()}>
+                            {(t) => (
+                              <button type="button" onClick={() => addDep(t.id)}
+                                class="w-full text-left px-3 py-1.5 text-sm text-foreground hover:bg-sidebar-accent truncate">
+                                {t.title}
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
+                  </div>
                 </Show>
               </Show>
 
