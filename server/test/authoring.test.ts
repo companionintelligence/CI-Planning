@@ -53,12 +53,12 @@ beforeEach(() => {
   sqlite.exec(`DELETE FROM flight_plan;`);
   // resetDb() already clears daily_plan; here for explicitness
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}';`);
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'ritual' WHERE owner_id = ?`).run(OWNER);
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC', workday_start = '09:00', workday_end = '18:00', planning_mode = 'basic' WHERE owner_id = ?`).run(OWNER);
 });
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe('authorPlanOrder — deterministic path (planning_mode = ritual)', () => {
+describe('authorPlanOrder — deterministic path (planning_mode = basic)', () => {
   it('writes one daily_plan row per staged task, ordered by deterministic priority+due sort', async () => {
     const p3 = insertTask('Low priority', 3);
     const p1 = insertTask('High priority', 1);
@@ -130,11 +130,9 @@ describe('authorPlanOrder — deterministic path (planning_mode = ritual)', () =
     expect(rows[1].task_id).toBe(future);
   });
 
-  it('a deadline on a lower-priority task can justify it appearing before a higher-priority no-deadline task', async () => {
-    // P3 task due today vs P1 task with no deadline
-    // Deterministic sort: priority first, then due → P1 no-due = position Infinity → P3 with due comes after P1
-    // Wait — deterministic is priority first. So P1 always comes before P3 in the deterministic sort.
-    // This test verifies the DETERMINISTIC fallback's priority-first rule.
+  it('a deadline on a lower-priority task places it before a higher-priority no-deadline task', async () => {
+    // Deterministic sort is deadline-first: due_at → priority → id.
+    // P3 with a deadline sorts before P1 with no deadline ('9999' sentinel).
     const p1NoDue = insertTask('High priority no deadline', 1);
     const p3WithDue = insertTask('Low priority urgent', 3, DATE);
     stage(p3WithDue, 0);
@@ -143,9 +141,9 @@ describe('authorPlanOrder — deterministic path (planning_mode = ritual)', () =
     await authorPlanOrder(OWNER, DATE);
 
     const rows = dailyPlanRows();
-    // Deterministic: P1 first (priority beats deadline in the fallback comparator)
-    expect(rows[0].task_id).toBe(p1NoDue);
-    expect(rows[1].task_id).toBe(p3WithDue);
+    // Deadline beats priority: p3WithDue comes first.
+    expect(rows[0].task_id).toBe(p3WithDue);
+    expect(rows[1].task_id).toBe(p1NoDue);
   });
 });
 
@@ -178,12 +176,13 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
     expect(blocks[1].title).toBe('High priority');
   });
 
-  it('falls back to flight_plan.position for tasks with no daily_plan row', () => {
-    const a = insertTask('Task A', 2, undefined, 30);
-    const b = insertTask('Task B', 2, undefined, 30);
-    stage(a, 0);
-    stage(b, 1);
-    // No daily_plan rows → selectedStaged falls back to fp.position order
+  it('falls back to priority order when no daily_plan row exists', () => {
+    // Without a daily_plan, the workday pass calls orderForPlan which sorts by priority.
+    // Stage the lower-priority task first (counter-priority) to prove it's not fp.position.
+    const high = insertTask('High priority', 1, undefined, 30);
+    const low = insertTask('Low priority', 3, undefined, 30);
+    stage(low, 0); // staged first but lower priority
+    stage(high, 1);
 
     placeFlightPlan(OWNER, { date: DATE });
 
@@ -191,8 +190,8 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
       .prepare(`SELECT title, start_at FROM time_blocks WHERE is_auto = 1 AND block_kind = 'task' ORDER BY start_at`)
       .all() as { title: string; start_at: string }[];
 
-    expect(blocks[0].title).toBe('Task A'); // fp.position 0 first
-    expect(blocks[1].title).toBe('Task B');
+    expect(blocks[0].title).toBe('High priority'); // priority wins over fp.position
+    expect(blocks[1].title).toBe('Low priority');
   });
 
   it('links daily_plan.block_id for each placed task', () => {
@@ -239,7 +238,7 @@ describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {
   });
 });
 
-describe('authorPlanOrder — LLM path (planning_mode = auto)', () => {
+describe('authorPlanOrder — LLM path (planning_mode = smart)', () => {
   it('writes source=llm or source=deterministic (never throws) when Ollama is available', async () => {
     if (!(await ollamaAvailable())) {
       // Skip — not a failure; loop.test.ts mocks cover the harness contract.
@@ -253,7 +252,7 @@ describe('authorPlanOrder — LLM path (planning_mode = auto)', () => {
     stage(p2, 1);
     stage(p3, 2);
 
-    sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'auto' WHERE owner_id = ?`).run(OWNER);
+    sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart' WHERE owner_id = ?`).run(OWNER);
     await authorPlanOrder(OWNER, DATE);
 
     const rows = dailyPlanRows();

@@ -74,7 +74,7 @@ export function up(db: Database): void {
       max_focus_block_minutes  INTEGER DEFAULT 90,
       min_break_minutes        INTEGER DEFAULT 10,
       day_theme                TEXT,
-      planning_mode            TEXT DEFAULT 'ritual',
+      planning_mode            TEXT DEFAULT 'basic',
       timezone                 TEXT,
       planning_horizon_days    INTEGER DEFAULT 7
     );

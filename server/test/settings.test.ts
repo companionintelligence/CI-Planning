@@ -20,18 +20,18 @@ describe('settings / prefs API', () => {
   it('PATCH /api/prefs updates and persists work hours + planning mode', async () => {
     const patch = await api(server.url, '/api/prefs', {
       method: 'PATCH',
-      json: { workday_start: '08:00', workday_end: '17:30', max_focus_block_minutes: 120, planning_mode: 'auto' },
+      json: { workday_start: '08:00', workday_end: '17:30', max_focus_block_minutes: 120, planning_mode: 'smart' },
     });
     expect(patch.status).toBe(200);
     expect(patch.body.prefs.workday_start).toBe('08:00');
     expect(patch.body.prefs.max_focus_block_minutes).toBe(120);
-    expect(patch.body.prefs.planning_mode).toBe('auto');
+    expect(patch.body.prefs.planning_mode).toBe('smart');
 
     // Confirm it persisted.
     const get = await api(server.url, '/api/prefs');
     expect(get.body.prefs.workday_start).toBe('08:00');
     expect(get.body.prefs.workday_end).toBe('17:30');
-    expect(get.body.prefs.planning_mode).toBe('auto');
+    expect(get.body.prefs.planning_mode).toBe('smart');
   });
 
   it('GET /api/llm/status reports availability + configured models', async () => {

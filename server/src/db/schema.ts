@@ -152,7 +152,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   maxFocusBlockMinutes: integer('max_focus_block_minutes').default(90),
   minBreakMinutes: integer('min_break_minutes').default(10),
   dayTheme: text('day_theme', { mode: 'json' }).$type<Record<string, string>>(),
-  planningMode: text('planning_mode').default('ritual'), // dormant (no UI sets it); default 'ritual' disables the AI-reorder path at agents/plan.ts. Retained for a future AI-reorder UI — not dead code, do not drop.
+  planningMode: text('planning_mode').default('basic'), // 'basic' (deterministic deadline→priority sort) | 'smart' (§A0 LLM loop). No UI yet (A5); do not drop.
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
   planningHorizonDays: integer('planning_horizon_days').default(7), // "today set" lookahead for auto-scheduling
   // Time-Block container duration bounds (0017). Distinct from the Auto engine's

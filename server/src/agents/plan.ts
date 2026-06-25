@@ -5,7 +5,7 @@
  *  - Is called ONCE per (owner, date) — the author-once guard makes every
  *    subsequent call a no-op until the next day's first placement.
  *  - Runs the §A0 generate→evaluate→iterate loop (via `runLoop`) when
- *    planning_mode = 'auto' AND Ollama is reachable.
+ *    planning_mode = 'smart' AND Ollama is reachable.
  *  - Falls back silently to a deterministic priority/deadline order otherwise,
  *    so the app never throws and the toggle-off path is always tested in CI.
  *  - Persists the frozen order into `daily_plan`; placement and reflow only
@@ -55,7 +55,7 @@ interface PlanningPrefs {
 function loadPlanningPrefs(owner: string): PlanningPrefs {
   return (sqlite
     .prepare(`SELECT planning_mode, workday_start, workday_end FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as PlanningPrefs | undefined) ?? { planning_mode: 'ritual', workday_start: '09:00', workday_end: '18:00' };
+    .get(owner) as PlanningPrefs | undefined) ?? { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00' };
 }
 
 function dailyPlanAuthored(owner: string, date: string): boolean {
@@ -99,8 +99,8 @@ function deterministicIndices(tasks: PlanTask[]): number[] {
     .map((_, i) => i)
     .sort(
       (a, b) =>
-        tasks[a].priority - tasks[b].priority ||
         (tasks[a].due_at ?? '9999').localeCompare(tasks[b].due_at ?? '9999') ||
+        tasks[a].priority - tasks[b].priority ||
         tasks[a].task_id.localeCompare(tasks[b].task_id),
     );
 }
@@ -245,7 +245,7 @@ function revisePrompt(lines: string[], order: number[], defects: Defect[], criti
 /**
  * Author the day's task order into `daily_plan` for `(owner, date)`.
  *
- * - Runs the §A0 generate→evaluate→iterate loop when planning_mode='auto'
+ * - Runs the §A0 generate→evaluate→iterate loop when planning_mode='smart'
  *   and Ollama is up; otherwise writes a deterministic priority/deadline order.
  * - Author-once: a second call for the same (owner, date) is a no-op.
  * - Never throws: Ollama failures always fall back to the deterministic order.
@@ -262,7 +262,7 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
     return;
   }
 
-  const aiEnabled = prefs.planning_mode === 'auto';
+  const aiEnabled = prefs.planning_mode === 'smart';
   if (!aiEnabled || !(await isAvailable())) {
     persistOrder(owner, date, staged, deterministicIndices(staged), 'deterministic');
     return;
@@ -340,7 +340,7 @@ export async function authorPlanOrder(owner: string, date: string): Promise<void
  * and any callers on the scheduler.ts path continue to compile without change.
  */
 export async function orderForToday(ranked: Task[], prefs: Prefs): Promise<Task[]> {
-  if (prefs.planningMode !== 'auto' || ranked.length < 2) return ranked;
+  if (prefs.planningMode !== 'smart' || ranked.length < 2) return ranked;
   if (!(await isAvailable())) return ranked;
 
   try {
