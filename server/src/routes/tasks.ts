@@ -13,6 +13,7 @@ import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone } from '../engine/recurrence-generate.js';
 import { rescheduleTask } from '../engine/review.js';
+import { requestReplan } from '../engine/auto-defense.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
 import { ensureHabitPattern } from '../services/patterns.js';
@@ -170,6 +171,7 @@ export function tasksRouter() {
     };
     broadcast(currentOwnerId(), 'task:created', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
+    requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
     ctx.status = 201;
     ctx.body = { task: out };
   });
@@ -452,6 +454,7 @@ export function tasksRouter() {
     broadcast(currentOwnerId(), 'task:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `task:${targetId}` });
     if (generated) broadcast(currentOwnerId(), 'recurrence:generated', generated);
+    requestReplan('task:updated'); // B2: edits to priority/due/estimate can re-order the day
     ctx.body = { task: out, ...(generated ? { generated } : {}) };
   });
 
@@ -468,6 +471,7 @@ export function tasksRouter() {
     const out = { ...taskToApi(task), tags: [] as string[] };
     broadcast(currentOwnerId(), 'task:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `task:${id}` });
+    requestReplan('task:deleted'); // B2: a cancelled task frees its slot — re-pack the day
     ctx.body = { task: out };
   });
 

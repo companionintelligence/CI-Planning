@@ -20,8 +20,11 @@ import { placeFlightPlan } from './autoplan.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
+import { broadcast } from '../routes/sse.js';
+import { logger } from '../lib/logger.js';
 
 const STABILITY_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const DEBOUNCE_MS = 1500; // B2: per-owner trailing debounce — collapse a burst of triggers to one reflow
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -228,4 +231,112 @@ export function reflow(
     // Always restore is_locked, even if placeFlightPlan threw.
     unfreeze(originalLocks);
   }
+}
+
+// ─── B2: triggers + debounce ───────────────────────────────────────────────────
+
+const pendingReplans = new Map<string, ReturnType<typeof setTimeout>>(); // owner → trailing timer
+const reflowing = new Set<string>(); // owner currently inside a reflow (re-entrancy guard)
+
+/** Reflow is gated per owner by scheduling_prefs.auto_defense_enabled (default on). */
+function autoDefenseEnabled(owner: string): boolean {
+  const row = sqlite
+    .prepare(`SELECT auto_defense_enabled FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { auto_defense_enabled: number } | undefined;
+  return (row?.auto_defense_enabled ?? 1) === 1;
+}
+
+/** Run one reflow now and broadcast the diff. Swallows errors — never throws to a timer. */
+function fireReplan(owner: string, date: string | undefined, reason: string): void {
+  if (reflowing.has(owner)) return; // re-entrancy: a reflow's own writes must not re-trigger
+  reflowing.add(owner);
+  try {
+    const diff = reflow(owner, date, reason);
+    broadcast(owner, 'schedule:done', { reason, ...diff });
+  } catch (err) {
+    logger.warn('reflow failed (requestReplan)', { owner, reason, err: String(err) });
+  } finally {
+    reflowing.delete(owner);
+  }
+}
+
+/**
+ * B2 — request a reactive reflow. A burst of calls for one owner within DEBOUNCE_MS
+ * collapses to a single trailing reflow. Gated by `auto_defense_enabled`; a re-entrancy
+ * guard stops a reflow from triggering itself; never throws into a caller's handler.
+ */
+export function requestReplan(reason: string, owner: string = currentOwnerId(), date?: string): void {
+  try {
+    if (!autoDefenseEnabled(owner)) return;
+    if (reflowing.has(owner)) return; // ignore triggers raised during an in-flight reflow
+    const existing = pendingReplans.get(owner);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      pendingReplans.delete(owner);
+      fireReplan(owner, date, reason);
+    }, DEBOUNCE_MS);
+    // A pending debounce must never keep the process (or a test runner) alive.
+    if (typeof timer.unref === 'function') timer.unref();
+    pendingReplans.set(owner, timer);
+  } catch {
+    // requestReplan is called from request/sync handlers — it must never throw.
+  }
+}
+
+/**
+ * B2 — missed-block sweep. Auto task blocks whose planned end is in the past but were
+ * never started/completed are marked 'skipped' (missed) and their task re-staged into
+ * flight_plan, so the next reflow re-places the work into the remaining day. Returns
+ * counts; does not itself reflow (the caller decides — the cron pairs it with requestReplan).
+ */
+export function sweepMissedBlocks(
+  owner: string = currentOwnerId(),
+  date?: string,
+  now: number = Date.now(),
+): { skipped: number; requeued: number } {
+  const prefs = sqlite
+    .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { timezone: string | null } | undefined;
+  const tz = prefs?.timezone || serverTimezone();
+  const d = date ?? localISODate();
+  const dayStartISO = zonedWallTimeToUTC(d, '00:00', tz);
+  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const nowISO = new Date(now).toISOString();
+
+  const missed = sqlite
+    .prepare(
+      `SELECT id, task_id FROM time_blocks
+        WHERE task_id IS NOT NULL
+          AND is_auto = 1 AND block_kind = 'task' AND source_kind = 'agent'
+          AND status = 'planned'
+          AND end_at <= ?
+          AND start_at < ? AND end_at > ?`
+    )
+    .all(nowISO, dayEndISO, dayStartISO) as { id: string; task_id: string }[];
+
+  if (missed.length === 0) return { skipped: 0, requeued: 0 };
+
+  const markSkipped = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ?`);
+  const restage = sqlite.prepare(
+    `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`
+  );
+  let requeued = 0;
+  sqlite.transaction(() => {
+    for (const blk of missed) {
+      markSkipped.run(blk.id);
+      // Only re-queue tasks that are still open (a completed task's stale block isn't work).
+      const open = sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'open'`).get(blk.task_id);
+      if (open) { restage.run(owner, blk.task_id); requeued++; }
+    }
+  })();
+
+  broadcast(owner, 'blocks:missed', { count: missed.length });
+  return { skipped: missed.length, requeued };
+}
+
+/** Test-only: clear pending debounce timers + the re-entrancy guard between tests. */
+export function _resetReplanState(): void {
+  for (const t of pendingReplans.values()) clearTimeout(t);
+  pendingReplans.clear();
+  reflowing.clear();
 }
