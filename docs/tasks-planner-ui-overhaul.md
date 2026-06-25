@@ -9,14 +9,16 @@
 > **Flight-plan** Fill⇄Clear + Due-Date relabel (T-FP-1/2, #152); the **wizard** weekly day-picker +
 > Depends-on task search (T-TB-1 / T-DEP-1, #153); **Routine-type creation removed** (T-SET-1, #154).
 >
-> **🔄 In flight:** Tasks **sort + Archive** — T-TASKS-4 plus the Completed / Thrown-away collapsible
-> archive (**PR #156, open**).
+> **✅ Also shipped:** Tasks **sort + Archive** (T-TASKS-4 + archive, #156, merged).
 >
-> **⬜ Remaining — the only work left (3 groups):**
-> 1. **Tasks tabs + nav restructure** — **T-TASKS-1** (Routines / Time-Blocks / Patterns tabs),
->    **T-TASKS-6** (functional Time-Blocks tab), **T-NAV-1** (Calendar → 4th nav button, drop Routines
->    from nav, redirect `/patterns`), and the Routine-menu tickets **T-RTN-1/2**. Needs extracting the
->    Routines/Time-Blocks panels out of the closure-heavy `Patterns.tsx` (deferred from #156 for this reason).
+> **🔄 In flight:** **Tasks tabs + nav restructure** — **T-TASKS-1** (Tasks · Habits · Routines · Time
+> Blocks tabs), **T-TASKS-6** (functional Time Blocks tab), **T-NAV-1** (Calendar → primary nav, drop
+> Routines from nav, redirect `/patterns` → `/tasks`), **T-RTN-1** (attach existing + new-by-name tasks
+> at Routine create) and **T-RTN-2** (edit affordance in the Routines tab). The Routines/Time-Blocks
+> panels are extracted from the closure-heavy `Patterns.tsx` into `RoutinesPanel`/`TimeBlocksPanel`;
+> `Patterns.tsx` is slimmed to a thin composition. **(this PR)**
+>
+> **⬜ Remaining — the only work left (2 groups):**
 > 2. **Day-types** — **T-SCHED-3** ("not every Monday is a Workday": custom day types + per-date
 >    assignment) is the wave's **one migration (`0068`)** + a `resolveDayType` engine change; then
 >    **T-SCHED-1/4** (UI) and **T-SCHED-2** (schedule-mode horizon). Run as a sequential phase.
@@ -71,13 +73,13 @@ _Status legend: ✅ merged · 🔄 open PR · ⬜ not started._
 | T-TB-1 | Time Block menu | Weekly recurrence day-of-week picker | ✅ #153 |
 | T-DEP-1 | Task menu | "Depends on" task-search field | ✅ #153 |
 | T-SET-1 | Settings | Remove Routine-type creation | ✅ #154 |
-| T-TASKS-4 | Tasks view | Sort controls (priority / due / direction) | 🔄 PR #156 |
-| Archive | Tasks view | Archive view — Completed + Thrown-away, collapsible | 🔄 PR #156 |
-| **T-TASKS-1** | **Tasks view** | **Routines / Time-Blocks / Patterns tabs** (extract from `Patterns.tsx`) | ⬜ pairs w/ T-NAV-1 |
-| **T-TASKS-6** | **Tasks view** | **Functional Time Blocks tab (saved templates)** | ⬜ after T-TASKS-1 |
-| **T-NAV-1** | **Navigation** | **Calendar → 4th nav button; remove Routines from nav; redirect `/patterns`** | ⬜ pairs w/ T-TASKS-1 |
-| **T-RTN-1** | **Routine menu** | **Add existing + new-by-name tasks at create** | ⬜ after T-TASKS-1 |
-| **T-RTN-2** | **Routine menu** | **Edit-task affordance in Routines tab** | ⬜ after T-TASKS-1 |
+| T-TASKS-4 | Tasks view | Sort controls (priority / due / direction) | ✅ #156 |
+| Archive | Tasks view | Archive view — Completed + Thrown-away, collapsible | ✅ #156 |
+| T-TASKS-1 | Tasks view | Tasks · Habits · Routines · Time Blocks tabs (extract from `Patterns.tsx`) | 🔄 this PR |
+| T-TASKS-6 | Tasks view | Functional Time Blocks tab (saved templates) | 🔄 this PR |
+| T-NAV-1 | Navigation | Calendar → primary nav; remove Routines from nav; redirect `/patterns` | 🔄 this PR |
+| T-RTN-1 | Routine menu | Add existing + new-by-name tasks at create | 🔄 this PR |
+| T-RTN-2 | Routine menu | Edit-task affordance in Routines tab | 🔄 this PR |
 | **T-SCHED-3** | **Schedule** | **Custom day types + per-date assignment (model + resolver + migration `0068`)** | ⬜ the wave's only migration |
 | **T-SCHED-1** | **Schedule** | **Assign day types + edit windows per day (Today + Calendar)** | ⬜ after T-SCHED-3 |
 | **T-SCHED-4** | **Schedule** | **Manage custom day types in Settings (CRUD)** | ⬜ after T-SCHED-3 |
