@@ -4,7 +4,7 @@ import { newId } from '../lib/ids.js';
 export interface PatternRange { id: string; start_time: string; end_time: string }
 export type DirectionWindows = Record<string, PatternRange[]>; // dirTagId → ranges
 
-export function getPatternBlocks(ownerId: string, dayType: 'workday' | 'weekend'): DirectionWindows {
+export function getPatternBlocks(ownerId: string, dayType: string): DirectionWindows {
   const rows = sqlite
     .prepare(
       `SELECT id, pattern_tag_id, start_time, end_time

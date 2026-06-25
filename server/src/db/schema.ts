@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, primaryKey, unique, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { newId } from '../lib/ids.js';
 
@@ -224,10 +224,36 @@ export const patternBlocks = sqliteTable('pattern_blocks', {
   id:            text('id').primaryKey().$defaultFn(newId),
   ownerId:       text('owner_id').references(() => owners.id).notNull(),
   patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
-  dayType:       text('day_type').notNull(), // 'workday' | 'weekend'
+  dayType:       text('day_type').notNull(), // a day_types.key (builtin 'workday'/'weekend' or custom)
   startTime:     text('start_time').notNull(), // 'HH:MM' wall-clock in owner's timezone
   endTime:       text('end_time').notNull(),
 });
+
+// 0068: custom day types + per-date assignment (T-SCHED-3). resolveDayType() maps a
+// date → day-type key (per-date assignment > weekly map > UTC weekend heuristic),
+// which selects the pattern_blocks windows Auto places into. Builtins workday/weekend
+// are rename-only (is_builtin=1).
+export const dayTypes = sqliteTable('day_types', {
+  id:        text('id').primaryKey().$defaultFn(newId),
+  ownerId:   text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+  key:       text('key').notNull(),
+  name:      text('name').notNull(),
+  isBuiltin: integer('is_builtin', { mode: 'boolean' }).notNull().default(false),
+}, (t) => ({ ownerKey: unique().on(t.ownerId, t.key) }));
+
+// The recurring weekly default: dow (0=Sun … 6=Sat, UTC noon) → day-type key.
+export const dayOfWeekMap = sqliteTable('day_of_week_map', {
+  ownerId:    text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+  dow:        integer('dow').notNull(),
+  dayTypeKey: text('day_type_key').notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.ownerId, t.dow] }) }));
+
+// Per-date override: a specific 'YYYY-MM-DD' → day-type key (beats the weekly map).
+export const dayAssignments = sqliteTable('day_assignments', {
+  ownerId:    text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+  date:       text('date').notNull(),
+  dayTypeKey: text('day_type_key').notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.ownerId, t.date] }) }));
 
 // 0039: per-owner, per-pattern-tag preferences — scheduling (auto_fill, reminder
 // offsets) AND pattern-block display config (icon_shape, color_token). The display
