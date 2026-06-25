@@ -43,6 +43,24 @@ on('schedule:done', (data) => {
   if (msg) showToast(msg, 'default');
 });
 
+// ── Replan suggestion (Phase M B4) ──────────────────────────────────────────────
+// A big-disruption reflow surfaces a nudge: a persistent Today banner (ReplanBanner
+// reads this signal) PLUS a transient actionable toast. Accepting calls the LLM
+// re-author; dismissing clears it. The server clears it server-side too, broadcasting
+// 'replan:dismissed' so other tabs drop the banner.
+export interface ReplanSuggestion { date: string; reason?: string; summary?: string }
+export const [replanSuggestion, setReplanSuggestion] = createSignal<ReplanSuggestion | null>(null);
+
+on('replan:suggested', (data) => {
+  const s = data as ReplanSuggestion;
+  setReplanSuggestion(s);
+  showToast(s.summary ? `${s.summary} — re-plan with AI?` : 'Re-plan your day with AI?', 'default', 8000, {
+    label: 'Re-plan',
+    run: () => { void api.plan.reauthor(s.date).then(() => setReplanSuggestion(null)).catch(() => {}); },
+  });
+});
+on('replan:dismissed', () => setReplanSuggestion(null));
+
 // ── Concepts (Phase G, Step 2b) ────────────────────────────────────────────────
 // Unscheduled goal Time-Blocks — owner-scoped, off the minute grid (a goal day +
 // duration, no fixed time). Fetched separately from the dated range since they have

@@ -298,6 +298,13 @@ Deterministic reflow handles *placement* perfectly but can't *re-triage* — whe
   - Standing suites green (no overlaps / no lost minutes; B1–B3 idempotency unaffected).
 
 - **Definition of done.** Reflow stays deterministic and LLM-free; the only added LLM invocation sits behind explicit user accept; a big disruption surfaces a single actionable nudge (toast + durable Today banner); the day is never silently re-authored; accept re-authors via the existing authoring path; dismiss suppresses re-nudge; degrades cleanly when Ollama is down; all new + standing tests pass under `TZ=UTC`; `tsc --noEmit` clean; docs describe the two-clock model. **Effort: S–M, ~1.5–2 days** (assumes B1 diff + §0/A1 authoring in place).
+- **✅ Shipped (as-built).**
+  - **Suggestion lives in `fireReplan`, not `reflow()`** — `reflow()` stays a pure, LLM-free, side-effect-light placement engine. The accept route calls `reflow()` *directly* (not via `fireReplan`), so an accepted re-author can never raise another nudge. This achieves the "re-author never emits `replan:suggested`" invariant *by construction* rather than via a flag.
+  - **`isBigDisruption(diff)` = a high-priority (P≤2) task is at risk** — dropped (`removed`) or unplaceable (`unplaced`), via a DB priority lookup (`highPriorityAtRisk`). The spec's `deferred`-rose and `MAX_MOVES_PER_RUN`-saturated signals are **N/A** — the B1 reflow tracks neither. I also tightened the spec's bare `unplaced>0` to *high-priority* unplaced, so a routine over-full day of low-priority backlog doesn't nag.
+  - **Accept does a FULL force re-author**, not `scope='dirty'`: `authorPlanOrder(owner, date, { force: true })` deletes the day's `daily_plan` rows (re-opening the author-once guard) → re-authors (LLM if smart+Ollama up, else deterministic; never throws) → `reflow()` re-places → broadcast `schedule:done`. The targeted dirty-set rerun is **deferred** (it overlaps the A-workstream's re-tagging machinery, which isn't built); a full re-author is the honest available behavior.
+  - **In-memory state** (`Map<ownerId, {date,reason,summary}>`, one per owner; new day overwrites) — no migration, as planned. `subsFor` was exported from [reminders.ts](../server/src/engine/reminders.js) so the push nudge reuses the same query.
+  - Files: [auto-defense.ts](../server/src/engine/auto-defense.js) (`isBigDisruption`, `outstandingSuggestion`, `clearSuggestion`, `maybeSuggestReauthor`, `pushReplanNudge`, hooked in `fireReplan`); new [routes/plan.ts](../server/src/routes/plan.js); [agents/plan.ts](../server/src/agents/plan.js) (`force` opt); client [api.ts](../client/src/lib/api.js) (`api.plan`), [stores/index.ts](../client/src/stores/index.js) (`replanSuggestion` signal + `on('replan:suggested')` toast + `on('replan:dismissed')`), new [ReplanBanner.tsx](../client/src/components/ReplanBanner.js), mounted in [Today.tsx](../client/src/views/Today.js).
+  - Tests: [reauthor.test.ts](../server/test/reauthor.test.ts) (9) — predicate (high vs low priority, empty), one-nudge-per-day de-dup, **nudge-first invariant** (reflow leaves `daily_plan` untouched while surfacing a nudge), no-nudge on low-priority-only, accept force-re-author + Ollama-down deterministic fallback + clear + refresh, dismiss clears + broadcasts. 80 server files / 690 passed; 14 client files / 137 passed; both `tsc` clean.
 
 **Workstream B effort: ~3–4 days (B1–B3, M) + ~1.5–2 days (B4).**
 
@@ -365,7 +372,7 @@ Shared sequential DB; migration-on-import; snapshot pollution from resurrected t
 | — (init) | `vec0` virtual table (guarded, not numbered) | C3 | pending |
 | — | none — revision log reuses `audit_log`; `overrun` enum / `day_theme` / `planning_mode` already exist | §A0 / C1 / C2 / A5 | ✅ shipped |
 
-New endpoints: `POST /api/plan/instruct` (A4, pending), `POST /api/plan/reauthor` + `/dismiss` (B4, pending). `POST /api/schedule/run` re-pointed to drive reflow (B1, ✅).
+New endpoints: `POST /api/plan/instruct` (A4, pending); `POST /api/plan/reauthor` + `POST /api/plan/reauthor/dismiss` (B4, ✅ — new `routes/plan.ts`); `POST /api/schedule/run` re-pointed to drive reflow (B1, ✅).
 
 ### Recommended sequence
 1. **§0 seam + `daily_plan`** — add the durable day table; relocate the LLM hook to author into it; confirm Option A.

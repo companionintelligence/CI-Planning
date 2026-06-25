@@ -22,6 +22,8 @@ import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
+import { sendPush } from '../lib/push.js';
+import { subsFor } from './reminders.js';
 
 const STABILITY_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 const DEBOUNCE_MS = 1500; // B2: per-owner trailing debounce — collapse a burst of triggers to one reflow
@@ -250,9 +252,19 @@ function autoDefenseEnabled(owner: string): boolean {
 function fireReplan(owner: string, date: string | undefined, reason: string): void {
   if (reflowing.has(owner)) return; // re-entrancy: a reflow's own writes must not re-trigger
   reflowing.add(owner);
+  const d = date ?? localISODate();
   try {
-    const diff = reflow(owner, date, reason);
+    const diff = reflow(owner, d, reason);
     broadcast(owner, 'schedule:done', { reason, ...diff });
+    // B4: on a BIG disruption (a high-priority task can't fit), escalate by surfacing
+    // ONE actionable nudge — never re-author here. The LLM only runs on explicit accept
+    // (POST /api/plan/reauthor). This is the reactive path; the accept route calls
+    // reflow() directly, so an accepted re-author can never re-trigger a suggestion.
+    const sug = maybeSuggestReauthor(owner, d, diff, reason);
+    if (sug) {
+      broadcast(owner, 'replan:suggested', { date: sug.date, reason: sug.reason, summary: sug.summary });
+      void pushReplanNudge(owner, sug.summary);
+    }
   } catch (err) {
     logger.warn('reflow failed (requestReplan)', { owner, reason, err: String(err) });
   } finally {
@@ -334,9 +346,78 @@ export function sweepMissedBlocks(
   return { skipped: missed.length, requeued };
 }
 
-/** Test-only: clear pending debounce timers + the re-entrancy guard between tests. */
+// ─── B4: nudge-first escalation (reflow → suggest → accept re-authors) ─────────
+//
+// Two clocks: the deterministic reflow above is fast/sync/LLM-free; this layer only
+// DETECTS a big disruption and surfaces ONE actionable nudge. The LLM re-author runs
+// solely via POST /api/plan/reauthor (the accept route) — never here, never in reflow().
+
+interface Suggestion { date: string; reason: string; summary: string; atRisk: number }
+
+/** One outstanding suggestion per owner (keyed by ownerId; a new day overwrites). */
+const outstanding = new Map<string, Suggestion>();
+
+/**
+ * The high-priority (P≤2) task ids that a reflow left at risk — dropped (`removed`)
+ * or unplaceable (`unplaced`). This is the disruption signal: a chronically-full day
+ * of low-priority backlog does NOT nag; only an important task losing its slot does.
+ */
+function highPriorityAtRisk(diff: ReflowDiff): string[] {
+  const ids = [...new Set<string>([...diff.removed.map((r) => r.task_id), ...diff.unplaced])];
+  if (ids.length === 0) return [];
+  const rows = sqlite
+    .prepare(`SELECT id, priority FROM tasks WHERE id IN (${ids.map(() => '?').join(',')})`)
+    .all(...ids) as { id: string; priority: number | null }[];
+  return rows.filter((r) => (r.priority ?? 3) <= 2).map((r) => r.id);
+}
+
+/** B4 disruption predicate: a high-priority task is at risk after the deterministic reflow. */
+export function isBigDisruption(diff: ReflowDiff): boolean {
+  return highPriorityAtRisk(diff).length > 0;
+}
+
+/**
+ * Record + return a new suggestion when a reflow is a big disruption AND none is
+ * already outstanding for this (owner, date). Returns null otherwise (no disruption,
+ * or de-duped). Pure bookkeeping — the caller broadcasts/pushes.
+ */
+function maybeSuggestReauthor(owner: string, date: string, diff: ReflowDiff, reason: string): Suggestion | null {
+  const atRisk = highPriorityAtRisk(diff);
+  if (atRisk.length === 0) return null;
+  const existing = outstanding.get(owner);
+  if (existing && existing.date === date) return null; // anti-spam: one per (owner, day)
+  const k = atRisk.length;
+  const sug: Suggestion = { date, reason, summary: `${k} priority task${k === 1 ? '' : 's'} at risk`, atRisk: k };
+  outstanding.set(owner, sug);
+  return sug;
+}
+
+/** Best-effort Web Push for the nudge — mirrors reminders.deliver; never throws. */
+async function pushReplanNudge(owner: string, summary: string): Promise<void> {
+  try {
+    for (const s of subsFor(owner)) {
+      const res = await sendPush(s.sub, { title: 'Re-plan your day?', body: summary, tag: 'replan:suggested', url: '/' });
+      if (res === 'gone') sqlite.prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(s.id);
+    }
+  } catch {
+    // SSE already delivered the nudge in-app; push is a bonus.
+  }
+}
+
+/** The outstanding suggestion for an owner (B4 — read by routes/tests). */
+export function outstandingSuggestion(owner: string): Suggestion | undefined {
+  return outstanding.get(owner);
+}
+
+/** Clear the outstanding suggestion (on accept/dismiss). */
+export function clearSuggestion(owner: string): void {
+  outstanding.delete(owner);
+}
+
+/** Test-only: clear pending debounce timers, the re-entrancy guard, and suggestions. */
 export function _resetReplanState(): void {
   for (const t of pendingReplans.values()) clearTimeout(t);
   pendingReplans.clear();
   reflowing.clear();
+  outstanding.clear();
 }
