@@ -374,6 +374,26 @@ export interface AutoResult {
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
 }
 
+/** Phase M B1/B3: one block a reactive reflow moved (its before/after windows). */
+export interface BlockMove {
+  block_id: string;
+  task_id: string;
+  before: { start_at: string; end_at: string };
+  after: { start_at: string; end_at: string };
+}
+
+/**
+ * Phase M B3: the `schedule:done` SSE payload — what a reactive reflow changed.
+ * Mirrors the server's ReflowDiff (auto-defense.ts) plus the trigger `reason`.
+ */
+export interface ReplanDiff {
+  reason?: string;
+  moved: BlockMove[];
+  removed: { block_id: string; task_id: string }[];
+  added: { block_id: string; task_id: string }[];
+  unplaced: string[];
+}
+
 /** Result of POST /api/patterns/:id/place-today (PR-C+, Phase C). */
 export interface PlacePatternResult {
   patternId: string;
