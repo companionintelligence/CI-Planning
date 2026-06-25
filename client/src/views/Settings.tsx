@@ -647,6 +647,38 @@ export function Settings() {
           <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
             hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
 
+          {/* AI day ordering toggle — saved immediately, not via the Save button */}
+          {(() => {
+            const smartMode = () => prefs()?.planning_mode === 'smart';
+            const togglePlanningMode = async () => {
+              const nextValue = smartMode() ? 'basic' : 'smart';
+              try {
+                await api.prefs.update({ planning_mode: nextValue });
+                refetchPrefs();
+              } catch (err) { showToast((err as Error).message, 'error'); }
+            };
+            return (
+              <label class="flex items-start gap-2 cursor-pointer select-none">
+                <button type="button" role="switch" aria-checked={smartMode()}
+                  onClick={togglePlanningMode}
+                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                  classList={{ 'bg-primary': smartMode(), 'bg-muted border border-border': !smartMode() }}>
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                    classList={{ 'translate-x-4': smartMode() }} />
+                </button>
+                <div>
+                  <div class="text-sm text-foreground leading-tight">AI day ordering</div>
+                  <div class="text-[11px] text-muted-foreground">
+                    AI orders your plan; placement stays deterministic.
+                    <Show when={smartMode() && !ollamaUp()}>
+                      {' '}Requires Ollama — falls back to basic order when unavailable.
+                    </Show>
+                  </div>
+                </div>
+              </label>
+            );
+          })()}
+
           {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
         </section>
 
