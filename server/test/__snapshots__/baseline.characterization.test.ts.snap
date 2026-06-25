@@ -672,6 +672,32 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "date",
+      "day_type_key",
+    ],
+    "table": "day_assignments",
+  },
+  {
+    "columns": [
+      "owner_id",
+      "dow",
+      "day_type_key",
+    ],
+    "table": "day_of_week_map",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "key",
+      "name",
+      "is_builtin",
+    ],
+    "table": "day_types",
+  },
+  {
+    "columns": [
       "entity_kind",
       "entity_id",
       "tag_id",
