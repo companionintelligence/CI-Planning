@@ -207,6 +207,7 @@ Reply with ONLY a JSON array containing every index exactly once, in the improve
 - **Files changing.** New `routes/plan.ts` (`/api/plan/instruct`), `agents/plan.ts` (constraint parser → typed schema), `engine/autoplan.ts` (apply hints in authoring), client command-bar entry.
 - **Tests.** Each constraint type → expected pins/hints; adversarial/empty rejected; deterministic placement given hints; Ollama-down handled.
 - **DoD.** NL text yields only bounded, structured inputs to the deterministic placer. **Effort: ~2 days (ship after A1–A3).**
+- **✅ Shipped (pins-first MVP; tag-window enforcement deferred).** `POST /api/plan/instruct { text, date? }` ([routes/plan.ts](../server/src/routes/plan.js)) → `parseInstruction` ([plan.ts](../server/src/agents/plan.js)) makes ONE small-tier LLM call → `validateInstruction` (pure-schema rubric, no judge): pins need a title + valid `HH:MM` start<end and **no two pins overlap**; hints need a known `kind` (`tag_before`/`tag_after`/`batch`) + an existing tag (+ valid time for before/after); empty parse ⇒ invalid. Errors map to **422** (invalid) / **503** (`InstructError('unavailable')`), and validation completes BEFORE any write so there are **no partial applies**. Valid **time pins** are created as locked, non-auto `'meeting'` blocks (`source_kind='instruct'`) the deterministic placer already routes around (via `dayObstacles`); the parse converts `HH:MM`→UTC via the owner tz. **Tag/ordering HINTS are parsed, validated, and returned but NOT yet wired into placement** — that's the invasive autoplan change deferred per the agreed MVP scope (a clean follow-up: per-tag transient day-windows, like direction windows). Client: `api.plan.instruct`, a one-line [PlanInstruct.tsx](../client/src/components/PlanInstruct.js) command-bar entry mounted on Today (Wand2 icon; toasts "N pinned · M hints noted"). Tests: [instruct.test.ts](../server/test/instruct.test.ts) (8) — pins→locked blocks + hints returned; 422 on overlap / bad time / unknown tag / unknown kind / nothing-actionable / empty text; **no-partial-write** (a valid pin alongside an invalid hint writes nothing); 503 + no writes when Ollama down. 81 server files / 703 passed; 137 client; both `tsc` clean.
 
 ### A5 — Prefs + UI toggle
 - **Goal.** Turn dormant `planningMode` into a real Settings control; default `ritual` (deterministic); `auto` enables A1–A3. Makes "AI auto-block" honest.
@@ -374,7 +375,7 @@ Shared sequential DB; migration-on-import; snapshot pollution from resurrected t
 | — (init) | `vec0` virtual table (guarded, not numbered) | C3 | pending |
 | — | none — revision log reuses `audit_log`; `overrun` enum / `day_theme` / `planning_mode` already exist | §A0 / C1 / C2 / A5 | ✅ shipped |
 
-New endpoints: `POST /api/plan/instruct` (A4, pending); `GET /api/plan/suggestion` + `POST /api/plan/reauthor` + `POST /api/plan/reauthor/dismiss` (B4, ✅ — new `routes/plan.ts`); `POST /api/schedule/run` re-pointed to drive reflow (B1, ✅).
+New endpoints (all in `routes/plan.ts`): `POST /api/plan/instruct` (A4 pins-first, ✅); `GET /api/plan/suggestion` + `POST /api/plan/reauthor` + `POST /api/plan/reauthor/dismiss` (B4, ✅); `POST /api/schedule/run` re-pointed to drive reflow (B1, ✅).
 
 ### Recommended sequence
 1. **§0 seam + `daily_plan`** — add the durable day table; relocate the LLM hook to author into it; confirm Option A.

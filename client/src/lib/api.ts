@@ -210,6 +210,8 @@ export const api = {
     suggestion: () => request<{ suggestion: ReplanSuggestion | null }>('GET', '/plan/suggestion'),
     reauthor: (date: string) => request<{ ok: boolean; date: string }>('POST', '/plan/reauthor', { date }),
     dismiss: (date: string) => request<{ ok: boolean }>('POST', '/plan/reauthor/dismiss', { date }),
+    // §A4 (pins-first): parse a natural-language instruction → pinned blocks + surfaced hints.
+    instruct: (text: string, date?: string) => request<InstructResponse>('POST', '/plan/instruct', { text, date }),
   },
 
   blockTemplates: {
@@ -411,6 +413,11 @@ export interface ReplanSuggestion {
   reason?: string;
   summary?: string;
 }
+
+/** Phase M A4: a parsed NL planning instruction. Pins are applied; hints are surfaced only (MVP). */
+export interface PlanPin { title: string; start_at: string; end_at: string }
+export interface PlanHint { kind: 'tag_before' | 'tag_after' | 'batch'; tag: string; time?: string }
+export interface InstructResponse { ok: boolean; date: string; pins: PlanPin[]; hints: PlanHint[]; created: number }
 
 /** Result of POST /api/patterns/:id/place-today (PR-C+, Phase C). */
 export interface PlacePatternResult {

@@ -8,6 +8,7 @@ import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
+import { PlanInstruct } from '../components/PlanInstruct.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
@@ -126,6 +127,8 @@ export function Today() {
         </div>
       </div>
 
+      {/* Natural-language planning instruction — pins become blocks, hints are noted (A4) */}
+      <PlanInstruct />
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
       <ReplanBanner />
       {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
