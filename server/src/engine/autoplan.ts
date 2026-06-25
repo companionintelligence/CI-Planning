@@ -27,6 +27,7 @@ import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
+import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 
 const DEFAULT_EST_MIN = 30;
@@ -277,12 +278,6 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
   return added;
 }
 
-/** True for Saturday (6) and Sunday (0) — UTC date-of-week, DST-safe. */
-function isWeekendDate(dateStr: string): boolean {
-  const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay();
-  return dow === 0 || dow === 6;
-}
-
 /**
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
@@ -367,7 +362,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   // flowing around the Plans. Per-direction auto_fill (pattern_prefs) is still honored.
   // Leftover capacity is left OPEN here — the workday/priority fill is the separate,
   // explicit fillByPriority() step (tap 3, D5).
-  const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
+  const dayType = resolveDayType(owner, date);
   const patWindows = getPatternBlocks(owner, dayType);
   // Track tasks gated off by per-direction auto_fill=false so Pass 2b skips them too.
   const directionGatedOffIds = new Set<string>();
