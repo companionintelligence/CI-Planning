@@ -70,6 +70,30 @@ export function colorVar(token: string | null | undefined): string {
   return token ? `var(--${token})` : 'var(--primary)';
 }
 
+/**
+ * The CSS colour for a Task's **direction** (its pattern-tag) — for outlining
+ * task cards (T-TASKS-3) and tinting the Selected Task Summary name (T-PLAN-3).
+ *
+ * Pure + store-free so it's unit-testable: the caller passes the `tags` resource
+ * and the per-pattern prefs (keyed by tag id). Resolution order:
+ *   1. the pattern-tag among the task's tag names (`tags.kind === 'pattern'`)
+ *   2. its saved `color_token` (pattern_prefs) wins
+ *   3. else the brand default by lowercased name ([[BASE_TAG_DEFAULTS]])
+ *   4. else `var(--primary)` (no direction / unknown)
+ */
+export function directionColorForTask(
+  task: { tags?: string[] | null },
+  tagDefs: { id: string; name: string; kind: string }[],
+  prefs: Record<string, { color_token?: string | null }> = {},
+): string {
+  const names = task.tags ?? [];
+  const dir = tagDefs.find((t) => t.kind === 'pattern' && names.includes(t.name));
+  if (!dir) return 'var(--primary)';
+  const saved = prefs[dir.id]?.color_token;
+  if (saved) return colorVar(saved);
+  return colorVar(BASE_TAG_DEFAULTS[dir.name.toLowerCase()]?.color_token);
+}
+
 /** A canonical Concept tag: a name (used as title + tag) + a default estimate + optional colour. */
 export interface ConceptTag { name: string; minutes: number; color_token?: string }
 
