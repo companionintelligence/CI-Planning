@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
+import { DayTypeControl } from '../components/DayTypeControl.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { PlanInstruct } from '../components/PlanInstruct.js';
@@ -124,6 +125,11 @@ export function Today() {
           <Pill icon={AlertCircle} value={overdue()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
           <Pill icon={Ban}         value={blocked()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
           <Pill icon={ListTodo}    value={open()}    label="open"    tone="foreground" />
+        </div>
+
+        {/* Day type for this date — assign + edit its windows (T-SCHED-1). */}
+        <div class="mt-3 pt-3 border-t border-border">
+          <DayTypeControl date={selectedDay()} />
         </div>
       </div>
 

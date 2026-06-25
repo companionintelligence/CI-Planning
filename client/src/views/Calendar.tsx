@@ -15,6 +15,7 @@ import { showToast } from '../stores/index.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
 import { minutesIntoDay } from '../lib/grid.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
+import { DayTypeControl } from '../components/DayTypeControl.js';
 import type { Block } from '../lib/api.js';
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -235,6 +236,13 @@ export function Calendar() {
               </button>
             </Show>
           </div>
+        </div>
+      </Show>
+
+      {/* Day-type assignment for the focused date — day view only (unambiguous date). */}
+      <Show when={view() === 'day'}>
+        <div class="mb-3 p-3 rounded-lg border border-surface-700/60 bg-surface-800">
+          <DayTypeControl date={anchor()} />
         </div>
       </Show>
 
