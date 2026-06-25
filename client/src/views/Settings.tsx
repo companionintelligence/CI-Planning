@@ -638,7 +638,7 @@ export function Settings() {
           </div>
         </section>
 
-        {/* Routine Settings */}
+        {/* Routine Settings — recall behaviour + the pattern-type taxonomy */}
         <section class="card">
           <div class="flex items-center justify-between mb-3">
             <div class="section-label">Routine Settings</div>
@@ -648,13 +648,13 @@ export function Settings() {
             hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
 
           {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
-        </section>
 
-        {/* Routine Types — create/edit/delete pattern type taxonomy */}
-        <section class="card">
-          <div class="section-label mb-3">Routine Types</div>
-          <p class="text-xs text-muted-foreground mb-3">The categories your Routines, Habits, and custom types belong to. Built-in types can be edited but not deleted.</p>
-          <RoutineTypeSettings />
+          {/* Routine Types — create/edit/delete pattern type taxonomy */}
+          <div class="border-t border-border pt-4 mt-4">
+            <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Routine Types</div>
+            <p class="text-xs text-muted-foreground mb-3">The categories your Routines, Habits, and custom types belong to. Built-in types can be edited but not deleted.</p>
+            <RoutineTypeSettings />
+          </div>
         </section>
 
         {/* Pattern Block settings — shape + colour per pattern tag; sits directly above Tag Settings */}
