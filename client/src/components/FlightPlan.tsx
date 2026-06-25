@@ -1,5 +1,5 @@
 import { For, Show, createSignal, createMemo } from 'solid-js';
-import { Zap, CalendarCheck, X, ChevronDown, ChevronRight, Repeat2, Undo2 } from 'lucide-solid';
+import { Zap, CalendarCheck, X, ChevronDown, ChevronRight, Repeat2, Undo2, Trash2 } from 'lucide-solid';
 import { api, type FlightPlanItem } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, prefs, refetchPrefs, showToast, selectedDay,
@@ -204,11 +204,12 @@ export function FlightPlan() {
           </Show>
         </button>
 
-        {/* Priority / Over-Due toggle — workday fill ordering */}
+        {/* Priority / Due Date toggle — workday fill ordering. The "Due Date" value is
+            the existing `fill_order='overdue'` (Phase M places soonest-due first). */}
         <div
           class="inline-flex rounded-full border border-border overflow-hidden text-[11px] flex-shrink-0"
           role="group"
-          title="Priority: place highest-priority tasks first. Over-Due: place most-overdue tasks first."
+          title="Priority: place highest-priority tasks first. Due Date: place soonest-due tasks first."
         >
           <button
             onClick={() => setFillOrder('priority')}
@@ -219,18 +220,33 @@ export function FlightPlan() {
             onClick={() => setFillOrder('overdue')}
             class="px-2 py-0.5 transition-colors"
             classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'overdue', 'text-muted-foreground hover:text-foreground': fillOrder() !== 'overdue' }}
-          >Over-Due</button>
+          >Due Date</button>
         </div>
 
-        {/* Fill Plan — proposes candidates, never places; outlined style */}
-        <button
-          onClick={runFill}
-          disabled={running()}
-          class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors disabled:opacity-40 flex-shrink-0"
-          title="Propose open tasks into the flight-plan (never places anything)"
+        {/* T-FP-1: empty → Fill Plan (propose candidates, never places); has items →
+            Clear Plan (reset, removes all staged tasks). Same outlined style. */}
+        <Show
+          when={items().length > 0}
+          fallback={
+            <button
+              onClick={runFill}
+              disabled={running()}
+              class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground transition-colors disabled:opacity-40 flex-shrink-0"
+              title="Propose open tasks into the flight-plan (never places anything)"
+            >
+              <Zap size={11} classList={{ 'animate-pulse': running() }} /> Fill Plan
+            </button>
+          }
         >
-          <Zap size={11} classList={{ 'animate-pulse': running() }} /> Fill Plan
-        </button>
+          <button
+            onClick={reset}
+            disabled={running()}
+            class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:border-destructive/50 hover:text-destructive transition-colors disabled:opacity-40 flex-shrink-0"
+            title="Clear all tasks from the flight-plan"
+          >
+            <Trash2 size={11} /> Clear Plan
+          </button>
+        </Show>
 
         {/* Schedule — places selected staged items + workday fill */}
         <button
