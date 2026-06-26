@@ -183,20 +183,72 @@ export function placePatternOnDay(
     let blocksCreated = 0;
     let placed = 0;
     let unplaced = 0;
-    for (const t of toPlace) {
-      const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
-      let placedSessions = 0;
-      for (const want of sessions) {
-        const pick = pickGap(gaps, want);
-        if (!pick) break;
-        const startMs = pick.gap.cursor;
-        const endMs = startMs + pick.len;
-        ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId);
-        pick.gap.cursor = endMs + breakMs;
-        blocksCreated++;
-        placedSessions++;
+
+    if (parentBlockId != null) {
+      // Scoped to an existing Plan: scatter the member tasks into the Plan's free gaps.
+      // They inherit the Plan's parent_block_id, so they already move with that group.
+      for (const t of toPlace) {
+        const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
+        let placedSessions = 0;
+        for (const want of sessions) {
+          const pick = pickGap(gaps, want);
+          if (!pick) break;
+          const startMs = pick.gap.cursor;
+          const endMs = startMs + pick.len;
+          ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId);
+          pick.gap.cursor = endMs + breakMs;
+          blocksCreated++;
+          placedSessions++;
+        }
+        placedSessions > 0 ? placed++ : unplaced++;
       }
-      placedSessions > 0 ? placed++ : unplaced++;
+    } else {
+      // Free placement: lay the routine out CONTIGUOUSLY in a single gap and wrap it in a
+      // Plan container (block_kind='timeblock'), parenting each task block to it. The
+      // existing move-group then moves the whole routine together — "a container like a
+      // time-block". The container shares the pattern marker so it's idempotent, survives
+      // clear-day (source_kind='pattern'), and cascades on delete.
+      const meta = sqlite.prepare(`SELECT name, tag FROM patterns WHERE id = ?`).get(patternId) as
+        | { name: string; tag: string | null }
+        | undefined;
+      const seq: { task: MemberTask; lenMs: number }[] = [];
+      for (const t of toPlace) {
+        for (const lenMs of splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs)) {
+          seq.push({ task: t, lenMs });
+        }
+      }
+      const totalMs = seq.reduce((s, x) => s + x.lenMs, 0) + Math.max(0, seq.length - 1) * breakMs;
+      const pick = pickGap(gaps, totalMs); // a gap that fits the whole routine, else the largest (truncated)
+      if (pick) {
+        const limit = pick.gap.cursor + pick.len;
+        let cursor = pick.gap.cursor;
+        const layout: { task: MemberTask; startMs: number; endMs: number }[] = [];
+        for (const s of seq) {
+          if (cursor + s.lenMs > limit) break; // routine overflows this gap → the rest is unplaced
+          layout.push({ task: s.task, startMs: cursor, endMs: cursor + s.lenMs });
+          cursor = cursor + s.lenMs + breakMs;
+        }
+        if (layout.length > 0) {
+          // Container first (so the FK parent exists before its children).
+          const containerEndMs = layout[layout.length - 1].endMs;
+          const containerId = (sqlite
+            .prepare(
+              `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+               VALUES (uuid7(), ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
+            )
+            .get(meta?.name ?? 'Routine', meta?.tag ?? null, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)) as { id: string }).id;
+          const placedTaskIds = new Set<string>();
+          for (const l of layout) {
+            ins.run(l.task.task_id, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId);
+            blocksCreated++;
+            placedTaskIds.add(l.task.task_id);
+          }
+          placed = placedTaskIds.size;
+        }
+        unplaced = toPlace.length - placed;
+      } else {
+        unplaced = toPlace.length;
+      }
     }
     broadcast(owner, 'pattern:placed', { patternId, date, blocksCreated, placed, unplaced });
     return { patternId, date, blocksCreated, placed, unplaced, skippedAlreadyPlaced: false };
