@@ -188,6 +188,31 @@ describe('§A2 authorPlanOrder integration', () => {
     for (const ep of emailPositions) expect(allWork.has(ep)).toBe(false);
   });
 
+  it('clustering YIELDS to priority: a post-pass that would invert priority is discarded (fallback to the priority order)', async () => {
+    // The §A2 safety property end-to-end (not just the pure checkOrder unit test): same-tag
+    // clustering must never ship a priority inversion. Deterministic priority order is
+    // W1(P1), E1(P2), W2(P3). The tag post-pass would cluster the two 'work' tasks first →
+    // W1, W2, E1 → P3 before P2 = inversion → checkOrder flags it → authorPlanOrder keeps the
+    // un-clustered priority order (plan.ts:471 fallback). Pre-fix this branch had no coverage.
+    const w1 = insertTask('Work P1', 1, null, 30);
+    const e1 = insertTask('Email P2', 2, null, 30);
+    const w2 = insertTask('Work P3', 3, null, 30);
+    addTag(w1, 'work');
+    addTag(e1, 'email');
+    addTag(w2, 'work');
+    stage(w1, 0);
+    stage(e1, 1);
+    stage(w2, 2);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows(DATE);
+    const posOf = (id: string) => rows.find((r) => r.task_id === id)!.position;
+    // Priority order preserved: P1 < P2 < P3 by position; clustering NOT applied.
+    expect(posOf(w1)).toBeLessThan(posOf(e1));
+    expect(posOf(e1)).toBeLessThan(posOf(w2)); // E1(P2) before W2(P3) — no inversion
+  });
+
   it('is idempotent: second call for same (owner, date) is a no-op', async () => {
     const t1 = insertTask('Task 1', 3, null, 30);
     const t2 = insertTask('Task 2', 3, null, 30);

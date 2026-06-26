@@ -26,12 +26,12 @@ The market splits cleanly into three camps. None occupies the corner Companion P
 | **Sunsama** | Commercial cloud | ❌ | ✅ | ✅ manual ritual | ❌ (deliberately) | Calm, mindful morning planning ritual |
 | **Akiflow** | Commercial cloud | ❌ | ✅ | ✅ | ⚠️ assisted | Command-bar speed; consolidating many task sources |
 | **TickTick / Todoist** | Commercial | ❌ | ✅ | ⚠️ | ❌ | Polished cross-platform mainstream task apps |
-| **➡️ Companion Planning** | **OSS, self-host** | **✅ SQLite source of truth** | **✅ two-way (planned)** | **✅ first-class** | **✅ local-LLM auto-block** | **Private AI day-planning you fully own** |
+| **➡️ Companion Planning** | **OSS, self-host** | **✅ SQLite source of truth** | **✅ two-way** | **✅ first-class** | **✅ AI orders the plan; deterministic placement + reflow** | **Private AI day-planning you fully own** |
 ### 2.2 What each camp gets right (and the gap)
 - **Open-source / self-hosted** (Super Productivity, Vikunja, Taskwarrior, Nextcloud Tasks): strong on privacy and ownership. Super Productivity is the standout — local-first with built-in timeboxing and time tracking and deep issue-tracker integration. But all of them stop at *manual* scheduling; none auto-plans your day.
 - **Commercial AI schedulers** (Motion, Reclaim): genuinely automate the calendar. Motion replaces your calendar and rebuilds the day when a meeting runs long; Reclaim defends habits and focus blocks with two-way sync. The cost is total cloud dependence and no data ownership.
 - **Mindful manual planners** (Sunsama, Akiflow): Sunsama's morning ritual — review yesterday, pull tasks, estimate time, block the calendar, set a realistic goal — is the gold standard for *intentional* planning, and it refuses auto-scheduling on principle. Cloud-only.
-**The gap:** there is no mature tool that is simultaneously (a) open-source, (b) local-first with the device as source of truth, and (c) capable of AI auto-scheduling tasks into calendar blocks. Companion Planning is built precisely for that corner — and uniquely can offer **both** Motion-style auto-blocking *and* a Sunsama-style ritual, switchable per user.
+**The gap:** there is no mature tool that is simultaneously (a) open-source, (b) local-first with the device as source of truth, and (c) capable of AI-assisted day planning. Companion Planning is built precisely for that corner — and uniquely offers **both** an AI-authored, deterministically-placed plan with reactive reflow *and* a Sunsama-style manual ritual, switchable per user (`planning_mode` = `smart` / `basic`). The LLM authors the day's *order* once per day; placement and reflow stay deterministic (see §4.3).
 ### 2.3 Design lessons we steal
 1. **From Super Productivity:** local-first storage + integrated time tracking, no mandatory account.
 2. **From Motion:** auto-reschedule the day when reality shifts (meeting overran → afternoon re-blocks).
@@ -73,8 +73,8 @@ The scheduler runs a deterministic pass first; the LLM only resolves ambiguity a
 5. **Insert buffers/breaks** per prefs; never schedule past `workday_end`.
 6. **Overflow** → leave unscheduled, surface in the review queue, optionally suggest a due-date push.
 7. **LLM pass (optional):** re-order/justify edge cases, batch same-tag work, write a one-line rationale per block.
-### 4.3 Reactivity (the Motion lesson)
-When a synced calendar event appears/moves, or a user marks a block done/overrun, the scheduler re-runs an **incremental** pass that only moves non-locked, non-completed `time_blocks` for the remainder of the day. Nightly grooming does a full re-plan for tomorrow.
+### 4.3 Reactivity — two clocks (Phase M, the Motion lesson)
+Planning runs on **two clocks**. The **slow clock** is LLM authoring: once per day it freezes a task *order* into `daily_plan` (smart mode; `basic` mode authors the same order deterministically). The **fast clock** is a deterministic, **LLM-free** reflow that re-packs the day's movable auto blocks from that frozen order whenever the obstacle set shifts — a synced calendar change, a task create/update/delete, the missed-block sweep, or a timer **overrun**. The reflow never moves in-progress, user-locked, recently-moved, meeting, or completed blocks (anti-thrash), and is debounced + toggle-gated (`auto_defense_enabled`). On a *big* disruption (a high-priority task loses its slot) it surfaces a single "Re-plan with AI?" nudge; the LLM re-authors **only** on explicit accept (`POST /api/plan/reauthor`) — never inside the reflow. Nightly grooming re-stages tomorrow.
 ---
 ## 5. High-Level System Architecture
 ```mermaid
