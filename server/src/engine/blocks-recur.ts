@@ -32,6 +32,8 @@ interface BlockTemplate {
   source_kind: string | null;
   recurrence_rule: string;
   recurrence_dtstart: string | null;
+  category_id: string | null;  // 0069: propagated to instances
+  color_token: string | null;  // 0069: the FROZEN category stamp, copied verbatim
 }
 
 /**
@@ -52,7 +54,7 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
   const templates = sqlite
     .prepare(
       `SELECT id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, source_kind,
-              recurrence_rule, recurrence_dtstart
+              recurrence_rule, recurrence_dtstart, category_id, color_token
          FROM time_blocks
         WHERE recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL`,
     )
@@ -62,8 +64,8 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
   const ins = sqlite.prepare(
     `INSERT OR IGNORE INTO time_blocks
        (id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, is_auto,
-        source_kind, status, recurrence_parent_id, occurrence_date)
-     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'planned', ?, ?)
+        source_kind, status, recurrence_parent_id, occurrence_date, category_id, color_token)
+     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'planned', ?, ?, ?, ?)
      RETURNING id`,
   );
   // Carry the template's normalized tags (with levels) onto the instance so Phase 5
@@ -97,6 +99,7 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
         const row = ins.get(
           t.title, t.block_kind ?? 'timeblock', t.tag, t.block_type, t.note,
           startISO, endISO, t.is_locked ?? 0, t.source_kind ?? 'manual', t.id, day,
+          t.category_id, t.color_token, // 0069: frozen stamp copied verbatim (not re-derived)
         ) as { id: string } | undefined;
         if (row) {
           blocksCreated++;
