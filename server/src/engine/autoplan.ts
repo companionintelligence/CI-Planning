@@ -19,7 +19,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { taskTagNames } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
@@ -115,8 +115,7 @@ function prefsOf(owner: string): PrefsRow | undefined {
 
 /** Tagged, timed Plan containers on `date`, earliest first. */
 function dayPlans(date: string, tz: string): PlanRow[] {
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   return sqlite
     .prepare(
       `SELECT tb.id, tb.start_at, tb.end_at, tb.tag,
@@ -198,8 +197,7 @@ const insBlock = () =>
 
 /** Clear our OWN prior agent placements for the local day (pattern blocks survive). */
 function clearPriorAuto(date: string, tz: string): void {
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   sqlite
     .prepare(
       `DELETE FROM time_blocks
@@ -470,8 +468,7 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
   const staged = selectedStaged(owner, date);
   // Tasks already auto-placed today are not re-placed (this top-up runs AFTER tap 2,
   // and must not clear or duplicate those placements).
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   const placedTaskIds = new Set(
     (sqlite
       .prepare(
