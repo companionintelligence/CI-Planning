@@ -2,6 +2,7 @@ import { sqlite, vecAvailable } from '../db/index.js';
 import { embed } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
+import { resolveTrustPolicy } from '../engine/autoplan.js';
 
 export interface PromoteResult {
   promoted: number;
@@ -26,10 +27,18 @@ interface PossibleRow {
  * for manual review.
  */
 export function promotePossibles(opts: { threshold?: number } = {}): PromoteResult {
-  const threshold = opts.threshold ?? 0.7;
+  const policy = resolveTrustPolicy(currentOwnerId());
   const pending = sqlite
     .prepare("SELECT * FROM possible_tasks WHERE status = 'pending'")
     .all() as PossibleRow[];
+
+  // TM-5: Cautious trust mode never auto-promotes — everything waits in the Inbox for a
+  // manual promote. (An explicit `threshold` override, used by tests, still promotes.)
+  if (opts.threshold === undefined && !policy.autoPromote) {
+    logger.info('promotePossibles skipped (cautious)', { keptPending: pending.length });
+    return { promoted: 0, keptPending: pending.length };
+  }
+  const threshold = opts.threshold ?? policy.promoteThreshold;
 
   let promoted = 0;
   let keptPending = 0;

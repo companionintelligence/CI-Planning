@@ -24,6 +24,21 @@ export interface JobOutcome {
   log: string;
 }
 
+/**
+ * TM-5 — best-effort auto-block after a promote. In the Hands-off trust mode this stages
+ * the newly-promoted, estimate-bearing tasks and places them (zero-click); a no-op in
+ * Cautious/Balanced. Wrapped so a placement hiccup never turns a successful promotion into
+ * a failed job — the tasks are already promoted; we just couldn't block them this pass.
+ */
+function autoBlockAfterPromote(): number {
+  try {
+    return autoScheduleOnIngest(currentOwnerId(), { requireEstimate: true })?.blocksCreated ?? 0;
+  } catch (err) {
+    logger.error('auto-block after promote failed', { err: (err as Error).message });
+    return 0;
+  }
+}
+
 /** Execute a single job kind. Returns counts + a human-readable log line. */
 async function execute(kind: string): Promise<JobOutcome> {
   switch (kind) {
@@ -52,16 +67,18 @@ async function execute(kind: string): Promise<JobOutcome> {
     }
     case 'promote_possibles': {
       const r = promotePossibles();
-      return { itemsCreated: r.promoted, itemsUpdated: 0, log: `Promoted ${r.promoted}, kept ${r.keptPending} pending` };
+      const blocked = autoBlockAfterPromote();
+      return { itemsCreated: r.promoted, itemsUpdated: 0, log: `Promoted ${r.promoted}, kept ${r.keptPending} pending${blocked ? `; auto-blocked ${blocked}` : ''}` };
     }
     case 'nightly_grooming': {
       const dedupe = await dedupePossibles();
       const overdue = surfaceOverdue();
       const promote = promotePossibles();
+      const blocked = autoBlockAfterPromote();
       return {
         itemsCreated: promote.promoted,
         itemsUpdated: dedupe.duplicates + overdue,
-        log: `Dedupe: ${dedupe.duplicates} dup (embeddings ${dedupe.available ? 'on' : 'off'}); bumped ${overdue} overdue; promoted ${promote.promoted}`,
+        log: `Dedupe: ${dedupe.duplicates} dup (embeddings ${dedupe.available ? 'on' : 'off'}); bumped ${overdue} overdue; promoted ${promote.promoted}${blocked ? `; auto-blocked ${blocked}` : ''}`,
       };
     }
     case 'auto_schedule': {

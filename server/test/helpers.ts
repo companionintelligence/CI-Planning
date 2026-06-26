@@ -68,6 +68,7 @@ export function resetDb(): void {
       recall_keeps_pattern = 0,
       day_theme = NULL,
       planning_mode = 'basic',
+      trust_mode = 'balanced',
       auto_defense_enabled = 0;
   `);
 }

@@ -6,6 +6,7 @@ import { broadcast } from './sse.js';
 import { toApiList, taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
+import { autoScheduleOnIngest } from '../engine/autoplan.js';
 
 /**
  * Linchpin (auto-scheduling finding 2): copy a possible-task's suggested tags onto
@@ -76,6 +77,11 @@ export function possiblesRouter() {
     const out = taskToApi(task);
     broadcast(currentOwnerId(), 'possible:promoted', { id, task: out });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'promote', entity: `possible:${id}` });
+
+    // TM-5: in the Hands-off trust mode, auto-block the promoted work (estimate-bearing only).
+    // Best-effort — a placement hiccup must not fail the promote. No-op in Cautious/Balanced.
+    try { autoScheduleOnIngest(currentOwnerId(), { requireEstimate: true }); } catch { /* best-effort */ }
+
     ctx.status = 201;
     ctx.body = { task: out };
   });

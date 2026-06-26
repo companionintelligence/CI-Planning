@@ -174,7 +174,14 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // this gates whether leftover tasks also fill open 9–6 time. Default ON.
   autoFillWorkday: integer('auto_fill_workday', { mode: 'boolean' }).default(true),
   // Trust toggle (0052): 'suggest' (stepped taps) | 'schedule' (zero-click on ingest).
+  // VESTIGIAL since 0070 — superseded by trustMode below; no readers, kept for one
+  // release before a contract migration drops it. Do not add new readers.
   autoMode: text('auto_mode').notNull().default('suggest'),
+  // Trust dial (0070) — the 3-state automation Setting that replaced auto_mode:
+  // 'cautious' (no auto-promote, no auto-block) | 'balanced' (auto-promote ≥0.7,
+  // no auto-block; the default) | 'hands_off' (auto-promote + auto-block estimate-bearing
+  // promoted tasks). Read via resolveTrustPolicy() in engine/autoplan.ts, never raw.
+  trustMode: text('trust_mode').notNull().default('balanced'),
   // Leftover-fill ordering (0055): 'priority' (P1 first) | 'overdue' (due_at ASC first).
   fillOrder: text('fill_order').notNull().default('priority'),
   conceptDefaultMinutes: integer('concept_default_minutes').default(60),

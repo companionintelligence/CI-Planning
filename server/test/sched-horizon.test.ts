@@ -28,7 +28,9 @@ const countOn = (date: string): number =>
 const stagedCount = (): number => (sqlite.prepare(`SELECT COUNT(*) c FROM flight_plan WHERE owner_id = ?`).get(OWNER) as { c: number }).c;
 // Shrink the workday to a one-task window + set the mode/horizon for the test.
 function setMode(mode: 'suggest' | 'schedule', horizon: number): void {
-  sqlite.prepare(`UPDATE scheduling_prefs SET auto_mode = ?, planning_horizon_days = ?, workday_start = '09:00', workday_end = '10:00' WHERE owner_id = ?`).run(mode, horizon, OWNER);
+  // TM-4: the N-day horizon gate moved from auto_mode='schedule' to trust_mode='hands_off'.
+  const trust = mode === 'schedule' ? 'hands_off' : 'balanced';
+  sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = ?, planning_horizon_days = ?, workday_start = '09:00', workday_end = '10:00' WHERE owner_id = ?`).run(trust, horizon, OWNER);
 }
 
 let srv: TestServer;
