@@ -31,6 +31,8 @@ import { generateJson, isAvailable } from '../mcp/ollama.js';
 import { taskTagNames } from '../services/tags.js';
 import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
+import { broadcast } from '../routes/sse.js';
+import { writeAudit } from '../lib/audit.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -462,93 +464,127 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // fill_order maps onto the deterministic authoring sort (default deadline-first).
   const fillOrder = prefs.fill_order ?? 'overdue';
 
-  const aiEnabled = !opts.deterministic && prefs.planning_mode === 'smart';
-  if (!aiEnabled || !(await isAvailable())) {
-    // Deterministic path: apply theme bias, then §A2 post-pass
+  // Deterministic authoring — basic mode, AI off, Ollama unreachable at the pre-flight
+  // check, OR (via the catch below) an LLM call that fails MID-loop. Centralised here so
+  // the "never throws / always lands a valid order" invariant holds for every caller.
+  const persistDeterministic = () => {
     const detIndices = deterministicIndices(staged, themeTag, fillOrder);
     const postPassed = tagGroupPostPass(detIndices, staged);
     const defects = checkOrder(postPassed, staged, date, themeTag);
     const final = defects.length === 0 ? postPassed : detIndices;
     persistOrder(owner, date, staged, final, 'deterministic');
+  };
+
+  const aiEnabled = !opts.deterministic && prefs.planning_mode === 'smart';
+  if (!aiEnabled || !(await isAvailable())) {
+    persistDeterministic();
     return;
   }
 
   const lines = staged.map(taskLine);
   const capacityMin = workdayMinutes(prefs.workday_start, prefs.workday_end);
 
-  const result = await runLoop<number[]>(
-    {
-      stage: 'order',
-      ownerId: owner,
+  // B4 invariant (docs/M-ai-scheduler.md:270,303): an LLM failure MID-loop — Ollama dies
+  // AFTER the pre-flight isAvailable() check (timeout, OOM, dropped connection) — must
+  // degrade to the deterministic order, never throw. `runLoop` re-throws a genuine
+  // generator/judge error (loop.ts) and `generateRationales` also calls the model, so the
+  // whole LLM tail is guarded. (The sibling A4 parseInstruction already wraps its call;
+  // authoring was the omission this restores.)
+  try {
+    const result = await runLoop<number[]>(
+      {
+        stage: 'order',
+        ownerId: owner,
 
-      generate: async () => {
-        // §C2: pass theme tag to prompt
-        const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag), {
-          tier: 'small',
-          system: genSystem(),
-          temperature: 0.2,
-          timeoutMs: 25_000,
-        });
-        return safeOrder(raw, staged);
+        generate: async () => {
+          // §C2: pass theme tag to prompt
+          const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag), {
+            tier: 'small',
+            system: genSystem(),
+            temperature: 0.2,
+            timeoutMs: 25_000,
+          });
+          return safeOrder(raw, staged);
+        },
+
+        check: (order) => {
+          // §A2: apply post-pass before checking
+          const postPassed = tagGroupPostPass(order, staged);
+          return checkOrder(postPassed, staged, date, themeTag);
+        },
+
+        judge: async (order): Promise<JudgeScore> => {
+          const raw = await generateJson<Record<string, unknown>>(judgePrompt(lines, order, staged), {
+            tier: 'medium',
+            system: judgeSystem(),
+            temperature: 0.1,
+            timeoutMs: 30_000,
+          });
+          return {
+            overall: typeof raw.overall === 'number' ? raw.overall : 0,
+            critique: typeof raw.critique === 'string' ? raw.critique : '',
+            momentum: typeof raw.momentum === 'number' ? raw.momentum : undefined,
+            focus_fit: typeof raw.focus_fit === 'number' ? raw.focus_fit : undefined,
+            coherence: typeof raw.coherence === 'number' ? raw.coherence : undefined,
+          };
+        },
+
+        revise: async (order, defects, critique) => {
+          const raw = await generateJson<unknown>(revisePrompt(lines, order, defects, critique), {
+            tier: 'small',
+            system: reviseSystem(),
+            temperature: 0.2,
+            timeoutMs: 25_000,
+          });
+          return safeOrder(raw, staged);
+        },
+
+        baseline: () => deterministicIndices(staged, themeTag, fillOrder),
       },
-
-      check: (order) => {
-        // §A2: apply post-pass before checking
-        const postPassed = tagGroupPostPass(order, staged);
-        return checkOrder(postPassed, staged, date, themeTag);
+      {
+        onEscape: (ownerId, stage, info) => {
+          logger.warn('authorPlanOrder: loop stalled, falling back to deterministic order', {
+            owner: ownerId,
+            stage,
+            score: info.score,
+            iterations: info.iterations,
+            reason: info.reason,
+          });
+        },
       },
+    );
 
-      judge: async (order): Promise<JudgeScore> => {
-        const raw = await generateJson<Record<string, unknown>>(judgePrompt(lines, order, staged), {
-          tier: 'medium',
-          system: judgeSystem(),
-          temperature: 0.1,
-          timeoutMs: 30_000,
-        });
-        return {
-          overall: typeof raw.overall === 'number' ? raw.overall : 0,
-          critique: typeof raw.critique === 'string' ? raw.critique : '',
-          momentum: typeof raw.momentum === 'number' ? raw.momentum : undefined,
-          focus_fit: typeof raw.focus_fit === 'number' ? raw.focus_fit : undefined,
-          coherence: typeof raw.coherence === 'number' ? raw.coherence : undefined,
-        };
-      },
+    // §A2: apply post-pass to the final LLM result
+    const finalCandidate = tagGroupPostPass(result.candidate, staged);
+    const finalDefects = checkOrder(finalCandidate, staged, date, themeTag);
+    const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
 
-      revise: async (order, defects, critique) => {
-        const raw = await generateJson<unknown>(revisePrompt(lines, order, defects, critique), {
-          tier: 'small',
-          system: reviseSystem(),
-          temperature: 0.2,
-          timeoutMs: 25_000,
-        });
-        return safeOrder(raw, staged);
-      },
+    // §A3: only an LLM-authored order carries per-task rationales; an escape-hatch
+    // fallback (source='deterministic') leaves them null, like the basic-mode path.
+    const source = result.passed ? 'llm' : 'deterministic';
+    const rationales = source === 'llm' ? await generateRationales(staged, finalIndices, themeTag) : undefined;
+    persistOrder(owner, date, staged, finalIndices, source, rationales);
 
-      baseline: () => deterministicIndices(staged, themeTag, fillOrder),
-    },
-    {
-      onEscape: (ownerId, stage, info) => {
-        logger.warn('authorPlanOrder: loop stalled, falling back to deterministic order', {
-          owner: ownerId,
-          stage,
-          score: info.score,
-          iterations: info.iterations,
-          reason: info.reason,
-        });
-      },
-    },
-  );
+    // §A0 clause 6 (docs/M-ai-scheduler.md:71,76): a STALLED loop must not silently revert.
+    // The day still lands a valid deterministic order (above), AND we raise a "plan needs
+    // review" signal — a persisted audit row + a live SSE event — so the escalation is
+    // visible, not just a server log. (Client surfacing of plan:needs_review is a follow-up;
+    // the audit row is the §A0 inspectability sink and is queryable today.)
+    if (result.escaped) signalPlanNeedsReview(owner, date, result.score);
+  } catch (err) {
+    logger.warn('authorPlanOrder: LLM authoring failed mid-call, falling back to deterministic order', {
+      owner,
+      date,
+      err: String(err),
+    });
+    persistDeterministic();
+  }
+}
 
-  // §A2: apply post-pass to the final LLM result
-  const finalCandidate = tagGroupPostPass(result.candidate, staged);
-  const finalDefects = checkOrder(finalCandidate, staged, date, themeTag);
-  const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
-
-  // §A3: only an LLM-authored order carries per-task rationales; an escape-hatch
-  // fallback (source='deterministic') leaves them null, like the basic-mode path.
-  const source = result.passed ? 'llm' : 'deterministic';
-  const rationales = source === 'llm' ? await generateRationales(staged, finalIndices, themeTag) : undefined;
-  persistOrder(owner, date, staged, finalIndices, source, rationales);
+/** §A0/B4 — raise a visible "plan needs review" signal when the authoring loop stalls. */
+function signalPlanNeedsReview(owner: string, date: string, score: number): void {
+  writeAudit({ ownerId: owner, actor: 'system', action: 'plan_needs_review', entity: `plan:${date}` });
+  broadcast(owner, 'plan:needs_review', { date, score });
 }
 
 // ─── §A4 — NL planning constraints (pins-first MVP) ──────────────────────────

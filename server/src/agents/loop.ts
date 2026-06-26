@@ -113,7 +113,9 @@ export interface LoopOptions<C> {
   callBudget?: number;
   /** Sink for each revision (default: append to audit_log). Injected in tests. */
   record?: (ownerId: string, stage: string, rev: Revision<C>) => void;
-  /** Called once when the loop stalls. Default: logger.warn. B4 wires its "plan needs review" nudge here. */
+  /** Called once when the loop stalls. Default: logger.warn. The authoring caller ALSO checks
+   * `result.escaped` and raises a "plan needs review" signal there (writeAudit + SSE) — see
+   * agents/plan.ts signalPlanNeedsReview. (B4's disruption nudge is a separate path in auto-defense.) */
   onEscape?: (ownerId: string, stage: string, info: { score: number; iterations: number; reason: string }) => void;
 }
 
@@ -150,8 +152,8 @@ function auditRecord<C>(ownerId: string, stage: string, rev: Revision<C>): void 
  *
  * Returns the passing candidate, or — on stall (max-iter / plateau / budget) — the
  * deterministic `baseline()`, never the best *failing* candidate. The caller decides
- * what to do with `result.escaped` (Workstream A persists deterministic positions and
- * carries on; B4 turns it into a "plan needs review" nudge).
+ * what to do with `result.escaped` (Workstream A persists deterministic positions AND
+ * raises a "plan needs review" signal — audit row + SSE — so the fallback isn't silent).
  */
 export async function runLoop<C>(stage: LoopStage<C>, options: LoopOptions<C> = {}): Promise<LoopResult<C>> {
   const maxIterations = options.maxIterations ?? DEFAULTS.maxIterations;
