@@ -1,11 +1,12 @@
-import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
+import { createResource, createMemo, onCleanup, onMount, Show, For } from 'solid-js';
 import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-solid';
 import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
-import { selection, clearSelection, selectedTaskIds, selectedTitles } from '../stores/selection.js';
+import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
+import { DayTypeControl } from '../components/DayTypeControl.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { PlanInstruct } from '../components/PlanInstruct.js';
@@ -43,8 +44,8 @@ export function Today() {
   // ── Multi-select → "Create Routine" (Phase F) ──────────────────────────────
   // The Shift+= chord (the literal "Shift + +" keys) opens a small modal listing
   // the selected items and lets the user name + create the Routine via
-  // POST /api/patterns/promote-from-tasks. Escape clears the selection too.
-  const [routineModal, setRoutineModal] = createSignal<{ open: boolean; name: string }>({ open: false, name: '' });
+  // POST /api/patterns/promote-from-tasks. Escape clears the selection too. The modal
+  // state lives in the selection store so the Planner header "+ Routine" button can open it.
   function onKey(e: KeyboardEvent) {
     if (e.target instanceof HTMLElement && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
     if (e.key === '+' && e.shiftKey) {
@@ -124,6 +125,11 @@ export function Today() {
           <Pill icon={AlertCircle} value={overdue()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
           <Pill icon={Ban}         value={blocked()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
           <Pill icon={ListTodo}    value={open()}    label="open"    tone="foreground" />
+        </div>
+
+        {/* Day type for this date — assign + edit its windows (T-SCHED-1). */}
+        <div class="mt-3 pt-3 border-t border-border">
+          <DayTypeControl date={selectedDay()} />
         </div>
       </div>
 

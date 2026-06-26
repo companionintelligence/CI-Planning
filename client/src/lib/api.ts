@@ -199,7 +199,9 @@ export const api = {
     fill: (body?: { date?: string }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/fill', body ?? {}),
     // Auto Schedule: place selected staged items (Plans → direction windows → workday fill).
-    run: (body?: { block_id?: string; date?: string }) =>
+    // horizon_days (T-SCHED-2): explicitly place across N days; omit to let the server
+    // apply the Schedule-mode horizon (planning_horizon_days) in Schedule mode.
+    run: (body?: { block_id?: string; date?: string; horizon_days?: number }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/run', body ?? {}),
     // Undo the last placement run (D2): delete its blocks, re-stage its tasks.
     undo: () =>
@@ -222,6 +224,8 @@ export const api = {
     list: () => request<{ block_templates: BlockTemplate[] }>('GET', '/block-templates'),
     create: (body: { name: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[] }) =>
       request<{ block_template: BlockTemplate }>('POST', '/block-templates', body),
+    update: (id: string, body: { name?: string; tag?: string | null; default_minutes?: number }) =>
+      request<{ block_template: BlockTemplate }>('PATCH', `/block-templates/${id}`, body),
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/block-templates/${id}`),
     instantiate: (id: string, start_at: string, end_at?: string) =>
       request<{ block: Block }>('POST', `/block-templates/${id}/instantiate`, { start_at, end_at }),
@@ -238,11 +242,20 @@ export const api = {
 
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
-    create: (name: string, opts?: { kind?: 'pattern' | 'intention'; directions?: string[] }) =>
+    create: (name: string, opts?: { kind?: 'pattern' | 'intention' | 'category'; directions?: string[]; categories?: string[] }) =>
       request<{ tag: Tag }>('POST', '/tags', { name, ...opts }),
-    // PATCH directions REPLACES membership (drag-move = single target); muted toggles.
-    update: (id: string, body: { directions?: string[]; muted?: boolean }) =>
-      request<{ tag: Tag }>('PATCH', `/tags/${id}`, body),
+    // PATCH: directions/categories REPLACE membership (drag-move = single target);
+    // direction_toggle flips one category↔direction scope; name renames; muted toggles.
+    update: (
+      id: string,
+      body: {
+        directions?: string[];
+        categories?: string[];
+        direction_toggle?: { patternTagId: string; enabled: boolean };
+        name?: string;
+        muted?: boolean;
+      },
+    ) => request<{ tag: Tag }>('PATCH', `/tags/${id}`, body),
     remove: (id: string) => request<{ ok: boolean }>('DELETE', `/tags/${id}`),
   },
 
@@ -290,8 +303,25 @@ export const api = {
 
   patternBlocks: {
     list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
+    forDay: (dayType: string) => request<{ windows: PatternWindows }>('GET', `/pattern-blocks/${dayType}`),
     set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
             request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
+  },
+
+  // Day types (T-SCHED-3): the catalog, the weekly default map (dow→key), and
+  // per-date overrides. resolveDayType picks which pattern_blocks windows Auto uses.
+  dayTypes: {
+    list: () => request<{ day_types: DayType[] }>('GET', '/day-types'),
+    resolve: (date: string) => request<{ date: string; key: string; source: 'assignment' | 'map' | 'default' }>('GET', `/day-types/resolve/${date}`),
+    create: (key: string, name: string) => request<{ day_type: DayType }>('POST', '/day-types', { key, name }),
+    rename: (id: string, name: string) => request<{ day_type: DayType }>('PATCH', `/day-types/${id}`, { name }),
+    remove: (id: string) => request<{ ok: boolean }>('DELETE', `/day-types/${id}`),
+    weekMap: () => request<{ map: Record<number, string> }>('GET', '/day-types/week-map'),
+    setWeekMap: (map: Record<number, string>) => request<{ map: Record<number, string> }>('PUT', '/day-types/week-map', { map }),
+    assignments: () => request<{ assignments: Record<string, string> }>('GET', '/day-types/assignments'),
+    assign: (date: string, dayTypeKey: string) =>
+      request<{ date: string; day_type_key: string }>('PUT', `/day-types/assignments/${date}`, { day_type_key: dayTypeKey }),
+    clearAssignment: (date: string) => request<{ ok: boolean }>('DELETE', `/day-types/assignments/${date}`),
   },
 
   patternPrefs: {
@@ -299,6 +329,13 @@ export const api = {
       request<PatternPrefsResponse>('GET', '/pattern-prefs'),
     set: (patternTagId: string, patch: Partial<PatternPref>): Promise<{ pref: PatternPref }> =>
       request<{ pref: PatternPref }>('PUT', `/pattern-prefs/${patternTagId}`, patch),
+  },
+
+  categoryPrefs: {
+    list: (): Promise<CategoryPrefsResponse> =>
+      request<CategoryPrefsResponse>('GET', '/category-prefs'),
+    set: (categoryTagId: string, patch: Partial<CategoryPref>): Promise<{ pref: CategoryPref }> =>
+      request<{ pref: CategoryPref }>('PUT', `/category-prefs/${categoryTagId}`, patch),
   },
 
   backup: {
@@ -324,6 +361,8 @@ export interface Block {
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)
   parent_block_id?: string | null; // the containing Plan for a member task block (PR-C / 0023)
+  category_id?: string | null; // Time Block Category (tags.kind='category'); direction implied by the category (0069)
+  color_token?: string | null; // frozen category color stamped at create-time — forward-only (0069)
   rationale?: string | null; // §A3 "why now" — joined from daily_plan via block_id (AI-authored placements only)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
@@ -389,6 +428,7 @@ export interface AutoResult {
   step: 'fill' | 'place';
   candidatesAdded?: number;              // step 1
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
+  days?: number;                          // T-SCHED-2: Schedule-mode horizon span (>1 only)
 }
 
 /** Phase M B1/B3: one block a reactive reflow moved (its before/after windows). */
@@ -444,14 +484,17 @@ export interface BlockTemplate {
 
 export interface Tag {
   id: string; name: string; count: number;
-  // Tag taxonomy (0036): 'pattern' = top-level category (brand-set home/work/community);
-  // 'intention' = grouped under one+ patterns. `used` blocks delete. `directions` =
+  // Tag taxonomy (0036; 'category' added 0069): 'pattern' = top-level grouping (brand-set
+  // home/work/community); 'intention' = grouped under patterns; 'category' = a SECOND
+  // grouping over intentions ("Time Block Category"). `used` blocks delete. `directions` =
   // member pattern names (empty intention = Unsorted).
-  kind: 'pattern' | 'intention';
+  kind: 'pattern' | 'intention' | 'category';
   muted: boolean;
   is_base: boolean;
   used: boolean;
   directions: string[];
+  categories?: string[];        // intention only: member category names ([] = Unsorted on the Category tab) (0069)
+  direction_optouts?: string[]; // category only: pattern (direction) names turned OFF (empty = all directions on) (0069)
 }
 
 export interface Prefs {
@@ -537,6 +580,10 @@ export interface Integrations {
 export interface PatternRange { id: string; start_time: string; end_time: string }
 export type PatternWindows = Record<string, PatternRange[]>; // dirTagId → ranges
 
+// ── Day types (0068, T-SCHED-3): a date resolves to one of these keys, selecting
+// the pattern_blocks windows Auto places into. Builtins workday/weekend are rename-only.
+export interface DayType { id: string; key: string; name: string; is_builtin: boolean }
+
 // ── Pattern-prefs (0039): per-pattern auto_fill + reminder offsets + block display ──
 export interface PatternPref {
   auto_fill: boolean;
@@ -548,4 +595,14 @@ export interface PatternPref {
 
 export interface PatternPrefsResponse {
   prefs: Record<string, PatternPref>;
+}
+
+// ── Category-prefs (0069): per-category color + default block length ──
+export interface CategoryPref {
+  color_token: string;     // CI-Hub token key (never hex)
+  default_minutes: number; // prefills the wizard's block length when this category is picked
+}
+
+export interface CategoryPrefsResponse {
+  prefs: Record<string, CategoryPref>;
 }

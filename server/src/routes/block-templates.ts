@@ -69,6 +69,29 @@ export function blockTemplatesRouter() {
     ctx.body = { block_template: out };
   });
 
+  // Edit a saved Time Block (name / tag / default duration). The saved tasks are
+  // captured via "save as template"; this just renames/retags/retimes it.
+  router.patch('/api/block-templates/:id', async (ctx) => {
+    const owner = currentOwnerId();
+    const existing = sqlite.prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner) as TemplateRow | undefined;
+    if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const body = (ctx.request.body ?? {}) as { name?: string; tag?: string | null; default_minutes?: number };
+    const name = body.name !== undefined ? body.name.trim() : existing.name;
+    if (!name) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
+    const row = sqlite
+      .prepare(`UPDATE block_templates SET name = ?, tag = ?, default_minutes = ? WHERE id = ? AND owner_id = ? RETURNING *`)
+      .get(
+        name,
+        body.tag !== undefined ? (body.tag || null) : existing.tag,
+        body.default_minutes !== undefined ? body.default_minutes : existing.default_minutes,
+        ctx.params.id, owner,
+      ) as TemplateRow;
+    const out = serializeTemplate(row);
+    broadcast(owner, 'block_template:updated', out);
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block-template:${row.id}` });
+    ctx.body = { block_template: out };
+  });
+
   router.delete('/api/block-templates/:id', async (ctx) => {
     const r = sqlite.prepare(`DELETE FROM block_templates WHERE id = ? AND owner_id = ?`).run(ctx.params.id, currentOwnerId());
     if (r.changes === 0) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }

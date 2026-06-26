@@ -2,7 +2,7 @@ import { A } from '@solidjs/router';
 import { Show } from 'solid-js';
 import {
   CheckSquare, Inbox, Tag, Settings, Activity,
-  Sun, Cpu, Shapes, CalendarDays,
+  Sun, Cpu, CalendarDays,
 } from 'lucide-solid';
 import { possibles } from '../stores/index.js';
 import { ThemeToggle } from './ThemeToggle.js';
@@ -12,7 +12,6 @@ const links = [
   { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
   { href: '/inbox',    label: 'Inbox',    Icon: Inbox, badge: true },
   { href: '/tasks',    label: 'Tasks',    Icon: CheckSquare },
-  { href: '/patterns', label: 'Routines', Icon: Shapes },
   { href: '/tags',     label: 'Tags',     Icon: Tag },
   { href: '/jobs',     label: 'Jobs',     Icon: Activity },
   { href: '/settings', label: 'Settings', Icon: Settings },
@@ -63,7 +62,7 @@ export function Nav() {
             </Show>
           </A>
           {/* Stroke line under Inbox — separates capture (Today/Calendar/Inbox)
-              from planning (Tasks/Patterns/…). */}
+              from planning (Tasks/Tags/…). */}
           <Show when={l.href === '/inbox'}>
             <div class="my-1.5 border-t border-border/60" />
           </Show>

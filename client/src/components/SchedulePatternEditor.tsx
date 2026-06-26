@@ -1,65 +1,53 @@
-import { createSignal, createEffect, For } from 'solid-js';
+import { createSignal, createEffect, createResource, For } from 'solid-js';
 import { Plus, Trash2 } from 'lucide-solid';
-import { tags, patternBlocks, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
+import { tags, patternPrefs, refetchPatternPrefs, refetchPatternBlocks, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 
 /**
- * Per-direction availability windows (Pattern-blocks) for one day type, plus the
- * per-direction "fill work hours" toggle. Extracted from the inline editor in
- * Settings.tsx so the same control can mount in Settings, Today, and Calendar
- * (T-CORE-5 → T-SCHED-1). Behaviour is identical to the Settings editor.
+ * Per-direction availability windows (Pattern-blocks) for ONE day type, plus the
+ * per-direction "fill work hours" toggle. Mounts in Settings (T-SCHED-4), Today and
+ * Calendar (T-SCHED-1). As of T-SCHED-3/4 it targets any day-type **key** (builtin
+ * workday/weekend or a custom one), fetching that key's windows directly rather than
+ * reading the two-key store — so a custom day type can own its own windows.
  *
- * Glossary: a Pattern-block ties a pattern-tag (Home/Work/Community) to time
- * ranges on a day type — Workday (Mon–Fri) or Weekend (Sat–Sun). Editing a day
- * edits its day-type template (no per-date overrides; migration-free).
- *
- * Local edit state is keyed `${dayType}:${dirTagId}` and seeded once from the
- * patternBlocks store; edits commit to the server on blur (the store is not
- * refetched on save), so switching day types never clobbers an edit.
+ * Local edit state is keyed by dirTagId, seeded from the fetch and re-seeded only when
+ * `dayType` changes; edits commit to the server on blur (and refresh dependents via
+ * refetchPatternBlocks), so editing never clobbers an in-progress change.
  */
 
-interface Range {
-  start_time: string;
-  end_time: string;
-}
+interface Range { start_time: string; end_time: string }
 
 export interface SchedulePatternEditorProps {
-  dayType: 'workday' | 'weekend';
+  dayType: string;
 }
 
 export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
   const patternTagList = () => (tags() ?? []).filter((t) => t.kind === 'pattern');
 
+  // Re-fetched whenever the targeted day type changes.
+  const [data] = createResource(() => props.dayType, (dt) => api.patternBlocks.forDay(dt).then((r) => r.windows));
+
   const [windows, setWindows] = createSignal<Record<string, Range[]>>({});
-  let seeded = false;
   createEffect(() => {
-    const pb = patternBlocks();
-    if (!pb || seeded) return;
-    seeded = true;
+    const w = data();
+    if (!w) return;
     const out: Record<string, Range[]> = {};
-    for (const dt of ['workday', 'weekend'] as const) {
-      for (const [dirId, ranges] of Object.entries(pb[dt] ?? {})) {
-        out[`${dt}:${dirId}`] = ranges.map((r) => ({ start_time: r.start_time, end_time: r.end_time }));
-      }
-    }
+    for (const [dirId, ranges] of Object.entries(w)) out[dirId] = ranges.map((r) => ({ start_time: r.start_time, end_time: r.end_time }));
     setWindows(out);
   });
 
-  const key = (dirId: string) => `${props.dayType}:${dirId}`;
-  const getRanges = (dirId: string) => windows()[key(dirId)] ?? [];
+  const getRanges = (dirId: string) => windows()[dirId] ?? [];
   const addRange = (dirId: string) =>
-    setWindows((w) => ({ ...w, [key(dirId)]: [...getRanges(dirId), { start_time: '09:00', end_time: '17:00' }] }));
+    setWindows((w) => ({ ...w, [dirId]: [...getRanges(dirId), { start_time: '09:00', end_time: '17:00' }] }));
   const removeRange = (dirId: string, idx: number) =>
-    setWindows((w) => ({ ...w, [key(dirId)]: getRanges(dirId).filter((_, i) => i !== idx) }));
+    setWindows((w) => ({ ...w, [dirId]: getRanges(dirId).filter((_, i) => i !== idx) }));
   const updateRange = (dirId: string, idx: number, field: keyof Range, val: string) =>
-    setWindows((w) => ({
-      ...w,
-      [key(dirId)]: getRanges(dirId).map((r, i) => (i === idx ? { ...r, [field]: val } : r)),
-    }));
+    setWindows((w) => ({ ...w, [dirId]: getRanges(dirId).map((r, i) => (i === idx ? { ...r, [field]: val } : r)) }));
 
   async function save(dirId: string) {
     try {
       await api.patternBlocks.set(dirId, props.dayType, getRanges(dirId));
+      refetchPatternBlocks(); // refresh the Planner overlay + other store consumers
     } catch (err) {
       showToast((err as Error).message, 'error');
     }
@@ -102,10 +90,7 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
                   <button
                     type="button"
                     class="text-muted-foreground hover:text-destructive transition-colors"
-                    onClick={() => {
-                      removeRange(dir.id, i());
-                      save(dir.id);
-                    }}
+                    onClick={() => { removeRange(dir.id, i()); save(dir.id); }}
                   >
                     <Trash2 size={14} />
                   </button>

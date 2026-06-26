@@ -92,7 +92,8 @@ export function FlightPlan() {
     setRunning(true);
     try {
       const { result } = await api.auto.run({ date: selectedDay() });
-      const bits = [`Scheduled ${result.placed ?? 0}`];
+      const span = (result.days ?? 1) > 1 ? ` across ${result.days} days` : '';
+      const bits = [`Scheduled ${result.placed ?? 0}${span}`];
       if (result.unplaced) bits.push(`${result.unplaced} didn't fit`);
       showToast(bits.join(' · '), 'success');
       if ((result.blocksCreated ?? 0) > 0) setCanUndo(true);

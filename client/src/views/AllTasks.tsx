@@ -4,9 +4,10 @@ import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast } from 
 import { api, type Task } from '../lib/api.js';
 import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
-import { QuickAdd } from '../components/QuickAdd.js';
 import { SortControl, type SortOrder } from '../components/SortControl.js';
 import { byPriority, byDueDateAsc } from '../lib/sort.js';
+import { RoutinesPanel } from '../components/RoutinesPanel.js';
+import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -23,9 +24,17 @@ export function AllTasks() {
 
   const activeTaskCount = () => (tasks() ?? []).filter((t) => t.status === 'open').length;
 
-  // Tasks vs Habits tabs. Both exclude subtasks + recurrence instances (a series
-  // collapses to its template); Habits are split out onto their own tab.
-  const [view, setView] = createSignal<'tasks' | 'habits'>('tasks');
+  // Tasks/Habits/Routines/Time-Blocks tabs. Tasks & Habits list the backlog (both
+  // exclude subtasks + recurrence instances — a series collapses to its template);
+  // Routines & Time Blocks mount the panels lifted out of the Patterns view.
+  type Tab = 'tasks' | 'habits' | 'routines' | 'timeblocks';
+  const [view, setView] = createSignal<Tab>('tasks');
+  const isTaskTab = () => view() === 'tasks' || view() === 'habits';
+  // Switching to a panel tab drops the Tasks-only archive/filter state.
+  const selectTab = (v: Tab) => {
+    setView(v);
+    if (v !== 'tasks' && v !== 'habits') { setShowArchive(false); setShowFilters(false); }
+  };
   const isTopLevel = (t: Task) => !t.parent_id && !t.recurrence_parent_id;
   const baseList = () => (tasks() ?? []).filter(isTopLevel);
 
@@ -90,82 +99,60 @@ export function AllTasks() {
           <h1 class="text-2xl font-bold text-slate-100">Tasks</h1>
           <p class="text-slate-500 text-sm mt-0.5">{activeTaskCount()} open</p>
         </div>
-        <div class="flex items-center gap-2">
-          <button
-            onClick={autoTagUntagged}
-            disabled={tagging() || showArchive()}
-            class="btn-secondary gap-2"
-            classList={{ 'opacity-40 pointer-events-none': showArchive() }}
-            title="Tag untagged tasks in this view using your existing tag vocabulary"
-          >
-            <Sparkles size={14} classList={{ 'animate-pulse': tagging() }} /> {tagging() ? 'Tagging…' : 'Auto-tag'}
-          </button>
-          <button onClick={() => setShowFilters((v) => !v)} disabled={showArchive()} class="btn-secondary gap-2" classList={{ 'opacity-40 pointer-events-none': showArchive() }}>
-            <SlidersHorizontal size={14} /> Filters
-          </button>
-          {/* Archive — toggle to the done + thrown-away view. */}
-          <button
-            onClick={() => setShowArchive((v) => !v)}
-            class="btn-secondary gap-2"
-            classList={{ 'border-primary text-primary': showArchive() }}
-            title="View completed and thrown-away tasks"
-          >
-            <Archive size={14} /> Archive
-          </button>
-        </div>
-      </div>
-
-      {/* ── Active view ── */}
-      <Show when={!showArchive()}>
-        <QuickAdd />
-
-        <Show when={showFilters()}>
-          <div class="card mb-4 flex gap-2 flex-wrap animate-slide-down">
-            <div class="flex-1 min-w-36 relative">
-              <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-              <input
-                class="input pl-8"
-                placeholder="Search…"
-                value={taskFilter().q ?? ''}
-                onInput={(e) => setTaskFilter((f) => ({ ...f, q: e.currentTarget.value || '' }))}
-              />
-            </div>
-            <select
-              class="input w-auto"
-              value={taskFilter().status ?? ''}
-              onChange={(e) => setTaskFilter((f) => ({ ...f, status: e.currentTarget.value }))}
+        <Show when={isTaskTab()}>
+          <div class="flex items-center gap-2">
+            <button
+              onClick={autoTagUntagged}
+              disabled={tagging() || showArchive()}
+              class="btn-secondary gap-2"
+              classList={{ 'opacity-40 pointer-events-none': showArchive() }}
+              title="Tag untagged tasks in this view using your existing tag vocabulary"
             >
-              {statusOptions.map((s) => <option value={s}>{s || 'All statuses'}</option>)}
-            </select>
-            <select
-              class="input w-auto"
-              value={taskFilter().tag ?? ''}
-              onChange={(e) => setTaskFilter((f) => ({ ...f, tag: e.currentTarget.value }))}
+              <Sparkles size={14} classList={{ 'animate-pulse': tagging() }} /> {tagging() ? 'Tagging…' : 'Auto-tag'}
+            </button>
+            <button onClick={() => setShowFilters((v) => !v)} disabled={showArchive()} class="btn-secondary gap-2" classList={{ 'opacity-40 pointer-events-none': showArchive() }}>
+              <SlidersHorizontal size={14} /> Filters
+            </button>
+            {/* Archive — toggle to the done + thrown-away view. */}
+            <button
+              onClick={() => setShowArchive((v) => !v)}
+              class="btn-secondary gap-2"
+              classList={{ 'border-primary text-primary': showArchive() }}
+              title="View completed and thrown-away tasks"
             >
-              <option value="">All tags</option>
-              <For each={tags()}>
-                {(t) => <option value={t.name}>#{t.name} ({t.count})</option>}
-              </For>
-            </select>
-            <button class="btn-ghost text-xs" onClick={() => setTaskFilter({})}>Clear</button>
+              <Archive size={14} /> Archive
+            </button>
           </div>
         </Show>
+      </div>
 
-        {/* Tabs (left) + sort control (right) */}
-        <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
-          <div class="flex gap-2">
-            <For each={[['tasks', 'Tasks'], ['habits', 'Habits']] as const}>
-              {([v, label]) => (
-                <button
-                  onClick={() => setView(v)}
-                  class="px-3 py-1 text-sm rounded-md transition-colors"
-                  classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
-                >
-                  {label} <span class="opacity-60 tabular-nums">{tabCount(v)}</span>
-                </button>
-              )}
-            </For>
-          </div>
+      {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
+      <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
+        <div class="flex gap-2">
+          <For each={[['tasks', 'Tasks'], ['habits', 'Habits']] as const}>
+            {([v, label]) => (
+              <button
+                onClick={() => selectTab(v)}
+                class="px-3 py-1 text-sm rounded-md transition-colors"
+                classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
+              >
+                {label} <span class="opacity-60 tabular-nums">{tabCount(v)}</span>
+              </button>
+            )}
+          </For>
+          <For each={[['routines', 'Routines'], ['timeblocks', 'Time Blocks']] as const}>
+            {([v, label]) => (
+              <button
+                onClick={() => selectTab(v)}
+                class="px-3 py-1 text-sm rounded-md transition-colors"
+                classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
+              >
+                {label}
+              </button>
+            )}
+          </For>
+        </div>
+        <Show when={isTaskTab() && !showArchive()}>
           <SortControl
             order={order()}
             onOrder={setOrder}
@@ -174,39 +161,80 @@ export function AllTasks() {
             directions={directions()}
             onDirection={setDirection}
           />
-        </div>
+        </Show>
+      </div>
 
-        {/* List — top-level only; recurring series collapse to their template. */}
-        <div class="flex flex-col gap-2">
-          <Show when={shownList().length > 0} fallback={
-            <div class="card text-center text-slate-500 py-12 text-sm">No {view() === 'habits' ? 'habits' : 'tasks'} found.</div>
-          }>
-            <For each={shownList()}>
-              {(task) => <TaskCard task={task} />}
-            </For>
+      {/* ── Task / Habit backlog ── */}
+      <Show when={isTaskTab()}>
+        <Show when={!showArchive()}>
+          <Show when={showFilters()}>
+            <div class="card mb-4 flex gap-2 flex-wrap animate-slide-down">
+              <div class="flex-[2] min-w-[16rem] relative">
+                <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                <input
+                  class="input pl-8"
+                  placeholder="Search…"
+                  value={taskFilter().q ?? ''}
+                  onInput={(e) => setTaskFilter((f) => ({ ...f, q: e.currentTarget.value || '' }))}
+                />
+              </div>
+              <select
+                class="input w-auto"
+                value={taskFilter().status ?? ''}
+                onChange={(e) => setTaskFilter((f) => ({ ...f, status: e.currentTarget.value }))}
+              >
+                {statusOptions.map((s) => <option value={s}>{s || 'All statuses'}</option>)}
+              </select>
+              <select
+                class="input w-auto"
+                value={taskFilter().tag ?? ''}
+                onChange={(e) => setTaskFilter((f) => ({ ...f, tag: e.currentTarget.value }))}
+              >
+                <option value="">All tags</option>
+                <For each={tags()}>
+                  {(t) => <option value={t.name}>#{t.name} ({t.count})</option>}
+                </For>
+              </select>
+              <button class="btn-ghost text-xs" onClick={() => setTaskFilter({})}>Clear</button>
+            </div>
           </Show>
-        </div>
+
+          {/* List — top-level only; recurring series collapse to their template. */}
+          <div class="flex flex-col gap-2">
+            <Show when={shownList().length > 0} fallback={
+              <div class="card text-center text-slate-500 py-12 text-sm">No {view() === 'habits' ? 'habits' : 'tasks'} found.</div>
+            }>
+              <For each={shownList()}>
+                {(task) => <TaskCard task={task} />}
+              </For>
+            </Show>
+          </div>
+        </Show>
+
+        {/* Archive view — completed + thrown-away, in two collapsible containers. */}
+        <Show when={showArchive()}>
+          <ArchiveSection
+            title="Completed"
+            open={doneOpen()}
+            onToggle={() => setDoneOpen((v) => !v)}
+            items={archived()?.done ?? []}
+            loading={archived.loading}
+            emptyLabel="No completed tasks."
+          />
+          <ArchiveSection
+            title="Thrown away"
+            open={cancelledOpen()}
+            onToggle={() => setCancelledOpen((v) => !v)}
+            items={archived()?.cancelled ?? []}
+            loading={archived.loading}
+            emptyLabel="Nothing thrown away."
+          />
+        </Show>
       </Show>
 
-      {/* ── Archive view — completed + thrown-away, in two collapsible containers ── */}
-      <Show when={showArchive()}>
-        <ArchiveSection
-          title="Completed"
-          open={doneOpen()}
-          onToggle={() => setDoneOpen((v) => !v)}
-          items={archived()?.done ?? []}
-          loading={archived.loading}
-          emptyLabel="No completed tasks."
-        />
-        <ArchiveSection
-          title="Thrown away"
-          open={cancelledOpen()}
-          onToggle={() => setCancelledOpen((v) => !v)}
-          items={archived()?.cancelled ?? []}
-          loading={archived.loading}
-          emptyLabel="Nothing thrown away."
-        />
-      </Show>
+      {/* ── Routines / Time Blocks — panels lifted from the Patterns view ── */}
+      <Show when={view() === 'routines'}><RoutinesPanel /></Show>
+      <Show when={view() === 'timeblocks'}><TimeBlocksPanel /></Show>
     </div>
   );
 }

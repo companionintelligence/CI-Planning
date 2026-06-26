@@ -1,6 +1,6 @@
-import { For } from 'solid-js';
+import { For, createResource } from 'solid-js';
 import { patternBlocks, patternPrefs, tags } from '../stores/index.js';
-import { isWeekend } from '../lib/dates.js';
+import { api } from '../lib/api.js';
 import { yOf } from '../lib/grid.js';
 import { BASE_TAG_DEFAULTS, HATCH_OFFSET_BY_NAME, colorVar } from '../lib/pattern-meta.js';
 
@@ -68,8 +68,17 @@ const LABEL_STEP_PX = 18;
  * stays readable. Purely visual — pointer-events: none.
  */
 export function PatternBlockOverlay(props: { date: string }) {
-  const dayType = () => (isWeekend(props.date) ? 'weekend' : 'workday');
-  const windows = () => patternBlocks()?.[dayType()] ?? {};
+  // Resolve the date's day type (per-date assignment > weekly map > heuristic) and read
+  // that key's windows. Keyed on the patternBlocks store tick so it refreshes whenever a
+  // day-type mutation calls refetchPatternBlocks() (assign/clear/window-edit).
+  const [dayWindows] = createResource(
+    () => [props.date, patternBlocks()] as const,
+    async ([d]) => {
+      const { key } = await api.dayTypes.resolve(d);
+      return (await api.patternBlocks.forDay(key)).windows;
+    },
+  );
+  const windows = () => dayWindows() ?? {};
   const allTags = () => tags() ?? [];
 
   const tagName = (dirTagId: string) => allTags().find((t) => t.id === dirTagId)?.name ?? '';

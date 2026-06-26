@@ -1,9 +1,11 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, ChevronUp, ChevronDown, Database, AlertTriangle } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternBlocks, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
+import { DayTypeManager } from '../components/DayTypeManager.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { RoutineTypeSettings } from '../components/RoutineTypeSettings.js';
+import { CategorySettings } from '../components/CategorySettings.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { DEFAULT_CONCEPT_TAGS, PATTERN_COLORS, colorVar, type ConceptTag } from '../lib/pattern-meta.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
@@ -52,43 +54,8 @@ const DEFAULTS: SettingsForm = {
 export function Settings() {
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
-  // ── Pattern-blocks local edit state ─────────────────────────────────────────
-  const [dayTab, setDayTab] = createSignal<'workday' | 'weekend'>('workday');
-  const [localWindows, setLocalWindows] = createSignal<Record<string, { start_time: string; end_time: string }[]>>({});
-
-  let pbInitialized = false;
-  createEffect(() => {
-    const pb = patternBlocks();
-    if (!pb || pbInitialized) return;
-    pbInitialized = true;
-    const out: Record<string, { start_time: string; end_time: string }[]> = {};
-    for (const dt of ['workday', 'weekend'] as const) {
-      for (const [dirTagId, ranges] of Object.entries(pb[dt])) {
-        out[`${dt}:${dirTagId}`] = ranges.map((r) => ({ start_time: r.start_time, end_time: r.end_time }));
-      }
-    }
-    setLocalWindows(out);
-  });
-
-  function pbKey(dirTagId: string) { return `${dayTab()}:${dirTagId}`; }
-  function getRanges(dirTagId: string) { return localWindows()[pbKey(dirTagId)] ?? []; }
-  function addRange(dirTagId: string) {
-    setLocalWindows((w) => ({ ...w, [pbKey(dirTagId)]: [...getRanges(dirTagId), { start_time: '09:00', end_time: '17:00' }] }));
-  }
-  function removeRange(dirTagId: string, idx: number) {
-    setLocalWindows((w) => ({ ...w, [pbKey(dirTagId)]: getRanges(dirTagId).filter((_, i) => i !== idx) }));
-  }
-  function updateRange(dirTagId: string, idx: number, field: 'start_time' | 'end_time', val: string) {
-    setLocalWindows((w) => ({
-      ...w,
-      [pbKey(dirTagId)]: getRanges(dirTagId).map((r, i) => (i === idx ? { ...r, [field]: val } : r)),
-    }));
-  }
-  async function savePatternWindows(dirTagId: string) {
-    try {
-      await api.patternBlocks.set(dirTagId, dayTab(), getRanges(dirTagId));
-    } catch (err) { showToast((err as Error).message, 'error'); }
-  }
+  // Schedule Patterns now live in <DayTypeManager /> (day types + week map + the
+  // shared per-day-type window editor). T-SCHED-4 replaced the inline editor here.
 
   // ── Pattern-tag default estimate (pattern_prefs.default_minutes) ──────────────
   // The fallback minutes a pattern tag contributes when a task has no intention tag.
@@ -136,26 +103,6 @@ export function Settings() {
 
   function setField<K extends keyof SettingsForm>(key: K, val: SettingsForm[K]) {
     setForm((f) => ({ ...f, [key]: val }));
-  }
-
-  // ── Per-pattern fill toggle (pattern_prefs.auto_fill) ────────────────────────
-  const patternFill = (tagId: string) => patternPrefs()?.prefs?.[tagId]?.auto_fill ?? true;
-  async function togglePatternFill(tagId: string) {
-    try {
-      await api.patternPrefs.set(tagId, { auto_fill: !patternFill(tagId) });
-      refetchPatternPrefs();
-    } catch (err) { showToast((err as Error).message, 'error'); }
-  }
-
-  // ── Schedule Patterns save — flush every edited availability window at once ────
-  async function saveSchedulePatterns() {
-    try {
-      await Promise.all(Object.entries(localWindows()).map(([key, ranges]) => {
-        const idx = key.indexOf(':');
-        return api.patternBlocks.set(key.slice(idx + 1), key.slice(0, idx), ranges);
-      }));
-      showToast('Schedule patterns saved', 'success');
-    } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
   // ── Reminder Defaults — ONE shared config for all pattern tags (Home/Community/Work).
@@ -409,72 +356,12 @@ export function Settings() {
       <form onSubmit={save} class="flex flex-col gap-5">
         {/* Schedule Patterns — per-direction availability windows */}
         <section class="card">
-          <div class="flex items-center justify-between mb-1">
-            <div class="section-label">Schedule Patterns</div>
-            <button type="button" onClick={saveSchedulePatterns} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-          </div>
+          <div class="section-label mb-1">Schedule Patterns</div>
           <p class="text-xs text-muted-foreground mb-3">
-            Availability windows per direction. Auto places direction-tagged tasks only inside these windows.
+            Define day types, assign them to each weekday, and set per-direction availability windows.
+            Auto places direction-tagged tasks only inside these windows. Changes save as you make them.
           </p>
-          <div class="flex gap-2 mb-4">
-            <For each={[['workday', 'Workday'], ['weekend', 'Weekend']] as [string, string][]}>
-              {([val, label]) => (
-                <button type="button"
-                  onClick={() => setDayTab(val as 'workday' | 'weekend')}
-                  class="px-3 py-1 text-sm rounded-md transition-colors"
-                  classList={{ 'bg-primary text-primary-foreground': dayTab() === val, 'text-muted-foreground hover:text-foreground': dayTab() !== val }}>
-                  {label}
-                </button>
-              )}
-            </For>
-          </div>
-          <div class="flex flex-col gap-5">
-            <For each={(tags() ?? []).filter((t) => t.kind === 'pattern')}>
-              {(dir) => (
-                <div class="flex flex-col gap-2">
-                  <div class="text-sm font-medium text-foreground capitalize">{dir.name}</div>
-                  <For each={getRanges(dir.id)}>
-                    {(r, i) => (
-                      <div class="flex items-center gap-2">
-                        <input type="time" class="input py-1 text-sm flex-1"
-                          value={r.start_time}
-                          onInput={(e) => updateRange(dir.id, i(), 'start_time', e.currentTarget.value)}
-                          onBlur={() => savePatternWindows(dir.id)} />
-                        <span class="text-muted-foreground text-xs">–</span>
-                        <input type="time" class="input py-1 text-sm flex-1"
-                          value={r.end_time}
-                          onInput={(e) => updateRange(dir.id, i(), 'end_time', e.currentTarget.value)}
-                          onBlur={() => savePatternWindows(dir.id)} />
-                        <button type="button"
-                          class="text-muted-foreground hover:text-destructive transition-colors"
-                          onClick={() => { removeRange(dir.id, i()); savePatternWindows(dir.id); }}>
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    )}
-                  </For>
-                  <button type="button"
-                    class="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors self-start"
-                    onClick={() => addRange(dir.id)}>
-                    <Plus size={12} /> Add window
-                  </button>
-                  <label class="flex items-start gap-2 cursor-pointer select-none mt-1">
-                    <button type="button" role="switch" aria-checked={patternFill(dir.id)}
-                      onClick={() => togglePatternFill(dir.id)}
-                      class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
-                      classList={{ 'bg-primary': patternFill(dir.id), 'bg-muted border border-border': !patternFill(dir.id) }}>
-                      <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
-                        classList={{ 'translate-x-4': patternFill(dir.id) }} />
-                    </button>
-                    <div>
-                      <div class="text-sm text-foreground leading-tight">Fill work hours</div>
-                      <div class="text-[11px] text-muted-foreground capitalize">Auto Schedule fills open {dir.name} windows with leftover tasks</div>
-                    </div>
-                  </label>
-                </div>
-              )}
-            </For>
-          </div>
+          <DayTypeManager />
           {/* General fallback: fill open workday time for tasks with no direction tag */}
           <div class="mt-4 pt-3 border-t border-border">
             <Toggle
@@ -482,6 +369,24 @@ export function Settings() {
               label="Fill work hours for undirected tasks"
               hint="Auto Schedule fills open workday time with tasks that have no direction tag. Per-direction fill (above) is independent."
             />
+          </div>
+          {/* T-SCHED-2: Schedule-mode planning horizon. Reuses planning_horizon_days
+              (also the task candidate window — same value as "Planning horizon" below). */}
+          <div class="mt-4 pt-3 border-t border-border">
+            <label class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm text-foreground leading-tight">Schedule mode — plan days ahead</div>
+                <div class="text-[11px] text-muted-foreground">In Schedule mode, Auto plans this many days ahead. Shares the Planning horizon (also the task candidate window).</div>
+              </div>
+              <input type="number" class="input py-1 text-sm w-20 flex-shrink-0" min={1} max={60} step={1}
+                value={form().planning_horizon_days}
+                onInput={(e) => setField('planning_horizon_days', Number(e.currentTarget.value))}
+                onChange={(e) => {
+                  const v = Math.max(1, Math.min(60, Number(e.currentTarget.value) || 1));
+                  setField('planning_horizon_days', v);
+                  void api.prefs.update({ planning_horizon_days: v }).then(() => refetchPrefs()).catch((err) => showToast((err as Error).message, 'error'));
+                }} />
+            </label>
           </div>
         </section>
 
@@ -697,6 +602,13 @@ export function Settings() {
           </div>
           <p class="text-xs text-muted-foreground mb-3">Each pattern tag's display shape and colour. Colours come from the shared theme palette.</p>
           <PatternBlockSettings onReady={(fn) => { savePatternPrefs = fn; }} />
+        </section>
+
+        {/* Time Block Categories — the kind='category' catalog (0069): colour + default block length */}
+        <section class="card">
+          <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
+          <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Family Time, Social Time, Me Time + your own). Pick a colour and a default length; the defaults can be edited but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
+          <CategorySettings />
         </section>
 
         {/* Tag Settings — Pattern Tags (read-only) + Intention Tags (editable) */}
