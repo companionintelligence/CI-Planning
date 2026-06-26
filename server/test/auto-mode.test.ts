@@ -1,19 +1,20 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { autoScheduleOnIngest, autoMode } from '../src/engine/autoplan.js';
+import { autoScheduleOnIngest, resolveTrustPolicy } from '../src/engine/autoplan.js';
 import { resetDb } from './helpers.js';
 
 /**
- * Trust toggle (req 1, D1). Schedule mode collapses taps 1+2 on ingest (zero-click,
- * tag-matched placement in the background); suggest mode is a no-op (the user drives
- * the taps). The explicit priority top-up is never run here.
+ * Trust dial (TM-4; FTUE gaps 5 & 6). Hands-off collapses taps 1+2 on ingest (zero-click,
+ * tag-matched placement in the background); Balanced/Cautious are a no-op here (the user
+ * drives the taps). The explicit priority top-up is never run here. (Renamed from the
+ * legacy auto_mode 'suggest'/'schedule' toggle — behavior is identical to old 'schedule'.)
  */
 const OWNER = SYSTEM_OWNER;
 const DATE = '2026-06-22';
 
-function setMode(mode: 'suggest' | 'schedule'): void {
-  sqlite.prepare(`UPDATE scheduling_prefs SET auto_mode = ? WHERE owner_id = ?`).run(mode, OWNER);
+function setTrust(mode: 'cautious' | 'balanced' | 'hands_off'): void {
+  sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = ? WHERE owner_id = ?`).run(mode, OWNER);
 }
 
 /** A tagged, scheduled Plan container on DATE (what pass-1 places tag-matched work into). */
@@ -44,10 +45,11 @@ beforeEach(() => {
   sqlite.exec(`DELETE FROM flight_plan;`);
 });
 
-describe('autoScheduleOnIngest (D1)', () => {
-  it('schedule mode places tag-matched work in one pass', () => {
-    setMode('schedule');
-    expect(autoMode(OWNER)).toBe('schedule');
+describe('autoScheduleOnIngest (trust dial)', () => {
+  it('hands-off mode places tag-matched work in one pass', () => {
+    setTrust('hands_off');
+    expect(resolveTrustPolicy(OWNER).mode).toBe('hands_off');
+    expect(resolveTrustPolicy(OWNER).autoBlock).toBe(true);
     const plan = makePlan('errands', `${DATE}T16:00:00.000Z`, `${DATE}T18:00:00.000Z`);
     makeTask('Post office', 'errands');
 
@@ -58,8 +60,9 @@ describe('autoScheduleOnIngest (D1)', () => {
     expect(placed.parent_block_id).toBe(plan); // routed into the matching Plan
   });
 
-  it('suggest mode is a no-op on ingest (no staging, no placement)', () => {
-    setMode('suggest');
+  it('balanced mode is a no-op on ingest (no staging, no placement)', () => {
+    setTrust('balanced');
+    expect(resolveTrustPolicy(OWNER).autoBlock).toBe(false);
     makePlan('errands', `${DATE}T16:00:00.000Z`, `${DATE}T18:00:00.000Z`);
     makeTask('Post office', 'errands');
 
