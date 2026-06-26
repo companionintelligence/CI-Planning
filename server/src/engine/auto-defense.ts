@@ -21,7 +21,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { placeFlightPlan } from './autoplan.js';
-import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
 import { broadcast } from '../routes/sse.js';
@@ -322,8 +322,8 @@ export function sweepMissedBlocks(
     .get(owner) as { timezone: string | null } | undefined;
   const tz = prefs?.timezone || serverTimezone();
   const d = date ?? localISODate();
-  const dayStartISO = zonedWallTimeToUTC(d, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  // Same DST-aware day window as reflow/clearPriorAuto (utcDayBounds), not start+24h.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(d, tz);
   const nowISO = new Date(now).toISOString();
 
   const missed = sqlite
