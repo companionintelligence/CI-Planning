@@ -266,6 +266,34 @@ describe('catch-all Plan (Community pattern type)', () => {
   });
 });
 
+describe('DST-correct day slab (clearPriorAuto)', () => {
+  // 2026-11-01 is a US fall-back day in America/New_York: the local day is 25h long.
+  // Local 23:00 on that day is EST (UTC-5) = 2026-11-02T04:00:00Z. A naive
+  // local-midnight + 24h slab ends at 2026-11-02T04:00:00Z (exclusive), so a block
+  // sitting in that last hour is MISSED; the DST-correct utcDayBounds end is
+  // 2026-11-02T05:00:00Z, which covers it. See tz.utcDayBounds.
+  const DST_DAY = '2026-11-01';
+
+  it('clears a prior auto block in the shifted last hour of a fall-back local day', () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/New_York' WHERE owner_id = ?`).run(OWNER);
+    // Stale agent auto block at local 23:00–23:30 on the fall-back day.
+    sqlite
+      .prepare(
+        `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, is_locked, source_kind, status)
+         VALUES (uuid7(), NULL, 'Stale auto', 'task', ?, ?, 1, 0, 'agent', 'planned')`,
+      )
+      .run('2026-11-02T04:00:00.000Z', '2026-11-02T04:30:00.000Z');
+
+    // Empty flight plan → placeFlightPlan does nothing but run clearPriorAuto for the day.
+    placeFlightPlan(OWNER, { date: DST_DAY });
+
+    const survivors = sqlite
+      .prepare(`SELECT title FROM time_blocks WHERE source_kind = 'agent'`)
+      .all() as { title: string }[];
+    expect(survivors.some((b) => b.title === 'Stale auto')).toBe(false); // cleared by the DST-correct slab
+  });
+});
+
 describe('idempotent re-place', () => {
   it('re-running Auto clears prior agent blocks but preserves pattern + manual blocks', async () => {
     const plan = await makePlan(srv, 'work', at('09:00'), at('12:00'));
