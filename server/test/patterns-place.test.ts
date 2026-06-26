@@ -36,10 +36,18 @@ function insertPattern(typeName: string, name: string, taskIds: string[]): strin
   return pid;
 }
 
+// Task blocks the placement produced (excludes the routine container, which is a
+// block_kind='timeblock' wrapper added for free placements).
 const patternBlocks = (patternId: string) =>
   sqlite
-    .prepare(`SELECT title, start_at, end_at, parent_block_id, task_id FROM time_blocks WHERE source_kind = 'pattern' AND source_ref = ? ORDER BY start_at`)
+    .prepare(`SELECT title, start_at, end_at, parent_block_id, task_id FROM time_blocks WHERE source_kind = 'pattern' AND source_ref = ? AND block_kind = 'task' ORDER BY start_at`)
     .all(patternId) as { title: string; start_at: string; end_at: string; parent_block_id: string | null; task_id: string }[];
+
+// The routine container (Plan wrapper) for a freely-placed pattern, if any.
+const patternContainer = (patternId: string) =>
+  sqlite
+    .prepare(`SELECT id, title, tag, start_at, end_at FROM time_blocks WHERE source_kind = 'pattern' AND source_ref = ? AND block_kind = 'timeblock'`)
+    .get(patternId) as { id: string; title: string; tag: string | null; start_at: string; end_at: string } | undefined;
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -59,8 +67,15 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     expect(r).toMatchObject({ patternId: pid, date: DAY, placed: 2, unplaced: 0, blocksCreated: 2, skippedAlreadyPlaced: false });
     const blocks = patternBlocks(pid);
     expect(blocks.map((b) => b.title)).toEqual(['Plan day', 'Deep focus']);
-    // parent NULL when not scoped to a Plan
-    expect(blocks.every((b) => b.parent_block_id === null)).toBe(true);
+    // Free placement wraps the routine in a container and parents the tasks to it, so
+    // they move together (PR-C grouped movement) — "a container like a time-block".
+    const container = patternContainer(pid);
+    expect(container).toBeTruthy();
+    expect(container!.title).toBe('Morning Routine');
+    expect(blocks.every((b) => b.parent_block_id === container!.id)).toBe(true);
+    // Contiguous: every task sits within the container's span.
+    expect(blocks[0].start_at >= container!.start_at).toBe(true);
+    expect(blocks[blocks.length - 1].end_at <= container!.end_at).toBe(true);
   });
 
   it('idempotency: a 2nd call same day returns skippedAlreadyPlaced and inserts no rows', async () => {
@@ -140,8 +155,11 @@ describe('POST /api/patterns/:id/place-today', () => {
     const r = await api(srv.url, `/api/patterns/${pid}/place-today`, { method: 'POST', json: { date: DAY } });
     expect(r.status).toBe(200);
     expect(r.body.result.patternId).toBe(pid);
-    expect(r.body.blocks.length).toBe(1);
-    expect(r.body.blocks[0].title).toBe('Plan day');
+    // Returns the routine container + its task block(s) so the client can render the group.
+    const taskBlocks = r.body.blocks.filter((b: any) => b.block_kind === 'task');
+    expect(taskBlocks.length).toBe(1);
+    expect(taskBlocks[0].title).toBe('Plan day');
+    expect(r.body.blocks.some((b: any) => b.block_kind === 'timeblock')).toBe(true);
   });
 
   it('404 for an unknown pattern id', async () => {
