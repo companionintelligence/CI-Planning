@@ -324,7 +324,9 @@ exports[`behavior baseline — read API serialization > serializes the canonical
 {
   "tags": [
     {
+      "categories": [],
       "count": 1,
+      "direction_optouts": [],
       "directions": [],
       "id": "tag#1",
       "is_base": false,
@@ -334,7 +336,9 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "used": true,
     },
     {
+      "categories": [],
       "count": 1,
+      "direction_optouts": [],
       "directions": [],
       "id": "tag#2",
       "is_base": false,
