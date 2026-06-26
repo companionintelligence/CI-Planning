@@ -316,6 +316,13 @@ export const api = {
       request<{ pref: PatternPref }>('PUT', `/pattern-prefs/${patternTagId}`, patch),
   },
 
+  categoryPrefs: {
+    list: (): Promise<CategoryPrefsResponse> =>
+      request<CategoryPrefsResponse>('GET', '/category-prefs'),
+    set: (categoryTagId: string, patch: Partial<CategoryPref>): Promise<{ pref: CategoryPref }> =>
+      request<{ pref: CategoryPref }>('PUT', `/category-prefs/${categoryTagId}`, patch),
+  },
+
   backup: {
     import: (json: unknown) =>
       request<{ imported: Record<string, number> }>('POST', '/import', json),
@@ -339,6 +346,8 @@ export interface Block {
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)
   parent_block_id?: string | null; // the containing Plan for a member task block (PR-C / 0023)
+  category_id?: string | null; // Time Block Category (tags.kind='category'); direction implied by the category (0069)
+  color_token?: string | null; // frozen category color stamped at create-time — forward-only (0069)
   rationale?: string | null; // §A3 "why now" — joined from daily_plan via block_id (AI-authored placements only)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
@@ -459,14 +468,17 @@ export interface BlockTemplate {
 
 export interface Tag {
   id: string; name: string; count: number;
-  // Tag taxonomy (0036): 'pattern' = top-level category (brand-set home/work/community);
-  // 'intention' = grouped under one+ patterns. `used` blocks delete. `directions` =
+  // Tag taxonomy (0036; 'category' added 0069): 'pattern' = top-level grouping (brand-set
+  // home/work/community); 'intention' = grouped under patterns; 'category' = a SECOND
+  // grouping over intentions ("Time Block Category"). `used` blocks delete. `directions` =
   // member pattern names (empty intention = Unsorted).
-  kind: 'pattern' | 'intention';
+  kind: 'pattern' | 'intention' | 'category';
   muted: boolean;
   is_base: boolean;
   used: boolean;
   directions: string[];
+  categories?: string[];        // intention only: member category names ([] = Unsorted on the Category tab) (0069)
+  direction_optouts?: string[]; // category only: pattern (direction) names turned OFF (empty = all directions on) (0069)
 }
 
 export interface Prefs {
@@ -567,4 +579,14 @@ export interface PatternPref {
 
 export interface PatternPrefsResponse {
   prefs: Record<string, PatternPref>;
+}
+
+// ── Category-prefs (0069): per-category color + default block length ──
+export interface CategoryPref {
+  color_token: string;     // CI-Hub token key (never hex)
+  default_minutes: number; // prefills the wizard's block length when this category is picked
+}
+
+export interface CategoryPrefsResponse {
+  prefs: Record<string, CategoryPref>;
 }
