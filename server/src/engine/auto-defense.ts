@@ -4,20 +4,24 @@
  * `reflow(owner, date)` re-places only the movable auto blocks for the day,
  * deterministically, from the frozen `daily_plan` order. It never calls the LLM.
  *
+ * Gap-close: reflow re-places ONLY the tasks already holding an auto block on the day
+ * (never the whole daily_plan), so a freed slot compacts and no un-placed backlog is
+ * pulled onto the board. Intake is exclusively the explicit Auto/Schedule path.
+ *
  * Anti-thrash rules (in priority order):
  *   1. In-progress blocks are never moved.
- *   2. Recently-moved blocks (last_moved_at within STABILITY_WINDOW_MS) are frozen.
- *   3. All other auto blocks are cleared and re-placed from daily_plan order.
+ *   2. Manually-locked auto blocks are held (slot AND task) — never moved or duplicated.
+ *   3. Recently-moved blocks (last_moved_at within STABILITY_WINDOW_MS) are held.
+ *   4. All other auto blocks are cleared and re-placed from daily_plan order.
  *
- * The "freeze as locked → placeFlightPlan → unfreeze" pattern reuses the existing
- * obstacle machinery in placeFlightPlan without touching its internals:
- *   - freezeAsLocked sets is_locked = 1 on protected blocks so clearPriorAuto skips
- *     them and dayObstacles treats them as fixed obstacles.
- *   - unfreeze (in finally) always restores the original is_locked value, even on throw.
+ * Protected blocks (1–3) are passed to placeFlightPlan as an in-memory `protectIds`
+ * set: clearPriorAuto skips them and dayObstacles already routes placement around any
+ * live task block. Nothing is ever written to is_locked, so an interrupted reflow can
+ * never leave a block stuck "locked".
  */
 import { sqlite } from '../db/index.js';
 import { placeFlightPlan } from './autoplan.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
 import { broadcast } from '../routes/sse.js';
@@ -182,8 +186,10 @@ export function reflow(
   const tz = prefs?.timezone || serverTimezone();
   const d = date ?? localISODate();
 
-  const dayStartISO = zonedWallTimeToUTC(d, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  // Use the SAME day window as clearPriorAuto/dayPlans (utcDayBounds — DST-aware, end is
+  // next-day midnight, not start+24h). The snapshot defines the gap-close re-stage set, so
+  // it must match the clear window exactly or a DST-day block could be dropped/duplicated.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(d, tz);
 
   // 1. Snapshot auto blocks before any changes.
   const snapshot = snapshotAutoBlocks(dayStartISO, dayEndISO);
