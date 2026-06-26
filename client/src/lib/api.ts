@@ -238,11 +238,20 @@ export const api = {
 
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
-    create: (name: string, opts?: { kind?: 'pattern' | 'intention'; directions?: string[] }) =>
+    create: (name: string, opts?: { kind?: 'pattern' | 'intention' | 'category'; directions?: string[]; categories?: string[] }) =>
       request<{ tag: Tag }>('POST', '/tags', { name, ...opts }),
-    // PATCH directions REPLACES membership (drag-move = single target); muted toggles.
-    update: (id: string, body: { directions?: string[]; muted?: boolean }) =>
-      request<{ tag: Tag }>('PATCH', `/tags/${id}`, body),
+    // PATCH: directions/categories REPLACE membership (drag-move = single target);
+    // direction_toggle flips one category↔direction scope; name renames; muted toggles.
+    update: (
+      id: string,
+      body: {
+        directions?: string[];
+        categories?: string[];
+        direction_toggle?: { patternTagId: string; enabled: boolean };
+        name?: string;
+        muted?: boolean;
+      },
+    ) => request<{ tag: Tag }>('PATCH', `/tags/${id}`, body),
     remove: (id: string) => request<{ ok: boolean }>('DELETE', `/tags/${id}`),
   },
 
