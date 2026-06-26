@@ -483,6 +483,24 @@ export function Settings() {
               hint="Auto Schedule fills open workday time with tasks that have no direction tag. Per-direction fill (above) is independent."
             />
           </div>
+          {/* T-SCHED-2: Schedule-mode planning horizon. Reuses planning_horizon_days
+              (also the task candidate window — same value as "Planning horizon" below). */}
+          <div class="mt-4 pt-3 border-t border-border">
+            <label class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm text-foreground leading-tight">Schedule mode — plan days ahead</div>
+                <div class="text-[11px] text-muted-foreground">In Schedule mode, Auto plans this many days ahead. Shares the Planning horizon (also the task candidate window).</div>
+              </div>
+              <input type="number" class="input py-1 text-sm w-20 flex-shrink-0" min={1} max={60} step={1}
+                value={form().planning_horizon_days}
+                onInput={(e) => setField('planning_horizon_days', Number(e.currentTarget.value))}
+                onChange={(e) => {
+                  const v = Math.max(1, Math.min(60, Number(e.currentTarget.value) || 1));
+                  setField('planning_horizon_days', v);
+                  void api.prefs.update({ planning_horizon_days: v }).then(() => refetchPrefs()).catch((err) => showToast((err as Error).message, 'error'));
+                }} />
+            </label>
+          </div>
         </section>
 
         {/* Time-Block settings — Plan | Concept */}
