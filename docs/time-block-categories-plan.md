@@ -2,6 +2,17 @@
 
 > Lead-architect synthesis of 6 subsystem reports, re-verified against the live codebase (head migration `0068`, next = `0069`), then adversarially critiqued (governance / scheduler / data-model lenses) and revised. Every new element cites the existing pattern it mirrors. Anchor edits on the named **symbols**, not the integer line numbers (the tree drifts).
 
+## IMPLEMENTATION STATUS (2026-06-26) — SHIPPED on `claude/admiring-proskuriakova-7d2cec`
+
+All phases implemented and committed; server suite **729 passed / 0 failed**, client **150 passed**, both typecheck clean (TZ=UTC).
+- `c07f3d8` Wave 0 — migration 0069, schema, category-prefs stack, api/store contracts, backup coverage
+- `a27c148` Lane A — Tags "Time Block Categories" tab + category membership API
+- `2ebc15e` Lane B — Settings category catalog
+- `83e9c4d` Lane C — time-block category field + forward-only color stamp
+- `2ef035e` Lane D — auto-scheduler category fill + recurrence propagation
+
+Note: the parallel-worktree fan-out (§12) was abandoned mid-run — the harness branches isolated worktrees from `main`, not from this feature branch, so Wave 0 wasn't visible to them. Built sequentially on this branch instead (same commits, one thread). This branch is based on `3a2d31d`; `main` has since advanced (PRs #162–#165), so a rebase/merge is needed before a PR.
+
 ## EXECUTIVE SUMMARY
 
 We add a third value to the existing `tags.kind` taxonomy axis — `'category'` — a **Tag sub-level**, exactly as `'pattern'` and `'intention'` are sub-levels today. It groups a subset of *intention* tags via a `tag_categories` junction (verbatim mirror of `tag_patterns`), is configured by a `category_prefs` table (a *trimmed* mirror of `pattern_prefs`), and is stamped forward-only onto time-blocks via new `time_blocks.category_id` + `color_token` columns. One migration, `0069`. The same model surfaces on two screens: a new tab on the Tags page (mirroring `AllTasks.tsx` tabs + reusing `DirectionCard`) and a Settings catalog (mirroring `RoutineTypeSettings.tsx`). The deterministic auto-scheduler consumes it by **extending the existing Pass-1 `dayPlans` loop** — not by adding a parallel pass — with the two fill axes (tag-Plan vs category-Plan) made **mutually exclusive** so no time-block is double-processed.
