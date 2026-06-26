@@ -3,7 +3,7 @@ import { Plus, Trash2, X, ChevronDown, ChevronRight, Repeat, Pencil, Zap, ArrowU
 import { patterns, patternTypes, prefs, refetchPatterns, showToast, setElementModal } from '../stores/index.js';
 import { api, type Pattern, type PatternType, type Task } from '../lib/api.js';
 import { buildRule, rulePresetForPattern, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
-import { useDraggable, useDropZone, dragPayload } from '../lib/draggable.js';
+import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { MinuteDial } from '../components/MinuteDial.js';
@@ -43,10 +43,6 @@ export function RoutinesPanel() {
     const ty = typeByName().get(name);
     return ty ? (patterns() ?? []).filter((p) => p.type_id === ty.id) : [];
   };
-
-  // Recurring tasks (habits) — shown in their own container on this tab so they can
-  // be dragged onto a Routine to bundle. A series collapses to its template.
-  const habitTasks = () => (allTasks() ?? []).filter((t) => t.is_habit && !t.recurrence_parent_id);
 
   // Routines section is a drop zone (Phase E): a Habit task or Plan Block dropped
   // in promotes into a new Routine (server picks the right promote-from-* route).
@@ -101,6 +97,14 @@ export function RoutinesPanel() {
     try { await api.patterns.update(p.id, { recurrence_rule: rule }); refetchPatterns(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+  // T-RTN: a free-text note on a routine (patterns.notes already exists server-side).
+  async function saveNote(p: Pattern, notes: string) {
+    if ((notes || '') === (p.notes ?? '')) return;
+    try { await api.patterns.update(p.id, { notes: notes.trim() || null }); refetchPatterns(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  /** Total estimated minutes across a routine's member tasks → "2h 15m" / "45m". */
+  const fmtMin = (n: number) => (n >= 60 ? `${Math.floor(n / 60)}h${n % 60 ? ` ${n % 60}m` : ''}` : `${n}m`);
   async function placePattern(p: Pattern) {
     try {
       const { result } = await api.patterns.placeToday(p.id);
@@ -177,6 +181,8 @@ export function RoutinesPanel() {
     const [picking, setPicking] = createSignal(false);
     const [fast, setFast] = createSignal('');
     const members = () => props.pattern.task_ids.map((id) => taskById().get(id)).filter(Boolean) as Task[];
+    const totalMin = () => members().reduce((s, t) => s + (t.estimated_minutes ?? 0), 0);
+    const [note, setNote] = createSignal(props.pattern.notes ?? '');
     // Habits (recurring tasks) CAN be added to a routine, so include them even though
     // a habit template's status isn't 'open'. Routines are never addable here.
     const candidates = () => {
@@ -219,6 +225,7 @@ export function RoutinesPanel() {
             <span class="text-[10px] text-muted-foreground" title={describe()}>{describe()}</span>
           </Show>
           <span class="text-[11px] text-muted-foreground">{props.pattern.task_ids.length} task{props.pattern.task_ids.length === 1 ? '' : 's'}</span>
+          <Show when={totalMin() > 0}><span class="text-[11px] text-muted-foreground" title="Total estimated time of attached tasks">· {fmtMin(totalMin())}</span></Show>
           <button onClick={() => placePattern(props.pattern)} class="btn-icon" title="Add to today's board"><Plus size={15} class="text-primary" /></button>
           <button onClick={() => deletePattern(props.pattern)} class="btn-icon hover:text-destructive" title="Delete pattern"><Trash2 size={13} /></button>
         </div>
@@ -263,6 +270,15 @@ export function RoutinesPanel() {
                 </Show>
               </div>
             </Show>
+            {/* Free-text note on the routine (persists to patterns.notes on blur). */}
+            <textarea
+              class="input w-full text-sm py-1.5 resize-none mb-3"
+              rows={2}
+              placeholder="Add a note…"
+              value={note()}
+              onInput={(e) => setNote(e.currentTarget.value)}
+              onBlur={() => saveNote(props.pattern, note())}
+            />
             <Show when={members().length > 0} fallback={<p class="text-xs text-muted-foreground italic mb-2">No tasks yet.</p>}>
               <ul class="flex flex-col gap-1 mb-2">
                 <For each={members()}>
@@ -402,7 +418,11 @@ export function RoutinesPanel() {
             <h2 class="text-sm font-semibold text-foreground">{props.title}</h2>
             <p class="text-[11px] text-muted-foreground">{props.subtitle}</p>
           </div>
-          <button onClick={() => setCreating((v) => !v)} class="btn-secondary text-xs px-2.5 py-1"><Plus size={12} /> New {props.typeName}</button>
+          {/* Routine creation now happens from a task (Tasks → add-to-routine → + New
+              routine); the standalone "New Routine" button is removed. Rituals keep theirs. */}
+          <Show when={props.typeName !== 'Routine'}>
+            <button onClick={() => setCreating((v) => !v)} class="btn-secondary text-xs px-2.5 py-1"><Plus size={12} /> New {props.typeName}</button>
+          </Show>
         </div>
 
         {/* Inline create form (Routine / Ritual) */}
@@ -457,39 +477,6 @@ export function RoutinesPanel() {
         </Show>
         <PatternList typeName="Routine" />
       </Section>
-
-      {/* Recurring tasks (habits) — separate container; drag one onto a Routine to bundle. */}
-      <section class="mb-6">
-        <div class="flex items-center gap-2 mb-2.5">
-          <Repeat size={16} class="text-primary" />
-          <div class="flex-1">
-            <h2 class="text-sm font-semibold text-foreground">Recurring tasks</h2>
-            <p class="text-[11px] text-muted-foreground">Habits — drag onto a Routine to bundle</p>
-          </div>
-          <button onClick={() => setElementModal({ open: true, mode: 'add', kind: 'habit' })} class="btn-secondary text-xs px-2.5 py-1" title="Habits are recurring tasks"><Plus size={12} /> New Habit</button>
-        </div>
-        <Show when={habitTasks().length > 0} fallback={<EmptyHint>No recurring tasks yet — “New Habit” creates one.</EmptyHint>}>
-          <div class="flex flex-col gap-1.5">
-            <For each={habitTasks()}>
-              {(t) => {
-                const drag = useDraggable({ kind: 'habit', id: t.id });
-                return (
-                  <div
-                    onPointerDown={drag.onPointerDown}
-                    class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 cursor-grab select-none touch-none"
-                  >
-                    <Repeat size={12} class="text-primary flex-shrink-0" />
-                    <span class="flex-1 text-sm text-foreground truncate">{t.title}</span>
-                    <Show when={t.tags?.length}><span class="text-primary text-xs">#{t.tags[0]}</span></Show>
-                    <Show when={t.estimated_minutes}><span class="text-[11px] font-mono text-muted-foreground">{t.estimated_minutes}m</span></Show>
-                    <button onClick={(e) => { e.stopPropagation(); setElementModal({ open: true, mode: 'edit', kind: 'habit', editTarget: { kind: 'habit', id: t.id } }); }} class="btn-icon" title="Edit habit"><Pencil size={13} /></button>
-                  </div>
-                );
-              }}
-            </For>
-          </div>
-        </Show>
-      </section>
 
       <Show when={prefs()?.enable_rituals}>
         <Section typeName="Ritual" title="Rituals" subtitle="Habits + one-off tasks for an occasion (e.g. Board-meeting prep)">

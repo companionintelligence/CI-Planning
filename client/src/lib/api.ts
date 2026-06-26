@@ -224,6 +224,8 @@ export const api = {
     list: () => request<{ block_templates: BlockTemplate[] }>('GET', '/block-templates'),
     create: (body: { name: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[] }) =>
       request<{ block_template: BlockTemplate }>('POST', '/block-templates', body),
+    update: (id: string, body: { name?: string; tag?: string | null; default_minutes?: number }) =>
+      request<{ block_template: BlockTemplate }>('PATCH', `/block-templates/${id}`, body),
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/block-templates/${id}`),
     instantiate: (id: string, start_at: string, end_at?: string) =>
       request<{ block: Block }>('POST', `/block-templates/${id}/instantiate`, { start_at, end_at }),
