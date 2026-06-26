@@ -6,7 +6,7 @@ import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } 
 import { resolveGroup, containerAt } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
-import { isSelected, toggleSelection, setActiveTask } from '../stores/selection.js';
+import { isSelected, toggleSelection, setActiveTask, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
@@ -742,6 +742,17 @@ export function Planner() {
           <span class="text-[10px] text-muted-foreground">{windowHours()}h · scroll for more</span>
         </div>
         <div class="flex items-center gap-3">
+          {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
+              shown once ≥2 task chips are selected (opens the same Create-Routine modal). */}
+          <Show when={selection().size >= 2}>
+            <button
+              onClick={() => setRoutineModal({ open: true, name: '' })}
+              class="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+              title={`Create a routine from the ${selection().size} selected tasks`}
+            >
+              <Repeat size={12} /> + Routine
+            </button>
+          </Show>
           {/* T-PLAN-1: clear this day's auto-placed blocks (keeps locked/calendar/habit). */}
           <button
             onClick={clearDay}
