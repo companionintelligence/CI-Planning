@@ -105,6 +105,12 @@ export const timeBlocks = sqliteTable('time_blocks', {
   // Plan-as-container (PR-C / 0023): a task block's containing Plan. Self-ref FK,
   // ON DELETE SET NULL — deleting a Plan detaches members (they stay as loose blocks).
   parentBlockId: text('parent_block_id').references((): AnySQLiteColumn => timeBlocks.id, { onDelete: 'set null' }),
+  // 0069: Time Block Category — a tags.kind='category' row. Direction is IMPLIED by the
+  // category (the wizard sets category_id, NOT tag). ON DELETE SET NULL so deleting a
+  // category never deletes blocks. color_token is the FROZEN stamp from category_prefs
+  // at create-time → editing/deleting a category never re-colors existing blocks.
+  categoryId: text('category_id').references((): AnySQLiteColumn => tags.id, { onDelete: 'set null' }),
+  colorToken: text('color_token'),                   // frozen category color (forward-only)
   // CON-4 recurrence (0034): bare recurring Time Blocks via the SHARED rrule.js
   // engine (recurrence.ts), mirroring tasks. A *template* has recurrenceRule set +
   // recurrenceParentId null (never rendered directly); GET materializes one
@@ -197,11 +203,13 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
 export const tags = sqliteTable('tags', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull().unique(),
-  // Tag taxonomy (0036/0043) — a SECOND axis, orthogonal to entity_tags.level (Phase-5
-  // per-entity dilution). `kind` is the taxonomy LEVEL: a 'pattern' is a top-level
-  // category (brand-set Home/Work/Community + user-added), an 'intention' is grouped
-  // under one or more patterns via tag_patterns (renamed from tag_directions in 0043).
-  kind: text('kind').notNull().default('intention'),       // 'pattern' | 'intention'
+  // Tag taxonomy (0036/0043; 'category' added 0069) — a SECOND axis, orthogonal to
+  // entity_tags.level (Phase-5 per-entity dilution). `kind` is the taxonomy LEVEL: a
+  // 'pattern' is a top-level GROUPING (brand-set Home/Work/Community + user-added); an
+  // 'intention' is grouped under one or more patterns via tag_patterns (renamed from
+  // tag_directions in 0043); a 'category' (0069) is a SECOND, orthogonal grouping over
+  // intentions via tag_categories — surfaced to the user as "Time Block Category".
+  kind: text('kind').notNull().default('intention'),       // 'pattern' | 'intention' | 'category'
   muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
   isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
 });
@@ -216,6 +224,31 @@ export const tagPatterns = sqliteTable(
     patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
   },
   (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.patternTagId] }) })
+);
+
+// 0069: intention→category-tag membership (many-to-many). A verbatim mirror of
+// tag_patterns on the second grouping axis: an intention with no row here is
+// "Unsorted" in the Time Block Category view. Both sides FK tags(id) cascade.
+export const tagCategories = sqliteTable(
+  'tag_categories',
+  {
+    intentionTagId: text('intention_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    categoryTagId: text('category_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.categoryTagId] }) })
+);
+
+// 0069: per-category direction SCOPE, opt-out polarity. A row = this pattern
+// (direction) tag is turned OFF for this category; an empty set = all directions on.
+// Opt-out polarity makes "default all-on for every existing & new category — and any
+// future direction" fall out for free (no backfill). Precedent: tags.muted.
+export const categoryDirectionOptouts = sqliteTable(
+  'category_direction_optouts',
+  {
+    categoryTagId: text('category_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.categoryTagId, t.patternTagId] }) })
 );
 
 // 0037: direction-scoped scheduling windows (Pattern-block, noun 8). Multiple rows
@@ -271,6 +304,19 @@ export const patternPrefs = sqliteTable('pattern_prefs', {
   // intention tag. Migration adds it NOT NULL DEFAULT 60; the Drizzle def had drifted.
   defaultMinutes: integer('default_minutes').notNull().default(60),
 });
+
+// 0069: per-owner, per-category-tag display config — a TRIMMED mirror of pattern_prefs
+// (drops auto_fill/reminder_offsets/icon_shape; no consumer on the category axis).
+// color_token = user-pickable category color, also the SOURCE of the forward-only
+// stamp copied onto time_blocks.color_token at create-time. default_minutes prefills
+// the wizard's new-block length when a category is picked (the scheduler ignores it).
+export const categoryPrefs = sqliteTable('category_prefs', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  categoryTagId: text('category_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  colorToken: text('color_token').notNull().default('primary'),  // CI-Hub token key (never hex)
+  defaultMinutes: integer('default_minutes').notNull().default(60),
+}, (t) => ({ uq: unique().on(t.ownerId, t.categoryTagId) }));
 
 // --- Patterns (Phase G). Typed, reusable task collections (Routine ▢ / Habit ◯ /
 //     Ritual △ + user-defined). No own recurrence; tasks-only (no nesting) in V1. ---

@@ -57,6 +57,22 @@ export function tagColorVar(tag: string | null | undefined): string {
 }
 
 /**
+ * The CSS colour for a Time Block (0069). Precedence:
+ *   1. `block.color_token` — the FROZEN category stamp (immutable; forward-only)
+ *   2. live `category_prefs[category_id].color_token` — transitional, for an unstamped block
+ *   3. `tagColorVar(block.tag)` — the legacy per-tag hash (also the no-tag fallback)
+ * Editing a category never re-colours a placed block because step 1 reads the stamp.
+ */
+export function blockColorVar(
+  block: { color_token?: string | null; category_id?: string | null; tag?: string | null },
+  categoryPrefs?: Record<string, { color_token: string }>,
+): string {
+  if (block.color_token) return `var(--${block.color_token})`;
+  if (block.category_id && categoryPrefs?.[block.category_id]) return `var(--${categoryPrefs[block.category_id].color_token})`;
+  return tagColorVar(block.tag);
+}
+
+/**
  * Background style for a *completed* item: a sparse diagonal hatch in the tag's
  * hue at 60% alpha — 1px stroke / 8px gap, upper-left → lower-right ("\"). Reads
  * as "done, and here's its tag" while staying legible (vs. just dimming it).

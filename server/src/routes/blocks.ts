@@ -8,6 +8,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
+import { getCategoryPrefs } from '../services/category-prefs.js';
 import { localISODate } from '../lib/dates.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
@@ -104,6 +105,8 @@ export function blocksRouter() {
       all_day?: boolean;
       recurrence_rule?: string;
       recurrence_dtstart?: string;
+      category_id?: string;
+      color_token?: string;
     };
 
     if (!body.title || !body.start_at || !body.end_at) {
@@ -112,6 +115,20 @@ export function blocksRouter() {
       return;
     }
 
+    // 0069: a time block is owned by EITHER a tag (direction) OR a category — never
+    // both (the scheduler partitions on this). color_token is the forward-only stamp
+    // copied from category_prefs at create-time.
+    const hasTag = body.tag != null && body.tag !== '';
+    const hasCat = body.category_id != null && body.category_id !== '';
+    if (hasTag && hasCat) { ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return; }
+    if (hasCat) {
+      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND kind = 'category' LIMIT 1`).get(body.category_id);
+      if (!ok) { ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return; }
+    }
+    const colorToken = hasCat
+      ? (body.color_token ?? getCategoryPrefs(currentOwnerId())[body.category_id!]?.color_token ?? 'primary')
+      : undefined;
+
     const [block] = await db
       .insert(timeBlocks)
       .values({
@@ -119,6 +136,8 @@ export function blocksRouter() {
         title: body.title,
         blockKind: body.block_kind ?? 'task',
         tag: body.tag,
+        categoryId: body.category_id,
+        colorToken,
         blockType: body.block_type,
         goalStartDate: body.goal_start_date,
         durationMinutes: body.duration_minutes,
@@ -170,6 +189,7 @@ export function blocksRouter() {
       secondary_tags: string[];
       recurrence_rule: string | null;
       recurrence_dtstart: string | null;
+      category_id: string | null;
     }>;
 
     // I10: inbound calendar mirrors are authoritative — the owner may not directly
@@ -184,6 +204,21 @@ export function blocksRouter() {
         ctx.body = { error: 'Calendar meeting blocks are read-only — edit the event in Google Calendar' };
         return;
       }
+    }
+
+    // 0069: enforce the tag XOR category_id partition on the MERGED row + validate the
+    // category kind. (color re-stamp is handled below, only when category_id changes.)
+    const existing = sqlite.prepare(`SELECT tag, category_id FROM time_blocks WHERE id = ?`)
+      .get(id) as { tag: string | null; category_id: string | null } | undefined;
+    if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const effTag = body.tag !== undefined ? body.tag : existing.tag;
+    const effCat = body.category_id !== undefined ? body.category_id : existing.category_id;
+    if (effTag != null && effTag !== '' && effCat != null && effCat !== '') {
+      ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return;
+    }
+    if (body.category_id != null && body.category_id !== '') {
+      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND kind = 'category' LIMIT 1`).get(body.category_id);
+      if (!ok) { ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return; }
     }
 
     const update: Partial<typeof timeBlocks.$inferInsert> = {};
@@ -203,6 +238,16 @@ export function blocksRouter() {
     if (body.all_day         !== undefined) update.allDay          = body.all_day;
     // Attach to / detach from a Plan (PR-C): a number attaches, null detaches.
     if (body.parent_block_id !== undefined) update.parentBlockId   = body.parent_block_id;
+    // 0069: re-stamp the frozen color ONLY when the category actually changes (a
+    // deliberate re-assignment); detaching (null) clears it, a no-op patch keeps it.
+    if (body.category_id !== undefined) {
+      update.categoryId = body.category_id;
+      if (body.category_id !== existing.category_id) {
+        update.colorToken = body.category_id != null && body.category_id !== ''
+          ? (getCategoryPrefs(currentOwnerId())[body.category_id]?.color_token ?? 'primary')
+          : null;
+      }
+    }
     // CON-4 series edit: changing the rule on a template re-anchors + re-materializes.
     if (body.recurrence_rule !== undefined) {
       update.recurrenceRule = body.recurrence_rule;
