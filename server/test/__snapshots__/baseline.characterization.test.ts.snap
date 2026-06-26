@@ -69,6 +69,8 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "auto_run_id": null,
       "block_kind": "timeblock",
       "block_type": "someday",
+      "category_id": null,
+      "color_token": null,
       "created_at": "<ts>",
       "duration_minutes": 60,
       "end_at": "2026-06-22T01:00:00.000Z",
@@ -98,6 +100,8 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "auto_run_id": null,
       "block_kind": "meeting",
       "block_type": null,
+      "category_id": null,
+      "color_token": null,
       "created_at": "<ts>",
       "duration_minutes": null,
       "end_at": "2026-06-22T13:30:00.000Z",
@@ -127,6 +131,8 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "auto_run_id": null,
       "block_kind": "timeblock",
       "block_type": "scheduled",
+      "category_id": null,
+      "color_token": null,
       "created_at": "<ts>",
       "duration_minutes": null,
       "end_at": "2026-06-22T12:00:00.000Z",
@@ -156,6 +162,8 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "auto_run_id": null,
       "block_kind": "task",
       "block_type": null,
+      "category_id": null,
+      "color_token": null,
       "created_at": "<ts>",
       "duration_minutes": null,
       "end_at": "2026-06-22T09:45:00.000Z",
@@ -630,6 +638,23 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "category_tag_id",
+      "pattern_tag_id",
+    ],
+    "table": "category_direction_optouts",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "category_tag_id",
+      "color_token",
+      "default_minutes",
+    ],
+    "table": "category_prefs",
+  },
+  {
+    "columns": [
       "id",
       "owner_id",
       "provider",
@@ -969,6 +994,13 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "intention_tag_id",
+      "category_tag_id",
+    ],
+    "table": "tag_categories",
+  },
+  {
+    "columns": [
+      "intention_tag_id",
       "pattern_tag_id",
     ],
     "table": "tag_patterns",
@@ -1048,6 +1080,8 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "occurrence_date",
       "auto_run_id",
       "last_moved_at",
+      "category_id",
+      "color_token",
     ],
     "table": "time_blocks",
   },

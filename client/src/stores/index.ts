@@ -190,6 +190,11 @@ export const [patternPrefs, { refetch: refetchPatternPrefs }] = createResource((
   api.patternPrefs.list()
 );
 
+// ── Category-prefs (0069): per-(Time Block Category) color + default block length ──
+export const [categoryPrefs, { refetch: refetchCategoryPrefs }] = createResource(() =>
+  api.categoryPrefs.list()
+);
+
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 export const [jobs, { refetch: refetchJobs }] = createResource(() =>
   api.jobs.list().then((r) => r.jobs)
@@ -201,7 +206,7 @@ on('job:run', () => refetchJobs());
 on('data:imported', () => {
   refetchTasks(); refetchBlocks(); refetchConcepts(); refetchPossibles();
   refetchFlightPlan(); refetchPatterns(); refetchPatternTypes();
-  refetchTags(); refetchPrefs(); refetchPatternBlocks(); refetchPatternPrefs(); refetchJobs();
+  refetchTags(); refetchPrefs(); refetchPatternBlocks(); refetchPatternPrefs(); refetchCategoryPrefs(); refetchJobs();
 });
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
