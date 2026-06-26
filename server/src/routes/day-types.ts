@@ -4,7 +4,7 @@ import { writeAudit } from '../lib/audit.js';
 import {
   listDayTypes, getDayType, createDayType, renameDayType, deleteDayType,
   getWeekMap, setWeekMap, listAssignments, assignDate, clearAssignment,
-  dayTypeKeyExists,
+  dayTypeKeyExists, resolveDayTypeWithSource,
 } from '../services/day-types.js';
 
 const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
@@ -62,6 +62,13 @@ export function dayTypesRouter() {
     deleteDayType(owner, dt);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `day-type:${dt.key}` });
     ctx.body = { ok: true };
+  });
+
+  // ── Resolution (what day type applies to a date, and from where) ───────────
+  router.get('/api/day-types/resolve/:date', (ctx) => {
+    const { date } = ctx.params;
+    if (!isISODate(date)) { ctx.status = 422; ctx.body = { error: 'date must be YYYY-MM-DD' }; return; }
+    ctx.body = { date, ...resolveDayTypeWithSource(currentOwnerId(), date) };
   });
 
   // ── Weekly default map ───────────────────────────────────────────────────

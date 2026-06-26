@@ -2,6 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { getPatternBlocks, setPatternBlockRanges } from '../services/pattern-blocks.js';
+import { dayTypeKeyExists } from '../services/day-types.js';
 import { writeAudit } from '../lib/audit.js';
 
 const TIME_RE = /^\d{2}:\d{2}$/;
@@ -18,6 +19,11 @@ export function patternBlocksRouter() {
     };
   });
 
+  // GET /api/pattern-blocks/:dayType → DirectionWindows for one day type (incl. custom).
+  router.get('/api/pattern-blocks/:dayType', (ctx) => {
+    ctx.body = { windows: getPatternBlocks(currentOwnerId(), ctx.params.dayType) };
+  });
+
   // PUT /api/pattern-blocks/:dirTagId/:dayType  body: { ranges: [{start_time,end_time}] }
   // Replaces all ranges for that direction+dayType atomically.
   router.put('/api/pattern-blocks/:dirTagId/:dayType', (ctx) => {
@@ -29,7 +35,7 @@ export function patternBlocksRouter() {
       .get(dirTagId) as { kind: string } | undefined;
     if (!tag) { ctx.status = 404; ctx.body = { error: 'Tag not found' }; return; }
     if (tag.kind !== 'pattern') { ctx.status = 422; ctx.body = { error: 'Tag is not a pattern' }; return; }
-    if (!['workday', 'weekend'].includes(dayType)) { ctx.status = 422; ctx.body = { error: 'Invalid day_type' }; return; }
+    if (!dayTypeKeyExists(owner, dayType)) { ctx.status = 422; ctx.body = { error: 'Invalid day_type' }; return; }
 
     const body = ctx.request.body as { ranges?: unknown };
     if (!Array.isArray(body?.ranges)) { ctx.status = 422; ctx.body = { error: 'ranges must be an array' }; return; }
