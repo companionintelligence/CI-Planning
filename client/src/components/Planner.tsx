@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight, Sparkles, Eraser } from 'lucide-solid';
+import { Lock, LockOpen, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight, Sparkles, Eraser } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
@@ -364,6 +364,11 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     try { await api.blocks.update(b().id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Time Block', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+  async function unlock() {
+    setMenu(null);
+    try { await api.blocks.update(b().id, { is_locked: false }); refetchBlocks(); showToast('Unlocked', 'default'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
   async function removeBlock() {
     setMenu(null);
     const blk = b();
@@ -380,6 +385,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     const items: MenuItem[] = [{ label: 'Edit', icon: Pencil, onClick: edit }];
     if (t && !t.is_habit) items.push({ label: 'Promote to habit', icon: Repeat, onClick: promoteHabit });
     if (b().parent_block_id != null) items.push({ label: 'Remove from Time Block', icon: Unlink, onClick: detach });
+    if (b().is_locked) items.push({ label: 'Unlock', icon: LockOpen, onClick: unlock });
     items.push({ label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true });
     return items;
   };
@@ -686,16 +692,24 @@ export function Planner() {
   }
 
   let scroller: HTMLDivElement | undefined;
-  // T-PLAN-2: open each day scrolled to ~1h before its first scheduled block
-  // (scrollTopForBlock keeps SLOT_MIN=60 of lead-in above it). Re-pins on day /
-  // blocks / zoom change — NOT on the minute tick, so it never yanks the user's
-  // scroll as time passes. Empty day → top.
-  const repin = () => {
-    if (!scroller) return;
-    scroller.scrollTop = scrollTopForBlock(firstChip(), day());
-  };
+  // T-PLAN-2: open each day scrolled to ~1h before its anchor block (scrollTopForBlock
+  // keeps SLOT_MIN=60 of lead-in above it). On TODAY the anchor is the next-up item so
+  // the view opens at the current work, not 6am; other days anchor to their first block.
+  const anchorChip = () => (isToday() ? nextUp() ?? firstChip() : firstChip());
+  const repin = () => { if (scroller) scroller.scrollTop = scrollTopForBlock(anchorChip(), day()); };
   onMount(repin);
-  createEffect(() => { firstChip(); day(); windowHours(); queueMicrotask(repin); });
+  // Pin ONCE per (day, zoom) — never on a blocks refetch. A committed action (delete,
+  // complete, drag, auto-reflow) refetches blocks, which previously re-ran this effect
+  // and yanked the scroll back to the top of the day; gating on the day+zoom key stops
+  // that. `firstChip()` is read only to re-run once the new day's blocks land.
+  let pinnedKey = '';
+  createEffect(() => {
+    const key = `${day()}:${windowHours()}`;
+    firstChip();
+    if (key === pinnedKey || blocks.loading) return;
+    pinnedKey = key;
+    queueMicrotask(repin);
+  });
 
   // Someday Time Blocks (was Concepts) render on their goal day in the header lane;
   // clicking one opens a lightweight popover — Edit · Add to day · Delete (cockpit-v2

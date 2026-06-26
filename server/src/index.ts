@@ -6,6 +6,12 @@ import { pushEnabled } from './lib/push.js';
 
 // DB is initialised on import (runs setup + seed).
 import './db/index.js';
+import { recoverStaleFreezeLocks } from './engine/auto-defense.js';
+
+// Heal any auto blocks left `is_locked` by a reflow that was interrupted before its
+// unfreeze could run (pre-fix databases). No-op once clean; reflow no longer freezes.
+const recovered = recoverStaleFreezeLocks();
+if (recovered > 0) logger.info(`Recovered ${recovered} stale auto-block lock(s) from an interrupted reflow`);
 
 const app = buildApp();
 
