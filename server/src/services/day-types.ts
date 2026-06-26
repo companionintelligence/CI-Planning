@@ -21,18 +21,26 @@ function utcDow(dateStr: string): number {
  * did. The seeded builtins + map make the default visible & editable, nothing more.
  */
 export function resolveDayType(ownerId: string, date: string): string {
+  return resolveDayTypeWithSource(ownerId, date).key;
+}
+
+export type DayTypeSource = 'assignment' | 'map' | 'default';
+
+/** Like resolveDayType but also reports WHERE the key came from — so the UI can show
+ *  whether a date carries an explicit per-date override (and offer "reset to default"). */
+export function resolveDayTypeWithSource(ownerId: string, date: string): { key: string; source: DayTypeSource } {
   const a = sqlite
     .prepare(`SELECT day_type_key FROM day_assignments WHERE owner_id = ? AND date = ?`)
     .get(ownerId, date) as { day_type_key: string } | undefined;
-  if (a) return a.day_type_key;
+  if (a) return { key: a.day_type_key, source: 'assignment' };
 
   const dow = utcDow(date);
   const m = sqlite
     .prepare(`SELECT day_type_key FROM day_of_week_map WHERE owner_id = ? AND dow = ?`)
     .get(ownerId, dow) as { day_type_key: string } | undefined;
-  if (m) return m.day_type_key;
+  if (m) return { key: m.day_type_key, source: 'map' };
 
-  return dow === 0 || dow === 6 ? 'weekend' : 'workday';
+  return { key: dow === 0 || dow === 6 ? 'weekend' : 'workday', source: 'default' };
 }
 
 // ── Catalog CRUD (consumed by routes/day-types.ts) ────────────────────────────
