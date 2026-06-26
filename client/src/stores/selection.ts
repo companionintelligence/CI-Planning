@@ -50,6 +50,14 @@ export function clearActiveTask(): void {
 }
 
 /**
+ * "Create Routine from selection" modal state. Shared so it can be opened both by
+ * the Shift++ chord (Today) and the Planner header "+ Routine" button that appears
+ * once ≥2 items are selected (so the chord isn't the only way in). Today owns the
+ * modal markup + the create handler; both entry points just flip this open.
+ */
+export const [routineModal, setRoutineModal] = createSignal<{ open: boolean; name: string }>({ open: false, name: '' });
+
+/**
  * Resolve the selection to a deduped, ordered list of task ids — what the
  * `POST /api/patterns/promote-from-tasks` endpoint expects. The caller passes
  * in the current `blocks` list so the block→task_id lookup works.
