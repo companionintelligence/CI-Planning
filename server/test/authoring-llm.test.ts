@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vites
 const llmOrder = vi.fn<() => number[]>(() => [2, 0, 1]); // C, A, B — a non-deterministic permutation
 const rationaleResp = vi.fn<() => Record<string, string>>(() => ({ '0': 'Reason zero', '1': 'Reason one', '2': 'Reason two' }));
 let ollamaUp = true;
+let genThrows = false; // simulate Ollama failing MID-loop (after the pre-flight isAvailable() check)
+let judgeOverall = 0.9; // lower this below the 0.8 pass threshold to force a loop stall (escape hatch)
 
 vi.mock('../src/mcp/ollama.js', async (importActual) => {
   const actual = await importActual<typeof import('../src/mcp/ollama.js')>();
@@ -21,8 +23,9 @@ vi.mock('../src/mcp/ollama.js', async (importActual) => {
     ...actual,
     isAvailable: vi.fn(async () => ollamaUp),
     generateJson: vi.fn(async (_prompt: string, opts?: { tier?: string; system?: string }) => {
+      if (genThrows) throw new Error('ollama died mid-call'); // b4-1: timeout/OOM/dropped connection
       if (opts?.system?.includes('explain a finished day plan')) return rationaleResp(); // §A3 rationale call
-      if (opts?.tier === 'medium') return { overall: 0.9, critique: 'looks coherent' };
+      if (opts?.tier === 'medium') return { overall: judgeOverall, critique: 'looks coherent' };
       return llmOrder();
     }),
   };
@@ -67,8 +70,48 @@ beforeEach(() => {
   sqlite.exec(`DELETE FROM daily_plan WHERE owner_id = '${OWNER}'`);
   sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'smart', timezone = 'UTC' WHERE owner_id = ?`).run(OWNER);
   ollamaUp = true;
+  genThrows = false;
+  judgeOverall = 0.9;
   llmOrder.mockReturnValue([2, 0, 1]);
   rationaleResp.mockReturnValue({ '0': 'Reason zero', '1': 'Reason one', '2': 'Reason two' });
+});
+
+const auditCount = (action: string) =>
+  (sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE owner_id = ? AND action = ?`).get(OWNER, action) as { n: number }).n;
+
+describe('authorPlanOrder — robustness (b4-1, a0-1, a02-1)', () => {
+  it('b4-1: an Ollama failure MID-loop degrades to deterministic, never throws', async () => {
+    genThrows = true; // isAvailable() still true, but the first generate() call throws
+    const a = insertTask('A'); const b = insertTask('B');
+    stage(a, 0); stage(b, 1);
+
+    await expect(authorPlanOrder(OWNER, DATE)).resolves.toBeUndefined(); // no 500 / no throw
+
+    const rows = dailyPlanRows();
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.source === 'deterministic')).toBe(true); // landed a valid order
+  });
+
+  it('a0-1: a stalled loop falls back to deterministic AND raises a visible plan_needs_review signal', async () => {
+    judgeOverall = 0.1; // deterministic checks pass, but the judge never clears 0.8 → loop escapes
+    const a = insertTask('A'); const b = insertTask('B'); const c = insertTask('C');
+    stage(a, 0); stage(b, 1); stage(c, 2);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    expect(rows.every((r) => r.source === 'deterministic')).toBe(true); // escape hatch → deterministic
+    expect(auditCount('plan_needs_review')).toBeGreaterThanOrEqual(1); // NOT a silent revert (§A0 clause 6)
+  });
+
+  it('a02-1: the real auditRecord sink writes plan_revision rows (default record path, not a stub)', async () => {
+    const a = insertTask('A'); const b = insertTask('B');
+    stage(a, 0); stage(b, 1);
+
+    await authorPlanOrder(OWNER, DATE); // smart path, default record = auditRecord (no mock injected)
+
+    expect(auditCount('plan_revision')).toBeGreaterThanOrEqual(1); // each loop revision is logged
+  });
 });
 
 describe('authorPlanOrder — LLM path (mocked Ollama)', () => {
