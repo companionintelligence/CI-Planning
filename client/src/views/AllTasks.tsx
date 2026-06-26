@@ -4,7 +4,6 @@ import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast } from 
 import { api, type Task } from '../lib/api.js';
 import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
-import { QuickAdd } from '../components/QuickAdd.js';
 import { SortControl, type SortOrder } from '../components/SortControl.js';
 import { byPriority, byDueDateAsc } from '../lib/sort.js';
 import { RoutinesPanel } from '../components/RoutinesPanel.js';
@@ -168,11 +167,9 @@ export function AllTasks() {
       {/* ── Task / Habit backlog ── */}
       <Show when={isTaskTab()}>
         <Show when={!showArchive()}>
-          <QuickAdd />
-
           <Show when={showFilters()}>
             <div class="card mb-4 flex gap-2 flex-wrap animate-slide-down">
-              <div class="flex-1 min-w-36 relative">
+              <div class="flex-[2] min-w-[16rem] relative">
                 <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                 <input
                   class="input pl-8"
