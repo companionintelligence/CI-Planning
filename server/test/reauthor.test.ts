@@ -19,6 +19,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { broadcast } from '../src/routes/sse.js';
+import { placeFlightPlan } from '../src/engine/autoplan.js';
 import {
   isBigDisruption,
   requestReplan,
@@ -53,6 +54,16 @@ function fullDayMeeting(): void {
   sqlite
     .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), 'All-day mtg', 'meeting', ?, ?, 1, 0, 'manual', 'planned')`)
     .run(`${DATE}T09:00:00.000Z`, `${DATE}T18:00:00.000Z`);
+}
+/**
+ * Place `taskId` on an otherwise-open day, then fill the day so a subsequent reflow
+ * can't re-place it. Models a genuine disruption: a COMMITTED placement gets knocked
+ * out (gap-close reflow only re-packs already-placed work — it never intakes backlog).
+ */
+function placeThenFillDay(taskId: string): void {
+  stage(taskId);
+  placeFlightPlan(OWNER, { date: DATE }); // task holds a real slot on the open day...
+  fullDayMeeting();                        // ...then the day fills up — reflow loses it
 }
 function setAutoDefense(on: boolean): void {
   sqlite.prepare(`UPDATE scheduling_prefs SET auto_defense_enabled = ? WHERE owner_id = ?`).run(on ? 1 : 0, OWNER);
@@ -101,7 +112,7 @@ describe('reactive reflow → nudge (no LLM in the hot path)', () => {
       setAutoDefense(true);
       const p1 = insertTask('Crunch', 1);
       seedDailyPlan(p1, 0);
-      fullDayMeeting(); // P1 cannot be placed → unplaced high-priority → big disruption
+      placeThenFillDay(p1); // placed P1, then the day fills → P1 knocked out → big disruption
 
       requestReplan('task:updated', OWNER, DATE);
       vi.advanceTimersByTime(1500);
@@ -123,7 +134,7 @@ describe('reactive reflow → nudge (no LLM in the hot path)', () => {
       setAutoDefense(true);
       const p1 = insertTask('Crunch', 1);
       seedDailyPlan(p1, 0);
-      fullDayMeeting();
+      placeThenFillDay(p1);
 
       const before = dailyPlan();
       requestReplan('task:updated', OWNER, DATE);
@@ -144,7 +155,7 @@ describe('reactive reflow → nudge (no LLM in the hot path)', () => {
       setAutoDefense(true);
       const p3 = insertTask('Low', 3);
       seedDailyPlan(p3, 0);
-      fullDayMeeting();
+      placeThenFillDay(p3);
 
       requestReplan('task:updated', OWNER, DATE);
       vi.advanceTimersByTime(1500);
@@ -184,7 +195,7 @@ describe('POST /api/plan/reauthor/dismiss', () => {
     setAutoDefense(true);
     const p1 = insertTask('Crunch', 1);
     seedDailyPlan(p1, 0);
-    fullDayMeeting();
+    placeThenFillDay(p1);
     requestReplan('task:updated', OWNER, DATE);
     vi.advanceTimersByTime(1500);
     vi.useRealTimers();
@@ -203,7 +214,7 @@ describe('restart-durable nudge (replan_suggestions table)', () => {
     setAutoDefense(true);
     const p1 = insertTask('Crunch', 1);
     seedDailyPlan(p1, 0);
-    fullDayMeeting();
+    placeThenFillDay(p1);
     requestReplan('task:updated', OWNER, DATE);
     vi.advanceTimersByTime(1500);
     vi.useRealTimers();
@@ -236,7 +247,7 @@ describe('GET /api/plan/suggestion (reload-durable nudge)', () => {
     setAutoDefense(true);
     const p1 = insertTask('Crunch', 1);
     seedDailyPlan(p1, 0);
-    fullDayMeeting();
+    placeThenFillDay(p1);
     requestReplan('task:updated', OWNER, DATE);
     vi.advanceTimersByTime(1500);
     vi.useRealTimers();
