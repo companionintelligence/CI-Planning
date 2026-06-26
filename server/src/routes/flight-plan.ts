@@ -2,7 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
-import { runAuto, fillByPriority, undoLastAuto, fillFlightPlanCandidates, placeFlightPlan } from '../engine/autoplan.js';
+import { runAuto, fillByPriority, undoLastAuto, fillFlightPlanCandidates, placeFlightPlan, resolveTrustPolicy } from '../engine/autoplan.js';
 import { authorPlanOrder } from '../agents/plan.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
@@ -132,21 +132,22 @@ export function flightPlanRouter() {
     const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string; horizon_days?: number };
     const date = body.date ?? localISODate();
 
-    // T-SCHED-2 — Schedule-mode planning horizon. In Schedule mode, Auto plans the
-    // next N days starting at `date` instead of just that one day; in Suggest mode it
+    // T-SCHED-2 — Hands-off planning horizon. In the Hands-off trust mode, Auto plans the
+    // next N days starting at `date` instead of just that one day; in Cautious/Balanced it
     // stays single-day (byte-identical to before). The count reuses
     // scheduling_prefs.planning_horizon_days — the SAME pref that governs the task
     // candidate-selection window, so "pulled in because due within N days" == "placed
     // across those N days" (intentional layering, no new column). An explicit
     // body.horizon_days overrides; a specific-block placement is always single-day.
+    // (TM-4: the gate moved from the legacy auto_mode='schedule' to trust_mode='hands_off'.)
     const sched = sqlite
-      .prepare(`SELECT auto_mode, planning_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
-      .get(owner) as { auto_mode?: string; planning_horizon_days?: number } | undefined;
+      .prepare(`SELECT planning_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
+      .get(owner) as { planning_horizon_days?: number } | undefined;
     const days = body.block_id != null
       ? 1
       : body.horizon_days != null
         ? clampDays(body.horizon_days)
-        : (sched?.auto_mode === 'schedule' ? clampDays(sched?.planning_horizon_days ?? 7) : 1);
+        : (resolveTrustPolicy(owner).mode === 'hands_off' ? clampDays(sched?.planning_horizon_days ?? 7) : 1);
 
     if (days > 1) {
       // Bounded loop over the EXISTING single-day placement — no new placement

@@ -36,7 +36,9 @@ function lastRun(kind: string) {
 }
 
 function setMode(mode: 'suggest' | 'schedule'): void {
-  sqlite.prepare(`UPDATE scheduling_prefs SET auto_mode = ? WHERE owner_id = ?`).run(mode, OWNER);
+  // TM-4: autoScheduleOnIngest now gates on trust_mode='hands_off' (was auto_mode='schedule').
+  const trust = mode === 'schedule' ? 'hands_off' : 'balanced';
+  sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = ? WHERE owner_id = ?`).run(trust, OWNER);
 }
 
 /** A tagged, scheduled Plan container — what schedule-mode placement routes tag-matched work into. */
