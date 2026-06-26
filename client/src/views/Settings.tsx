@@ -5,6 +5,7 @@ import { api } from '../lib/api.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { RoutineTypeSettings } from '../components/RoutineTypeSettings.js';
+import { CategorySettings } from '../components/CategorySettings.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { DEFAULT_CONCEPT_TAGS, PATTERN_COLORS, colorVar, type ConceptTag } from '../lib/pattern-meta.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
@@ -601,6 +602,13 @@ export function Settings() {
           </div>
           <p class="text-xs text-muted-foreground mb-3">Each pattern tag's display shape and colour. Colours come from the shared theme palette.</p>
           <PatternBlockSettings onReady={(fn) => { savePatternPrefs = fn; }} />
+        </section>
+
+        {/* Time Block Categories — the kind='category' catalog (0069): colour + default block length */}
+        <section class="card">
+          <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
+          <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Family Time, Social Time, Me Time + your own). Pick a colour and a default length; the defaults can be edited but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
+          <CategorySettings />
         </section>
 
         {/* Tag Settings — Pattern Tags (read-only) + Intention Tags (editable) */}

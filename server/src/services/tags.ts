@@ -221,3 +221,56 @@ const dirsOfStmt = sqlite.prepare(
 export function directionsOf(intentionTagId: string): string[] {
   return (dirsOfStmt.all(intentionTagId) as { name: string }[]).map((r) => r.name);
 }
+
+// ── Tag taxonomy (0069): intention ▸ category (a SECOND grouping axis) ───────
+// Mirror of the tag_patterns membership trio above, on tag_categories.
+
+const delCats = sqlite.prepare(`DELETE FROM tag_categories WHERE intention_tag_id = ?`);
+const insCat = sqlite.prepare(
+  `INSERT OR IGNORE INTO tag_categories (intention_tag_id, category_tag_id) VALUES (?, ?)`,
+);
+/** Replace an intention tag's category membership (drag-move = a single target). */
+export function setCategoryMemberships(intentionTagId: string, categoryTagIds: string[]): void {
+  delCats.run(intentionTagId);
+  for (const c of categoryTagIds) insCat.run(intentionTagId, c);
+}
+
+const catsOfStmt = sqlite.prepare(
+  `SELECT c.name AS name FROM tag_categories tc
+     JOIN tags c ON c.id = tc.category_tag_id
+    WHERE tc.intention_tag_id = ? ORDER BY c.name`,
+);
+/** The category names an intention tag belongs to (empty = Unsorted on the Category tab). */
+export function categoriesOf(intentionTagId: string): string[] {
+  return (catsOfStmt.all(intentionTagId) as { name: string }[]).map((r) => r.name);
+}
+
+// ── Category ▸ direction SCOPE (0069), opt-out polarity ──────────────────────
+// A row = this pattern (direction) tag is OFF for this category; empty = all on.
+
+const delOptOut = sqlite.prepare(`DELETE FROM category_direction_optouts WHERE category_tag_id = ? AND pattern_tag_id = ?`);
+const insOptOut = sqlite.prepare(`INSERT OR IGNORE INTO category_direction_optouts (category_tag_id, pattern_tag_id) VALUES (?, ?)`);
+/** Toggle a direction on/off for a category (delete the opt-out row to enable, insert to disable). */
+export function setDirectionEnabled(categoryTagId: string, patternTagId: string, enabled: boolean): void {
+  if (enabled) delOptOut.run(categoryTagId, patternTagId);
+  else insOptOut.run(categoryTagId, patternTagId);
+}
+
+const optOutsOfStmt = sqlite.prepare(
+  `SELECT p.name AS name FROM category_direction_optouts cdo
+     JOIN tags p ON p.id = cdo.pattern_tag_id
+    WHERE cdo.category_tag_id = ? ORDER BY p.name`,
+);
+/** The direction names turned OFF for a category (empty = all directions enabled). */
+export function directionOptoutsOf(categoryTagId: string): string[] {
+  return (optOutsOfStmt.all(categoryTagId) as { name: string }[]).map((r) => r.name);
+}
+
+// A category's references live in time_blocks.category_id + tag_categories — NEITHER of
+// which writes entity_tags, so tagIsUsed() (entity_tags-only) does NOT cover categories.
+const catRefByBlock = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE category_id = ? LIMIT 1`);
+const catRefByMember = sqlite.prepare(`SELECT 1 FROM tag_categories WHERE category_tag_id = ? LIMIT 1`);
+/** True if a category tag is assigned to any time block or has any member intention. */
+export function categoryIsReferenced(categoryTagId: string): boolean {
+  return !!catRefByBlock.get(categoryTagId) || !!catRefByMember.get(categoryTagId);
+}

@@ -16,6 +16,7 @@ const OWNER_TABLES = [
   'block_templates',
   'pattern_blocks',
   'pattern_prefs',
+  'category_prefs',
   'flight_plan',
   'time_entries',
   'reminders',
@@ -59,11 +60,10 @@ export function backupRouter() {
     const taskIds = taskIdsRaw.map((r) => r.id);
     const patternIds = patternIdsRaw.map((r) => r.id);
 
-    const timeBlocks = taskIds.length
-      ? sqlite
-          .prepare(`SELECT * FROM time_blocks WHERE task_id IN (${taskIds.map(() => '?').join(',')})`)
-          .all(taskIds)
-      : [];
+    // v0.2 single-owner: full table dump so CONTAINER blocks (block_kind='timeblock',
+    // task_id IS NULL — incl. Time Block Category containers) are exported too. A
+    // task_id-scoped query silently dropped them (and now their category_id/color_token).
+    const timeBlocks = sqlite.prepare(`SELECT * FROM time_blocks`).all();
     const blockIds = (timeBlocks as { id: string }[]).map((b) => b.id);
 
     const patternTasks = patternIds.length
@@ -102,6 +102,8 @@ export function backupRouter() {
       scheduling_prefs: ownerData['scheduling_prefs'],
       tags: sqlite.prepare('SELECT * FROM tags').all(),
       tag_patterns: sqlite.prepare('SELECT * FROM tag_patterns').all(),
+      tag_categories: sqlite.prepare('SELECT * FROM tag_categories').all(),
+      category_direction_optouts: sqlite.prepare('SELECT * FROM category_direction_optouts').all(),
       pattern_types: ownerData['pattern_types'],
       patterns: ownerData['patterns'],
       tasks: ownerData['tasks'],
@@ -111,6 +113,7 @@ export function backupRouter() {
       block_templates: ownerData['block_templates'],
       pattern_blocks: ownerData['pattern_blocks'],
       pattern_prefs: ownerData['pattern_prefs'],
+      category_prefs: ownerData['category_prefs'],
       flight_plan: ownerData['flight_plan'],
       time_entries: ownerData['time_entries'],
       entity_tags: entityTags,
@@ -163,6 +166,10 @@ export function backupRouter() {
     const counts: Record<string, number> = {};
 
     sqlite.transaction(() => {
+      // Defer FK checks to COMMIT so a full-table restore is order-independent — e.g.
+      // time_blocks containers + their child task-blocks (parent_block_id), and the new
+      // category_id refs. The complete dataset is consistent at commit. Auto-resets at tx end.
+      sqlite.exec('PRAGMA defer_foreign_keys=ON');
       // ── Delete in reverse FK order ─────────────────────────────────────────
       sqlite.prepare('DELETE FROM push_subscriptions WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM reminders WHERE owner_id = ?').run(ownerId);
@@ -173,20 +180,23 @@ export function backupRouter() {
       sqlite.prepare(`DELETE FROM entity_tags WHERE entity_id IN (
         SELECT id FROM tasks WHERE owner_id = ?
         UNION SELECT id FROM patterns WHERE owner_id = ?
-        UNION SELECT id FROM time_blocks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)
-      )`).run(ownerId, ownerId, ownerId);
+        UNION SELECT id FROM time_blocks
+      )`).run(ownerId, ownerId);
       sqlite.prepare('DELETE FROM time_entries WHERE owner_id = ?').run(ownerId);
       sqlite.prepare(`DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
       sqlite.prepare(`DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare(`DELETE FROM time_blocks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
+      sqlite.exec('DELETE FROM time_blocks'); // v0.2 single-owner: full wipe (incl. containers)
       sqlite.prepare('DELETE FROM flight_plan WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM pattern_prefs WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM category_prefs WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM pattern_blocks WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM block_templates WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM tasks WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM patterns WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM pattern_types WHERE owner_id = ?').run(ownerId);
-      // tags / tag_patterns have no owner_id — full wipe (v0.2 single-owner).
+      // tags + junctions have no owner_id — full wipe (v0.2 single-owner).
+      sqlite.exec('DELETE FROM tag_categories');
+      sqlite.exec('DELETE FROM category_direction_optouts');
       sqlite.exec('DELETE FROM tag_patterns');
       sqlite.exec('DELETE FROM tags');
       sqlite.prepare('DELETE FROM daily_summaries WHERE owner_id = ?').run(ownerId);
@@ -198,6 +208,8 @@ export function backupRouter() {
       counts['daily_summaries']  = insertRows('daily_summaries', g('daily_summaries'));
       counts['tags']             = insertRows('tags', g('tags'));
       counts['tag_patterns']     = insertRows('tag_patterns', g('tag_patterns'));
+      counts['tag_categories']   = insertRows('tag_categories', g('tag_categories'));
+      counts['category_direction_optouts'] = insertRows('category_direction_optouts', g('category_direction_optouts'));
       counts['pattern_types']    = insertRows('pattern_types', g('pattern_types'));
       counts['patterns']         = insertRows('patterns', g('patterns'));
       counts['tasks']            = insertRows('tasks', g('tasks'));
@@ -207,6 +219,7 @@ export function backupRouter() {
       counts['block_templates']  = insertRows('block_templates', g('block_templates'));
       counts['pattern_blocks']   = insertRows('pattern_blocks', g('pattern_blocks'));
       counts['pattern_prefs']    = insertRows('pattern_prefs', g('pattern_prefs'));
+      counts['category_prefs']   = insertRows('category_prefs', g('category_prefs'));
       counts['flight_plan']      = insertRows('flight_plan', g('flight_plan'));
       counts['time_entries']     = insertRows('time_entries', g('time_entries'));
       counts['entity_tags']      = insertRows('entity_tags', g('entity_tags'));

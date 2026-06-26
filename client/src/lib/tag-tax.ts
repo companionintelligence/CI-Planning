@@ -56,7 +56,59 @@ export function groupByDirection(tags: Tag[]): Grouped {
   };
 }
 
-/** Directions first (brand order), then everything else — for any tag list/cloud. */
+/**
+ * Directions first (brand order), then intentions — for a task/intention tag cloud.
+ * EXPLICIT allow-list: category tags (kind='category', 0069) are NEVER task chips —
+ * they surface only on the Tags "Time Block Categories" tab + the timeblock picker.
+ */
 export function directionsFirst(tags: Tag[]): Tag[] {
-  return [...sortDirections(tags.filter((t) => t.kind === 'pattern')), ...tags.filter((t) => t.kind !== 'pattern')];
+  return [...sortDirections(tags.filter((t) => t.kind === 'pattern')), ...tags.filter((t) => t.kind === 'intention')];
+}
+
+// ── Category axis (0069): mirror of the direction grouping, on tags.kind='category' ──
+
+const CATEGORY_BASE_ORDER = ['family', 'social', 'me'];
+
+/** Base categories first (family·social·me), then custom categories alphabetically. */
+export function sortCategories(categories: Tag[]): Tag[] {
+  return [...categories].sort((a, b) => {
+    const ai = CATEGORY_BASE_ORDER.indexOf(a.name), bi = CATEGORY_BASE_ORDER.indexOf(b.name);
+    if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    return a.name.localeCompare(b.name);
+  });
+}
+
+export interface CatGroup {
+  category: Tag;
+  active: Tag[];   // intentions in this category, not muted
+  muted: Tag[];    // intentions in this category, muted
+}
+export interface GroupedCategories {
+  groups: CatGroup[];
+  unsortedActive: Tag[];
+  unsortedMuted: Tag[];
+}
+
+/**
+ * Group intention tags under their categories (0069) — mirror of groupByDirection on
+ * the second grouping axis. An intention with no category is Unsorted on the
+ * "Time Block Categories" tab.
+ */
+export function groupByCategory(tags: Tag[]): GroupedCategories {
+  const categories = sortCategories(tags.filter((t) => t.kind === 'category'));
+  const intentions = tags.filter((t) => t.kind === 'intention');
+  const groups: CatGroup[] = categories.map((category) => {
+    const inCat = intentions.filter((t) => (t.categories ?? []).includes(category.name));
+    return {
+      category,
+      active: inCat.filter((t) => !t.muted),
+      muted: inCat.filter((t) => t.muted),
+    };
+  });
+  const unsorted = intentions.filter((t) => (t.categories ?? []).length === 0);
+  return {
+    groups,
+    unsortedActive: unsorted.filter((t) => !t.muted),
+    unsortedMuted: unsorted.filter((t) => t.muted),
+  };
 }

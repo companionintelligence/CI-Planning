@@ -1,13 +1,14 @@
 import { createSignal, createEffect, Show, For } from 'solid-js';
 import { X, ChevronLeft, Plus, ListTodo, Flame, Boxes, Clock, Calendar } from 'lucide-solid';
 import {
-  elementModal, setElementModal, tags, blocks, concepts, tasks, showToast,
+  elementModal, setElementModal, tags, blocks, concepts, tasks, categoryPrefs, showToast,
   type ElementKind,
 } from '../stores/index.js';
 import {
   ELEMENT_KINDS, patternTagList, patternDefaultMinutes, rankedSecondaryTags,
   nextHalfHour, saveElement, type ElementForm,
 } from '../lib/element.js';
+import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { localISODate } from '../lib/dates.js';
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { api } from '../lib/api.js';
@@ -62,6 +63,7 @@ export function ElementWizard() {
   const [tbWeekdays, setTbWeekdays] = createSignal<string[]>([]);
   const [tbCustomRule, setTbCustomRule] = createSignal('');
   const [secondaryTags, setSecondaryTags] = createSignal<string[]>([]);
+  const [categoryId, setCategoryId] = createSignal('');
   const [depDraft, setDepDraft] = createSignal('');
   const [saving, setSaving] = createSignal(false);
 
@@ -72,6 +74,13 @@ export function ElementWizard() {
   // T-TB-1: Time-Block weekly recurrence — its own weekday set, mirroring the task path.
   const currentTbRule = () => buildRule(tbRepeat(), tbWeekdays(), tbCustomRule());
   const toggleTbWeekday = (d: string) => setTbWeekdays((ws) => (ws.includes(d) ? ws.filter((x) => x !== d) : [...ws, d]));
+  // Time Block Category picker (0069): single-select; picking one prefills the block length.
+  const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
+  function pickCategory(id: string) {
+    setCategoryId(id);
+    const p = id ? categoryPrefs()?.prefs?.[id] : undefined;
+    if (p?.default_minutes) setDurMin(p.default_minutes);
+  }
   const candidateTasks = () => (tasks() ?? []).filter((t) => t.status === 'open' && t.id !== m().editTarget?.id);
 
   // T-DEP-1: "Depends on" task search — typeahead over open tasks (excludes self +
@@ -105,7 +114,7 @@ export function ElementWizard() {
       setScheduledFor(localISODate()); setEstimate(30); setDueAt(''); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule(''); setTaskTime('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
-      setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]);
+      setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]); setCategoryId('');
       if (st.mode === 'edit' && st.editTarget) loadForEdit(st.editTarget.kind, st.editTarget.id);
     }
     wasOpen = st.open;
@@ -119,6 +128,7 @@ export function ElementWizard() {
       const tagNames = (b.tag ?? '').split(',').map((s) => s.trim()).filter(Boolean);
       seedTags(tagNames);
       setNote(b.note ?? '');
+      setCategoryId(b.category_id ?? '');
       setSecondaryTags(b.secondary_tags ?? []);
       const ps = rulePreset(b.recurrence_rule);
       setTbRepeat(TB_REPEAT.includes(ps.preset) ? ps.preset : 'custom');
@@ -211,6 +221,7 @@ export function ElementWizard() {
         note: note() || undefined,
         day: day(), start: start(), durationMin: durMin(), someday: someday(), goalDay: goalDay(),
         secondaryTags: secondaryTags().length ? secondaryTags() : undefined,
+        categoryId: categoryId() || undefined,
         scheduledFor: scheduledFor(), taskTime: taskTime() || undefined, estimatedMinutes: estimate(),
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
@@ -347,10 +358,30 @@ export function ElementWizard() {
               <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Title</span>
                 <input autofocus class="input py-1.5 text-sm" placeholder="Title…" value={title()} onInput={(e) => setTitle(e.currentTarget.value)} /></label>
 
-              <TagSection />
+              <Show when={kind() !== 'timeblock'}><TagSection /></Show>
 
               {/* ── Time-Block fields ── */}
               <Show when={kind() === 'timeblock'}>
+                {/* Category (0069) — replaces the direction picker for time blocks; direction is implied by the category. */}
+                <div>
+                  <div class="text-[11px] text-muted-foreground mb-1">Category</div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <button type="button" onClick={() => pickCategory('')}
+                      class="text-xs px-2 py-1 rounded-full border transition-colors"
+                      classList={{ 'border-primary text-primary bg-primary/10': !categoryId(), 'border-border text-muted-foreground hover:text-foreground': !!categoryId() }}>
+                      None
+                    </button>
+                    <For each={categoryOptions()}>
+                      {(c) => (
+                        <button type="button" onClick={() => pickCategory(c.id)}
+                          class="text-xs px-2 py-1 rounded-full border capitalize transition-colors"
+                          classList={{ 'border-primary text-primary bg-primary/10': categoryId() === c.id, 'border-border text-muted-foreground hover:text-foreground': categoryId() !== c.id }}>
+                          {displayTag(c.name)}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
                 <div class="flex gap-2">
                   <button type="button" onClick={() => setSomeday(false)} class="flex-1 py-1 rounded-md text-xs border transition-colors"
                     classList={{ 'border-primary text-primary bg-primary/10': !someday(), 'border-border text-muted-foreground': someday() }}>Scheduled</button>
