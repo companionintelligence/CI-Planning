@@ -123,11 +123,69 @@ function dayPlans(date: string, tz: string): PlanRow[] {
                          WHERE pt.name = tb.tag AND pt.catch_all = 1 LIMIT 1), 0) AS catch_all
          FROM time_blocks tb
         WHERE tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled' AND tb.tag IS NOT NULL
+          AND tb.category_id IS NULL
           AND COALESCE(tb.all_day, 0) = 0
           AND tb.start_at < ? AND tb.end_at > ?
-        ORDER BY tb.start_at`
+        ORDER BY tb.start_at, tb.id`
     )
     .all(dayEndISO, dayStartISO) as PlanRow[];
+}
+
+interface CategoryPlanRow { id: string; start_at: string; end_at: string; category_id: string }
+
+/**
+ * Category-tagged, timed Plan containers on `date`, earliest first (0069). Disjoint
+ * from dayPlans by the tag XOR category_id invariant (a category container has tag
+ * NULL; a tag-Plan has category_id NULL — enforced in routes/blocks.ts), so no block
+ * is ever filled by both passes.
+ */
+function dayCategoryPlans(date: string, tz: string): CategoryPlanRow[] {
+  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
+  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  return sqlite
+    .prepare(
+      `SELECT tb.id, tb.start_at, tb.end_at, tb.category_id
+         FROM time_blocks tb
+        WHERE tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled' AND tb.category_id IS NOT NULL
+          AND COALESCE(tb.all_day, 0) = 0
+          AND tb.start_at < ? AND tb.end_at > ?
+        ORDER BY tb.start_at, tb.id`
+    )
+    .all(dayEndISO, dayStartISO) as CategoryPlanRow[];
+}
+
+/**
+ * Staged tasks eligible for a category Plan (0069): a SECONDARY tag (entity_tags
+ * level>1) that is a member of the category, AND a direction that is NOT fully opted
+ * out for the category. Preserves `staged` order (deterministic — id-keyed, no clock/
+ * randomness). NB: `staged.tags` is level-1 only, so category matching MUST read
+ * entity_tags level>1 directly. A direction-less task is included on the tag match alone.
+ */
+function categoryCandidates(staged: StagedTask[], categoryId: string): StagedTask[] {
+  const candIds = new Set(
+    (sqlite
+      .prepare(
+        `SELECT DISTINCT entity_id FROM entity_tags
+          WHERE entity_kind = 'task' AND level > 1
+            AND tag_id IN (SELECT intention_tag_id FROM tag_categories WHERE category_tag_id = ?)`
+      )
+      .all(categoryId) as { entity_id: string }[]).map((r) => r.entity_id),
+  );
+  if (candIds.size === 0) return [];
+  const optOut = new Set(
+    (sqlite
+      .prepare(`SELECT pattern_tag_id FROM category_direction_optouts WHERE category_tag_id = ?`)
+      .all(categoryId) as { pattern_tag_id: string }[]).map((r) => r.pattern_tag_id),
+  );
+  const patNameToId = new Map<string, string>();
+  for (const pt of sqlite.prepare(`SELECT id, name FROM tags WHERE kind = 'pattern'`).all() as { id: string; name: string }[]) {
+    patNameToId.set(pt.name, pt.id);
+  }
+  return staged.filter((t) => {
+    if (!candIds.has(t.task_id)) return false;
+    const dirIds = t.tags.map((n) => patNameToId.get(n)).filter((id): id is string => id !== undefined);
+    return dirIds.length === 0 || !dirIds.every((d) => optOut.has(d)); // include unless EVERY direction opted out
+  });
 }
 
 /**
@@ -291,26 +349,33 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
-    const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ?`).get(opts.blockId) as
-      | { start_at: string; end_at: string; tag: string | null }
+    const block = sqlite.prepare(`SELECT start_at, end_at, tag, category_id FROM time_blocks WHERE id = ?`).get(opts.blockId) as
+      | { start_at: string; end_at: string; tag: string | null; category_id: string | null }
       | undefined;
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
     clearPriorAutoInWindow(Date.parse(block.start_at), Date.parse(block.end_at));
-    const catchAll = !!(sqlite
-      .prepare(`SELECT 1 FROM pattern_types WHERE name = ? AND catch_all = 1 LIMIT 1`)
-      .get(block.tag) as {} | undefined);
     let cands: StagedTask[];
     let ordered: StagedTask[];
-    if (catchAll) {
-      // Catch-all Plan: accept every staged task, sorted by priority only.
-      cands = staged;
-      ordered = [...staged].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
+    if (block.category_id) {
+      // 0069 category Plan: fill ONLY its category candidates (NOT every staged task) —
+      // the same secondary-tag + opt-out filter as the general Pass 1.5.
+      cands = categoryCandidates(staged, block.category_id);
+      ordered = cands; // preserve staged order (deterministic)
     } else {
-      // Phase 5: match on ANY of the Plan's tags; dilute secondaries in ordering.
-      const weights = planTagWeights(opts.blockId, block.tag);
-      const planTags = [...weights.keys()];
-      cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
-      ordered = orderForPlan(cands, weights);
+      const catchAll = !!(sqlite
+        .prepare(`SELECT 1 FROM pattern_types WHERE name = ? AND catch_all = 1 LIMIT 1`)
+        .get(block.tag) as {} | undefined);
+      if (catchAll) {
+        // Catch-all Plan: accept every staged task, sorted by priority only.
+        cands = staged;
+        ordered = [...staged].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
+      } else {
+        // Phase 5: match on ANY of the Plan's tags; dilute secondaries in ordering.
+        const weights = planTagWeights(opts.blockId, block.tag);
+        const planTags = [...weights.keys()];
+        cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
+        ordered = orderForPlan(cands, weights);
+      }
     }
     const r = placeIntoWindow(ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
     recordRun(owner, runId, r.blocksCreated);
@@ -351,6 +416,19 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     }
     if (cands.length === 0) continue;
     const r = placeIntoWindow(ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
+    r.placedTaskIds.forEach((id) => placedIds.add(id));
+    blocksCreated += r.blocksCreated;
+  }
+
+  // Pass 1.5 — category Plans (0069). Disjoint from Pass 1 (tag XOR category_id), so no
+  // block is filled twice. Each is filled with its category candidates (secondary-tag
+  // match + direction opt-out filter), preserving staged order. Runs immediately after
+  // Pass 1 and before the direction-window pass, so category blocks supersede pattern
+  // windows for their span (via dayObstacles includePlans) just like tag-Plans.
+  for (const plan of dayCategoryPlans(date, tz)) {
+    const filtered = categoryCandidates(staged, plan.category_id).filter((t) => !placedIds.has(t.task_id));
+    if (filtered.length === 0) continue;
+    const r = placeIntoWindow(filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
