@@ -1,5 +1,5 @@
 import { Show, For } from 'solid-js';
-import { Pencil, Repeat, Unlink, Trash2, X } from 'lucide-solid';
+import { Pencil, Repeat, Unlink, LockOpen, Trash2, X } from 'lucide-solid';
 import { tasks, taskOf, blocks, tags, patternPrefs, setElementModal, showToast, refetchBlocks, refetchFlightPlan } from '../stores/index.js';
 import { activeTask, clearActiveTask } from '../stores/selection.js';
 import { api } from '../lib/api.js';
@@ -57,6 +57,12 @@ export function SelectedTaskSummary() {
     try { await api.blocks.update(b.id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Time Block', 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+  async function unlock() {
+    const b = block();
+    if (!b) return;
+    try { await api.blocks.update(b.id, { is_locked: false }); refetchBlocks(); showToast('Unlocked', 'default'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
   async function removeFromDay() {
     const b = block();
     if (!b) return;
@@ -97,6 +103,9 @@ export function SelectedTaskSummary() {
             </Show>
             <Show when={block()?.parent_block_id != null}>
               <button onClick={detach} class="btn-icon" title="Remove from Time Block"><Unlink size={14} /></button>
+            </Show>
+            <Show when={block()?.is_locked}>
+              <button onClick={unlock} class="btn-icon" title="Unlock (let auto-scheduling move it again)"><LockOpen size={14} /></button>
             </Show>
             <Show when={block()}>
               <button onClick={removeFromDay} class="btn-icon hover:text-destructive" title="Remove from the day (sends the task back to the flight-plan)"><Trash2 size={14} /></button>

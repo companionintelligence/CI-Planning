@@ -4,20 +4,24 @@
  * `reflow(owner, date)` re-places only the movable auto blocks for the day,
  * deterministically, from the frozen `daily_plan` order. It never calls the LLM.
  *
+ * Gap-close: reflow re-places ONLY the tasks already holding an auto block on the day
+ * (never the whole daily_plan), so a freed slot compacts and no un-placed backlog is
+ * pulled onto the board. Intake is exclusively the explicit Auto/Schedule path.
+ *
  * Anti-thrash rules (in priority order):
  *   1. In-progress blocks are never moved.
- *   2. Recently-moved blocks (last_moved_at within STABILITY_WINDOW_MS) are frozen.
- *   3. All other auto blocks are cleared and re-placed from daily_plan order.
+ *   2. Manually-locked auto blocks are held (slot AND task) — never moved or duplicated.
+ *   3. Recently-moved blocks (last_moved_at within STABILITY_WINDOW_MS) are held.
+ *   4. All other auto blocks are cleared and re-placed from daily_plan order.
  *
- * The "freeze as locked → placeFlightPlan → unfreeze" pattern reuses the existing
- * obstacle machinery in placeFlightPlan without touching its internals:
- *   - freezeAsLocked sets is_locked = 1 on protected blocks so clearPriorAuto skips
- *     them and dayObstacles treats them as fixed obstacles.
- *   - unfreeze (in finally) always restores the original is_locked value, even on throw.
+ * Protected blocks (1–3) are passed to placeFlightPlan as an in-memory `protectIds`
+ * set: clearPriorAuto skips them and dayObstacles already routes placement around any
+ * live task block. Nothing is ever written to is_locked, so an interrupted reflow can
+ * never leave a block stuck "locked".
  */
 import { sqlite } from '../db/index.js';
 import { placeFlightPlan } from './autoplan.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
 import { broadcast } from '../routes/sse.js';
@@ -89,6 +93,9 @@ function computeProtected(snapshot: BlockSnapshot[], nowMs: number): Set<string>
   const ids = new Set<string>();
   for (const b of snapshot) {
     if (b.status === 'in_progress') { ids.add(b.id); continue; }
+    // A user-pinned (locked) auto block holds its slot AND its task — never move it,
+    // never re-place its task (which would otherwise leave a duplicate beside the pin).
+    if (b.is_locked) { ids.add(b.id); continue; }
     if (b.last_moved_at && nowMs - Date.parse(b.last_moved_at) < STABILITY_WINDOW_MS) {
       ids.add(b.id);
     }
@@ -96,28 +103,18 @@ function computeProtected(snapshot: BlockSnapshot[], nowMs: number): Set<string>
   return ids;
 }
 
-function freezeAsLocked(blockIds: string[]): Map<string, number> {
-  const original = new Map<string, number>();
-  const stmt = sqlite.prepare(`SELECT is_locked FROM time_blocks WHERE id = ?`);
-  const upd = sqlite.prepare(`UPDATE time_blocks SET is_locked = 1 WHERE id = ?`);
-  for (const id of blockIds) {
-    const row = stmt.get(id) as { is_locked: number } | undefined;
-    if (row !== undefined) {
-      original.set(id, row.is_locked);
-      upd.run(id);
-    }
-  }
-  return original;
-}
-
-function unfreeze(original: Map<string, number>): void {
-  const upd = sqlite.prepare(`UPDATE time_blocks SET is_locked = ? WHERE id = ?`);
-  for (const [id, wasLocked] of original) {
-    upd.run(wasLocked, id);
-  }
-}
-
-function restageFromDailyPlan(owner: string, date: string, protectedTaskIds: Set<string>): Set<string> {
+/**
+ * Re-stage the day's MOVABLE-AND-ALREADY-PLACED tasks for re-placement (gap-close).
+ * Only tasks that currently hold an auto block (`placedTaskIds`) and aren't protected
+ * are staged — so a reactive reflow re-packs what's already on the day and never pulls
+ * un-placed backlog onto the board. Returns the set that was staged.
+ */
+function restageFromDailyPlan(
+  owner: string,
+  date: string,
+  protectedTaskIds: Set<string>,
+  placedTaskIds: Set<string>,
+): Set<string> {
   const rows = sqlite
     .prepare(
       `SELECT dp.task_id, dp.position
@@ -134,6 +131,7 @@ function restageFromDailyPlan(owner: string, date: string, protectedTaskIds: Set
   const staged = new Set<string>();
   for (const row of rows) {
     if (protectedTaskIds.has(row.task_id)) continue;
+    if (!placedTaskIds.has(row.task_id)) continue; // gap-close: never intake un-placed work
     ins.run(owner, row.task_id, row.position);
     staged.add(row.task_id);
   }
@@ -188,8 +186,10 @@ export function reflow(
   const tz = prefs?.timezone || serverTimezone();
   const d = date ?? localISODate();
 
-  const dayStartISO = zonedWallTimeToUTC(d, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  // Use the SAME day window as clearPriorAuto/dayPlans (utcDayBounds — DST-aware, end is
+  // next-day midnight, not start+24h). The snapshot defines the gap-close re-stage set, so
+  // it must match the clear window exactly or a DST-day block could be dropped/duplicated.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(d, tz);
 
   // 1. Snapshot auto blocks before any changes.
   const snapshot = snapshotAutoBlocks(dayStartISO, dayEndISO);
@@ -204,35 +204,46 @@ export function reflow(
       .filter((t): t is string => t != null)
   );
 
-  // 3. Freeze protected blocks so clearPriorAuto and dayObstacles skip them.
-  const originalLocks = freezeAsLocked([...protectedIds]);
+  // 3. Re-stage the day's already-placed, movable tasks (gap-close: never the whole
+  //    daily_plan, so a delete frees a slot and the rest compact — nothing new appears).
+  const stagedTaskIds = restageFromDailyPlan(owner, d, protectedTaskIds, new Set(beforeMap.keys()));
 
-  try {
-    // 4. Re-stage movable tasks from daily_plan into flight_plan.
-    const stagedTaskIds = restageFromDailyPlan(owner, d, protectedTaskIds);
+  // 4. Place. `protectIds` keeps the protected blocks out of clearPriorAuto's DELETE
+  //    (in memory — never written to is_locked), and dayObstacles already routes
+  //    placement around them. `onlyTaskIds` scopes placement to the re-staged set.
+  placeFlightPlan(owner, { date: d, onlyTaskIds: stagedTaskIds, protectIds: protectedIds });
 
-    // 5. Place: clearPriorAuto removes non-locked auto blocks; placeFlightPlan
-    //    re-places staged tasks around the now-locked protected blocks.
-    placeFlightPlan(owner, { date: d });
+  // 5. Snapshot after and compute the diff.
+  const afterSnapshot = snapshotAutoBlocks(dayStartISO, dayEndISO);
+  const afterMap = toTaskMap(afterSnapshot);
+  const { moved, removed, added } = diffBlocks(beforeMap, afterMap);
 
-    // 6. Snapshot after and compute the diff.
-    const afterSnapshot = snapshotAutoBlocks(dayStartISO, dayEndISO);
-    const afterMap = toTaskMap(afterSnapshot);
-    const { moved, removed, added } = diffBlocks(beforeMap, afterMap);
+  // 6. Stamp last_moved_at on blocks that actually changed time.
+  const nowISO = new Date(nowMs).toISOString();
+  const stamp = sqlite.prepare(`UPDATE time_blocks SET last_moved_at = ? WHERE id = ?`);
+  for (const m of moved) stamp.run(nowISO, m.block_id);
 
-    // 7. Stamp last_moved_at on blocks that actually changed time.
-    const nowISO = new Date(nowMs).toISOString();
-    const stamp = sqlite.prepare(`UPDATE time_blocks SET last_moved_at = ? WHERE id = ?`);
-    for (const m of moved) stamp.run(nowISO, m.block_id);
+  // 7. Unplaced = tasks we re-staged but that didn't end up with a block.
+  const unplaced = [...stagedTaskIds].filter((id) => !afterMap.has(id));
 
-    // 8. Unplaced = tasks we re-staged but that didn't end up with a block.
-    const unplaced = [...stagedTaskIds].filter((id) => !afterMap.has(id));
+  return { moved, removed, added, unplaced };
+}
 
-    return { moved, removed, added, unplaced };
-  } finally {
-    // Always restore is_locked, even if placeFlightPlan threw.
-    unfreeze(originalLocks);
-  }
+/**
+ * One-time startup recovery: clear `is_locked` left on our OWN auto blocks by a reflow
+ * that was interrupted before the pre-fix `unfreeze` could run. Genuine user/calendar
+ * locks live on manual or meeting blocks (is_auto=0) and are never touched. Idempotent —
+ * a no-op once clean. (Post-fix, reflow no longer writes is_locked at all, so no new
+ * residue is ever produced; this only heals databases written by the old code.)
+ */
+export function recoverStaleFreezeLocks(): number {
+  return sqlite
+    .prepare(
+      `UPDATE time_blocks SET is_locked = 0
+        WHERE is_locked = 1 AND is_auto = 1 AND source_kind = 'agent' AND block_kind = 'task'
+          AND status = 'planned'`
+    )
+    .run().changes;
 }
 
 // ─── B2: triggers + debounce ───────────────────────────────────────────────────
@@ -311,8 +322,8 @@ export function sweepMissedBlocks(
     .get(owner) as { timezone: string | null } | undefined;
   const tz = prefs?.timezone || serverTimezone();
   const d = date ?? localISODate();
-  const dayStartISO = zonedWallTimeToUTC(d, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  // Same DST-aware day window as reflow/clearPriorAuto (utcDayBounds), not start+24h.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(d, tz);
   const nowISO = new Date(now).toISOString();
 
   const missed = sqlite
