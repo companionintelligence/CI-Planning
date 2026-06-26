@@ -42,6 +42,7 @@ export interface AutoResult {
   unplaced?: number;
   placedInPlans?: number;    // step 2: tasks that landed inside a Plan
   placedInWorkday?: number;  // step 2: tasks that landed in the workday fallback
+  days?: number;             // T-SCHED-2: how many days a Schedule-mode horizon run spanned (>1 only)
 }
 
 interface StagedTask {
@@ -282,7 +283,7 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
  */
-export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?: string; blockId?: string } = {}): AutoResult {
+export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?: string; blockId?: string; silent?: boolean } = {}): AutoResult {
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
@@ -314,11 +315,11 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
     }
     const r = placeIntoWindow(ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
     recordRun(owner, runId, r.blocksCreated);
-    broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
+    if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     if (r.placedTaskIds.size > 0) {
       const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
       for (const id of r.placedTaskIds) del.run(owner, id);
-      broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
+      if (!opts.silent) broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
     }
     return { step: 'place', blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size, placedInPlans: r.placedTaskIds.size, placedInWorkday: 0 };
   }
@@ -442,11 +443,11 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
 
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
-  broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
+  if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
   if (placedIds.size > 0) {
     const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
     for (const id of placedIds) del.run(owner, id);
-    broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
+    if (!opts.silent) broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
   }
   return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday };
 }

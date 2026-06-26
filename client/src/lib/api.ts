@@ -199,7 +199,9 @@ export const api = {
     fill: (body?: { date?: string }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/fill', body ?? {}),
     // Auto Schedule: place selected staged items (Plans → direction windows → workday fill).
-    run: (body?: { block_id?: string; date?: string }) =>
+    // horizon_days (T-SCHED-2): explicitly place across N days; omit to let the server
+    // apply the Schedule-mode horizon (planning_horizon_days) in Schedule mode.
+    run: (body?: { block_id?: string; date?: string; horizon_days?: number }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/run', body ?? {}),
     // Undo the last placement run (D2): delete its blocks, re-stage its tasks.
     undo: () =>
@@ -404,6 +406,7 @@ export interface AutoResult {
   step: 'fill' | 'place';
   candidatesAdded?: number;              // step 1
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
+  days?: number;                          // T-SCHED-2: Schedule-mode horizon span (>1 only)
 }
 
 /** Phase M B1/B3: one block a reactive reflow moved (its before/after windows). */
