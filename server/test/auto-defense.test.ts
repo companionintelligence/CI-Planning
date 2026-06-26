@@ -8,13 +8,14 @@
  *   - Identical state ⇒ empty diff (deterministic re-placement)
  *   - In-progress blocks are never moved
  *   - Stability window prevents immediate re-churn (anti-thrash)
- *   - freezeAsLocked restores original is_locked even when a block was already locked
+ *   - A manually-locked auto block survives reflow, stays locked, and isn't duplicated
+ *   - Gap-close: a reflow re-packs only what's already placed; it never pulls in backlog
  */
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, type TestServer } from './helpers.js';
-import { reflow } from '../src/engine/auto-defense.js';
+import { reflow, recoverStaleFreezeLocks } from '../src/engine/auto-defense.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 
 const OWNER = SYSTEM_OWNER;
@@ -170,7 +171,7 @@ describe('reflow', () => {
     expect(diff2.moved).toHaveLength(0);
   });
 
-  it('freezeAsLocked restores is_locked=1 for a manually-locked auto block', () => {
+  it('a manually-locked auto block survives reflow, stays locked, and is not duplicated', () => {
     const t1 = insertTask('Locked auto');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
@@ -184,25 +185,71 @@ describe('reflow', () => {
 
     reflow(OWNER, DATE);
 
-    // Block should still exist and still be locked.
+    // The locked block survives clearPriorAuto and stays locked...
     const afterBlock = sqlite
-      .prepare(`SELECT is_locked, status FROM time_blocks WHERE id = ?`)
-      .get(block.id) as { is_locked: number; status: string } | undefined;
-
-    // The block was locked so clearPriorAuto skipped it; it survives reflow.
+      .prepare(`SELECT is_locked FROM time_blocks WHERE id = ?`)
+      .get(block.id) as { is_locked: number } | undefined;
     expect(afterBlock).toBeTruthy();
     expect(afterBlock!.is_locked).toBe(1);
+    // ...and its task is held (protected), so reflow does NOT place a duplicate beside it.
+    expect(autoBlocks().filter((b) => b.task_id === t1)).toHaveLength(1);
   });
 
-  it('unplaced contains tasks that could not be scheduled', () => {
-    // Pack the workday solid with a meeting, leaving no room for task blocks.
-    insertMeeting(`${DATE}T09:00:00.000Z`, `${DATE}T18:00:00.000Z`);
+  it('gap-close: deleting an earlier block compacts the rest and never pulls in backlog', () => {
+    const t1 = insertTask('T1');
+    const t2 = insertTask('T2');
+    const backlog = insertTask('Backlog'); // in the day's plan, but never placed
+    insertDailyPlan(t1, 0);
+    insertDailyPlan(t2, 1);
+    insertDailyPlan(backlog, 2);
+    stage(t1, 0);
+    stage(t2, 1);
+    placeFlightPlan(OWNER, { date: DATE });
 
+    const before = autoBlocks();
+    expect(before).toHaveLength(2);
+    const t2Start = before.find((b) => b.task_id === t2)!.start_at;
+
+    // Remove the earlier task's block (t1), as the planner's "Remove" does, then reflow.
+    const t1Block = before.find((b) => b.task_id === t1)!;
+    sqlite.prepare(`DELETE FROM time_blocks WHERE id = ?`).run(t1Block.id);
+
+    const diff = reflow(OWNER, DATE);
+
+    const after = autoBlocks();
+    expect(after.map((b) => b.task_id)).toEqual([t2]); // only the survivor remains
+    expect(after.some((b) => b.task_id === backlog)).toBe(false); // backlog never auto-placed
+    expect(after[0].start_at < t2Start).toBe(true); // t2 compacted into the freed slot
+    expect(diff.added).toHaveLength(0); // gap-close adds no new work
+  });
+
+  it('unplaced contains a placed task that no longer fits after a disruption', () => {
     const t1 = insertTask('No room');
     insertDailyPlan(t1, 0);
-    // Don't pre-place; reflow will try to stage and place from daily_plan.
+    stage(t1, 0);
+    placeFlightPlan(OWNER, { date: DATE });
+    expect(autoBlocks()).toHaveLength(1);
+
+    // A full-day meeting lands, leaving no room to re-place t1 on reflow.
+    insertMeeting(`${DATE}T09:00:00.000Z`, `${DATE}T18:00:00.000Z`);
 
     const diff = reflow(OWNER, DATE);
     expect(diff.unplaced).toContain(t1);
+    expect(diff.removed.some((r) => r.task_id === t1)).toBe(true);
+  });
+
+  it('recoverStaleFreezeLocks clears is_locked left on a planned auto block', () => {
+    const t1 = insertTask('Stuck');
+    insertDailyPlan(t1, 0);
+    stage(t1, 0);
+    placeFlightPlan(OWNER, { date: DATE });
+    const [block] = autoBlocks();
+    // Simulate residue from a reflow that died before unfreeze.
+    sqlite.prepare(`UPDATE time_blocks SET is_locked = 1 WHERE id = ?`).run(block.id);
+
+    const cleared = recoverStaleFreezeLocks();
+    expect(cleared).toBeGreaterThanOrEqual(1);
+    const after = sqlite.prepare(`SELECT is_locked FROM time_blocks WHERE id = ?`).get(block.id) as { is_locked: number };
+    expect(after.is_locked).toBe(0);
   });
 });

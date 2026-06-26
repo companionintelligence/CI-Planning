@@ -194,18 +194,25 @@ const insBlock = () =>
      VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?)`
   );
 
-/** Clear our OWN prior agent placements for the local day (pattern blocks survive). */
-function clearPriorAuto(date: string, tz: string): void {
+/**
+ * Clear our OWN prior agent placements for the local day (pattern blocks survive).
+ * `protectIds` — block ids the caller wants kept regardless (auto-defense passes the
+ * in-progress / recently-moved / locked blocks here, in memory, so a reflow never has
+ * to write is_locked to fence them off and can't leave a block stuck locked on a crash).
+ */
+function clearPriorAuto(date: string, tz: string, protectIds?: Set<string>): void {
   const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
   const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const protect = protectIds && protectIds.size ? [...protectIds] : [];
+  const notIn = protect.length ? ` AND id NOT IN (${protect.map(() => '?').join(',')})` : '';
   sqlite
     .prepare(
       `DELETE FROM time_blocks
         WHERE is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
           AND status NOT IN ('completed','skipped')
-          AND start_at < ? AND end_at > ?`
+          AND start_at < ? AND end_at > ?` + notIn
     )
-    .run(dayEndISO, dayStartISO);
+    .run(dayEndISO, dayStartISO, ...protect);
 }
 
 /**
@@ -287,11 +294,18 @@ function isWeekendDate(dateStr: string): boolean {
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
  */
-export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?: string; blockId?: string } = {}): AutoResult {
+export function placeFlightPlan(
+  owner: string = currentOwnerId(),
+  opts: { date?: string; blockId?: string; onlyTaskIds?: Set<string>; protectIds?: Set<string> } = {},
+): AutoResult {
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
-  const staged = selectedStaged(owner, date);
+  const stagedAll = selectedStaged(owner, date);
+  // Reflow (auto-defense) passes `onlyTaskIds` to scope placement to the tasks already
+  // on the day — so a reactive reflow re-packs the EXISTING plan and never pulls in
+  // un-staged backlog or the user's pending flight-plan items (gap-close, not re-fill).
+  const staged = opts.onlyTaskIds ? stagedAll.filter((t) => opts.onlyTaskIds!.has(t.task_id)) : stagedAll;
   const runId = newId(); // stamps every block this run creates, so Undo can target it (D2)
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
@@ -329,7 +343,7 @@ export function placeFlightPlan(owner: string = currentOwnerId(), opts: { date?:
   }
 
   // ── General Auto: Plans first, then the workday fallback ────────────────────
-  clearPriorAuto(date, tz);
+  clearPriorAuto(date, tz, opts.protectIds);
   const placedIds = new Set<string>();
   let blocksCreated = 0;
 
