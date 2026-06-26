@@ -17,6 +17,7 @@ import {
 import { showToast } from '../stores/index.js';
 import { isAllDay, isTimed } from '../lib/overlay.js';
 import { localISODate, addDays } from '../lib/dates.js';
+import { tagColorVar } from '../lib/textures.js';
 
 // ── Palette (mirrors BlockCard's CI teal kinds) ───────────────────────────────
 const kindColor: Record<string, string> = {
@@ -27,6 +28,17 @@ const kindColor: Record<string, string> = {
   break:   '#1a3040',
   buffer:  '#152637',
 };
+
+/**
+ * The chip colour for a calendar block. A stamped Time Block Category colour (0069)
+ * wins; a tagged `timeblock` container uses its tag hash; everything else keeps the
+ * kind palette. Returns a CSS colour usable in color-mix (hex or a `var()` token).
+ */
+function chipColor(b: Block): string {
+  if (b.color_token) return `var(--${b.color_token})`;
+  if (b.block_kind === 'timeblock' && b.tag) return tagColorVar(b.tag);
+  return kindColor[b.block_kind] ?? '#152637';
+}
 
 // Minimum visible chip height (px). Display-only clamp — the stored duration is
 // never altered, position math still uses the true minutes.
@@ -124,7 +136,7 @@ function NowLine(props: { day: string }) {
 // ── Block chip (time-axis positioned, draggable + resizable) ──────────────────
 function BlockChip(props: { placed: Placed; day: string }) {
   const b = () => props.placed.block;
-  const color = () => kindColor[b().block_kind] ?? '#152637';
+  const color = () => chipColor(b());
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
   const locked = () => isImmovable(b());
@@ -190,7 +202,7 @@ function BlockChip(props: { placed: Placed; day: string }) {
         height: `${heightPx()}px`,
         left: `${(props.placed.col / props.placed.cols) * 100}%`,
         width: `calc(${100 / props.placed.cols}% - 2px)`,
-        'background-color': `${color()}26`,       // ~15% alpha fill
+        'background-color': `color-mix(in srgb, ${color()} 15%, transparent)`,
         'border-color': color(),
         'border-left-width': '3px',
       }}
@@ -228,14 +240,14 @@ function BlockChip(props: { placed: Placed; day: string }) {
 
 // ── All-day chip (pinned header lane; not on the minute axis) ──────────────────
 function AllDayChip(props: { block: Block }) {
-  const color = () => kindColor[props.block.block_kind] ?? '#152637';
+  const color = () => chipColor(props.block);
   const done = () => ['completed', 'skipped'].includes(props.block.status);
   return (
     <div
       class="rounded px-1.5 py-0.5 text-[10px] leading-tight truncate border-l-2"
       classList={{ 'opacity-40': done() }}
       style={{
-        'background-color': `${color()}26`,
+        'background-color': `color-mix(in srgb, ${color()} 15%, transparent)`,
         'border-left-color': color(),
       }}
       title={props.block.title}
@@ -449,8 +461,8 @@ export function CalendarGrid(props: Props) {
                       <div
                         class="text-[10px] leading-tight truncate rounded px-1 py-0.5"
                         style={{
-                          'background-color': `${kindColor[b.block_kind] ?? '#152637'}26`,
-                          'border-left': `2px solid ${kindColor[b.block_kind] ?? '#152637'}`,
+                          'background-color': `color-mix(in srgb, ${chipColor(b)} 15%, transparent)`,
+                          'border-left': `2px solid ${chipColor(b)}`,
                         }}
                         title={`${b.title} · ${fmtTime(b.start_at)}`}
                       >

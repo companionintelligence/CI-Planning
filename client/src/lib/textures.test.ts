@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { textureSeed, textureStyle, motifFor, TEXTURE_OPACITY } from './textures.js';
+import { textureSeed, textureStyle, motifFor, TEXTURE_OPACITY, blockColorVar, tagColorVar } from './textures.js';
 
 describe('textureSeed — deterministic + well-distributed', () => {
   it('is stable for the same tag across calls', () => {
@@ -75,5 +75,22 @@ describe('textureStyle — deterministic, shape-correct, subtle', () => {
     expect(Number(style.opacity)).toBeLessThanOrEqual(0.08);
     expect(style['background-color']).toBe('currentColor'); // flips with light/dark
     expect(style['mask-image']).toBe(style['-webkit-mask-image']); // both prefixes set
+  });
+});
+
+describe('blockColorVar — precedence: stamp → live prefs → tag hash (0069)', () => {
+  it('prefers the stamped color_token — immutable, forward-only', () => {
+    expect(blockColorVar({ color_token: 'chart-1', category_id: 'c1', tag: 'work' }, { c1: { color_token: 'tag-5' } }))
+      .toBe('var(--chart-1)'); // stamp wins over both live prefs and tag
+  });
+  it('falls back to live category prefs when there is no stamp', () => {
+    expect(blockColorVar({ category_id: 'c1', tag: 'work' }, { c1: { color_token: 'tag-5' } })).toBe('var(--tag-5)');
+  });
+  it('falls back to the tag hash when there is no stamp or category pref', () => {
+    expect(blockColorVar({ tag: 'work' })).toBe(tagColorVar('work'));
+    expect(blockColorVar({ category_id: 'c1', tag: 'work' })).toBe(tagColorVar('work')); // category w/o a pref row
+  });
+  it('handles a bare block (no stamp/category/tag) via the tag hash', () => {
+    expect(blockColorVar({})).toBe(tagColorVar(undefined));
   });
 });

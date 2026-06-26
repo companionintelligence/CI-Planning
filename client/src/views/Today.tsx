@@ -1,9 +1,11 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-solid';
-import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
+import { blocks, tasks, taskOf, tags, categoryPrefs, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles } from '../stores/selection.js';
-import { api } from '../lib/api.js';
+import { api, type Tag } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
+import { colorVar } from '../lib/pattern-meta.js';
+import { displayTag } from '../lib/tag-tax.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { MissedReview } from '../components/MissedReview.js';
@@ -34,6 +36,17 @@ export function Today() {
       for (const t of taskOf(b.task_id)?.tags ?? []) set.add(t);
     }
     return [...set];
+  });
+
+  // Time Block Categories scheduled today (0069) — surfaced as colored chips.
+  const todayCategories = createMemo(() => {
+    const byId = new Map<string, Tag>((tags() ?? []).filter((t) => t.kind === 'category').map((c) => [c.id, c]));
+    const seen = new Map<string, Tag>();
+    for (const b of blocks() ?? []) {
+      const c = b.category_id ? byId.get(b.category_id) : undefined;
+      if (c) seen.set(c.id, c);
+    }
+    return [...seen.values()];
   });
 
   const overdue = () => summary()?.stats.overdue ?? 0;
@@ -112,10 +125,18 @@ export function Today() {
         </div>
 
         <Show
-          when={todayTags().length > 0}
+          when={todayTags().length + todayCategories().length > 0}
           fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing scheduled yet.</p>}
         >
           <div class="mt-2 flex flex-wrap gap-1.5">
+            <For each={todayCategories()}>
+              {(c) => (
+                <span class="badge-neutral text-[11px] inline-flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full flex-shrink-0" style={{ 'background-color': colorVar(categoryPrefs()?.prefs?.[c.id]?.color_token) }} />
+                  {displayTag(c.name)}
+                </span>
+              )}
+            </For>
             <For each={todayTags()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
           </div>
         </Show>

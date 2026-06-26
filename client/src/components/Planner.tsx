@@ -219,6 +219,8 @@ interface GroupCtx {
 // ── Plan container outline (a timed Time-Block: ★ solid 3pt) — interactive ─────
 function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; onEdit: (b: Block) => void; onRequestDelete: (b: Block) => void }) {
   const b = () => props.block;
+  // 0069: the container's colour — its stamped category colour, else its tag hash (uniform with chips).
+  const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
   const baseTop = () => minutesIntoDay(b().start_at, props.day);
   const baseHeight = () => Math.max(minutesIntoDay(b().end_at, props.day) - baseTop(), 0);
   const locked = () => isImmovable(b());
@@ -251,16 +253,16 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
 
   return (
     <div
-      class="absolute left-0.5 right-0.5 rounded-lg border-[3px] border-primary/70 select-none touch-none"
+      class="absolute left-0.5 right-0.5 rounded-lg border-[3px] select-none touch-none"
       classList={{ 'z-0': !drag(), 'z-[25] shadow-lg': !!drag(), 'cursor-grab': !locked() }}
-      style={{ top: `${yOf(top())}px`, height: `${yOf(liveHeight())}px` }}
+      style={{ top: `${yOf(top())}px`, height: `${yOf(liveHeight())}px`, 'border-color': color(), 'background-color': `color-mix(in srgb, ${color()} 8%, transparent)` }}
       title={`${b().title} · Plan — drag to move the whole group`}
       onPointerDown={(e) => startGesture('move', e)}
     >
       <span class="absolute -top-2 left-2 px-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-card rounded pointer-events-none">
-        <Star size={9} class="text-primary" />
+        <Star size={9} style={{ color: color() }} />
         {b().title}
-        <Show when={b().tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
+        <Show when={blockTagLabel(b())}>{(lbl) => <span style={{ color: color() }}>{lbl()}</span>}</Show>
       </span>
       <Show when={!locked()}>
         <div class="absolute top-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-top', e)} />

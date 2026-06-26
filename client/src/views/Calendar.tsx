@@ -195,7 +195,7 @@ export function Calendar() {
         <div class="mb-4 p-3 rounded-lg border border-surface-700/60 bg-surface-800 flex flex-col gap-3">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-[10px] uppercase tracking-wide text-slate-500 w-14">Tags</span>
-            <For each={tags() ?? []}>
+            <For each={(tags() ?? []).filter((t) => t.kind !== 'category')}>
               {(t) => (
                 <button
                   onClick={() => toggleTag(t.name)}
