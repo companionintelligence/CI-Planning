@@ -292,6 +292,7 @@ export const api = {
 
   patternBlocks: {
     list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
+    forDay: (dayType: string) => request<{ windows: PatternWindows }>('GET', `/pattern-blocks/${dayType}`),
     set:  (dirTagId: string, dayType: string, ranges: Omit<PatternRange, 'id'>[]) =>
             request<{ ranges: PatternRange[] }>('PUT', `/pattern-blocks/${dirTagId}/${dayType}`, { ranges }),
   },
@@ -300,6 +301,7 @@ export const api = {
   // per-date overrides. resolveDayType picks which pattern_blocks windows Auto uses.
   dayTypes: {
     list: () => request<{ day_types: DayType[] }>('GET', '/day-types'),
+    resolve: (date: string) => request<{ date: string; key: string; source: 'assignment' | 'map' | 'default' }>('GET', `/day-types/resolve/${date}`),
     create: (key: string, name: string) => request<{ day_type: DayType }>('POST', '/day-types', { key, name }),
     rename: (id: string, name: string) => request<{ day_type: DayType }>('PATCH', `/day-types/${id}`, { name }),
     remove: (id: string) => request<{ ok: boolean }>('DELETE', `/day-types/${id}`),
