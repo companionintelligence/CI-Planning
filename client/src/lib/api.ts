@@ -200,7 +200,7 @@ export const api = {
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/fill', body ?? {}),
     // Auto Schedule: place selected staged items (Plans → direction windows → workday fill).
     // horizon_days (T-SCHED-2): explicitly place across N days; omit to let the server
-    // apply the Schedule-mode horizon (planning_horizon_days) in Schedule mode.
+    // apply the planning_horizon_days horizon in the Hands-off trust mode (TM-4).
     run: (body?: { block_id?: string; date?: string; horizon_days?: number }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/run', body ?? {}),
     // Undo the last placement run (D2): delete its blocks, re-stage its tasks.
@@ -497,10 +497,14 @@ export interface Tag {
   direction_optouts?: string[]; // category only: pattern (direction) names turned OFF (empty = all directions on) (0069)
 }
 
+/** The automation trust dial (0069) — a Setting, not a glossary noun. See TrustDial.tsx. */
+export type TrustMode = 'cautious' | 'balanced' | 'hands_off';
+
 export interface Prefs {
   id: string; owner_id: string; workday_start: string; workday_end: string;
   auto_fill_workday?: boolean; // gates the workday fallback fill (0028)
-  auto_mode?: 'suggest' | 'schedule'; // trust toggle (0052); default 'suggest'
+  auto_mode?: 'suggest' | 'schedule'; // VESTIGIAL since 0069 (superseded by trust_mode); no readers
+  trust_mode?: TrustMode; // automation dial (0069): 'cautious' | 'balanced' (default) | 'hands_off'
   fill_order?: 'priority' | 'overdue'; // leftover fill ordering (0055); default 'priority'
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;

@@ -46,6 +46,11 @@ reserved)** and demotes everything else.
   **Setting** (managed under Settings → MCP connections). Connecting Google adds no new
   glossary entity; its data surfaces as existing nouns (calendar events → **Time Block**
   *meeting* mirrors; extracted action items → **Inbox** items). The noun budget stays at 8.
+- **Trust dial — Cautious / Balanced / Hands-off:** **not a noun** — it is a **Setting**
+  (`scheduling_prefs.trust_mode`, surfaced in the top bar and Settings → Automation). One control
+  over two levers: how aggressively the **Inbox** auto-promotes, and whether promoted,
+  estimate-bearing **Tasks** auto-schedule onto the day. It introduces no new entity (its effects
+  surface as existing nouns — Tasks and their Time Blocks). The noun budget stays at 8.
 - **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each pattern-tag has
   0–N time ranges per day type. Pattern-tag-less tasks fall back to the general `workday_start`/
   `workday_end` window from scheduling\_prefs.

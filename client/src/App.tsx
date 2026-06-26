@@ -5,6 +5,7 @@ import { Nav }      from './components/Nav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
 import { ElementWizard } from './components/ElementWizard.js';
+import { TrustDial } from './components/TrustDial.js';
 import { Today }    from './views/Today.js';
 import { Calendar } from './views/Calendar.js';
 import { Inbox }    from './views/Inbox.js';
@@ -12,8 +13,7 @@ import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
-import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast } from './stores/index.js';
-import { api } from './lib/api.js';
+import { setElementModal, blocks, taskOf, tags, patternPrefs } from './stores/index.js';
 import {
   requestNotificationPermission,
   scheduleTaskReminders,
@@ -74,13 +74,6 @@ function Shell(props: { children?: any }) {
   const location = useLocation();
   useTaskReminders();
 
-  const mode = () => prefs()?.auto_mode ?? 'suggest';
-  async function setMode(m: 'suggest' | 'schedule') {
-    if (m === mode()) return;
-    try { await api.prefs.update({ auto_mode: m }); refetchPrefs(); }
-    catch (err) { showToast((err as Error).message, 'error'); }
-  }
-
   return (
     <div class="flex h-screen overflow-hidden bg-surface-950">
       <Nav />
@@ -96,23 +89,8 @@ function Shell(props: { children?: any }) {
             <span class="font-heading text-sm text-slate-100 tracking-wide">Planning</span>
           </div>
           <div class="flex-1" />
-          {/* Suggest / Schedule toggle — global auto-mode; lives in the top bar */}
-          <div
-            class="inline-flex rounded-full border border-surface-700/60 overflow-hidden text-[11px]"
-            role="group"
-            title="Suggest: nothing schedules until you press a button. Schedule: new tasks auto-schedule as they arrive; buttons still work for manual runs."
-          >
-            <button
-              onClick={() => setMode('suggest')}
-              class="px-2.5 py-0.5 transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': mode() === 'suggest', 'text-muted-foreground hover:text-foreground': mode() !== 'suggest' }}
-            >Suggest</button>
-            <button
-              onClick={() => setMode('schedule')}
-              class="px-2.5 py-0.5 transition-colors"
-              classList={{ 'bg-primary text-primary-foreground': mode() === 'schedule', 'text-muted-foreground hover:text-foreground': mode() !== 'schedule' }}
-            >Schedule</button>
-          </div>
+          {/* Automation trust dial — Cautious / Balanced / Hands-off; lives in the top bar */}
+          <TrustDial compact />
           <span class="text-xs font-mono" style={{ color: '#244859' }}>
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>

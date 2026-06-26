@@ -17,7 +17,7 @@ import { useDraggable } from '../lib/draggable.js';
  *    Plans, then direction windows, then leftover workday capacity ordered by the
  *    Priority / Over-Due toggle. Never proposes candidates.
  *
- * The Suggest / Schedule toggle has moved to the Day Overview header (Today.tsx).
+ * The automation trust dial (Cautious / Balanced / Hands-off) lives in the top bar.
  * Per-direction fill is configured in Settings → Schedule Patterns.
  * The general workday fallback is configured in Settings → Schedule Patterns →
  * "Fill work hours for undirected tasks".

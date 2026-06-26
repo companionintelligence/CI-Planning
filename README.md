@@ -209,6 +209,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Inbox / review queue** — ingestion jobs propose "possible tasks" from email and
   calendar; each shows its source and a confidence score, and nothing becomes a real
   task until you promote it (one keystroke: `P` to add, `D` to dismiss)
+- **Automation trust dial** — one Setting (top bar + Settings → Automation) sets how
+  hands-off you want to be: **Cautious** (review everything in the Inbox), **Balanced**
+  (high-confidence items auto-promote; you schedule them — the default), or **Hands-off**
+  (auto-promote *and* auto-schedule any promoted task that carries a time estimate). AI
+  orders the plan; placement stays deterministic
 - **Background jobs** — Gmail / Calendar ingest, possible-task promotion, nightly
   grooming (embedding-based dedupe), and auto-schedule; all visible and manually
   runnable from the Jobs view

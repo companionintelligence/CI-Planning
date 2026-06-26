@@ -3,6 +3,7 @@ import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshC
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
+import { TrustDial } from '../components/TrustDial.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { RoutineTypeSettings } from '../components/RoutineTypeSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
@@ -354,6 +355,17 @@ export function Settings() {
       <h1 class="text-2xl font-bold text-slate-100 mb-6">Settings</h1>
 
       <form onSubmit={save} class="flex flex-col gap-5">
+        {/* Automation — the trust dial (a Setting, not a glossary noun). Governs how
+            aggressively the Inbox auto-promotes and whether promoted, estimate-bearing
+            tasks auto-schedule. AI orders the plan; placement stays deterministic. */}
+        <section class="card">
+          <div class="section-label mb-1">Automation</div>
+          <p class="text-xs text-muted-foreground mb-3">
+            How much Companion does on its own. AI orders your plan; placement stays deterministic.
+          </p>
+          <TrustDial />
+        </section>
+
         {/* Schedule Patterns — per-direction availability windows */}
         <section class="card">
           <div class="section-label mb-1">Schedule Patterns</div>
@@ -375,8 +387,8 @@ export function Settings() {
           <div class="mt-4 pt-3 border-t border-border">
             <label class="flex items-center justify-between gap-3">
               <div>
-                <div class="text-sm text-foreground leading-tight">Schedule mode — plan days ahead</div>
-                <div class="text-[11px] text-muted-foreground">In Schedule mode, Auto plans this many days ahead. Shares the Planning horizon (also the task candidate window).</div>
+                <div class="text-sm text-foreground leading-tight">Hands-off mode — plan days ahead</div>
+                <div class="text-[11px] text-muted-foreground">In Hands-off mode, Auto plans this many days ahead. Shares the Planning horizon (also the task candidate window).</div>
               </div>
               <input type="number" class="input py-1 text-sm w-20 flex-shrink-0" min={1} max={60} step={1}
                 value={form().planning_horizon_days}
@@ -584,7 +596,7 @@ export function Settings() {
             );
           })()}
 
-          {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
+          {/* The automation trust dial lives in the top bar and in Settings → Automation. */}
 
           {/* Routine Types — edit the built-in pattern-type taxonomy (creation removed, T-SET-1) */}
           <div class="border-t border-border pt-4 mt-4">
