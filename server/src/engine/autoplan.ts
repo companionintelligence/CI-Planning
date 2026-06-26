@@ -319,7 +319,13 @@ function placeIntoWindow(
 /** STEP 1: propose open-task candidates (not already staged) into the flight-plan.
  * Habits are excluded — they're auto-placed daily from their recurrence, so they
  * shouldn't flood the flight-plan as one-off candidates. */
-export function fillFlightPlanCandidates(owner: string = currentOwnerId()): number {
+export function fillFlightPlanCandidates(
+  owner: string = currentOwnerId(),
+  opts: { requireEstimate?: boolean } = {},
+): number {
+  // TM-3: the auto-block path stages only estimate-bearing tasks (we won't fabricate a
+  // block duration for a task the user never sized). Default false ⇒ unchanged staging.
+  const estimateClause = opts.requireEstimate ? `AND estimated_minutes IS NOT NULL` : '';
   const candidates = sqlite
     .prepare(
       `SELECT id FROM tasks
@@ -327,6 +333,7 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
           AND subtype IS NOT 'habit'
           AND parent_id IS NULL
           AND recurrence_parent_id IS NULL
+          ${estimateClause}
           AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)
         ORDER BY priority, COALESCE(due_at, '9999-12-31'), id
         LIMIT ?`
@@ -649,25 +656,53 @@ export function runAuto(opts: { date?: string; blockId?: string } = {}): AutoRes
   return placeFlightPlan(owner, opts);
 }
 
-/** The owner's trust mode (D1). Defaults to the safe 'suggest' if prefs are absent. */
-export function autoMode(owner: string = currentOwnerId()): 'suggest' | 'schedule' {
-  const row = sqlite.prepare(`SELECT auto_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { auto_mode?: string } | undefined;
-  return row?.auto_mode === 'schedule' ? 'schedule' : 'suggest';
+export type TrustMode = 'cautious' | 'balanced' | 'hands_off';
+
+export interface TrustPolicy {
+  mode: TrustMode;
+  /** auto-promote high-confidence Inbox items into Tasks (off only for 'cautious'). */
+  autoPromote: boolean;
+  /** confidence gate for auto-promotion (Balanced / Hands-off). */
+  promoteThreshold: number;
+  /** auto-block promoted, estimate-bearing Tasks at the promotion boundary (Hands-off only). */
+  autoBlock: boolean;
+}
+
+/** Default auto-promote confidence gate. The dial chooses *whether* to promote, not this value. */
+export const AUTO_PROMOTE_THRESHOLD = 0.7;
+
+/**
+ * The owner's trust dial (TM-2; FTUE gaps 5 & 6) — the single source of truth that maps
+ * `scheduling_prefs.trust_mode` to behavior. Read this, never the raw column. Defaults to
+ * the safe 'balanced' when prefs are absent (auto-promote on, auto-block off — today's behavior).
+ */
+export function resolveTrustPolicy(owner: string = currentOwnerId()): TrustPolicy {
+  const row = sqlite.prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
+    | { trust_mode?: string }
+    | undefined;
+  const mode: TrustMode = row?.trust_mode === 'cautious' || row?.trust_mode === 'hands_off' ? row.trust_mode : 'balanced';
+  return {
+    mode,
+    autoPromote: mode !== 'cautious',
+    promoteThreshold: AUTO_PROMOTE_THRESHOLD,
+    autoBlock: mode === 'hands_off',
+  };
 }
 
 /**
- * Schedule-mode zero-click path (D1): on ingest, collapse taps 1+2 — fill candidates
- * (all selected) and place tag-matched work in one pass. No-op in suggest mode (the
- * user drives the taps). The explicit priority top-up (tap 3) is never silent and is
- * NOT run here. Returns the place result, or null when suggest mode / nothing to do.
+ * Hands-off zero-click path (TM-4): collapse taps 1+2 — fill candidates (all selected) and
+ * place tag-matched work in one pass. No-op unless the trust dial is Hands-off (Cautious /
+ * Balanced leave the user to drive the taps). The explicit priority top-up (tap 3) is never
+ * silent and is NOT run here. `requireEstimate` limits staging to estimate-bearing tasks (the
+ * promotion-boundary policy, TM-5). Returns the place result, or null when off / nothing to do.
  */
 export function autoScheduleOnIngest(
   owner: string = currentOwnerId(),
-  opts: { date?: string } = {},
+  opts: { date?: string; requireEstimate?: boolean } = {},
 ): AutoResult | null {
-  if (autoMode(owner) !== 'schedule') return null;
-  fillFlightPlanCandidates(owner); // stage any new open tasks, all selected
+  if (!resolveTrustPolicy(owner).autoBlock) return null;
+  fillFlightPlanCandidates(owner, { requireEstimate: opts.requireEstimate }); // stage new open tasks, all selected
   const date = opts.date ?? localISODate();
   if (selectedStaged(owner, date).length === 0) return null;
-  return placeFlightPlan(owner, opts);
+  return placeFlightPlan(owner, { date: opts.date });
 }
