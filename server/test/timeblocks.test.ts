@@ -94,4 +94,22 @@ describe('block templates', () => {
     const t = (await api(srv.url, '/api/block-templates', { method: 'POST', json: { name: 'X' } })).body.block_template;
     expect((await api(srv.url, `/api/block-templates/${t.id}/instantiate`, { method: 'POST', json: {} })).status).toBe(422);
   });
+
+  it('edits a template via PATCH (name / tag / duration); 404 unknown; 422 blank name', async () => {
+    const t = (await api(srv.url, '/api/block-templates', { method: 'POST', json: { name: 'Focus', tag: 'work', default_minutes: 60 } })).body.block_template;
+
+    const u = await api(srv.url, `/api/block-templates/${t.id}`, { method: 'PATCH', json: { name: 'Deep focus', tag: 'deep', default_minutes: 120 } });
+    expect(u.status).toBe(200);
+    expect(u.body.block_template).toMatchObject({ name: 'Deep focus', tag: 'deep', default_minutes: 120 });
+    // persisted + tasks untouched
+    const row = (await api(srv.url, '/api/block-templates')).body.block_templates.find((x: any) => x.id === t.id);
+    expect(row).toMatchObject({ name: 'Deep focus', tag: 'deep', default_minutes: 120 });
+
+    // partial patch (only minutes) keeps name/tag
+    const u2 = await api(srv.url, `/api/block-templates/${t.id}`, { method: 'PATCH', json: { default_minutes: 45 } });
+    expect(u2.body.block_template).toMatchObject({ name: 'Deep focus', tag: 'deep', default_minutes: 45 });
+
+    expect((await api(srv.url, '/api/block-templates/does-not-exist', { method: 'PATCH', json: { name: 'x' } })).status).toBe(404);
+    expect((await api(srv.url, `/api/block-templates/${t.id}`, { method: 'PATCH', json: { name: '   ' } })).status).toBe(422);
+  });
 });
