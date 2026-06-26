@@ -85,6 +85,7 @@ export interface ElementForm {
   someday?: boolean;          // time-block as a someday goal
   goalDay?: string;           // YYYY-MM-DD (someday)
   recurrenceRule?: string | null;  // time-block RRULE ('' / null clears)
+  categoryId?: string;             // time-block: the Time Block Category (0069); direction implied
   secondaryTags?: string[];        // preserved on time-block edit (not authored here)
   // task / habit
   scheduledFor?: string;
@@ -104,10 +105,11 @@ async function ensureIntentionTags(primary: string, names: string[]): Promise<vo
   if (!primary) return;
   const all = tags() ?? [];
   const known = new Set(all.map((t) => t.name.toLowerCase()));
-  const patternNames = new Set(all.filter((t) => t.kind === 'pattern').map((t) => t.name.toLowerCase()));
+  // Never auto-create an intention that collides with a pattern OR a category name.
+  const reserved = new Set(all.filter((t) => t.kind === 'pattern' || t.kind === 'category').map((t) => t.name.toLowerCase()));
   for (const n of names) {
     const key = n.toLowerCase();
-    if (!known.has(key) && !patternNames.has(key)) {
+    if (!known.has(key) && !reserved.has(key)) {
       await api.tags.create(n, { kind: 'intention', directions: [primary] });
     }
   }
@@ -124,7 +126,10 @@ export async function saveElement(
   form: ElementForm,
   editId?: string,
 ): Promise<string> {
-  const tagList = [form.primary, ...form.intentions].filter(Boolean);
+  // Category tags are NEVER task/direction tags — keep them out of an entity's tag list
+  // (a typed intention name that collides with a category must not attach the category).
+  const categoryNames = new Set((tags() ?? []).filter((t) => t.kind === 'category').map((t) => t.name.toLowerCase()));
+  const tagList = [form.primary, ...form.intentions].filter(Boolean).filter((n) => !categoryNames.has(n.toLowerCase()));
   await ensureIntentionTags(form.primary, form.intentions);
 
   if (kind === 'task' || kind === 'habit') {
@@ -189,6 +194,7 @@ export async function saveElement(
       tag: tagList.join(',') || undefined, goal_start_date: goal, duration_minutes: durMin, all_day: true,
       note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
+      ...(form.categoryId ? { category_id: form.categoryId } : {}),
       ...extra,
     };
   } else {
@@ -198,6 +204,7 @@ export async function saveElement(
       tag: tagList.join(',') || undefined, note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...(form.recurrenceRule !== undefined ? { recurrence_rule: form.recurrenceRule } : {}),
+      ...(form.categoryId ? { category_id: form.categoryId } : {}),
       ...extra,
     };
   }

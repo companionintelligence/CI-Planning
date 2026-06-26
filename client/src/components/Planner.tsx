@@ -6,11 +6,12 @@ import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } 
 import { resolveGroup, containerAt } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
-import { isSelected, toggleSelection, setActiveTask } from '../stores/selection.js';
+import { isSelected, toggleSelection, setActiveTask, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
-import { textureStyle, tagColorVar, doneHatchStyle } from '../lib/textures.js';
+import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
+import { displayTag } from '../lib/tag-tax.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
@@ -19,6 +20,16 @@ import { SelectedTaskSummary } from './SelectedTaskSummary.js';
 /** Open the unified Element wizard to edit a Time Block. */
 function editTimeBlock(id: string) {
   setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id } });
+}
+
+/** A block's grouping chip label: its #tag, else its Time Block Category name (0069). */
+function blockTagLabel(block: { tag?: string | null; category_id?: string | null }): string | undefined {
+  if (block.tag) return `#${block.tag}`;
+  if (block.category_id) {
+    const c = (tags() ?? []).find((t) => t.id === block.category_id);
+    if (c) return displayTag(c.name);
+  }
+  return undefined;
 }
 
 /**
@@ -283,7 +294,7 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
         <Pentagon size={10} class="text-muted-foreground flex-shrink-0" />
       </Show>
       <span class="text-foreground truncate">{props.block.title}</span>
-      <Show when={props.block.tag}>{(t) => <span class="text-primary flex-shrink-0">#{t()}</span>}</Show>
+      <Show when={blockTagLabel(props.block)}>{(lbl) => <span class="text-primary flex-shrink-0">{lbl()}</span>}</Show>
     </span>
   );
 }
@@ -294,6 +305,8 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   const task = () => taskOf(b().task_id);
   const pat = () => patternForTask(b().task_id);
   const tag = () => task()?.tags?.[0] ?? b().tag ?? undefined;
+  // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
+  const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
   const completed = () => b().status === 'completed';
@@ -399,7 +412,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         left: `calc(${(props.placed.col / props.placed.cols) * 100}% + ${inset()}px)`,
         width: `calc(${100 / props.placed.cols}% - 3px - ${inset()}px)`,
         ...(completed() ? doneHatchStyle(tag()) : {}),
-        ...(glow() ? { '--done-glow': `color-mix(in srgb, ${tagColorVar(tag())} 55%, transparent)` } : {}),
+        ...(glow() ? { '--done-glow': `color-mix(in srgb, ${color()} 55%, transparent)` } : {}),
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
       onAnimationEnd={() => setGlow(false)}
@@ -430,7 +443,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         <button
           class="absolute top-1 left-1 z-20 w-4 h-4 rounded-[4px] border flex items-center justify-center"
           classList={{ 'bg-card border-muted-foreground': !completed(), 'border-transparent': completed() }}
-          style={completed() ? { background: tagColorVar(tag()) } : {}}
+          style={completed() ? { background: color() } : {}}
           title={completed() ? 'Mark not done' : 'Mark done'}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); void setDone(!completed()); }}
@@ -725,14 +738,14 @@ export function Planner() {
         >
           <Pentagon size={10} class="text-muted-foreground flex-shrink-0" />
           <span class="text-foreground truncate">{props.block.title}</span>
-          <Show when={props.block.tag}>{(t) => <span class="text-primary flex-shrink-0">#{t()}</span>}</Show>
+          <Show when={blockTagLabel(props.block)}>{(lbl) => <span class="text-primary flex-shrink-0">{lbl()}</span>}</Show>
         </button>
         <Show when={open()}>
           <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div class="absolute top-full left-0 mt-1 z-30 w-56 rounded-lg border border-border bg-popover shadow-xl p-3">
             <div class="text-sm font-medium text-foreground truncate">{props.block.title}</div>
             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Show when={props.block.tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
+              <Show when={blockTagLabel(props.block)}>{(lbl) => <span class="text-primary">{lbl()}</span>}</Show>
               <Show when={props.block.goal_start_date}>{(d) => <span>· goal {d()}</span>}</Show>
               <Show when={props.block.duration_minutes}>{(m) => <span>· {m()}m</span>}</Show>
             </div>
@@ -756,6 +769,17 @@ export function Planner() {
           <span class="text-[10px] text-muted-foreground">{windowHours()}h · scroll for more</span>
         </div>
         <div class="flex items-center gap-3">
+          {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
+              shown once ≥2 task chips are selected (opens the same Create-Routine modal). */}
+          <Show when={selection().size >= 2}>
+            <button
+              onClick={() => setRoutineModal({ open: true, name: '' })}
+              class="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+              title={`Create a routine from the ${selection().size} selected tasks`}
+            >
+              <Repeat size={12} /> + Routine
+            </button>
+          </Show>
           {/* T-PLAN-1: clear this day's auto-placed blocks (keeps locked/calendar/habit). */}
           <button
             onClick={clearDay}

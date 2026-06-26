@@ -19,7 +19,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { taskTagNames } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
@@ -27,6 +27,7 @@ import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
+import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
 
 const DEFAULT_EST_MIN = 30;
@@ -41,6 +42,7 @@ export interface AutoResult {
   unplaced?: number;
   placedInPlans?: number;    // step 2: tasks that landed inside a Plan
   placedInWorkday?: number;  // step 2: tasks that landed in the workday fallback
+  days?: number;             // T-SCHED-2: how many days a Schedule-mode horizon run spanned (>1 only)
 }
 
 interface StagedTask {
@@ -113,8 +115,7 @@ function prefsOf(owner: string): PrefsRow | undefined {
 
 /** Tagged, timed Plan containers on `date`, earliest first. */
 function dayPlans(date: string, tz: string): PlanRow[] {
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   return sqlite
     .prepare(
       `SELECT tb.id, tb.start_at, tb.end_at, tb.tag,
@@ -122,11 +123,69 @@ function dayPlans(date: string, tz: string): PlanRow[] {
                          WHERE pt.name = tb.tag AND pt.catch_all = 1 LIMIT 1), 0) AS catch_all
          FROM time_blocks tb
         WHERE tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled' AND tb.tag IS NOT NULL
+          AND tb.category_id IS NULL
           AND COALESCE(tb.all_day, 0) = 0
           AND tb.start_at < ? AND tb.end_at > ?
-        ORDER BY tb.start_at`
+        ORDER BY tb.start_at, tb.id`
     )
     .all(dayEndISO, dayStartISO) as PlanRow[];
+}
+
+interface CategoryPlanRow { id: string; start_at: string; end_at: string; category_id: string }
+
+/**
+ * Category-tagged, timed Plan containers on `date`, earliest first (0069). Disjoint
+ * from dayPlans by the tag XOR category_id invariant (a category container has tag
+ * NULL; a tag-Plan has category_id NULL — enforced in routes/blocks.ts), so no block
+ * is ever filled by both passes.
+ */
+function dayCategoryPlans(date: string, tz: string): CategoryPlanRow[] {
+  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
+  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  return sqlite
+    .prepare(
+      `SELECT tb.id, tb.start_at, tb.end_at, tb.category_id
+         FROM time_blocks tb
+        WHERE tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled' AND tb.category_id IS NOT NULL
+          AND COALESCE(tb.all_day, 0) = 0
+          AND tb.start_at < ? AND tb.end_at > ?
+        ORDER BY tb.start_at, tb.id`
+    )
+    .all(dayEndISO, dayStartISO) as CategoryPlanRow[];
+}
+
+/**
+ * Staged tasks eligible for a category Plan (0069): a SECONDARY tag (entity_tags
+ * level>1) that is a member of the category, AND a direction that is NOT fully opted
+ * out for the category. Preserves `staged` order (deterministic — id-keyed, no clock/
+ * randomness). NB: `staged.tags` is level-1 only, so category matching MUST read
+ * entity_tags level>1 directly. A direction-less task is included on the tag match alone.
+ */
+function categoryCandidates(staged: StagedTask[], categoryId: string): StagedTask[] {
+  const candIds = new Set(
+    (sqlite
+      .prepare(
+        `SELECT DISTINCT entity_id FROM entity_tags
+          WHERE entity_kind = 'task' AND level > 1
+            AND tag_id IN (SELECT intention_tag_id FROM tag_categories WHERE category_tag_id = ?)`
+      )
+      .all(categoryId) as { entity_id: string }[]).map((r) => r.entity_id),
+  );
+  if (candIds.size === 0) return [];
+  const optOut = new Set(
+    (sqlite
+      .prepare(`SELECT pattern_tag_id FROM category_direction_optouts WHERE category_tag_id = ?`)
+      .all(categoryId) as { pattern_tag_id: string }[]).map((r) => r.pattern_tag_id),
+  );
+  const patNameToId = new Map<string, string>();
+  for (const pt of sqlite.prepare(`SELECT id, name FROM tags WHERE kind = 'pattern'`).all() as { id: string; name: string }[]) {
+    patNameToId.set(pt.name, pt.id);
+  }
+  return staged.filter((t) => {
+    if (!candIds.has(t.task_id)) return false;
+    const dirIds = t.tags.map((n) => patNameToId.get(n)).filter((id): id is string => id !== undefined);
+    return dirIds.length === 0 || !dirIds.every((d) => optOut.has(d)); // include unless EVERY direction opted out
+  });
 }
 
 /**
@@ -201,8 +260,7 @@ const insBlock = () =>
  * to write is_locked to fence them off and can't leave a block stuck locked on a crash).
  */
 function clearPriorAuto(date: string, tz: string, protectIds?: Set<string>): void {
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   const protect = protectIds && protectIds.size ? [...protectIds] : [];
   const notIn = protect.length ? ` AND id NOT IN (${protect.map(() => '?').join(',')})` : '';
   sqlite
@@ -284,19 +342,13 @@ export function fillFlightPlanCandidates(owner: string = currentOwnerId()): numb
   return added;
 }
 
-/** True for Saturday (6) and Sunday (0) — UTC date-of-week, DST-safe. */
-function isWeekendDate(dateStr: string): boolean {
-  const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay();
-  return dow === 0 || dow === 6;
-}
-
 /**
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
  */
 export function placeFlightPlan(
   owner: string = currentOwnerId(),
-  opts: { date?: string; blockId?: string; onlyTaskIds?: Set<string>; protectIds?: Set<string> } = {},
+  opts: { date?: string; blockId?: string; silent?: boolean; onlyTaskIds?: Set<string>; protectIds?: Set<string> } = {},
 ): AutoResult {
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
@@ -310,34 +362,41 @@ export function placeFlightPlan(
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
-    const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ?`).get(opts.blockId) as
-      | { start_at: string; end_at: string; tag: string | null }
+    const block = sqlite.prepare(`SELECT start_at, end_at, tag, category_id FROM time_blocks WHERE id = ?`).get(opts.blockId) as
+      | { start_at: string; end_at: string; tag: string | null; category_id: string | null }
       | undefined;
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
     clearPriorAutoInWindow(Date.parse(block.start_at), Date.parse(block.end_at));
-    const catchAll = !!(sqlite
-      .prepare(`SELECT 1 FROM pattern_types WHERE name = ? AND catch_all = 1 LIMIT 1`)
-      .get(block.tag) as {} | undefined);
     let cands: StagedTask[];
     let ordered: StagedTask[];
-    if (catchAll) {
-      // Catch-all Plan: accept every staged task, sorted by priority only.
-      cands = staged;
-      ordered = [...staged].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
+    if (block.category_id) {
+      // 0069 category Plan: fill ONLY its category candidates (NOT every staged task) —
+      // the same secondary-tag + opt-out filter as the general Pass 1.5.
+      cands = categoryCandidates(staged, block.category_id);
+      ordered = cands; // preserve staged order (deterministic)
     } else {
-      // Phase 5: match on ANY of the Plan's tags; dilute secondaries in ordering.
-      const weights = planTagWeights(opts.blockId, block.tag);
-      const planTags = [...weights.keys()];
-      cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
-      ordered = orderForPlan(cands, weights);
+      const catchAll = !!(sqlite
+        .prepare(`SELECT 1 FROM pattern_types WHERE name = ? AND catch_all = 1 LIMIT 1`)
+        .get(block.tag) as {} | undefined);
+      if (catchAll) {
+        // Catch-all Plan: accept every staged task, sorted by priority only.
+        cands = staged;
+        ordered = [...staged].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
+      } else {
+        // Phase 5: match on ANY of the Plan's tags; dilute secondaries in ordering.
+        const weights = planTagWeights(opts.blockId, block.tag);
+        const planTags = [...weights.keys()];
+        cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
+        ordered = orderForPlan(cands, weights);
+      }
     }
     const r = placeIntoWindow(ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
     recordRun(owner, runId, r.blocksCreated);
-    broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
+    if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     if (r.placedTaskIds.size > 0) {
       const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
       for (const id of r.placedTaskIds) del.run(owner, id);
-      broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
+      if (!opts.silent) broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
     }
     return { step: 'place', blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size, placedInPlans: r.placedTaskIds.size, placedInWorkday: 0 };
   }
@@ -373,6 +432,19 @@ export function placeFlightPlan(
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
+
+  // Pass 1.5 — category Plans (0069). Disjoint from Pass 1 (tag XOR category_id), so no
+  // block is filled twice. Each is filled with its category candidates (secondary-tag
+  // match + direction opt-out filter), preserving staged order. Runs immediately after
+  // Pass 1 and before the direction-window pass, so category blocks supersede pattern
+  // windows for their span (via dayObstacles includePlans) just like tag-Plans.
+  for (const plan of dayCategoryPlans(date, tz)) {
+    const filtered = categoryCandidates(staged, plan.category_id).filter((t) => !placedIds.has(t.task_id));
+    if (filtered.length === 0) continue;
+    const r = placeIntoWindow(filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
+    r.placedTaskIds.forEach((id) => placedIds.add(id));
+    blocksCreated += r.blocksCreated;
+  }
   const placedInPlans = placedIds.size;
 
   // Pass 2a — direction-window placement (tag-matched). Runs UNCONDITIONALLY: this is
@@ -381,7 +453,7 @@ export function placeFlightPlan(
   // flowing around the Plans. Per-direction auto_fill (pattern_prefs) is still honored.
   // Leftover capacity is left OPEN here — the workday/priority fill is the separate,
   // explicit fillByPriority() step (tap 3, D5).
-  const dayType = isWeekendDate(date) ? 'weekend' : 'workday';
+  const dayType = resolveDayType(owner, date);
   const patWindows = getPatternBlocks(owner, dayType);
   // Track tasks gated off by per-direction auto_fill=false so Pass 2b skips them too.
   const directionGatedOffIds = new Set<string>();
@@ -461,11 +533,11 @@ export function placeFlightPlan(
 
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
-  broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
+  if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
   if (placedIds.size > 0) {
     const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
     for (const id of placedIds) del.run(owner, id);
-    broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
+    if (!opts.silent) broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
   }
   return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday };
 }
@@ -488,8 +560,7 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
   const staged = selectedStaged(owner, date);
   // Tasks already auto-placed today are not re-placed (this top-up runs AFTER tap 2,
   // and must not clear or duplicate those placements).
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   const placedTaskIds = new Set(
     (sqlite
       .prepare(
