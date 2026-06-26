@@ -506,7 +506,13 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     broadcast(owner, 'timer:stopped', res.entry);
     broadcast(owner, 'task:updated', { id: res.taskId, actual_minutes: res.actualMinutes });
-    if (res.overran) broadcast(owner, 'block:updated', { id: res.entry.block_id });
+    if (res.overran) {
+      broadcast(owner, 'block:updated', { id: res.entry.block_id });
+      // §C1 (docs/M-ai-scheduler.md:322): an overrun shifts the day's obstacles — request a
+      // reactive reflow so the remaining blocks re-pack around the long-running one
+      // (debounced + toggle-gated; never throws into this handler).
+      requestReplan('overrun', owner);
+    }
     writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:stop', entity: `task:${res.taskId}` });
     ctx.body = { entry: res.entry, actual_minutes: res.actualMinutes };
   });
