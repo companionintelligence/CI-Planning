@@ -4,10 +4,10 @@ import { api } from '../lib/api.js';
 import { selectedDay, refetchBlocks, showToast } from '../stores/index.js';
 
 /**
- * Phase M A4 (pins-first) — one-line natural-language planning instruction.
- * Enter parses via /api/plan/instruct: appointment-style PINS become locked blocks
- * the deterministic placer routes around; tag/ordering HINTS are parsed + surfaced
- * (not yet enforced — see the A4 "as-built" note).
+ * Phase M A4 — one-line natural-language planning instruction.
+ * Enter parses via /api/plan/instruct: appointment-style PINS become locked blocks the
+ * deterministic placer routes around; tag/ordering HINTS are persisted and enforced on
+ * the next Auto run (per-tag time windows in placement + a soft authoring constraint).
  */
 export function PlanInstruct() {
   const [text, setText] = createSignal('');
@@ -23,7 +23,7 @@ export function PlanInstruct() {
       if (res.created > 0) refetchBlocks();
       const bits: string[] = [];
       if (res.created > 0) bits.push(`${res.created} pinned`);
-      if (res.hints.length > 0) bits.push(`${res.hints.length} hint${res.hints.length === 1 ? '' : 's'} noted`);
+      if (res.hints.length > 0) bits.push(`${res.hints.length} hint${res.hints.length === 1 ? '' : 's'} applied`);
       showToast(bits.length ? `Plan: ${bits.join(' · ')}` : 'Nothing to pin', bits.length ? 'success' : 'default');
     } catch (e) {
       showToast((e as Error).message, 'error');
