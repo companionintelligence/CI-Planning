@@ -16,6 +16,7 @@ import { rescheduleTask } from '../engine/review.js';
 import { requestReplan } from '../engine/auto-defense.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
+import { syncBlockFromTask } from '../services/block-task-sync.js';
 import { ensureHabitPattern } from '../services/patterns.js';
 import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, entityTagLevels, syncLeveledEntityTags } from '../services/tags.js';
 import { utcDayBounds } from '../lib/tz.js';
@@ -429,6 +430,17 @@ export function tasksRouter() {
 
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, targetId, body.depends_on)) return;
     syncTaskReminders(currentOwnerId(), targetId); // Phase H (b): re-derive if due_at changed
+
+    // REQ2 (reverse sync): editing a task's time/day/estimate moves its placed block in
+    // lockstep. Instance scope only — a series edit re-materializes instances below.
+    const estimateChanged = body.estimated_minutes !== undefined || body.estimatedMinutes !== undefined;
+    if (
+      scope === 'instance' &&
+      (body.scheduled_for !== undefined || body.task_time !== undefined || estimateChanged)
+    ) {
+      const movedBlock = syncBlockFromTask(targetId, currentOwnerId(), { resizeToEstimate: estimateChanged });
+      if (movedBlock) broadcast(currentOwnerId(), 'block:updated', { id: movedBlock });
+    }
 
     // A series edit that changes the recurrence pattern or per-instance time drops
     // future un-actioned instances and re-materializes them under the new rule;
