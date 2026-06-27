@@ -88,6 +88,14 @@ function dailyPlanAuthored(owner: string, date: string): boolean {
   return !!(sqlite.prepare(`SELECT 1 FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`).get(owner, date));
 }
 
+/** §A4 — the day's persisted NL hints (from `/api/plan/instruct`). Empty when none. */
+export function loadPlanHints(owner: string, date: string): PlanHint[] {
+  const rows = sqlite
+    .prepare(`SELECT kind, tag, time FROM plan_hints WHERE owner_id = ? AND date = ?`)
+    .all(owner, date) as { kind: string; tag: string; time: string | null }[];
+  return rows.map((r) => ({ kind: r.kind as PlanHint['kind'], tag: r.tag, time: r.time ?? undefined }));
+}
+
 function getStagedTasks(owner: string): PlanTask[] {
   const rows = sqlite
     .prepare(
@@ -315,10 +323,27 @@ function genSystem(): string {
 }
 
 /**
+ * §A4 — render the day's hints into one soft constraint line for the generator
+ * prompt (PROMPT 1). Empty string when there are no hints. The HARD enforcement of
+ * before/after windows is deterministic, in placement (autoplan transient windows);
+ * this line only nudges the LLM to order coherently within those windows.
+ */
+export function constraintLine(hints: PlanHint[]): string {
+  if (hints.length === 0) return '';
+  const parts = hints.map((h) => {
+    if (h.kind === 'tag_before') return `schedule #${h.tag} tasks before ${h.time}`;
+    if (h.kind === 'tag_after') return `schedule #${h.tag} tasks after ${h.time}`;
+    return `keep #${h.tag} tasks batched together`;
+  });
+  return `\nConstraints (honor strictly): ${parts.join('; ')}.`;
+}
+
+/**
  * Build the generator prompt.
  * §C2: when themeTag is provided, append a theme line after the capacity line.
+ * §A4: when `constraint` is non-empty, append the NL-hint constraint line.
  */
-export function genPrompt(lines: string[], capacityMin: number, themeTag?: string | null): string {
+export function genPrompt(lines: string[], capacityMin: number, themeTag?: string | null, constraint = ''): string {
   const themeLine = themeTag
     ? `\nToday's theme: ${themeTag} — favour ${themeTag}-tagged tasks earlier.`
     : '';
@@ -327,7 +352,7 @@ export function genPrompt(lines: string[], capacityMin: number, themeTag?: strin
     `1) hard deadlines (sooner due = earlier); 2) priority (P1 highest);\n` +
     `3) momentum — group related work, minimize context switches;\n` +
     `4) front-load demanding work while focus is fresh.\n` +
-    `Capacity today: ~${capacityMin} focused minutes.${themeLine}\n\n` +
+    `Capacity today: ~${capacityMin} focused minutes.${themeLine}${constraint}\n\n` +
     `Tasks (index: [priority] title (due) ~estimate tags):\n${lines.join('\n')}\n\n` +
     `Reply with ONLY a JSON array containing every index exactly once, in your chosen order. Example: [3,0,1,2]`
   );
@@ -483,6 +508,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
 
   const lines = staged.map(taskLine);
   const capacityMin = workdayMinutes(prefs.workday_start, prefs.workday_end);
+  // §A4: fold any persisted NL hints into a soft constraint line for the generator.
+  const constraint = constraintLine(loadPlanHints(owner, date));
 
   // B4 invariant (docs/M-ai-scheduler.md:270,303): an LLM failure MID-loop — Ollama dies
   // AFTER the pre-flight isAvailable() check (timeout, OOM, dropped connection) — must
@@ -497,8 +524,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         ownerId: owner,
 
         generate: async () => {
-          // §C2: pass theme tag to prompt
-          const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag), {
+          // §C2: pass theme tag to prompt; §A4: pass the NL-hint constraint line
+          const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag, constraint), {
             tier: 'small',
             system: genSystem(),
             temperature: 0.2,

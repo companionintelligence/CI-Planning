@@ -33,6 +33,11 @@ function instructBlocks(): { title: string; start_at: string; end_at: string; is
     .prepare(`SELECT title, start_at, end_at, is_locked, block_kind FROM time_blocks WHERE source_kind = 'instruct' ORDER BY start_at`)
     .all() as { title: string; start_at: string; end_at: string; is_locked: number; block_kind: string }[];
 }
+function planHints(): { kind: string; tag: string; time: string | null }[] {
+  return sqlite
+    .prepare(`SELECT kind, tag, time FROM plan_hints WHERE date = ? ORDER BY kind, tag`)
+    .all(DATE) as { kind: string; tag: string; time: string | null }[];
+}
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -66,6 +71,23 @@ describe('POST /api/plan/instruct (A4 pins-first)', () => {
     expect(blocks[0].block_kind).toBe('meeting');
     expect(blocks[0].start_at).toBe(`${DATE}T14:00:00.000Z`);
     expect(blocks[0].end_at).toBe(`${DATE}T15:00:00.000Z`);
+
+    // The hint is persisted so a later autoplan run can enforce it (A4 enforcement).
+    expect(planHints()).toEqual([{ kind: 'tag_before', tag: 'deep-work', time: '15:00' }]);
+  });
+
+  it('persists hints even with no pins, and is idempotent across a repeated instruct', async () => {
+    insertTag('errands');
+    parseResp.mockReturnValue({ pins: [], hints: [{ kind: 'tag_after', tag: 'errands', time: '12:00' }] });
+
+    const res = await post('no errands before noon');
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(0);
+    expect(planHints()).toEqual([{ kind: 'tag_after', tag: 'errands', time: '12:00' }]);
+
+    // Same instruction again → INSERT OR IGNORE against the dedupe index → still one row.
+    await post('no errands before noon');
+    expect(planHints()).toHaveLength(1);
   });
 
   it('422 + no writes on overlapping pins', async () => {
@@ -96,6 +118,7 @@ describe('POST /api/plan/instruct (A4 pins-first)', () => {
     const res = await post('standup 9, batch nonexistent');
     expect(res.status).toBe(422);
     expect(instructBlocks()).toHaveLength(0); // the valid pin must NOT have been created
+    expect(planHints()).toHaveLength(0);      // …nor any hint (no partial apply)
   });
 
   it('422 on an unknown hint kind', async () => {
