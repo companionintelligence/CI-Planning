@@ -27,8 +27,10 @@ Consequences:
   becomes a **Pattern type**, not a planning mode.
 - Phase A's deterministic scheduler is **reframed** as the engine Auto runs over
   the flight-plan — it no longer auto-packs the entire open backlog.
-- Overlaps are now **allowed but flagged** (two items may share a slot; the
-  PLANNER shows a conflict marker) — a change from the old no-overlap packer.
+- Manual drag/resize is **collision-clamped**: a block stops at a neighbour's edge
+  rather than overlapping it (a whole Plan group clamps by its outer edge). It never
+  *increases* a pre-existing overlap; any **residual** overlap from earlier data still
+  shows a conflict marker. (The standalone Calendar view keeps overlap allowed-but-flagged.)
 
 ## 2. TODAY cockpit layout
 
@@ -136,8 +138,18 @@ place by **manual drag**, by **Auto with a time-block tag filter**, or by
 - **Items:** name · tag · start–end; Time-Blocks render as labelled **outlines**
   spanning their range; pattern instances carry their **type texture**.
 - **Drag to reorder** items within the hour grid.
-- **Overlap allowed, flagged:** two items may occupy the same slot; the PLANNER
-  shows a clear **conflict marker** (it does not silently prevent or reflow).
+- **Collision-clamped, residual flagged:** a dragged/resized block (or Plan group)
+  stops at a neighbour's edge instead of overlapping — live during the drag, not just
+  on release — and never increases a pre-existing overlap. Any residual overlap still
+  shows a clear **conflict marker** (the PLANNER never silently reflows). Plan
+  containers are attach-on-drop targets, so dropping a task into a Plan's window
+  attaches it rather than clamping.
+- **Placement ⇄ task in lockstep:** a placed task IS scheduled, so the two stay in
+  sync. Moving/resizing a block writes the linked task's `scheduled_for` + `task_time`
+  (the earliest session owns them; tz-correct in the owner's zone), and completing a
+  block completes the task. Editing the task's time/day/estimate moves its placed block
+  in return. One-block tasks are the common case; multi-session tasks anchor on the
+  first session.
 
 ## 7. Visual spec (CI-Hub tokens — global styles first)
 

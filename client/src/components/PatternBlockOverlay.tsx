@@ -1,17 +1,5 @@
-import { For, createResource } from 'solid-js';
-import { patternBlocks, patternPrefs, tags } from '../stores/index.js';
-import { api } from '../lib/api.js';
-import { yOf } from '../lib/grid.js';
-import { BASE_TAG_DEFAULTS, HATCH_OFFSET_BY_NAME, colorVar } from '../lib/pattern-meta.js';
-
-function timeToMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-
-function displayTag(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1);
-}
+import { For } from 'solid-js';
+import type { Band } from '../lib/day-windows.js';
 
 // ── Hatch geometry ─────────────────────────────────────────────────────────────
 // Each "line" is a 1px stroke shaped by the pattern's icon, repeated vertically with
@@ -43,95 +31,21 @@ function hatchMask(shape: string): string {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
-/** A flattened availability band, ready to render. `labelIndex` stacks the titles of
- * windows that start at the same minute so none overlap. */
-interface Band {
-  key: string;
-  name: string;
-  color: string;
-  shape: string;
-  offset: number;
-  top: number;
-  height: number;
-  labelIndex: number;
-}
-
-/** Vertical step (px) between stacked titles of windows that start together. */
-const LABEL_STEP_PX = 18;
-
 /**
  * Renders availability-zone bands behind the Planner grid — one per pattern-block
  * range. Each band reads in its pattern's own colour: a 1px outline plus a faint
  * (10%) horizontal hatch whose line *shape* comes from the pattern icon (wavy /
  * zigzag / castle), 1px stroke + 8px gap. Work & Home are phase-offset so overlapping
- * zones don't line up. Titles of windows that start together are stacked so each
- * stays readable. Purely visual — pointer-events: none.
+ * zones don't line up. Purely visual — pointer-events: none.
+ *
+ * The direction *names* now live in the left `DirectionColumn`, so this overlay only
+ * paints the shaded zones. Bands are computed once in the Planner (shared with the
+ * column) and passed in, so the two never drift.
  */
-export function PatternBlockOverlay(props: { date: string }) {
-  // Resolve the date's day type (per-date assignment > weekly map > heuristic) and read
-  // that key's windows. Keyed on the patternBlocks store tick so it refreshes whenever a
-  // day-type mutation calls refetchPatternBlocks() (assign/clear/window-edit).
-  const [dayWindows] = createResource(
-    () => [props.date, patternBlocks()] as const,
-    async ([d]) => {
-      const { key } = await api.dayTypes.resolve(d);
-      return (await api.patternBlocks.forDay(key)).windows;
-    },
-  );
-  const windows = () => dayWindows() ?? {};
-  const allTags = () => tags() ?? [];
-
-  const tagName = (dirTagId: string) => allTags().find((t) => t.id === dirTagId)?.name ?? '';
-
-  // The pattern's display colour: the saved per-tag token, else the brand base
-  // default (Community/Home/Work), else the primary accent.
-  function colorFor(dirTagId: string): string {
-    const saved = patternPrefs()?.prefs?.[dirTagId]?.color_token;
-    if (saved) return colorVar(saved);
-    return colorVar(BASE_TAG_DEFAULTS[tagName(dirTagId).toLowerCase()]?.color_token);
-  }
-
-  // The line shape comes from the pattern's icon (saved pref or brand base default).
-  function shapeFor(dirTagId: string): string {
-    const saved = patternPrefs()?.prefs?.[dirTagId]?.icon_shape;
-    if (saved) return saved.toLowerCase();
-    return (BASE_TAG_DEFAULTS[tagName(dirTagId).toLowerCase()]?.icon_shape ?? 'circle').toLowerCase();
-  }
-
-  function offsetFor(dirTagId: string): number {
-    return HATCH_OFFSET_BY_NAME[tagName(dirTagId).toLowerCase()] ?? 0;
-  }
-
-  // Flatten every range across all directions into bands, assigning each a label
-  // stacking index per identical start minute (titles share the right corner).
-  const bands = (): Band[] => {
-    const out: Band[] = [];
-    const seenAtStart = new Map<number, number>();
-    for (const [dirTagId, ranges] of Object.entries(windows())) {
-      const name = tagName(dirTagId);
-      const color = colorFor(dirTagId);
-      const shape = shapeFor(dirTagId);
-      const offset = offsetFor(dirTagId);
-      for (const range of ranges) {
-        const startMin = timeToMinutes(range.start_time);
-        const labelIndex = seenAtStart.get(startMin) ?? 0;
-        seenAtStart.set(startMin, labelIndex + 1);
-        const top = yOf(startMin);
-        out.push({
-          key: `${dirTagId}:${range.start_time}-${range.end_time}`,
-          name, color, shape, offset,
-          top,
-          height: yOf(timeToMinutes(range.end_time)) - top,
-          labelIndex,
-        });
-      }
-    }
-    return out;
-  };
-
+export function PatternBlockOverlay(props: { bands: () => Band[] }) {
   return (
     <div class="absolute inset-0 pointer-events-none z-0">
-      <For each={bands()}>
+      <For each={props.bands()}>
         {(b) => {
           const mask = hatchMask(b.shape);
           return (
@@ -140,7 +54,7 @@ export function PatternBlockOverlay(props: { date: string }) {
               style={{ top: `${b.top}px`, height: `${b.height}px`, border: `1px solid ${b.color}` }}
             >
               {/* Hatch fill — a masked shaped line; colour comes from CSS so it stays
-                  theme-aware, and the mask leaves the border/label untouched. */}
+                  theme-aware, and the mask leaves the border untouched. */}
               <div
                 style={{
                   position: 'absolute',
@@ -156,12 +70,6 @@ export function PatternBlockOverlay(props: { date: string }) {
                   '-webkit-mask-position': `${b.offset}px 0`,
                 }}
               />
-              <span
-                class="absolute right-1 text-[10px] bg-background/70 rounded px-1.5 py-0.5 leading-none select-none whitespace-nowrap"
-                style={{ color: b.color, top: `${4 + b.labelIndex * LABEL_STEP_PX}px` }}
-              >
-                {displayTag(b.name)}
-              </span>
             </div>
           );
         }}

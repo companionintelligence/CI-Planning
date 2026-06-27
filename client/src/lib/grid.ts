@@ -12,8 +12,9 @@
  * literal `Z` or slices an ISO string to read hours/minutes.
  */
 
-/** Vertical scale: 48px per hour. One source of truth for position + persistence. */
-export const PX_PER_MIN = 0.8;
+/** Vertical scale: ~77px per hour. One source of truth for position + persistence.
+ * (Bumped 60% from the original 0.8 = 48px/hr so hour rows read comfortably.) */
+export const PX_PER_MIN = 1.28;
 
 /** Snap granularity (minutes) for pixel→minute conversion. */
 export const SNAP_MIN = 15;
@@ -52,6 +53,16 @@ export function instantFor(dayStr: string, mins: number): string {
 
 /** Minutes → pixels (top offset / height). */
 export const yOf = (mins: number): number => mins * PX_PER_MIN;
+
+/**
+ * Half-open interval intersection: do `[aStart, aEnd)` and `[bStart, bEnd)` overlap?
+ * Unit-agnostic — callers pass a consistent unit (the client clamp uses
+ * minutes-into-day; the server obstacle math uses epoch ms). The single shared
+ * definition of "these two blocks collide", mirroring the server's `start < end &&
+ * end > start` SQL so the drag clamp and any server guard never drift.
+ */
+export const intervalsOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: number): boolean =>
+  aStart < bEnd && aEnd > bStart;
 
 /** Pixels → minutes, snapped to `SNAP_MIN`. (Used by PR2 gestures; pure + tested here.) */
 export const minsOf = (y: number): number =>
