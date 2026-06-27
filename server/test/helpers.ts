@@ -43,6 +43,7 @@ export function resetDb(): void {
     DELETE FROM job_runs;
     DELETE FROM daily_summaries;
     DELETE FROM daily_plan;
+    DELETE FROM plan_hints;
     DELETE FROM replan_suggestions;
     DELETE FROM day_assignments;
     DELETE FROM day_of_week_map;
