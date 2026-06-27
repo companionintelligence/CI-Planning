@@ -66,15 +66,17 @@ interface PlanningPrefs {
 
 function loadPlanningPrefs(owner: string): PlanningPrefs {
   const row = sqlite
-    .prepare(`SELECT planning_mode, workday_start, workday_end, day_theme, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as (PlanningPrefs & { day_theme: string | null; fill_order: string | null }) | undefined;
+    .prepare(`SELECT planning_mode, trust_mode, workday_start, workday_end, day_theme, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as (PlanningPrefs & { trust_mode: string | null; day_theme: string | null; fill_order: string | null }) | undefined;
   if (!row) return { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00', fill_order: 'overdue' };
   let day_theme: Record<string, string> | null = null;
   if (row.day_theme) {
     try { day_theme = JSON.parse(row.day_theme) as Record<string, string>; } catch { /* ignore malformed */ }
   }
+  // Hands-off trust dial implies smart planning: the user has opted into full AI autonomy.
+  const planning_mode = row.trust_mode === 'hands_off' ? 'smart' : row.planning_mode;
   return {
-    planning_mode: row.planning_mode,
+    planning_mode,
     workday_start: row.workday_start,
     workday_end: row.workday_end,
     day_theme,
@@ -674,7 +676,7 @@ export async function parseInstruction(owner: string, date: string, text: string
  * and any callers on the scheduler.ts path continue to compile without change.
  */
 export async function orderForToday(ranked: Task[], prefs: Prefs): Promise<Task[]> {
-  if (prefs.planningMode !== 'smart' || ranked.length < 2) return ranked;
+  if ((prefs.planningMode !== 'smart' && prefs.trustMode !== 'hands_off') || ranked.length < 2) return ranked;
   if (!(await isAvailable())) return ranked;
 
   try {
