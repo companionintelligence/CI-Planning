@@ -1,12 +1,12 @@
 import { For, Show, createMemo, createSignal, createResource, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, LockOpen, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight, Sparkles, Eraser } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, MINUTES_PER_DAY, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta } from '../lib/drag.js';
 import { resolveGroup, containerAt, clampGroupDelta } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
-import { isSelected, toggleSelection, setActiveTask, selection, setRoutineModal } from '../stores/selection.js';
+import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
@@ -17,7 +17,7 @@ import { computeBands } from '../lib/day-windows.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
 import { DirectionColumn } from './DirectionColumn.js';
-import { SelectedTaskSummary } from './SelectedTaskSummary.js';
+import { PlannerEntityCard } from './PlannerEntityCard.js';
 
 /** Open the unified Element wizard to edit a Time Block. */
 function editTimeBlock(id: string) {
@@ -208,39 +208,6 @@ function useBlockDrag(opts: {
   return { drag, liveTop, liveHeight, startGesture };
 }
 
-interface MenuItem { label: string; icon: any; onClick: () => void; danger?: boolean }
-
-/** The options popover (Edit / Remove / …) — fixed-positioned + z-999 so it's never clipped. */
-function BlockMenu(props: { pos: { x: number; y: number }; title: string; rationale?: string | null; items: MenuItem[]; onClose: () => void }) {
-  return (
-    <>
-      <div class="fixed inset-0 z-[998]" onClick={props.onClose} onPointerDown={(e) => e.stopPropagation()} />
-      <div
-        class="fixed z-[999] rounded-md border border-border bg-popover shadow-2xl text-xs overflow-hidden min-w-[150px] max-w-[260px]"
-        style={{ left: `${Math.min(props.pos.x, window.innerWidth - 160)}px`, top: `${Math.min(props.pos.y, window.innerHeight - 120)}px` }}
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        <div class="px-2.5 py-1 text-[10px] text-muted-foreground border-b border-border truncate">{props.title}</div>
-        {/* §A3: AI "why now" rationale, when this placement was AI-authored. */}
-        <Show when={props.rationale}>
-          <div class="px-2.5 py-1.5 text-[10px] text-primary border-b border-border flex items-start gap-1.5">
-            <Sparkles size={10} class="flex-shrink-0 mt-0.5" />
-            <span class="leading-snug">{props.rationale}</span>
-          </div>
-        </Show>
-        <For each={props.items}>
-          {(it) => (
-            <button onClick={it.onClick} class="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left hover:bg-sidebar-accent"
-              classList={{ 'text-destructive': it.danger, 'text-foreground': !it.danger }}>
-              <it.icon size={12} /> {it.label}
-            </button>
-          )}
-        </For>
-      </div>
-    </>
-  );
-}
-
 // ── Time gutter (hour labels) ─────────────────────────────────────────────────
 function TimeGutter() {
   const hours = Array.from({ length: 24 }, (_, h) => h);
@@ -293,14 +260,14 @@ interface GroupCtx {
 }
 
 // ── Plan container outline (a timed Time-Block: ★ solid 3pt) — interactive ─────
-function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; onEdit: (b: Block) => void; onRequestDelete: (b: Block) => void }) {
+function ContainerOutline(props: { block: Block; day: string; group: GroupCtx }) {
   const b = () => props.block;
   const baseTop = () => minutesIntoDay(b().start_at, props.day);
   const baseHeight = () => Math.max(minutesIntoDay(b().end_at, props.day) - baseTop(), 0);
   const locked = () => isImmovable(b());
-  const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
   const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
-    block: b, day: props.day, locked, baseTop, baseHeight, onClick: (x, y) => setMenu({ x, y }),
+    // Click (a near-zero drag) on the label expands the Time-Block into the entity card.
+    block: b, day: props.day, locked, baseTop, baseHeight, onClick: () => setActiveBlock(b().id),
     onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
     onMoveEnd: () => props.group.onMoveEnd(),
     onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
@@ -308,24 +275,6 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
     clampLiveDy: (mode, dyPx, ev) => clampLiveDyFor(b(), props.day, blocks() ?? [], mode, dyPx, ev),
   });
   const top = () => liveTop() + props.group.extraMin(b().id);
-
-  // Save the Plan + the task blocks currently inside its window as a reusable template.
-  async function saveTemplate() {
-    setMenu(null);
-    const s = Date.parse(b().start_at), e = Date.parse(b().end_at);
-    const tasks = (blocks() ?? [])
-      .filter((x) => x.block_kind === 'task' && Date.parse(x.start_at) < e && Date.parse(x.end_at) > s)
-      .map((x) => ({
-        title: taskOf(x.task_id)?.title ?? x.title,
-        tag: taskOf(x.task_id)?.tags?.[0] ?? x.tag ?? null,
-        estimated_minutes: Math.round((Date.parse(x.end_at) - Date.parse(x.start_at)) / 60000),
-        offset_minutes: Math.max(0, Math.round((Date.parse(x.start_at) - s) / 60000)),
-      }));
-    try {
-      await api.blockTemplates.create({ name: b().title, tag: b().tag ?? undefined, default_minutes: Math.round((e - s) / 60000), tasks });
-      showToast(`Saved "${b().title}" template (${tasks.length} task${tasks.length === 1 ? '' : 's'})`, 'success');
-    } catch (err) { showToast((err as Error).message, 'error'); }
-  }
 
   // 0069: the Time-Block category colour — stamped category colour wins, else the tag
   // hash (the same helper the chips use), so the column matches the rest of the planner.
@@ -363,15 +312,6 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
       <Show when={!locked()}>
         <div class="absolute top-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-top', e)} />
         <div class="absolute bottom-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-bottom', e)} />
-      </Show>
-      <Show when={menu()}>
-        {(pos) => (
-          <BlockMenu pos={pos()} title={b().title} onClose={() => setMenu(null)} items={[
-            { label: 'Edit', icon: Pencil, onClick: () => { setMenu(null); props.onEdit(b()); } },
-            { label: 'Save as template', icon: Save, onClick: saveTemplate },
-            { label: 'Remove', icon: Trash2, onClick: () => { setMenu(null); props.onRequestDelete(b()); }, danger: true },
-          ]} />
-        )}
       </Show>
     </div>
   );
@@ -424,14 +364,12 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  // Drag/resize + click→menu via the shared hook.
-  const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
+  // Drag/resize via the shared hook; a click (near-zero drag) expands the entity into
+  // the card — a task chip focuses its task, a non-task block focuses the block.
   const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
     block: b, day: props.day, locked,
     baseTop: () => props.placed.top, baseHeight: () => props.placed.height,
-    // T-PLAN-4: a task chip click SELECTS it (drives the Selected Task Summary);
-    // non-task blocks (meetings/focus/etc.) keep the inline options menu.
-    onClick: (x, y) => { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setMenu({ x, y }); },
+    onClick: () => { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setActiveBlock(b().id); },
     onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
     onMoveEnd: () => props.group.onMoveEnd(),
     onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
@@ -443,50 +381,6 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   // Nested chips sit in their Time-Block's task region (right of the category cell);
   // loose chips tile across the full width.
   const frame = () => chipFrame(props.placed.col, props.placed.cols, props.nested);
-
-  function edit() {
-    setMenu(null);
-    const t = task();
-    if (t) setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } });
-    else showToast('Nothing to edit on this block', 'default');
-  }
-  async function promoteHabit() {
-    setMenu(null);
-    const t = task();
-    if (!t) return;
-    try { await api.tasks.promoteHabit(t.id); showToast(`"${t.title}" is now a habit`, 'success'); }
-    catch (err) { showToast((err as Error).message, 'error'); }
-  }
-  async function detach() {
-    setMenu(null);
-    try { await api.blocks.update(b().id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Time Block', 'default'); }
-    catch (err) { showToast((err as Error).message, 'error'); }
-  }
-  async function unlock() {
-    setMenu(null);
-    try { await api.blocks.update(b().id, { is_locked: false }); refetchBlocks(); showToast('Unlocked', 'default'); }
-    catch (err) { showToast((err as Error).message, 'error'); }
-  }
-  async function removeBlock() {
-    setMenu(null);
-    const blk = b();
-    try {
-      await api.blocks.delete(blk.id);
-      if (blk.task_id) await api.flightPlan.addTask(blk.task_id); // send the task back to the flight-plan
-      refetchBlocks();
-      refetchFlightPlan();
-      showToast(blk.task_id ? 'Removed — sent back to the flight-plan' : 'Removed', 'default');
-    } catch (err) { showToast((err as Error).message, 'error'); }
-  }
-  const menuItems = (): MenuItem[] => {
-    const t = task();
-    const items: MenuItem[] = [{ label: 'Edit', icon: Pencil, onClick: edit }];
-    if (t && !t.is_habit) items.push({ label: 'Promote to habit', icon: Repeat, onClick: promoteHabit });
-    if (b().parent_block_id != null) items.push({ label: 'Remove from Time Block', icon: Unlink, onClick: detach });
-    if (b().is_locked) items.push({ label: 'Unlock', icon: LockOpen, onClick: unlock });
-    items.push({ label: 'Remove', icon: Trash2, onClick: removeBlock, danger: true });
-    return items;
-  };
 
   const selectedBlock = () => isSelected({ kind: 'block', id: b().id });
   return (
@@ -526,8 +420,8 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
       }}
       onClick={(e) => {
         if (props.updateMode) { void setDone(!completed()); return; }
-        // Locked chips don't drag, so the click lands here: select tasks, menu otherwise.
-        if (locked()) { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setMenu({ x: e.clientX, y: e.clientY }); }
+        // Locked chips don't drag, so the click lands here: expand the entity card.
+        if (locked()) { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setActiveBlock(b().id); }
       }}
     >
       {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
@@ -578,10 +472,6 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
           onPointerDown={(e) => startGesture('resize-bottom', e)} />
       </Show>
 
-      {/* Options popover (click the chip) — fixed/z-999 so the chip's overflow never clips it. */}
-      <Show when={menu()}>
-        {(pos) => <BlockMenu pos={pos()} title={b().title} rationale={b().rationale} onClose={() => setMenu(null)} items={menuItems()} />}
-      </Show>
     </div>
   );
 }
@@ -931,10 +821,6 @@ export function Planner() {
         </div>
       </div>
 
-      {/* Selected Task Summary (T-PLAN-3) — a strip at the top of the board showing the
-          clicked task's quick actions; replaces the old block click pop-up. */}
-      <SelectedTaskSummary />
-
       {/* Header lane — all-day Plans + Concepts whose goal day is today (off the grid). */}
       <Show when={hasHeaderLane()}>
         <div class="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-border bg-card/60 flex-shrink-0">
@@ -970,7 +856,7 @@ export function Planner() {
             <For each={containers()}>
               {(c) => (
                 <>
-                  <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={(b) => editTimeBlock(b.id)} onRequestDelete={requestDeletePlan} />
+                  <ContainerOutline block={c} day={day()} group={groupCtx} />
                   <For each={placedChildren(c.id)}>
                     {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
                   </For>
@@ -982,6 +868,8 @@ export function Planner() {
               {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <Show when={isToday()}><NowLine day={day()} now={nowISO()} /></Show>
+            {/* Expanded entity card — overlays the grid at the selected entity's slot. */}
+            <PlannerEntityCard day={day()} onRequestDeletePlan={requestDeletePlan} />
             <Show when={chips().length === 0 && containers().length === 0}>
               <div class="absolute left-0 right-0 top-24 text-center text-sm text-muted-foreground px-4 pointer-events-none">
                 Nothing planned yet — <span class="text-primary font-medium">click an empty slot</span> to add a block,

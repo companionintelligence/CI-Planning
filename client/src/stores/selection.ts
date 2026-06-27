@@ -33,20 +33,35 @@ export function clearSelection(): void {
 }
 
 /**
- * The single "focused" Task (T-CORE-3) — independent of the multi-select `Map`
- * above. A plain task id, or null when nothing is focused. Drives the Selected
- * Task Summary panel under the Planner header (T-PLAN-3/4); a Planner block click
- * sets it instead of opening the old pop-up menu.
+ * The single "expanded" Planner entity — a Task (a task chip) OR a Block (a
+ * Time-Block / meeting / focus chip). Clicking an entity on the Planner expands it
+ * into the `PlannerEntityCard` overlay (details + actions) instead of the old
+ * header strip (tasks) or pop-up menu (blocks). Only one entity is expanded at a
+ * time, so setting one clears the other.
+ *
+ * `activeTask` is kept as the task-focused accessor (T-CORE-3) the rest of the app
+ * already reads; `activeBlock` is its block-side sibling.
  */
 const [activeTask, setActiveTaskId] = createSignal<string | null>(null);
+const [activeBlock, setActiveBlockId] = createSignal<string | null>(null);
 
-export { activeTask };
+export { activeTask, activeBlock };
 
 export function setActiveTask(id: string | null): void {
+  setActiveBlockId(null);
   setActiveTaskId(id);
+}
+export function setActiveBlock(id: string | null): void {
+  setActiveTaskId(null);
+  setActiveBlockId(id);
 }
 export function clearActiveTask(): void {
   if (activeTask() !== null) setActiveTaskId(null);
+}
+/** Close the expanded card whichever kind of entity it holds. */
+export function clearActiveEntity(): void {
+  if (activeTask() !== null) setActiveTaskId(null);
+  if (activeBlock() !== null) setActiveBlockId(null);
 }
 
 /**
