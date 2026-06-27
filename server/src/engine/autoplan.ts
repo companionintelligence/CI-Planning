@@ -316,6 +316,67 @@ function placeIntoWindow(
   return { blocksCreated, placedTaskIds };
 }
 
+/**
+ * Phase M A4 — place tasks constrained by natural-language tag-window hints.
+ *
+ * `tag_before T` / `tag_after T` (from `plan_hints`, persisted by `/api/plan/instruct`)
+ * become a transient per-tag clock window for TODAY: `tag_before`→`[workdayStart,T]`,
+ * `tag_after`→`[T,workdayEnd]`, intersected when several hints touch one task. A hinted
+ * task is placed ONLY within its window. The returned `constrainedIds` are the tasks any
+ * hint touched — the caller MUST exclude these from its unconstrained workday fill so a
+ * hinted task is never dropped outside its window (HARD enforcement: a full/empty window
+ * leaves the task unplaced, not force-filled). `batch` imposes no window — contiguity is
+ * the §A2 authored-order concern. `candidates` should already be in daily_plan order so
+ * same-tag tasks pack contiguously. No-op (empty sets) when the day has no timed hints.
+ */
+function placeHintWindows(
+  owner: string,
+  date: string,
+  candidates: StagedTask[],
+  prefs: PrefsRow | undefined,
+  tz: string,
+  runId: string,
+): { placedTaskIds: Set<string>; constrainedIds: Set<string>; blocksCreated: number } {
+  const placedTaskIds = new Set<string>();
+  const constrainedIds = new Set<string>();
+  let blocksCreated = 0;
+
+  const hintRows = sqlite
+    .prepare(`SELECT kind, tag, time FROM plan_hints WHERE owner_id = ? AND date = ?`)
+    .all(owner, date) as { kind: string; tag: string; time: string | null }[];
+  const timed = hintRows.filter((h) => (h.kind === 'tag_before' || h.kind === 'tag_after') && h.time);
+  if (timed.length === 0) return { placedTaskIds, constrainedIds, blocksCreated };
+
+  const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
+  const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
+  const tagWindow = new Map<string, { start: number; end: number }>(); // tag → intersected [start,end]
+  for (const h of timed) {
+    const tMs = Date.parse(zonedWallTimeToUTC(date, h.time!, tz));
+    const cur = tagWindow.get(h.tag) ?? { start: wsMs, end: weMs };
+    if (h.kind === 'tag_before') cur.end = Math.min(cur.end, tMs);
+    else cur.start = Math.max(cur.start, tMs);
+    tagWindow.set(h.tag, cur);
+  }
+
+  for (const t of candidates) {
+    let start = wsMs, end = weMs, matched = false;
+    for (const tag of t.tags) {
+      const w = tagWindow.get(tag);
+      if (!w) continue;
+      matched = true;
+      start = Math.max(start, w.start);
+      end = Math.min(end, w.end);
+    }
+    if (!matched) continue;
+    constrainedIds.add(t.task_id); // hard: caller excludes these from the unconstrained fill
+    if (end <= start) continue;    // contradictory/empty window → leave unplaced today
+    const r = placeIntoWindow([t], start, end, prefs, { parentBlockId: null, includePlans: true, runId });
+    r.placedTaskIds.forEach((id) => placedTaskIds.add(id));
+    blocksCreated += r.blocksCreated;
+  }
+  return { placedTaskIds, constrainedIds, blocksCreated };
+}
+
 /** STEP 1: propose open-task candidates (not already staged) into the flight-plan.
  * Habits are excluded — they're auto-placed daily from their recurrence, so they
  * shouldn't flood the flight-plan as one-off candidates. */
@@ -454,6 +515,17 @@ export function placeFlightPlan(
   }
   const placedInPlans = placedIds.size;
 
+  // Pass 1.75 — Phase M A4 NL tag-window hints (transient per-tag clock windows). Runs
+  // after the explicit Plan passes (those still win) but BEFORE direction windows, so a
+  // same-day instruction outranks a recurring pattern. `hintConstrainedIds` is excluded
+  // from the direction-window pass AND the workday fill below, so a hinted task never
+  // lands outside its window (HARD: a full/empty window leaves it unplaced). Reflow honours
+  // this automatically — it re-runs placeFlightPlan, which re-reads `plan_hints`.
+  const hintPass = placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId);
+  hintPass.placedTaskIds.forEach((id) => placedIds.add(id));
+  blocksCreated += hintPass.blocksCreated;
+  const hintConstrainedIds = hintPass.constrainedIds;
+
   // Pass 2a — direction-window placement (tag-matched). Runs UNCONDITIONALLY: this is
   // part of tag-matched placement (tap 2), not the priority fill. Direction-tagged
   // tasks are constrained to their direction's pattern windows (union, earliest-first),
@@ -473,7 +545,7 @@ export function placeFlightPlan(
       .all(...ids) as { id: string; name: string }[];
     for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
 
-    for (const t of staged.filter((s) => !placedIds.has(s.task_id))) {
+    for (const t of staged.filter((s) => !placedIds.has(s.task_id) && !hintConstrainedIds.has(s.task_id))) {
       const taskDirIds = t.tags
         .map((name) => dirNameToId.get(name))
         .filter((id): id is string => id !== undefined);
@@ -499,7 +571,7 @@ export function placeFlightPlan(
   // Skips tasks that have a direction tag with auto_fill=false (directionGatedOffIds).
   let placedInWorkday = 0;
   if ((prefs?.auto_fill_workday ?? 1) === 1) {
-    const remaining = staged.filter((t) => !placedIds.has(t.task_id) && !directionGatedOffIds.has(t.task_id));
+    const remaining = staged.filter((t) => !placedIds.has(t.task_id) && !directionGatedOffIds.has(t.task_id) && !hintConstrainedIds.has(t.task_id));
     if (remaining.length > 0) {
       // When a daily_plan has been authored for today, it already encodes the
       // preferred sequence (LLM or deterministic) — preserve that order so placement
@@ -587,16 +659,23 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
   // orderForPlan with no weights sorts priority-first (P1 first). includePlans flows
   // around Plans and the tag-matched blocks tap 2 already created.
   const runId = newId();
-  const r = placeIntoWindow(orderForPlan(remaining), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
-  recordRun(owner, runId, r.blocksCreated);
-  const placed = r.placedTaskIds.size;
-  broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed });
-  if (r.placedTaskIds.size > 0) {
+  // A4: honour NL tag-window hints here too. A hint-constrained task is placed only within
+  // its window (or left unplaced) and excluded from the unconstrained priority fill, so the
+  // explicit top-up can't leak "no errands before noon" past its window.
+  const hintPass = placeHintWindows(owner, date, remaining, prefs, tz, runId);
+  const unconstrained = remaining.filter((t) => !hintPass.constrainedIds.has(t.task_id));
+  const r = placeIntoWindow(orderForPlan(unconstrained), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
+  const filled = new Set([...hintPass.placedTaskIds, ...r.placedTaskIds]);
+  const blocksCreated = hintPass.blocksCreated + r.blocksCreated;
+  recordRun(owner, runId, blocksCreated);
+  const placed = filled.size;
+  broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced: remaining.length - placed });
+  if (filled.size > 0) {
     const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
-    for (const id of r.placedTaskIds) del.run(owner, id);
-    broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
+    for (const id of filled) del.run(owner, id);
+    broadcast(owner, 'flight_plan:updated', { removed: filled.size });
   }
-  return { step: 'place', blocksCreated: r.blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
+  return { step: 'place', blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
 }
 
 /**
