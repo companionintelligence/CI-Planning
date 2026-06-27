@@ -75,6 +75,21 @@ export function utcToZonedWallTime(utcISO: string, tz: string): string {
   return `${hh}:${p.minute}`;
 }
 
+/**
+ * The local calendar date (YYYY-MM-DD) of a UTC instant in `tz`. The owner-tz
+ * counterpart of `localISODate` (which uses the *server* zone) — required so a
+ * block's `start_at` maps to the right `scheduled_for` for an owner whose zone
+ * differs from the server's, including near local midnight and across DST.
+ */
+export function localDateInTZ(utcISO: string, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(utcISO));
+  const p: Record<string, string> = {};
+  for (const part of parts) if (part.type !== 'literal') p[part.type] = part.value;
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
 /** [start, end) UTC ISO bounds of the local calendar day `date` in `tz`. */
 export function utcDayBounds(date: string, tz: string): { start: string; end: string } {
   const [y, m, d] = date.split('-').map(Number);

@@ -1,20 +1,22 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount, createEffect } from 'solid-js';
+import { For, Show, createMemo, createSignal, createResource, onCleanup, onMount, createEffect } from 'solid-js';
 import { Lock, LockOpen, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Save, Repeat, Unlink, Check, CheckCircle2, ArrowUpRight, Sparkles, Eraser } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
-import { PX_PER_MIN, DAY_HEIGHT_PX, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
-import { HANDLE_PX, type GestureMode, isImmovable, resolveGesture, commitDrag } from '../lib/drag.js';
-import { resolveGroup, containerAt } from '../lib/group-move.js';
+import { PX_PER_MIN, DAY_HEIGHT_PX, MINUTES_PER_DAY, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
+import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta } from '../lib/drag.js';
+import { resolveGroup, containerAt, clampGroupDelta } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
+import { computeBands } from '../lib/day-windows.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
+import { DirectionColumn } from './DirectionColumn.js';
 import { SelectedTaskSummary } from './SelectedTaskSummary.js';
 
 /** Open the unified Element wizard to edit a Time Block. */
@@ -57,10 +59,77 @@ function blockTagLabel(block: { tag?: string | null; category_id?: string | null
 
 type Placed = ReturnType<typeof layoutBlocks>[number];
 
-/** Horizontal inset (px) for a member chip nested inside its Plan. */
-const NEST_INSET_PX = 12;
+/** Width (px) of a Time-Block's solid category label cell — the left edge of its
+ * container box. Child task chips render in the task region to the right of it. */
+const CAT_WIDTH_PX = 104;
+/** Gutter (px) kept to the right of each chip so neighbours don't touch. */
+const CHIP_GAP_PX = 3;
 /** Default duration (minutes) for click-to-create / drag-to-schedule when no estimate. */
 const DEFAULT_BLOCK_MIN = 60;
+
+/** Inline left/width for a chip, framed either inside a Time-Block's task region
+ * (offset past the category cell) or across the full width when it's a loose task.
+ * `col`/`cols` are the chip's slot within its overlap cluster. */
+function chipFrame(col: number, cols: number, nested: boolean): { left: string; width: string } {
+  if (nested) {
+    // Task region = everything right of the category cell, split into overlap columns.
+    const region = `(100% - ${CAT_WIDTH_PX}px)`;
+    return {
+      left: `calc(${CAT_WIDTH_PX}px + ${col / cols} * ${region})`,
+      width: `calc(${region} / ${cols} - ${CHIP_GAP_PX}px)`,
+    };
+  }
+  // Loose task: tile across the full width (it never shares a row with a Time-Block).
+  return {
+    left: `calc(${(col / cols) * 100}%)`,
+    width: `calc(${100 / cols}% - ${CHIP_GAP_PX}px)`,
+  };
+}
+
+/**
+ * The blocks a dragged/resized block must not overlap, reduced to day-minute extents
+ * for the collision clamp. Scoping by kind:
+ *  - a Time-Block container clamps against every other timed block EXCEPT its own
+ *    children (they ride along on a group move);
+ *  - a nested chip clamps against its siblings in the same container only (it moves
+ *    freely within its Plan; the container is its home, not an obstacle);
+ *  - a loose chip clamps against other top-level non-container blocks — Plan
+ *    containers are attach-on-drop targets, never walls.
+ */
+function neighboursFor(b: Block, day: string, all: Block[]): Neighbour[] {
+  const timed = all.filter((x) => !isAllDay(x) && x.block_type !== 'someday');
+  const toMin = (x: Block): Neighbour => ({ topMin: minutesIntoDay(x.start_at, day), botMin: minutesIntoDay(x.end_at, day) });
+  // Only blocks intersecting THIS day are obstacles — a range fetch can include an
+  // adjacent-day row, which maps to negative / >MINUTES_PER_DAY minutes and would
+  // otherwise be a phantom wall near midnight (matches clampGroupDelta's filter).
+  const inDay = (n: Neighbour) => n.botMin > 0 && n.topMin < MINUTES_PER_DAY;
+  let candidates: Block[];
+  if (b.block_kind === 'timeblock') {
+    candidates = timed.filter((x) => x.id !== b.id && x.parent_block_id !== b.id);
+  } else if (b.parent_block_id != null) {
+    candidates = timed.filter((x) => x.id !== b.id && x.parent_block_id === b.parent_block_id);
+  } else {
+    candidates = timed.filter((x) => x.id !== b.id && x.block_kind !== 'timeblock' && x.parent_block_id == null);
+  }
+  return candidates.map(toMin).filter(inDay);
+}
+
+/**
+ * The clamped pixel delta for a live drag preview — so the block (or whole group)
+ * visibly stops at a neighbour's edge while dragging, not just on release. Mirrors the
+ * commit's clamp scoping: a group move clamps by the group hull; a loose move / any
+ * resize clamps per-edge against `neighboursFor`. Alt-drag (detach) clamps as a loose
+ * block, matching the commit path.
+ */
+function clampLiveDyFor(b: Block, day: string, all: Block[], mode: GestureMode, dyPx: number, ev: PointerEvent): number {
+  const dMin = dyPx / PX_PER_MIN;
+  const altDetach = mode === 'move' && b.parent_block_id != null && ev.altKey;
+  if (mode === 'move' && !altDetach && (b.block_kind === 'timeblock' || b.parent_block_id != null)) {
+    return clampGroupDelta(resolveGroup(all, b.id), all, day, dMin) * PX_PER_MIN;
+  }
+  const n = altDetach ? neighboursFor({ ...b, parent_block_id: null }, day, all) : neighboursFor(b, day, all);
+  return clampLiveDelta(b, day, mode, dMin, n) * PX_PER_MIN;
+}
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -85,6 +154,8 @@ function useBlockDrag(opts: {
   onMoveLive?: (dy: number, ev: PointerEvent) => void;
   onMoveEnd?: () => void;
   onMoveCommit?: (dy: number, ev: PointerEvent) => void;
+  neighbours?: () => Neighbour[];
+  clampLiveDy?: (mode: GestureMode, dyPx: number, ev: PointerEvent) => number;
 }) {
   const [drag, setDrag] = createSignal<{ mode: GestureMode; dy: number } | null>(null);
   const liveTop = () => {
@@ -109,7 +180,10 @@ function useBlockDrag(opts: {
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture?.(e.pointerId);
     const onMove = (ev: PointerEvent) => {
-      const dy = ev.clientY - startY;
+      const raw = ev.clientY - startY;
+      // Live preview is collision-clamped so the chip/group visibly stops at the wall
+      // while dragging; the pointer-up commit still snaps+clamps via resolveGesture.
+      const dy = opts.clampLiveDy ? opts.clampLiveDy(mode, raw, ev) : raw;
       setDrag({ mode, dy });
       if (mode === 'move') opts.onMoveLive?.(dy, ev);
     };
@@ -117,12 +191,14 @@ function useBlockDrag(opts: {
       target.releasePointerCapture?.(ev.pointerId);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      const dy = ev.clientY - startY;
+      const dy = ev.clientY - startY; // RAW delta: click detection + commit (which clamps itself)
       setDrag(null);
       if (mode === 'move') opts.onMoveEnd?.();
       if (mode === 'move' && Math.abs(dy) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
       if (mode === 'move' && opts.onMoveCommit) { opts.onMoveCommit(dy, ev); return; }
-      const resolved = resolveGesture(opts.block(), opts.day, mode, dy);
+      // Resize (and any non-grouped move): clamp against neighbours so an edge can't
+      // be dragged into an adjacent block.
+      const resolved = resolveGesture(opts.block(), opts.day, mode, dy, opts.neighbours?.() ?? []);
       void commitDrag(opts.block(), resolved, { onError: (m) => showToast(m, 'error') });
     };
     window.addEventListener('pointermove', onMove);
@@ -228,6 +304,8 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
     onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
     onMoveEnd: () => props.group.onMoveEnd(),
     onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
+    neighbours: () => neighboursFor(b(), props.day, blocks() ?? []),
+    clampLiveDy: (mode, dyPx, ev) => clampLiveDyFor(b(), props.day, blocks() ?? [], mode, dyPx, ev),
   });
   const top = () => liveTop() + props.group.extraMin(b().id);
 
@@ -249,22 +327,42 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // 0069: the Time-Block category colour — stamped category colour wins, else the tag
+  // hash (the same helper the chips use), so the column matches the rest of the planner.
+  const fill = () => blockColorVar(b(), categoryPrefs()?.prefs);
+  const heightPx = () => Math.max(yOf(liveHeight()), 24);
   return (
     <div
-      class="absolute left-0.5 right-0.5 rounded-lg border-[3px] border-primary/70 select-none touch-none"
-      classList={{ 'z-0': !drag(), 'z-[25] shadow-lg': !!drag(), 'cursor-grab': !locked() }}
-      style={{ top: `${yOf(top())}px`, height: `${yOf(liveHeight())}px` }}
-      title={`${b().title} · Plan — drag to move the whole group`}
-      onPointerDown={(e) => startGesture('move', e)}
+      class="absolute left-0.5 right-0.5 rounded-lg border-2 select-none touch-none pointer-events-none"
+      classList={{ 'z-0': !drag(), 'z-[25] shadow-lg': !!drag() }}
+      style={{ top: `${yOf(top())}px`, height: `${heightPx()}px`, 'border-color': fill() }}
+      title={`${b().title} · Time Block — drag the label to move the whole group`}
     >
-      <span class="absolute -top-2 left-2 px-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-card rounded pointer-events-none">
-        <Star size={9} class="text-primary" />
-        {b().title}
-        <Show when={b().tag}>{(t) => <span class="text-primary">#{t()}</span>}</Show>
-      </span>
+      {/* Solid category label cell (left) — name + secondary tags, white text. It IS
+          the drag handle: dragging it moves the Time Block + its tasks as a group. */}
+      <div
+        class="absolute top-0 bottom-0 left-0 rounded-l-md overflow-hidden px-2 py-1 flex flex-col gap-0.5 pointer-events-auto"
+        classList={{ 'cursor-grab': !locked(), 'cursor-default': locked() }}
+        style={{ width: `${CAT_WIDTH_PX}px`, 'background-color': fill(), color: '#fff', 'text-shadow': '0 1px 1px rgba(0,0,0,.45)' }}
+        onPointerDown={(e) => startGesture('move', e)}
+      >
+        <div class="flex items-center gap-1 text-[11px] font-medium leading-tight">
+          <Star size={9} class="flex-shrink-0" />
+          <span class="truncate">{b().title}</span>
+        </div>
+        <Show when={heightPx() >= 34}>
+          <div class="flex flex-wrap items-center gap-x-1 text-[10px] leading-none opacity-90">
+            {/* 0069: the grouping label is the #tag OR the Time Block Category name. */}
+            <Show when={blockTagLabel(b())}>{(lbl) => <span class="truncate">{lbl()}</span>}</Show>
+            <For each={b().secondary_tags ?? []}>{(s) => <span class="truncate">#{s}</span>}</For>
+          </div>
+        </Show>
+      </div>
+      {/* Resize handles live in the task region (right of the label) so they don't
+          fight the label's move-drag. */}
       <Show when={!locked()}>
-        <div class="absolute top-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-top', e)} />
-        <div class="absolute bottom-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-bottom', e)} />
+        <div class="absolute top-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-top', e)} />
+        <div class="absolute bottom-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-bottom', e)} />
       </Show>
       <Show when={menu()}>
         {(pos) => (
@@ -316,16 +414,12 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   // tag-coloured diagonal hatch + a one-shot glow (set on the act of completing).
   const [glow, setGlow] = createSignal(false);
   async function setDone(next: boolean) {
-    const blk = b(); const t = task();
+    const blk = b();
     try {
-      if (next) {
-        await api.blocks.update(blk.id, { status: 'completed' });
-        if (t) await api.tasks.update(t.id, { completed: true });
-        setGlow(true);
-      } else {
-        await api.blocks.update(blk.id, { status: 'planned' });
-        if (t) await api.tasks.update(t.id, { status: 'open', completed_at: null });
-      }
+      // One PATCH: the server mirrors a task-linked block's done-state onto the task
+      // (and emits task:updated), so there's no non-atomic client dual write.
+      await api.blocks.update(blk.id, { status: next ? 'completed' : 'planned' });
+      if (next) setGlow(true);
       refetchBlocks();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -341,10 +435,14 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
     onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
     onMoveEnd: () => props.group.onMoveEnd(),
     onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
+    neighbours: () => neighboursFor(b(), props.day, blocks() ?? []),
+    clampLiveDy: (mode, dyPx, ev) => clampLiveDyFor(b(), props.day, blocks() ?? [], mode, dyPx, ev),
   });
   const top = () => liveTop() + props.group.extraMin(b().id);
   const heightPx = () => Math.max(yOf(liveHeight()), 18);
-  const inset = () => (props.nested ? NEST_INSET_PX : 0);
+  // Nested chips sit in their Time-Block's task region (right of the category cell);
+  // loose chips tile across the full width.
+  const frame = () => chipFrame(props.placed.col, props.placed.cols, props.nested);
 
   function edit() {
     setMenu(null);
@@ -409,8 +507,8 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
       style={{
         top: `${yOf(top())}px`,
         height: `${heightPx()}px`,
-        left: `calc(${(props.placed.col / props.placed.cols) * 100}% + ${inset()}px)`,
-        width: `calc(${100 / props.placed.cols}% - 3px - ${inset()}px)`,
+        left: frame().left,
+        width: frame().width,
         ...(completed() ? doneHatchStyle(tag()) : {}),
         ...(glow() ? { '--done-glow': `color-mix(in srgb, ${color()} 55%, transparent)` } : {}),
       }}
@@ -542,8 +640,16 @@ export function Planner() {
   const containers = () => dayBlocks().filter((b) => b.block_kind === 'timeblock' && !isAllDay(b));
   // Task/meeting/focus chips share the overlap layout; containers + break/buffer + all-day don't.
   const chips = () => dayBlocks().filter((b) => !['timeblock', 'break', 'buffer'].includes(b.block_kind) && !isAllDay(b));
-  const placed = createMemo(() => layoutBlocks(chips(), day()));
   const nextUp = createMemo(() => pickNextUp(chips(), nowISO()));
+
+  // Day-type availability windows → bands, shared by the Direction column and the
+  // background hatch so the two never drift. Re-resolves on day change or any
+  // day-type mutation (the patternBlocks store tick).
+  const [dayWindows] = createResource(
+    () => [day(), patternBlocks()] as const,
+    async ([d]) => { const { key } = await api.dayTypes.resolve(d); return (await api.patternBlocks.forDay(key)).windows; },
+  );
+  const bands = createMemo(() => computeBands(dayWindows() ?? {}, tags() ?? [], patternPrefs()?.prefs ?? {}));
   // T-PLAN-2: the day's earliest grid block — the scroll anchor (1h of lead-in above it).
   const firstChip = createMemo(() => {
     const cs = chips();
@@ -558,6 +664,13 @@ export function Planner() {
   // A chip is nested when its Plan is a container currently drawn on the grid.
   const containerIds = createMemo(() => new Set(containers().map((c) => c.id)));
   const isNested = (b: Block) => b.parent_block_id != null && containerIds().has(b.parent_block_id);
+
+  // Placement: loose chips tile across the full width; a container's own task chips
+  // lay out (overlap) inside its task region. By the exclusivity rule a loose chip
+  // never shares a row with a Time-Block, so the two sets don't visually collide.
+  const looseChips = () => chips().filter((c) => !isNested(c));
+  const placedLoose = createMemo(() => layoutBlocks(looseChips(), day()));
+  const placedChildren = (cid: string) => layoutBlocks(chips().filter((c) => c.parent_block_id === cid), day());
 
   // ── Grouped movement (PR-C): a live group ghost + the gesture commits ──────────
   // `ghost` offsets every member EXCEPT the one under the pointer (it follows the
@@ -579,30 +692,35 @@ export function Planner() {
   async function onMoveCommit(anchor: Block, dy: number, ev: PointerEvent) {
     const deltaMin = minsOf(dy);
 
-    // Member + Alt → detach this one and move it alone.
+    // Member + Alt → detach this one and move it alone. It becomes loose, so clamp it
+    // against the loose obstacle set (as if it had no parent).
     if (anchor.parent_block_id != null && ev.altKey) {
       setGhost(null);
-      const resolved = resolveGesture(anchor, day(), 'move', dy);
+      const looseN = neighboursFor({ ...anchor, parent_block_id: null }, day(), blocks() ?? []);
+      const resolved = resolveGesture(anchor, day(), 'move', dy, looseN);
       if (!resolved) return;
       try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Time Block', 'default'); }
       catch (err) { showToast((err as Error).message, 'error'); }
       return;
     }
 
-    // Plan container or member (non-Alt) → move the whole group atomically.
+    // Plan container or member (non-Alt) → move the whole group atomically, clamped so
+    // the group never overlaps a non-member block.
     if (isGroupAnchor(anchor)) {
-      if (deltaMin === 0) { setGhost(null); return; } // identity — no write
       const members = resolveGroup(blocks() ?? [], anchor.id);
-      setGhost({ ids: new Set(members.map((m) => m.id)), dy: deltaMin * PX_PER_MIN }); // hold at snapped delta
-      try { await api.blocks.moveGroup(anchor.id, deltaMin); refetchBlocks(); }
+      const clamped = clampGroupDelta(members, blocks() ?? [], day(), deltaMin);
+      if (clamped === 0) { setGhost(null); return; } // identity / fully blocked — no write
+      setGhost({ ids: new Set(members.map((m) => m.id)), dy: clamped * PX_PER_MIN }); // hold at clamped delta
+      try { await api.blocks.moveGroup(anchor.id, clamped); refetchBlocks(); }
       catch (err) { showToast((err as Error).message, 'error'); }
       finally { setGhost(null); }
       return;
     }
 
-    // Loose chip → plain move; if dropped inside a Plan's window, attach it.
+    // Loose chip → plain move (clamped against other loose blocks); if dropped inside a
+    // Plan's window, attach it (containers are attach targets, not clamp walls).
     setGhost(null);
-    const resolved = resolveGesture(anchor, day(), 'move', dy);
+    const resolved = resolveGesture(anchor, day(), 'move', dy, neighboursFor(anchor, day(), blocks() ?? []));
     if (!resolved) return;
     const container = containerAt(blocks() ?? [], Date.parse(resolved.start_at), anchor.id);
     try {
@@ -832,8 +950,10 @@ export function Planner() {
         class="overflow-y-auto overflow-x-hidden relative"
         style={{ height: `${visiblePx()}px` }}
       >
-        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1fr' }}>
+        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr' }}>
           <TimeGutter />
+          {/* Direction column — rotated, per-direction-colored window names. */}
+          <div class="border-l border-border/60"><DirectionColumn bands={bands} /></div>
           <div
             ref={gridEl}
             class="relative border-l border-border/60 transition-colors"
@@ -843,11 +963,23 @@ export function Planner() {
             onPointerDown={onGridPointerDown}
             onPointerUp={gridDrop.handlers.onPointerUp}
           >
-            <PatternBlockOverlay date={day()} />
+            <PatternBlockOverlay bands={bands} />
             <HourLines />
-            <For each={containers()}>{(c) => <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={(b) => editTimeBlock(b.id)} onRequestDelete={requestDeletePlan} />}</For>
-            <For each={placed()}>
-              {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={isNested(p.block)} updateMode={updateMode()} group={groupCtx} />}
+            {/* Each Time-Block draws its container box (solid category label + box) and
+                its own task chips, laid out inside the box's task region. */}
+            <For each={containers()}>
+              {(c) => (
+                <>
+                  <ContainerOutline block={c} day={day()} group={groupCtx} onEdit={(b) => editTimeBlock(b.id)} onRequestDelete={requestDeletePlan} />
+                  <For each={placedChildren(c.id)}>
+                    {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
+                  </For>
+                </>
+              )}
+            </For>
+            {/* Loose chips tile across the full width (in the gaps between Time-Blocks). */}
+            <For each={placedLoose()}>
+              {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <Show when={isToday()}><NowLine day={day()} now={nowISO()} /></Show>
             <Show when={chips().length === 0 && containers().length === 0}>
