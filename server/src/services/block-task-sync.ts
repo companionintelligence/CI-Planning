@@ -1,0 +1,152 @@
+/**
+ * Block ⇄ Task scheduling sync.
+ *
+ * A task on the Planner IS scheduled, so its own scheduling-intent fields
+ * (`scheduled_for`, `task_time`) must mirror the placement of its block, and editing
+ * the task's time/day must move the placed block — the two stay in lockstep. The
+ * BLOCK is the source of truth for placement; the TASK carries the user-facing intent.
+ *
+ * All cross-entity writes funnel through here (the single service the codebase was
+ * missing), modelled on `services/timer.ts` which likewise writes both entities. Uses
+ * raw `sqlite` (synchronous) so a write can't be interrupted mid-flight, and converts
+ * instants through the owner's timezone — never the server zone — so a near-midnight
+ * placement lands on the correct calendar day (DST included).
+ */
+import { sqlite } from '../db/index.js';
+import { ownerTimezone } from '../engine/recurrence-generate.js';
+import { localDateInTZ, utcToZonedWallTime, zonedWallTimeToUTC } from '../lib/tz.js';
+import { syncTaskReminders } from '../engine/reminders.js';
+
+interface BlockRow {
+  id: string;
+  task_id: string | null;
+  block_kind: string;
+  start_at: string;
+  end_at: string;
+  all_day: number;
+  is_locked: number;
+  status: string;
+}
+
+function blockRow(id: string): BlockRow | undefined {
+  return sqlite
+    .prepare(`SELECT id, task_id, block_kind, start_at, end_at, all_day, is_locked, status FROM time_blocks WHERE id = ?`)
+    .get(id) as BlockRow | undefined;
+}
+
+/**
+ * Mirror a block's placement onto its linked task's `scheduled_for` + `task_time`.
+ * No-op unless the block is a task placement (`block_kind='task'` with a `task_id`).
+ *
+ * One task can have several session blocks; only the **earliest-start** placement owns
+ * the task's scheduling-intent fields, so dragging a later session never re-anchors the
+ * task (or its reminders, which key off `scheduled_for`+`task_time`). An all-day block
+ * clears `task_time` (it has no clock time). Returns the synced task id, or null.
+ */
+export function syncTaskFromBlock(blockId: string, ownerId: string): string | null {
+  const block = blockRow(blockId);
+  if (!block || !block.task_id || block.block_kind !== 'task') return null;
+
+  // Only the earliest placement of the task owns its scheduling fields.
+  const earliest = sqlite
+    .prepare(`SELECT MIN(start_at) AS s FROM time_blocks WHERE task_id = ? AND block_kind = 'task'`)
+    .get(block.task_id) as { s: string | null } | undefined;
+  if (earliest?.s && block.start_at > earliest.s) return null;
+
+  const tz = ownerTimezone(ownerId);
+  const scheduledFor = localDateInTZ(block.start_at, tz);
+  const taskTime = block.all_day ? null : utcToZonedWallTime(block.start_at, tz);
+
+  // For a recurring INSTANCE (occurrence_date set), keep occurrence_date aligned with
+  // the new day too — otherwise reminders (which anchor on scheduled_for) and the
+  // recurrence/streak logic (which keys on occurrence_date) would disagree and the
+  // instance would be half-moved.
+  sqlite
+    .prepare(
+      `UPDATE tasks SET scheduled_for = ?, task_time = ?,
+         occurrence_date = CASE WHEN occurrence_date IS NOT NULL THEN ? ELSE occurrence_date END
+       WHERE id = ? AND owner_id = ?`,
+    )
+    .run(scheduledFor, taskTime, scheduledFor, block.task_id, ownerId);
+
+  syncTaskReminders(ownerId, block.task_id);
+  return block.task_id;
+}
+
+/**
+ * Mirror a block's done-state onto its linked task: completing a placement completes
+ * the task; reverting it reopens the task and clears its completion time. Keeps the
+ * two status vocabularies reconciled server-side, so the client makes one call (no
+ * non-atomic dual write). No-op unless the block is a task placement. Returns the
+ * task id when a mirror was applied.
+ */
+export function mirrorBlockStatusToTask(blockId: string, ownerId: string): string | null {
+  const block = blockRow(blockId);
+  if (!block || !block.task_id || block.block_kind !== 'task') return null;
+  if (block.status === 'completed') {
+    sqlite
+      .prepare(`UPDATE tasks SET status = 'done', completed_at = ? WHERE id = ? AND owner_id = ?`)
+      .run(new Date().toISOString(), block.task_id, ownerId);
+    // Re-derive reminders AFTER the status flip so a same-PATCH time+complete change
+    // doesn't leave auto-reminders firing for a now-done task (syncTaskReminders
+    // clears them for a done task).
+    syncTaskReminders(ownerId, block.task_id);
+    return block.task_id;
+  }
+  if (block.status === 'planned') {
+    sqlite
+      .prepare(`UPDATE tasks SET status = 'open', completed_at = NULL WHERE id = ? AND owner_id = ?`)
+      .run(block.task_id, ownerId);
+    syncTaskReminders(ownerId, block.task_id);
+    return block.task_id;
+  }
+  return null;
+}
+
+/**
+ * The reverse direction: when a task's `scheduled_for` / `task_time` / `estimated_minutes`
+ * is edited, move (and resize) its placed block to match — so editing the task keeps
+ * its Planner placement in lockstep, not just the other way around.
+ *
+ * Operates on the task's earliest **planned** task block only (the common one-block
+ * case); a locked or all-day block is left untouched. The block is marked manual
+ * (`is_auto=0`) so a subsequent Auto replan won't reclaim/relocate it. Returns the
+ * moved block id, or null when there's nothing to move / no change.
+ */
+export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resizeToEstimate?: boolean } = {}): string | null {
+  const task = sqlite
+    .prepare(`SELECT id, scheduled_for, task_time, estimated_minutes FROM tasks WHERE id = ? AND owner_id = ?`)
+    .get(taskId, ownerId) as
+    | { id: string; scheduled_for: string | null; task_time: string | null; estimated_minutes: number | null }
+    | undefined;
+  if (!task) return null;
+
+  const block = sqlite
+    .prepare(
+      `SELECT id, start_at, end_at, all_day, is_locked FROM time_blocks
+       WHERE task_id = ? AND block_kind = 'task' AND status = 'planned'
+       ORDER BY start_at ASC LIMIT 1`,
+    )
+    .get(taskId) as { id: string; start_at: string; end_at: string; all_day: number; is_locked: number } | undefined;
+  if (!block || block.all_day || block.is_locked) return null;
+
+  const tz = ownerTimezone(ownerId);
+  // Day from the task's scheduled_for, else the block's current local day; time from
+  // the task's task_time, else the block's current local time-of-day.
+  const day = task.scheduled_for ?? localDateInTZ(block.start_at, tz);
+  const time = task.task_time ?? utcToZonedWallTime(block.start_at, tz);
+  const newStart = zonedWallTimeToUTC(day, time, tz);
+  // Resize to the estimate ONLY when the estimate was actually edited; otherwise
+  // preserve the block's current span so a day/time edit never silently reverts a
+  // manual block resize (the block span and task.estimated_minutes can legitimately
+  // differ — a resize updates the span, not the estimate).
+  const curDurMs = Date.parse(block.end_at) - Date.parse(block.start_at);
+  const durMs = opts.resizeToEstimate && task.estimated_minutes ? task.estimated_minutes * 60_000 : curDurMs;
+  const newEnd = new Date(Date.parse(newStart) + durMs).toISOString();
+
+  if (newStart === block.start_at && newEnd === block.end_at) return null; // no change
+  sqlite
+    .prepare(`UPDATE time_blocks SET start_at = ?, end_at = ?, is_auto = 0 WHERE id = ?`)
+    .run(newStart, newEnd, block.id);
+  return block.id;
+}

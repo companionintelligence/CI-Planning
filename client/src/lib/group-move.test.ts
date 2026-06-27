@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shiftBlock, applyGroupDelta, resolveGroup, containerAt } from './group-move.js';
+import { shiftBlock, applyGroupDelta, resolveGroup, containerAt, clampGroupDelta } from './group-move.js';
 import { instantFor, minutesIntoDay } from './grid.js';
 import type { Block } from './api.js';
 
@@ -98,6 +98,40 @@ describe('resolveGroup', () => {
   });
   it('an unknown anchor resolves to nothing', () => {
     expect(resolveGroup(all, 999)).toEqual([]);
+  });
+});
+
+describe('clampGroupDelta — whole-group collision clamp', () => {
+  // Group hull = [540, 720] (plan 09:00–12:00 with two children inside).
+  const plan = mk({ id: 1, block_kind: 'timeblock', start_at: at(540), end_at: at(720) });
+  const a = mk({ id: 2, parent_block_id: 1, start_at: at(540), end_at: at(600) });
+  const b = mk({ id: 3, parent_block_id: 1, start_at: at(630), end_at: at(660) });
+  const members = [plan, a, b];
+
+  it('clamps a downward move so the hull stops flush at the nearest trailing obstacle', () => {
+    const below = mk({ id: 9, start_at: at(780), end_at: at(840) }); // 13:00–14:00
+    expect(clampGroupDelta(members, [...members, below], day, 120)).toBe(60); // 780−720
+  });
+
+  it('clamps a backward move so the hull stops flush at the nearest leading obstacle', () => {
+    const above = mk({ id: 9, start_at: at(420), end_at: at(480) }); // 07:00–08:00
+    expect(clampGroupDelta(members, [...members, above], day, -120)).toBe(-60); // 540−480
+  });
+
+  it('passes the delta through untouched when there is no obstacle', () => {
+    expect(clampGroupDelta(members, members, day, 200)).toBe(200);
+    expect(clampGroupDelta(members, members, day, -200)).toBe(-200);
+    expect(clampGroupDelta(members, members, day, 0)).toBe(0);
+  });
+
+  it('never treats a member as an obstacle (internal overlaps move rigidly)', () => {
+    // Even with overlapping children, the hull move is unconstrained by its own members.
+    expect(clampGroupDelta(members, members, day, 90)).toBe(90);
+  });
+
+  it('excludes all-day blocks from the obstacle set', () => {
+    const allDayBelow = mk({ id: 9, all_day: true, start_at: at(780), end_at: at(840) });
+    expect(clampGroupDelta(members, [...members, allDayBelow], day, 120)).toBe(120); // ignored
   });
 });
 

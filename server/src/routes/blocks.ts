@@ -13,6 +13,7 @@ import { localISODate } from '../lib/dates.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
+import { syncTaskFromBlock, mirrorBlockStatusToTask } from '../services/block-task-sync.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -284,6 +285,15 @@ export function blocksRouter() {
 
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(id) };
     broadcast(currentOwnerId(), 'block:updated', out);
+
+    // REQ2: a placed task IS scheduled — keep the linked task's scheduling-intent
+    // fields (and its done-state) in lockstep with the block. A time change mirrors
+    // start → scheduled_for/task_time; a status change mirrors done ⇄ open.
+    let syncedTask: string | null = null;
+    if (body.start_at !== undefined || body.end_at !== undefined) syncedTask = syncTaskFromBlock(id, currentOwnerId());
+    if (body.status !== undefined) syncedTask = mirrorBlockStatusToTask(id, currentOwnerId()) ?? syncedTask;
+    if (syncedTask) broadcast(currentOwnerId(), 'task:updated', { id: syncedTask });
+
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${id}` });
     enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
     ctx.body = { block: out };
@@ -323,6 +333,13 @@ export function blocksRouter() {
     const ids = members.map((m) => m.id);
     const rows = ids.length ? await db.select().from(timeBlocks).where(inArray(timeBlocks.id, ids)) : [];
     broadcast(currentOwnerId(), 'block:updated', { moved_group: parentId, count: ids.length });
+
+    // REQ2: mirror each moved task member's new placement onto its task (non-task
+    // members — focus/break/meeting/the container — are skipped by the helper).
+    const movedTasks = new Set<string>();
+    for (const m of members) { const t = syncTaskFromBlock(m.id, currentOwnerId()); if (t) movedTasks.add(t); }
+    for (const t of movedTasks) broadcast(currentOwnerId(), 'task:updated', { id: t });
+
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${parentId}` });
     ctx.body = { blocks: toApiList(rows) };
   });
@@ -345,6 +362,9 @@ export function blocksRouter() {
       .returning();
     const out = toApi(block);
     broadcast(currentOwnerId(), 'block:updated', out);
+    // REQ2: a promoted concept linked to a task gets concrete times — mirror them.
+    const promotedTask = syncTaskFromBlock(id, currentOwnerId());
+    if (promotedTask) broadcast(currentOwnerId(), 'task:updated', { id: promotedTask });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'promote', entity: `block:${id}` });
     ctx.body = { block: out };
   });

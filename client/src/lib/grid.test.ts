@@ -48,8 +48,8 @@ describe('grid math — pixel positioning', () => {
     const heightMin = minutesIntoDay(end, day) - topMin;
     expect(topMin).toBe(540);
     expect(heightMin).toBe(30);
-    expect(yOf(topMin)).toBeCloseTo(540 * PX_PER_MIN, 9); // 432px at 0.8px/min
-    expect(yOf(heightMin)).toBeCloseTo(30 * PX_PER_MIN, 9); // 24px
+    expect(yOf(topMin)).toBeCloseTo(540 * PX_PER_MIN, 9); // scales with PX_PER_MIN
+    expect(yOf(heightMin)).toBeCloseTo(30 * PX_PER_MIN, 9); // scales with PX_PER_MIN
   });
 
   it('minsOf snaps pixels back to SNAP_MIN granularity', () => {
