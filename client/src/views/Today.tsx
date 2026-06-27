@@ -140,14 +140,12 @@ export function Today() {
       {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
       <MissedReview />
 
-      {/* Two-column workspace (cockpit-v2 Phase 3): Planner left · Flight-plan right
-          (≥ md); stacked on mobile. Someday Time Blocks now render on their goal day
-          in the Planner header lane (the ConceptLane is retired — CON-2d). */}
-      <div class="grid gap-4 items-start md:grid-cols-[1fr_minmax(20rem,24rem)]">
+      {/* Stacked workspace: Planner on top, Flight-plan below it (full width).
+          Someday Time Blocks render on their goal day in the Planner header lane
+          (the ConceptLane is retired — CON-2d). */}
+      <div class="flex flex-col gap-4">
         <Planner />
-        <div class="flex flex-col gap-4">
-          <FlightPlan />
-        </div>
+        <FlightPlan />
       </div>
 
       {/* Multi-select indicator (Phase F) — appears when items are picked. */}
