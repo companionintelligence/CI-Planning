@@ -112,6 +112,21 @@ describe('authorPlanOrder — LLM path (mocked Ollama)', () => {
     expect(new Set(rows.map((r) => r.task_id))).toEqual(new Set([a, b, c]));
     expect(rows[0].task_id).toBe(b); // the one index the LLM did return leads
   });
+
+  it("trust_mode='hands_off' activates the LLM path even when planning_mode='basic'", async () => {
+    // Reset to basic so the activation comes purely from the trust dial.
+    sqlite.prepare(`UPDATE scheduling_prefs SET planning_mode = 'basic', trust_mode = 'hands_off' WHERE owner_id = ?`).run(OWNER);
+
+    const a = insertTask('A'); const b = insertTask('B'); const c = insertTask('C');
+    stage(a, 0); stage(b, 1); stage(c, 2);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.source === 'llm')).toBe(true);
+    expect(rows.map((r) => r.task_id)).toEqual([c, a, b]); // LLM order [2,0,1] ⇒ C,A,B
+  });
 });
 
 describe('§A3 — per-task rationale', () => {
