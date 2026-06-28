@@ -193,6 +193,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Per-owner feature flags (0024). Default OFF — V1 mental model is Routine /
   // Habit / Plan-Block; Rituals are hidden until the user opts back in.
   enableRituals: integer('enable_rituals', { mode: 'boolean' }).default(false),
+  // Routines feature flag (0073). Default OFF — hides the Routine tile in the Add
+  // wizard AND stops recurring Routine patterns from auto-placing on the board.
+  enableRoutines: integer('enable_routines', { mode: 'boolean' }).default(false),
   // cockpit-v2 Phase 6: recall=clone of a Past task copies Routine membership only when ON (default OFF).
   recallKeepsPattern: integer('recall_keeps_pattern', { mode: 'boolean' }).default(false),
   // Per-owner Ollama model overrides (null = use the env default). 0012.
