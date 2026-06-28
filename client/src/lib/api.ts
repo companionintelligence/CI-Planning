@@ -504,8 +504,8 @@ export interface Prefs {
   fill_order?: 'priority' | 'overdue'; // leftover fill ordering (0055); default 'priority'
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
-  // Time-Block container duration bounds (0017).
-  max_time_block_minutes?: number; min_time_block_minutes?: number;
+  // Time-Block container duration bounds (0017); default duration (0072).
+  max_time_block_minutes?: number; min_time_block_minutes?: number; default_time_block_minutes?: number;
   // Plan/Concept Time-Block config (0018). Plan horizon = planning_horizon_days.
   plan_allday_always?: boolean; plan_daylong_for_promoted?: boolean; plan_autofill_gaps?: boolean;
   concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;

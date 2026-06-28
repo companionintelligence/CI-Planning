@@ -292,12 +292,12 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx })
       <div
         class="absolute top-0 bottom-0 left-0 rounded-l-md overflow-hidden px-2 py-1 flex flex-col gap-0.5 pointer-events-auto"
         classList={{ 'cursor-grab': !locked(), 'cursor-default': locked() }}
-        style={{ width: `${CAT_WIDTH_PX}px`, 'background-color': fill(), color: '#fff', 'text-shadow': '0 1px 1px rgba(0,0,0,.45)' }}
+        style={{ width: `${CAT_WIDTH_PX}px`, 'background-color': fill(), color: `color-mix(in oklch, ${fill()} 30%, black)` }}
         onPointerDown={(e) => startGesture('move', e)}
       >
-        <div class="flex items-center gap-1 text-[11px] font-medium leading-tight">
-          <Star size={9} class="flex-shrink-0" />
-          <span class="truncate">{b().title}</span>
+        <div class="flex items-start gap-1 text-[11px] font-medium leading-tight">
+          <Star size={9} class="flex-shrink-0 mt-0.5" />
+          <span class="break-words min-w-0">{b().title}</span>
         </div>
         <Show when={heightPx() >= 34}>
           <div class="flex flex-wrap items-center gap-x-1 text-[10px] leading-none opacity-90">
@@ -660,21 +660,6 @@ export function Planner() {
     if (it) void createBlockAt(e.clientY, it);
   });
 
-  // Click-to-create: a near-zero pointer interaction on empty grid space (chips and
-  // containers stopPropagation on their own pointerdown, so only the background
-  // reaches here) creates a default Time Block at the clicked time.
-  function onGridPointerDown(e: PointerEvent) {
-    if (updateMode() || dragPayload()) return; // not while completing, not mid-drag
-    const startX = e.clientX, startY = e.clientY;
-    const onUp = (ev: PointerEvent) => {
-      window.removeEventListener('pointerup', onUp);
-      if (Math.abs(ev.clientX - startX) < CLICK_PX && Math.abs(ev.clientY - startY) < CLICK_PX) {
-        void createBlockAt(ev.clientY);
-      }
-    };
-    window.addEventListener('pointerup', onUp);
-  }
-
   function requestDeletePlan(plan: Block) {
     const childCount = (blocks() ?? []).filter((b) => b.parent_block_id === plan.id).length;
     if (childCount === 0) {
@@ -845,8 +830,7 @@ export function Planner() {
             class="relative border-l border-border/60 transition-colors"
             classList={{ 'bg-primary/[0.04]': gridDrop.isOver() }}
             style={{ height: `${DAY_HEIGHT_PX}px` }}
-            title="Click an empty slot to add a block · drop a flight-plan task to schedule it"
-            onPointerDown={onGridPointerDown}
+            title="Drop a flight-plan task to schedule it"
             onPointerUp={gridDrop.handlers.onPointerUp}
           >
             <PatternBlockOverlay bands={bands} />
