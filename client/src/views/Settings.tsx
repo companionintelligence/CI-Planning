@@ -1,12 +1,11 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, ChevronUp, ChevronDown, Database, AlertTriangle } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, Hash, Check, X, Pencil, Database, AlertTriangle } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { RoutineTypeSettings } from '../components/RoutineTypeSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
-import { ShapeIcon } from '../components/ShapeIcon.js';
 import { DEFAULT_CONCEPT_TAGS, PATTERN_COLORS, colorVar, type ConceptTag } from '../lib/pattern-meta.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { on } from '../lib/sse.js';
@@ -22,6 +21,7 @@ interface SettingsForm {
   auto_fill_workday: boolean;
   max_focus_block_minutes: number; min_break_minutes: number;
   max_time_block_minutes: number; min_time_block_minutes: number;
+  default_time_block_minutes: number;
   // Plan/Concept Time-Block config. Plan horizon = planning_horizon_days.
   plan_allday_always: boolean; plan_daylong_for_promoted: boolean; plan_autofill_gaps: boolean;
   concept_default_minutes: number; concept_autosurface: boolean; concept_horizon_days: number;
@@ -41,6 +41,7 @@ const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
   max_focus_block_minutes: 90, min_break_minutes: 10,
   max_time_block_minutes: 240, min_time_block_minutes: 15,
+  default_time_block_minutes: 60,
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
   concept_default_minutes: 60, concept_autosurface: true, concept_horizon_days: 30,
   concept_tags: DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
@@ -52,6 +53,7 @@ const DEFAULTS: SettingsForm = {
 };
 
 export function Settings() {
+  const [activeTab, setActiveTab] = createSignal<'preferences' | 'connections'>('preferences');
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   // Schedule Patterns now live in <DayTypeManager /> (day types + week map + the
@@ -76,28 +78,29 @@ export function Settings() {
     const p = prefs();
     if (!p) return;
     setForm({
-      auto_fill_workday:       p.auto_fill_workday ?? true,
-      max_focus_block_minutes: p.max_focus_block_minutes ?? 90,
-      min_break_minutes:       p.min_break_minutes ?? 10,
-      max_time_block_minutes:  p.max_time_block_minutes ?? 240,
-      min_time_block_minutes:  p.min_time_block_minutes ?? 15,
-      plan_allday_always:        p.plan_allday_always ?? false,
-      plan_daylong_for_promoted: p.plan_daylong_for_promoted ?? false,
-      plan_autofill_gaps:        p.plan_autofill_gaps ?? true,
-      concept_default_minutes:   p.concept_default_minutes ?? 60,
-      concept_autosurface:       p.concept_autosurface ?? true,
-      concept_horizon_days:      p.concept_horizon_days ?? 30,
-      concept_tags:              p.concept_tags?.length ? p.concept_tags.map((c) => ({ ...c })) : DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
-      timezone:                p.timezone ?? BROWSER_TZ,
-      planning_horizon_days:   p.planning_horizon_days ?? 3,
-      fast_model:              p.fast_model ?? '',
-      quality_model:           p.quality_model ?? '',
-      embed_model:             p.embed_model ?? '',
-      recall_keeps_pattern:    p.recall_keeps_pattern ?? false,
-      memory_sync_enabled:     p.memory_sync_enabled ?? false,
-      memory_sync_completed:   p.memory_sync_completed ?? true,
-      memory_sync_habits:      p.memory_sync_habits ?? true,
-      memory_sync_reflections: p.memory_sync_reflections ?? true,
+      auto_fill_workday:          p.auto_fill_workday ?? true,
+      max_focus_block_minutes:    p.max_focus_block_minutes ?? 90,
+      min_break_minutes:          p.min_break_minutes ?? 10,
+      max_time_block_minutes:     p.max_time_block_minutes ?? 240,
+      min_time_block_minutes:     p.min_time_block_minutes ?? 15,
+      default_time_block_minutes: p.default_time_block_minutes ?? 60,
+      plan_allday_always:         p.plan_allday_always ?? false,
+      plan_daylong_for_promoted:  p.plan_daylong_for_promoted ?? false,
+      plan_autofill_gaps:         p.plan_autofill_gaps ?? true,
+      concept_default_minutes:    p.concept_default_minutes ?? 60,
+      concept_autosurface:        p.concept_autosurface ?? true,
+      concept_horizon_days:       p.concept_horizon_days ?? 30,
+      concept_tags:               p.concept_tags?.length ? p.concept_tags.map((c) => ({ ...c })) : DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
+      timezone:                   p.timezone ?? BROWSER_TZ,
+      planning_horizon_days:      p.planning_horizon_days ?? 3,
+      fast_model:                 p.fast_model ?? '',
+      quality_model:              p.quality_model ?? '',
+      embed_model:                p.embed_model ?? '',
+      recall_keeps_pattern:       p.recall_keeps_pattern ?? false,
+      memory_sync_enabled:        p.memory_sync_enabled ?? false,
+      memory_sync_completed:      p.memory_sync_completed ?? true,
+      memory_sync_habits:         p.memory_sync_habits ?? true,
+      memory_sync_reflections:    p.memory_sync_reflections ?? true,
     });
   });
 
@@ -149,8 +152,8 @@ export function Settings() {
       setPushOn(next === 'subscribed');
       if (next === 'subscribed') showToast('Push notifications enabled', 'success');
       else if (next === 'denied') showToast('Notifications are blocked in your browser settings', 'error');
-      else if (next === 'unconfigured') showToast('Push notifications aren’t set up on the server yet', 'error');
-      else if (next === 'unsupported') showToast('Push isn’t supported on this device', 'error');
+      else if (next === 'unconfigured') showToast("Push notifications aren't set up on the server yet", 'error');
+      else if (next === 'unsupported') showToast("Push isn't supported on this device", 'error');
       else showToast('Push notifications disabled');
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -158,11 +161,6 @@ export function Settings() {
       setPushBusy(false);
     }
   }
-
-  // Intention Tags scroll (show CT_PAGE_SIZE at a time) ───────────────────────
-  const CT_PAGE_SIZE = 4;
-  const [ctOffset, setCtOffset] = createSignal(0);
-  const maxCtOffset = () => Math.max(0, form().concept_tags.length - CT_PAGE_SIZE);
 
   // A small switch bound to a boolean form field.
   const Toggle = (props: { field: BoolField; label: string; hint?: string }) => (
@@ -194,10 +192,54 @@ export function Settings() {
   }
   function removeCT(i: number) {
     setForm((f) => ({ ...f, concept_tags: f.concept_tags.filter((_, idx) => idx !== i) }));
-    setCtOffset((o) => Math.min(o, Math.max(0, form().concept_tags.length - CT_PAGE_SIZE)));
   }
-  function addCT() {
-    setForm((f) => ({ ...f, concept_tags: [...f.concept_tags, { name: 'New', minutes: 60 }] }));
+
+  // Intention Tags inline-edit state (mirrors CategorySettings UX)
+  const [ctEditIdx, setCtEditIdx] = createSignal<number | null>(null);
+  const [ctEditForm, setCtEditForm] = createSignal<{ name: string; minutes: number; color_token: string }>({ name: '', minutes: 60, color_token: 'primary' });
+  const [ctConfirmDelete, setCtConfirmDelete] = createSignal<number | null>(null);
+  const [newCtName, setNewCtName] = createSignal('');
+  const [ctSaving, setCtSaving] = createSignal(false);
+
+  function startCtEdit(idx: number) {
+    const ct = form().concept_tags[idx];
+    setCtEditForm({ name: ct.name, minutes: ct.minutes, color_token: ct.color_token ?? 'primary' });
+    setCtEditIdx(idx);
+    setCtConfirmDelete(null);
+  }
+  function cancelCtEdit() { setCtEditIdx(null); setCtConfirmDelete(null); }
+
+  async function saveCtEdit() {
+    const idx = ctEditIdx();
+    if (idx === null) return;
+    const f = ctEditForm();
+    if (!f.name.trim()) { showToast('Name is required', 'error'); return; }
+    setCtSaving(true);
+    try {
+      updateCT(idx, { name: f.name.trim(), minutes: f.minutes || 60, color_token: f.color_token });
+      await doSave();
+      setCtEditIdx(null);
+    } finally { setCtSaving(false); }
+  }
+
+  async function doCtDelete(idx: number) {
+    setCtSaving(true);
+    try {
+      removeCT(idx);
+      setCtConfirmDelete(null);
+      await doSave();
+    } finally { setCtSaving(false); }
+  }
+
+  async function addCtFromInput(e: Event) {
+    e.preventDefault();
+    if (!newCtName().trim()) return;
+    setCtSaving(true);
+    try {
+      setForm((f) => ({ ...f, concept_tags: [...f.concept_tags, { name: newCtName().trim(), minutes: 60, color_token: 'primary' }] }));
+      setNewCtName('');
+      await doSave();
+    } finally { setCtSaving(false); }
   }
 
   let savePatternPrefs: () => Promise<void> = async () => {};
@@ -221,20 +263,6 @@ export function Settings() {
     doSave();
   }
 
-  // Tag Settings save: flush pattern-tag default minutes (pattern_prefs) alongside
-  // the scheduling prefs (intention tags, colours) saved by doSave().
-  async function savePatternDefaults() {
-    const pm = patternMinutes();
-    await Promise.all(
-      patternTagsList().map((t) => api.patternPrefs.set(t.id, { default_minutes: pm[t.id] ?? 60 })),
-    );
-    refetchPatternPrefs();
-  }
-  async function saveTagSettings() {
-    try { await savePatternDefaults(); }
-    catch (err) { showToast((err as Error).message, 'error'); return; }
-    doSave();
-  }
 
   const [integrations, { refetch: refetchIntegrations }] = createResource(() => api.llm.integrations());
   const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
@@ -351,627 +379,661 @@ export function Settings() {
 
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-2xl mx-auto w-full">
-      <h1 class="text-2xl font-bold text-slate-100 mb-6">Settings</h1>
+      <h1 class="text-2xl font-bold text-slate-100 mb-4">Settings</h1>
+
+      {/* Tab bar */}
+      <div class="flex gap-1 mb-5 border-b border-border">
+        <button
+          type="button"
+          onClick={() => setActiveTab('preferences')}
+          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          classList={{
+            'border-primary text-foreground': activeTab() === 'preferences',
+            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'preferences',
+          }}
+        >
+          Preferences
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('connections')}
+          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          classList={{
+            'border-primary text-foreground': activeTab() === 'connections',
+            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'connections',
+          }}
+        >
+          Connections
+        </button>
+      </div>
 
       <form onSubmit={save} class="flex flex-col gap-5">
-        {/* Schedule Patterns — per-direction availability windows */}
-        <section class="card">
-          <div class="section-label mb-1">Schedule Patterns</div>
-          <p class="text-xs text-muted-foreground mb-3">
-            Define day types, assign them to each weekday, and set per-direction availability windows.
-            Auto places direction-tagged tasks only inside these windows. Changes save as you make them.
-          </p>
-          <DayTypeManager />
-          {/* General fallback: fill open workday time for tasks with no direction tag */}
-          <div class="mt-4 pt-3 border-t border-border">
-            <Toggle
-              field="auto_fill_workday"
-              label="Fill work hours for undirected tasks"
-              hint="Auto Schedule fills open workday time with tasks that have no direction tag. Per-direction fill (above) is independent."
-            />
-          </div>
-          {/* T-SCHED-2: Schedule-mode planning horizon. Reuses planning_horizon_days
-              (also the task candidate window — same value as "Planning horizon" below). */}
-          <div class="mt-4 pt-3 border-t border-border">
-            <label class="flex items-center justify-between gap-3">
-              <div>
-                <div class="text-sm text-foreground leading-tight">Schedule mode — plan days ahead</div>
-                <div class="text-[11px] text-muted-foreground">In Schedule mode, Auto plans this many days ahead. Shares the Planning horizon (also the task candidate window).</div>
-              </div>
-              <input type="number" class="input py-1 text-sm w-20 flex-shrink-0" min={1} max={60} step={1}
-                value={form().planning_horizon_days}
-                onInput={(e) => setField('planning_horizon_days', Number(e.currentTarget.value))}
-                onChange={(e) => {
-                  const v = Math.max(1, Math.min(60, Number(e.currentTarget.value) || 1));
-                  setField('planning_horizon_days', v);
-                  void api.prefs.update({ planning_horizon_days: v }).then(() => refetchPrefs()).catch((err) => showToast((err as Error).message, 'error'));
-                }} />
-            </label>
-          </div>
-        </section>
 
-        {/* Time-Block settings — Plan | Concept */}
-        <section class="card">
-          <div class="flex items-center justify-between mb-3">
-            <div class="section-label">Time-Block Settings</div>
-            <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
+        <Show when={activeTab() === 'preferences'}>
 
-            {/* ── PLAN ── scheduled (set time + duration) */}
-            <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
-              <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-foreground">Scheduled Block</span>
-                <Star size={15} class="text-primary" />
-              </div>
-              <div class="border-t-[3px] border-primary" />
-              <p class="text-[11px] text-muted-foreground -mt-1.5">Fixed time + duration, placed on the calendar.</p>
-
-              <div class="flex gap-3">
-                <label class="flex flex-col gap-1 flex-1">
-                  <span class="text-[11px] text-muted-foreground">Max (min)</span>
-                  <input type="number" class="input py-1 text-sm" min={15} max={1440} step={15}
-                    value={form().max_time_block_minutes} onInput={e => setField('max_time_block_minutes', Number(e.currentTarget.value))} />
-                </label>
-                <label class="flex flex-col gap-1 flex-1">
-                  <span class="text-[11px] text-muted-foreground">Min (min)</span>
-                  <input type="number" class="input py-1 text-sm" min={5} max={240} step={5}
-                    value={form().min_time_block_minutes} onInput={e => setField('min_time_block_minutes', Number(e.currentTarget.value))} />
-                </label>
-              </div>
-
-              <Toggle field="plan_allday_always" label="All-day Plans" hint="Always allow creating all-day Plans." />
-              <Toggle field="plan_daylong_for_promoted" label="Day-long when promoted" hint="A promoted Concept becomes a day-long Plan." />
-
-              <label class="flex flex-col gap-1">
-                <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
-                <input type="number" class="input py-1 text-sm" min={1} max={60} step={1}
-                  value={form().planning_horizon_days} onInput={e => setField('planning_horizon_days', Number(e.currentTarget.value))} />
-              </label>
-
-              <div class="pt-2 border-t border-border mt-auto">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
-                <Toggle field="plan_autofill_gaps" label="Auto-fill free gaps" hint="Let Auto place Plans into open time." />
-                <div class="flex gap-3 mt-2">
-                  <label class="flex flex-col gap-1 flex-1">
-                    <span class="text-[11px] text-muted-foreground">Max focus (min)</span>
-                    <input type="number" class="input py-1 text-sm" min={15} max={240} step={15}
-                      value={form().max_focus_block_minutes} onInput={e => setField('max_focus_block_minutes', Number(e.currentTarget.value))} />
-                  </label>
-                  <label class="flex flex-col gap-1 flex-1">
-                    <span class="text-[11px] text-muted-foreground">Min break (min)</span>
-                    <input type="number" class="input py-1 text-sm" min={0} max={60} step={5}
-                      value={form().min_break_minutes} onInput={e => setField('min_break_minutes', Number(e.currentTarget.value))} />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* ── CONCEPT ── unscheduled goal (start day + duration) */}
-            <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
-              <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-foreground">Someday Block</span>
-                <Pentagon size={15} class="text-muted-foreground" />
-              </div>
-              <div class="border-t-2 border-dashed border-muted-foreground" />
-              <p class="text-[11px] text-muted-foreground -mt-1.5">A goal with a start day + estimate; no set time until Auto places it.</p>
-
-              <div>
-                <span class="text-[11px] text-muted-foreground">Default duration</span>
-                <div class="flex gap-2 mt-1">
-                  <label class="flex flex-col gap-0.5 flex-1">
-                    <input type="number" class="input py-1 text-sm" min={0} max={60} value={cDays()} onInput={e => setCdm(Number(e.currentTarget.value) || 0, cHrs(), cMin())} />
-                    <span class="text-[10px] text-muted-foreground text-center">days</span>
-                  </label>
-                  <label class="flex flex-col gap-0.5 flex-1">
-                    <input type="number" class="input py-1 text-sm" min={0} max={23} value={cHrs()} onInput={e => setCdm(cDays(), Number(e.currentTarget.value) || 0, cMin())} />
-                    <span class="text-[10px] text-muted-foreground text-center">hrs</span>
-                  </label>
-                  <label class="flex flex-col gap-0.5 flex-1">
-                    <input type="number" class="input py-1 text-sm" min={0} max={55} step={5} value={cMin()} onInput={e => setCdm(cDays(), cHrs(), Number(e.currentTarget.value) || 0)} />
-                    <span class="text-[10px] text-muted-foreground text-center">min</span>
-                  </label>
-                </div>
-              </div>
-
-              <label class="flex flex-col gap-1">
-                <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
-                <input type="number" class="input py-1 text-sm" min={1} max={365} step={1}
-                  value={form().concept_horizon_days} onInput={e => setField('concept_horizon_days', Number(e.currentTarget.value))} />
-              </label>
-
-              <div class="pt-2 border-t border-border mt-auto">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
-                <Toggle field="concept_autosurface" label="Surface on goal day" hint="Show the Concept on its goal start day." />
-              </div>
-            </div>
-
-          </div>
-
-          {/* Reminder Defaults — ONE shared config for Home / Community / Work. */}
-          <div class="pt-4 mt-4 border-t border-border">
+          {/* Schedule Patterns — per-direction availability windows */}
+          <section class="card">
             <div class="flex items-center justify-between mb-1">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Reminder Defaults</div>
-              <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+              <div class="section-label">Schedule Patterns</div>
+              <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
-            <p class="text-xs text-muted-foreground mb-3">Shared by Home, Community, and Work. Reminders fire in-app; enable push below for backgrounded delivery.</p>
-            <div class="flex flex-col gap-3">
-              {/* Push notifications — opt-in browser delivery (Phase H). */}
-              <label class="flex items-start gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
-                  classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
-                </button>
+            <p class="text-xs text-muted-foreground mb-3">
+              Define day types, assign them to each weekday, and set per-direction availability windows.
+              Auto places direction-tagged tasks only inside these windows. Changes save as you make them.
+            </p>
+            <DayTypeManager />
+            {/* General fallback: fill open workday time for tasks with no direction tag */}
+            <div class="mt-4 pt-3 border-t border-border">
+              <Toggle
+                field="auto_fill_workday"
+                label="Fill work hours for undirected tasks"
+                hint="Auto Schedule fills open workday time with tasks that have no direction tag. Per-direction fill (above) is independent."
+              />
+            </div>
+            {/* T-SCHED-2: Schedule-mode planning horizon. Reuses planning_horizon_days
+                (also the task candidate window — same value as "Planning horizon" below). */}
+            <div class="mt-4 pt-3 border-t border-border">
+              <label class="flex items-center justify-between gap-3">
                 <div>
-                  <div class="text-sm text-foreground leading-tight">Push notifications</div>
-                  <div class="text-[11px] text-muted-foreground">Deliver reminders to this device even when the app is closed.</div>
+                  <div class="text-sm text-foreground leading-tight">Schedule mode — plan days ahead</div>
+                  <div class="text-[11px] text-muted-foreground">In Schedule mode, Auto plans this many days ahead. Shares the Planning horizon (also the task candidate window).</div>
                 </div>
-              </label>
-              {/* Start-time reminder */}
-              <label class="flex items-start gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
-                  classList={{ 'bg-primary': remStartOn(), 'bg-muted border border-border': !remStartOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
-                </button>
-                <div>
-                  <div class="text-sm text-foreground leading-tight">Start-time reminder</div>
-                  <div class="text-[11px] text-muted-foreground">Notify exactly when the task starts.</div>
-                </div>
-              </label>
-              {/* Advance reminder (advanced timer) */}
-              <label class="flex items-start gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
-                  classList={{ 'bg-primary': remAdvOn(), 'bg-muted border border-border': !remAdvOn() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
-                </button>
-                <div class="flex-1">
-                  <div class="text-sm text-foreground leading-tight">Advance reminder</div>
-                  <div class="text-[11px] text-muted-foreground">Notify ahead of the start time.</div>
-                  <Show when={remAdvOn()}>
-                    <div class="flex items-center gap-1.5 mt-1.5">
-                      <input type="number" min="1" step="5" class="input py-1 text-sm w-20"
-                        value={remAdvMin()} onInput={(e) => setRemAdvMin(Number(e.currentTarget.value) || 0)} />
-                      <span class="text-[11px] text-muted-foreground">minutes before start</span>
-                    </div>
-                  </Show>
-                </div>
+                <input type="number" class="input py-1 text-sm w-20 flex-shrink-0" min={1} max={60} step={1}
+                  value={form().planning_horizon_days}
+                  onInput={(e) => setField('planning_horizon_days', Number(e.currentTarget.value))}
+                  onChange={(e) => {
+                    const v = Math.max(1, Math.min(60, Number(e.currentTarget.value) || 1));
+                    setField('planning_horizon_days', v);
+                    void api.prefs.update({ planning_horizon_days: v }).then(() => refetchPrefs()).catch((err) => showToast((err as Error).message, 'error'));
+                  }} />
               </label>
             </div>
-          </div>
-        </section>
+          </section>
 
-        {/* Routine Settings — recall behaviour + the pattern-type taxonomy */}
-        <section class="card">
-          <div class="flex items-center justify-between mb-3">
-            <div class="section-label">Routine Settings</div>
-            <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-          </div>
-          <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
-            hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
+          {/* Pattern Tags — unified: shape, colour, and default minutes per direction tag */}
+          <section class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div class="section-label flex items-center gap-1.5"><Shapes size={12} /> Pattern Tags</div>
+              <button type="button" onClick={() => savePatternPrefs()} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+            </div>
+            <p class="text-xs text-muted-foreground mb-3">Shape, colour, and default estimate for each direction tag. The default time is used when a task has no intention tag.</p>
+            <PatternBlockSettings
+              minutes={patternMinutes}
+              onMinutesChange={(id, val) => setPatternMinutes((m) => ({ ...m, [id]: val }))}
+              onReady={(fn) => { savePatternPrefs = fn; }}
+            />
+          </section>
 
-          {/* AI day ordering toggle — saved immediately, not via the Save button */}
-          {(() => {
-            const smartMode = () => prefs()?.planning_mode === 'smart';
-            const togglePlanningMode = async () => {
-              const nextValue = smartMode() ? 'basic' : 'smart';
-              try {
-                await api.prefs.update({ planning_mode: nextValue });
-                refetchPrefs();
-              } catch (err) { showToast((err as Error).message, 'error'); }
-            };
-            return (
-              <label class="flex items-start gap-2 cursor-pointer select-none">
-                <button type="button" role="switch" aria-checked={smartMode()}
-                  onClick={togglePlanningMode}
-                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
-                  classList={{ 'bg-primary': smartMode(), 'bg-muted border border-border': !smartMode() }}>
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
-                    classList={{ 'translate-x-4': smartMode() }} />
-                </button>
-                <div>
-                  <div class="text-sm text-foreground leading-tight">AI day ordering</div>
-                  <div class="text-[11px] text-muted-foreground">
-                    AI orders your plan; placement stays deterministic.
-                    <Show when={smartMode() && !ollamaUp()}>
-                      {' '}Requires Ollama — falls back to basic order when unavailable.
-                    </Show>
+          {/* Time-Block settings — Plan | Concept */}
+          <section class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div class="section-label">Time-Block Settings</div>
+              <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              {/* ── PLAN ── scheduled (set time + duration) */}
+              <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-semibold text-foreground">Scheduled Block</span>
+                  <Star size={15} class="text-primary" />
+                </div>
+                <div class="border-t-[3px] border-primary" />
+                <p class="text-[11px] text-muted-foreground -mt-1.5">Fixed time + duration, placed on the calendar.</p>
+
+                <div class="flex gap-3">
+                  <label class="flex flex-col gap-1 flex-1">
+                    <span class="text-[11px] text-muted-foreground">Max (min)</span>
+                    <input type="number" class="input py-1 text-sm" min={15} max={1440} step={15}
+                      value={form().max_time_block_minutes} onInput={e => setField('max_time_block_minutes', Number(e.currentTarget.value))} />
+                  </label>
+                  <label class="flex flex-col gap-1 flex-1">
+                    <span class="text-[11px] text-muted-foreground">Min (min)</span>
+                    <input type="number" class="input py-1 text-sm" min={5} max={240} step={5}
+                      value={form().min_time_block_minutes} onInput={e => setField('min_time_block_minutes', Number(e.currentTarget.value))} />
+                  </label>
+                  <label class="flex flex-col gap-1 flex-1">
+                    <span class="text-[11px] text-muted-foreground">Default (min)</span>
+                    <input type="number" class="input py-1 text-sm" min={5} max={480} step={5}
+                      value={form().default_time_block_minutes} onInput={e => setField('default_time_block_minutes', Number(e.currentTarget.value))} />
+                  </label>
+                </div>
+
+                <Toggle field="plan_allday_always" label="All-day Plans" hint="Always allow creating all-day Plans." />
+                <Toggle field="plan_daylong_for_promoted" label="Day-long when promoted" hint="A promoted Concept becomes a day-long Plan." />
+
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
+                  <input type="number" class="input py-1 text-sm" min={1} max={60} step={1}
+                    value={form().planning_horizon_days} onInput={e => setField('planning_horizon_days', Number(e.currentTarget.value))} />
+                </label>
+
+                <div class="pt-2 border-t border-border mt-auto">
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
+                  <Toggle field="plan_autofill_gaps" label="Auto-fill free gaps" hint="Let Auto place Plans into open time." />
+                  <div class="flex gap-3 mt-2">
+                    <label class="flex flex-col gap-1 flex-1">
+                      <span class="text-[11px] text-muted-foreground">Max focus (min)</span>
+                      <input type="number" class="input py-1 text-sm" min={15} max={240} step={15}
+                        value={form().max_focus_block_minutes} onInput={e => setField('max_focus_block_minutes', Number(e.currentTarget.value))} />
+                    </label>
+                    <label class="flex flex-col gap-1 flex-1">
+                      <span class="text-[11px] text-muted-foreground">Min break (min)</span>
+                      <input type="number" class="input py-1 text-sm" min={0} max={60} step={5}
+                        value={form().min_break_minutes} onInput={e => setField('min_break_minutes', Number(e.currentTarget.value))} />
+                    </label>
                   </div>
                 </div>
-              </label>
-            );
-          })()}
+              </div>
 
-          {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
+              {/* ── CONCEPT ── unscheduled goal (start day + duration) */}
+              <div class="rounded-xl border border-border p-3 flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-semibold text-foreground">Someday Block</span>
+                  <Pentagon size={15} class="text-muted-foreground" />
+                </div>
+                <div class="border-t-2 border-dashed border-muted-foreground" />
+                <p class="text-[11px] text-muted-foreground -mt-1.5">A goal with a start day + estimate; no set time until Auto places it.</p>
 
-          {/* Routine Types — edit the built-in pattern-type taxonomy (creation removed, T-SET-1) */}
-          <div class="border-t border-border pt-4 mt-4">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Routine Types</div>
-            <p class="text-xs text-muted-foreground mb-3">The built-in categories your Routines and Habits belong to. You can edit their shape, colour, and defaults — they can't be created or deleted.</p>
-            <RoutineTypeSettings />
-          </div>
-        </section>
+                <div>
+                  <span class="text-[11px] text-muted-foreground">Default duration</span>
+                  <div class="flex gap-2 mt-1">
+                    <label class="flex flex-col gap-0.5 flex-1">
+                      <input type="number" class="input py-1 text-sm" min={0} max={60} value={cDays()} onInput={e => setCdm(Number(e.currentTarget.value) || 0, cHrs(), cMin())} />
+                      <span class="text-[10px] text-muted-foreground text-center">days</span>
+                    </label>
+                    <label class="flex flex-col gap-0.5 flex-1">
+                      <input type="number" class="input py-1 text-sm" min={0} max={23} value={cHrs()} onInput={e => setCdm(cDays(), Number(e.currentTarget.value) || 0, cMin())} />
+                      <span class="text-[10px] text-muted-foreground text-center">hrs</span>
+                    </label>
+                    <label class="flex flex-col gap-0.5 flex-1">
+                      <input type="number" class="input py-1 text-sm" min={0} max={55} step={5} value={cMin()} onInput={e => setCdm(cDays(), cHrs(), Number(e.currentTarget.value) || 0)} />
+                      <span class="text-[10px] text-muted-foreground text-center">min</span>
+                    </label>
+                  </div>
+                </div>
 
-        {/* Pattern Block settings — shape + colour per pattern tag; sits directly above Tag Settings */}
-        <section class="card">
-          <div class="flex items-center justify-between mb-3">
-            <div class="section-label flex items-center gap-1.5"><Shapes size={12} /> Pattern Block Settings</div>
-            <button type="button" onClick={() => savePatternPrefs()} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-          </div>
-          <p class="text-xs text-muted-foreground mb-3">Each pattern tag's display shape and colour. Colours come from the shared theme palette.</p>
-          <PatternBlockSettings onReady={(fn) => { savePatternPrefs = fn; }} />
-        </section>
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] text-muted-foreground">Planning horizon (days)</span>
+                  <input type="number" class="input py-1 text-sm" min={1} max={365} step={1}
+                    value={form().concept_horizon_days} onInput={e => setField('concept_horizon_days', Number(e.currentTarget.value))} />
+                </label>
 
-        {/* Time Block Categories — the kind='category' catalog (0069): colour + default block length */}
-        <section class="card">
-          <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
-          <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Family Time, Social Time, Me Time + your own). Pick a colour and a default length; the defaults can be edited but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
-          <CategorySettings />
-        </section>
+                <div class="pt-2 border-t border-border mt-auto">
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Autoscheduling</div>
+                  <Toggle field="concept_autosurface" label="Surface on goal day" hint="Show the Concept on its goal start day." />
+                </div>
+              </div>
 
-        {/* Tag Settings — Pattern Tags (read-only) + Intention Tags (editable) */}
-        <section class="card">
-          <div class="flex items-center justify-between mb-4">
-            <div class="section-label flex items-center gap-1.5"><Tags size={12} /> Tag Settings</div>
-            <button type="button" onClick={saveTagSettings} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-          </div>
-
-          {/* Pattern Tags — direction tags; color/shape come from Pattern Block Settings */}
-          <div class="mb-5">
-            <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Pattern Tags</div>
-            <div class="flex flex-col gap-1.5">
-              <For each={(tags() ?? []).filter((t) => t.kind === 'pattern')}>
-                {(t) => {
-                  const pref = () => patternPrefs()?.prefs?.[t.id];
-                  return (
-                    <div class="flex items-center gap-2.5 rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                      <div style={{ color: colorVar(pref()?.color_token) }} class="flex-shrink-0">
-                        <ShapeIcon shape={pref()?.icon_shape ?? 'circle'} size={13} strokeWidth={1.5} />
-                      </div>
-                      <div class="w-3 h-3 rounded-full flex-shrink-0 border border-border/30"
-                        style={{ 'background-color': colorVar(pref()?.color_token) }} />
-                      <span class="text-sm text-foreground capitalize flex-1">{t.name}</span>
-                      <input type="number" min="5" step="5"
-                        class="input py-1 text-sm w-20"
-                        title="Default time when a task has no intention tag"
-                        value={patternMinutes()[t.id] ?? 60}
-                        onInput={(e) => setPatternMinutes((m) => ({ ...m, [t.id]: Number(e.currentTarget.value) || 0 }))} />
-                      <span class="text-[11px] text-muted-foreground">min</span>
-                      <Show when={t.is_base}>
-                        <span class="badge-neutral text-[10px]">base</span>
-                      </Show>
-                    </div>
-                  );
-                }}
-              </For>
             </div>
-            <p class="text-[11px] text-muted-foreground mt-2">Shape and colour managed in Pattern Block Settings above. The default time is the suggested estimate when a task has no intention tag.</p>
-          </div>
 
-          {/* Intention Tags — Block Wizard categories; each has a name, estimate, and colour */}
-          <div class="border-t border-border pt-4">
-            <div class="flex items-center justify-between mb-3">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Intention Tags</div>
-              <div class="flex items-center gap-1">
-                <Show when={form().concept_tags.length > CT_PAGE_SIZE}>
-                  <span class="text-[10px] text-muted-foreground mr-1.5">
-                    {ctOffset() + 1}–{Math.min(ctOffset() + CT_PAGE_SIZE, form().concept_tags.length)} of {form().concept_tags.length}
-                  </span>
-                </Show>
-                <button type="button"
-                  onClick={() => setCtOffset((o) => Math.max(0, o - 1))}
-                  disabled={ctOffset() === 0}
-                  class="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:pointer-events-none transition-colors">
-                  <ChevronUp size={14} />
-                </button>
-                <button type="button"
-                  onClick={() => setCtOffset((o) => Math.min(maxCtOffset(), o + 1))}
-                  disabled={ctOffset() >= maxCtOffset()}
-                  class="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:pointer-events-none transition-colors">
-                  <ChevronDown size={14} />
-                </button>
+            {/* Reminder Defaults — ONE shared config for Home / Community / Work. */}
+            <div class="pt-4 mt-4 border-t border-border">
+              <div class="flex items-center justify-between mb-1">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Reminder Defaults</div>
+                <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+              </div>
+              <p class="text-xs text-muted-foreground mb-3">Shared by Home, Community, and Work. Reminders fire in-app; enable push below for backgrounded delivery.</p>
+              <div class="flex flex-col gap-3">
+                {/* Push notifications — opt-in browser delivery (Phase H). */}
+                <label class="flex items-start gap-2 cursor-pointer select-none">
+                  <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
+                    classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
+                  </button>
+                  <div>
+                    <div class="text-sm text-foreground leading-tight">Push notifications</div>
+                    <div class="text-[11px] text-muted-foreground">Deliver reminders to this device even when the app is closed.</div>
+                  </div>
+                </label>
+                {/* Start-time reminder */}
+                <label class="flex items-start gap-2 cursor-pointer select-none">
+                  <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                    classList={{ 'bg-primary': remStartOn(), 'bg-muted border border-border': !remStartOn() }}>
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
+                  </button>
+                  <div>
+                    <div class="text-sm text-foreground leading-tight">Start-time reminder</div>
+                    <div class="text-[11px] text-muted-foreground">Notify exactly when the task starts.</div>
+                  </div>
+                </label>
+                {/* Advance reminder (advanced timer) */}
+                <label class="flex items-start gap-2 cursor-pointer select-none">
+                  <button type="button" role="switch" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                    classList={{ 'bg-primary': remAdvOn(), 'bg-muted border border-border': !remAdvOn() }}>
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
+                  </button>
+                  <div class="flex-1">
+                    <div class="text-sm text-foreground leading-tight">Advance reminder</div>
+                    <div class="text-[11px] text-muted-foreground">Notify ahead of the start time.</div>
+                    <Show when={remAdvOn()}>
+                      <div class="flex items-center gap-1.5 mt-1.5">
+                        <input type="number" min="1" step="5" class="input py-1 text-sm w-20"
+                          value={remAdvMin()} onInput={(e) => setRemAdvMin(Number(e.currentTarget.value) || 0)} />
+                        <span class="text-[11px] text-muted-foreground">minutes before start</span>
+                      </div>
+                    </Show>
+                  </div>
+                </label>
               </div>
             </div>
+          </section>
+
+          {/* Time Block Categories — the kind='category' catalog (0069): colour + default block length */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
+            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Family Time, Social Time, Me Time + your own). Pick a colour and a default length; the defaults can be edited but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
+            <CategorySettings />
+          </section>
+
+          {/* Tag Settings — Intention Tags (editable), mirrors CategorySettings UX */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Tag Settings</div>
+            <p class="text-xs text-muted-foreground mb-3">Default intention tags for the Block Wizard. Each has a name, default estimate, and colour.</p>
 
             <div class="flex flex-col gap-2">
-              <For each={form().concept_tags.slice(ctOffset(), ctOffset() + CT_PAGE_SIZE)}>
-                {(ct, localIdx) => {
-                  const globalIdx = () => ctOffset() + localIdx();
-                  return (
-                    <div class="rounded-lg border border-border/60 bg-card/30 p-2 flex flex-col gap-1.5">
-                      <div class="flex items-center gap-2">
-                        <input
-                          class="input py-1 text-sm flex-1"
-                          value={ct.name}
-                          onInput={(e) => updateCT(globalIdx(), { name: e.currentTarget.value })}
-                        />
-                        <input
-                          type="number" min="5" step="5"
-                          class="input py-1 text-sm w-20"
-                          value={ct.minutes}
-                          onInput={(e) => updateCT(globalIdx(), { minutes: Number(e.currentTarget.value) || 0 })}
-                        />
-                        <span class="text-[11px] text-muted-foreground">min</span>
-                        <button type="button"
-                          onClick={() => removeCT(globalIdx())}
-                          class="btn-icon hover:text-destructive" title="Remove">
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                      <div class="flex flex-wrap gap-1">
-                        <For each={PATTERN_COLORS}>
-                          {(c) => (
-                            <button
-                              type="button"
-                              onClick={() => updateCT(globalIdx(), { color_token: c.token })}
-                              title={c.label}
-                              class="w-4 h-4 rounded-full border-[1.5px] transition-all"
-                              classList={{
-                                'border-foreground scale-110': ct.color_token === c.token,
-                                'border-transparent hover:scale-105': ct.color_token !== c.token,
-                              }}
-                              style={{ 'background-color': colorVar(c.token) }}
-                            />
-                          )}
-                        </For>
-                      </div>
+              <For each={form().concept_tags}>
+                {(ct, localIdx) => (
+                  <div class="rounded-lg border border-border bg-card overflow-hidden">
+                    {/* Summary row */}
+                    <div class="flex items-center gap-2.5 px-3 py-2.5">
+                      <span class="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ 'background-color': colorVar(ct.color_token ?? 'primary') }} />
+                      <span class="text-sm font-medium text-foreground flex-1">{ct.name}</span>
+                      <span class="text-[11px] text-muted-foreground">{ct.minutes}m</span>
+                      <button
+                        type="button"
+                        title={ctEditIdx() === localIdx() ? 'Cancel edit' : 'Edit'}
+                        onClick={() => (ctEditIdx() === localIdx() ? cancelCtEdit() : startCtEdit(localIdx()))}
+                        class="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+                      ><Pencil size={12} /></button>
+                      <button
+                        type="button"
+                        title="Delete"
+                        onClick={() => setCtConfirmDelete(ctConfirmDelete() === localIdx() ? null : localIdx())}
+                        class="p-1 rounded text-muted-foreground hover:text-destructive transition-colors"
+                      ><Trash2 size={12} /></button>
                     </div>
-                  );
-                }}
+
+                    {/* Inline delete confirmation */}
+                    <Show when={ctConfirmDelete() === localIdx()}>
+                      <div class="border-t border-border bg-destructive/5 px-3 py-2 flex items-center justify-between">
+                        <span class="text-xs text-destructive">Delete "{ct.name}"?</span>
+                        <div class="flex items-center gap-1.5 ml-3 flex-shrink-0">
+                          <button type="button" onClick={() => setCtConfirmDelete(null)}
+                            class="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded border border-border transition-colors">Cancel</button>
+                          <button type="button" onClick={() => doCtDelete(localIdx())} disabled={ctSaving()}
+                            class="text-xs text-destructive hover:text-destructive/80 px-2 py-1 rounded border border-destructive/40 disabled:opacity-50 transition-colors">Delete</button>
+                        </div>
+                      </div>
+                    </Show>
+
+                    {/* Inline edit form */}
+                    <Show when={ctEditIdx() === localIdx()}>
+                      <div class="border-t border-border px-3 py-3 flex flex-col gap-3">
+                        <div class="flex items-center gap-2">
+                          <span class="text-[11px] text-muted-foreground w-14 flex-shrink-0">Name</span>
+                          <input type="text" maxlength="40" class="input text-sm flex-1"
+                            value={ctEditForm().name}
+                            onInput={(e) => setCtEditForm({ ...ctEditForm(), name: e.currentTarget.value })}
+                            placeholder="Tag name" />
+                        </div>
+                        <div class="flex items-start gap-2">
+                          <span class="text-[11px] text-muted-foreground w-14 flex-shrink-0 mt-0.5">Color</span>
+                          <div class="flex flex-wrap gap-1.5">
+                            <For each={PATTERN_COLORS}>
+                              {(col) => (
+                                <button type="button" title={col.label}
+                                  onClick={() => setCtEditForm({ ...ctEditForm(), color_token: col.token })}
+                                  class="w-5 h-5 rounded-full border-2 transition-all"
+                                  classList={{
+                                    'border-foreground scale-110': ctEditForm().color_token === col.token,
+                                    'border-transparent hover:scale-105': ctEditForm().color_token !== col.token,
+                                  }}
+                                  style={{ 'background-color': colorVar(col.token) }} />
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-[11px] text-muted-foreground w-14 flex-shrink-0">Default</span>
+                          <input type="number" min="5" step="5" class="input text-sm w-20"
+                            value={ctEditForm().minutes}
+                            onInput={(e) => setCtEditForm({ ...ctEditForm(), minutes: Number(e.currentTarget.value) || 0 })} />
+                          <span class="text-[11px] text-muted-foreground">min — default block length</span>
+                        </div>
+                        <div class="flex items-center justify-end gap-2 pt-1 border-t border-border/50">
+                          <button type="button" onClick={cancelCtEdit}
+                            class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded border border-border transition-colors"><X size={11} /> Cancel</button>
+                          <button type="button" onClick={saveCtEdit} disabled={ctSaving()}
+                            class="flex items-center gap-1 text-xs text-primary hover:text-primary/80 px-2 py-1 rounded border border-primary/40 disabled:opacity-50 transition-colors"><Check size={11} /> {ctSaving() ? 'Saving…' : 'Save'}</button>
+                        </div>
+                      </div>
+                    </Show>
+                  </div>
+                )}
               </For>
               <Show when={form().concept_tags.length === 0}>
                 <p class="text-sm text-muted-foreground">No intention tags yet.</p>
               </Show>
-            </div>
 
-            <button type="button" onClick={addCT} class="btn-secondary text-xs px-2.5 py-1 mt-3">
-              <Plus size={12} /> Add tag
-            </button>
-          </div>
-        </section>
-
-        {/* Models */}
-        <section class="card">
-          <div class="flex items-center justify-between mb-3">
-            <div class="section-label flex items-center gap-1.5"><Cpu size={12} /> Models</div>
-            <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-          </div>
-          <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking Ollama…</div>}>
-            <Show
-              when={ollamaUp()}
-              fallback={
-                <div class="flex items-center gap-2 text-xs text-destructive">
-                  <XCircle size={13} /> Ollama unavailable — start it on localhost:11434 to choose models.
+              {/* Add a tag */}
+              <form onSubmit={addCtFromInput} class="flex gap-2 mt-1">
+                <div class="relative flex-1">
+                  <Hash size={12} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <input class="input text-sm pl-7" placeholder="New tag…" value={newCtName()} onInput={(e) => setNewCtName(e.currentTarget.value)} />
                 </div>
-              }
-            >
-              <div class="flex flex-col gap-4">
-                <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.smallModel} />
-                <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.mediumModel} />
-                <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
-                <p class="text-[11px] text-muted-foreground">{ollamaModels().length} models installed · changes apply on Save.</p>
-              </div>
-            </Show>
-          </Show>
-        </section>
-
-        {/* Companion Memory */}
-        <section class="card">
-          <div class="flex items-center justify-between mb-3">
-            <div class="section-label flex items-center gap-1.5"><Brain size={12} /> Companion Memory</div>
-            <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-          </div>
-
-          {/* Master toggle */}
-          <label class="flex items-start gap-3 cursor-pointer select-none">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={form().memory_sync_enabled}
-              onClick={() => setField('memory_sync_enabled', !form().memory_sync_enabled)}
-              class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
-              classList={{ 'bg-primary': form().memory_sync_enabled, 'bg-muted border border-border': !form().memory_sync_enabled }}
-            >
-              <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
-                classList={{ 'translate-x-4': form().memory_sync_enabled }} />
-            </button>
-            <div class="flex-1">
-              <div class="text-sm font-medium text-foreground">Sync with Companion Memory</div>
-              <div class="text-xs text-muted-foreground mt-0.5">
-                Your plan stays on this device. Turn this on to back it up and enrich it with your Companion Memory. One-way push.
-              </div>
+                <button type="submit" disabled={ctSaving() || !newCtName().trim()} class="btn-secondary text-xs px-2.5 py-1 disabled:opacity-50"><Plus size={12} /> Add</button>
+              </form>
             </div>
-          </label>
+          </section>
 
-          {/* Connection + scopes (only meaningful when enabled) */}
-          <Show when={form().memory_sync_enabled}>
-            <div class="flex flex-col gap-3 mt-4 pt-4 border-t border-border">
-              {/* Connection row */}
+          {/* Routine Settings — recall behaviour + the pattern-type taxonomy */}
+          <section class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div class="section-label">Routine Settings</div>
+              <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+            </div>
+            <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
+              hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
+
+            {/* AI day ordering toggle — saved immediately, not via the Save button */}
+            {(() => {
+              const smartMode = () => prefs()?.planning_mode === 'smart';
+              const togglePlanningMode = async () => {
+                const nextValue = smartMode() ? 'basic' : 'smart';
+                try {
+                  await api.prefs.update({ planning_mode: nextValue });
+                  refetchPrefs();
+                } catch (err) { showToast((err as Error).message, 'error'); }
+              };
+              return (
+                <label class="flex items-start gap-2 cursor-pointer select-none">
+                  <button type="button" role="switch" aria-checked={smartMode()}
+                    onClick={togglePlanningMode}
+                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                    classList={{ 'bg-primary': smartMode(), 'bg-muted border border-border': !smartMode() }}>
+                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                      classList={{ 'translate-x-4': smartMode() }} />
+                  </button>
+                  <div>
+                    <div class="text-sm text-foreground leading-tight">AI day ordering</div>
+                    <div class="text-[11px] text-muted-foreground">
+                      AI orders your plan; placement stays deterministic.
+                      <Show when={smartMode() && !ollamaUp()}>
+                        {' '}Requires Ollama — falls back to basic order when unavailable.
+                      </Show>
+                    </div>
+                  </div>
+                </label>
+              );
+            })()}
+
+            {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
+
+            {/* Routine Types — edit the built-in pattern-type taxonomy (creation removed, T-SET-1) */}
+            <div class="border-t border-border pt-4 mt-4">
+              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Routine Types</div>
+              <p class="text-xs text-muted-foreground mb-3">The built-in categories your Routines and Habits belong to. You can edit their shape, colour, and defaults — they can't be created or deleted.</p>
+              <RoutineTypeSettings />
+            </div>
+          </section>
+
+          <button type="submit" class="btn-primary self-start px-5">
+            <Save size={14} /> Save Settings
+          </button>
+
+        </Show>
+
+        {/* ── CONNECTIONS TAB ─────────────────────────────────────────────────── */}
+        <Show when={activeTab() === 'connections'}>
+
+          {/* Models */}
+          <section class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div class="section-label flex items-center gap-1.5"><Cpu size={12} /> Models</div>
+              <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+            </div>
+            <Show when={integrations()} fallback={<div class="text-xs text-muted-foreground animate-pulse2">Checking Ollama…</div>}>
               <Show
-                when={memStatus()?.connected}
+                when={ollamaUp()}
                 fallback={
-                  <div class="flex items-center justify-between gap-3">
-                    <span class="text-xs text-muted-foreground">Not connected</span>
-                    <button type="button" onClick={connectMemory} class="btn-secondary text-xs px-3 py-1.5">
-                      <Link2 size={12} /> Connect
-                    </button>
+                  <div class="flex items-center gap-2 text-xs text-destructive">
+                    <XCircle size={13} /> Ollama unavailable — start it on localhost:11434 to choose models.
                   </div>
                 }
               >
-                <div class="flex items-center justify-between gap-3">
-                  <span class="flex items-center gap-1.5 text-xs text-foreground">
-                    <CheckCircle2 size={13} class="text-primary" /> Connected as {memStatus()!.account}
-                  </span>
-                  <button type="button" onClick={disconnectMemory} class="btn-ghost text-xs px-2 py-1">
-                    <Unlink size={12} /> Disconnect
-                  </button>
+                <div class="flex flex-col gap-4">
+                  <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.smallModel} />
+                  <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.mediumModel} />
+                  <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
+                  <p class="text-[11px] text-muted-foreground">{ollamaModels().length} models installed · changes apply on Save.</p>
                 </div>
               </Show>
+            </Show>
+          </section>
 
-              {/* What syncs */}
-              <div class="flex flex-col gap-2">
-                <span class="text-xs text-muted-foreground">What syncs</span>
-                <ScopeCheck label="Completed tasks & time actuals" field="memory_sync_completed" />
-                <ScopeCheck label="Habits & streaks" field="memory_sync_habits" />
-                <ScopeCheck label="Daily reflections & briefings" field="memory_sync_reflections" />
-              </div>
-
-              {/* Status footer */}
-              <div class="flex items-center justify-between gap-3 pt-1">
-                <span class="text-[11px] text-muted-foreground">
-                  <Show when={memStatus()?.lastSyncedAt} fallback="Never synced">
-                    Last synced {new Date(memStatus()!.lastSyncedAt!).toLocaleString()}
-                  </Show>
-                  <Show when={!memStatus()?.available}> · connector arrives with the auth phase</Show>
-                </span>
-                <button type="button" onClick={syncNow} class="btn-secondary text-xs px-3 py-1.5"
-                  disabled={!memStatus()?.connected}>
-                  <RefreshCw size={12} /> Sync now
-                </button>
-              </div>
+          {/* Companion Memory */}
+          <section class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div class="section-label flex items-center gap-1.5"><Brain size={12} /> Companion Memory</div>
+              <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
-          </Show>
-        </section>
 
-        {/* Integrations */}
-        <section class="card">
-          <div class="section-label mb-3">Integrations</div>
-          <Show when={integrations()} fallback={<div class="text-xs text-slate-500 animate-pulse2">Checking…</div>}>
-            {(i) => (
-              <div class="flex flex-col gap-3">
-                <div class="flex items-center gap-3">
-                  <Cpu size={16} class={i().ollama.available ? 'text-green-400' : 'text-red-400'} />
-                  <div class="flex-1">
-                    <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
-                      Ollama
-                      {i().ollama.available
-                        ? <CheckCircle2 size={13} class="text-green-400" />
-                        : <XCircle size={13} class="text-red-400" />}
-                    </div>
-                    <div class="text-xs text-slate-500 mt-0.5">
-                      {i().ollama.available
-                        ? `${i().ollama.models.length} models · small: ${i().ollama.smallModel} · medium: ${i().ollama.mediumModel}`
-                        : 'Unavailable — start Ollama on localhost:11434'}
-                    </div>
-                  </div>
+            {/* Master toggle */}
+            <label class="flex items-start gap-3 cursor-pointer select-none">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form().memory_sync_enabled}
+                onClick={() => setField('memory_sync_enabled', !form().memory_sync_enabled)}
+                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                classList={{ 'bg-primary': form().memory_sync_enabled, 'bg-muted border border-border': !form().memory_sync_enabled }}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                  classList={{ 'translate-x-4': form().memory_sync_enabled }} />
+              </button>
+              <div class="flex-1">
+                <div class="text-sm font-medium text-foreground">Sync with Companion Memory</div>
+                <div class="text-xs text-muted-foreground mt-0.5">
+                  Your plan stays on this device. Turn this on to back it up and enrich it with your Companion Memory. One-way push.
                 </div>
-                <div class="flex items-center gap-3">
-                  <Globe size={16} class="text-blue-400" />
-                  <div class="flex-1">
-                    <div class="text-sm text-slate-200 font-medium">Google MCP</div>
-                    <div class="text-xs text-slate-500 mt-0.5 capitalize">
-                      Mode: {i().google.mode} · Gmail + Google Calendar
-                    </div>
-                  </div>
-                </div>
+              </div>
+            </label>
 
-                {/* WP7: read-only Google connection health, live-updated on sync. */}
-                <div class="flex flex-col gap-2 pl-7">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="section-label">Connections</span>
-                    <Show when={i().google.connections.length === 0}>
-                      <button
-                        type="button"
-                        onClick={connectGoogle}
-                        disabled={!i().google.liveEnabled}
-                        title={i().google.liveEnabled ? 'Connect a Google account' : 'Set GOOGLE_MODE=live to connect a Google account'}
-                        class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
+            {/* Connection + scopes (only meaningful when enabled) */}
+            <Show when={form().memory_sync_enabled}>
+              <div class="flex flex-col gap-3 mt-4 pt-4 border-t border-border">
+                {/* Connection row */}
+                <Show
+                  when={memStatus()?.connected}
+                  fallback={
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-xs text-muted-foreground">Not connected</span>
+                      <button type="button" onClick={connectMemory} class="btn-secondary text-xs px-3 py-1.5">
                         <Link2 size={12} /> Connect
                       </button>
-                    </Show>
+                    </div>
+                  }
+                >
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="flex items-center gap-1.5 text-xs text-foreground">
+                      <CheckCircle2 size={13} class="text-primary" /> Connected as {memStatus()!.account}
+                    </span>
+                    <button type="button" onClick={disconnectMemory} class="btn-ghost text-xs px-2 py-1">
+                      <Unlink size={12} /> Disconnect
+                    </button>
                   </div>
+                </Show>
 
-                  <Show
-                    when={i().google.connections.length > 0}
-                    fallback={<div class="text-xs text-slate-500">No Google accounts connected.</div>}
-                  >
-                    <For each={i().google.connections}>
-                      {(c) => (
-                        <div class="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
-                          <div class="flex items-center justify-between gap-2">
-                            <span class="text-xs text-slate-200 font-medium truncate">{c.account}</span>
-                            <div class="flex items-center gap-2 shrink-0">
-                              <span
-                                class="text-[10px] px-1.5 py-0.5 rounded-full"
-                                classList={{
-                                  'bg-green-500/15 text-green-400': c.status === 'connected',
-                                  'bg-amber-500/15 text-amber-400': c.status === 'expired',
-                                  'bg-slate-500/15 text-slate-400': c.status === 'inactive',
-                                }}
-                              >
-                                {c.status}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => disconnectGoogle(c.account)}
-                                disabled={!i().google.liveEnabled}
-                                title={i().google.liveEnabled ? 'Disconnect this account' : 'Set GOOGLE_MODE=live to manage connections'}
-                                class="btn-ghost text-xs px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
-                              >
-                                <Unlink size={12} /> Disconnect
-                              </button>
-                            </div>
-                          </div>
-                          <div class="flex items-center gap-3 text-[11px] text-slate-500">
-                            <span>{c.lastSyncAt ? `Last sync: ${new Date(c.lastSyncAt).toLocaleString()}` : 'Never synced'}</span>
-                            <span>·</span>
-                            <span>{c.mappedEventCount} mapped event{c.mappedEventCount === 1 ? '' : 's'}</span>
-                          </div>
-                          <Show when={c.lastError}>
-                            <div class="flex items-center gap-1.5 text-[11px] text-destructive">
-                              <AlertTriangle size={11} /> {c.lastError}
-                            </div>
-                          </Show>
-                        </div>
-                      )}
-                    </For>
-                  </Show>
+                {/* What syncs */}
+                <div class="flex flex-col gap-2">
+                  <span class="text-xs text-muted-foreground">What syncs</span>
+                  <ScopeCheck label="Completed tasks & time actuals" field="memory_sync_completed" />
+                  <ScopeCheck label="Habits & streaks" field="memory_sync_habits" />
+                  <ScopeCheck label="Daily reflections & briefings" field="memory_sync_reflections" />
+                </div>
+
+                {/* Status footer */}
+                <div class="flex items-center justify-between gap-3 pt-1">
+                  <span class="text-[11px] text-muted-foreground">
+                    <Show when={memStatus()?.lastSyncedAt} fallback="Never synced">
+                      Last synced {new Date(memStatus()!.lastSyncedAt!).toLocaleString()}
+                    </Show>
+                    <Show when={!memStatus()?.available}> · connector arrives with the auth phase</Show>
+                  </span>
+                  <button type="button" onClick={syncNow} class="btn-secondary text-xs px-3 py-1.5"
+                    disabled={!memStatus()?.connected}>
+                    <RefreshCw size={12} /> Sync now
+                  </button>
                 </div>
               </div>
-            )}
-          </Show>
-        </section>
+            </Show>
+          </section>
 
-        {/* Backup / Restore / Export */}
-        <section class="card">
-          <div class="section-label flex items-center gap-1.5 mb-3"><Database size={12} /> Backup &amp; Export</div>
-          <div class="flex flex-col gap-4">
-            <div class="flex items-center gap-3 flex-wrap">
-              <a
-                href="/api/export"
-                download="companion-export.json"
-                class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
-              >
-                <Database size={12} /> Export JSON
-              </a>
-              <label class={`btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 cursor-pointer ${importBusy() ? 'opacity-50 pointer-events-none' : ''}`}>
-                {importBusy() ? 'Importing…' : 'Import JSON'}
-                <input
-                  type="file"
-                  accept=".json"
-                  class="sr-only"
-                  onChange={(e) => {
-                    const f = e.currentTarget.files?.[0];
-                    if (f) { e.currentTarget.value = ''; handleImport(f); }
-                  }}
-                />
-              </label>
-            </div>
-            <div class="flex items-start gap-1.5 text-[11px] text-amber-400/80">
-              <AlertTriangle size={11} class="mt-0.5 flex-shrink-0" />
-              <span>
-                Do not sync the live <code class="font-mono">.db</code> file with Syncthing or rsync — WAL mode writes across multiple files and a partial sync can corrupt the database. Use Export or <code class="font-mono">pnpm snapshot</code> instead.
-              </span>
-            </div>
-          </div>
-        </section>
+          {/* Integrations */}
+          <section class="card">
+            <div class="section-label mb-3">Integrations</div>
+            <Show when={integrations()} fallback={<div class="text-xs text-slate-500 animate-pulse2">Checking…</div>}>
+              {(i) => (
+                <div class="flex flex-col gap-3">
+                  <div class="flex items-center gap-3">
+                    <Cpu size={16} class={i().ollama.available ? 'text-green-400' : 'text-red-400'} />
+                    <div class="flex-1">
+                      <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
+                        Ollama
+                        {i().ollama.available
+                          ? <CheckCircle2 size={13} class="text-green-400" />
+                          : <XCircle size={13} class="text-red-400" />}
+                      </div>
+                      <div class="text-xs text-slate-500 mt-0.5">
+                        {i().ollama.available
+                          ? `${i().ollama.models.length} models · small: ${i().ollama.smallModel} · medium: ${i().ollama.mediumModel}`
+                          : 'Unavailable — start Ollama on localhost:11434'}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <Globe size={16} class="text-blue-400" />
+                    <div class="flex-1">
+                      <div class="text-sm text-slate-200 font-medium">Google MCP</div>
+                      <div class="text-xs text-slate-500 mt-0.5 capitalize">
+                        Mode: {i().google.mode} · Gmail + Google Calendar
+                      </div>
+                    </div>
+                  </div>
 
-        <button type="submit" class="btn-primary self-start px-5">
-          <Save size={14} /> Save Settings
-        </button>
+                  {/* WP7: read-only Google connection health, live-updated on sync. */}
+                  <div class="flex flex-col gap-2 pl-7">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="section-label">Connections</span>
+                      <Show when={i().google.connections.length === 0}>
+                        <button
+                          type="button"
+                          onClick={connectGoogle}
+                          disabled={!i().google.liveEnabled}
+                          title={i().google.liveEnabled ? 'Connect a Google account' : 'Set GOOGLE_MODE=live to connect a Google account'}
+                          class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <Link2 size={12} /> Connect
+                        </button>
+                      </Show>
+                    </div>
+
+                    <Show
+                      when={i().google.connections.length > 0}
+                      fallback={<div class="text-xs text-slate-500">No Google accounts connected.</div>}
+                    >
+                      <For each={i().google.connections}>
+                        {(c) => (
+                          <div class="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
+                            <div class="flex items-center justify-between gap-2">
+                              <span class="text-xs text-slate-200 font-medium truncate">{c.account}</span>
+                              <div class="flex items-center gap-2 shrink-0">
+                                <span
+                                  class="text-[10px] px-1.5 py-0.5 rounded-full"
+                                  classList={{
+                                    'bg-green-500/15 text-green-400': c.status === 'connected',
+                                    'bg-amber-500/15 text-amber-400': c.status === 'expired',
+                                    'bg-slate-500/15 text-slate-400': c.status === 'inactive',
+                                  }}
+                                >
+                                  {c.status}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => disconnectGoogle(c.account)}
+                                  disabled={!i().google.liveEnabled}
+                                  title={i().google.liveEnabled ? 'Disconnect this account' : 'Set GOOGLE_MODE=live to manage connections'}
+                                  class="btn-ghost text-xs px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Unlink size={12} /> Disconnect
+                                </button>
+                              </div>
+                            </div>
+                            <div class="flex items-center gap-3 text-[11px] text-slate-500">
+                              <span>{c.lastSyncAt ? `Last sync: ${new Date(c.lastSyncAt).toLocaleString()}` : 'Never synced'}</span>
+                              <span>·</span>
+                              <span>{c.mappedEventCount} mapped event{c.mappedEventCount === 1 ? '' : 's'}</span>
+                            </div>
+                            <Show when={c.lastError}>
+                              <div class="flex items-center gap-1.5 text-[11px] text-destructive">
+                                <AlertTriangle size={11} /> {c.lastError}
+                              </div>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                </div>
+              )}
+            </Show>
+          </section>
+
+          {/* Backup / Restore / Export */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-3"><Database size={12} /> Backup &amp; Export</div>
+            <div class="flex flex-col gap-4">
+              <div class="flex items-center gap-3 flex-wrap">
+                <a
+                  href="/api/export"
+                  download="companion-export.json"
+                  class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
+                >
+                  <Database size={12} /> Export JSON
+                </a>
+                <label class={`btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 cursor-pointer ${importBusy() ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {importBusy() ? 'Importing…' : 'Import JSON'}
+                  <input
+                    type="file"
+                    accept=".json"
+                    class="sr-only"
+                    onChange={(e) => {
+                      const f = e.currentTarget.files?.[0];
+                      if (f) { e.currentTarget.value = ''; handleImport(f); }
+                    }}
+                  />
+                </label>
+              </div>
+              <div class="flex items-start gap-1.5 text-[11px] text-amber-400/80">
+                <AlertTriangle size={11} class="mt-0.5 flex-shrink-0" />
+                <span>
+                  Do not sync the live <code class="font-mono">.db</code> file with Syncthing or rsync — WAL mode writes across multiple files and a partial sync can corrupt the database. Use Export or <code class="font-mono">pnpm snapshot</code> instead.
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <button type="submit" class="btn-primary self-start px-5">
+            <Save size={14} /> Save Settings
+          </button>
+
+        </Show>
+
       </form>
     </div>
   );

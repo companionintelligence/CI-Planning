@@ -144,11 +144,12 @@ export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (bl
   }
   async function remove() {
     const b = block();
-    // A Plan with children routes through the confirm dialog (keep vs remove tasks).
-    if (isContainer() && b) {
-      const childCount = (blocks() ?? []).filter((x) => x.parent_block_id === b.id).length;
-      if (childCount > 0) { clearActiveEntity(); props.onRequestDeletePlan(b); return; }
-    }
+    // All container deletes route through requestDeletePlan in the Planner — it
+    // recomputes childCount from the authoritative store and either deletes directly
+    // (0 children) or shows the keep/remove dialog (>0 children). Bypassing this
+    // path with a client-side childCount check risks leaving orphaned child chips
+    // visible when the store is stale.
+    if (isContainer() && b) { clearActiveEntity(); props.onRequestDeletePlan(b); return; }
     if (!b) { clearActiveEntity(); return; }
     try {
       await api.blocks.delete(b.id);

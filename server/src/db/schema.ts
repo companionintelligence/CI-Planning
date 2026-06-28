@@ -166,6 +166,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // focus-session/break knobs above.
   maxTimeBlockMinutes: integer('max_time_block_minutes').default(240),
   minTimeBlockMinutes: integer('min_time_block_minutes').default(15),
+  defaultTimeBlockMinutes: integer('default_time_block_minutes').default(60),
   // Plan/Concept Time-Block config (0018). Plan horizon reuses planningHorizonDays.
   planAlldayAlways: integer('plan_allday_always', { mode: 'boolean' }).default(false),
   planDaylongForPromoted: integer('plan_daylong_for_promoted', { mode: 'boolean' }).default(false),
