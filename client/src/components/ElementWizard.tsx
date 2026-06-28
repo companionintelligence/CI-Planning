@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, For } from 'solid-js';
 import { X, ChevronLeft, Plus, ListTodo, Flame, Boxes, Clock, Calendar } from 'lucide-solid';
 import {
-  elementModal, setElementModal, tags, blocks, concepts, tasks, categoryPrefs, showToast,
+  elementModal, setElementModal, tags, blocks, concepts, tasks, categoryPrefs, prefs, showToast,
   type ElementKind,
 } from '../stores/index.js';
 import {
@@ -66,9 +66,12 @@ export function ElementWizard() {
   const [categoryId, setCategoryId] = createSignal('');
   const [depDraft, setDepDraft] = createSignal('');
   const [saving, setSaving] = createSignal(false);
+  const [makeHabit, setMakeHabit] = createSignal(false);
 
   // Habit implies recurrence — default a freshly-chosen habit to daily.
   createEffect(() => { if (kind() === 'habit' && taskRepeat() === 'none') setTaskRepeat('daily'); });
+  // Reset makeHabit when repeat is cleared.
+  createEffect(() => { if (taskRepeat() === 'none') setMakeHabit(false); });
   const currentTaskRule = () => buildRule(taskRepeat(), taskWeekdays(), taskCustomRule());
   const toggleWeekday = (d: string) => setTaskWeekdays((ws) => (ws.includes(d) ? ws.filter((x) => x !== d) : [...ws, d]));
   // T-TB-1: Time-Block weekly recurrence — its own weekday set, mirroring the task path.
@@ -114,7 +117,7 @@ export function ElementWizard() {
       setScheduledFor(localISODate()); setEstimate(30); setDueAt(''); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule(''); setTaskTime('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
-      setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]); setCategoryId('');
+      setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]); setCategoryId(''); setMakeHabit(false);
       if (st.mode === 'edit' && st.editTarget) loadForEdit(st.editTarget.kind, st.editTarget.id);
     }
     wasOpen = st.open;
@@ -214,6 +217,7 @@ export function ElementWizard() {
   async function doSave() {
     const k = kind();
     if (!k) return;
+    const effectiveKind = k === 'task' && makeHabit() ? 'habit' : k;
     setSaving(true);
     try {
       const form: ElementForm = {
@@ -227,11 +231,11 @@ export function ElementWizard() {
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
         editScope: editScope(), parentId: m().parentId,
         recurrenceRule:
-          (k === 'task' || k === 'habit') ? (currentTaskRule() || null)
-          : (k === 'timeblock' && !someday()) ? (currentTbRule() || null)
+          (effectiveKind === 'task' || effectiveKind === 'habit') ? (currentTaskRule() || null)
+          : (effectiveKind === 'timeblock' && !someday()) ? (currentTbRule() || null)
           : undefined,
       };
-      const msg = await saveElement(k, m().mode, form, m().editTarget?.id);
+      const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');
       close();
     } catch (err) { showToast((err as Error).message, 'error'); }
@@ -335,7 +339,9 @@ export function ElementWizard() {
           {/* Stage 0 — type chooser (nothing preselected) */}
           <Show when={kind() === null}>
             <div class="p-4 grid grid-cols-2 gap-3">
-              <For each={ELEMENT_KINDS}>
+              <For each={ELEMENT_KINDS.filter((opt) =>
+                opt.kind !== 'habit' && (opt.kind !== 'routine' || (prefs()?.enable_routines ?? false))
+              )}>
                 {(opt) => {
                   const Icon = KIND_ICON[opt.kind];
                   return (
@@ -523,6 +529,19 @@ export function ElementWizard() {
                     <span class="text-[11px] text-muted-foreground">{describeRule(currentTaskRule()!)}</span>
                   </Show>
                 </div>
+
+                {/* Habit upgrade — visible when a task has any repeat set */}
+                <Show when={kind() === 'task' && taskRepeat() !== 'none'}>
+                  <label class="flex items-center gap-2 py-0.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      class="rounded accent-primary"
+                      checked={makeHabit()}
+                      onChange={(e) => setMakeHabit(e.currentTarget.checked)}
+                    />
+                    <span class="text-xs text-foreground">Create a habit from this task to track your daily streak</span>
+                  </label>
+                </Show>
 
                 {/* Notes */}
                 <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Notes</span>

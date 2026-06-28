@@ -511,6 +511,7 @@ export interface Prefs {
   concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
+  enable_routines?: boolean; // feature flag; default false — Routines hidden from Add dialog
   recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
