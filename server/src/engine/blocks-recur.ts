@@ -32,8 +32,39 @@ interface BlockTemplate {
   source_kind: string | null;
   recurrence_rule: string;
   recurrence_dtstart: string | null;
+  recurrence_exdates: string | null; // JSON string[] of skipped local YYYY-MM-DD
   category_id: string | null;  // 0069: propagated to instances
   color_token: string | null;  // 0069: the FROZEN category stamp, copied verbatim
+}
+
+/** Parse the stored EXDATE JSON (`string[]`), tolerating null/garbage. Mirrors recurrence-ops.ts. */
+function parseExdates(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Exclude one occurrence of a recurring Time-Block template: append `date`
+ * (local YYYY-MM-DD) to the template's EXDATE so the lazy materializer
+ * (`ensureRecurringBlocksForRange`) won't resurrect it on the next read. Mirrors
+ * the task `skipInstance` EXDATE behavior. Idempotent. The DELETE route calls
+ * this when removing a materialized instance, so deleting an occurrence sticks.
+ */
+export function excludeBlockOccurrence(templateId: string, date: string): void {
+  const tpl = sqlite
+    .prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ?`)
+    .get(templateId) as { recurrence_exdates: string | null } | undefined;
+  if (!tpl) return;
+  const ex = parseExdates(tpl.recurrence_exdates);
+  if (ex.includes(date)) return;
+  ex.push(date);
+  ex.sort();
+  sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ?`).run(JSON.stringify(ex), templateId);
 }
 
 /**
@@ -54,7 +85,7 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
   const templates = sqlite
     .prepare(
       `SELECT id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, source_kind,
-              recurrence_rule, recurrence_dtstart, category_id, color_token
+              recurrence_rule, recurrence_dtstart, recurrence_exdates, category_id, color_token
          FROM time_blocks
         WHERE recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL`,
     )
@@ -85,7 +116,7 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
       let hits: string[];
       try {
         hits = occurrencesBetween(
-          { recurrenceRule: t.recurrence_rule, recurrenceDtstart: dtstart, taskTime: wall, recurrenceExdates: [], timezone: tz },
+          { recurrenceRule: t.recurrence_rule, recurrenceDtstart: dtstart, taskTime: wall, recurrenceExdates: parseExdates(t.recurrence_exdates), timezone: tz },
           fromDay,
           toDay,
         );
