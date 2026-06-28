@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, createResource, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, MINUTES_PER_DAY, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta } from '../lib/drag.js';
@@ -137,7 +137,8 @@ function fmtTime(iso: string) {
 
 // ── Shared block interaction: drag/resize gesture + a click→options popover ─────
 // A move gesture under this pixel threshold is treated as a click (opens the menu).
-const CLICK_PX = 5;
+// 8 px absorbs normal trackpad/touch tremor without masking intentional drags.
+const CLICK_PX = 8;
 
 /**
  * Drag/resize state + a pointer handler. `onClick` fires for a near-zero move.
@@ -173,13 +174,15 @@ function useBlockDrag(opts: {
     return opts.baseHeight() + dMin;
   };
   function startGesture(mode: GestureMode, e: PointerEvent) {
-    if (opts.locked()) return;
+    // Do NOT bail early for locked blocks — click detection must still work so the
+    // entity card can open. Locking only suppresses drag state and commits.
     e.preventDefault();
     e.stopPropagation();
     const startY = e.clientY;
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture?.(e.pointerId);
     const onMove = (ev: PointerEvent) => {
+      if (opts.locked()) return; // no drag visual for locked blocks
       const raw = ev.clientY - startY;
       // Live preview is collision-clamped so the chip/group visibly stops at the wall
       // while dragging; the pointer-up commit still snaps+clamps via resolveGesture.
@@ -192,9 +195,9 @@ function useBlockDrag(opts: {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       const dy = ev.clientY - startY; // RAW delta: click detection + commit (which clamps itself)
-      setDrag(null);
-      if (mode === 'move') opts.onMoveEnd?.();
+      if (!opts.locked()) { setDrag(null); if (mode === 'move') opts.onMoveEnd?.(); }
       if (mode === 'move' && Math.abs(dy) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
+      if (opts.locked()) return; // no drag commit for locked blocks
       if (mode === 'move' && opts.onMoveCommit) { opts.onMoveCommit(dy, ev); return; }
       // Resize (and any non-grouped move): clamp against neighbours so an edge can't
       // be dragged into an adjacent block.
@@ -203,7 +206,7 @@ function useBlockDrag(opts: {
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-    setDrag({ mode, dy: 0 });
+    if (!opts.locked()) setDrag({ mode, dy: 0 }); // only show drag state for unlocked blocks
   }
   return { drag, liveTop, liveHeight, startGesture };
 }
@@ -260,7 +263,7 @@ interface GroupCtx {
 }
 
 // ── Plan container outline (a timed Time-Block: ★ solid 3pt) — interactive ─────
-function ContainerOutline(props: { block: Block; day: string; group: GroupCtx }) {
+function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; onDelete: (b: Block) => void }) {
   const b = () => props.block;
   const baseTop = () => minutesIntoDay(b().start_at, props.day);
   const baseHeight = () => Math.max(minutesIntoDay(b().end_at, props.day) - baseTop(), 0);
@@ -288,16 +291,24 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx })
       title={`${b().title} · Time Block — drag the label to move the whole group`}
     >
       {/* Solid category label cell (left) — name + secondary tags, white text. It IS
-          the drag handle: dragging it moves the Time Block + its tasks as a group. */}
+          the drag handle: dragging it moves the Time Block + its tasks as a group.
+          The × button provides one-tap delete without needing to open the entity card. */}
       <div
-        class="absolute top-0 bottom-0 left-0 rounded-l-md overflow-hidden px-2 py-1 flex flex-col gap-0.5 pointer-events-auto"
+        class="group/label absolute top-0 bottom-0 left-0 rounded-l-md overflow-hidden px-2 py-1 flex flex-col gap-0.5 pointer-events-auto"
         classList={{ 'cursor-grab': !locked(), 'cursor-default': locked() }}
         style={{ width: `${CAT_WIDTH_PX}px`, 'background-color': fill(), color: `color-mix(in oklch, ${fill()} 30%, black)` }}
         onPointerDown={(e) => startGesture('move', e)}
       >
         <div class="flex items-start gap-1 text-[11px] font-medium leading-tight">
           <Star size={9} class="flex-shrink-0 mt-0.5" />
-          <span class="break-words min-w-0">{b().title}</span>
+          <span class="break-words min-w-0 flex-1">{b().title}</span>
+          <button
+            type="button"
+            title="Remove Time Block"
+            class="flex-shrink-0 opacity-0 group-hover/label:opacity-70 hover:!opacity-100 transition-opacity ml-0.5 -mr-0.5 -mt-0.5 rounded"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); props.onDelete(b()); }}
+          ><X size={10} /></button>
         </div>
         <Show when={heightPx() >= 34}>
           <div class="flex flex-wrap items-center gap-x-1 text-[10px] leading-none opacity-90">
@@ -840,7 +851,7 @@ export function Planner() {
             <For each={containers()}>
               {(c) => (
                 <>
-                  <ContainerOutline block={c} day={day()} group={groupCtx} />
+                  <ContainerOutline block={c} day={day()} group={groupCtx} onDelete={requestDeletePlan} />
                   <For each={placedChildren(c.id)}>
                     {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
                   </For>
