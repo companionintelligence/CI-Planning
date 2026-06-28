@@ -10,7 +10,7 @@ import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { getCategoryPrefs } from '../services/category-prefs.js';
 import { localISODate } from '../lib/dates.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask } from '../services/block-task-sync.js';
@@ -396,6 +396,17 @@ export function blocksRouter() {
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     // CON-3 cascade: the block itself is HARD-deleted — drop its tag rows.
     removeEntityTags('time_block', id);
+    // 0074: deleting a lazily-placed recurring-pattern CONTAINER opts that
+    // (pattern, local-day) out, so the next GET /api/blocks read won't regenerate
+    // it. Without this the marker-based idempotency re-places it immediately and
+    // the block can never be removed. Scoped to containers (block_kind='timeblock')
+    // — a single child task block deletion is a partial edit, not a day opt-out.
+    if (block.sourceKind === 'pattern' && block.blockKind === 'timeblock' && block.sourceRef && block.startAt) {
+      const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(currentOwnerId()) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+      sqlite
+        .prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`)
+        .run(currentOwnerId(), String(block.sourceRef), localDateInTZ(block.startAt, tz));
+    }
     broadcast(currentOwnerId(), 'block:deleted', { id });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block:${id}` });
     ctx.body = { ok: true };

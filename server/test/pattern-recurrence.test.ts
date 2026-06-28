@@ -47,7 +47,10 @@ beforeEach(() => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan; DELETE FROM pattern_tasks; DELETE FROM patterns WHERE id > 0;`);
   // Default timezone for determinism; recurrence anchors are sensitive to tz.
-  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/Los_Angeles' WHERE owner_id = ?`).run(OWNER);
+  // enable_routines is OFF by default (0073), which gates recurring Routine
+  // auto-placement; turn it ON here so the placement tests below exercise both
+  // Routine + Habit. The dedicated gate test flips it back to 0 explicitly.
+  sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/Los_Angeles', enable_routines = 1 WHERE owner_id = ?`).run(OWNER);
 });
 
 describe('patternsRecurringOnDate', () => {
@@ -98,6 +101,54 @@ describe('ensurePatternsForRange (lazy placement on GET)', () => {
     const r = await api(srv.url, `/api/blocks?from=${TODAY}T00:00:00.000Z&to=${TODAY}T23:59:59.999Z`);
     expect(r.status).toBe(200);
     expect(r.body.blocks.some((b: any) => b.source_kind === 'pattern' && b.title === 'A')).toBe(true);
+  });
+
+  it('skips recurring Routines when enable_routines is OFF, but still places Habits', () => {
+    // Regression: with the flag off, a deleted Routine container used to regenerate
+    // on the very next read (the refetch after delete), so it could never be removed.
+    sqlite.prepare(`UPDATE scheduling_prefs SET enable_routines = 0 WHERE owner_id = ?`).run(OWNER);
+    insertPattern('Routine', 'DailyRoutine', [insertTask('RoutineTaskA', 30), insertTask('RoutineTaskB', 30)], 'FREQ=DAILY', noonUTC(TODAY));
+    insertPattern('Habit', 'DailyHabit', [insertTask('HabitTask', 30)], 'FREQ=DAILY', noonUTC(TODAY));
+
+    ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
+
+    // Only the Habit placed (its container + task block); the Routine's container
+    // and both its task blocks are absent — nothing for the user to fight to delete.
+    const titles = (sqlite
+      .prepare(`SELECT title FROM time_blocks WHERE source_kind = 'pattern' ORDER BY title`)
+      .all() as { title: string }[]).map((r) => r.title);
+    expect(titles).toEqual(['DailyHabit', 'HabitTask']);
+  });
+
+  it('honours a pattern_day_optout: an opted-out (pattern, day) is not placed', () => {
+    const t = insertTask('A', 30);
+    const pid = insertPattern('Routine', 'DailyOne', [t], 'FREQ=DAILY', noonUTC(TODAY));
+    sqlite.prepare(`INSERT INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`).run(OWNER, pid, TODAY);
+
+    ensurePatternsForRange(OWNER, `${TODAY}T00:00:00.000Z`, `${TODAY}T23:59:59.999Z`);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE source_kind = 'pattern'`).get() as { n: number }).n).toBe(0);
+  });
+
+  it('a deleted recurring-pattern container stays deleted (DELETE records the opt-out; no regen on next read)', async () => {
+    // The exact user scenario: a recurring pattern places a container, the user
+    // deletes it, and the immediate refetch used to regenerate it.
+    const t = insertTask('Task A', 30);
+    const pid = insertPattern('Routine', 'DailyRoutine', [t], 'FREQ=DAILY', noonUTC(TODAY));
+    const range = `?from=${TODAY}T00:00:00.000Z&to=${TODAY}T23:59:59.999Z`;
+
+    // First read lazily places the container.
+    let blocks = (await api(srv.url, `/api/blocks${range}`)).body.blocks;
+    const container = blocks.find((b: any) => b.block_kind === 'timeblock' && b.source_kind === 'pattern' && b.title === 'DailyRoutine');
+    expect(container).toBeTruthy();
+
+    // Delete it (cascading its task children).
+    expect((await api(srv.url, `/api/blocks/${container.id}?children=delete`, { method: 'DELETE' })).status).toBe(200);
+    // The opt-out row was recorded for this pattern …
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM pattern_day_optouts WHERE pattern_id = ?`).get(pid) as { n: number }).n).toBe(1);
+
+    // … so the next read does NOT bring the container back.
+    blocks = (await api(srv.url, `/api/blocks${range}`)).body.blocks;
+    expect(blocks.some((b: any) => b.source_kind === 'pattern' && b.title === 'DailyRoutine')).toBe(false);
   });
 
   it('does NOT backfill past days (no recursion into yesterday on a normal read)', () => {

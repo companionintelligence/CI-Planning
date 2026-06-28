@@ -819,6 +819,14 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "pattern_id",
+      "date",
+    ],
+    "table": "pattern_day_optouts",
+  },
+  {
+    "columns": [
       "id",
       "owner_id",
       "pattern_tag_id",
@@ -994,6 +1002,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "auto_defense_enabled",
       "trust_mode",
       "default_time_block_minutes",
+      "enable_routines",
     ],
     "table": "scheduling_prefs",
   },
