@@ -1,5 +1,5 @@
 import { createSignal, Show, For, type JSX } from 'solid-js';
-import { Hash, Plus, Lock, Trash2, VolumeX, Volume2, ChevronRight, ChevronDown } from 'lucide-solid';
+import { Lock, Trash2, VolumeX, Volume2, ChevronRight, ChevronDown } from 'lucide-solid';
 import { tags, refetchTags, showToast } from '../stores/index.js';
 import { api, type Tag } from '../lib/api.js';
 import { groupByDirection, groupByCategory, sortDirections, displayTag } from '../lib/tag-tax.js';
@@ -17,8 +17,6 @@ import { useDraggable, useDropZone } from '../lib/draggable.js';
  */
 export function Tags() {
   const [view, setView] = createSignal<'patterns' | 'categories'>('patterns');
-  const [newDir, setNewDir] = createSignal('');
-  const [newCat, setNewCat] = createSignal('');
 
   const groupedDir = () => groupByDirection(tags() ?? []);
   const groupedCat = () => groupByCategory(tags() ?? []);
@@ -27,19 +25,6 @@ export function Tags() {
   async function run(p: Promise<unknown>, ok: string) {
     try { await p; refetchTags(); showToast(ok, 'success'); }
     catch (err) { showToast((err as Error).message, 'error'); }
-  }
-
-  async function addDirection(e: Event) {
-    e.preventDefault();
-    if (!newDir().trim()) return;
-    await run(api.tags.create(newDir().trim(), { kind: 'pattern' }), 'Pattern added');
-    setNewDir('');
-  }
-  async function addCategory(e: Event) {
-    e.preventDefault();
-    if (!newCat().trim()) return;
-    await run(api.tags.create(newCat().trim(), { kind: 'category' }), 'Time Block Category added');
-    setNewCat('');
   }
 
   // Re-file an intention onto the active axis (single target = drag-move; null = Unsorted).
@@ -81,14 +66,6 @@ export function Tags() {
 
       {/* ── Patterns tab ── */}
       <Show when={view() === 'patterns'}>
-        <form onSubmit={addDirection} class="flex gap-2 mb-6 max-w-sm">
-          <div class="relative flex-1">
-            <Hash size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-            <input class="input pl-8" placeholder="New pattern…" value={newDir()} onInput={(e) => setNewDir(e.currentTarget.value)} />
-          </div>
-          <button type="submit" class="btn-primary"><Plus size={14} /> Pattern</button>
-        </form>
-
         <div class="grid gap-4 md:grid-cols-3">
           <For each={groupedDir().groups}>
             {(g) => (
@@ -125,14 +102,6 @@ export function Tags() {
 
       {/* ── Time Block Categories tab ── */}
       <Show when={view() === 'categories'}>
-        <form onSubmit={addCategory} class="flex gap-2 mb-6 max-w-sm">
-          <div class="relative flex-1">
-            <Hash size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-            <input class="input pl-8" placeholder="New category…" value={newCat()} onInput={(e) => setNewCat(e.currentTarget.value)} />
-          </div>
-          <button type="submit" class="btn-primary"><Plus size={14} /> Category</button>
-        </form>
-
         <div class="grid gap-4 md:grid-cols-3">
           <For each={groupedCat().groups}>
             {(g) => (

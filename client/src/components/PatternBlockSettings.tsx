@@ -14,12 +14,18 @@ const DEFAULT_PREF: PatternPref = {
 };
 
 /**
- * Pattern Block Settings: per-pattern-tag visual config — icon shape + token colour.
+ * Pattern Block Settings: per-pattern-tag visual config — icon shape + token colour,
+ * and optionally a default-minutes field (when minutes/onMinutesChange are provided).
  * State is lifted here; cards register getters so a single Save can flush all changes
  * at once. Colours use inline CSS variables to bypass Tailwind purging of dynamic
  * class names.
  */
-export function PatternBlockSettings(props: { onReady?: (save: () => Promise<void>) => void }) {
+export function PatternBlockSettings(props: {
+  onReady?: (save: () => Promise<void>) => void;
+  /** If provided, renders a "Default (min)" field per card and includes it in saveAll. */
+  minutes?: () => Record<string, number>;
+  onMinutesChange?: (id: string, val: number) => void;
+}) {
   const patternTags = () => (tags() ?? []).filter((t) => t.kind === 'pattern');
   const cardGetters = new Map<Tag['id'], () => { shape: string; color: string }>();
 
@@ -29,7 +35,12 @@ export function PatternBlockSettings(props: { onReady?: (save: () => Promise<voi
         patternTags().map((t) => {
           const s = cardGetters.get(t.id)?.();
           if (!s) return;
-          return api.patternPrefs.set(t.id, { icon_shape: s.shape, color_token: s.color });
+          const update: Parameters<typeof api.patternPrefs.set>[1] = {
+            icon_shape: s.shape,
+            color_token: s.color,
+          };
+          if (props.minutes) update.default_minutes = props.minutes()[t.id] ?? 60;
+          return api.patternPrefs.set(t.id, update);
         })
       );
       refetchPatternPrefs();
@@ -44,7 +55,14 @@ export function PatternBlockSettings(props: { onReady?: (save: () => Promise<voi
   return (
     <div class="flex flex-col gap-2">
       <For each={patternTags()}>
-        {(t) => <PatternBlockCard tag={t} onRegister={(g) => cardGetters.set(t.id, g)} />}
+        {(t) => (
+          <PatternBlockCard
+            tag={t}
+            onRegister={(g) => cardGetters.set(t.id, g)}
+            minutes={props.minutes ? () => props.minutes!()[t.id] ?? 60 : undefined}
+            onMinutesChange={props.onMinutesChange ? (val) => props.onMinutesChange!(t.id, val) : undefined}
+          />
+        )}
       </For>
       <Show when={patternTags().length === 0}>
         <p class="text-sm text-muted-foreground">No pattern tags yet. Add one on the Tags page.</p>
@@ -56,6 +74,8 @@ export function PatternBlockSettings(props: { onReady?: (save: () => Promise<voi
 function PatternBlockCard(props: {
   tag: Tag;
   onRegister: (getter: () => { shape: string; color: string }) => void;
+  minutes?: () => number;
+  onMinutesChange?: (val: number) => void;
 }) {
   const pref = (): PatternPref => {
     const saved = patternPrefs()?.prefs?.[props.tag.id];
@@ -76,7 +96,7 @@ function PatternBlockCard(props: {
 
   return (
     <div class="rounded-lg border border-border bg-card p-3 flex flex-col gap-2">
-      {/* Preview + name */}
+      {/* Preview + name + base badge + optional minutes */}
       <div class="flex items-center gap-2">
         <div
           class="relative w-9 h-6 rounded-md border border-border overflow-hidden flex items-center justify-center flex-shrink-0"
@@ -86,6 +106,18 @@ function PatternBlockCard(props: {
           <span class="relative"><ShapeIcon shape={shape()} size={13} strokeWidth={1.5} /></span>
         </div>
         <span class="text-sm font-medium text-foreground flex-1 capitalize">{props.tag.name}</span>
+        <Show when={props.minutes !== undefined}>
+          <div class="flex items-center gap-1.5 flex-shrink-0">
+            <input
+              type="number" min="5" step="5"
+              class="input py-1 text-sm w-20"
+              title="Default time when a task has no intention tag"
+              value={props.minutes!()}
+              onInput={(e) => props.onMinutesChange?.(Number(e.currentTarget.value) || 0)}
+            />
+            <span class="text-[11px] text-muted-foreground">min</span>
+          </div>
+        </Show>
         <Show when={props.tag.is_base}>
           <span class="badge-neutral text-[10px]">base</span>
         </Show>
