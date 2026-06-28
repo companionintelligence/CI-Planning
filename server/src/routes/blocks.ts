@@ -6,7 +6,7 @@ import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
-import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
+import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { getCategoryPrefs } from '../services/category-prefs.js';
 import { localISODate } from '../lib/dates.js';
@@ -406,6 +406,13 @@ export function blocksRouter() {
       sqlite
         .prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`)
         .run(currentOwnerId(), String(block.sourceRef), localDateInTZ(block.startAt, tz));
+    }
+    // CON-4 sibling of the opt-out above: deleting a recurring Time-Block INSTANCE
+    // records its day in the template's EXDATE, so ensureRecurringBlocksForRange
+    // won't re-materialize it on the next read. Without this, recurring blocks with
+    // no tasks inside (e.g. a "Deep-focus" block) were impossible to delete.
+    if (block.recurrenceParentId && block.occurrenceDate) {
+      excludeBlockOccurrence(block.recurrenceParentId, block.occurrenceDate);
     }
     broadcast(currentOwnerId(), 'block:deleted', { id });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block:${id}` });

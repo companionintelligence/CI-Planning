@@ -94,6 +94,28 @@ describe('CON-4 recurring Time Blocks', () => {
     expect(times.size).toBe(1);
   });
 
+  it('deleting one instance EXDATEs it so it does not regenerate on the next read', async () => {
+    // The user scenario: a recurring Time Block with no tasks inside ("Deep-focus")
+    // could not be deleted — the next GET re-materialized the instance.
+    const tpl = await makeRecurring('FREQ=DAILY');
+    let blocks = await getBlocks(srv, at(T0, '00:00'), at(T2, '23:59'));
+    let insts = blocks.filter((b) => b.recurrence_parent_id === tpl.id);
+    expect(insts).toHaveLength(3); // T0, T1, T2
+
+    // Delete the middle occurrence.
+    const t1 = insts.find((b) => b.occurrence_date === T1)!;
+    expect((await api(srv.url, `/api/blocks/${t1.id}`, { method: 'DELETE' })).status).toBe(200);
+
+    // Its day is now in the template's EXDATE …
+    const exRaw = (sqlite.prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ?`).get(tpl.id) as { recurrence_exdates: string | null }).recurrence_exdates;
+    expect(JSON.parse(exRaw ?? '[]')).toContain(T1);
+
+    // … so the next read keeps it gone (only T0 + T2 remain).
+    blocks = await getBlocks(srv, at(T0, '00:00'), at(T2, '23:59'));
+    insts = blocks.filter((b) => b.recurrence_parent_id === tpl.id);
+    expect(insts.map((b) => b.occurrence_date).sort()).toEqual([T0, T2]);
+  });
+
   it('series rule change re-materializes; deleting the template cascades instances', async () => {
     const tpl = await makeRecurring('FREQ=DAILY');
     await getBlocks(srv, at(T0, '00:00'), at(T2, '23:59'));

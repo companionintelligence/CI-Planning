@@ -119,6 +119,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   recurrenceRule: text('recurrence_rule'),           // RRULE string; null = one-off
   recurrenceDtstart: text('recurrence_dtstart'),     // UTC ISO anchor of the series
   recurrenceParentId: text('recurrence_parent_id'),  // template id on an instance (no FK: cleared by hand)
+  recurrenceExdates: text('recurrence_exdates', { mode: 'json' }).$type<string[]>(), // 0075: skipped local YYYY-MM-DD (per-instance delete)
   occurrenceDate: text('occurrence_date'),           // YYYY-MM-DD local day of an instance
   autoRunId: text('auto_run_id'),                    // the Auto placement run that created this block (0052; for Undo)
   lastMovedAt: text('last_moved_at'),               // B1: UTC ISO when reflow last moved this block (anti-thrash stability window)
