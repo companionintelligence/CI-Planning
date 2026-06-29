@@ -161,6 +161,83 @@ Most concurrency converges silently (different fields → both kept; same field 
 ## Effort
 **L** — the schema/version/merge core is modest, but the op-log durability, temp-id rewrite, replay-on-reconnect choreography, SSE catch-up with `Last-Event-ID`, and the conflict UI together make this a large, test-heavy phase. Budget meaningful time for the cross-device integration tests, which are the only way to trust the monotonic-completion guarantee.
 
+---
+
+## Implementation status
+
+Core shipped on branch `claude/zen-bohr-ba20e0` (migrations 0076–0079):
+
+| Component | File(s) | Status |
+|-----------|---------|--------|
+| Schema: `version`, `updated_at`, `field_ts` on tasks + time_blocks | `0076_sync_versioning.ts` | ✅ |
+| Schema: `sync_events` append-only log | `0077_sync_events.ts` | ✅ |
+| Field-level LWW + monotonic completion | `server/src/sync/apply.ts` | ✅ |
+| `POST /api/sync` batch endpoint | `server/src/routes/sync.ts` | ✅ |
+| `stampRow` on existing PATCH routes | `routes/tasks.ts`, `routes/blocks.ts` | ✅ |
+| SSE catch-up (`Last-Event-ID` replay + `sync:resync` with cursor-advancing `id:`) | `server/src/routes/sse.ts` | ✅ |
+| Client op-log (IndexedDB, injectable store) | `client/src/lib/oplog.ts` | ✅ |
+| Optimistic mutations + flush | `client/src/stores/mutations.ts` | ✅ |
+| Persistent conflict banner + store | `stores/conflicts.ts`, `components/ConflictBanner.tsx` | ✅ |
+| `sync_events` daily prune job (30-day retention) | `0078_prune_sync_events_job.ts`, `jobs/index.ts` | ✅ |
+| `field_ts` seeding from `updated_at` for pre-migration rows | `0079_seed_field_ts.ts` | ✅ |
+| Server tests (22 apply cases, 3 SSE catch-up cases) | `test/sync-apply.test.ts`, `test/sse-catchup.test.ts` | ✅ |
+| Client tests (10 oplog cases, 8 conflict-store cases) | `lib/oplog.test.ts`, `stores/conflicts.test.ts` | ✅ |
+
+Deferred from the spec (not yet built):
+- Temp-id rewrite for offline-created entities (negative-id op rewrite path)
+- Offline create (the client path only wraps existing PATCH calls; `POST /api/tasks` still requires network)
+
+---
+
+## Known gaps (prioritized backlog)
+
+Gaps discovered during implementation review, ordered by severity. Gaps 3, 4, 7, 8, 9, 10 are closed. Remaining open: P3 documentation items (gaps 1/2, 5, 6).
+
+### P1 — Fix before production ✅ All closed
+
+**Gap 7 — `sync_events` has no retention policy** ✅ *Closed by migration 0078 + `prune_sync_events` job*
+
+`sync_events` grows at ~1 row per mutation with no pruning. At production write rates this becomes a performance drag and a disk-pressure risk within weeks. Retention has no correctness coupling — events older than the reconnect window are useless.
+
+**Resolution:** migration 0078 inserts a `prune_sync_events` row into `scheduled_jobs` (daily cron `0 3 * * *`). The `execute()` switch in `jobs/index.ts` runs an owner-scoped `DELETE FROM sync_events WHERE owner_id = ? AND at < datetime('now', '-30 days')`. The 30-day window exceeds any realistic offline-reconnect gap; devices offline longer than that get a `sync:resync` and full refetch regardless.
+
+**Gap 10 — No optimistic rollback on server rejection** ✅ *Closed in `mutations.ts` flush() error path*
+
+When `flush()` gets `{ error: 'not found' }` back for an op (race-deleted entity), the op is acked and removed from the queue, but the local optimistic mutation already applied — the task or block remains visible in the UI until the next `refetchTasks()`/`refetchBlocks()`. The window is short (the next SSE event or user action triggers a refetch) but the entity is non-interactive while it persists.
+
+**Resolution:** `flush()` in `mutations.ts` now inspects each error result. When the error string includes `'not found'`, it immediately calls `mutateTasks`/`mutateBlocks` to filter the entity out of local SolidJS state before acking the op — no server change required. The entity vanishes from the UI without waiting for the next SSE frame.
+
+### P2 — Fix before Phase L GA ✅ All closed
+
+**Gap 9 — Flush not called on Service Worker activation** ✅ *Closed: SW push handler + `navigator.serviceWorker` message listener*
+
+`mutations.ts` registers `window.addEventListener('online', flush)`. If Phase H's push notification wakes the app while the tab is in the background, queued ops stay pending until the user opens the window and the `online` event fires. Writes can be stranded for hours if the user dismisses the notification without opening the app.
+
+**Resolution:** two-part fix. `client/public/sw.js` wraps `showNotification` and a `clients.matchAll(...).then(...)` call in `Promise.all` inside the push handler, broadcasting `{ type: 'sync-flush' }` to all open window clients on every push. `stores/mutations.ts` registers a `navigator.serviceWorker.addEventListener('message', ...)` listener that calls `flush()` when `e.data.type === 'sync-flush'`, guarded by a `typeof navigator !== 'undefined'` check for SSR safety.
+
+**Gap 4 — No `field_ts` seeding on existing rows** ✅ *Closed by migration 0079*
+
+Migration 0076 added `field_ts TEXT DEFAULT NULL`. Without seeding, the first sync op on any pre-migration row would win unconditionally because `op.clientTs >= (fieldTs[field] ?? '')` is always true when `fieldTs[field]` is `undefined`. Migration 0079 (`server/src/db/migrations/0079_seed_field_ts.ts`) fixes this by seeding `field_ts` for all existing rows:
+
+- Rows with `updated_at`: each whitelisted field is stamped with `updated_at`, so any op with an older `clientTs` correctly loses LWW.
+- Rows without `updated_at` (never touched since 0076): fields are stamped with the epoch `'1970-01-01T00:00:00.000Z'`. This ensures the next LWW comparison has an anchor without retroactively rejecting legitimate queued ops that were generated after 0076 ran.
+
+### P3 — Document; revisit when relevant
+
+**Gap 1/2 — `baseVersion` unused; `patchTask`/`patchBlock` send 0** *(staleness detection unimplemented)*
+
+`applyOp` receives `op.baseVersion` but ignores it. It was intended as a stale-client detector: if `op.baseVersion` is far behind the current `row.version`, the client was editing from a very old snapshot and its op could be confidently rejected rather than merged. LWW on `clientTs` handles the common concurrent-edit case; `baseVersion` would add a hard fence for extreme staleness (e.g. editing a task from a page that's been backgrounded for days without refreshing). Not a correctness issue today.
+
+When enforcing: add a staleness threshold (e.g. `op.baseVersion < row.version - 50`) and return a dedicated `{ opId, error: 'stale base' }` result rather than a 404, so the client can surface a "your edits may be very old — please refresh" message rather than silently draining the op.
+
+**Gap 6 — Client version not tracked in optimistic state** *(low risk; no UI reads version)*
+
+`patchTask`/`patchBlock` hard-code `baseVersion: 0` and don't increment `task.version` in the optimistic mutation. The correct version arrives on the next server response and after `flush()` acks. No UI component currently reads `task.version` for display. Revisit if version is used for display, conflict-reason attribution, or when Gap 1/2 is enforced.
+
+**Gap 5 — Blocks have no `owner_id` check in `applyOp`** *(impossible under current schema)*
+
+`tasks` ownership is verified (`row['owner_id'] !== ownerId → 404`); `time_blocks` has no `owner_id` column, so `applyOp` trusts the authenticated session. Under the current single-owner schema this is safe — a session can only be authenticated as the owner who created the blocks. Document as a constraint if multi-owner block sharing is ever added: `time_blocks` would need an `owner_id` column and an explicit check.
+
 ## Suggested PR breakdown
 1. **Server versioning + field-level apply** (no client change): migrations for `version`/`updated_at`/`field_ts`, `sync/apply.ts`, `POST /api/sync`, `applyMonotonic`. Ship with `apply.test.ts` covering field merge + monotonic completion. Existing PATCH routes delegate to the same apply path so online edits get versioned too.
 2. **SSE catch-up:** `sync_events` table + log-on-broadcast, `Last-Event-ID` replay in `routes/sse.ts`, client cursor handling + flush-before-trust in `lib/sse.ts`. Catch-up test.
