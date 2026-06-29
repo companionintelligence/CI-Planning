@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns } from '../stores/index.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns } from '../stores/index.js';
 import { directionColorForTask } from '../lib/pattern-meta.js';
 
 const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
@@ -105,6 +105,10 @@ export function TaskCard(props: Props) {
   );
 
   const isInstance = () => !!props.task.recurrence_parent_id;
+
+  // Number of linked subtasks, shown on the card. Counts children present in the task
+  // store (accurate in the default backlog view); thrown-away ones don't count.
+  const subtaskCount = () => (tasks() ?? []).filter((t) => t.parent_id === props.task.id && t.status !== 'cancelled').length;
 
   function toggleSubs() {
     setSubsFetched(true);
@@ -223,64 +227,29 @@ export function TaskCard(props: Props) {
           'border-left-color': dirColor() ?? 'var(--border)',
         }}
       >
-        {/* LEFT column: checkbox/habit-marker (top) + the hover action buttons,
-            pushed to the bottom so they line up with the Start row on the right. */}
-        <div class="flex flex-col items-start justify-between flex-shrink-0 self-stretch gap-2">
-          {/* Checkbox — habits aren't completed here; you mark occurrences done on the
-              planner. Show a non-interactive habit marker instead of a checkbox. */}
-          <Show
-            when={!props.task.is_habit}
-            fallback={
-              <span class="checkbox mt-0.5 flex-shrink-0 flex items-center justify-center cursor-default opacity-60"
-                title="Habit — mark occurrences done on the planner, not here">
-                <Repeat size={11} class="text-muted-foreground" />
-              </span>
-            }
+        {/* Checkbox / habit-marker — the only thing in the left gutter now. Actions
+            moved to the right rail so the title / notes / tags left-align. */}
+        <Show
+          when={!props.task.is_habit}
+          fallback={
+            <span class="checkbox mt-0.5 flex-shrink-0 flex items-center justify-center cursor-default opacity-60"
+              title="Habit — mark occurrences done on the planner, not here">
+              <Repeat size={11} class="text-muted-foreground" />
+            </span>
+          }
+        >
+          <button
+            onClick={toggleDone}
+            class={`checkbox mt-0.5 flex-shrink-0 ${props.task.status === 'done' ? 'checkbox-checked' : ''}`}
+            title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
           >
-            <button
-              onClick={toggleDone}
-              class={`checkbox mt-0.5 flex-shrink-0 ${props.task.status === 'done' ? 'checkbox-checked' : ''}`}
-              title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
-            >
-              <Show when={props.task.status === 'done'}>
-                <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
-                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </Show>
-            </button>
-          </Show>
-
-          {/* Hover actions (T-TASKS-2/5 + add-to-routine), bottom-aligned with Start. */}
-          <div class="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-wrap max-w-[92px] transition-opacity duration-100">
-            <button onClick={sendToFlightPlan} class="btn-icon hover:text-primary" title="Send to Flight-plan"><Rocket size={13} /></button>
-            <Show when={isInstance()}>
-              <button onClick={skip} class="btn-icon" title="Skip this occurrence"><SkipForward size={13} /></button>
+            <Show when={props.task.status === 'done'}>
+              <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
+                <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
             </Show>
-            {/* Add to a routine — pick an existing one or create a new routine with this task. */}
-            <div class="relative">
-              <button onClick={() => setRoutineMenu((v) => !v)} class="btn-icon hover:text-primary" title="Add to a routine"><Shapes size={13} /></button>
-              <Show when={routineMenu()}>
-                <div class="absolute z-20 left-0 top-full mt-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
-                  <For each={routines()}>
-                    {(r) => (
-                      <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
-                    )}
-                  </For>
-                  <Show when={routines().length === 0}>
-                    <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
-                  </Show>
-                  <button onClick={newRoutineWithTask} class="w-full text-left px-3 py-1.5 text-sm text-primary hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
-                </div>
-              </Show>
-            </div>
-            <button onClick={toggleSubs} class="btn-icon" title="Subtasks">
-              <Show when={showSubs()} fallback={<ChevronRight size={13} />}><ChevronDown size={13} /></Show>
-            </button>
-            <button class="btn-icon" title="Add subtask" onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}><Plus size={13} /></button>
-            <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
-            <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>
-          </div>
-        </div>
+          </button>
+        </Show>
 
         {/* Content (unchanged: dot, title, description, tags, streak) */}
         <div class="flex-1 min-w-0">
@@ -289,6 +258,17 @@ export function TaskCard(props: Props) {
             <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
               {props.task.title}
             </span>
+            {/* Linked-subtask count — visible at a glance; click to expand. */}
+            <Show when={subtaskCount() > 0}>
+              <button
+                onClick={toggleSubs}
+                class="badge-neutral text-[10px] flex-shrink-0 inline-flex items-center gap-0.5 mt-0.5 hover:text-foreground"
+                title={`${subtaskCount()} subtask${subtaskCount() === 1 ? '' : 's'}`}
+              >
+                <Show when={showSubs()} fallback={<ChevronRight size={10} />}><ChevronDown size={10} /></Show>
+                {subtaskCount()}
+              </button>
+            </Show>
             <Show when={props.task.is_habit}>
               <span class="badge-neutral text-[10px] flex-shrink-0 inline-flex items-center gap-0.5"><Repeat size={9} /> habit</span>
             </Show>
@@ -353,10 +333,38 @@ export function TaskCard(props: Props) {
           </Show>
         </div>
 
-        {/* Right rail: estimate on top, then the always-visible priority toggle and
-            Due / Start date fields. (Actions moved to the left column.) */}
+        {/* Right rail: top slot shows the estimate, and swaps to the hover action
+            buttons (over the priority toggle); then priority + Due / Start. */}
         <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
-          <div class="min-h-[18px]">{est()}</div>
+          <div class="relative flex items-center justify-end min-h-[22px] w-full">
+            <span class="group-hover:opacity-0 transition-opacity">{est()}</span>
+            <div class="absolute right-0 top-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+              <button onClick={sendToFlightPlan} class="btn-icon hover:text-primary" title="Send to Flight-plan"><Rocket size={13} /></button>
+              <Show when={isInstance()}>
+                <button onClick={skip} class="btn-icon" title="Skip this occurrence"><SkipForward size={13} /></button>
+              </Show>
+              {/* Add to a routine — pick an existing one or create a new routine with this task. */}
+              <div class="relative">
+                <button onClick={() => setRoutineMenu((v) => !v)} class="btn-icon hover:text-primary" title="Add to a routine"><Shapes size={13} /></button>
+                <Show when={routineMenu()}>
+                  <div class="absolute z-20 right-0 top-full mt-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
+                    <For each={routines()}>
+                      {(r) => (
+                        <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
+                      )}
+                    </For>
+                    <Show when={routines().length === 0}>
+                      <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
+                    </Show>
+                    <button onClick={newRoutineWithTask} class="w-full text-left px-3 py-1.5 text-sm text-primary hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
+                  </div>
+                </Show>
+              </div>
+              <button class="btn-icon" title="Add subtask" onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}><Plus size={13} /></button>
+              <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
+              <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>
+            </div>
+          </div>
           <PriorityToggle value={p()} onPick={setPriority} />
           <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
           <DateField label="Start" value={props.task.scheduled_for} onSet={setStart} />
