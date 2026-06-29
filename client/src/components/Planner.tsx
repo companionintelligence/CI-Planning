@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, createResource, onCleanup, onMount, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X } from 'lucide-solid';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, MINUTES_PER_DAY, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
 import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta } from '../lib/drag.js';
@@ -8,7 +8,7 @@ import { spanAtY } from '../lib/place.js';
 import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
@@ -352,6 +352,8 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
 function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
   const b = () => props.placed.block;
   const task = () => taskOf(b().task_id);
+  // Linked subtasks of this chip's task (excludes thrown-away). Drives the count badge.
+  const subCount = () => { const t = task(); return t ? (tasks() ?? []).filter((x) => x.parent_id === t.id && x.status !== 'cancelled').length : 0; };
   const pat = () => patternForTask(b().task_id);
   const tag = () => task()?.tags?.[0] ?? b().tag ?? undefined;
   // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
@@ -466,6 +468,11 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
           <Show when={b().is_locked}><Lock size={9} class="text-muted-foreground flex-shrink-0" /></Show>
           <Show when={props.nested}><Star size={8} class="text-primary/60 flex-shrink-0" /></Show>
           <span class="truncate">{b().title}</span>
+          <Show when={subCount() > 0}>
+            <span class="flex-shrink-0 inline-flex items-center gap-0.5 text-[9px] text-muted-foreground" title={`${subCount()} subtask${subCount() === 1 ? '' : 's'}`}>
+              <ListChecks size={9} /> {subCount()}
+            </span>
+          </Show>
           <Show when={conflict()}>
             <AlertTriangle size={10} class="text-destructive flex-shrink-0 ml-auto" />
           </Show>
