@@ -12,7 +12,7 @@ import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, 
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
-import { pickNextUp, scrollTopForBlock, VISIBLE_HOURS } from '../lib/planner.js';
+import { pickNextUp, scrollTopForBlock, SLOT_MIN, VISIBLE_HOURS } from '../lib/planner.js';
 import { computeBands } from '../lib/day-windows.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
@@ -696,21 +696,31 @@ export function Planner() {
   }
 
   let scroller: HTMLDivElement | undefined;
-  // T-PLAN-2: open each day scrolled to ~1h before its anchor block (scrollTopForBlock
-  // keeps SLOT_MIN=60 of lead-in above it). On TODAY the anchor is the next-up item so
-  // the view opens at the current work, not 6am; other days anchor to their first block.
+  // Open each day scrolled to exactly 1h before its FIRST pattern direction (the
+  // earliest availability window) — one hour of lead-in, no more, no less. Falls back
+  // to the first block, then the day top, when the day has no direction windows.
+  const firstDirectionTop = createMemo(() => {
+    const bs = bands();
+    return bs.length ? Math.min(...bs.map((b) => b.top)) : null;
+  });
   const anchorChip = () => (isToday() ? nextUp() ?? firstChip() : firstChip());
-  const repin = () => { if (scroller) scroller.scrollTop = scrollTopForBlock(anchorChip(), day()); };
+  const SLOT_PX = SLOT_MIN * PX_PER_MIN; // 1h of lead-in above the anchor
+  const repin = () => {
+    if (!scroller) return;
+    const dirTop = firstDirectionTop();
+    scroller.scrollTop = dirTop != null ? Math.max(0, dirTop - SLOT_PX) : scrollTopForBlock(anchorChip(), day());
+  };
   onMount(repin);
   // Pin ONCE per (day, zoom) — never on a blocks refetch. A committed action (delete,
   // complete, drag, auto-reflow) refetches blocks, which previously re-ran this effect
   // and yanked the scroll back to the top of the day; gating on the day+zoom key stops
-  // that. `firstChip()` is read only to re-run once the new day's blocks land.
+  // that. Reading firstChip()/firstDirectionTop() re-runs it once the day's blocks AND
+  // direction windows have landed; the loading gates hold it until both are ready.
   let pinnedKey = '';
   createEffect(() => {
     const key = `${day()}:${windowHours()}`;
-    firstChip();
-    if (key === pinnedKey || blocks.loading) return;
+    firstChip(); firstDirectionTop();
+    if (key === pinnedKey || blocks.loading || dayWindows.loading) return;
     pinnedKey = key;
     queueMicrotask(repin);
   });
