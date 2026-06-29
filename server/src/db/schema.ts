@@ -55,6 +55,12 @@ export const tasks = sqliteTable('tasks', {
   sourceRef: text('source_ref'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   completedAt: text('completed_at'),
+  // Phase L: monotonic per-record version (advances on every applied op or PATCH);
+  // field_ts is a JSON { field: utcIso } map for per-field LWW; updated_at is the
+  // server clock of the last write (informational, not a lock cursor).
+  version: integer('version').notNull().default(1),
+  updatedAt: text('updated_at'),
+  fieldTs: text('field_ts'),
 });
 
 // Dependency edges: task_id is blocked until depends_on_id is done.
@@ -124,6 +130,10 @@ export const timeBlocks = sqliteTable('time_blocks', {
   autoRunId: text('auto_run_id'),                    // the Auto placement run that created this block (0052; for Undo)
   lastMovedAt: text('last_moved_at'),               // B1: UTC ISO when reflow last moved this block (anti-thrash stability window)
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  // Phase L: same versioning columns as tasks (see tasks table comment).
+  version: integer('version').notNull().default(1),
+  updatedAt: text('updated_at'),
+  fieldTs: text('field_ts'),
 });
 
 // Reusable Time-Block templates (Phase G): a saved named/tagged container with a
@@ -525,6 +535,18 @@ export const outboundQueue = sqliteTable('outbound_queue', {
   provider: text('provider').notNull(),
   account: text('account').notNull(),
   createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// --- Phase L (0077): Append-only SSE event log for Last-Event-ID catch-up. ---
+export const syncEvents = sqliteTable('sync_events', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').notNull(),
+  entity: text('entity').notNull().default(''),
+  entityId: text('entity_id').notNull().default(''),
+  version: integer('version'),
+  event: text('event').notNull(),
+  payload: text('payload').notNull(),
+  at: text('at').notNull(),
 });
 
 // --- Phase R (0046): Audit log. Append-only; every mutating route writes one row. ---

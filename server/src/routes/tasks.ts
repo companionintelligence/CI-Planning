@@ -22,6 +22,7 @@ import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, entityTagL
 import { utcDayBounds } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 
 export function tasksRouter() {
   const router = new Router();
@@ -422,6 +423,12 @@ export function tasksRouter() {
       ? await db.update(tasks).set(update).where(eq(tasks.id, targetId)).returning()
       : await db.select().from(tasks).where(eq(tasks.id, targetId));
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    // Phase L: stamp version/field_ts so concurrent sync ops from other devices
+    // compare correctly against this online edit using field-level LWW.
+    if (Object.keys(update).length > 0) {
+      stampRow(sqlite, 'task', targetId, Object.keys(update));
+    }
 
     if (Array.isArray(body.tags) || Array.isArray(body.secondary_tags)) {
       // Partial: an omitted level is preserved (mirrors the block PATCH semantics).

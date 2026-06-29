@@ -10,7 +10,7 @@ import { replanToastMessage } from '../lib/replan.js';
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export const [taskFilter, setTaskFilter] = createSignal<Record<string, string>>({});
 
-export const [tasks, { refetch: refetchTasks }] = createResource(taskFilter, (f) =>
+export const [tasks, { refetch: refetchTasks, mutate: mutateTasks }] = createResource(taskFilter, (f) =>
   api.tasks.list(f).then((r) => r.tasks)
 );
 
@@ -27,7 +27,7 @@ export const [selectedDay, setSelectedDay] = createSignal(localISODate());
 // the Planner is unaffected. The Calendar resets this to null on unmount.
 export const [calendarRange, setCalendarRange] = createSignal<{ from: string; to: string } | null>(null);
 export const blockRange = createMemo(() => calendarRange() ?? dayRangeUTC(selectedDay()));
-export const [blocks, { refetch: refetchBlocks }] = createResource(blockRange, (r) =>
+export const [blocks, { refetch: refetchBlocks, mutate: mutateBlocks }] = createResource(blockRange, (r) =>
   api.blocks.list(r.from, r.to).then((res) => res.blocks)
 );
 
@@ -207,6 +207,12 @@ on('data:imported', () => {
   refetchTasks(); refetchBlocks(); refetchConcepts(); refetchPossibles();
   refetchFlightPlan(); refetchPatterns(); refetchPatternTypes();
   refetchTags(); refetchPrefs(); refetchPatternBlocks(); refetchPatternPrefs(); refetchCategoryPrefs(); refetchJobs();
+});
+
+// Phase L: server tells the client it missed too many events (> REPLAY_LIMIT=500) —
+// do a full refetch so local state is guaranteed consistent.
+on('sync:resync', () => {
+  refetchTasks(); refetchBlocks(); refetchConcepts();
 });
 
 // ── Toast ─────────────────────────────────────────────────────────────────────

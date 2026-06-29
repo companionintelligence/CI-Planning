@@ -346,6 +346,12 @@ export const api = {
     import: (json: unknown) =>
       request<{ imported: Record<string, number> }>('POST', '/import', json),
   },
+
+  // ── Phase L: field-level sync batch endpoint ────────────────────────────────
+  sync: {
+    apply: (ops: SyncOp[]) =>
+      request<(SyncResult | SyncError)[]>('POST', '/sync', { ops }),
+  },
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -579,6 +585,32 @@ export interface Integrations {
   ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
   google: { mode: string; liveEnabled: boolean; connections: ConnectionHealth[] };
   push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver
+}
+
+// ── Phase L: multi-device sync ─────────────────────────────────────────────────
+/** One field-scoped mutation to apply on the server. */
+export interface SyncOp {
+  opId: string;
+  entity: 'task' | 'block';
+  entityId: string;
+  fields: Record<string, unknown>;
+  baseVersion: number;
+  clientTs: string;
+}
+
+/** Server applied the op; `dropped` lists fields that lost a LWW race. */
+export interface SyncResult {
+  opId: string;
+  entityId: string;
+  version: number;
+  applied: Record<string, unknown>;
+  dropped: string[];
+}
+
+/** Server rejected the op entirely (404 / auth / validation). */
+export interface SyncError {
+  opId: string;
+  error: string;
 }
 
 // ── Pattern-blocks (noun 8) ────────────────────────────────────────────────────
