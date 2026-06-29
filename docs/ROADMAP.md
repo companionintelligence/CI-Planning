@@ -1,6 +1,6 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-**Status (2026-06-24, migration head 0061):** **A · B0 · C · D · E · F · G · H · R · I · J shipped & merged**, plus a standalone **Google-connector track** (OAuth 2.1 + MCP + live Calendar/Gmail — #130–#139) and a **tag-driven autoplan engine** (#121–#129). The Phase-0.5 cleanup is **done** (W1-A dropped the habit booleans — #113/#114, `0048`; G7 Routine-Types UI — #115). Identity/auth (**I** — JWKS verify-only · API-key store · encrypted token store · rate-limiting · threat model — #116–#120) and inbound calendar sync (**J** — #128, `external_events` `0051`) are merged. **Next build:** **Phase M — AI scheduler** ([M-ai-scheduler.md](M-ai-scheduler.md)): make LLM planning real, add the Phase-K reactive reflow (**M absorbs K**), and back the stubbed claims. Still future: **L** (multi-device sync & offline writes). The §3b `patterns`→`routines` rename stays **deferred** (the as-built `patterns` naming stands; see GLOSSARY). *Superseded planning docs now live in [archive/](archive/); see [archive/README.md](archive/README.md).*
+**Status (2026-06-29, migration head 0079):** **A · B0 · C · D · E · F · G · H · R · I · J shipped & merged**, plus a standalone **Google-connector track** (OAuth 2.1 + MCP + live Calendar/Gmail — #130–#139) and a **tag-driven autoplan engine** (#121–#129). The Phase-0.5 cleanup is **done** (W1-A dropped the habit booleans — #113/#114, `0048`; G7 Routine-Types UI — #115). Identity/auth (**I** — JWKS verify-only · API-key store · encrypted token store · rate-limiting · threat model — #116–#120) and inbound calendar sync (**J** — #128, `external_events` `0051`) are merged. **Currently building: Phase L — Multi-device sync & offline writes** (migs 0076–0079; all P1+P2 gaps closed; 3 P3 items deferred). **Next after L: Phase M — AI scheduler** ([M-ai-scheduler.md](M-ai-scheduler.md)): make LLM planning real, add the Phase-K reactive reflow (**M absorbs K**), and back the stubbed claims. The §3b `patterns`→`routines` rename stays **deferred** (the as-built `patterns` naming stands; see GLOSSARY). *Superseded planning docs now live in [archive/](archive/); see [archive/README.md](archive/README.md).*
 
 > **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). Each phase has its own `docs/<id>-*.md` spec; the new G UX is canonical in [design-today-cockpit.md](design-today-cockpit.md).
 
@@ -49,7 +49,7 @@
 | | **J** Two-way calendar sync | I, F | L | ✅ done (#128, `external_events` `0051`) — inbound; extended by the Connectors track below |
 | | **Connectors** Google OAuth 2.1 + MCP + live Calendar/Gmail | I, J | L | ✅ done (#130–#139, migrations `0058`–`0061`) |
 | | **K** Auto-defense (continuous re-plan) | A, F, J | M | ↪ **folded into M** — see [M-ai-scheduler.md](M-ai-scheduler.md) |
-| | **L** Multi-device sync & offline writes | B0, I, H | L | 📋 spec'd (not started) |
+| | **L** Multi-device sync & offline writes | B0, I, H | L | 🚧 core built (migs 0076–0079); P1+P2 gaps closed; 3 P3 items deferred — see [L-multi-device-sync.md](L-multi-device-sync.md) |
 | | **M** AI scheduler — real LLM planning · reactive reflow (absorbs K) · back stubbed claims | A, F, G, J | L | 📋 spec'd — **next build** ([M-ai-scheduler.md](M-ai-scheduler.md)) |
 
 **G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). **G7** custom Routine-type management UI is **shipped** (#115, W1-C); **G-INT** (timing intelligence) remains deferred. The detailed spec [archive/G-rituals-reflection.md](archive/G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — archived for history only.
@@ -201,11 +201,12 @@ Time-Block's tag filter or a Pattern's rules.
 
 ### L — Multi-device sync & offline writes (D3, **revised**)
 
-> 📋 **Not started** — still future; no offline op-log / IndexedDB client code exists yet.
+> 🚧 **Core built** — migrations 0076–0079, field-level merge, `POST /api/sync`, SSE catch-up (`Last-Event-ID` replay + overflow `id:` cursor advance), client op-log (IndexedDB), optimistic mutations + 404-rollback, persistent conflict banner, SW push-wake flush, `sync_events` daily prune job, `field_ts` seeding from `updated_at`. All P1 + P2 gaps closed. Full implementation spec: [L-multi-device-sync.md](L-multi-device-sync.md).
 **Goal:** PWA offline write path; converge across a single owner's devices.
-- **Infra:** client offline op-log (IndexedDB); server apply with a **monotonic per-record version** and **field-level merge** (not whole-record LWW); **completions are monotonic** — a concurrent edit can't silently un-complete a task. SSE pushes authoritative state; genuine conflicts surface a banner.
-- **Tests:** offline create/edit/complete replays on reconnect; two devices editing different fields of one task converge without loss; a completion is never lost to a concurrent non-completion edit; SSE catch-up after disconnect.
+- **Infra:** client offline op-log (IndexedDB); server apply with a **monotonic per-record version** and **field-level merge** (not whole-record LWW); **completions are monotonic** — a concurrent edit can't silently un-complete a task. SSE pushes authoritative state; genuine conflicts surface a persistent banner (not a toast).
+- **Tests:** 25 server-side (22 apply + 3 SSE catch-up) + 18 client-side (10 oplog + 8 conflict-store); 96 server test files green.
 - **Acceptance:** offline edits appear after reconnect with no data loss; concurrent edits converge predictably; **no lost completions** (now actually achievable, vs v1's LWW which contradicted this).
+- **Deferred (P3 only):** `baseVersion` staleness fence (gap 1/2), `time_blocks` owner check (gap 5), client version in optimistic state (gap 6). None affect current correctness. See [known gaps](L-multi-device-sync.md#known-gaps-prioritized-backlog).
 
 ---
 

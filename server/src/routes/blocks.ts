@@ -14,6 +14,7 @@ import { localISODate } from '../lib/dates.js';
 import { blocksToICal, type ICalBlock } from '../lib/ical.js';
 import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask } from '../services/block-task-sync.js';
 
@@ -299,6 +300,11 @@ export function blocksRouter() {
       ? await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning()
       : await db.select().from(timeBlocks).where(eq(timeBlocks.id, id));
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    // Phase L: stamp version/field_ts for sync versioning (mirrors tasks PATCH).
+    if (Object.keys(update).length > 0) {
+      stampRow(sqlite, 'block', id, Object.keys(update));
+    }
 
     // CON-3 + Phase 5: keep the normalized store in sync. A partial PATCH that
     // omits `tag` or `secondary_tags` preserves that level (null/'' clears top).
