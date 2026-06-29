@@ -158,6 +158,19 @@ async function execute(kind: string): Promise<JobOutcome> {
       pruneOldSnapshots(backupDir, config.snapshotRetain);
       return { itemsCreated: 1, itemsUpdated: 0, log: `snapshot → ${dest}` };
     }
+    case 'prune_sync_events': {
+      // Phase L: delete sync_events rows older than 30 days. Devices offline longer
+      // than that receive sync:resync and do a full refetch anyway, so older rows
+      // serve no catch-up purpose. Runs owner-scoped so multi-owner isolation holds.
+      const { changes } = sqlite
+        .prepare(
+          `DELETE FROM sync_events
+            WHERE owner_id = ?
+              AND at < datetime('now', '-30 days')`,
+        )
+        .run(currentOwnerId());
+      return { itemsCreated: 0, itemsUpdated: changes, log: `Pruned ${changes} sync_event row(s) older than 30 days` };
+    }
     default:
       return { itemsCreated: 0, itemsUpdated: 0, log: `Unknown job kind '${kind}'` };
   }

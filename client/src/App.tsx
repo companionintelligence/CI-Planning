@@ -4,6 +4,7 @@ import { Plus, Cpu } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
+import { ConflictBanner } from './components/ConflictBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
 import { Today }    from './views/Today.js';
 import { Calendar } from './views/Calendar.js';
@@ -117,6 +118,9 @@ function Shell(props: { children?: any }) {
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
         </div>
+
+        {/* Phase L: persistent conflict banner — shown when sync ops lost a LWW race */}
+        <ConflictBanner />
 
         {/* Bottom padding clears the mobile tab bar */}
         <div class="flex-1 overflow-auto pb-16 md:pb-0">

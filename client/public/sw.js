@@ -18,11 +18,20 @@ self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = {}; }
   e.waitUntil(
-    self.registration.showNotification(d.title || 'Reminder', {
-      body: d.body || '',
-      tag: d.tag, // collapses re-delivery of the same reminder into one notification
-      data: { url: d.url || '/' },
-    }),
+    Promise.all([
+      self.registration.showNotification(d.title || 'Reminder', {
+        body: d.body || '',
+        tag: d.tag, // collapses re-delivery of the same reminder into one notification
+        data: { url: d.url || '/' },
+      }),
+      // Phase L (gap 9): tell open tabs to flush their op-log. Without this,
+      // writes queued while the tab is backgrounded stall until the user opens
+      // the window and the 'online' event fires. The client registers a
+      // 'message' listener in stores/mutations.ts that calls flush() on receipt.
+      self.clients
+        .matchAll({ type: 'window', includeUncontrolled: true })
+        .then((clients) => { for (const c of clients) c.postMessage({ type: 'sync-flush' }); }),
+    ]),
   );
 });
 

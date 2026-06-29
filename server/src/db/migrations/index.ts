@@ -73,6 +73,10 @@ import * as m0072 from './0072_default_time_block_minutes.js';
 import * as m0073 from './0073_enable_routines.js';
 import * as m0074 from './0074_pattern_day_optouts.js';
 import * as m0075 from './0075_block_recurrence_exdates.js';
+import * as m0076 from './0076_sync_versioning.js';
+import * as m0077 from './0077_sync_events.js';
+import * as m0078 from './0078_prune_sync_events_job.js';
+import * as m0079 from './0079_seed_field_ts.js';
 
 export interface Migration {
   id: string;
@@ -85,4 +89,4 @@ export interface Migration {
  * Ordered list of migrations. Explicit (not a glob / dynamic import) so order is
  * deterministic and the set is bundler-safe. Append new migrations to the end.
  */
-export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025, m0026, m0027, m0028, m0029, m0030, m0031, m0032, m0033, m0034, m0035, m0036, m0037, m0038, m0039, m0040, m0041, m0042, m0043, m0044, m0045, m0046, m0047, m0048, m0049, m0050, m0051, m0052, m0053, m0054, m0055, m0056, m0057, m0058, m0059, m0060, m0061, m0062, m0063, m0064, m0065, m0066, m0067, m0068, m0069, m0070, m0071, m0072, m0073, m0074, m0075];
+export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025, m0026, m0027, m0028, m0029, m0030, m0031, m0032, m0033, m0034, m0035, m0036, m0037, m0038, m0039, m0040, m0041, m0042, m0043, m0044, m0045, m0046, m0047, m0048, m0049, m0050, m0051, m0052, m0053, m0054, m0055, m0056, m0057, m0058, m0059, m0060, m0061, m0062, m0063, m0064, m0065, m0066, m0067, m0068, m0069, m0070, m0071, m0072, m0073, m0074, m0075, m0076, m0077, m0078, m0079];
