@@ -87,6 +87,11 @@ export interface ElementForm {
   recurrenceRule?: string | null;  // time-block RRULE ('' / null clears)
   categoryId?: string;             // time-block: the Time Block Category (0069); direction implied
   secondaryTags?: string[];        // preserved on time-block edit (not authored here)
+  // time-block membership (scheduled only): existing tasks/habits to scatter inside,
+  // routines to place inside, and child blocks to detach — all applied on Save.
+  attachTaskIds?: string[];
+  attachRoutineIds?: string[];
+  detachBlockIds?: string[];
   // task / habit
   scheduledFor?: string;
   taskTime?: string;
@@ -208,8 +213,19 @@ export async function saveElement(
       ...extra,
     };
   }
-  if (mode === 'add') await api.blocks.create(body as any);
-  else await api.blocks.update(editId!, body as any);
+  let blockId: string;
+  if (mode === 'add') blockId = (await api.blocks.create(body as any)).block.id;
+  else { await api.blocks.update(editId!, body as any); blockId = editId!; }
+
+  // Membership changes (scheduled blocks only) — applied after we hold the block id, so
+  // this works identically for New (just-created) and Edit. Detach first, then add.
+  if (!form.someday) {
+    for (const cid of form.detachBlockIds ?? []) await api.blocks.update(cid, { parent_block_id: null });
+    if (form.attachTaskIds?.length) await api.blocks.addTasks(blockId, form.attachTaskIds);
+    for (const rid of form.attachRoutineIds ?? []) await api.patterns.placeToday(rid, { block_id: blockId, date: form.day || localISODate() });
+  }
+
   refetchBlocks(); refetchConcepts(); refetchTags();
+  if (form.attachTaskIds?.length || form.attachRoutineIds?.length) { refetchTasks(); refetchPatterns(); }
   return 'Time Block saved';
 }

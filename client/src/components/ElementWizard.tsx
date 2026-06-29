@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, For } from 'solid-js';
 import { X, ChevronLeft, Plus, ListTodo, Flame, Boxes, Clock, Calendar } from 'lucide-solid';
 import {
-  elementModal, setElementModal, tags, blocks, concepts, tasks, categoryPrefs, prefs, showToast,
+  elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
   type ElementKind,
 } from '../stores/index.js';
 import {
@@ -67,6 +67,10 @@ export function ElementWizard() {
   const [depDraft, setDepDraft] = createSignal('');
   const [saving, setSaving] = createSignal(false);
   const [makeHabit, setMakeHabit] = createSignal(false);
+  // time-block membership: search-to-add tasks/habits/routines + staged removals (edit)
+  const [attachDraft, setAttachDraft] = createSignal('');
+  const [attachItems, setAttachItems] = createSignal<{ kind: 'task' | 'habit' | 'routine'; id: string; label: string }[]>([]);
+  const [removedMemberIds, setRemovedMemberIds] = createSignal<string[]>([]);
 
   // Habit implies recurrence — default a freshly-chosen habit to daily.
   createEffect(() => { if (kind() === 'habit' && taskRepeat() === 'none') setTaskRepeat('daily'); });
@@ -98,6 +102,46 @@ export function ElementWizard() {
   const addDep = (id: string) => { if (!dependsOn().includes(id)) setDependsOn([...dependsOn(), id]); setDepDraft(''); };
   const removeDep = (id: string) => setDependsOn(dependsOn().filter((x) => x !== id));
 
+  // ── Time-block membership: add existing tasks/habits/routines, manage current ones ──
+  const enableRoutines = () => !!prefs()?.enable_routines;
+  const routineTypeId = () => (patternTypes() ?? []).find((t) => t.name === 'Routine')?.id;
+  // The block being edited's current child blocks, minus anything staged for removal.
+  const existingMembers = () => {
+    const tid = m().editTarget?.id;
+    if (m().mode !== 'edit' || !tid) return [];
+    const removed = new Set(removedMemberIds());
+    return (blocks() ?? []).filter((b) => b.parent_block_id === tid && !removed.has(b.id));
+  };
+  // Typeahead over open tasks + habit templates, and (when enabled) Routine patterns;
+  // excludes self, already-staged, and tasks already inside the block.
+  const attachSuggestions = () => {
+    const q = attachDraft().trim().toLowerCase();
+    if (!q) return [];
+    const takenTasks = new Set(attachItems().filter((i) => i.kind !== 'routine').map((i) => i.id));
+    const takenRoutines = new Set(attachItems().filter((i) => i.kind === 'routine').map((i) => i.id));
+    const memberTaskIds = new Set(existingMembers().map((b) => b.task_id).filter(Boolean) as string[]);
+    // Non-terminal tasks + habit templates (not instances/subtasks). Mirrors the server's
+    // skip rule so we never offer something `placeTasksInBlock` would reject.
+    const taskHits = (tasks() ?? [])
+      .filter((t) => !t.parent_id && !t.recurrence_parent_id
+        && !['done', 'completed', 'skipped', 'cancelled', 'missed'].includes(t.status)
+        && !takenTasks.has(t.id) && !memberTaskIds.has(t.id) && t.title.toLowerCase().includes(q))
+      .map((t) => ({ kind: (t.is_habit ? 'habit' : 'task') as 'habit' | 'task', id: t.id, label: t.title }));
+    const rid = routineTypeId();
+    const routineHits = enableRoutines() && rid
+      ? (patterns() ?? []).filter((p) => p.type_id === rid && !takenRoutines.has(p.id) && p.name.toLowerCase().includes(q))
+          .map((p) => ({ kind: 'routine' as const, id: p.id, label: p.name }))
+      : [];
+    return [...taskHits, ...routineHits].slice(0, 8);
+  };
+  const addAttach = (item: { kind: 'task' | 'habit' | 'routine'; id: string; label: string }) => {
+    if (!attachItems().some((i) => i.kind === item.kind && i.id === item.id)) setAttachItems([...attachItems(), item]);
+    setAttachDraft('');
+  };
+  const removeAttach = (id: string) => setAttachItems(attachItems().filter((i) => i.id !== id));
+  const removeMember = (id: string) => setRemovedMemberIds([...removedMemberIds(), id]);
+  const attachIcon = (k: 'task' | 'habit' | 'routine') => (k === 'routine' ? Boxes : k === 'habit' ? Flame : ListTodo);
+
   function close() {
     setElementModal({ open: false, mode: 'add', kind: null });
   }
@@ -118,6 +162,7 @@ export function ElementWizard() {
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule(''); setTaskTime('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
       setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]); setCategoryId(''); setMakeHabit(false);
+      setAttachDraft(''); setAttachItems([]); setRemovedMemberIds([]);
       if (st.mode === 'edit' && st.editTarget) loadForEdit(st.editTarget.kind, st.editTarget.id);
     }
     wasOpen = st.open;
@@ -234,6 +279,10 @@ export function ElementWizard() {
           (effectiveKind === 'task' || effectiveKind === 'habit') ? (currentTaskRule() || null)
           : (effectiveKind === 'timeblock' && !someday()) ? (currentTbRule() || null)
           : undefined,
+        // Time-block membership (applied by saveElement only for scheduled time-blocks).
+        attachTaskIds: attachItems().filter((i) => i.kind !== 'routine').map((i) => i.id),
+        attachRoutineIds: attachItems().filter((i) => i.kind === 'routine').map((i) => i.id),
+        detachBlockIds: removedMemberIds(),
       };
       const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');
@@ -446,6 +495,60 @@ export function ElementWizard() {
                 </Show>
                 <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Note</span>
                   <textarea class="textarea text-sm" rows="2" value={note()} onInput={(e) => setNote(e.currentTarget.value)} /></label>
+
+                {/* Tasks & routines inside this block — scheduled blocks only (a someday
+                    block has no window to place them into). */}
+                <Show when={!someday()}>
+                  <div class="flex flex-col gap-1.5 border-t border-border pt-2.5">
+                    <span class="text-[11px] text-muted-foreground">Tasks &amp; routines in this block</span>
+                    <Show when={existingMembers().length > 0 || attachItems().length > 0}>
+                      <div class="flex flex-wrap gap-1.5">
+                        <For each={existingMembers()}>
+                          {(b) => (
+                            <span class="text-xs px-2 py-0.5 rounded-full border border-border text-foreground inline-flex items-center gap-1 max-w-full">
+                              <ListTodo size={11} class="flex-shrink-0 text-muted-foreground" />
+                              <span class="truncate">{b.title}</span>
+                              <button type="button" title="Remove from block" onClick={() => removeMember(b.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
+                            </span>
+                          )}
+                        </For>
+                        <For each={attachItems()}>
+                          {(it) => {
+                            const Icon = attachIcon(it.kind);
+                            return (
+                              <span class="text-xs px-2 py-0.5 rounded-full border border-primary/40 bg-primary/10 text-primary inline-flex items-center gap-1 max-w-full">
+                                <Icon size={11} class="flex-shrink-0" />
+                                <span class="truncate">{it.label}</span>
+                                <button type="button" onClick={() => removeAttach(it.id)} class="hover:text-destructive flex-shrink-0"><X size={11} /></button>
+                              </span>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+                    <div class="relative">
+                      <input class="input py-1 text-sm" placeholder={enableRoutines() ? 'Add a task, habit, or routine…' : 'Add a task or habit…'}
+                        value={attachDraft()} onInput={(e) => setAttachDraft(e.currentTarget.value)} />
+                      <Show when={attachSuggestions().length > 0}>
+                        <div class="absolute z-50 left-0 right-0 mt-1 rounded-md border border-border bg-popover shadow-xl max-h-44 overflow-y-auto">
+                          <For each={attachSuggestions()}>
+                            {(s) => {
+                              const Icon = attachIcon(s.kind);
+                              return (
+                                <button type="button" onClick={() => addAttach(s)}
+                                  class="w-full flex items-center gap-2 text-left px-3 py-1.5 text-sm text-foreground hover:bg-sidebar-accent">
+                                  <Icon size={12} class="flex-shrink-0 text-muted-foreground" />
+                                  <span class="truncate flex-1">{s.label}</span>
+                                  <span class="text-[10px] text-muted-foreground capitalize flex-shrink-0">{s.kind}</span>
+                                </button>
+                              );
+                            }}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
+                  </div>
+                </Show>
               </Show>
 
               {/* ── Task / Habit fields ── */}

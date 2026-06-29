@@ -7,6 +7,7 @@ import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
+import { placeTasksInBlock } from '../engine/blocks-place.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { getCategoryPrefs } from '../services/category-prefs.js';
 import { localISODate } from '../lib/dates.js';
@@ -449,6 +450,20 @@ export function blocksRouter() {
     if (removed.length) broadcast(owner, 'block:deleted', { cleared: removed.length, date });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'clear-day', entity: `day:${date}` });
     ctx.body = { ok: true, cleared: removed.length };
+  });
+
+  // POST /api/blocks/:id/add-tasks — attach existing tasks to a Time-Block container,
+  // scattering them into its free time as child blocks (parent_block_id set). Used by
+  // the New/Edit Time-Block modal's "add existing tasks/habits/routines" control.
+  router.post('/api/blocks/:id/add-tasks', async (ctx) => {
+    const id = ctx.params.id;
+    const body = (ctx.request.body ?? {}) as { task_ids?: unknown };
+    const taskIds = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is string => typeof x === 'string') : [];
+    const result = placeTasksInBlock(currentOwnerId(), id, taskIds);
+    if (result.blocksCreated > 0) {
+      writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'add-tasks', entity: `block:${id}` });
+    }
+    ctx.body = { ok: true, ...result };
   });
 
   return router;
