@@ -120,6 +120,10 @@ export const api = {
     create: (body: Partial<Block> & { title: string; start_at: string; end_at: string }) =>
       request<{ block: Block }>('POST', '/blocks', body),
     update: (id: string, body: Partial<Block>) => request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
+    // Attach existing tasks to a Time-Block container: scatters them into its free time
+    // as child task blocks (parent_block_id set). Used by the New/Edit Time-Block modal.
+    addTasks: (id: string, task_ids: string[]) =>
+      request<{ ok: boolean; blocksCreated: number; placed: number; unplaced: number; skipped: number }>('POST', `/blocks/${id}/add-tasks`, { task_ids }),
     // children:'delete' also removes a Plan's member task blocks; default keeps them (FK SET NULL).
     delete: (id: string, opts?: { children?: 'delete' }) =>
       request<{ ok: boolean }>('DELETE', `/blocks/${id}${opts?.children === 'delete' ? '?children=delete' : ''}`),
@@ -511,6 +515,7 @@ export interface Prefs {
   concept_default_minutes?: number; concept_autosurface?: boolean; concept_horizon_days?: number;
   concept_tags?: { name: string; minutes: number }[]; // canonical Block-Wizard concept tags (0021)
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
+  enable_routines?: boolean; // feature flag; default false — Routines hidden from Add dialog
   recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
