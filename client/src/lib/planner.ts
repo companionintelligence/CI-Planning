@@ -7,8 +7,8 @@
  */
 import { minutesIntoDay, PX_PER_MIN } from './grid.js';
 
-/** Default visible window: 8 hours tall (design §6); a control expands it to 24h. */
-export const VISIBLE_HOURS = 8;
+/** Default visible window: 4 hours tall; a control expands it (8h / 16h / 24h). */
+export const VISIBLE_HOURS = 4;
 
 /** One "slot" of context kept above the next-up item, so it reads as row 2. */
 export const SLOT_MIN = 60;
