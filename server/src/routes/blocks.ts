@@ -11,6 +11,7 @@ import { placeTasksInBlock } from '../engine/blocks-place.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { getCategoryPrefs } from '../services/category-prefs.js';
 import { localISODate } from '../lib/dates.js';
+import { blocksToICal, type ICalBlock } from '../lib/ical.js';
 import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
@@ -47,6 +48,26 @@ function rationaleOf(blockId: string): string | null {
   return row?.rationale ?? null;
 }
 
+/**
+ * Shared block fetch for a date range — the single source of truth for both the JSON
+ * read (`GET /api/blocks`) and the `.ics` export, so the two never drift. Lazily
+ * materializes recurring patterns + Time-Block instances, selects the range, drops
+ * recurrence *templates* (rule set, no parent — never rendered), and enriches with
+ * secondary tags + the "why now" rationale.
+ */
+async function fetchBlocksForRange(from: string, to: string): Promise<Record<string, unknown>[]> {
+  ensurePatternsForRange(currentOwnerId(), from, to);
+  ensureRecurringBlocksForRange(currentOwnerId(), from, to);
+  const fetched = await db.select().from(timeBlocks)
+    .where(and(gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));
+  const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
+  return toApiList(rows).map((b) => ({
+    ...b,
+    secondary_tags: secondaryTagsOf(b.id as string),
+    rationale: rationaleOf(b.id as string),
+  }));
+}
+
 export function blocksRouter() {
   const router = new Router();
 
@@ -57,16 +78,14 @@ export function blocksRouter() {
   router.get('/api/blocks', async (ctx) => {
     const { from, to, state } = ctx.query as Record<string, string>;
 
-    // Lazy pattern placement (PR-C+, Phase D refactor): when the read targets
-    // a real time range (not the concept list), ensure every recurring Habit/
-    // Routine pattern that fires inside it is on the board before we SELECT.
-    // Idempotent via the marker on time_blocks → safe to call on every read.
+    // The common day-view read (a real time range, not the concept list) shares the
+    // export's fetch helper: lazy materialization + range select + enrich.
     if (from && to && !state) {
-      ensurePatternsForRange(currentOwnerId(), from, to);
-      // CON-4: materialize recurring Time-Block instances for the range (idempotent).
-      ensureRecurringBlocksForRange(currentOwnerId(), from, to);
+      ctx.body = { blocks: await fetchBlocksForRange(from, to) };
+      return;
     }
 
+    // `state=someday` (no range) and partial-range reads keep the conditional select.
     const conditions = [];
     if (from) conditions.push(gte(timeBlocks.startAt, from));
     if (to)   conditions.push(lte(timeBlocks.endAt, to));
@@ -87,6 +106,20 @@ export function blocksRouter() {
       rationale: rationaleOf(b.id as string),
     }));
     ctx.body = { blocks };
+  });
+
+  // GET /api/blocks/export.ics?from=ISO&to=ISO — download the range's dated blocks as
+  // a standard iCalendar file. Registered before the `/:id` routes so the literal path
+  // can't be shadowed. Defaults to today when from/to are absent.
+  router.get('/api/blocks/export.ics', async (ctx) => {
+    const from = (ctx.query.from as string) || `${localISODate()}T00:00:00.000Z`;
+    const to   = (ctx.query.to as string)   || `${localISODate()}T23:59:59.999Z`;
+    const blocks = await fetchBlocksForRange(from, to);
+    const ics = blocksToICal(blocks as unknown as ICalBlock[]);
+    ctx.set('Content-Type', 'text/calendar; charset=utf-8');
+    ctx.set('Content-Disposition', `attachment; filename="companion-${from.slice(0, 10)}-${to.slice(0, 10)}.ics"`);
+    ctx.body = ics;
+    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'export', entity: 'blocks:ics' });
   });
 
   // POST /api/blocks
