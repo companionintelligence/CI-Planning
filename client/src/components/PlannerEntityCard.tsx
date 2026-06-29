@@ -2,7 +2,7 @@ import { Show, For, createMemo, onCleanup, onMount } from 'solid-js';
 import { Pencil, Repeat, Unlink, LockOpen, Lock, Trash2, X, Save, Star, Sparkles, Play } from 'lucide-solid';
 import {
   tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs,
-  setElementModal, showToast, refetchBlocks, refetchFlightPlan,
+  setElementModal, showToast, refetchBlocks, refetchFlightPlan, refetchTasks,
 } from '../stores/index.js';
 import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
 import { api, type Block, type Task } from '../lib/api.js';
@@ -49,6 +49,12 @@ export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (bl
   const block = (): Block | undefined => blockSel() ?? (blocks() ?? []).find((b) => b.task_id === activeTask());
   // The task behind the card: the focused task, or the focused block's linked task.
   const task = (): Task | undefined => taskSel() ?? (block()?.task_id ? taskOf(block()!.task_id) : undefined);
+  // Linked subtasks of the focused task (excludes thrown-away) — listed in the card so
+  // each can be completed independently without leaving the Planner.
+  const subtasks = (): Task[] => {
+    const t = task();
+    return t ? (tasks() ?? []).filter((s) => s.parent_id === t.id && s.status !== 'cancelled') : [];
+  };
 
   const isContainer = () => blockSel()?.block_kind === 'timeblock';
   const title = () => task()?.title ?? block()?.title ?? '';
@@ -159,6 +165,14 @@ export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (bl
       clearActiveEntity();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
+  // Complete / re-open a single subtask in place — independent of the parent.
+  async function toggleSub(s: Task) {
+    try {
+      if (s.status === 'done') await api.tasks.update(s.id, { status: 'open', completed_at: null });
+      else await api.tasks.update(s.id, { completed: true });
+      refetchTasks();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
 
   // Esc closes the card.
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && open()) clearActiveEntity(); };
@@ -214,10 +228,42 @@ export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (bl
               </div>
             )}
           </Show>
+          <Show when={task()?.notes || task()?.description}>
+            <p class="text-[11px] text-muted-foreground leading-snug whitespace-pre-wrap line-clamp-4">{task()!.notes ?? task()!.description}</p>
+          </Show>
           <Show when={!block()}>
             <div class="text-[11px] text-muted-foreground italic">Not scheduled on this day.</div>
           </Show>
         </div>
+
+        {/* Subtasks — the primary task's children; each completes independently. */}
+        <Show when={subtasks().length > 0}>
+          <div class="px-3 py-2 border-t border-border flex flex-col gap-1">
+            <div class="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Subtasks · {subtasks().filter((s) => s.status === 'done').length}/{subtasks().length}
+            </div>
+            <div class="flex flex-col gap-0.5 max-h-44 overflow-y-auto -mx-1 px-1">
+              <For each={subtasks()}>
+                {(s) => (
+                  <div class="flex items-center gap-2 py-0.5">
+                    <button
+                      onClick={() => toggleSub(s)}
+                      class={`checkbox flex-shrink-0 ${s.status === 'done' ? 'checkbox-checked' : ''}`}
+                      title={s.status === 'done' ? 'Mark open' : 'Mark done'}
+                    >
+                      <Show when={s.status === 'done'}>
+                        <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
+                          <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                      </Show>
+                    </button>
+                    <span class={`text-xs truncate ${s.status === 'done' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{s.title}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
 
         {/* Actions */}
         <div class="flex flex-wrap items-center gap-1 px-2.5 py-2 border-t border-border bg-card/40">

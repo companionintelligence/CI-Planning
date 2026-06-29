@@ -113,6 +113,19 @@ export function placePatternOnDay(
   const date = opts.date ?? localISODate();
 
   return sqlite.transaction((): PlacePatternResult => {
+    // Per-day opt-out (0074): a user who deletes a lazily-placed container removes
+    // that (pattern, day) — honour it so the block doesn't regenerate on the next
+    // read. Only the free/auto path checks this; an explicit "place into this Plan"
+    // (blockId given) is deliberate and overrides the opt-out.
+    if (opts.blockId == null) {
+      const optedOut = sqlite
+        .prepare(`SELECT 1 FROM pattern_day_optouts WHERE owner_id = ? AND pattern_id = ? AND date = ? LIMIT 1`)
+        .get(owner, String(patternId), date);
+      if (optedOut) {
+        return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: true };
+      }
+    }
+
     const prefs = sqlite
       .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
       .get(owner) as PrefsRow | undefined;
@@ -320,13 +333,22 @@ export function patternsRecurringOnDate(owner: string, today: string): Recurring
  * cron in the loop.
  */
 export function ensurePatternsForRange(owner: string, fromUtcISO: string, toUtcISO: string): { placed: number; blocksCreated: number } {
-  const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+  const prefsRow = sqlite
+    .prepare(`SELECT timezone, enable_routines FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { timezone: string | null; enable_routines: number | null } | undefined;
+  const tz = prefsRow?.timezone || serverTimezone();
+  // Routines are gated behind a feature flag (0073, default OFF). When disabled,
+  // recurring Routine patterns must NOT auto-place: otherwise a user-deleted
+  // Routine container regenerates on the very next read (the refetch fired right
+  // after the delete), making it impossible to remove. Habits are unaffected.
+  const routinesEnabled = !!prefsRow?.enable_routines;
   const today = localISODate(); // server-local day; recurrence days are compared as YYYY-MM-DD strings
   const days = localDaysInRange(fromUtcISO, toUtcISO, tz).filter((d) => d >= today);
   let placed = 0;
   let blocksCreated = 0;
   for (const day of days) {
     for (const p of patternsRecurringOnDate(owner, day)) {
+      if (p.type_name === 'Routine' && !routinesEnabled) continue;
       const r = placePatternOnDay(owner, p.id, { date: day });
       if (!r.skippedAlreadyPlaced && r.blocksCreated > 0) placed++;
       blocksCreated += r.blocksCreated;

@@ -6,11 +6,12 @@ import { broadcast } from './sse.js';
 import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
-import { ensureRecurringBlocksForRange } from '../engine/blocks-recur.js';
+import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
+import { placeTasksInBlock } from '../engine/blocks-place.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
 import { getCategoryPrefs } from '../services/category-prefs.js';
 import { localISODate } from '../lib/dates.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask } from '../services/block-task-sync.js';
@@ -396,6 +397,24 @@ export function blocksRouter() {
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     // CON-3 cascade: the block itself is HARD-deleted — drop its tag rows.
     removeEntityTags('time_block', id);
+    // 0074: deleting a lazily-placed recurring-pattern CONTAINER opts that
+    // (pattern, local-day) out, so the next GET /api/blocks read won't regenerate
+    // it. Without this the marker-based idempotency re-places it immediately and
+    // the block can never be removed. Scoped to containers (block_kind='timeblock')
+    // — a single child task block deletion is a partial edit, not a day opt-out.
+    if (block.sourceKind === 'pattern' && block.blockKind === 'timeblock' && block.sourceRef && block.startAt) {
+      const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(currentOwnerId()) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
+      sqlite
+        .prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`)
+        .run(currentOwnerId(), String(block.sourceRef), localDateInTZ(block.startAt, tz));
+    }
+    // CON-4 sibling of the opt-out above: deleting a recurring Time-Block INSTANCE
+    // records its day in the template's EXDATE, so ensureRecurringBlocksForRange
+    // won't re-materialize it on the next read. Without this, recurring blocks with
+    // no tasks inside (e.g. a "Deep-focus" block) were impossible to delete.
+    if (block.recurrenceParentId && block.occurrenceDate) {
+      excludeBlockOccurrence(block.recurrenceParentId, block.occurrenceDate);
+    }
     broadcast(currentOwnerId(), 'block:deleted', { id });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block:${id}` });
     ctx.body = { ok: true };
@@ -431,6 +450,20 @@ export function blocksRouter() {
     if (removed.length) broadcast(owner, 'block:deleted', { cleared: removed.length, date });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'clear-day', entity: `day:${date}` });
     ctx.body = { ok: true, cleared: removed.length };
+  });
+
+  // POST /api/blocks/:id/add-tasks — attach existing tasks to a Time-Block container,
+  // scattering them into its free time as child blocks (parent_block_id set). Used by
+  // the New/Edit Time-Block modal's "add existing tasks/habits/routines" control.
+  router.post('/api/blocks/:id/add-tasks', async (ctx) => {
+    const id = ctx.params.id;
+    const body = (ctx.request.body ?? {}) as { task_ids?: unknown };
+    const taskIds = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is string => typeof x === 'string') : [];
+    const result = placeTasksInBlock(currentOwnerId(), id, taskIds);
+    if (result.blocksCreated > 0) {
+      writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'add-tasks', entity: `block:${id}` });
+    }
+    ctx.body = { ok: true, ...result };
   });
 
   return router;

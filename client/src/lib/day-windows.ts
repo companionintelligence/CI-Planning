@@ -31,8 +31,8 @@ export interface TagDef {
 /** The per-pattern presentation prefs, keyed by tag id (color + motif overrides). */
 export type PatternPrefMap = Record<string, { color_token?: string | null; icon_shape?: string | null }>;
 
-/** A flattened availability band, ready to render. `labelIndex` stacks the titles of
- * windows that start at the same minute so none overlap. */
+/** A flattened availability band, ready to render. `labelTop` is the absolute px y
+ * of the rotated title — packed so titles NEVER overlap, even when windows overlap. */
 export interface Band {
   key: string;
   name: string;
@@ -41,12 +41,18 @@ export interface Band {
   offset: number;
   top: number;
   height: number;
-  labelIndex: number;
+  labelTop: number;
 }
 
 function timeToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;
+}
+
+/** Rough px height of a rotated (vertical-rl) 10px title — generous so packing never
+ * leaves two titles overlapping. ~7px per glyph + base; "Community" (9) ≈ 71px. */
+function estimateLabelHeight(name: string): number {
+  return name.length * 7 + 8;
 }
 
 /** Display label for a direction name (rendered capitalized). */
@@ -77,25 +83,33 @@ export function computeBands(windows: DayWindows, tags: TagDef[], prefs: Pattern
     HATCH_OFFSET_BY_NAME[tagName(dirTagId).toLowerCase()] ?? 0;
 
   const out: Band[] = [];
-  const seenAtStart = new Map<number, number>();
   for (const [dirTagId, ranges] of Object.entries(windows)) {
     const name = tagName(dirTagId);
     const color = colorFor(dirTagId);
     const shape = shapeFor(dirTagId);
     const offset = offsetFor(dirTagId);
     for (const range of ranges) {
-      const startMin = timeToMinutes(range.start_time);
-      const labelIndex = seenAtStart.get(startMin) ?? 0;
-      seenAtStart.set(startMin, labelIndex + 1);
-      const top = yOf(startMin);
+      const top = yOf(timeToMinutes(range.start_time));
       out.push({
         key: `${dirTagId}:${range.start_time}-${range.end_time}`,
         name, color, shape, offset,
         top,
         height: yOf(timeToMinutes(range.end_time)) - top,
-        labelIndex,
+        labelTop: top,
       });
     }
+  }
+
+  // Place each title at its band's top edge, pushed DOWN only as much as needed so no
+  // two rotated titles ever overlap in the narrow column. Weekend day-types overlap
+  // heavily (e.g. Home 08–23, Work 09–13, Community 10–20) — centering the titles in
+  // their bands collided them; top-anchored greedy packing guarantees clearance.
+  const LABEL_GAP = 6;
+  const TOP_PAD = 4;
+  let cursor = -Infinity;
+  for (const b of [...out].sort((a, z) => a.top - z.top || z.height - a.height)) {
+    b.labelTop = Math.max(b.top + TOP_PAD, cursor + LABEL_GAP);
+    cursor = b.labelTop + estimateLabelHeight(b.name);
   }
   return out;
 }

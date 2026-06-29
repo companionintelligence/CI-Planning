@@ -119,6 +119,7 @@ export const timeBlocks = sqliteTable('time_blocks', {
   recurrenceRule: text('recurrence_rule'),           // RRULE string; null = one-off
   recurrenceDtstart: text('recurrence_dtstart'),     // UTC ISO anchor of the series
   recurrenceParentId: text('recurrence_parent_id'),  // template id on an instance (no FK: cleared by hand)
+  recurrenceExdates: text('recurrence_exdates', { mode: 'json' }).$type<string[]>(), // 0075: skipped local YYYY-MM-DD (per-instance delete)
   occurrenceDate: text('occurrence_date'),           // YYYY-MM-DD local day of an instance
   autoRunId: text('auto_run_id'),                    // the Auto placement run that created this block (0052; for Undo)
   lastMovedAt: text('last_moved_at'),               // B1: UTC ISO when reflow last moved this block (anti-thrash stability window)
@@ -193,6 +194,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Per-owner feature flags (0024). Default OFF — V1 mental model is Routine /
   // Habit / Plan-Block; Rituals are hidden until the user opts back in.
   enableRituals: integer('enable_rituals', { mode: 'boolean' }).default(false),
+  // Routines feature flag (0073). Default OFF — hides the Routine tile in the Add
+  // wizard AND stops recurring Routine patterns from auto-placing on the board.
+  enableRoutines: integer('enable_routines', { mode: 'boolean' }).default(false),
   // cockpit-v2 Phase 6: recall=clone of a Past task copies Routine membership only when ON (default OFF).
   recallKeepsPattern: integer('recall_keeps_pattern', { mode: 'boolean' }).default(false),
   // Per-owner Ollama model overrides (null = use the env default). 0012.
