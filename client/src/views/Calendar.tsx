@@ -1,5 +1,5 @@
 import { createSignal, createMemo, createEffect, onCleanup, For, Show } from 'solid-js';
-import { ChevronLeft, ChevronRight, Zap, Filter, X } from 'lucide-solid';
+import { ChevronLeft, ChevronRight, Zap, Filter, X, Download } from 'lucide-solid';
 import {
   visibleBlocks,
   setCalendarRange,
@@ -122,6 +122,13 @@ export function Calendar() {
     return `${aStr} – ${bStr}, ${year}`;
   });
 
+  // Export the visible range as an .ics file — a plain download link (no JSON helper).
+  const exportHref = createMemo(() => {
+    const d = visibleDays();
+    const r = rangeUTC(d[0], d[d.length - 1]);
+    return `/api/blocks/export.ics?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}`;
+  });
+
   const views: ViewMode[] = ['day', 'week', 'month'];
 
   // ── Overlay filter (tag AND priority, combinable) ────────────────────────────
@@ -165,6 +172,14 @@ export function Calendar() {
               )}
             </For>
           </div>
+          <a
+            href={exportHref()}
+            download=""
+            class="btn-ghost text-xs gap-1"
+            title="Download this range as an .ics calendar file"
+          >
+            <Download size={13} /> Export
+          </a>
           <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
             <Zap size={14} />
             {runningSchedule() ? 'Scheduling…' : 'Schedule Day'}
