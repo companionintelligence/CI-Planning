@@ -30,18 +30,18 @@ SQLite is the single source of truth for data.
 ```mermaid
 graph TB
     subgraph Browser["Browser (SolidJS PWA)"]
-        UI[Eight Views<br/>Today · Calendar · Inbox<br/>Tasks · Routines · Tags · Jobs · Settings]
+        UI[Ten Views<br/>Today · Calendar · Inbox · Tasks<br/>Routines · Objectives · Tags · Jobs · Settings]
         Store[Reactive Stores<br/>createResource / createSignal]
         SW[Service Worker<br/>Web Push + installable PWA]
         BN[Reminders<br/>in-app toast + Web Push]
     end
 
     subgraph Server["Koa Server — port 3848"]
-        API[REST API<br/>17 route modules]
+        API[REST API<br/>20+ route modules]
         SSE[SSE /api/events<br/>real-time push]
-        Engine[Auto-scheduler<br/>engine/autoplan.ts]
-        Cron[Croner Jobs<br/>ingest · groom · schedule · fire_reminders]
-        Migrate[Migration runner<br/>0001 → 0061 on boot]
+        Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
+        Cron[Croner Jobs<br/>12 scheduled jobs]
+        Migrate[Migration runner<br/>0001 → 0084 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -97,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0067 ordered list
+                                    // migrations from the 0001–0084 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -108,7 +108,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0061_drop_unused_sync_columns`) produce the following tables:
+Migrations (current head: `0084_daily_plan_outcome`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -141,6 +141,15 @@ Migrations (current head: `0061_drop_unused_sync_columns`) produce the following
 | `outbound_queue` | Local blocks pending push to a provider — one row per `(block, provider, account)`, drained by the sync agent when `CP_SYNC_WRITEBACK` is on (Phase J 0057) |
 | `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at the callback (0058) |
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` — calendar syncToken, Gmail watermark, dead-letter (0060) |
+| `daily_plan` | AI-authored task order for a day — one row per `(owner, date, task)` with a "why now" rationale and `outcome` stamp (0062, 0084) |
+| `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
+| `daily_summaries` | LLM-generated day briefings cached by content hash to avoid redundant generation |
+| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
+| `reflections` | Today goal + up to 3 weekly goals per ISO week, with optional category and done-at stamp (Phase N, 0080) |
+| `objectives` | Hierarchical life goals — Goal (depth 0) → Project (depth 1) → Milestone (depth 2+); progress derived from task completion (Phase N, 0081) |
+| `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
+| `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083) |
+| `plan_outcomes` | Per-day planned-vs-completed block counts aggregated nightly by `aggregate_plan_outcomes` job (Phase N, 0083) |
 
 ## See it in action
 
@@ -163,15 +172,22 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 
 ## Screenshots
 
-| Today | Calendar |
+| Today (with Morning Briefing + Goals) | Calendar (with Weekly Review) |
 |---|---|
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
-| AI briefing, next blocks, open tasks, and overdue count at a glance | Standalone day / week / month view over the same time blocks |
+| Morning Briefing prose · today goal · weekly goals · PLANNER · Flight-plan | Day / week / month grid · Weekly Review panel (capacity · calibration · objectives) |
 
 | Inbox | Tasks |
 |---|---|
 | [![Inbox view](docs/screenshots/inbox.png)](docs/screenshots/inbox.png) | [![Tasks view](docs/screenshots/tasks.png)](docs/screenshots/tasks.png) |
 | Review queue of AI-proposed tasks with source + confidence; promote or dismiss | The full backlog with priorities, tags, and notes — filter by status, tag, or text |
+
+| Routines | Objectives |
+|---|---|
+| [![Routines view](docs/screenshots/routines.png)](docs/screenshots/routines.png) | [![Objectives view](docs/screenshots/objectives.png)](docs/screenshots/objectives.png) |
+| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Milestone — with task linkage and progress |
+
+> 📸 Routines and Objectives screenshots coming soon.
 
 | Tags | Jobs |
 |---|---|
@@ -185,7 +201,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 
 ## What you get
 
-- **Eight views** — Today · Calendar · Inbox · Tasks · Routines · Tags · Jobs · Settings
+- **Ten views** — Today · Calendar · Inbox · Tasks · Routines · Objectives · Tags · Jobs · Settings (plus Morning Briefing inside Today)
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
   hours, pattern-block windows, locked meetings, and break preferences. Placement is always
@@ -221,6 +237,12 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Live updates** — Server-Sent Events push task / block / job changes to every open
   client, so the UI stays in sync without polling
 - **Installable PWA** — manifest + standalone display; usable from a phone over your tailnet
+- **Objectives hierarchy** — a life-planning tree of Goals → Projects → Milestones; each links to Tasks whose completion rolls up into progress; depth-derived level (no manual selection); progress is `NULL` when there's nothing to measure — a rot signal, not a zero
+- **Morning Briefing** — AI-authored prose summary of the day's tasks, capacity, focus, and objectives; shown in the Today cockpit alongside today's goal and weekly goals
+- **Today / weekly goals** — a daily intention and up to three weekly goals in the Today cockpit, each optionally linked to a category with a color stripe; checked off as the day progresses
+- **Weekly Review** — summary stats (scheduled vs focus minutes, capacity, block completion %) with calibration insights and objectives progress for the week; available inside the Calendar week view
+- **Estimate calibration** — a weekly job computes your personal bias ratio (median actual/estimated), surfaced as an amber label in the Weekly Review when your pattern deviates more than 10%; helps you plan more accurately over time
+- **Multi-device sync** — IndexedDB offline write log, field-level merge (not whole-record LWW), monotonic completions that survive concurrent edits, `Last-Event-ID` SSE catch-up replay for reconnecting devices (Phase L)
 
 ## How it works
 
@@ -302,16 +324,17 @@ them at different moments and can produce a corrupt or inconsistent database. Us
 `pnpm snapshot` or Litestream — both open a proper SQLite connection and export a
 consistent snapshot.
 
-## Project status (v0.2, 2026-06)
+## Project status (v0.3, 2026-06)
 
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0067): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0084): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
-  reminders, push_subscriptions, replan_suggestions, audit_log
-- All eight SolidJS views, with full task CRUD (tags, notes, priorities, due
+  reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,
+  reflections, objectives, objective_tasks, estimate_calibration, plan_outcomes
+- All ten SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
   and break preferences; per-pattern auto-fill gating
@@ -334,6 +357,12 @@ consistent snapshot.
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: pattern (direction) / intention hierarchy with many-to-many grouping
+- **Objectives** — life-planning hierarchy (Goal → Project → Milestone) with task linkage, progress roll-up, and the `advance_objectives` job that auto-stages tasks for active objectives into the flight plan
+- **Reflections** — today goal + up to 3 weekly goals per ISO week, with category color stripes and done/undone toggling
+- **Morning Briefing** — AI-authored or deterministic prose summary in the Today cockpit
+- **Weekly Review** — scheduled/focus minutes, capacity bar, completion rate, and calibration bias insight
+- **Estimate calibration** — weekly `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review
+- **Multi-device sync** — field-level merge, `sync_events` append-only log, `Last-Event-ID` SSE catch-up; `POST /api/sync` applies offline op-log entries
 
 **Intentionally partial:**
 
@@ -476,6 +505,12 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET | `/api/oauth/google/callback` | Public OAuth redirect target; verifies the `id_token`, exchanges the code, seals tokens into `connection_tokens`. |
 | GET | `/api/oauth/google/accounts` | List connected Google accounts (status only, no secrets). |
 | DELETE | `/api/oauth/google/accounts/:account` | Disconnect an account (revoke at Google + drop its tokens and queued pushes). |
+| GET/PUT/DELETE | `/api/reflections` · `/api/reflections/today` · `/api/reflections/weekly/:pos` | Today goal + weekly goals (Phase N) |
+| POST | `/api/reflections/:kind/:pos/done` | Mark a goal done / undone |
+| GET/POST/PATCH/DELETE | `/api/objectives` | Objectives CRUD (Phase N) |
+| GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
+| GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
+| POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
