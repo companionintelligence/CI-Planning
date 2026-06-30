@@ -219,7 +219,8 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "priority": 3,
       "recurrence_rule": null,
       "selected": false,
-      "source_pattern_id": "pattern#1",
+      "source_kind": "pattern",
+      "source_ref": "<ref>",
       "status": "open",
       "task_id": "task#1",
       "title": "Meditate",
@@ -232,7 +233,8 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "priority": 3,
       "recurrence_rule": null,
       "selected": true,
-      "source_pattern_id": null,
+      "source_kind": "manual",
+      "source_ref": null,
       "status": "open",
       "task_id": "task#2",
       "title": "Post office",
@@ -719,6 +721,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "rationale",
       "source",
       "block_id",
+      "outcome",
     ],
     "table": "daily_plan",
   },
@@ -773,6 +776,18 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "computed_at",
+      "sample_count",
+      "bias_ratio",
+      "p25",
+      "p50",
+      "p75",
+    ],
+    "table": "estimate_calibration",
+  },
+  {
+    "columns": [
       "id",
       "owner_id",
       "provider",
@@ -789,10 +804,11 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "owner_id",
       "task_id",
-      "source_pattern_id",
       "selected",
       "position",
       "added_at",
+      "source_kind",
+      "source_ref",
     ],
     "table": "flight_plan",
   },
@@ -822,6 +838,35 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "expires_at",
     ],
     "table": "oauth_states",
+  },
+  {
+    "columns": [
+      "objective_id",
+      "task_id",
+    ],
+    "table": "objective_tasks",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "parent_id",
+      "level",
+      "horizon",
+      "title",
+      "description",
+      "target_date",
+      "status",
+      "category_id",
+      "progress_cache",
+      "cadence",
+      "last_advanced_at",
+      "priority",
+      "created_at",
+      "updated_at",
+      "completed_at",
+    ],
+    "table": "objectives",
   },
   {
     "columns": [
@@ -927,6 +972,15 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "date",
+      "planned",
+      "completed",
+    ],
+    "table": "plan_outcomes",
+  },
+  {
+    "columns": [
       "possible_task_id",
       "tag_id",
     ],
@@ -961,6 +1015,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "created_at",
     ],
     "table": "push_subscriptions",
+  },
+  {
+    "columns": [
+      "owner_id",
+      "kind",
+      "period_key",
+      "position",
+      "body",
+      "category_id",
+      "done_at",
+      "created_at",
+      "updated_at",
+    ],
+    "table": "reflections",
   },
   {
     "columns": [

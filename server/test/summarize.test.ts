@@ -89,4 +89,41 @@ describe('summarize agent', () => {
     expect(s.focus.some((f) => f.reason === 'Due today')).toBe(true);
     expect(s.focus.length).toBeLessThanOrEqual(3); // capped at three
   });
+
+  it('includes capacity: scheduled_minutes, focus_minutes, workday_minutes', async () => {
+    // Scheduled blocks: 30 min standup + 60 min deep work = 90 min
+    sqlite
+      .prepare(
+        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, status)
+         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 'done'),
+                (uuid7(), 'Deep Work', 'task', ?, ?, 'done')`
+      )
+      .run(
+        `${TODAY}T09:00:00.000Z`, `${TODAY}T09:30:00.000Z`,
+        `${TODAY}T10:00:00.000Z`, `${TODAY}T11:00:00.000Z`,
+      );
+
+    // A focused task with estimated_minutes — it'll appear in focus[]
+    sqlite
+      .prepare(
+        `INSERT INTO tasks (id, title, owner_id, priority, status, due_at, estimated_minutes)
+         VALUES (uuid7(), 'Tax filing', ?, 1, 'open', '2026-05-01T12:00:00.000Z', 45)`
+      )
+      .run(SYSTEM_OWNER);
+
+    const s = await summarizeDay(TODAY, { refresh: true });
+
+    expect(s.capacity).toBeDefined();
+    expect(s.capacity.scheduled_minutes).toBe(90);
+    expect(s.capacity.focus_minutes).toBe(45); // sum of estimated_minutes for focus tasks
+    // Default workday: 09:00–18:00 UTC = 540 min (pinned by prefs reset)
+    expect(s.capacity.workday_minutes).toBe(540);
+  });
+
+  it('capacity.scheduled_minutes is 0 for an empty day', async () => {
+    const s = await summarizeDay(TODAY, { refresh: true });
+    expect(s.capacity.scheduled_minutes).toBe(0);
+    expect(s.capacity.focus_minutes).toBe(0);
+    expect(s.capacity.workday_minutes).toBe(540);
+  });
 });

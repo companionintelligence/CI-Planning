@@ -14,6 +14,9 @@ import { writeAudit } from '../lib/audit.js';
 import { snapshot, pruneOldSnapshots, backupDir } from '../lib/backup.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { syncAll } from '../agents/sync.js';
+import { advanceObjectives } from './advance-objectives.js';
+import { calibrateEstimates } from './calibrate-estimates.js';
+import { aggregatePlanOutcomes } from './aggregate-plan-outcomes.js';
 import { config } from '../lib/config.js';
 import { gmailLiveAllowed } from '../mcp/gmail-flag.js';
 import { join } from 'node:path';
@@ -170,6 +173,29 @@ async function execute(kind: string): Promise<JobOutcome> {
         )
         .run(currentOwnerId());
       return { itemsCreated: 0, itemsUpdated: changes, log: `Pruned ${changes} sync_event row(s) older than 30 days` };
+    }
+    case 'advance_objectives': {
+      const r = advanceObjectives();
+      return {
+        itemsCreated: r.nominated,
+        itemsUpdated: r.skipped,
+        log: `Nominated ${r.nominated} objective next-action task(s); skipped ${r.skipped}`,
+      };
+    }
+    case 'calibrate_estimates': {
+      const r = calibrateEstimates();
+      const label = r.bias_ratio != null
+        ? `bias_ratio=${r.bias_ratio.toFixed(2)} (n=${r.sample_count})`
+        : 'no timed tasks yet';
+      return { itemsCreated: 0, itemsUpdated: r.sample_count, log: `Estimate calibration: ${label}` };
+    }
+    case 'aggregate_plan_outcomes': {
+      const r = aggregatePlanOutcomes();
+      return {
+        itemsCreated: 0,
+        itemsUpdated: 1,
+        log: `Plan outcomes for ${r.date}: planned=${r.planned}, completed=${r.completed}`,
+      };
     }
     default:
       return { itemsCreated: 0, itemsUpdated: 0, log: `Unknown job kind '${kind}'` };

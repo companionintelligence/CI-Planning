@@ -10,6 +10,7 @@ import { Today }    from './views/Today.js';
 import { Calendar } from './views/Calendar.js';
 import { Inbox }    from './views/Inbox.js';
 import { AllTasks } from './views/AllTasks.js';
+import { Objectives } from './views/Objectives.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
@@ -157,7 +158,8 @@ export function App() {
       <Route path="/"         component={Today} />
       <Route path="/calendar" component={Calendar} />
       <Route path="/inbox"    component={Inbox} />
-      <Route path="/tasks"    component={AllTasks} />
+      <Route path="/tasks"       component={AllTasks} />
+      <Route path="/objectives"  component={Objectives} />
       {/* Routines moved into the Tasks screen as tabs (T-TASKS-1); redirect stale deep-links. */}
       <Route path="/patterns" component={() => <Navigate href="/tasks" />} />
       <Route path="/tags"     component={Tags} />

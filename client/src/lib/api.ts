@@ -298,6 +298,15 @@ export const api = {
       const q = date ? `?date=${date}` : '';
       return request<DaySummary>('GET', `/summary${q}`);
     },
+    refresh: (date: string) => request<DaySummary>('GET', `/summary?date=${date}&refresh=1`),
+  },
+
+  review: {
+    week: (anchor?: string) => {
+      const q = anchor ? `?anchor=${anchor}` : '';
+      return request<WeekReview>('GET', `/review/week${q}`);
+    },
+    calibration: () => request<Calibration>('GET', '/calibration'),
   },
 
   llm: {
@@ -351,6 +360,31 @@ export const api = {
   sync: {
     apply: (ops: SyncOp[]) =>
       request<(SyncResult | SyncError)[]>('POST', '/sync', { ops }),
+  },
+
+  // ── Phase N0: daily + weekly goals (reflections table) ───────────────────────
+  reflections: {
+    get: (period: string) =>
+      request<ReflectionsResponse>('GET', `/reflections?period=${encodeURIComponent(period)}`),
+    setToday: (body: ReflectionWrite & { period_key: string }) =>
+      request<{ ok: boolean }>('PUT', '/reflections/today', body),
+    setWeekly: (position: 0 | 1 | 2, body: ReflectionWrite & { period_key: string }) =>
+      request<{ ok: boolean }>('PUT', `/reflections/weekly/${position}`, body),
+    setDone: (kind: 'today_goal' | 'weekly_goal', position: number, period_key: string, done: boolean) =>
+      request<{ ok: boolean }>('POST', `/reflections/${kind}/${position}/done`, { period_key, done }),
+    delete: (kind: 'today_goal' | 'weekly_goal', position: number, period_key: string) =>
+      request<{ ok: boolean }>('DELETE', `/reflections/${kind}/${position}?period_key=${encodeURIComponent(period_key)}`),
+  },
+
+  // ── Phase N1: objectives ──────────────────────────────────────────────────────
+  objectives: {
+    list: () => request<{ objectives: Objective[] }>('GET', '/objectives'),
+    create: (body: ObjectiveInput) => request<{ objective: Objective }>('POST', '/objectives', body),
+    update: (id: string, body: Partial<ObjectiveInput>) => request<{ objective: Objective }>('PATCH', `/objectives/${id}`, body),
+    delete: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}`),
+    linkTask: (id: string, task_id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/tasks`, { task_id }),
+    unlinkTask: (id: string, task_id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/tasks/${task_id}`),
+    recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
   },
 };
 
@@ -425,10 +459,10 @@ export interface PatternInput {
   recurrence_rule?: string | null; recurrence_dtstart?: string | null;
 }
 
-/** A flight-plan row: a staged task (+ its source pattern, if added via one). */
+/** A flight-plan row: a staged task (+ its nominating source). */
 export interface FlightPlanItem {
   task_id: string; selected: boolean; position: number;
-  source_pattern_id: string | null; added_at: string;
+  source_kind: string; source_ref: string | null; added_at: string;
   title: string; priority: number | null; estimated_minutes: number | null; status: string;
   is_recurring?: boolean;
 }
@@ -556,11 +590,33 @@ export interface Job {
 }
 
 export interface FocusItem { taskId: string; title: string; reason: string }
+
+export interface Capacity {
+  scheduled_minutes: number;
+  focus_minutes: number;
+  workday_minutes: number;
+}
+
 export interface DaySummary {
   date: string; prose: string; llm: boolean;
   stats: { overdue: number; dueToday: number; open: number; blocks: number };
   focus: FocusItem[];
+  capacity: Capacity;
 }
+
+export interface WeekReview {
+  week_key: string;
+  days: string[];
+  tasks_completed: number;
+  tasks_overdue: number;
+  blocks_count: number;
+  weekly_goals: Array<{ position: number; body: string; done_at: string | null }>;
+  objectives_rotting: number;
+}
+
+export type Calibration =
+  | { calibrated: false; sample_count: number }
+  | { calibrated: true; sample_count: number; bias_ratio: number; p25: number; p50: number; p75: number; computed_at: string; label: string };
 
 export interface LLMStatus {
   available: boolean; url: string; models: string[];
@@ -642,4 +698,71 @@ export interface CategoryPref {
 
 export interface CategoryPrefsResponse {
   prefs: Record<string, CategoryPref>;
+}
+
+// ── Phase N0: reflections (today + weekly goals) ─────────────────────────────
+export interface ReflectionGoal {
+  body: string;
+  category_id: string | null;
+  color_token: string | null;
+  done_at: string | null;
+}
+
+export interface WeeklyGoal extends ReflectionGoal {
+  position: number;
+}
+
+export interface ReflectionsResponse {
+  today: ReflectionGoal | null;
+  weekly: WeeklyGoal[];
+}
+
+export interface ReflectionWrite {
+  body: string;
+  category_id?: string | null;
+}
+
+// ── Phase N1: Objectives ───────────────────────────────────────────────────────
+export interface ObjectiveNextAction {
+  id: string;
+  title: string;
+  status: string;
+  scheduled_date: string | null;
+}
+
+export interface Objective {
+  id: string;
+  owner_id: string;
+  parent_id: string | null;
+  level: 'goal' | 'project' | 'milestone';
+  horizon: 'year' | 'quarter' | 'month' | 'week' | 'none';
+  title: string;
+  description: string | null;
+  target_date: string | null;
+  status: 'active' | 'paused' | 'done' | 'dropped';
+  category_id: string | null;
+  progress_cache: number | null;
+  cadence: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  last_advanced_at: string | null;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  // Server-precomputed fields returned by GET /objectives:
+  next_action: ObjectiveNextAction | null;
+  effective_target: string | null;
+  pace_expected: number | null;
+  children: Objective[];
+}
+
+export interface ObjectiveInput {
+  title: string;
+  parent_id?: string | null;
+  horizon?: 'year' | 'quarter' | 'month' | 'week' | 'none';
+  status?: 'active' | 'paused' | 'done' | 'dropped';
+  cadence?: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  target_date?: string | null;
+  category_id?: string | null;
+  priority?: number;
+  description?: string | null;
 }

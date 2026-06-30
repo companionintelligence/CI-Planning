@@ -69,7 +69,7 @@ describe('flight-plan CRUD + persistence', () => {
     expect(add.body.added).toBe(2);
     const fp = (await api(srv.url, '/api/flight-plan')).body.flight_plan;
     expect(fp.map((x: any) => x.task_id).sort()).toEqual([a, b].sort());
-    expect(fp.every((x: any) => x.source_pattern_id === p)).toBe(true);
+    expect(fp.every((x: any) => x.source_kind === 'pattern' && x.source_ref === p)).toBe(true);
   });
 
   it('reset clears the whole flight-plan', async () => {
