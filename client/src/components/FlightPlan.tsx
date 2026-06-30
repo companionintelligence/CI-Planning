@@ -50,10 +50,10 @@ export function FlightPlan() {
     const groups = new Map<string, FlightPlanItem[]>();
     const solo: FlightPlanItem[] = [];
     for (const it of items()) {
-      if (it.source_pattern_id != null) {
-        const arr = groups.get(it.source_pattern_id) ?? [];
+      if (it.source_kind === 'pattern' && it.source_ref != null) {
+        const arr = groups.get(it.source_ref) ?? [];
         arr.push(it);
-        groups.set(it.source_pattern_id, arr);
+        groups.set(it.source_ref, arr);
       } else solo.push(it);
     }
     return { groups: [...groups.entries()], solo };

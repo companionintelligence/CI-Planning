@@ -23,6 +23,9 @@ import { healthRouter } from './health.js';
 import { oauthRouter } from './oauth.js';
 import { planRouter } from './plan.js';
 import { syncRouter } from './sync.js';
+import { reflectionsRouter } from './reflections.js';
+import { objectivesRouter } from './objectives.js';
+import { reviewRouter } from './review.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -50,6 +53,9 @@ export function mountRoutes(app: Koa) {
     oauthRouter(),
     planRouter(),
     syncRouter(),
+    reflectionsRouter(),
+    objectivesRouter(),
+    reviewRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

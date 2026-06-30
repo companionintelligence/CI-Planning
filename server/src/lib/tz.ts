@@ -90,6 +90,30 @@ export function localDateInTZ(utcISO: string, tz: string): string {
   return `${p.year}-${p.month}-${p.day}`;
 }
 
+/**
+ * ISO-8601 week key — `YYYY-Www` — for a local calendar date (YYYY-MM-DD).
+ * Monday-start; Thursday rule: a week belongs to the year that contains its Thursday.
+ * Uses the noon-UTC pivot so arithmetic is DST-safe. Mirror of the client's isoWeekKey.
+ */
+export function isoWeekKey(dateStr: string): string {
+  const addD = (d: string, n: number): string => {
+    const dt = new Date(d + 'T12:00:00Z');
+    dt.setUTCDate(dt.getUTCDate() + n);
+    return dt.toISOString().slice(0, 10);
+  };
+  const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay();
+  const thursday = addD(dateStr, dow === 0 ? -3 : 4 - dow);
+  const year = Number(thursday.slice(0, 4));
+  const jan4 = `${year}-01-04`;
+  const jan4Dow = new Date(jan4 + 'T12:00:00Z').getUTCDay();
+  const w1Monday = addD(jan4, -(jan4Dow === 0 ? 6 : jan4Dow - 1));
+  const monday = addD(dateStr, -(dow === 0 ? 6 : dow - 1));
+  const days = Math.round(
+    (new Date(monday + 'T12:00:00Z').getTime() - new Date(w1Monday + 'T12:00:00Z').getTime()) / 86_400_000,
+  );
+  return `${year}-W${String(Math.floor(days / 7) + 1).padStart(2, '0')}`;
+}
+
 /** [start, end) UTC ISO bounds of the local calendar day `date` in `tz`. */
 export function utcDayBounds(date: string, tz: string): { start: string; end: string } {
   const [y, m, d] = date.split('-').map(Number);

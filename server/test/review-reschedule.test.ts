@@ -29,6 +29,12 @@ const task = (id: string) => sqlite.prepare(`SELECT status, scheduled_for, defer
   { status: string; scheduled_for: string | null; defer_count: number };
 const blockCount = (taskId: string) => (sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE task_id = ?`).get(taskId) as { n: number }).n;
 
+function insertDailyPlan(taskId: string, date: string): void {
+  sqlite.prepare(`INSERT INTO daily_plan (owner_id, date, task_id, position, source) VALUES (?, ?, ?, 0, 'deterministic')`).run(OWNER, date, taskId);
+}
+const planOutcome = (taskId: string): string | null =>
+  (sqlite.prepare(`SELECT outcome FROM daily_plan WHERE task_id = ?`).get(taskId) as { outcome: string | null } | undefined)?.outcome ?? null;
+
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
 afterAll(async () => { await srv.close(); });
@@ -85,6 +91,44 @@ describe('reviewAndReschedule (hybrid by priority)', () => {
     insertBlock(t, -2);
     reviewAndReschedule();
     expect(task(t).defer_count).toBe(2);
+  });
+});
+
+describe('daily_plan.outcome stamping (N4 lossy-slip fix)', () => {
+  const DATE = '2026-06-29';
+
+  it("stamps 'deferred' on auto-deferred low-priority task", () => {
+    const t = insertTask('Low chore', 4, 'open', 0);
+    insertBlock(t, -2);
+    insertDailyPlan(t, DATE);
+    reviewAndReschedule();
+    expect(planOutcome(t)).toBe('deferred');
+  });
+
+  it("stamps 'missed' on surfaced high-priority task", () => {
+    const t = insertTask('Important', 1, 'open', 0);
+    insertBlock(t, -2);
+    insertDailyPlan(t, DATE);
+    reviewAndReschedule();
+    expect(planOutcome(t)).toBe('missed');
+  });
+
+  it('is write-once: does not overwrite an already-stamped outcome', () => {
+    const t = insertTask('Low chore', 4, 'open', 0);
+    insertBlock(t, -2);
+    insertDailyPlan(t, DATE);
+    sqlite.prepare(`UPDATE daily_plan SET outcome = 'completed' WHERE task_id = ?`).run(t);
+    reviewAndReschedule();
+    expect(planOutcome(t)).toBe('completed');
+  });
+
+  it('is a no-op when no daily_plan row exists (task never planned by AI)', () => {
+    const t = insertTask('Unplanned', 4, 'open', 0);
+    insertBlock(t, -2);
+    // No insertDailyPlan — task was not in an AI plan
+    reviewAndReschedule();
+    expect(planOutcome(t)).toBeNull();
+    expect(task(t).defer_count).toBe(1); // still deferred normally
   });
 });
 

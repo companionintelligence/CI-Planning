@@ -29,6 +29,12 @@ export interface FocusItem {
   reason: string;
 }
 
+export interface Capacity {
+  scheduled_minutes: number;
+  focus_minutes: number;
+  workday_minutes: number;
+}
+
 export interface DaySummary {
   date: string;
   prose: string;
@@ -40,6 +46,8 @@ export interface DaySummary {
   };
   /** Up to three concrete things to act on, most urgent first. */
   focus: FocusItem[];
+  /** Total scheduled block time vs workday budget. */
+  capacity: Capacity;
   /** True when the prose came from the LLM; false when it's the deterministic fallback. */
   llm: boolean;
   /** True when served from the daily_summaries cache (no regeneration this call). */
@@ -136,6 +144,35 @@ function buildFocus(g: ReturnType<typeof gather>): FocusItem[] {
   return out;
 }
 
+function buildCapacity(g: ReturnType<typeof gather>, focus: FocusItem[]): Capacity {
+  const scheduled_minutes = g.blocks.reduce((sum, b) => {
+    const ms = new Date(b.end_at).getTime() - new Date(b.start_at).getTime();
+    return sum + Math.max(0, Math.round(ms / 60_000));
+  }, 0);
+
+  // Sum estimated_minutes only for tasks that made it into focus[].
+  // Deduplicate by id — a task can appear in multiple arrays (e.g. overdue AND open).
+  const focusIds = new Set(focus.map((f) => f.taskId));
+  const seenIds = new Set<string>();
+  let focus_minutes = 0;
+  for (const t of [...g.overdue, ...g.dueToday, ...g.open]) {
+    if (focusIds.has(t.id) && !seenIds.has(t.id) && t.estimated_minutes != null) {
+      focus_minutes += t.estimated_minutes;
+      seenIds.add(t.id);
+    }
+  }
+
+  const prefRow = sqlite
+    .prepare(`SELECT workday_start, workday_end FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(currentOwnerId()) as { workday_start: string | null; workday_end: string | null } | undefined;
+
+  const [sh, sm] = (prefRow?.workday_start ?? '09:00').split(':').map(Number);
+  const [eh, em] = (prefRow?.workday_end ?? '18:00').split(':').map(Number);
+  const workday_minutes = Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
+
+  return { scheduled_minutes, focus_minutes, workday_minutes };
+}
+
 /** Fingerprint of the inputs that feed a briefing; changes invalidate the cache. */
 function inputsHash(date: string, g: ReturnType<typeof gather>): string {
   return createHash('sha256').update(JSON.stringify({ date, g })).digest('hex');
@@ -158,6 +195,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     blocks: g.blocks.length,
   };
   const focus = buildFocus(g);
+  const capacity = buildCapacity(g, focus);
   const hash = inputsHash(date, g);
 
   if (!opts.refresh) {
@@ -172,6 +210,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
         prose: row.prose,
         stats: JSON.parse(row.stats),
         focus: JSON.parse(row.focus),
+        capacity,
         llm: !!row.llm,
         cached: true,
       };
@@ -201,5 +240,5 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     )
     .run(currentOwnerId(), date, prose, JSON.stringify(stats), JSON.stringify(focus), llm ? 1 : 0, hash);
 
-  return { date, prose, stats, focus, llm, cached: false };
+  return { date, prose, stats, focus, capacity, llm, cached: false };
 }

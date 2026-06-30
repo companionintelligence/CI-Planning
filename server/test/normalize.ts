@@ -44,7 +44,7 @@ const FK_NS: Record<string, string> = {
   recurrence_parent_id: 'task', promoted_task_id: 'task',
   parent_block_id: 'block', block_id: 'block',
   tag_id: 'tag', type_id: 'patternType',
-  pattern_id: 'pattern', source_pattern_id: 'pattern', job_id: 'job',
+  pattern_id: 'pattern', job_id: 'job',
 };
 
 /** Array-of-id field name → referent entity type for each element. */

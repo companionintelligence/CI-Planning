@@ -1,8 +1,8 @@
-import { createResource, createMemo, onCleanup, onMount, Show, For } from 'solid-js';
+import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-solid';
 import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
-import { api } from '../lib/api.js';
+import { api, type DaySummary } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
@@ -10,6 +10,8 @@ import { DayTypeControl } from '../components/DayTypeControl.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { PlanInstruct } from '../components/PlanInstruct.js';
+import { DayGoals } from '../components/DayGoals.js';
+import { MorningBriefing } from '../components/MorningBriefing.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
@@ -18,7 +20,7 @@ import { PlanInstruct } from '../components/PlanInstruct.js';
  * never-closing **drawer** floating at the bottom.
  */
 export function Today() {
-  const [summary] = createResource(selectedDay, (date) => api.summary.get(date));
+  const [summary, { mutate: mutateSummary }] = createResource(selectedDay, (date) => api.summary.get(date));
 
   const today = () => localISODate();
   const isToday = () => selectedDay() === today();
@@ -132,6 +134,16 @@ export function Today() {
           <DayTypeControl date={selectedDay()} />
         </div>
       </div>
+
+      {/* Phase N0: daily + weekly goals card */}
+      <DayGoals date={selectedDay()} />
+
+      {/* Phase N3: morning briefing — prose + focus items + capacity bar */}
+      <MorningBriefing
+        date={selectedDay()}
+        summary={summary()}
+        onRefresh={(updated) => mutateSummary(updated)}
+      />
 
       {/* Natural-language planning instruction — pins become blocks, hints are noted (A4) */}
       <PlanInstruct />

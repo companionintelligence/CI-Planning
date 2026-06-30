@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { zonedWallTimeToUTC, utcDayBounds, serverTimezone } from '../src/lib/tz.js';
+import { zonedWallTimeToUTC, utcDayBounds, serverTimezone, isoWeekKey } from '../src/lib/tz.js';
 
 describe('tz helpers', () => {
   it('maps a wall-clock time to UTC for zones west of UTC (PDT)', () => {
@@ -30,5 +30,43 @@ describe('tz helpers', () => {
   it('reports a usable server timezone', () => {
     expect(typeof serverTimezone()).toBe('string');
     expect(serverTimezone().length).toBeGreaterThan(0);
+  });
+});
+
+describe('isoWeekKey', () => {
+  it('ordinary mid-year Monday', () => {
+    expect(isoWeekKey('2026-06-15')).toBe('2026-W25');
+  });
+
+  it('Sunday belongs to the previous week (Monday-start)', () => {
+    expect(isoWeekKey('2026-06-21')).toBe('2026-W25');
+  });
+
+  it('2021-01-01 (Friday) → W53 of 2020', () => {
+    expect(isoWeekKey('2021-01-01')).toBe('2020-W53');
+  });
+
+  it('2021-01-03 (Sunday) → W53 of 2020', () => {
+    expect(isoWeekKey('2021-01-03')).toBe('2020-W53');
+  });
+
+  it('2021-01-04 (Monday) → W01 of 2021', () => {
+    expect(isoWeekKey('2021-01-04')).toBe('2021-W01');
+  });
+
+  it('2015-12-28 (Monday) → W53 of 2015', () => {
+    expect(isoWeekKey('2015-12-28')).toBe('2015-W53');
+  });
+
+  it('mirrors the client helper for all cases', () => {
+    const cases = [
+      ['2026-06-19', '2026-W25'],
+      ['2020-12-31', '2020-W53'],
+      ['2016-01-03', '2015-W53'],
+      ['2016-01-04', '2016-W01'],
+    ] as const;
+    for (const [date, expected] of cases) {
+      expect(isoWeekKey(date)).toBe(expected);
+    }
   });
 });

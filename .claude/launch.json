@@ -6,7 +6,7 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["dev"],
       "port": 5173,
-      "autoPort": false
+      "autoPort": true
     },
     {
       "name": "Koa API server",
