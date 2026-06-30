@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-06-22 (updated: ratify `kind='pattern'`; tag-axis rename 0043). The single source of truth for user-facing
+> **Status:** canonical, 2026-06-29 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9). The single source of truth for user-facing
 > nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -9,12 +9,12 @@
 The app accreted ~25 user-facing concepts (Plan, Concept, Container, Template,
 Plan-Block, Pattern, Habit, Ritual, Fast Task, Possible Task, …). Most are not
 distinct *things* — they are *states*, *subtypes*, *kinds*, or *filters* of a
-much smaller set. This glossary fixes the canon at **8 nouns (7 in use, 1
-reserved)** and demotes everything else.
+much smaller set. This glossary fixes the canon at **9 nouns** and demotes everything else.
+*(Phase N raised the original cap from 8 to 9 to accommodate the Objective hierarchy — a genuinely distinct entity with its own view, lifecycle, and progression mechanics.)*
 
 ## The noun budget (governance)
 
-1. **At most 8 top-level nouns.** Introducing a new one **requires retiring one**.
+1. **At most 9 top-level nouns.** Introducing a new one **requires retiring one** or a deliberate budget amendment.
 2. **Every UI label maps to a glossary term** (a noun, or a listed state/subtype/
    kind/filter). A label that isn't here is a bug.
 3. **The data model maps 1:1 to the glossary.** Internal table names may differ
@@ -30,6 +30,7 @@ reserved)** and demotes everything else.
 | 2 | **Time Block** | A named, tagged span of time. | Scheduled (was *Plan*) · Someday (was *Concept*) · Saved (was *Plan-Block/Template*) *(states)*; task · meeting · focus · break · buffer · container *(kinds, hidden)* |
 | 3 | **Routine** | A reusable bundle of tasks. (internal: `patterns`) | Ritual *(flavor, flagged off)*; surfaces Habit-subtype tasks |
 | 4 | **Tag** | A cross-cutting label. | Concept-Tag (= tag + default duration); top-level / second-level *(levels)* |
+| 9 | **Objective** | A hierarchical life goal — *Goal* at depth 0, *Project* at depth 1, *Milestone* at depth 2+. (internal: `objectives` + `objective_tasks`) | Level is server-derived from tree depth; progress is `NULL` when no tasks/children — a rot signal. |
 
 **Surfaces** (places you work):
 
@@ -45,7 +46,11 @@ reserved)** and demotes everything else.
 - **Connection / Integration (e.g. a connected Google account):** **not a noun** — it is a
   **Setting** (managed under Settings → MCP connections). Connecting Google adds no new
   glossary entity; its data surfaces as existing nouns (calendar events → **Time Block**
-  *meeting* mirrors; extracted action items → **Inbox** items). The noun budget stays at 8.
+  *meeting* mirrors; extracted action items → **Inbox** items).
+- **Today Goal / Weekly Goals:** **not nouns** — these are named intention slots in the Today
+  cockpit and Weekly Review surface (internal: `reflections` table, `kind` = `today_goal` /
+  `weekly_goal`). They are a feature of the **Planner** surface tied to an Objective, not
+  a standalone entity with its own CRUD lifecycle.
 - **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each pattern-tag has
   0–N time ranges per day type. Pattern-tag-less tasks fall back to the general `workday_start`/
   `workday_end` window from scheduling\_prefs.
