@@ -2,19 +2,20 @@ import { A } from '@solidjs/router';
 import { Show } from 'solid-js';
 import {
   CheckSquare, Inbox, Tag, Settings, Activity,
-  Sun, Cpu, CalendarDays,
+  Sun, Cpu, CalendarDays, Target,
 } from 'lucide-solid';
 import { possibles } from '../stores/index.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 const links = [
-  { href: '/',         label: 'Today',    Icon: Sun },
-  { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
-  { href: '/inbox',    label: 'Inbox',    Icon: Inbox, badge: true },
-  { href: '/tasks',    label: 'Tasks',    Icon: CheckSquare },
-  { href: '/tags',     label: 'Tags',     Icon: Tag },
-  { href: '/jobs',     label: 'Jobs',     Icon: Activity },
-  { href: '/settings', label: 'Settings', Icon: Settings },
+  { href: '/',            label: 'Today',      Icon: Sun },
+  { href: '/calendar',   label: 'Calendar',   Icon: CalendarDays },
+  { href: '/inbox',      label: 'Inbox',      Icon: Inbox, badge: true },
+  { href: '/tasks',      label: 'Tasks',      Icon: CheckSquare },
+  { href: '/objectives', label: 'Objectives', Icon: Target },
+  { href: '/tags',       label: 'Tags',       Icon: Tag },
+  { href: '/jobs',       label: 'Jobs',       Icon: Activity },
+  { href: '/settings',   label: 'Settings',   Icon: Settings },
 ];
 
 export function Nav() {

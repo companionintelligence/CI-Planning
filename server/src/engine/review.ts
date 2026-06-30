@@ -39,6 +39,7 @@ export interface ReviewResult {
 
 interface MissedRow {
   task_id: string;
+  owner_id: string;
   priority: number;
   defer_count: number;
 }
@@ -56,7 +57,7 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
   const ownerClause = opts.owner != null ? `AND t.owner_id = @owner` : ``;
   const missed = sqlite
     .prepare(
-      `SELECT t.id AS task_id, COALESCE(t.priority, 3) AS priority, COALESCE(t.defer_count, 0) AS defer_count
+      `SELECT t.id AS task_id, t.owner_id, COALESCE(t.priority, 3) AS priority, COALESCE(t.defer_count, 0) AS defer_count
          FROM tasks t
         WHERE t.id IN (
                 SELECT tb.task_id FROM time_blocks tb
@@ -79,6 +80,12 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
   const markBlocksMissed = sqlite.prepare(
     `UPDATE time_blocks SET status = 'missed' WHERE task_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ?`
   );
+  // N4 lossy-slip fix: stamp daily_plan.outcome before block hard-delete so the
+  // nightly aggregate can record planned-vs-done even after the block is gone.
+  // Write-once (outcome IS NULL guard) so re-runs can't overwrite a prior stamp.
+  const stampPlanOutcome = sqlite.prepare(
+    `UPDATE daily_plan SET outcome = ? WHERE owner_id = ? AND task_id = ? AND outcome IS NULL`
+  );
 
   let deferred = 0;
   let surfaced = 0;
@@ -86,12 +93,14 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
     for (const m of missed) {
       if (m.priority >= 3) {
         // Low priority → auto-defer with backoff; drop the stale block.
+        stampPlanOutcome.run('deferred', m.owner_id, m.task_id);
         bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
         // CON-3 cascade: dropped blocks are HARD-deleted — clear their tag rows.
         for (const b of dropBlocks.all(m.task_id, nowISO) as { id: string }[]) removeEntityTags('time_block', b.id);
         deferred++;
       } else {
         // High priority → surface for the user; don't move it silently.
+        stampPlanOutcome.run('missed', m.owner_id, m.task_id);
         markMissed.run(m.task_id);
         markBlocksMissed.run(m.task_id, nowISO);
         surfaced++;

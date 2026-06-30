@@ -24,7 +24,8 @@ interface FpRow {
   task_id: string;
   selected: number;
   position: number;
-  source_pattern_id: string | null;
+  source_kind: string;
+  source_ref: string | null;
   added_at: string;
   title: string;
   priority: number | null;
@@ -36,7 +37,7 @@ interface FpRow {
 function list(owner: string) {
   const rows = sqlite
     .prepare(
-      `SELECT fp.task_id, fp.selected, fp.position, fp.source_pattern_id, fp.added_at,
+      `SELECT fp.task_id, fp.selected, fp.position, fp.source_kind, fp.source_ref, fp.added_at,
               t.title, t.priority, t.estimated_minutes, t.status, t.recurrence_rule
          FROM flight_plan fp JOIN tasks t ON t.id = fp.task_id
         WHERE fp.owner_id = ? ORDER BY fp.position, fp.task_id`
@@ -61,7 +62,7 @@ export function flightPlanRouter() {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { task_id?: number; pattern_id?: number };
     const ins = sqlite.prepare(
-      `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_pattern_id, selected, position) VALUES (?, ?, ?, 1, ?)`
+      `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, ?, ?, 1, ?)`
     );
     let added = 0;
     if (body.pattern_id != null) {
@@ -69,12 +70,12 @@ export function flightPlanRouter() {
       if (!owns) { ctx.status = 404; ctx.body = { error: 'pattern not found' }; return; }
       const members = sqlite.prepare(`SELECT task_id FROM pattern_tasks WHERE pattern_id = ? ORDER BY position`).all(body.pattern_id) as { task_id: string }[];
       let pos = nextPos(owner);
-      for (const m of members) if (ins.run(owner, m.task_id, body.pattern_id, pos++).changes > 0) added++;
+      for (const m of members) if (ins.run(owner, m.task_id, 'pattern', body.pattern_id, pos++).changes > 0) added++;
     } else if (body.task_id != null) {
       const t = sqlite.prepare(`SELECT recurrence_parent_id FROM tasks WHERE id = ? AND owner_id = ?`).get(body.task_id, owner) as { recurrence_parent_id: string | null } | undefined;
       if (!t) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
       if (t.recurrence_parent_id) { ctx.status = 422; ctx.body = { error: 'stage the series template, not an instance' }; return; }
-      if (ins.run(owner, body.task_id, null, nextPos(owner)).changes > 0) added++;
+      if (ins.run(owner, body.task_id, 'manual', null, nextPos(owner)).changes > 0) added++;
     } else {
       ctx.status = 422; ctx.body = { error: 'task_id or pattern_id is required' }; return;
     }

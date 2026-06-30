@@ -99,7 +99,7 @@ function seedApiFixture(): void {
   insertNoId('pattern_tasks', { pattern_id: pattern, task_id: meditate, position: 0 });
 
   insertNoId('flight_plan', { owner_id: OWNER, task_id: post, selected: 1, position: 0 });
-  insertNoId('flight_plan', { owner_id: OWNER, task_id: meditate, source_pattern_id: pattern, selected: 0, position: 1 });
+  insertNoId('flight_plan', { owner_id: OWNER, task_id: meditate, source_kind: 'pattern', source_ref: pattern, selected: 0, position: 1 });
 
   insert('block_templates', { owner_id: OWNER, name: 'Deep work', tag: 'work', default_minutes: 90 });
   insert('possible_tasks', { raw_title: 'Maybe call dentist', source_kind: 'gmail', source_ref: 'msg-1', status: 'pending', proposed_priority: 3 });

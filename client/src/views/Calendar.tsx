@@ -1,5 +1,5 @@
-import { createSignal, createMemo, createEffect, onCleanup, For, Show } from 'solid-js';
-import { ChevronLeft, ChevronRight, Zap, Filter, X, Download } from 'lucide-solid';
+import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
+import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList } from 'lucide-solid';
 import {
   visibleBlocks,
   setCalendarRange,
@@ -16,6 +16,7 @@ import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib
 import { minutesIntoDay } from '../lib/grid.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
+import { WeeklyReview } from '../components/WeeklyReview.js';
 import type { Block } from '../lib/api.js';
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -131,6 +132,19 @@ export function Calendar() {
 
   const views: ViewMode[] = ['day', 'week', 'month'];
 
+  // ── Weekly review toggle (week view only) ───────────────────────────────────
+  const [showReview, setShowReview] = createSignal(false);
+  const reviewEnabled = () => view() === 'week' && showReview();
+  const [weekReview] = createResource(
+    () => (reviewEnabled() ? anchor() : null),
+    (a) => api.review.week(a),
+  );
+  // Calibration is owner-wide; fetch once when the review panel opens, then cache.
+  const [calibration] = createResource(
+    () => reviewEnabled() || null,
+    () => api.review.calibration(),
+  );
+
   // ── Overlay filter (tag AND priority, combinable) ────────────────────────────
   const [showFilters, setShowFilters] = createSignal(false);
   const activeFilters = createMemo(() => overlayTags().length + overlayPrio().length);
@@ -180,6 +194,16 @@ export function Calendar() {
           >
             <Download size={13} /> Export
           </a>
+          <Show when={view() === 'week'}>
+            <button
+              onClick={() => setShowReview((s) => !s)}
+              class="btn-ghost text-xs gap-1"
+              classList={{ 'text-primary': showReview() }}
+              title="Toggle weekly review panel"
+            >
+              <ClipboardList size={13} /> Review
+            </button>
+          </Show>
           <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
             <Zap size={14} />
             {runningSchedule() ? 'Scheduling…' : 'Schedule Day'}
@@ -259,6 +283,11 @@ export function Calendar() {
         <div class="mb-3 p-3 rounded-lg border border-surface-700/60 bg-surface-800">
           <DayTypeControl date={anchor()} />
         </div>
+      </Show>
+
+      {/* Phase N3/N4: weekly review panel — visible only in week view when toggled. */}
+      <Show when={view() === 'week' && showReview()}>
+        <WeeklyReview data={weekReview()} calibration={calibration()} />
       </Show>
 
       <div class="flex-1 overflow-hidden min-h-0">

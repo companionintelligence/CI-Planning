@@ -388,7 +388,8 @@ export const flightPlan = sqliteTable(
   {
     ownerId: text('owner_id').references(() => owners.id),
     taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
-    sourcePatternId: text('source_pattern_id').references(() => patterns.id, { onDelete: 'set null' }),
+    sourceKind: text('source_kind').default('manual'),
+    sourceRef: text('source_ref'),
     selected: integer('selected', { mode: 'boolean' }).default(true),
     position: integer('position').default(0),
     addedAt: text('added_at').default(sql`CURRENT_TIMESTAMP`),
