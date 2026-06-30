@@ -70,6 +70,29 @@ export function weekDaysOf(anchor: string): string[] {
 }
 
 /**
+ * ISO-8601 week key — `YYYY-Www` — for a local calendar date (YYYY-MM-DD).
+ * Monday-start; Thursday rule: a week belongs to the year that contains its Thursday.
+ * Uses the noon-UTC pivot so arithmetic is DST-safe and aligns with weekDaysOf().
+ * Example: 2021-01-01 (Friday) → '2020-W53' (Thursday of its week is 2020-12-31).
+ */
+export function isoWeekKey(dateStr: string): string {
+  const dow = new Date(dateStr + 'T12:00:00Z').getUTCDay(); // 0=Sun
+  // Thursday of this Monday-start week (Sun → -3, Mon → +3, …, Fri → -1, Sat → -2).
+  const thursday = addDays(dateStr, dow === 0 ? -3 : 4 - dow);
+  const year = Number(thursday.slice(0, 4));
+  // W01's Monday is the Monday on or before Jan 4 (Jan 4 is always in W01).
+  const jan4 = `${year}-01-04`;
+  const jan4Dow = new Date(jan4 + 'T12:00:00Z').getUTCDay();
+  const w1Monday = addDays(jan4, -(jan4Dow === 0 ? 6 : jan4Dow - 1));
+  // Monday of the input date (same formula as weekDaysOf).
+  const monday = addDays(dateStr, -(dow === 0 ? 6 : dow - 1));
+  const days = Math.round(
+    (new Date(monday + 'T12:00:00Z').getTime() - new Date(w1Monday + 'T12:00:00Z').getTime()) / 86_400_000,
+  );
+  return `${year}-W${String(Math.floor(days / 7) + 1).padStart(2, '0')}`;
+}
+
+/**
  * A 6×7 = 42-day month grid (YYYY-MM-DD) for the month containing `anchor`,
  * including leading days from the previous month and trailing days from the next
  * so the grid starts on a Monday and fills six full weeks.

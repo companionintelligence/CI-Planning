@@ -47,6 +47,11 @@ export function resetDb(): void {
     DELETE FROM replan_suggestions;
     DELETE FROM day_assignments;
     DELETE FROM day_of_week_map;
+    DELETE FROM reflections;
+    DELETE FROM objective_tasks;
+    DELETE FROM objectives;
+    DELETE FROM estimate_calibration;
+    DELETE FROM plan_outcomes;
   `);
   // Pin the scheduling prefs that drive Auto placement / recurrence / recall back to
   // a deterministic baseline. resetDb keeps the prefs ROW, and files run in a
