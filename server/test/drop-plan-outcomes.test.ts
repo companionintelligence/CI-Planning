@@ -46,9 +46,24 @@ describe('0095 drop plan_outcomes', () => {
     const db = fresh();
     runMigrations(db);
     expect(runMigrations(db).applied).toEqual([]);
-    // Direct re-invocation is a no-op (DROP IF EXISTS + a DELETE that matches nothing).
+
+    // Simulate an existing DB where the retired job had already produced job_runs.
+    db.prepare(
+      `INSERT INTO scheduled_jobs (id, name, kind, cron)
+       VALUES ('job_aggregate_plan_outcomes', 'aggregate_plan_outcomes', 'aggregate_plan_outcomes', '30 1 * * *')`
+    ).run();
+    db.prepare(
+      `INSERT INTO job_runs (id, job_id, status)
+       VALUES ('run_aggregate_plan_outcomes', 'job_aggregate_plan_outcomes', 'done')`
+    ).run();
+
     expect(() => m0095.up(db)).not.toThrow();
     expect(tableExists(db, 'plan_outcomes')).toBe(false);
+    const run = db
+      .prepare(`SELECT job_id FROM job_runs WHERE id = 'run_aggregate_plan_outcomes'`)
+      .get() as { job_id: string | null };
+    expect(run.job_id).toBeNull();
+
     db.close();
   });
 });
