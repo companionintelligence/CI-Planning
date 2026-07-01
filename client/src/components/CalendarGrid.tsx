@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
-import { Lock } from 'lucide-solid';
+import { Lock, NotebookPen } from 'lucide-solid';
 import type { Block } from '../lib/api.js';
 import {
   PX_PER_MIN,
@@ -290,6 +290,10 @@ interface Props {
   blocksByDay: () => Record<string, Block[]>;
   /** Click an empty slot → open the Add Element wizard at (day, HH:MM). */
   onCreateAt?: (day: string, hhmm: string) => void;
+  /** Phase O · O1 — local dates (YYYY-MM-DD) that have a day note; renders a dot. */
+  notedDays?: () => Set<string>;
+  /** Click a date's note dot → open that day's note. */
+  onOpenNote?: (day: string) => void;
 }
 
 export function CalendarGrid(props: Props) {
@@ -329,8 +333,19 @@ export function CalendarGrid(props: Props) {
               <div class="text-[10px] uppercase tracking-wide text-slate-500">
                 {dayLabel(day, { weekday: 'short' })}
               </div>
-              <div class="text-sm font-semibold" classList={{ 'text-slate-200': day !== today() }}>
-                {dayLabel(day, { day: 'numeric' })}
+              <div class="flex items-center justify-center gap-1">
+                <div class="text-sm font-semibold" classList={{ 'text-slate-200': day !== today() }}>
+                  {dayLabel(day, { day: 'numeric' })}
+                </div>
+                <Show when={props.notedDays?.().has(day)}>
+                  <button
+                    class="text-slate-400 hover:text-accent-light transition-colors"
+                    title="This day has a note"
+                    onClick={() => props.onOpenNote?.(day)}
+                  >
+                    <NotebookPen size={11} />
+                  </button>
+                </Show>
               </div>
             </div>
           )}
@@ -439,9 +454,20 @@ export function CalendarGrid(props: Props) {
                   >
                     {dayLabel(day, { day: 'numeric' })}
                   </span>
-                  <Show when={dayBlocks().length > 0}>
-                    <span class="text-[10px] text-slate-500">{dayBlocks().length}</span>
-                  </Show>
+                  <div class="flex items-center gap-1">
+                    <Show when={props.notedDays?.().has(day)}>
+                      <button
+                        class="text-slate-400 hover:text-accent-light transition-colors"
+                        title="This day has a note"
+                        onClick={(e) => { e.stopPropagation(); props.onOpenNote?.(day); }}
+                      >
+                        <NotebookPen size={11} />
+                      </button>
+                    </Show>
+                    <Show when={dayBlocks().length > 0}>
+                      <span class="text-[10px] text-slate-500">{dayBlocks().length}</span>
+                    </Show>
+                  </div>
                 </div>
                 <div class="flex flex-col gap-0.5">
                   <For each={dayBlocks().slice(0, MAX_CHIPS)}>

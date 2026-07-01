@@ -379,6 +379,12 @@ export const api = {
       request<{ ok: boolean }>('POST', `/reflections/${kind}/${position}/done`, { period_key, done }),
     delete: (kind: 'today_goal' | 'weekly_goal', position: number, period_key: string) =>
       request<{ ok: boolean }>('DELETE', `/reflections/${kind}/${position}?period_key=${encodeURIComponent(period_key)}`),
+    // Phase O · O1 — the one-per-day free-text note. Empty body deletes.
+    setNote: (period_key: string, body: string) =>
+      request<{ ok: boolean }>('PUT', '/reflections/note', { period_key, body }),
+    // Phase O · O1 — dates in [from, to] that have a day note (calendar dots).
+    notedDays: (from: string, to: string) =>
+      request<{ dates: string[] }>('GET', `/reflections/notes?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   },
 
   // ── Phase N1: objectives ──────────────────────────────────────────────────────
@@ -720,9 +726,16 @@ export interface WeeklyGoal extends ReflectionGoal {
   position: number;
 }
 
+// Phase O · O1 — the one free-text note per day (reflections kind='day_note').
+export interface DayNote {
+  body: string;
+  updated_at: string;
+}
+
 export interface ReflectionsResponse {
   today: ReflectionGoal | null;
   weekly: WeeklyGoal[];
+  note: DayNote | null;
 }
 
 export interface ReflectionWrite {

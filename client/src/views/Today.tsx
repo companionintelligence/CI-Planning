@@ -1,5 +1,5 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
-import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-solid';
+import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays, NotebookPen } from 'lucide-solid';
 import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type DaySummary } from '../lib/api.js';
@@ -21,6 +21,24 @@ import { MorningBriefing } from '../components/MorningBriefing.js';
  */
 export function Today() {
   const [summary, { mutate: mutateSummary }] = createResource(selectedDay, (date) => api.summary.get(date));
+
+  // Phase O · O1 — the one free-text note per day. Outline affordance when empty,
+  // accent-filled when a note exists; opens an inline editor (no modal).
+  const [reflections, { refetch: refetchReflections }] = createResource(selectedDay, (date) => api.reflections.get(date));
+  const note = () => reflections()?.note ?? null;
+  const [editingNote, setEditingNote] = createSignal(false);
+  const [noteDraft, setNoteDraft] = createSignal('');
+  function startEditNote() {
+    setNoteDraft(note()?.body ?? '');
+    setEditingNote(true);
+  }
+  async function saveNote() {
+    try {
+      await api.reflections.setNote(selectedDay(), noteDraft());
+      refetchReflections();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    setEditingNote(false);
+  }
 
   const today = () => localISODate();
   const isToday = () => selectedDay() === today();
@@ -108,11 +126,52 @@ export function Today() {
               </Show>
             </div>
           </div>
-          {/* Right column: Add button (Suggest/Schedule toggle moved to top bar) */}
-          <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0 self-start">
-            <Plus size={13} /> Add
-          </button>
+          {/* Right column: day note affordance + Add button */}
+          <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
+            <button
+              onClick={startEditNote}
+              class="btn-icon"
+              classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }}
+              title={note() ? 'Edit day note' : 'Add a note for the day'}
+            >
+              <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
+            </button>
+            <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5">
+              <Plus size={13} /> Add
+            </button>
+          </div>
         </div>
+
+        {/* Phase O · O1 — inline day-note editor (matches the card inline-edit idiom) */}
+        <Show when={editingNote()}>
+          <div class="mt-3 flex flex-col gap-2">
+            <textarea
+              autofocus
+              rows={3}
+              class="input text-sm w-full resize-y"
+              placeholder="A note for the day — how it went, what stood out…"
+              value={noteDraft()}
+              onInput={(e) => setNoteDraft(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setEditingNote(false);
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveNote();
+              }}
+            />
+            <div class="flex justify-end gap-2">
+              <button class="btn-ghost text-xs px-2 py-1" onClick={() => setEditingNote(false)}>Cancel</button>
+              <button class="btn-primary text-xs px-3 py-1" onClick={saveNote}>Save note</button>
+            </div>
+          </div>
+        </Show>
+        <Show when={!editingNote() && note()}>
+          <button
+            class="mt-3 w-full text-left text-sm text-muted-foreground rounded-lg px-3 py-2 border border-border hover:border-primary/50 transition-colors whitespace-pre-line"
+            onClick={startEditNote}
+            title="Edit day note"
+          >
+            {note()!.body}
+          </button>
+        </Show>
 
         <Show
           when={todayTags().length > 0}

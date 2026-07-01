@@ -400,6 +400,86 @@ describe('O0 — reflection source links', () => {
   });
 });
 
+// ── Phase O · O1 — day note (one per day) ──────────────────────────────────────
+
+describe('O1 — day note', () => {
+  const putNote = (body: Record<string, unknown>) =>
+    api(srv.url, '/api/reflections/note', { method: 'PUT', json: body });
+  const noteRows = () => reflectionRows().filter((r) => r.kind === 'day_note');
+
+  it('creates a day note and GET returns it', async () => {
+    const res = await putNote({ period_key: DAY, body: 'Good day today' });
+    expect(res.status).toBe(200);
+    expect(noteRows()).toHaveLength(1);
+    expect(noteRows()[0]).toMatchObject({ kind: 'day_note', period_key: DAY, position: 0, body: 'Good day today' });
+
+    const get = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(get.body.note).toMatchObject({ body: 'Good day today' });
+    expect(get.body.note.updated_at).toBeTruthy();
+  });
+
+  it('two saves same day → one row, latest body wins (PK upsert)', async () => {
+    await putNote({ period_key: DAY, body: 'First' });
+    await putNote({ period_key: DAY, body: 'Second' });
+    expect(noteRows()).toHaveLength(1);
+    expect(noteRows()[0].body).toBe('Second');
+  });
+
+  it('empty body deletes the note', async () => {
+    await putNote({ period_key: DAY, body: 'To clear' });
+    expect(noteRows()).toHaveLength(1);
+    const res = await putNote({ period_key: DAY, body: '' });
+    expect(res.status).toBe(200);
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  it('whitespace-only body is treated as empty (deletes)', async () => {
+    await putNote({ period_key: DAY, body: 'Something' });
+    await putNote({ period_key: DAY, body: '   ' });
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  it('422 when period_key is missing', async () => {
+    const res = await putNote({ body: 'No key' });
+    expect(res.status).toBe(422);
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  it('distinct days are independent; GET returns null when no note', async () => {
+    await putNote({ period_key: DAY, body: 'Monday note' });
+    await putNote({ period_key: NEXT_DAY, body: 'Tuesday note' });
+    expect(noteRows()).toHaveLength(2);
+
+    const g1 = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(g1.body.note.body).toBe('Monday note');
+    const g2 = await api(srv.url, `/api/reflections?period=${NEXT_DAY}`);
+    expect(g2.body.note.body).toBe('Tuesday note');
+    const g3 = await api(srv.url, `/api/reflections?period=${NEXT_WEEK_DAY}`);
+    expect(g3.body.note).toBeNull();
+  });
+
+  it('the note is independent of today/weekly goals for the same day', async () => {
+    await api(srv.url, '/api/reflections/today', { method: 'PUT', json: { period_key: DAY, body: 'Today focus' } });
+    await putNote({ period_key: DAY, body: 'A note' });
+    const get = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(get.body.today.body).toBe('Today focus');
+    expect(get.body.note.body).toBe('A note');
+  });
+
+  it('GET /api/reflections/notes returns dates with notes in range', async () => {
+    await putNote({ period_key: DAY, body: 'has note' });
+    await putNote({ period_key: NEXT_DAY, body: 'has note' });
+    const res = await api(srv.url, `/api/reflections/notes?from=${DAY}&to=${NEXT_WEEK_DAY}`);
+    expect(res.status).toBe(200);
+    expect(res.body.dates).toEqual([DAY, NEXT_DAY]);
+  });
+
+  it('GET /api/reflections/notes 422 without from/to', async () => {
+    const res = await api(srv.url, '/api/reflections/notes');
+    expect(res.status).toBe(422);
+  });
+});
+
 // ── Phase O · O0 — weekly done-toggle ──────────────────────────────────────────
 
 describe('O0 — weekly done-toggle', () => {
