@@ -26,6 +26,7 @@ import { syncRouter } from './sync.js';
 import { reflectionsRouter } from './reflections.js';
 import { objectivesRouter } from './objectives.js';
 import { reviewRouter } from './review.js';
+import { starsRouter } from './stars.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -56,6 +57,7 @@ export function mountRoutes(app: Koa) {
     reflectionsRouter(),
     objectivesRouter(),
     reviewRouter(),
+    starsRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }

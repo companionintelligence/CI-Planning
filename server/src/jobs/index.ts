@@ -17,6 +17,7 @@ import { syncAll } from '../agents/sync.js';
 import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
 import { aggregatePlanOutcomes } from './aggregate-plan-outcomes.js';
+import { freezeStars } from './freeze-stars.js';
 import { config } from '../lib/config.js';
 import { gmailLiveAllowed } from '../mcp/gmail-flag.js';
 import { join } from 'node:path';
@@ -195,6 +196,14 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsCreated: 0,
         itemsUpdated: 1,
         log: `Plan outcomes for ${r.date}: planned=${r.planned}, completed=${r.completed}`,
+      };
+    }
+    case 'freeze_stars': {
+      const r = freezeStars();
+      return {
+        itemsCreated: 0,
+        itemsUpdated: 1,
+        log: `Froze day stars for ${r.date}: ${r.total}/5`,
       };
     }
     default:

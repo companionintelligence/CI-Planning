@@ -764,6 +764,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "date",
+      "star_objective",
+      "star_habits",
+      "star_tasks",
+      "star_bonus",
+      "star_note",
+      "total",
+      "frozen_at",
+    ],
+    "table": "day_stars",
+  },
+  {
+    "columns": [
       "id",
       "owner_id",
       "key",

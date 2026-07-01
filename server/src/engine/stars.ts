@@ -1,0 +1,120 @@
+import { sqlite } from '../db/index.js';
+import { currentOwnerId } from '../lib/context.js';
+import { serverTimezone, utcDayBounds } from '../lib/tz.js';
+
+/**
+ * Phase O · O2 — the five-star day score.
+ *
+ * Five independent, DERIVED stars per (owner, date). No star is a manual toggle:
+ * each reads existing completion signal so the game rewards real work.
+ *
+ *   S1 objective  — the day's `today_goal` reflection has done_at set.
+ *   S2 habits     — >=1 habit instance that day AND all of them are done.
+ *   S3 tasks      — >=1 non-habit/non-routine task planned that day (daily_plan)
+ *                   AND all such planned tasks are done.
+ *   S4 bonus      — >=1 non-habit/non-routine task completed that day whose id is
+ *                   NOT in that day's daily_plan (an unplanned win).
+ *   S5 note       — >=1 task done that day AND a non-empty day_note exists.
+ *
+ * Habit/routine exclusion (S3/S4): mirrors the Today's Brief top-tasks rule —
+ * subtype != 'habit', recurrence_parent_id IS NULL, and not a pattern member.
+ *
+ * Empty-set rule (default): S2 and S3 require AT LEAST ONE of their kind to
+ * exist. A day with no habits can't earn the habits star; a day with no plan
+ * can't earn the tasks star. (Vacuous-true is a one-line flip below.)
+ *
+ * Pure read — never writes. Pinned-clock `now` mirrors advanceObjectives (unused
+ * today: every read is date-scoped, but kept for parity + future need).
+ */
+export interface DayStars {
+  objective: boolean;
+  habits: boolean;
+  tasks: boolean;
+  bonus: boolean;
+  note: boolean;
+  total: number;
+}
+
+export function computeStars(
+  owner: string = currentOwnerId(),
+  date: string = '',
+  _opts: { now?: string } = {},
+): DayStars {
+  const tzRow = sqlite
+    .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
+    .get(owner) as { timezone: string | null } | undefined;
+  const tz = tzRow?.timezone || serverTimezone();
+  const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
+
+  // ── S1 — intention ──────────────────────────────────────────────────────────
+  const goal = sqlite
+    .prepare(
+      `SELECT done_at FROM reflections
+        WHERE owner_id = ? AND kind = 'today_goal' AND period_key = ? AND position = 0`,
+    )
+    .get(owner, date) as { done_at: string | null } | undefined;
+  const objective = !!goal?.done_at;
+
+  // ── S2 — habits (>=1 habit instance today, all done) ─────────────────────────
+  const habitStats = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done
+         FROM tasks
+        WHERE owner_id = ?
+          AND COALESCE(subtype, 'standard') = 'habit'
+          AND occurrence_date = ?`,
+    )
+    .get(owner, date) as { total: number; done: number | null };
+  const habits = habitStats.total > 0 && (habitStats.done ?? 0) === habitStats.total;
+
+  // ── S3 — tasks (>=1 non-habit/non-routine planned task, all done) ────────────
+  const planStats = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done
+         FROM daily_plan dp
+         JOIN tasks t ON t.id = dp.task_id
+        WHERE dp.owner_id = ? AND dp.date = ?
+          AND COALESCE(t.subtype, 'standard') != 'habit'
+          AND t.recurrence_parent_id IS NULL
+          AND t.id NOT IN (SELECT task_id FROM pattern_tasks)`,
+    )
+    .get(owner, date) as { total: number; done: number | null };
+  const tasks = planStats.total > 0 && (planStats.done ?? 0) === planStats.total;
+
+  // ── S4 — bonus (an unplanned non-habit/non-routine completion today) ─────────
+  const bonusRow = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM tasks t
+        WHERE t.owner_id = ?
+          AND t.status = 'done'
+          AND t.completed_at >= ? AND t.completed_at < ?
+          AND COALESCE(t.subtype, 'standard') != 'habit'
+          AND t.recurrence_parent_id IS NULL
+          AND t.id NOT IN (SELECT task_id FROM pattern_tasks)
+          AND t.id NOT IN (SELECT task_id FROM daily_plan WHERE owner_id = ? AND date = ?)`,
+    )
+    .get(owner, dayStart, dayEnd, owner, date) as { n: number };
+  const bonus = bonusRow.n > 0;
+
+  // ── S5 — reflection (>=1 task done today AND a non-empty day note) ───────────
+  const doneToday = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS n FROM tasks
+        WHERE owner_id = ? AND status = 'done'
+          AND completed_at >= ? AND completed_at < ?`,
+    )
+    .get(owner, dayStart, dayEnd) as { n: number };
+  const noteRow = sqlite
+    .prepare(
+      `SELECT body FROM reflections
+        WHERE owner_id = ? AND kind = 'day_note' AND period_key = ? AND position = 0`,
+    )
+    .get(owner, date) as { body: string } | undefined;
+  const note = doneToday.n > 0 && !!noteRow && noteRow.body.trim().length > 0;
+
+  const total = [objective, habits, tasks, bonus, note].filter(Boolean).length;
+  return { objective, habits, tasks, bonus, note, total };
+}
