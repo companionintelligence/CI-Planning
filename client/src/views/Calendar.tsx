@@ -19,7 +19,7 @@ import { minutesIntoDay } from '../lib/grid.js';
 import { CalendarGrid } from '../components/CalendarGrid.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
 import { WeeklyReview } from '../components/WeeklyReview.js';
-import type { Block } from '../lib/api.js';
+import type { Block, DayStar } from '../lib/api.js';
 
 type ViewMode = 'day' | 'week' | 'month';
 
@@ -88,6 +88,23 @@ export function Calendar() {
     }
   });
   const notedDays = () => notedDates() ?? new Set<string>();
+
+  // Phase O · O3 — the five-star heatmap. One range call backs the whole visible
+  // month; the grid renders per-date pips (or a perfect-day single star). Only the
+  // month view uses it — day/week don't show the heatmap.
+  const [starRows] = createResource(
+    () => (view() === 'month' ? visibleDays() : null),
+    async (days) => {
+      if (!days?.length) return {} as Record<string, DayStar>;
+      try {
+        const rows = await api.stars.range(days[0], days[days.length - 1]);
+        return Object.fromEntries(rows.map((r) => [r.date, r]));
+      } catch {
+        return {} as Record<string, DayStar>;
+      }
+    },
+  );
+  const starsByDay = () => starRows() ?? {};
 
   function openNote(day: string) {
     setSelectedDay(day);
@@ -316,6 +333,7 @@ export function Calendar() {
           days={visibleDays()}
           blocksByDay={blocksByDay}
           notedDays={notedDays}
+          starsByDay={starsByDay}
           onOpenNote={openNote}
           onCreateAt={(day, hhmm) =>
             setElementModal({ open: true, mode: 'add', kind: null, prefill: { day, start: hhmm } })

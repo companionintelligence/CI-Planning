@@ -387,6 +387,13 @@ export const api = {
       request<{ dates: string[] }>('GET', `/reflections/notes?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   },
 
+  // ── Phase O · O2/O3: the five-star day score ─────────────────────────────────
+  stars: {
+    // One range call backs a whole calendar month; per date: frozen row or live.
+    range: (from: string, to: string) =>
+      request<DayStar[]>('GET', `/stars?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  },
+
   // ── Phase N1: objectives ──────────────────────────────────────────────────────
   objectives: {
     list: () => request<{ objectives: Objective[] }>('GET', '/objectives'),
@@ -744,6 +751,23 @@ export interface ReflectionWrite {
   // Phase O · O0 — link a focus to a task ('task') or objective ('objective').
   source_kind?: 'manual' | 'task' | 'objective';
   source_ref?: string | null;
+}
+
+// ── Phase O · O2/O3: the five-star day score ──────────────────────────────────
+/** The five derived booleans for a day (GET /api/stars). Live for today, frozen for the past. */
+export interface DayStars {
+  objective: boolean;
+  habits: boolean;
+  tasks: boolean;
+  bonus: boolean;
+  note: boolean;
+  total: number;
+}
+
+/** One row of GET /api/stars — a date's stars plus whether it's the frozen snapshot. */
+export interface DayStar extends DayStars {
+  date: string;
+  frozen: boolean;
 }
 
 // ── Phase O · O0: Today's Brief top-tasks row ─────────────────────────────────
