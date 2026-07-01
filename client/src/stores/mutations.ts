@@ -56,7 +56,11 @@ function surfaceConflict(result: SyncResult, originalOp: Op): void {
   const entityTitle =
     originalOp.entity === 'task'
       ? (tasks() ?? []).find((t) => t.id === originalOp.entityId)?.title ?? 'task'
-      : (blocks() ?? []).find((b) => b.id === originalOp.entityId)?.title ?? 'block';
+      : originalOp.entity === 'block'
+      ? (blocks() ?? []).find((b) => b.id === originalOp.entityId)?.title ?? 'block'
+      : originalOp.entity === 'objective'
+      ? 'objective'
+      : 'objective link';
 
   addConflict({
     id:          uuidv7(),
@@ -181,5 +185,26 @@ export async function patchBlock(id: string, fields: Partial<Block>): Promise<vo
     baseVersion: 0,
     clientTs:    nowUTC(),
   });
+  void flush();
+}
+
+/**
+ * Queue a field-scoped objective op (Follow-up 2, option B). Objectives are a
+ * server-derived read surface delivered via GET /api/objectives, so there is no
+ * local objective store to mutate optimistically — this only durably queues the
+ * op so an offline edit round-trips through POST /api/sync on reconnect.
+ * `fields` must be snake_case API shape (matching OBJECTIVE_FIELDS on the server).
+ */
+export async function enqueueObjectiveOp(id: string, fields: Record<string, unknown>): Promise<void> {
+  await enqueue({ opId: uuidv7(), entity: 'objective', entityId: id, fields, baseVersion: 0, clientTs: nowUTC() });
+  void flush();
+}
+
+/**
+ * Queue an objective↔task link change. `linkId` is the join row's surrogate id
+ * (server migration 0087); `linked` is 1 to link, 0 to unlink (tombstone).
+ */
+export async function enqueueObjectiveTaskOp(linkId: string, linked: 0 | 1): Promise<void> {
+  await enqueue({ opId: uuidv7(), entity: 'objective_task', entityId: linkId, fields: { linked }, baseVersion: 0, clientTs: nowUTC() });
   void flush();
 }

@@ -4,6 +4,7 @@ import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 
 // The tree is Goal › Project › Objective, built bottom-up: a task-bearing leaf is
 // an "objective", a node whose children are objectives is a "project", and one
@@ -27,6 +28,51 @@ function heightBelow(id: string): number {
 
 function levelFromHeight(h: number): 'goal' | 'project' | 'objective' {
   return h === 0 ? 'objective' : h === 1 ? 'project' : 'goal';
+}
+
+/**
+ * Link a task to an objective as an addressable, sync-versioned join row
+ * (migration 0087). Idempotent: re-linking an existing (possibly tombstoned)
+ * row flips it back to `linked = 1` and keeps its surrogate id. Stamps
+ * `field_ts` so a stale queued op can't clobber the change. Returns the link id.
+ */
+export function linkObjectiveTask(objectiveId: string, taskId: string): string {
+  const existing = sqlite
+    .prepare(`SELECT id FROM objective_tasks WHERE objective_id = ? AND task_id = ?`)
+    .get(objectiveId, taskId) as { id: string | null } | undefined;
+
+  let linkId: string;
+  if (existing) {
+    linkId = existing.id ?? newId();
+    sqlite
+      .prepare(`UPDATE objective_tasks SET id = ?, linked = 1 WHERE objective_id = ? AND task_id = ?`)
+      .run(linkId, objectiveId, taskId);
+  } else {
+    linkId = newId();
+    sqlite
+      .prepare(`INSERT INTO objective_tasks (objective_id, task_id, id, linked) VALUES (?, ?, ?, 1)`)
+      .run(objectiveId, taskId, linkId);
+  }
+  stampRow(sqlite, 'objective_task', linkId, ['linked']);
+  return linkId;
+}
+
+/**
+ * Unlink a task from an objective. Tombstones the join row (`linked = 0`) rather
+ * than deleting it, so the unlink round-trips through field-LWW (a row deletion
+ * can't merge). Stamps `field_ts`. Returns the link id, or null if none existed.
+ */
+export function unlinkObjectiveTask(objectiveId: string, taskId: string): string | null {
+  const existing = sqlite
+    .prepare(`SELECT id FROM objective_tasks WHERE objective_id = ? AND task_id = ?`)
+    .get(objectiveId, taskId) as { id: string | null } | undefined;
+  if (!existing) return null;
+  const linkId = existing.id ?? newId();
+  sqlite
+    .prepare(`UPDATE objective_tasks SET id = ?, linked = 0 WHERE objective_id = ? AND task_id = ?`)
+    .run(linkId, objectiveId, taskId);
+  stampRow(sqlite, 'objective_task', linkId, ['linked']);
+  return linkId;
 }
 
 // Re-stamp `level` for a node AND its ancestors, since a structure change (create /
@@ -111,12 +157,21 @@ function buildTree(owner: string) {
     next_action: null | { id: string; title: string; status: string; scheduled_date: string | null };
     effective_target: string | null;
     pace_expected: number | null;
+    has_tasks: boolean;
     children: any[];
   }>();
 
   for (const o of objs) {
-    byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, children: [] });
+    byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, has_tasks: false, children: [] });
   }
+
+  // Task-bearing set — one bulk query, not a per-objective existence check. A node with
+  // directly-linked tasks is an illegal parent (nesting under it would create a
+  // task-bearing non-leaf); the client disables it in the picker.
+  const withTasks = new Set(
+    (sqlite.prepare(`SELECT DISTINCT objective_id FROM objective_tasks`).all() as { objective_id: string }[])
+      .map((r) => r.objective_id)
+  );
 
   // Compute next_action + effective_target per objective.
   for (const id of objIds) {
@@ -134,13 +189,15 @@ function buildTree(owner: string) {
            FROM objective_tasks ot
            JOIN tasks t ON t.id = ot.task_id
            JOIN sub ON ot.objective_id = sub.id
-          WHERE t.status NOT IN ('done', 'cancelled', 'deferred')
+          WHERE ot.linked = 1 AND t.status NOT IN ('done', 'cancelled', 'deferred')
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`
       )
       .get(id) as { id: string; title: string; status: string; scheduled_date: string | null } | undefined;
 
     decorated.next_action = nextAction ?? null;
+
+    decorated.has_tasks = withTasks.has(id);
 
     const effectiveTarget = sqlite
       .prepare(
@@ -205,7 +262,7 @@ export function recomputeProgress(objectiveId: string): void {
       .prepare(
         `SELECT t.estimated_minutes, t.status
            FROM objective_tasks ot JOIN tasks t ON t.id = ot.task_id
-          WHERE ot.objective_id = ? AND t.status != 'cancelled'`
+          WHERE ot.objective_id = ? AND ot.linked = 1 AND t.status != 'cancelled'`
       )
       .all(obj.id) as { estimated_minutes: number | null; status: string }[];
 
@@ -307,6 +364,12 @@ export function objectivesRouter() {
     // the parent's height (e.g. its first child turns a leaf 'objective' into a 'project').
     restampLevels(id);
 
+    // Sync: stamp field_ts for the created fields so an older queued op can't clobber them.
+    stampRow(sqlite, 'objective', id, [
+      'title', 'description', 'parentId', 'horizon', 'status', 'cadence',
+      'targetDate', 'categoryId', 'priority',
+    ]);
+
     const obj = sqlite.prepare(`SELECT * FROM objectives WHERE id = ?`).get(id);
     broadcast(owner, 'objective:created', { id });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `objective:${id}` });
@@ -350,7 +413,7 @@ export function objectivesRouter() {
       // not be nested under a task-bearing objective (that parent would then hold both
       // tasks and sub-objectives). Group under a project/goal instead.
       const parentHasTasks = sqlite
-        .prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? LIMIT 1`)
+        .prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? AND linked = 1 LIMIT 1`)
         .get(body.parent_id);
       if (parentHasTasks) {
         ctx.status = 422;
@@ -393,6 +456,17 @@ export function objectivesRouter() {
     // and — if it moved away — its old ancestors).
     restampLevels(id);
     if (oldParentId && oldParentId !== patch.parent_id) restampLevels(oldParentId);
+
+    // Sync: stamp only the fields this PATCH actually carried, so a stale queued op
+    // for those same fields loses the LWW comparison on arrival (unmentioned fields
+    // keep their prior stamp so a concurrent edit to a different field still merges).
+    const patchToCamel: Record<string, string> = {
+      title: 'title', description: 'description', horizon: 'horizon', status: 'status',
+      cadence: 'cadence', target_date: 'targetDate', category_id: 'categoryId',
+      priority: 'priority', parent_id: 'parentId', completed_at: 'completedAt',
+    };
+    const stamped = Object.keys(body).map((k) => patchToCamel[k]).filter(Boolean);
+    if (stamped.length > 0) stampRow(sqlite, 'objective', id, stamped);
 
     const obj = sqlite.prepare(`SELECT * FROM objectives WHERE id = ?`).get(id);
     broadcast(owner, 'objective:updated', { id });
@@ -439,9 +513,10 @@ export function objectivesRouter() {
     const task = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ?`).get(body.task_id, owner);
     if (!task) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
 
-    sqlite.prepare(`INSERT OR IGNORE INTO objective_tasks (objective_id, task_id) VALUES (?, ?)`).run(objId, body.task_id);
+    const linkId = linkObjectiveTask(objId, body.task_id);
     recomputeProgress(objId);
     broadcast(owner, 'objective:updated', { id: objId });
+    if (linkId) broadcast(owner, 'objective_task:updated', { id: linkId });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'link', entity: `objective:${objId}:task:${body.task_id}` });
     ctx.status = 201;
     ctx.body = { ok: true };
@@ -451,9 +526,10 @@ export function objectivesRouter() {
   router.delete('/api/objectives/:id/tasks/:taskId', async (ctx) => {
     const owner = currentOwnerId();
     const { id: objId, taskId } = ctx.params;
-    sqlite.prepare(`DELETE FROM objective_tasks WHERE objective_id = ? AND task_id = ?`).run(objId, taskId);
+    const linkId = unlinkObjectiveTask(objId, taskId);
     recomputeProgress(objId);
     broadcast(owner, 'objective:updated', { id: objId });
+    if (linkId) broadcast(owner, 'objective_task:updated', { id: linkId });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'unlink', entity: `objective:${objId}:task:${taskId}` });
     ctx.body = { ok: true };
   });
