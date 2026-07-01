@@ -17,6 +17,7 @@ import { requestReplan } from '../engine/auto-defense.js';
 import { skipInstance, computeStreak, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
 import { syncBlockFromTask } from '../services/block-task-sync.js';
+import { ensureTaskPromoted, firstObjectiveByTaskIds, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from '../services/task-promotion.js';
 import { ensureHabitPattern } from '../services/patterns.js';
 import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, entityTagLevels, syncLeveledEntityTags } from '../services/tags.js';
 import { utcDayBounds } from '../lib/tz.js';
@@ -53,12 +54,14 @@ export function tasksRouter() {
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
+    const objectiveById = firstObjectiveByTaskIds(ids); // §I: drives the 8-pointed star + its link target
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
       depends_on: getDependencies(t.id),
       blocked: blocked.has(t.id),
+      objective_id: objectiveById.get(t.id) ?? null,
     }));
 
     // Filter by tag after attachment (simple approach for v1)
@@ -163,6 +166,8 @@ export function tasksRouter() {
       applyTaskTagLevels(task.id, { tags: body.tags, secondary: body.secondary_tags });
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, task.id, body.depends_on)) return;
     syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
+    // §H: creating a subtask promotes its parent to an objective (task list star).
+    if (body.parent_id) ensureTaskPromoted(body.parent_id, body.owner_id ?? currentOwnerId());
 
     const out = {
       ...taskToApi(task),
@@ -227,7 +232,13 @@ export function tasksRouter() {
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
-    const withTags = result.map((t) => ({ ...taskToApi(t), tags: tagsById.get(t.id) ?? [], secondary_tags: secondaryById.get(t.id) ?? [] }));
+    const objectiveById = firstObjectiveByTaskIds(ids); // §I: subtasks of a promoted parent are linked too — show their star
+    const withTags = result.map((t) => ({
+      ...taskToApi(t),
+      tags: tagsById.get(t.id) ?? [],
+      secondary_tags: secondaryById.get(t.id) ?? [],
+      objective_id: objectiveById.get(t.id) ?? null,
+    }));
     ctx.body = { subtasks: withTags };
   });
 
@@ -386,6 +397,12 @@ export function tasksRouter() {
     const scope = (ctx.query.scope as string) === 'series' ? 'series' : 'instance';
     const targetId = scope === 'series' ? (resolveTemplateId(id) ?? id) : id;
 
+    // Capture the pre-edit parent so a re-parent can GC the OLD parent's auto-objective
+    // if this was its last subtask.
+    const prevParentId = body.parent_id !== undefined
+      ? (sqlite.prepare(`SELECT parent_id FROM tasks WHERE id = ?`).get(targetId) as { parent_id: string | null } | undefined)?.parent_id ?? null
+      : null;
+
     const update: Partial<typeof tasks.$inferInsert> = {};
     if (body.title !== undefined)             update.title = body.title;
     if (body.description !== undefined)       update.description = body.description;
@@ -437,6 +454,12 @@ export function tasksRouter() {
 
     if (Array.isArray(body.depends_on) && !applyDependencies(ctx, targetId, body.depends_on)) return;
     syncTaskReminders(currentOwnerId(), targetId); // Phase H (b): re-derive if due_at changed
+    // §H: re-parenting a task UNDER another promotes that parent to an objective; moving
+    // it AWAY may leave the old parent empty → GC that parent's pristine auto-objective.
+    if (body.parent_id) ensureTaskPromoted(body.parent_id, currentOwnerId());
+    if (body.parent_id !== undefined && prevParentId && prevParentId !== body.parent_id) {
+      unpromoteIfEmpty(prevParentId, currentOwnerId());
+    }
 
     // REQ2 (reverse sync): editing a task's time/day/estimate moves its placed block in
     // lockstep. Instance scope only — a series edit re-materializes instances below.
@@ -487,6 +510,12 @@ export function tasksRouter() {
       .returning();
     if (!task) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     syncTaskReminders(currentOwnerId(), id); // Phase H (b): a cancelled task drops its auto reminders
+    // Objectives upkeep: drop the objective this task spawned (if pristine); if it was a
+    // subtask, GC its parent's objective when now empty; and reflect the cancel in any
+    // objective still linking it so progress doesn't count the abandoned task.
+    dropSourceObjective(id, currentOwnerId());
+    if (task.parentId) unpromoteIfEmpty(task.parentId, currentOwnerId());
+    recomputeObjectivesForTask(id);
     const out = { ...taskToApi(task), tags: [] as string[] };
     broadcast(currentOwnerId(), 'task:updated', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `task:${id}` });

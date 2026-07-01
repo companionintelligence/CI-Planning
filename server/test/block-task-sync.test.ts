@@ -88,7 +88,7 @@ describe('block → task sync (PATCH /api/blocks/:id)', () => {
 });
 
 describe('block done-state mirror', () => {
-  it('completing a task-linked block marks the task done; reverting reopens it', async () => {
+  it('completing a task-linked block marks the task done; un-completing returns it to scheduled', async () => {
     const task = insertTask('Finish me');
     const block = insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
 
@@ -97,10 +97,70 @@ describe('block done-state mirror', () => {
     expect(t.status).toBe('done');
     expect(t.completed_at).toBeTruthy();
 
+    // Un-completing a still-placed task returns it to `scheduled` (it still owns a block),
+    // not all the way back to the open backlog.
     await api(srv.url, `/api/blocks/${block}`, { method: 'PATCH', json: { status: 'planned' } });
     t = taskRow(task);
-    expect(t.status).toBe('open');
+    expect(t.status).toBe('scheduled');
     expect(t.completed_at).toBeNull();
+  });
+});
+
+describe('placement status (open ↔ scheduled)', () => {
+  const fieldTs = (id: string) =>
+    JSON.parse((sqlite.prepare(`SELECT field_ts FROM tasks WHERE id = ?`).get(id) as { field_ts: string | null }).field_ts ?? '{}');
+
+  it('POST /api/blocks flips an open task to scheduled, sets scheduling fields, and stamps status', async () => {
+    const task = insertTask('Place me');
+    const r = await api(srv.url, '/api/blocks', {
+      method: 'POST',
+      json: { task_id: task, title: 'Place me', block_kind: 'task', start_at: '2026-06-22T16:00:00.000Z', end_at: '2026-06-22T16:30:00.000Z' },
+    });
+    expect(r.status).toBe(201);
+    const t = taskRow(task);
+    expect(t.status).toBe('scheduled');
+    expect(t.scheduled_for).toBe('2026-06-22'); // 16:00Z = 09:00 LA
+    expect(t.task_time).toBe('09:00');
+    expect(fieldTs(task).status).toBeTruthy(); // Phase-L sync stamp advanced
+  });
+
+  it('deleting the placement returns the task to the open backlog', async () => {
+    const task = insertTask('Place then remove');
+    const created = await api(srv.url, '/api/blocks', {
+      method: 'POST',
+      json: { task_id: task, title: 'x', block_kind: 'task', start_at: '2026-06-22T16:00:00.000Z', end_at: '2026-06-22T16:30:00.000Z' },
+    });
+    expect(taskRow(task).status).toBe('scheduled');
+    await api(srv.url, `/api/blocks/${created.body.block.id}`, { method: 'DELETE' });
+    expect(taskRow(task).status).toBe('open');
+  });
+
+  it('deleting a Plan with ?children=delete reverts every child task', async () => {
+    const t1 = insertTask('child 1');
+    const t2 = insertTask('child 2');
+    const plan = (await api(srv.url, '/api/blocks', {
+      method: 'POST', json: { title: 'Plan', block_kind: 'timeblock', start_at: '2026-06-22T16:00:00.000Z', end_at: '2026-06-22T18:00:00.000Z' },
+    })).body.block.id;
+    for (const [tid, s] of [[t1, '16:00'], [t2, '16:45']] as const) {
+      const c = await api(srv.url, '/api/blocks', {
+        method: 'POST', json: { task_id: tid, title: 'c', block_kind: 'task', start_at: `2026-06-22T${s}:00.000Z`, end_at: `2026-06-22T${s}:00.000Z` },
+      });
+      await api(srv.url, `/api/blocks/${c.body.block.id}`, { method: 'PATCH', json: { parent_block_id: plan } });
+    }
+    expect(taskRow(t1).status).toBe('scheduled');
+    expect(taskRow(t2).status).toBe('scheduled');
+
+    await api(srv.url, `/api/blocks/${plan}?children=delete`, { method: 'DELETE' });
+    expect(taskRow(t1).status).toBe('open');
+    expect(taskRow(t2).status).toBe('open');
+  });
+
+  it('placement never overrides a done/cancelled task', async () => {
+    const done = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'D', ?, 'done') RETURNING id`).get(OWNER) as { id: string }).id;
+    await api(srv.url, '/api/blocks', {
+      method: 'POST', json: { task_id: done, title: 'D', block_kind: 'task', start_at: '2026-06-22T16:00:00.000Z', end_at: '2026-06-22T16:30:00.000Z' },
+    });
+    expect(taskRow(done).status).toBe('done'); // unchanged
   });
 });
 

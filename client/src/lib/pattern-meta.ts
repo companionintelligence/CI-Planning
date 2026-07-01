@@ -94,6 +94,27 @@ export function directionColorForTask(
   return colorVar(BASE_TAG_DEFAULTS[dir.name.toLowerCase()]?.color_token);
 }
 
+/**
+ * The **shape** for a Task's direction (its pattern-tag) — the sibling of
+ * [[directionColorForTask]], used to draw a task's status/direction icon
+ * ([[ShapeIcon]]). Same resolution order:
+ *   1. the pattern-tag among the task's tag names (`tags.kind === 'pattern'`)
+ *   2. its saved `icon_shape` (pattern_prefs) wins
+ *   3. else the brand default by lowercased name ([[BASE_TAG_DEFAULTS]])
+ *   4. else `'circle'` (no direction / unknown)
+ * Pure + store-free so it's unit-testable and shared by TaskCard + PlannerEntityCard.
+ */
+export function directionShapeForTask(
+  task: { tags?: string[] | null },
+  tagDefs: { id: string; name: string; kind: string }[],
+  prefs: Record<string, { icon_shape?: string | null }> = {},
+): string {
+  const names = task.tags ?? [];
+  const dir = tagDefs.find((t) => t.kind === 'pattern' && names.includes(t.name));
+  if (!dir) return 'circle';
+  return prefs[dir.id]?.icon_shape ?? BASE_TAG_DEFAULTS[dir.name.toLowerCase()]?.icon_shape ?? 'circle';
+}
+
 /** A canonical Concept tag: a name (used as title + tag) + a default estimate + optional colour. */
 export interface ConceptTag { name: string; minutes: number; color_token?: string }
 

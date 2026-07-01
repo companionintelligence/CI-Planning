@@ -5,26 +5,45 @@ import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
-// Compute depth of `id` within the objectives tree. Null parent = depth 0.
-// Walks UP the ancestor chain: depth 0 = root (no parent), 1 = child of root, etc.
-function depthOf(id: string): number {
+// The tree is Goal › Project › Objective, built bottom-up: a task-bearing leaf is
+// an "objective", a node whose children are objectives is a "project", and one
+// whose children are projects is a "goal". So level is derived from a node's
+// HEIGHT (longest path down to a leaf descendant), not its depth from the root —
+// a freshly-promoted standalone task-objective reads as "objective", and only
+// becomes a project/goal once things are nested beneath it.
+function heightBelow(id: string): number {
   const row = sqlite
     .prepare(
-      `WITH RECURSIVE chain(id, parent_id, depth) AS (
-         SELECT id, parent_id, 0 FROM objectives WHERE id = ?
+      `WITH RECURSIVE down(id, depth) AS (
+         SELECT id, 0 FROM objectives WHERE id = ?
          UNION ALL
-         SELECT o.id, o.parent_id, chain.depth + 1
-         FROM objectives o JOIN chain ON o.id = chain.parent_id
-         WHERE chain.parent_id IS NOT NULL
+         SELECT o.id, down.depth + 1 FROM objectives o JOIN down ON o.parent_id = down.id
        )
-       SELECT MAX(depth) AS d FROM chain`
+       SELECT MAX(depth) AS d FROM down`
     )
     .get(id) as { d: number };
   return row.d;
 }
 
-function levelFromDepth(d: number): 'goal' | 'project' | 'milestone' {
-  return d === 0 ? 'goal' : d === 1 ? 'project' : 'milestone';
+function levelFromHeight(h: number): 'goal' | 'project' | 'objective' {
+  return h === 0 ? 'objective' : h === 1 ? 'project' : 'goal';
+}
+
+// Re-stamp `level` for a node AND its ancestors, since a structure change (create /
+// re-parent / delete of a descendant) can change a parent's height and therefore its
+// level. Walks UP the parent chain from `startId`, guarding against cycles.
+export function restampLevels(startId: string | null | undefined): void {
+  let cur = startId ?? null;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const row = sqlite.prepare(`SELECT parent_id FROM objectives WHERE id = ?`).get(cur) as
+      | { parent_id: string | null }
+      | undefined;
+    if (!row) break;
+    sqlite.prepare(`UPDATE objectives SET level = ? WHERE id = ?`).run(levelFromHeight(heightBelow(cur)), cur);
+    cur = row.parent_id;
+  }
 }
 
 // Detect a cycle: would setting obj.parent_id = proposedParent create a cycle?
@@ -168,7 +187,7 @@ function buildTree(owner: string) {
  * Recompute progress_cache for an objective and all its ancestors (bounded
  * upward walk). Called after task links change or explicitly via POST /recompute.
  */
-function recomputeProgress(objectiveId: string): void {
+export function recomputeProgress(objectiveId: string): void {
   const now = new Date().toISOString();
 
   // Walk up the ancestor chain, recomputing each.
@@ -179,12 +198,14 @@ function recomputeProgress(objectiveId: string): void {
       .get(currentId) as { id: string; parent_id: string | null } | undefined;
     if (!obj) break;
 
-    // Compute estimate-weighted completion for directly-linked tasks.
+    // Compute estimate-weighted completion for directly-linked tasks. A cancelled
+    // (soft-deleted) task is dropped entirely — neither done nor remaining — so
+    // abandoning tasks never inflates the bar (it would if 'cancelled' counted as done).
     const tasks = sqlite
       .prepare(
         `SELECT t.estimated_minutes, t.status
            FROM objective_tasks ot JOIN tasks t ON t.id = ot.task_id
-          WHERE ot.objective_id = ?`
+          WHERE ot.objective_id = ? AND t.status != 'cancelled'`
       )
       .all(obj.id) as { estimated_minutes: number | null; status: string }[];
 
@@ -206,7 +227,7 @@ function recomputeProgress(objectiveId: string): void {
         for (const t of tasks) {
           const w = t.estimated_minutes ?? 0;
           total += w;
-          if (t.status === 'done' || t.status === 'cancelled') done += w;
+          if (t.status === 'done') done += w;
         }
         // Add children as weighted pseudo-tasks (average of their estimates if unknown, use count).
         for (const c of children) {
@@ -219,7 +240,7 @@ function recomputeProgress(objectiveId: string): void {
         progress = total > 0 ? done / total : null;
       } else {
         // Count-based fallback.
-        const doneCount = tasks.filter((t) => t.status === 'done' || t.status === 'cancelled').length;
+        const doneCount = tasks.filter((t) => t.status === 'done').length;
         const totalTasks = tasks.length + children.filter((c) => c.progress_cache !== null).length;
         const childDone = children.reduce((s, c) => s + (c.progress_cache ?? 0), 0);
         progress = totalTasks > 0 ? (doneCount + childDone) / totalTasks : null;
@@ -279,12 +300,12 @@ export function objectivesRouter() {
       id, owner, body.parent_id ?? null, body.title.trim(), body.description ?? null,
       body.horizon ?? 'none', body.status ?? 'active', body.cadence ?? 'none',
       body.target_date ?? null, body.category_id ?? null, body.priority ?? 3, now, now,
-      'goal', // placeholder — stamp correct level below
+      'objective', // placeholder — a childless new node is a leaf 'objective'; re-stamp below
     );
 
-    // Stamp the correct level from actual depth.
-    const depth = depthOf(id);
-    sqlite.prepare(`UPDATE objectives SET level = ? WHERE id = ?`).run(levelFromDepth(depth), id);
+    // Re-stamp the new node + its ancestors: giving a parent a new child can raise
+    // the parent's height (e.g. its first child turns a leaf 'objective' into a 'project').
+    restampLevels(id);
 
     const obj = sqlite.prepare(`SELECT * FROM objectives WHERE id = ?`).get(id);
     broadcast(owner, 'objective:created', { id });
@@ -325,7 +346,22 @@ export function objectivesRouter() {
       if (wouldCycle(id, body.parent_id)) {
         ctx.status = 422; ctx.body = { error: 'parent_id would create a cycle' }; return;
       }
+      // Containment rule: tasks live only at the leaf (objective) level, so a node may
+      // not be nested under a task-bearing objective (that parent would then hold both
+      // tasks and sub-objectives). Group under a project/goal instead.
+      const parentHasTasks = sqlite
+        .prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? LIMIT 1`)
+        .get(body.parent_id);
+      if (parentHasTasks) {
+        ctx.status = 422;
+        ctx.body = { error: 'cannot nest under a task-bearing objective — move its tasks first' };
+        return;
+      }
     }
+
+    // Capture the pre-update parent so a re-parent can re-level the OLD ancestor chain
+    // too (the old parent may lose height when this subtree leaves it).
+    const oldParentId = existing.parent_id;
 
     const now = new Date().toISOString();
     const patch = {
@@ -353,9 +389,10 @@ export function objectivesRouter() {
       patch.completed_at, now, id, owner,
     );
 
-    // Re-stamp level from new depth (re-parent may change it).
-    const depth = depthOf(id);
-    sqlite.prepare(`UPDATE objectives SET level = ? WHERE id = ?`).run(levelFromDepth(depth), id);
+    // Re-stamp levels from height (a re-parent can change this node, its new ancestors,
+    // and — if it moved away — its old ancestors).
+    restampLevels(id);
+    if (oldParentId && oldParentId !== patch.parent_id) restampLevels(oldParentId);
 
     const obj = sqlite.prepare(`SELECT * FROM objectives WHERE id = ?`).get(id);
     broadcast(owner, 'objective:updated', { id });
@@ -367,10 +404,13 @@ export function objectivesRouter() {
   router.delete('/api/objectives/:id', async (ctx) => {
     const owner = currentOwnerId();
     const id = ctx.params.id;
-    const existing = sqlite.prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(id, owner);
+    const existing = sqlite.prepare(`SELECT id, parent_id FROM objectives WHERE id = ? AND owner_id = ?`)
+      .get(id, owner) as { id: string; parent_id: string | null } | undefined;
     if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     sqlite.prepare(`DELETE FROM objectives WHERE id = ? AND owner_id = ?`).run(id, owner);
+    // Losing a child can shorten the (former) parent's height → re-level its chain.
+    restampLevels(existing.parent_id);
     broadcast(owner, 'objective:deleted', { id });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `objective:${id}` });
     ctx.body = { ok: true };
@@ -386,6 +426,15 @@ export function objectivesRouter() {
     if (!obj) { ctx.status = 404; ctx.body = { error: 'objective not found' }; return; }
 
     if (!body.task_id) { ctx.status = 422; ctx.body = { error: 'task_id is required' }; return; }
+
+    // Containment rule: tasks live only at the leaf (objective) level, so a task may
+    // only be linked to a node with no sub-objectives ("any task in a Goal must also be
+    // part of a project and an objective").
+    if (heightBelow(objId) > 0) {
+      ctx.status = 422;
+      ctx.body = { error: 'tasks can only be linked to a leaf objective, not a project or goal' };
+      return;
+    }
 
     const task = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ?`).get(body.task_id, owner);
     if (!task) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }

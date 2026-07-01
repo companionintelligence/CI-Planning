@@ -16,7 +16,7 @@ import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js'
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
-import { syncTaskFromBlock, mirrorBlockStatusToTask } from '../services/block-task-sync.js';
+import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus } from '../services/block-task-sync.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -199,6 +199,16 @@ export function blocksRouter() {
 
     const out = { ...toApi(block), secondary_tags: secondaryTagsOf(block.id) };
     broadcast(currentOwnerId(), 'block:created', out);
+
+    // REQ2: a placed task IS scheduled — on create (not just PATCH), mirror the
+    // placement onto the task's scheduling-intent fields and flip open → scheduled.
+    if (block.blockKind === 'task' && block.taskId) {
+      syncTaskFromBlock(block.id, currentOwnerId());
+      const flipped = applyTaskPlacementStatus(block.taskId, currentOwnerId());
+      broadcast(currentOwnerId(), 'task:updated', { id: block.taskId });
+      void flipped;
+    }
+
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `block:${block.id}` });
     enqueueOutbound(block.id);
     ctx.status = 201;
@@ -417,19 +427,32 @@ export function blocksRouter() {
     const id = ctx.params.id;
     // Push remote deletes before the block (and its external_events rows) are CASCADE-removed.
     await pushOutboundDeletes(id);
+    // REQ2: collect the task ids of every task-block about to be removed (the block
+    // itself + cascade-deleted children + recurring instances) BEFORE deletion, so we
+    // can return their tasks to the open backlog afterward. This handler isn't
+    // transactional, so gather up front.
+    const affectedTaskIds = new Set<string>();
+    const collectTaskId = (blockId: string) => {
+      const row = sqlite
+        .prepare(`SELECT task_id, block_kind FROM time_blocks WHERE id = ?`)
+        .get(blockId) as { task_id: string | null; block_kind: string } | undefined;
+      if (row?.task_id && row.block_kind === 'task') affectedTaskIds.add(row.task_id);
+    };
+    collectTaskId(id);
     if ((ctx.query.children as string) === 'delete') {
       // CON-3 cascade: members are HARD-deleted here — drop their tag rows first.
       const members = sqlite
         .prepare(`SELECT id FROM time_blocks WHERE parent_block_id = ?`)
         .all(id) as { id: string }[];
-      for (const m of members) removeEntityTags('time_block', m.id);
+      for (const m of members) { collectTaskId(m.id); removeEntityTags('time_block', m.id); }
       sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(id);
     }
     // CON-4: deleting a recurring template also removes its materialized instances
     // (+ their tag rows) — otherwise orphan instances would linger with a dead parent.
     for (const inst of sqlite
-      .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? RETURNING id`)
-      .all(id) as { id: string }[]) {
+      .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? RETURNING id, task_id, block_kind`)
+      .all(id) as { id: string; task_id: string | null; block_kind: string }[]) {
+      if (inst.task_id && inst.block_kind === 'task') affectedTaskIds.add(inst.task_id);
       removeEntityTags('time_block', inst.id);
     }
     const [block] = await db.delete(timeBlocks).where(eq(timeBlocks.id, id)).returning();
@@ -455,6 +478,12 @@ export function blocksRouter() {
       excludeBlockOccurrence(block.recurrenceParentId, block.occurrenceDate);
     }
     broadcast(currentOwnerId(), 'block:deleted', { id });
+    // REQ2: a task with no remaining active placement returns to the open backlog.
+    for (const taskId of affectedTaskIds) {
+      if (revertTaskPlacementStatus(taskId, currentOwnerId())) {
+        broadcast(currentOwnerId(), 'task:updated', { id: taskId });
+      }
+    }
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block:${id}` });
     ctx.body = { ok: true };
   });
@@ -482,10 +511,15 @@ export function blocksRouter() {
           WHERE is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
             AND status NOT IN ('completed','skipped')
             AND start_at < ? AND end_at > ?
-          RETURNING id`,
+          RETURNING id, task_id`,
       )
-      .all(dayEndISO, dayStartISO) as { id: string }[];
+      .all(dayEndISO, dayStartISO) as { id: string; task_id: string | null }[];
     for (const r of removed) removeEntityTags('time_block', r.id);
+    // REQ2: a task whose last active placement was just cleared returns to the open
+    // backlog — otherwise it's stranded at status='scheduled' with no block.
+    for (const taskId of new Set(removed.map((r) => r.task_id).filter((t): t is string => !!t))) {
+      if (revertTaskPlacementStatus(taskId, owner)) broadcast(owner, 'task:updated', { id: taskId });
+    }
     if (removed.length) broadcast(owner, 'block:deleted', { cleared: removed.length, date });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'clear-day', entity: `day:${date}` });
     ctx.body = { ok: true, cleared: removed.length };

@@ -1,6 +1,6 @@
 import { createSignal, createResource, Show, For } from 'solid-js';
 import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight } from 'lucide-solid';
-import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast } from '../stores/index.js';
+import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
 import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
@@ -17,12 +17,18 @@ export function AllTasks() {
   const [direction, setDirection] = createSignal('');
   const [doneOpen, setDoneOpen] = createSignal(true);
   const [cancelledOpen, setCancelledOpen] = createSignal(true);
+  // §E: the Tasks tab groups the backlog into Open / Scheduled / Routine sections.
+  const [openSecOpen, setOpenSecOpen] = createSignal(true);
+  const [schedSecOpen, setSchedSecOpen] = createSignal(true);
+  const [routineSecOpen, setRoutineSecOpen] = createSignal(true);
 
   // done + cancelled live in the Archive view now, not the status filter.
   const statusOptions = ['', 'open', 'scheduled', 'in_progress', 'deferred'];
   const ARCHIVED = new Set(['done', 'cancelled']);
 
-  const activeTaskCount = () => (tasks() ?? []).filter((t) => t.status === 'open').length;
+  // Header count matches what the default Tasks view actually shows as "Open" (top-level,
+  // non-routine, non-scheduled backlog) so the header number and the "Open ⟨n⟩" section agree.
+  const activeTaskCount = () => openList().length;
 
   // Tasks/Habits/Routines/Time-Blocks tabs. Tasks & Habits list the backlog (both
   // exclude subtasks + recurrence instances — a series collapses to its template);
@@ -51,6 +57,19 @@ export function AllTasks() {
   };
   const tabCount = (v: 'tasks' | 'habits') =>
     baseList().filter((t) => !ARCHIVED.has(t.status) && (v === 'habits' ? t.is_habit : !t.is_habit)).length;
+
+  // §E: partition the (already filtered+sorted) Tasks-tab backlog. Routine membership
+  // wins the grouping (a routine task can also be scheduled — it still lands here);
+  // then scheduled/in-progress; everything else (open/deferred/…) is Open.
+  const hasStatusFilter = () => !!taskFilter().status;
+  // "Scheduled" = a real placement on the planner (any engine) OR a persisted scheduled/
+  // in_progress status — so auto-placed tasks group correctly, not just manual ones.
+  const isScheduledish = (t: Task) => t.status === 'scheduled' || t.status === 'in_progress' || scheduledByTaskId().has(t.id);
+  const routineList = () => shownList().filter((t) => isRoutineTask(t.id));
+  const scheduledList = () => shownList().filter((t) => !isRoutineTask(t.id) && isScheduledish(t));
+  const openList = () => shownList().filter((t) => !isRoutineTask(t.id) && !isScheduledish(t));
+  // Explicit status filter → flat list; routine tasks never appear under the 'open' filter.
+  const explicitList = () => (taskFilter().status === 'open' ? shownList().filter((t) => !isRoutineTask(t.id)) : shownList());
 
   // Archive — done + cancelled, fetched explicitly (the default list may omit them).
   const [archived] = createResource(showArchive, async (on) => {
@@ -199,16 +218,38 @@ export function AllTasks() {
             </div>
           </Show>
 
-          {/* List — top-level only; recurring series collapse to their template. */}
-          <div class="flex flex-col gap-2">
-            <Show when={shownList().length > 0} fallback={
-              <div class="card text-center text-slate-500 py-12 text-sm">No {view() === 'habits' ? 'habits' : 'tasks'} found.</div>
-            }>
-              <For each={shownList()}>
-                {(task) => <TaskCard task={task} />}
-              </For>
+          {/* List — top-level only; recurring series collapse to their template.
+              Habits + any explicit status filter render flat; the default Tasks tab
+              groups into Open / Scheduled / Routine sections (§E). */}
+          <Show
+            when={view() === 'tasks' && !hasStatusFilter()}
+            fallback={
+              <div class="flex flex-col gap-2">
+                <Show when={(view() === 'habits' ? shownList() : explicitList()).length > 0} fallback={
+                  <div class="card text-center text-slate-500 py-12 text-sm">No {view() === 'habits' ? 'habits' : 'tasks'} found.</div>
+                }>
+                  <For each={view() === 'habits' ? shownList() : explicitList()}>
+                    {(task) => <TaskCard task={task} />}
+                  </For>
+                </Show>
+              </div>
+            }
+          >
+            <Show
+              when={openList().length + scheduledList().length + routineList().length > 0}
+              fallback={<div class="card text-center text-slate-500 py-12 text-sm">No tasks found.</div>}
+            >
+              <Show when={openList().length > 0}>
+                <ArchiveSection title="Open" open={openSecOpen()} onToggle={() => setOpenSecOpen((v) => !v)} items={openList()} loading={false} emptyLabel="" />
+              </Show>
+              <Show when={scheduledList().length > 0}>
+                <ArchiveSection title="Scheduled" open={schedSecOpen()} onToggle={() => setSchedSecOpen((v) => !v)} items={scheduledList()} loading={false} emptyLabel="" />
+              </Show>
+              <Show when={routineList().length > 0}>
+                <ArchiveSection title="Routine" open={routineSecOpen()} onToggle={() => setRoutineSecOpen((v) => !v)} items={routineList()} loading={false} emptyLabel="" />
+              </Show>
             </Show>
-          </div>
+          </Show>
         </Show>
 
         {/* Archive view — completed + thrown-away, in two collapsible containers. */}

@@ -1,7 +1,7 @@
-import { Show, For, createMemo, onCleanup, onMount } from 'solid-js';
-import { Pencil, Repeat, Unlink, LockOpen, Lock, Trash2, X, Save, Star, Sparkles, Play } from 'lucide-solid';
+import { Show, For, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { Pencil, Repeat, Unlink, LockOpen, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate } from 'lucide-solid';
 import {
-  tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs,
+  tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
   setElementModal, showToast, refetchBlocks, refetchFlightPlan, refetchTasks,
 } from '../stores/index.js';
 import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
@@ -148,6 +148,44 @@ export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (bl
       showToast(`Saved "${b.title}" template (${members.length} task${members.length === 1 ? '' : 's'})`, 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
+  // §L: quick-add a routine's tasks into this Plan (reuses place-today with a block_id).
+  const [routineMenu, setRoutineMenu] = createSignal(false);
+  const routineTypeId = () => (patternTypes() ?? []).find((t) => t.name === 'Routine')?.id;
+  const routines = () => (patterns() ?? []).filter((p) => p.type_id === routineTypeId());
+  async function addRoutine(routineId: string, name: string) {
+    const b = blockSel(); if (!b) return;
+    try {
+      const { result } = await api.patterns.placeToday(routineId, { block_id: b.id, date: props.day });
+      refetchBlocks(); refetchTasks();
+      setRoutineMenu(false);
+      // The engine only places routine members whose tag matches a tagged block, and
+      // only where a gap fits — so "placed 0" is a real outcome, not a success.
+      if (result.placed > 0) showToast(`Added ${result.placed} from "${name}"`, 'success');
+      else if (b.tag) showToast(`Nothing in "${name}" is tagged #${b.tag} — nothing added`, 'default');
+      else showToast(`"${name}" didn't fit this block`, 'default');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  // §M: swap this Plan's contents for a saved template (of the same tag / type).
+  const [templateMenu, setTemplateMenu] = createSignal(false);
+  const applicableTemplates = () => {
+    const b = blockSel();
+    const all = blockTemplates() ?? [];
+    // Prefer templates matching the block's tag ("of a type"); fall back to all when
+    // the block is untagged/category-owned so the picker is never empty.
+    return b?.tag ? all.filter((t) => t.tag === b.tag) : all;
+  };
+  async function applyTemplate(templateId: string, name: string) {
+    const b = blockSel(); if (!b) return;
+    if (!confirm(`Replace this block's tasks with the "${name}" template? Current open tasks return to the backlog.`)) return;
+    try {
+      await api.blockTemplates.applyToBlock(templateId, b.id);
+      refetchBlocks(); refetchTasks(); refetchFlightPlan();
+      showToast(`Applied "${name}"`, 'success');
+      setTemplateMenu(false);
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   async function remove() {
     const b = block();
     // All container deletes route through requestDeletePlan in the Planner — it
@@ -269,6 +307,30 @@ export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (bl
         <div class="flex flex-wrap items-center gap-1 px-2.5 py-2 border-t border-border bg-card/40">
           <button onClick={edit} class="btn-ghost text-xs px-2 py-1"><Pencil size={13} /> Edit</button>
           <Show when={isContainer()}>
+            {/* §L: quick-add a routine's tasks into this Plan. */}
+            <div class="relative">
+              <button onClick={() => { setRoutineMenu((v) => !v); setTemplateMenu(false); }} class="btn-ghost text-xs px-2 py-1"><Plus size={13} /> Routine</button>
+              <Show when={routineMenu()}>
+                <div class="absolute z-20 left-0 bottom-full mb-1 w-48 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
+                  <For each={routines()}>
+                    {(r) => <button onClick={() => addRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>}
+                  </For>
+                  <Show when={routines().length === 0}><p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p></Show>
+                </div>
+              </Show>
+            </div>
+            {/* §M: swap this block's contents for a saved template. */}
+            <div class="relative">
+              <button onClick={() => { setTemplateMenu((v) => !v); setRoutineMenu(false); }} class="btn-ghost text-xs px-2 py-1"><LayoutTemplate size={13} /> Apply template</button>
+              <Show when={templateMenu()}>
+                <div class="absolute z-20 left-0 bottom-full mb-1 w-48 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
+                  <For each={applicableTemplates()}>
+                    {(t) => <button onClick={() => applyTemplate(t.id, t.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{t.name}<span class="text-muted-foreground"> · {t.tasks?.length ?? 0}</span></button>}
+                  </For>
+                  <Show when={applicableTemplates().length === 0}><p class="px-3 py-1.5 text-xs text-muted-foreground">No templates yet</p></Show>
+                </div>
+              </Show>
+            </div>
             <button onClick={saveTemplate} class="btn-ghost text-xs px-2 py-1"><Save size={13} /> Save as template</button>
           </Show>
           <Show when={task() && !task()!.is_habit && !isContainer()}>

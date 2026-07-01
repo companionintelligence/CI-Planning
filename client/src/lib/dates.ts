@@ -12,6 +12,34 @@ export function localISODate(d: Date = new Date()): string {
 }
 
 /**
+ * Short "Mon D" label for a `YYYY-MM-DD` date string (the app's canonical local
+ * date shape — e.g. `tasks.scheduled_for`). Returns '' for empty/invalid input.
+ * Parsed at local midnight so the day never drifts across the UTC boundary.
+ */
+export function shortDate(ymd: string | null | undefined): string {
+  const v = (ymd ?? '').slice(0, 10);
+  if (!v) return '';
+  const d = new Date(v + 'T00:00:00');
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/**
+ * 12-hour clock label for an `HH:MM` wall-clock string (e.g. `tasks.task_time`).
+ * NOT for ISO instants — this takes a bare time-of-day, not a datetime.
+ * '9:05 AM', '2:00 PM'. Returns '' for empty/invalid input.
+ */
+export function clockLabel(hhmm: string | null | undefined): string {
+  const v = (hhmm ?? '').slice(0, 5);
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v);
+  if (!m) return '';
+  let h = Number(m[1]);
+  const min = m[2];
+  const ampm = h < 12 ? 'AM' : 'PM';
+  h = h % 12 || 12;
+  return `${h}:${min} ${ampm}`;
+}
+
+/**
  * UTC instants bounding the *local* calendar day `dateStr` (YYYY-MM-DD).
  * Building the bounds from local Date parts (not a hardcoded `T00:00:00Z`)
  * means a Pacific user's "today" fetches their day, not the UTC day.
