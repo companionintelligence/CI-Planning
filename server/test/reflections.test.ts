@@ -400,6 +400,134 @@ describe('O0 — reflection source links', () => {
   });
 });
 
+// ── Phase O · O1 — day note (one per day) ──────────────────────────────────────
+
+describe('O1 — day note', () => {
+  const putNote = (body: Record<string, unknown>) =>
+    api(srv.url, '/api/reflections/note', { method: 'PUT', json: body });
+  const noteRows = () => reflectionRows().filter((r) => r.kind === 'day_note');
+
+  it('creates a day note and GET returns it', async () => {
+    const res = await putNote({ period_key: DAY, body: 'Good day today' });
+    expect(res.status).toBe(200);
+    expect(noteRows()).toHaveLength(1);
+    expect(noteRows()[0]).toMatchObject({ kind: 'day_note', period_key: DAY, position: 0, body: 'Good day today' });
+
+    const get = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(get.body.note).toMatchObject({ body: 'Good day today' });
+    expect(get.body.note.updated_at).toBeTruthy();
+  });
+
+  it('two saves same day → one row, latest body wins (PK upsert)', async () => {
+    await putNote({ period_key: DAY, body: 'First' });
+    await putNote({ period_key: DAY, body: 'Second' });
+    expect(noteRows()).toHaveLength(1);
+    expect(noteRows()[0].body).toBe('Second');
+  });
+
+  it('empty body deletes the note', async () => {
+    await putNote({ period_key: DAY, body: 'To clear' });
+    expect(noteRows()).toHaveLength(1);
+    const res = await putNote({ period_key: DAY, body: '' });
+    expect(res.status).toBe(200);
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  it('whitespace-only body is treated as empty (deletes)', async () => {
+    await putNote({ period_key: DAY, body: 'Something' });
+    await putNote({ period_key: DAY, body: '   ' });
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  it('422 when period_key is missing', async () => {
+    const res = await putNote({ body: 'No key' });
+    expect(res.status).toBe(422);
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  it('distinct days are independent; GET returns null when no note', async () => {
+    await putNote({ period_key: DAY, body: 'Monday note' });
+    await putNote({ period_key: NEXT_DAY, body: 'Tuesday note' });
+    expect(noteRows()).toHaveLength(2);
+
+    const g1 = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(g1.body.note.body).toBe('Monday note');
+    const g2 = await api(srv.url, `/api/reflections?period=${NEXT_DAY}`);
+    expect(g2.body.note.body).toBe('Tuesday note');
+    const g3 = await api(srv.url, `/api/reflections?period=${NEXT_WEEK_DAY}`);
+    expect(g3.body.note).toBeNull();
+  });
+
+  it('the note is independent of today/weekly goals for the same day', async () => {
+    await api(srv.url, '/api/reflections/today', { method: 'PUT', json: { period_key: DAY, body: 'Today focus' } });
+    await putNote({ period_key: DAY, body: 'A note' });
+    const get = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(get.body.today.body).toBe('Today focus');
+    expect(get.body.note.body).toBe('A note');
+  });
+
+  it('GET /api/reflections/notes returns dates with notes in range', async () => {
+    await putNote({ period_key: DAY, body: 'has note' });
+    await putNote({ period_key: NEXT_DAY, body: 'has note' });
+    const res = await api(srv.url, `/api/reflections/notes?from=${DAY}&to=${NEXT_WEEK_DAY}`);
+    expect(res.status).toBe(200);
+    expect(res.body.dates).toEqual([DAY, NEXT_DAY]);
+  });
+
+  it('GET /api/reflections/notes 422 without from/to', async () => {
+    const res = await api(srv.url, '/api/reflections/notes');
+    expect(res.status).toBe(422);
+  });
+
+  // FIX 2 — from/to must be real YYYY-MM-DD dates (shape + calendar validity).
+  it('GET /api/reflections/notes 422 on malformed or impossible dates', async () => {
+    expect((await api(srv.url, '/api/reflections/notes?from=nope&to=2026-06-16')).status).toBe(422);
+    expect((await api(srv.url, `/api/reflections/notes?from=${DAY}&to=2026-13-40`)).status).toBe(422);
+    expect((await api(srv.url, `/api/reflections/notes?from=2026-02-31&to=${NEXT_DAY}`)).status).toBe(422);
+  });
+
+  // FIX 3 — a whitespace-only (legacy/manual) row is not reported as a noted day.
+  it('GET /api/reflections/notes skips whitespace-only day_note rows', async () => {
+    const now = new Date().toISOString();
+    // Insert a whitespace-only row directly (the route can't create one — it deletes).
+    sqlite.prepare(
+      `INSERT INTO reflections (owner_id, kind, period_key, position, body, created_at, updated_at)
+       VALUES (?, 'day_note', ?, 0, '   ', ?, ?)`,
+    ).run(SYSTEM_OWNER, DAY, now, now);
+    await putNote({ period_key: NEXT_DAY, body: 'real note' });
+
+    const res = await api(srv.url, `/api/reflections/notes?from=${DAY}&to=${NEXT_WEEK_DAY}`);
+    expect(res.status).toBe(200);
+    expect(res.body.dates).toEqual([NEXT_DAY]); // DAY (whitespace) excluded
+  });
+
+  // FIX 4 — period_key must be a real YYYY-MM-DD date.
+  it('PUT /api/reflections/note 422 on malformed period_key', async () => {
+    expect((await putNote({ period_key: 'not-a-date', body: 'x' })).status).toBe(422);
+    expect((await putNote({ period_key: '2026-13-01', body: 'x' })).status).toBe(422);
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  // FIX 1 — day_note is not a goal kind: the generic /done + DELETE routes reject it.
+  it('POST /api/reflections/day_note/0/done → 422 (not a goal kind)', async () => {
+    await putNote({ period_key: DAY, body: 'A note' });
+    const res = await api(srv.url, '/api/reflections/day_note/0/done', {
+      method: 'POST', json: { period_key: DAY, done: true },
+    });
+    expect(res.status).toBe(422);
+    // The note row is untouched (no done_at column semantics apply).
+    expect(noteRows()).toHaveLength(1);
+    expect(noteRows()[0].done_at).toBeNull();
+  });
+
+  it('DELETE /api/reflections/day_note/0 → 422 (not a goal kind)', async () => {
+    await putNote({ period_key: DAY, body: 'A note' });
+    const res = await api(srv.url, `/api/reflections/day_note/0?period_key=${DAY}`, { method: 'DELETE' });
+    expect(res.status).toBe(422);
+    expect(noteRows()).toHaveLength(1); // still there — must use PUT /note to clear
+  });
+});
+
 // ── Phase O · O0 — weekly done-toggle ──────────────────────────────────────────
 
 describe('O0 — weekly done-toggle', () => {

@@ -2,8 +2,9 @@ import { createResource, createSignal, For, Show, onMount } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
 import {
   Plus, ChevronRight, ChevronDown, Circle, Square, Diamond,
-  AlertTriangle, Clock, ArrowRight, Pencil, Trash2,
+  AlertTriangle, Clock, ArrowRight, Pencil, Trash2, Star,
 } from 'lucide-solid';
+import { STAR_GOLD } from '../lib/stars.js';
 import { api, type Objective } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { ObjectiveModal } from '../components/ObjectiveModal.js';
@@ -199,16 +200,20 @@ function ObjectiveNode(props: {
           </Show>
         </span>
 
-        {/* Progress track */}
+        {/* Progress track — completion reads as color filling in (Phase O · O3). A
+            done objective fills the ring gold; NULL progress stays the rot dashes. */}
         <div class="relative flex-shrink-0 w-16 h-1.5 rounded-full bg-background border border-border overflow-hidden"
-             title={progressPct() ?? 'No plan yet'}>
-          <Show when={obj().progress_cache != null}>
+             title={obj().status === 'done' ? 'Complete' : (progressPct() ?? 'No plan yet')}>
+          <Show when={obj().status === 'done'}>
+            <div class="absolute inset-0 rounded-full" style={{ 'background-color': STAR_GOLD }} />
+          </Show>
+          <Show when={obj().status !== 'done' && obj().progress_cache != null}>
             <div
               class="absolute inset-y-0 left-0 rounded-full bg-primary"
               style={{ width: progressPct()! }}
             />
           </Show>
-          <Show when={obj().progress_cache === null}>
+          <Show when={obj().status !== 'done' && obj().progress_cache === null}>
             {/* Dashed — no plan */}
             <div class="absolute inset-0 border border-dashed border-border rounded-full" />
           </Show>
@@ -223,6 +228,9 @@ function ObjectiveNode(props: {
             >
               {obj().title}
             </span>
+            <Show when={obj().status === 'done'}>
+              <Star size={12} color={STAR_GOLD} fill={STAR_GOLD} class="flex-shrink-0" />
+            </Show>
             <Show when={obj().level !== 'goal'}>
               <span class="text-[10px] text-muted-foreground capitalize">{obj().level}</span>
             </Show>

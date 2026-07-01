@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import { summarizeDay } from '../agents/summarize.js';
-import { localISODate } from '../lib/dates.js';
+import { localISODate, isValidISODate } from '../lib/dates.js';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
@@ -83,18 +83,10 @@ export function summaryRouter() {
   // (Phase O · O0). Non-habit, non-routine tasks for the day, daily_plan-ranked.
   router.get('/api/summary/top-tasks', async (ctx) => {
     const raw = (ctx.query as Record<string, unknown>).date;
-    if (raw !== undefined) {
-      if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-        ctx.status = 422;
-        ctx.body = { error: 'date must be YYYY-MM-DD' };
-        return;
-      }
-      const d = new Date(raw + 'T00:00:00Z');
-      if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) {
-        ctx.status = 422;
-        ctx.body = { error: 'date must be YYYY-MM-DD' };
-        return;
-      }
+    if (raw !== undefined && !isValidISODate(raw)) {
+      ctx.status = 422;
+      ctx.body = { error: 'date must be YYYY-MM-DD' };
+      return;
     }
 
     const day = typeof raw === 'string' ? raw : localISODate();
