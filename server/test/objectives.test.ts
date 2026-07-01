@@ -145,39 +145,41 @@ describe('GET /api/objectives', () => {
 // ── POST /api/objectives ───────────────────────────────────────────────────────
 
 describe('POST /api/objectives', () => {
-  it('creates a root objective with server-derived level=goal', async () => {
+  // Levels are HEIGHT-based (bottom-up): a childless node is a leaf 'objective', a node
+  // of objectives is a 'project', a node of projects is a 'goal'.
+  const levelOf = async (id: string): Promise<string> => {
+    const tree = (await api(srv.url, '/api/objectives', { method: 'GET' })).body.objectives as any[];
+    const find = (nodes: any[]): any => { for (const n of nodes) { if (n.id === id) return n; const f = find(n.children ?? []); if (f) return f; } return null; };
+    return find(tree)?.level;
+  };
+
+  it('a lone objective is a leaf (level=objective)', async () => {
     const res = await api(srv.url, '/api/objectives', {
       method: 'POST',
       json: { title: 'Write a novel', horizon: 'year' },
     });
     expect(res.status).toBe(201);
-    expect(res.body.objective.level).toBe('goal');
+    expect(res.body.objective.level).toBe('objective');
     expect(res.body.objective.title).toBe('Write a novel');
   });
 
-  it('ignores client-supplied level (server derives from depth)', async () => {
+  it('ignores client-supplied level (server derives from height)', async () => {
     const res = await api(srv.url, '/api/objectives', {
       method: 'POST',
-      json: { title: 'Root', level: 'milestone' },
+      json: { title: 'Root', level: 'goal' },
     });
     expect(res.status).toBe(201);
-    expect(res.body.objective.level).toBe('goal'); // depth 0 = goal regardless of client
+    expect(res.body.objective.level).toBe('objective'); // childless leaf, regardless of client
   });
 
-  it('creates a child with level=project (depth 1)', async () => {
-    const parent = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Parent' } });
-    const child = await api(srv.url, '/api/objectives', {
-      method: 'POST',
-      json: { title: 'Child', parent_id: parent.body.objective.id },
-    });
-    expect(child.body.objective.level).toBe('project');
-  });
-
-  it('creates a grandchild with level=milestone (depth 2)', async () => {
+  it('nesting builds the hierarchy bottom-up: leaf=objective, parent=project, root=goal', async () => {
     const g = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Goal' } });
     const p = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Project', parent_id: g.body.objective.id } });
-    const m = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Milestone', parent_id: p.body.objective.id } });
-    expect(m.body.objective.level).toBe('milestone');
+    const m = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Objective', parent_id: p.body.objective.id } });
+    expect(m.body.objective.level).toBe('objective'); // the leaf
+    // Adding descendants re-levels the ancestors: verify the whole chain.
+    expect(await levelOf(p.body.objective.id)).toBe('project');
+    expect(await levelOf(g.body.objective.id)).toBe('goal');
   });
 
   it('422 when title is missing', async () => {
@@ -221,16 +223,16 @@ describe('PATCH /api/objectives/:id', () => {
     expect(obj.target_date).toBe('2027-01-01');
   });
 
-  it('updates level on re-parent', async () => {
+  it('re-levels on re-parent: detaching a lone child makes it (and the ex-parent) a leaf objective', async () => {
     const root = insertObjective({ title: 'Root goal' });
     const child = insertObjective({ title: 'Was child', parent_id: root });
-    // Move child to root (no parent) → should become 'goal'
-    const res = await api(srv.url, `/api/objectives/${child}`, {
-      method: 'PATCH',
-      json: { parent_id: null },
-    });
+    // Move child to top-level (no parent). A childless node is a leaf → 'objective'.
+    const res = await api(srv.url, `/api/objectives/${child}`, { method: 'PATCH', json: { parent_id: null } });
     expect(res.status).toBe(200);
-    expect(res.body.objective.level).toBe('goal');
+    expect(res.body.objective.level).toBe('objective');
+    // The ex-parent lost its only child → it too is now a leaf objective.
+    const root2 = sqlite.prepare(`SELECT level FROM objectives WHERE id = ?`).get(root) as { level: string };
+    expect(root2.level).toBe('objective');
   });
 
   it('404 for unknown id', async () => {
@@ -302,6 +304,15 @@ describe('POST /api/objectives/:id/tasks', () => {
     const t = insertTask('Task');
     const res = await api(srv.url, '/api/objectives/nonexistent/tasks', { method: 'POST', json: { task_id: t } });
     expect(res.status).toBe(404);
+  });
+
+  it('422 when linking a task to a non-leaf objective (tasks live only at leaves)', async () => {
+    // A parent with a child is a 'project' (height 1) — not a valid task home.
+    const parent = insertObjective({ title: 'Project' });
+    insertObjective({ title: 'Leaf', parent_id: parent });
+    const t = insertTask('Misplaced');
+    const res = await api(srv.url, `/api/objectives/${parent}/tasks`, { method: 'POST', json: { task_id: t } });
+    expect(res.status).toBe(422);
   });
 });
 

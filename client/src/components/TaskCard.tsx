@@ -1,10 +1,13 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns } from '../stores/index.js';
-import { directionColorForTask } from '../lib/pattern-meta.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds } from '../stores/index.js';
+import { directionColorForTask, colorVar } from '../lib/pattern-meta.js';
+import { textureStyle } from '../lib/textures.js';
+import { TaskStatusIcon } from './TaskStatusIcon.js';
+import { EightPointStar } from './EightPointStar.js';
+import { useNavigate } from '@solidjs/router';
 
-const priorityDot = ['', 'p1', 'p2', 'p3', 'p4', 'p5'] as const;
 const statusClass: Record<string, string> = {
   open:      'text-slate-200',
   done:      'text-slate-500 line-through',
@@ -88,6 +91,7 @@ interface Props {
 }
 
 export function TaskCard(props: Props) {
+  const navigate = useNavigate();
   const depth = () => props.depth ?? 0;
   const p = () => Math.min(Math.max(props.task.priority, 1), 5);
   const [showSubs, setShowSubs] = createSignal(false);
@@ -212,12 +216,19 @@ export function TaskCard(props: Props) {
     ? <span class="text-xs font-mono text-slate-600">{props.task.estimated_minutes}m</span>
     : null;
 
+  // §D: a task already staged in the flight-plan is dimmed + loses its "send" button.
+  const inFlightPlan = () => flightPlanTaskIds().has(props.task.id);
+  const dimmed = () => props.task.status === 'cancelled' || inFlightPlan();
+  // §C: a routine member paints its Routine's texture as the card background — but not
+  // when the card is dimmed (opacity-40 × the 6% texture ≈ invisible mud; skip it).
+  const routineTex = () => (!dimmed() && isRoutineTask(props.task.id) ? patternForTask(props.task.id) : undefined);
+
   return (
     <div class={depth() > 0 ? 'pl-6 relative' : ''}>
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
-        class={`card group flex gap-3 ${props.task.status === 'cancelled' ? 'opacity-40' : ''}`}
+        class={`card group flex gap-3 relative isolate ${dimmed() ? 'opacity-40' : ''}`}
         style={{
           'margin-bottom': '6px',
           // Uniform 3px left accent for every card (no relative shift); coloured by
@@ -227,34 +238,62 @@ export function TaskCard(props: Props) {
           'border-left-color': dirColor() ?? 'var(--border)',
         }}
       >
-        {/* Checkbox / habit-marker — the only thing in the left gutter now. Actions
-            moved to the right rail so the title / notes / tags left-align. */}
-        <Show
-          when={!props.task.is_habit}
-          fallback={
-            <span class="checkbox mt-0.5 flex-shrink-0 flex items-center justify-center cursor-default opacity-60"
-              title="Habit — mark occurrences done on the planner, not here">
-              <Repeat size={11} class="text-muted-foreground" />
-            </span>
-          }
-        >
-          <button
-            onClick={toggleDone}
-            class={`checkbox mt-0.5 flex-shrink-0 ${props.task.status === 'done' ? 'checkbox-checked' : ''}`}
-            title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
-          >
-            <Show when={props.task.status === 'done'}>
-              <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
-                <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </Show>
-          </button>
+        {/* §C: Routine texture background — a low-contrast whisper behind the content
+            (z-index:-1 within the card's isolated stacking context; rounded to match). */}
+        <Show when={routineTex()}>
+          {(r) => (
+            <div
+              aria-hidden="true"
+              style={{
+                ...textureStyle(r().type?.icon_shape, r().pattern.tag),
+                color: colorVar(r().type?.color_token),
+                'z-index': '-1',
+                'border-radius': 'inherit',
+              }}
+            />
+          )}
         </Show>
+
+        {/* Left gutter: checkbox / habit-marker, with the 8-pointed objective star
+            stacked below it (§J — additive; the only indicator that a task is part of
+            a larger strategic plan). Actions live in the right rail. */}
+        <div class="flex flex-col items-center gap-1 flex-shrink-0">
+          <Show
+            when={!props.task.is_habit}
+            fallback={
+              <span class="checkbox mt-0.5 flex items-center justify-center cursor-default opacity-60"
+                title="Habit — mark occurrences done on the planner, not here">
+                <Repeat size={11} class="text-muted-foreground" />
+              </span>
+            }
+          >
+            <button
+              onClick={toggleDone}
+              class={`checkbox mt-0.5 ${props.task.status === 'done' ? 'checkbox-checked' : ''}`}
+              title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
+            >
+              <Show when={props.task.status === 'done'}>
+                <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
+                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </Show>
+            </button>
+          </Show>
+          <Show when={props.task.objective_id}>
+            <button
+              onClick={() => navigate(`/objectives?focus=${props.task.objective_id}`)}
+              class="btn-icon text-primary/70 hover:text-primary p-0"
+              title="Part of an objective — view it"
+            >
+              <EightPointStar size={13} />
+            </button>
+          </Show>
+        </div>
 
         {/* Content (unchanged: dot, title, description, tags, streak) */}
         <div class="flex-1 min-w-0">
           <div class="flex items-start gap-2">
-            <span class={`priority-dot mt-[5px] ${priorityDot[p()]}`} />
+            <span class="mt-[3px] flex-shrink-0"><TaskStatusIcon task={props.task} /></span>
             <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
               {props.task.title}
             </span>
@@ -339,7 +378,9 @@ export function TaskCard(props: Props) {
           <div class="relative flex items-center justify-end min-h-[22px] w-full">
             <span class="group-hover:opacity-0 transition-opacity">{est()}</span>
             <div class="absolute right-0 top-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
-              <button onClick={sendToFlightPlan} class="btn-icon hover:text-primary" title="Send to Flight-plan"><Rocket size={13} /></button>
+              <Show when={!inFlightPlan()}>
+                <button onClick={sendToFlightPlan} class="btn-icon hover:text-primary" title="Send to Flight-plan"><Rocket size={13} /></button>
+              </Show>
               <Show when={isInstance()}>
                 <button onClick={skip} class="btn-icon" title="Skip this occurrence"><SkipForward size={13} /></button>
               </Show>

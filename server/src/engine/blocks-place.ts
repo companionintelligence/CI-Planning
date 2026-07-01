@@ -16,6 +16,7 @@
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
+import { applyTaskPlacementStatus } from '../services/block-task-sync.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -102,7 +103,8 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
         blocksCreated++;
         placedSessions++;
       }
-      placedSessions > 0 ? placed++ : unplaced++;
+      if (placedSessions > 0) { placed++; applyTaskPlacementStatus(t.id, owner); }
+      else unplaced++;
     }
     if (blocksCreated > 0) broadcast(owner, 'block:created', { parentBlockId: blockId, count: blocksCreated });
     return { blockId, blocksCreated, placed, unplaced, skipped };
