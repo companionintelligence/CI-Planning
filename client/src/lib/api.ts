@@ -268,7 +268,7 @@ export const api = {
 
   prefs: {
     get: () => request<{ prefs: Prefs }>('GET', '/prefs'),
-    update: (body: Partial<Prefs>) => request<{ prefs: Prefs }>('PATCH', '/prefs', body),
+    update: (body: Partial<Prefs>) => request<{ prefs: Prefs; pruned?: number }>('PATCH', '/prefs', body),
   },
 
   // ── Notifications + Web Push (Phase H) ───────────────────────────────────────
@@ -577,6 +577,7 @@ export interface Prefs {
   recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
+  recurrence_horizon_days?: number; // Phase P: how far ahead recurrence materializes (7/15/30/60/90/180)
   // Ollama model overrides (null/'' = use env default).
   fast_model?: string | null; quality_model?: string | null; embed_model?: string | null;
   // Companion Memory sync.

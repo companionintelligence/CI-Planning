@@ -174,7 +174,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 **Goal:** reject bad values; when the horizon is lowered, delete future auto-instances beyond the new bound (no rule cap).
 **File:** [prefs.ts:19](../server/src/routes/prefs.ts) `PATCH /api/prefs`:
 - If `recurrence_horizon_days` present and ∉ `{7,15,30,60,90,180}` → `ctx.status=422` before update.
-- Read the **old** value first; after the update, if `new < old`: `snapshot()` then `clearPlannerRange({ owner: currentOwnerId(), start: addDays(today, newHorizon+1), suppress:'none', autoOnly:true, dryRun:false })`. Return `{ prefs, pruned: result.blocksDeleted }`.
+- Read the **old** value first; after the update, if `new < old`: `snapshot()` then `clearPlannerRange({ owner, start: addDays(today, newHorizon), suppress:'none', autoOnly:true, clearDailyPlan:false, dryRun:false })`. Return `{ prefs, pruned: result.blocksDeleted }`. Kept window is `[today, today+newHorizon-1]` (matches the engine clamp), so prune from `today+newHorizon`. **`today` is computed in the owner's tz** (`localDateInTZ`), and **`clearDailyPlan:false`** — the recurrence ceiling must not discard authored Phase-M day plans (raising the horizon can't restore them). Both are P1-review fixes; the `clearDailyPlan` flag was added to the P0 engine.
 - Broadcast `block:deleted` (mirror the day-clear broadcast at [blocks.ts:523](../server/src/routes/blocks.ts)) so clients refetch. Audit `action:'update'` stays; add the prune to the audit entity note.
 
 **Expected project state after:** lowering the horizon is a safe, snapshotted, reversible prune (raising it re-materializes on next read); raising does nothing immediately.

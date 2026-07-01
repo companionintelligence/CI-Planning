@@ -26,7 +26,7 @@ interface SettingsForm {
   plan_allday_always: boolean; plan_daylong_for_promoted: boolean; plan_autofill_gaps: boolean;
   concept_default_minutes: number; concept_autosurface: boolean; concept_horizon_days: number;
   concept_tags: ConceptTag[];
-  timezone: string; planning_horizon_days: number;
+  timezone: string; planning_horizon_days: number; recurrence_horizon_days: number;
   fast_model: string; quality_model: string; embed_model: string;
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
@@ -45,7 +45,7 @@ const DEFAULTS: SettingsForm = {
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
   concept_default_minutes: 60, concept_autosurface: true, concept_horizon_days: 30,
   concept_tags: DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
-  timezone: BROWSER_TZ, planning_horizon_days: 3,
+  timezone: BROWSER_TZ, planning_horizon_days: 3, recurrence_horizon_days: 7,
   fast_model: '', quality_model: '', embed_model: '',
   memory_sync_enabled: false, memory_sync_completed: true,
   memory_sync_habits: true, memory_sync_reflections: true,
@@ -93,6 +93,7 @@ export function Settings() {
       concept_tags:               p.concept_tags?.length ? p.concept_tags.map((c) => ({ ...c })) : DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
       timezone:                   p.timezone ?? BROWSER_TZ,
       planning_horizon_days:      p.planning_horizon_days ?? 3,
+      recurrence_horizon_days:    p.recurrence_horizon_days ?? 7,
       fast_model:                 p.fast_model ?? '',
       quality_model:              p.quality_model ?? '',
       embed_model:                p.embed_model ?? '',
@@ -447,6 +448,37 @@ export function Settings() {
                     setField('planning_horizon_days', v);
                     void api.prefs.update({ planning_horizon_days: v }).then(() => refetchPrefs()).catch((err) => showToast((err as Error).message, 'error'));
                   }} />
+              </label>
+            </div>
+            {/* Phase P: recurrence duration — how far ahead repeats (habits/routines/
+                recurring time-blocks) are materialized. Lowering it prunes already-placed
+                auto-repeats beyond the new window (server auto-prune). */}
+            <div class="mt-4 pt-3 border-t border-border">
+              <label class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-sm text-foreground leading-tight">Recurrence duration</div>
+                  <div class="text-[11px] text-muted-foreground">Generate repeats this many days ahead. Lowering it removes auto-placed repeats beyond the new window.</div>
+                </div>
+                <select class="input py-1 text-sm w-24 flex-shrink-0"
+                  value={form().recurrence_horizon_days}
+                  onChange={(e) => {
+                    const v = Number(e.currentTarget.value);
+                    const prev = form().recurrence_horizon_days;
+                    if (v < prev && !window.confirm(`Lowering the recurrence duration removes auto-placed repeats beyond ${v} days. Continue?`)) {
+                      e.currentTarget.value = String(prev); // revert the select
+                      return;
+                    }
+                    setField('recurrence_horizon_days', v);
+                    void api.prefs
+                      .update({ recurrence_horizon_days: v })
+                      .then((r) => {
+                        refetchPrefs();
+                        if (r.pruned) showToast(`Removed ${r.pruned} auto-placed repeat${r.pruned === 1 ? '' : 's'} beyond the new window`, 'success');
+                      })
+                      .catch((err) => showToast((err as Error).message, 'error'));
+                  }}>
+                  <For each={[7, 15, 30, 60, 90, 180]}>{(d) => <option value={d}>{d} days</option>}</For>
+                </select>
               </label>
             </div>
           </section>

@@ -120,16 +120,20 @@ describe('category-Plan fill (0069)', () => {
   it('recurrence: a recurring category template propagates category_id + frozen color_token to instances', async () => {
     const family = makeCategory('family');
     await api(srv.url, `/api/category-prefs/${family}`, { method: 'PUT', json: { color_token: 'chart-1' } });
-    // A future recurring category template (no backfill for past days).
-    const future = '2099-03-02'; // a Monday
+    // A near-future recurring category template. Must be WITHIN the recurrence
+    // horizon (Phase P, default 7) — the engines no longer materialize far-future
+    // days. Use tomorrow + FREQ=DAILY so this holds regardless of run date/weekday.
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + 1);
+    const future = d.toISOString().slice(0, 10);
     await api(srv.url, '/api/blocks', {
       method: 'POST',
       json: {
         title: 'Family evening', block_kind: 'timeblock', block_type: 'scheduled', category_id: family,
-        start_at: `${future}T18:00:00.000Z`, end_at: `${future}T19:00:00.000Z`, recurrence_rule: 'FREQ=WEEKLY;BYDAY=MO',
+        start_at: `${future}T18:00:00.000Z`, end_at: `${future}T19:00:00.000Z`, recurrence_rule: 'FREQ=DAILY',
       },
     });
-    ensureRecurringBlocksForRange(OWNER, `${future}T00:00:00.000Z`, `2099-03-09T00:00:00.000Z`);
+    ensureRecurringBlocksForRange(OWNER, `${future}T00:00:00.000Z`, `${future}T23:59:59.999Z`);
     const inst = sqlite
       .prepare(`SELECT category_id, color_token FROM time_blocks WHERE recurrence_parent_id IS NOT NULL AND category_id IS NOT NULL`)
       .get() as { category_id: string; color_token: string } | undefined;
