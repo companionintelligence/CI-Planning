@@ -85,7 +85,7 @@ export interface ClearRangeInput {
   start: string;                 // required local YYYY-MM-DD; clears >= this local day
   end?: string | null;          // optional inclusive local YYYY-MM-DD; omitted => open-ended
   suppress?: 'auto' | 'none';   // 'auto' (default): open-ended→UNTIL-cap, bounded→exdates/optouts. 'none': delete only.
-  autoOnly?: boolean;           // true => only is_auto=1 AND is_locked=0 blocks are deleted. default false.
+  autoOnly?: boolean;           // true => only delete engine-generated, non-locked blocks. default false.
   dryRun?: boolean;             // default true — compute + report, write nothing.
 }
 export interface ClearRangeResult {
@@ -101,7 +101,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 
 **Design (generalize the script's logic):** resolve `tz` from `scheduling_prefs` for `owner`; `startUTC = zonedWallTimeToUTC(start,'00:00',tz)`, bounded `endUTC = zonedWallTimeToUTC(addDays(end,1),'00:00',tz)`. In one `sqlite.transaction()`, **suppress first, then delete**:
 - **Suppress** (skip entirely when `suppress:'none'`): enumerate block templates + union of pattern/task rules with occurrences in the window (`occurrencesBetween`). Open-ended → `capRule(rule, UNTIL=startUTC-1s)` written to the owning row (`time_blocks`/`patterns`/`tasks`). Bounded → per-day `recurrence_exdates` (blocks) / `pattern_day_optouts` (patterns).
-- **Delete**: `time_blocks` with `start_at>=startUTC [AND <endUTC]` AND NOT template `[AND is_auto=1 AND is_locked=0 when autoOnly]`; drop their `entity_tags`; `external_events` cascade; `daily_plan.block_id` SET NULL. Then `daily_plan` rows in `[start,end]` (owner-scoped).
+- **Delete**: `time_blocks` with `start_at>=startUTC [AND <endUTC]` AND NOT template `[AND is_locked=0 AND (is_auto=1 OR recurrence_parent_id IS NOT NULL OR source_kind='pattern') when autoOnly]`; drop their `entity_tags`; `external_events` cascade; `daily_plan.block_id` SET NULL. Then `daily_plan` rows in `[start,end]` (owner-scoped). **NB** recurring block INSTANCES are stamped `is_auto=0` (blocks-recur.ts) — an `is_auto=1`-only filter would wrongly spare them, so the predicate keys on `recurrence_parent_id`/`source_kind` too.
 - `dryRun` returns identical counts without writing.
 
 **Relevant existing code to lift:** current [clear-planner-from.ts](../server/src/scripts/clear-planner-from.ts) (`capRule`, `untilToken`, `addDays`, the enumeration + delete blocks). `removeEntityTags` usage per [blocks.ts:461](../server/src/routes/blocks.ts). `excludeBlockOccurrence` for the exdate path.
@@ -137,7 +137,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 - [ ] bounded over `[D,D+2]`: exactly 3 exdates added, only those 3 instances deleted, `D+3` still re-materializes.
 - [ ] pattern (Routine on pattern row; Habit on member task) → `pattern_day_optouts`; `placePatternOnDay` for a suppressed day returns `skippedAlreadyPlaced`.
 - [ ] `suppress:'none'`: instances deleted, rules **unchanged**, exdates/optouts **unchanged**.
-- [ ] `autoOnly:true` spares `is_locked=1` / `is_auto=0`; `autoOnly:false` removes them.
+- [ ] `autoOnly:true` spares locked + user-manual blocks but still deletes recurring instances (`is_auto=0`, `recurrence_parent_id` set) + pattern placements; `autoOnly:false` removes locked/manual too.
 - [ ] templates (`recurrence_parent_id IS NULL`) always survive.
 - [ ] `dryRun:true` writes nothing but returns the same numbers as the apply.
 
