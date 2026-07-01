@@ -28,13 +28,14 @@ interface GenerateOpts {
 }
 
 /**
- * Build an OllamaUnavailable for a non-OK response. A 404 means the requested model
- * isn't pulled — Ollama's raw "model '...' not found" body is easy to miss, so name
- * the model and the exact fix (pull it, or point the env override at an installed one).
+ * Build an OllamaUnavailable for a non-OK response. A missing model is detected by
+ * Ollama's body ("model '...' not found, try pulling it first"), NOT by the 404 status
+ * alone — a bare 404 can also mean a wrong OLLAMA_URL, an API-path mismatch, or a proxy.
+ * So we only give the pull/override hint when the body confirms it, and otherwise return
+ * a generic error that names the endpoint (to surface URL problems) with a trimmed body.
  */
 async function ollamaError(op: string, res: Response, model: string): Promise<OllamaUnavailable> {
-  const body = await res.text().catch(() => '');
-  const bodyTrimmed = body.trim();
+  const bodyTrimmed = (await res.text().catch(() => '')).trim();
   const bodySnippet = bodyTrimmed.length > 500 ? `${bodyTrimmed.slice(0, 500)}…` : bodyTrimmed;
 
   // 404 *usually* means the model isn't pulled, but avoid misdiagnosing endpoint/proxy 404s.
@@ -44,8 +45,10 @@ async function ollamaError(op: string, res: Response, model: string): Promise<Ol
         `OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED in server/.env to a model from \`ollama list\`.`,
     );
   }
-
-  return new OllamaUnavailable(`Ollama ${op} failed: ${res.status}${bodySnippet ? ` ${bodySnippet}` : ''}`);
+  // Name the endpoint so a wrong OLLAMA_URL / proxy 404 is diagnosable from the message.
+  return new OllamaUnavailable(
+    `Ollama ${op} failed at ${config.ollamaUrl}: ${res.status}${bodySnippet ? ` ${bodySnippet}` : ''}`,
+  );
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
