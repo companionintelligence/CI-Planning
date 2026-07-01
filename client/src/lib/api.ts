@@ -652,7 +652,7 @@ export interface Integrations {
 /** One field-scoped mutation to apply on the server. */
 export interface SyncOp {
   opId: string;
-  entity: 'task' | 'block';
+  entity: 'task' | 'block' | 'objective' | 'objective_task';
   entityId: string;
   fields: Record<string, unknown>;
   baseVersion: number;
@@ -773,6 +773,7 @@ export interface Objective {
   next_action: ObjectiveNextAction | null;
   effective_target: string | null;
   pace_expected: number | null;
+  has_tasks: boolean;
   children: Objective[];
 }
 
