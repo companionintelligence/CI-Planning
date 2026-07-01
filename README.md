@@ -41,7 +41,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>12 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0084 on boot]
+        Migrate[Migration runner<br/>0001 → 0086 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -97,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0084 ordered list
+                                    // migrations from the 0001–0086 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -108,7 +108,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0084_daily_plan_outcome`) produce the following tables:
+Migrations (current head: `0086_objective_source_task`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -146,7 +146,7 @@ Migrations (current head: `0084_daily_plan_outcome`) produce the following table
 | `daily_summaries` | LLM-generated day briefings cached by content hash to avoid redundant generation |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
 | `reflections` | Today goal + up to 3 weekly goals per ISO week, with optional category and done-at stamp (Phase N, 0080) |
-| `objectives` | Hierarchical life goals — Goal (depth 0) → Project (depth 1) → Milestone (depth 2+); progress derived from task completion (Phase N, 0081) |
+| `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes (Phase N, 0081; 0085–0086) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083) |
 | `plan_outcomes` | Per-day planned-vs-completed block counts aggregated nightly by `aggregate_plan_outcomes` job (Phase N, 0083) |
@@ -185,7 +185,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 | Routines | Objectives |
 |---|---|
 | [![Routines view](docs/screenshots/routines.png)](docs/screenshots/routines.png) | [![Objectives view](docs/screenshots/objectives.png)](docs/screenshots/objectives.png) |
-| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Milestone — with task linkage and progress |
+| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress |
 
 > 📸 Routines and Objectives screenshots coming soon.
 
@@ -237,7 +237,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Live updates** — Server-Sent Events push task / block / job changes to every open
   client, so the UI stays in sync without polling
 - **Installable PWA** — manifest + standalone display; usable from a phone over your tailnet
-- **Objectives hierarchy** — a life-planning tree of Goals → Projects → Milestones; each links to Tasks whose completion rolls up into progress; depth-derived level (no manual selection); progress is `NULL` when there's nothing to measure — a rot signal, not a zero
+- **Objectives hierarchy** — a life-planning tree of Goals → Projects → Objectives; each leaf Objective links to Tasks whose completion rolls up into progress; height-derived level (no manual selection); a task that gains a subtask auto-promotes into its own Objective; progress is `NULL` when there's nothing to measure — a rot signal, not a zero
 - **Morning Briefing** — AI-authored prose summary of the day's tasks, capacity, focus, and objectives; shown in the Today cockpit alongside today's goal and weekly goals
 - **Today / weekly goals** — a daily intention and up to three weekly goals in the Today cockpit, each optionally linked to a category with a color stripe; checked off as the day progresses
 - **Weekly Review** — summary stats (scheduled vs focus minutes, capacity, block completion %) with calibration insights and objectives progress for the week; available inside the Calendar week view
@@ -329,7 +329,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0084): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0086): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
   reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,
@@ -357,7 +357,7 @@ consistent snapshot.
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: pattern (direction) / intention hierarchy with many-to-many grouping
-- **Objectives** — life-planning hierarchy (Goal → Project → Milestone) with task linkage, progress roll-up, and the `advance_objectives` job that auto-stages tasks for active objectives into the flight plan
+- **Objectives** — life-planning hierarchy (Goal → Project → Objective) with task linkage, progress roll-up, and the `advance_objectives` job that auto-stages tasks for active objectives into the flight plan
 - **Reflections** — today goal + up to 3 weekly goals per ISO week, with category color stripes and done/undone toggling
 - **Morning Briefing** — AI-authored or deterministic prose summary in the Today cockpit
 - **Weekly Review** — scheduled/focus minutes, capacity bar, completion rate, and calibration bias insight

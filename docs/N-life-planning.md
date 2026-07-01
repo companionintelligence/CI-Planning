@@ -2,7 +2,7 @@
 
 **Status:** Spec'd · not started · **Worktree head `0068`.** **Depends on / coordinates with:** the in-flight **Categories** work (`claude/category-ui-surfacing`, `0069_category_tags`, last commit 2026-06-26) which provides life-domains; and **Phase M** (shipped: `daily_plan`, `agents/loop.ts` runLoop, `authorPlanOrder`). Companion to [ROADMAP.md](ROADMAP.md), [GLOSSARY.md](GLOSSARY.md), [M-ai-scheduler.md](M-ai-scheduler.md), and the deferred [G-rituals-reflection.md](archive/G-rituals-reflection.md).
 
-> **Why this phase.** Today everything keys off work hours, focus blocks, deep work, and day themes — it plans a *workday*, not a *life*. A life planner needs the rest: a **goal → project → milestone → task** hierarchy with rollups and long-horizon planning; lightweight **daily/weekly intentions**; and the **reflection + learning loop** (Sunsama's morning ritual + weekly review) that turns captured data into insight. This phase adds all of it in five independently-shippable slices.
+> **Why this phase.** Today everything keys off work hours, focus blocks, deep work, and day themes — it plans a *workday*, not a *life*. A life planner needs the rest: a **goal → project → objective → task** hierarchy with rollups and long-horizon planning; lightweight **daily/weekly intentions**; and the **reflection + learning loop** (Sunsama's morning ritual + weekly review) that turns captured data into insight. This phase adds all of it in five independently-shippable slices.
 
 > **📍 Noun-budget note (READ FIRST — 2026-06-26).** The committed [GLOSSARY.md](GLOSSARY.md) (this branch, `main`, and the feature branches) lists **8 in-use nouns** — Task · Time Block · Routine · Tag · Inbox · Flight-plan · Planner · Pattern-block. The header's *"7 in use, 1 reserved"* is **stale** against its own 8-row table: Pattern-block is in use, so there is **no free slot**. Per the project owner, the current canonical tree adds **Categories** and **Objectives** as nouns (the strict 8-cap relaxed). Two things this spec pins down:
 > - **Categories** ships (today) as a **Tag sub-level** — `tags.kind='category'`, seeding base categories **`family` / `social` / `me`**, with `category_prefs.color_token` + `time_blocks.category_id`. Whether it's promoted to a *formal noun* is the owner's glossary call; **this spec binds life-domains to that Category axis regardless** of label.
@@ -16,14 +16,16 @@
 
 ## The locked Objective model
 
-One self-nesting **entity** — Goal / Project / Milestone are *levels* of one noun (like `tasks.parent_id` subtasks and `time_blocks.parent_block_id` containers), **not** three nouns. Leaf work stays **Tasks**.
+One self-nesting **entity** — Goal / Project / Objective are *levels* of one noun (like `tasks.parent_id` subtasks and `time_blocks.parent_block_id` containers), **not** three nouns. Leaf work stays **Tasks**. *(As built: the leaf level is **height-based** and named `objective` — see the leveling note below; migration 0085 renamed the original `milestone` leaf → `objective`.)*
 
 ```
 objectives (
   id, owner_id,
   parent_id,            -- self-nesting; cycle-rejected (reuse Phase-C dependency cycle check)
-  level,                -- 'goal'|'project'|'milestone' — DISPLAY ONLY, server-derived from depth,
-                        --   stamped on every (re)parent so stored == derived. NOT accepted on POST/PATCH.
+  level,                -- 'goal'|'project'|'objective' — DISPLAY ONLY, server-derived from HEIGHT
+                        --   (leaf-with-tasks='objective', node-of-objectives='project', node-of-projects='goal');
+                        --   stamped on the node + ancestors on every (re)parent. NOT accepted on POST/PATCH.
+  source_task_id,       -- set when auto-created by task promotion (0086): owns idempotency + GC.
   horizon,              -- 'year'|'quarter'|'month'|'week'|'none' — planning ALTITUDE
   target_date,          -- optional, SOFT (never a hard due_at; never renders red/overdue)
   status,               -- 'active'|'paused'|'done'|'dropped'
@@ -128,10 +130,10 @@ One view of the Objective entity, a `[ Tree | Month | Quarter | Year ]` view-mod
 | **NULL** | **dashed** track, no fill, italic "No plan yet", em-dash | `null` ≠ `0` (uses TaskCard's `—`-for-empty vocabulary) |
 | 0% | solid empty track + "0%" | "planned, not started" |
 | Rot | `(progress===null) OR (cadence≠none AND no next_action)` → amber dot + floats to top; "Rotting only" filter | the reason the lens exists |
-| Level marker | `ShapeIcon` goal=circle / project=square / milestone=diamond | derived from depth (== stored `level`) |
+| Level marker | `ShapeIcon` goal=circle / project=square / objective=diamond | derived from height (== stored `level`) |
 | Behind/ahead | soft amber/green hint, **never red** | `target_date` is soft |
 
-**Horizon lens = swimlane roadmap** (time on X, life-domain category on Y; bars positioned by soft `target_date`, filled by `progress_cache` in the category hue; permanent **Undated lane** — never silent-drop). Zoom = one spine, `Year → Quarter → Month → Week → the existing day Planner (/)`, driven by one `view` + one `anchor` signal. Granularity: Year→goals, Quarter→projects, Month→milestones, Week→next-action tasks. Reuses [dates.ts](../client/src/lib/dates.ts) date math (a new `lib/horizon.ts`); does **not** reuse CalendarGrid minute-geometry. *(Note: the Month zoom is the least valuable — real lives have few dated milestones per month; don't over-invest. Year is the headline.)*
+**Horizon lens = swimlane roadmap** (time on X, life-domain category on Y; bars positioned by soft `target_date`, filled by `progress_cache` in the category hue; permanent **Undated lane** — never silent-drop). Zoom = one spine, `Year → Quarter → Month → Week → the existing day Planner (/)`, driven by one `view` + one `anchor` signal. Granularity: Year→goals, Quarter→projects, Month→objectives, Week→next-action tasks. Reuses [dates.ts](../client/src/lib/dates.ts) date math (a new `lib/horizon.ts`); does **not** reuse CalendarGrid minute-geometry. *(Note: the Month zoom is the least valuable — real lives have few dated objectives per month; don't over-invest. Year is the headline.)*
 
 **Editing & linking:** inline chips on the expanded row for link/unlink/re-parent (the [RoutinesPanel](../client/src/components/RoutinesPanel.tsx) idiom); a **dedicated lightweight `ObjectiveModal`** for create/edit — **not** a 5th `ElementWizard` kind (the wizard's doSave/seed/loadForEdit/ElementForm are deeply task/timeblock-shaped and share ~no fields with Objective). `target_date` edited via form only (it's soft — no pixel-drag in v1).
 

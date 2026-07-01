@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-06-29 · migration head `0084`
+**Status:** Living document · last updated 2026-07-01 · migration head `0086`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,7 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → N, migration head 0084):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration).
+**Shipped phases (A → N, migration head 0086):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration). Latest: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, and block-template application (0085–0086).
 
 ---
 
@@ -49,7 +49,7 @@ graph TB
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>12 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0084 on boot"]
+            Migrate["Migration runner<br/>0001–0086 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -99,7 +99,7 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0084_daily_plan_outcome
+│       │   ├── migrations/   0001_baseline → 0086_objective_source_task
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
@@ -176,7 +176,7 @@ erDiagram
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` | 0060 |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay | 0077 |
 | `reflections` | Today goal + up to 3 weekly goals per ISO week | 0080 |
-| `objectives` | Hierarchical life goals — Goal → Project → Milestone by depth | 0081 |
+| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes | 0081, 0085, 0086 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio) | 0083 |
 | `plan_outcomes` | Per-day planned vs completed block counts | 0083 |
@@ -258,7 +258,7 @@ sequenceDiagram
 | **Inbox** | `/inbox` | `possible_tasks` review queue — promote (`P`) / dismiss (`D`) / merge |
 | **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies |
 | **Routines** | `/routines` | Pattern CRUD (Routine ▢ / Habit ◯); per-pattern fill + reminder config |
-| **Objectives** | `/objectives` | Tree of Goal → Project → Milestone; create / edit / link tasks |
+| **Objectives** | `/objectives` | Tree of Goal › Project › Objective; create / edit / re-parent / link tasks |
 | **Tags** | `/tags` | Pattern-tag / intention taxonomy; weighted cloud; mute / delete |
 | **Jobs** | `/jobs` | Scheduled job registry; run any job on demand; execution log |
 | **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · export/import |
@@ -308,7 +308,7 @@ Phase N turns Companion Planning from a workday planner into a life planner.
 
 ```mermaid
 flowchart TD
-    O["Objective (Goal → Project → Milestone)"]
+    O["Objective (Goal → Project → Objective)"]
     OT["objective_tasks"]
     T["Tasks"]
     FP["flight_plan"]
@@ -328,7 +328,7 @@ flowchart TD
 ```
 
 **Key decisions:**
-- Objective level is server-derived from tree depth — never stored, never accepted in PUT/POST body.
+- Objective level is server-derived from tree **height** (leaf-with-tasks = objective, node-of-objectives = project, node-of-projects = goal) — re-stamped on the node + ancestors on every (re)parent; never accepted in PUT/POST body. Tasks link only to leaf objectives.
 - Progress is `NULL` when there are no tasks or children (not 0 — a `NULL` is a rot signal).
 - `daily_plan.outcome` is write-once (`WHERE outcome IS NULL` guard) — `review.ts` stamps `'deferred'` / `'missed'` before hard-deleting the stale block.
 - Estimate bias uses the **median** (p50), not mean — robust against outlier interrupted sessions.
