@@ -16,7 +16,7 @@
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
-import { applyTaskPlacementStatus } from '../services/block-task-sync.js';
+import { applyTaskPlacementStatus, syncTaskFromBlock } from '../services/block-task-sync.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -85,7 +85,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
 
     const ins = sqlite.prepare(
       `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-       VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 0, 'manual', 'planned', ?)`,
+       VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
     );
     let blocksCreated = 0;
     let placed = 0;
@@ -93,18 +93,26 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
     for (const t of toPlace) {
       const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
       let placedSessions = 0;
+      let firstBlockId: string | undefined;
       for (const want of sessions) {
         const pick = pickGap(gaps, want);
         if (!pick) break;
         const startMs = pick.gap.cursor;
         const endMs = startMs + pick.len;
-        ins.run(t.id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId);
+        const { id: bid } = ins.get(t.id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId) as { id: string };
+        firstBlockId ??= bid;
         pick.gap.cursor = endMs + breakMs;
         blocksCreated++;
         placedSessions++;
       }
-      if (placedSessions > 0) { placed++; applyTaskPlacementStatus(t.id, owner); }
-      else unplaced++;
+      if (placedSessions > 0) {
+        placed++;
+        // A placed task IS scheduled: mirror the placement onto its scheduling-intent
+        // fields (so its calendar label has a date/time even out of the loaded blocks
+        // range) and flip open → scheduled — matching the other placement paths.
+        if (firstBlockId) syncTaskFromBlock(firstBlockId, owner);
+        applyTaskPlacementStatus(t.id, owner);
+      } else unplaced++;
     }
     if (blocksCreated > 0) broadcast(owner, 'block:created', { parentBlockId: blockId, count: blocksCreated });
     return { blockId, blocksCreated, placed, unplaced, skipped };
