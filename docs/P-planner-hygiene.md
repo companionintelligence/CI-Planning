@@ -149,7 +149,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 **Files/edits:**
 - New `server/src/db/migrations/0091_recurrence_horizon.ts`: `ALTER TABLE scheduling_prefs ADD COLUMN recurrence_horizon_days INTEGER DEFAULT 7` with the PRAGMA-guard idempotency of [0073](../server/src/db/migrations/0073_enable_routines.ts). Register in [migrations/index.ts](../server/src/db/migrations/index.ts) (`import * as m0091` + append to `MIGRATIONS`). **Re-check `index.ts`'s actual tail before branching** — confirm `0091` is still free; another lane may have claimed it since this doc was last reconciled.
 - [schema.ts:175](../server/src/db/schema.ts) region: add `recurrenceHorizonDays: integer('recurrence_horizon_days').default(7),` — comment: "recurrence materialization ceiling (distinct from planningHorizonDays, the auto-scheduler today-set window)."
-- [api.ts:547](../client/src/lib/api.ts) (`interface Prefs`, near the `planning_horizon_days` field at :564): add `recurrence_horizon_days?: number;`. *(Do NOT touch the `planner` helper here — that's T-P2-2, avoids the shared-file collision.)*
+- [api.ts:549](../client/src/lib/api.ts) (`interface Prefs`, near the `planning_horizon_days` field at :566): add `recurrence_horizon_days?: number;`. *(Do NOT touch the `planner` helper here — that's T-P2-2, avoids the shared-file collision.)*
 
 **Expected project state after:** migration head **0091**; column exists; type-visible to client; no behavior change yet.
 **DoD:** [ ] migration idempotent + registered; [ ] schema + `Prefs` updated; [ ] typecheck (server+client) green.
@@ -185,7 +185,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 ## T-P1-4 — Settings "Recurrence duration" select
 
 **Goal:** owner-facing control.
-**File:** [Settings.tsx](../client/src/views/Settings.tsx) Scheduling `section`, next to the [planning_horizon control at :442](../client/src/views/Settings.tsx). A `<select>` {7,15,30,60,90,180}; `onChange` → (if lowering, `confirm()` using the `pruned` count returned by the PATCH) → `api.prefs.update({recurrence_horizon_days})` → `refetchPrefs()` → `showToast` on error. Add to `interface SettingsForm` [:20](../client/src/views/Settings.tsx), `DEFAULTS` [:40](../client/src/views/Settings.tsx) (`7`), and hydration `createEffect` [:95](../client/src/views/Settings.tsx) (`?? 7`). Copy: "Recurrence duration — generate repeats this many days ahead." Hint: lowering removes auto-placed repeats beyond the window.
+**File:** [Settings.tsx](../client/src/views/Settings.tsx) Scheduling `section`, next to the [planning_horizon control at :443](../client/src/views/Settings.tsx). A `<select>` {7,15,30,60,90,180}; `onChange` → (if lowering, `confirm()` using the `pruned` count returned by the PATCH) → `api.prefs.update({recurrence_horizon_days})` → `refetchPrefs()` → `showToast` on error. Add to `interface SettingsForm` [:20](../client/src/views/Settings.tsx), `DEFAULTS` [:40](../client/src/views/Settings.tsx) (`7`), and hydration `createEffect` [:95](../client/src/views/Settings.tsx) (`?? 7`). Copy: "Recurrence duration — generate repeats this many days ahead." Hint: lowering removes auto-placed repeats beyond the window.
 
 **Expected project state after:** control persists + reflects stored value after reload; shorten shows a confirm with the count.
 **DoD:** [ ] select wired + hydrated + persisted; [ ] shorten confirm path; [ ] client typecheck/build green.
@@ -247,4 +247,4 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 - [ ] One clear/suppress engine (`clear-range.ts`) behind the CLI, the prune, and the endpoint.
 - [ ] Templates never deleted; locked/manual preserved by P1 prune; horizon changes reversible.
 - [ ] All new `*.test.ts` green; `pnpm --filter server typecheck` + client build green in CI ("Typecheck + Unit + Integration").
-- [ ] `resetDb` baseline in [helpers.ts:63](../server/test/helpers.ts) includes any pref a test depends on.
+- [ ] `resetDb` baseline in [helpers.ts:64](../server/test/helpers.ts) includes any pref a test depends on.
