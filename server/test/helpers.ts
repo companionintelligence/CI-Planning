@@ -52,7 +52,6 @@ export function resetDb(): void {
     DELETE FROM objective_tasks;
     DELETE FROM objectives;
     DELETE FROM estimate_calibration;
-    DELETE FROM plan_outcomes;
     DELETE FROM day_stars;
   `);
   // Pin the scheduling prefs that drive Auto placement / recurrence / recall back to
