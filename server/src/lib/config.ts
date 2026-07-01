@@ -94,9 +94,11 @@ export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
   dbPath,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
-  // Defaults match models installed on the host. Override via env for other rigs.
+  // Defaults are real, currently-pullable Ollama tags. They are only a fallback:
+  // set OLLAMA_SMALL/MEDIUM/EMBED in server/.env to any model from `ollama list`.
+  // If a configured model isn't pulled, generate/embed throw an actionable error.
   ollamaSmallModel: process.env.OLLAMA_SMALL ?? 'qwen2.5:0.5b',
-  ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'gemma4:e4b',
+  ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'gemma3n:e4b',
   ollamaEmbedModel: process.env.OLLAMA_EMBED ?? 'nomic-embed-text',
   staticDir: join(packageRoot, 'public'),
   // Web Push (Phase H). Generate once: `npx web-push generate-vapid-keys`.

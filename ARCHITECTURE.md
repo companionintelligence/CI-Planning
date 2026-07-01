@@ -58,7 +58,7 @@ graph TB
 
     subgraph AI["AI (optional — Ollama)"]
         Small["qwen2.5:0.5b<br/>extraction / triage"]
-        Medium["gemma4:e4b<br/>briefings / planning"]
+        Medium["gemma3n:e4b<br/>briefings / planning"]
         Embed["nomic-embed-text<br/>dedupe embeddings"]
     end
 

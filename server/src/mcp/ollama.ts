@@ -27,6 +27,22 @@ interface GenerateOpts {
   timeoutMs?: number;
 }
 
+/**
+ * Build an OllamaUnavailable for a non-OK response. A 404 means the requested model
+ * isn't pulled — Ollama's raw "model '...' not found" body is easy to miss, so name
+ * the model and the exact fix (pull it, or point the env override at an installed one).
+ */
+async function ollamaError(op: string, res: Response, model: string): Promise<OllamaUnavailable> {
+  const body = await res.text().catch(() => '');
+  if (res.status === 404) {
+    return new OllamaUnavailable(
+      `Model '${model}' is not installed in Ollama. Run \`ollama pull ${model}\`, or set ` +
+        `OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED in server/.env to a model from \`ollama list\`.`,
+    );
+  }
+  return new OllamaUnavailable(`Ollama ${op} failed: ${res.status} ${body}`);
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -60,7 +76,7 @@ export async function generate(prompt: string, opts: GenerateOpts = {}): Promise
     opts.timeoutMs ?? 60_000
   );
 
-  if (!res.ok) throw new OllamaUnavailable(`Ollama generate failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw await ollamaError('generate', res, model);
   const data = (await res.json()) as { response?: string };
   return data.response ?? '';
 }
@@ -95,16 +111,17 @@ export function parseJsonLoose<T = unknown>(raw: string): T {
 
 /** Return an embedding vector for a single piece of text. */
 export async function embed(text: string, timeoutMs = 30_000): Promise<number[]> {
+  const model = resolveEmbedModel();
   const res = await fetchWithTimeout(
     `${config.ollamaUrl}/api/embeddings`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: resolveEmbedModel(), prompt: text }),
+      body: JSON.stringify({ model, prompt: text }),
     },
     timeoutMs
   );
-  if (!res.ok) throw new OllamaUnavailable(`Ollama embeddings failed: ${res.status}`);
+  if (!res.ok) throw await ollamaError('embeddings', res, model);
   const data = (await res.json()) as { embedding?: number[] };
   if (!data.embedding?.length) throw new OllamaUnavailable('Ollama returned an empty embedding');
   return data.embedding;
