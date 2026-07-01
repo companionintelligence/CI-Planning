@@ -111,11 +111,12 @@ function buildTree(owner: string) {
     next_action: null | { id: string; title: string; status: string; scheduled_date: string | null };
     effective_target: string | null;
     pace_expected: number | null;
+    has_tasks: boolean;
     children: any[];
   }>();
 
   for (const o of objs) {
-    byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, children: [] });
+    byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, has_tasks: false, children: [] });
   }
 
   // Compute next_action + effective_target per objective.
@@ -141,6 +142,13 @@ function buildTree(owner: string) {
       .get(id) as { id: string; title: string; status: string; scheduled_date: string | null } | undefined;
 
     decorated.next_action = nextAction ?? null;
+
+    // Task-bearing? A node with directly-linked tasks is an illegal parent (nesting
+    // under it would create a task-bearing non-leaf). The client disables it in the picker.
+    const hasTasks = sqlite
+      .prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? LIMIT 1`)
+      .get(id) as { 1: number } | undefined;
+    decorated.has_tasks = hasTasks !== undefined;
 
     const effectiveTarget = sqlite
       .prepare(
