@@ -8,6 +8,9 @@ export const backupDir = join(dirname(config.dbPath), 'backups');
 /** Write a consistent point-in-time snapshot of the live DB to `dest`. */
 export async function snapshot(dest: string): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });
+  // Not via openDb(): this is a READ-ONLY snapshot source. `.backup()` copies
+  // pages and never writes through this handle, so FK enforcement is moot here;
+  // the openDb() helper (which opens read-write) would defeat the readonly guard.
   const src = new BetterSqlite3(config.dbPath, { readonly: true });
   try {
     await src.backup(dest);

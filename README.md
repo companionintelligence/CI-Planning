@@ -41,7 +41,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>16 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0091 on boot]
+        Migrate[Migration runner<br/>0001 → 0094 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -97,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0091 ordered list
+                                    // migrations from the 0001–0094 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -108,7 +108,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0091_recurrence_horizon`) produce the following tables:
+Migrations (current head: `0094_daily_summaries_owner_default`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -128,7 +128,7 @@ Migrations (current head: `0091_recurrence_horizon`) produce the following table
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
 | `pattern_blocks` | Pattern-tag-scoped scheduling windows (`workday` / `weekend` time ranges) |
 | `pattern_prefs` | Per-owner × per-pattern config: `auto_fill`, `reminder_offsets`, `icon_shape`, `color_token`, `default_minutes` |
-| `flight_plan` | Staged task list for the two-step Auto (select → schedule) |
+| `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
 | `job_runs` | Execution log per job run (status, items created/updated, log text) |
@@ -143,7 +143,7 @@ Migrations (current head: `0091_recurrence_horizon`) produce the following table
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` — calendar syncToken, Gmail watermark, dead-letter (0060) |
 | `daily_plan` | AI-authored task order for a day — one row per `(owner, date, task)` with a "why now" rationale and `outcome` stamp (0062, 0084) |
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
-| `daily_summaries` | LLM-generated day briefings cached by content hash to avoid redundant generation |
+| `daily_summaries` | LLM-generated day briefings cached by content hash to avoid redundant generation; `owner_id` `TEXT NOT NULL` with no default (0094) |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087) |
@@ -333,7 +333,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0091): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0094): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
   reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,

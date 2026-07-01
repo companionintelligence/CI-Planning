@@ -2,12 +2,12 @@
  * Run pending migrations against the configured database without booting the
  * server (for ops / CI). Usage: `pnpm migrate`.
  */
-import BetterSqlite3 from 'better-sqlite3';
 import { config } from '../lib/config.js';
 import { runMigrations } from '../db/migrate.js';
+import { openDb } from '../db/open.js';
 import { logger } from '../lib/logger.js';
 
-const db = new BetterSqlite3(config.dbPath);
+const db = openDb(config.dbPath); // FK enforcement ON before migrations run
 try {
   const { applied } = runMigrations(db);
   if (applied.length) logger.info('migrate: applied', { applied });
