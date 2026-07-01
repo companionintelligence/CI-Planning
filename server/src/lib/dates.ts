@@ -10,6 +10,13 @@ export function localISODate(d: Date = new Date()): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Add `n` days to a `YYYY-MM-DD` string (UTC calendar math; date-only, tz-agnostic). */
+export function addDays(day: string, n: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**

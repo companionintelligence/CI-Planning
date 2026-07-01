@@ -16,8 +16,8 @@
  */
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
-import { localISODate } from '../lib/dates.js';
+import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
+import { localISODate, addDays } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { occurrencesBetween, parseRule } from './recurrence.js';
 import { taskTagNames } from '../services/tags.js';
@@ -345,16 +345,23 @@ export function patternsRecurringOnDate(owner: string, today: string): Recurring
  */
 export function ensurePatternsForRange(owner: string, fromUtcISO: string, toUtcISO: string): { placed: number; blocksCreated: number } {
   const prefsRow = sqlite
-    .prepare(`SELECT timezone, enable_routines FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { timezone: string | null; enable_routines: number | null } | undefined;
+    .prepare(`SELECT timezone, enable_routines, recurrence_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { timezone: string | null; enable_routines: number | null; recurrence_horizon_days: number | null } | undefined;
   const tz = prefsRow?.timezone || serverTimezone();
   // Routines are gated behind a feature flag (0073, default OFF). When disabled,
   // recurring Routine patterns must NOT auto-place: otherwise a user-deleted
   // Routine container regenerates on the very next read (the refetch fired right
   // after the delete), making it impossible to remove. Habits are unaffected.
   const routinesEnabled = !!prefsRow?.enable_routines;
-  const today = localISODate(); // server-local day; recurrence days are compared as YYYY-MM-DD strings
-  const days = localDaysInRange(fromUtcISO, toUtcISO, tz).filter((d) => d >= today);
+  // "Today" in the OWNER's timezone (not the server's) so it lines up with the
+  // prefs-tz day set from localDaysInRange — otherwise the horizon boundary could
+  // drop/keep the wrong edge day when server TZ ≠ prefs TZ.
+  const today = localDateInTZ(new Date().toISOString(), tz);
+  // Phase P (0091): materialize at most `recurrence_horizon_days` days from today
+  // (inclusive), so navigating far into the future never auto-fills the planner.
+  const horizonDays = prefsRow?.recurrence_horizon_days ?? 7;
+  const horizonEnd = addDays(today, horizonDays - 1);
+  const days = localDaysInRange(fromUtcISO, toUtcISO, tz).filter((d) => d >= today && d <= horizonEnd);
   let placed = 0;
   let blocksCreated = 0;
   for (const day of days) {

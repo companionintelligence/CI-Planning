@@ -88,6 +88,7 @@ import * as m0087 from './0087_objective_sync_versioning.js';
 import * as m0088 from './0088_reflections_source.js';
 import * as m0089 from './0089_day_stars.js';
 import * as m0090 from './0090_freeze_stars_job.js';
+import * as m0091 from './0091_recurrence_horizon.js';
 
 export interface Migration {
   id: string;
@@ -100,4 +101,4 @@ export interface Migration {
  * Ordered list of migrations. Explicit (not a glob / dynamic import) so order is
  * deterministic and the set is bundler-safe. Append new migrations to the end.
  */
-export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025, m0026, m0027, m0028, m0029, m0030, m0031, m0032, m0033, m0034, m0035, m0036, m0037, m0038, m0039, m0040, m0041, m0042, m0043, m0044, m0045, m0046, m0047, m0048, m0049, m0050, m0051, m0052, m0053, m0054, m0055, m0056, m0057, m0058, m0059, m0060, m0061, m0062, m0063, m0064, m0065, m0066, m0067, m0068, m0069, m0070, m0071, m0072, m0073, m0074, m0075, m0076, m0077, m0078, m0079, m0080, m0081, m0082, m0083, m0084, m0085, m0086, m0087, m0088, m0089, m0090];
+export const MIGRATIONS: readonly Migration[] = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0010, m0011, m0012, m0013, m0014, m0015, m0016, m0017, m0018, m0019, m0020, m0021, m0022, m0023, m0024, m0025, m0026, m0027, m0028, m0029, m0030, m0031, m0032, m0033, m0034, m0035, m0036, m0037, m0038, m0039, m0040, m0041, m0042, m0043, m0044, m0045, m0046, m0047, m0048, m0049, m0050, m0051, m0052, m0053, m0054, m0055, m0056, m0057, m0058, m0059, m0060, m0061, m0062, m0063, m0064, m0065, m0066, m0067, m0068, m0069, m0070, m0071, m0072, m0073, m0074, m0075, m0076, m0077, m0078, m0079, m0080, m0081, m0082, m0083, m0084, m0085, m0086, m0087, m0088, m0089, m0090, m0091];

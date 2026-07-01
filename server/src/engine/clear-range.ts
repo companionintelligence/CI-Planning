@@ -45,6 +45,14 @@ export interface ClearRangeInput {
   suppress?: 'auto' | 'none';
   /** true ⇒ only delete engine-generated, non-locked blocks (P1 prune). default false. */
   autoOnly?: boolean;
+  /**
+   * Whether to also delete `daily_plan` rows in range. default true (P2 "clear a
+   * range" wants the authored day-plan gone too). The P1 horizon prune passes
+   * FALSE: the recurrence-materialization ceiling has no bearing on the Phase-M
+   * authored orderings/rationales/outcomes, and deleting them would be silent +
+   * unrecoverable-by-raising-the-horizon.
+   */
+  clearDailyPlan?: boolean;
   /** default true — compute + report, write nothing. */
   dryRun?: boolean;
 }
@@ -142,6 +150,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
   const end = input.end ?? null;
   const suppress = input.suppress ?? 'auto';
   const autoOnly = input.autoOnly ?? false;
+  const clearDailyPlan = input.clearDailyPlan ?? true;
   const dryRun = input.dryRun ?? true;
 
   // Guardrails: bounded clears can become extremely expensive (occurrence expansion + per-day suppression rows).
@@ -195,9 +204,9 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
     dpWhere.push(`date <= ?`);
     dpArgs.push(end);
   }
-  const dailyPlanDeleted = (
-    sqlite.prepare(`SELECT COUNT(*) AS n FROM daily_plan WHERE ${dpWhere.join(' AND ')}`).get(...dpArgs) as { n: number }
-  ).n;
+  const dailyPlanDeleted = clearDailyPlan
+    ? (sqlite.prepare(`SELECT COUNT(*) AS n FROM daily_plan WHERE ${dpWhere.join(' AND ')}`).get(...dpArgs) as { n: number }).n
+    : 0;
 
   // ---- enumerate generators + plan suppression ops ---------------------------
   const generators: ClearRangeGenerator[] = [];
@@ -328,7 +337,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
       delTags.run(b.id);
       delBlock.run(b.id);
     }
-    sqlite.prepare(dpDeleteSql).run(...dpArgs);
+    if (clearDailyPlan) sqlite.prepare(dpDeleteSql).run(...dpArgs);
   });
   run();
   return result;
