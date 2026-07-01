@@ -199,11 +199,15 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'freeze_stars': {
+      // Freezing is an INSERT (first-freeze-wins): a create, or a no-op if the
+      // day was already frozen — never an update. Report counters accordingly.
       const r = freezeStars();
       return {
-        itemsCreated: 0,
-        itemsUpdated: 1,
-        log: `Froze day stars for ${r.date}: ${r.total}/5`,
+        itemsCreated: r.created ? 1 : 0,
+        itemsUpdated: 0,
+        log: r.created
+          ? `Froze day stars for ${r.date}: ${r.total}/5`
+          : `Day stars for ${r.date} already frozen (${r.total}/5) — no-op`,
       };
     }
     default:

@@ -2,8 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { computeStars } from '../engine/stars.js';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { isValidISODate } from '../lib/dates.js';
 
 /** All local dates in [from, to] inclusive (noon-UTC pivot → DST-safe). */
 function datesInRange(from: string, to: string): string[] {
@@ -29,7 +28,7 @@ export function starsRouter() {
     const owner = currentOwnerId();
     const from = ctx.query.from as string | undefined;
     const to = ctx.query.to as string | undefined;
-    if (!from || !to || !DATE_RE.test(from) || !DATE_RE.test(to)) {
+    if (!isValidISODate(from) || !isValidISODate(to)) {
       ctx.status = 422;
       ctx.body = { error: 'from and to are required (YYYY-MM-DD)' };
       return;

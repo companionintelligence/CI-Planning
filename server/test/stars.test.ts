@@ -252,6 +252,7 @@ describe('freezeStars — nightly snapshot', () => {
     // now = a NEXT_DAY instant → yesterday = DAY.
     const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, iso(NEXT_DAY, '00:20')));
     expect(r.date).toBe(DAY);
+    expect(r.created).toBe(true); // FIX 6 — a first freeze is a create
     const row = frozenRow();
     expect(row).toMatchObject({ star_objective: 1, total: 1 });
   });
@@ -293,15 +294,18 @@ describe('freezeStars — nightly snapshot', () => {
   });
 
   // FIX 4 — first-freeze-wins: a same-day manual re-run after an edit cannot overwrite.
+  // FIX 6 — created=true on the first freeze, false on the no-op re-run.
   it('re-running freeze after mutating the day leaves the frozen row unchanged', () => {
     setToday('Goal', true);
     const first = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
     expect(first.total).toBe(1);
+    expect(first.created).toBe(true);
 
     // Owner edits DAY (adds an unplanned completion) then a manual job re-run fires.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
     const second = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '09:00')));
     expect(second.total).toBe(1);                 // returns the EXISTING total, no recompute
+    expect(second.created).toBe(false);           // no-op, not a create
     expect(frozenRow().total).toBe(1);            // row untouched
     const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM day_stars WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number }).n;
     expect(n).toBe(1);

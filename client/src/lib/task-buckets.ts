@@ -8,10 +8,10 @@ import { dayRangeUTC } from './dates.js';
  * summary stats (server/src/agents/summarize.ts) so the header counts and the
  * revealed lists agree:
  *
- *   overdue    — status IN (open, scheduled) AND due_at < the local day start
- *   due today  — status IN (open, scheduled) AND due_at within the local day
- *   scheduled  — placed on the planner for the day (scheduledIds) OR status='scheduled'
- *   open       — a plain backlog task (status='open'), not routine
+ *   overdue    — ACTIVE status (open, scheduled, in_progress) AND due_at < the local day start
+ *   due today  — ACTIVE status (open, scheduled, in_progress) AND due_at within the local day
+ *   scheduled  — not routine AND (status IN (scheduled, in_progress) OR placed on the planner for the day)
+ *   open       — a plain backlog task (status='open'), not routine and not placed for the day
  *
  * Pure + framework-free so it can be unit-tested in a node env (no jsdom). The
  * caller supplies `scheduledIds` (the store's placement map for the loaded range)

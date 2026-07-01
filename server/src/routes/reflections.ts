@@ -4,9 +4,14 @@ import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import { broadcast } from './sse.js';
 import { isoWeekKey } from '../lib/tz.js';
-import { localISODate } from '../lib/dates.js';
+import { localISODate, isValidISODate } from '../lib/dates.js';
 
-const VALID_KINDS = new Set(['today_goal', 'weekly_goal', 'day_note']);
+// The two goal kinds the generic /done + DELETE /:kind/:position routes accept.
+// day_note is deliberately NOT here: it toggles no done_at and is only ever
+// written/read through the dedicated /note, /notes, and GET routes — routing it
+// through the goal endpoints would contradict the "today_goal or weekly_goal"
+// contract those routes advertise.
+const GOAL_KINDS = new Set(['today_goal', 'weekly_goal']);
 const VALID_SOURCE_KINDS = new Set(['manual', 'task', 'objective']);
 
 /**
@@ -71,15 +76,18 @@ export function reflectionsRouter() {
     const owner = currentOwnerId();
     const from = ctx.query.from as string | undefined;
     const to = ctx.query.to as string | undefined;
-    if (!from || !to) {
+    if (!isValidISODate(from) || !isValidISODate(to)) {
       ctx.status = 422;
       ctx.body = { error: 'from and to are required (YYYY-MM-DD)' };
       return;
     }
+    // Only rows with a non-empty body count — guards legacy/manual whitespace-only
+    // rows so the calendar never dots a day that has no real note.
     const rows = sqlite
       .prepare(
         `SELECT period_key AS date FROM reflections
           WHERE owner_id=? AND kind='day_note' AND period_key>=? AND period_key<=?
+            AND TRIM(body) <> ''
           ORDER BY period_key`,
       )
       .all(owner, from, to) as { date: string }[];
@@ -96,9 +104,11 @@ export function reflectionsRouter() {
       body?: string;
     };
 
-    if (!period_key) {
+    // period_key IS the day the note belongs to, so it must be a real date —
+    // a malformed key would silently create an unreachable row.
+    if (!isValidISODate(period_key)) {
       ctx.status = 422;
-      ctx.body = { error: 'period_key is required' };
+      ctx.body = { error: 'period_key is required (YYYY-MM-DD)' };
       return;
     }
 
@@ -240,7 +250,7 @@ export function reflectionsRouter() {
     const kind = ctx.params.kind;
     const position = Number(ctx.params.position);
 
-    if (!VALID_KINDS.has(kind)) {
+    if (!GOAL_KINDS.has(kind)) {
       ctx.status = 422;
       ctx.body = { error: 'kind must be today_goal or weekly_goal' };
       return;
@@ -285,7 +295,7 @@ export function reflectionsRouter() {
     const kind = ctx.params.kind;
     const period_key = ctx.query.period_key as string | undefined;
 
-    if (!VALID_KINDS.has(kind)) {
+    if (!GOAL_KINDS.has(kind)) {
       ctx.status = 422;
       ctx.body = { error: 'invalid kind' };
       return;

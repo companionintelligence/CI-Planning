@@ -6,6 +6,8 @@ import { computeStars } from '../engine/stars.js';
 export interface FreezeResult {
   date: string;
   total: number;
+  /** True when this call inserted the day_stars row; false on a first-freeze-wins no-op. */
+  created: boolean;
 }
 
 /**
@@ -44,7 +46,7 @@ export function freezeStars(forDate?: string, nowISO?: string): FreezeResult {
   const existing = sqlite
     .prepare('SELECT total FROM day_stars WHERE owner_id = ? AND date = ?')
     .get(owner, date) as { total: number } | undefined;
-  if (existing) return { date, total: existing.total };
+  if (existing) return { date, total: existing.total, created: false };
 
   const stars = computeStars(owner, date);
   const frozenAt = nowISO ?? new Date().toISOString();
@@ -67,5 +69,5 @@ export function freezeStars(forDate?: string, nowISO?: string): FreezeResult {
       frozenAt,
     );
 
-  return { date, total: stars.total };
+  return { date, total: stars.total, created: true };
 }
