@@ -492,13 +492,15 @@ export function tasksRouter() {
     // from a completion timestamp. COALESCE preserves an already-set done_at.
     if (task.status === 'done') {
       const now = new Date().toISOString();
+      const completedAt = typeof body.completed_at === 'string' && body.completed_at ? body.completed_at : now;
+      const periodKey = completedAt.slice(0, 10);
       sqlite
         .prepare(
           `UPDATE reflections SET done_at = COALESCE(done_at, ?), updated_at = ?
-             WHERE owner_id = ? AND kind = 'today_goal' AND position = 0
+             WHERE owner_id = ? AND kind = 'today_goal' AND period_key = ? AND position = 0
                AND source_kind = 'task' AND source_ref = ?`,
         )
-        .run(now, now, currentOwnerId(), targetId);
+        .run(now, now, currentOwnerId(), periodKey, targetId);
     }
 
     const currentTags = taskTagNames(targetId);
