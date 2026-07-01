@@ -207,8 +207,8 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 ## T-P2-1 — `POST /api/planner/clear` route
 
 **Goal:** owner-facing clear-range endpoint with preview.
-**Files:** new `server/src/routes/planner.ts`; register in [app.ts](../server/src/app.ts) alongside `blocksRouter`/`prefsRouter`.
-- Body `{ start, end?, dry_run? }`; validate `start` ISO present, `end>=start` if given (`400` otherwise).
+**Files:** new `server/src/routes/planner.ts`; register in [routes/index.ts](../server/src/routes/index.ts) `mountRoutes` alongside `blocksRouter`/`prefsRouter` (that's where all routers mount — not `app.ts`).
+- Body `{ start, end?, dry_run? }`; validate `start` ISO present, `end>=start` if given, and a bounded span `≤ MAX_SPAN_DAYS` (all `400` otherwise — the last guards the engine's `throw` from surfacing as a 500 and avoids a wasted pre-apply snapshot). `end` normalizes `''`/`null` → open-ended.
 - `clearPlannerRange({ owner: currentOwnerId(), start, end, suppress:'auto', autoOnly:false, dryRun:!!dry_run })` — the engine branches on `end`: bounded→exdates/optouts, open-ended→UNTIL-cap.
 - Non-dry-run: `snapshot()` to `backups/companion-preclear-<ts>.db` first; include `backup` in the response; `writeAudit({action:'clear-range', entity:'planner:<start>..<end>'})`; broadcast `block:deleted`.
 - Response: `ClearRangeResult & { backup?: string }`.
