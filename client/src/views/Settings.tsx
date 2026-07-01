@@ -56,6 +56,40 @@ export function Settings() {
   const [activeTab, setActiveTab] = createSignal<'preferences' | 'connections'>('preferences');
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
+  // Phase P · P2 — Clear Date Range tool state.
+  const [clearStart, setClearStart] = createSignal('');
+  const [clearEnd, setClearEnd] = createSignal('');
+  const [clearPreview, setClearPreview] = createSignal<import('../lib/api.js').ClearRangeResult | null>(null);
+  const [clearBusy, setClearBusy] = createSignal(false);
+  async function previewClear() {
+    if (!clearStart()) { showToast('Pick a start date first', 'error'); return; }
+    setClearBusy(true);
+    try {
+      setClearPreview(await api.planner.clearRange({ start: clearStart(), end: clearEnd() || undefined, dry_run: true }));
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setClearBusy(false);
+    }
+  }
+  async function applyClear() {
+    const p = clearPreview();
+    if (!clearStart() || !p) return;
+    const scope = p.mode === 'open-ended' ? `from ${clearStart()} onward (stops repeats forever)` : `${clearStart()} → ${clearEnd()}`;
+    if (!window.confirm(`Clear ${p.blocksDeleted} block(s) ${scope}? A backup snapshot is taken first.`)) return;
+    setClearBusy(true);
+    try {
+      const r = await api.planner.clearRange({ start: clearStart(), end: clearEnd() || undefined });
+      showToast(`Cleared ${r.blocksDeleted} block(s); backup saved`, 'success');
+      setClearPreview(null);
+      setClearStart(''); setClearEnd('');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setClearBusy(false);
+    }
+  }
+
   // Schedule Patterns now live in <DayTypeManager /> (day types + week map + the
   // shared per-day-type window editor). T-SCHED-4 replaced the inline editor here.
 
@@ -481,6 +515,43 @@ export function Settings() {
                 </select>
               </label>
             </div>
+          </section>
+
+          {/* Phase P · P2 — Clear Date Range: bulk-clear the planner from a date (optionally through a date). */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-2"><Trash2 size={12} /> Clear Date Range</div>
+            <div class="text-[11px] text-muted-foreground mb-3">
+              Remove planner blocks from a start date (optionally through an end date) and stop repeats from regenerating.
+              Open-ended (no end) stops repeats <b>forever</b> from the start; a range skips <b>just that window</b>.
+              A backup snapshot is taken before anything is deleted.
+            </div>
+            <div class="flex items-end gap-3 flex-wrap">
+              <label class="flex flex-col gap-1">
+                <span class="text-[11px] text-muted-foreground">Start (required)</span>
+                <input type="date" class="input py-1 text-sm" value={clearStart()} onInput={(e) => { setClearStart(e.currentTarget.value); setClearPreview(null); }} />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-[11px] text-muted-foreground">End (optional)</span>
+                <input type="date" class="input py-1 text-sm" value={clearEnd()} onInput={(e) => { setClearEnd(e.currentTarget.value); setClearPreview(null); }} />
+              </label>
+              <button type="button" class="btn-secondary text-sm" disabled={clearBusy() || !clearStart()} onClick={previewClear}>Preview</button>
+            </div>
+            <Show when={clearPreview()}>
+              {(p) => (
+                <div class="mt-3 text-sm">
+                  <div class="flex items-start gap-1.5 text-muted-foreground">
+                    <AlertTriangle size={13} class="mt-0.5 flex-shrink-0" />
+                    <span>
+                      Will delete <b>{p().blocksDeleted}</b> block(s)
+                      {p().dailyPlanDeleted ? <> + <b>{p().dailyPlanDeleted}</b> day-plan row(s)</> : null} and suppress{' '}
+                      <b>{p().generators.length}</b> recurring generator(s) —{' '}
+                      <b>{p().mode === 'open-ended' ? 'stops repeats forever from the start' : 'skips only this window'}</b>.
+                    </span>
+                  </div>
+                  <button type="button" class="btn-danger text-sm mt-2" disabled={clearBusy()} onClick={applyClear}>Clear now</button>
+                </div>
+              )}
+            </Show>
           </section>
 
           {/* Pattern Tags — unified: shape, colour, and default minutes per direction tag */}
