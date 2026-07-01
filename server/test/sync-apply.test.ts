@@ -26,6 +26,26 @@ function getTask(id: string): Record<string, unknown> {
   return sqlite.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown>;
 }
 
+function insertObjective(id: string, title = 'Test objective'): void {
+  const now = '2026-06-01T00:00:00.000Z';
+  sqlite
+    .prepare(
+      `INSERT INTO objectives (id, owner_id, title, level, horizon, status, cadence, priority, created_at, updated_at, version)
+       VALUES (?, ?, ?, 'objective', 'none', 'active', 'none', 3, ?, ?, 1)`,
+    )
+    .run(id, SYSTEM_OWNER, title, now, now);
+}
+
+function getObjective(id: string): Record<string, unknown> {
+  return sqlite.prepare('SELECT * FROM objectives WHERE id = ?').get(id) as Record<string, unknown>;
+}
+
+function insertLink(linkId: string, objectiveId: string, taskId: string): void {
+  sqlite
+    .prepare(`INSERT INTO objective_tasks (objective_id, task_id, id, linked, version) VALUES (?, ?, ?, 1, 1)`)
+    .run(objectiveId, taskId, linkId);
+}
+
 // ── applyMonotonic unit tests ─────────────────────────────────────────────────
 
 describe('applyMonotonic', () => {
@@ -40,6 +60,16 @@ describe('applyMonotonic', () => {
 
   it('allows setting done when already done (idempotent)', () => {
     expect(applyMonotonic('status', { status: 'done' }, 'done')).toBe('done');
+  });
+
+  it('pins scheduled against a stale open (placement must not be lost)', () => {
+    expect(applyMonotonic('status', { status: 'scheduled' }, 'open')).toBe('scheduled');
+  });
+
+  it('allows scheduled to advance to done / cancelled / in_progress', () => {
+    expect(applyMonotonic('status', { status: 'scheduled' }, 'done')).toBe('done');
+    expect(applyMonotonic('status', { status: 'scheduled' }, 'cancelled')).toBe('cancelled');
+    expect(applyMonotonic('status', { status: 'scheduled' }, 'in_progress')).toBe('in_progress');
   });
 
   it('keeps earliest completed_at when a later value arrives', () => {
@@ -191,6 +221,119 @@ describe('applyOp', () => {
     // priority has no prior field_ts so it applies
     expect(result.dropped).toContain('title');
     expect(result.applied).toHaveProperty('priority', 5);
+  });
+});
+
+// ── scheduled-status guard (open⇄scheduled regression) ───────────────────────
+
+describe('applyOp — scheduled status guard', () => {
+  beforeEach(() => resetDb());
+
+  function insertScheduledTask(id: string): void {
+    sqlite
+      .prepare(
+        `INSERT INTO tasks (id, title, owner_id, status, priority, version, field_ts)
+         VALUES (?, 'Placed task', ?, 'scheduled', 3, 5, ?)`,
+      )
+      .run(id, SYSTEM_OWNER, JSON.stringify({ status: '2026-06-01T12:00:00.000Z' }));
+  }
+
+  it('does NOT revert scheduled→open for a stale queued op (older clientTs)', () => {
+    insertScheduledTask('t-sched-1');
+    // A queued offline op carrying {status:'open'} with a clientTs OLDER than the
+    // server's scheduled stamp — must be dropped by LWW, leaving 'scheduled'.
+    const result = applyOp(sqlite, {
+      opId: 'op-sched-1', entity: 'task', entityId: 't-sched-1',
+      fields: { status: 'open' }, baseVersion: 1,
+      clientTs: '2026-06-01T11:00:00.000Z', // older than the stored field_ts
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('status');
+    expect(getTask('t-sched-1')['status']).toBe('scheduled');
+  });
+
+  it('still pins scheduled→open even when the op is NEWER (monotonic clamp)', () => {
+    insertScheduledTask('t-sched-2');
+    const result = applyOp(sqlite, {
+      opId: 'op-sched-2', entity: 'task', entityId: 't-sched-2',
+      fields: { status: 'open' }, baseVersion: 1,
+      clientTs: '2026-06-01T13:00:00.000Z', // newer — wins LWW but is clamped
+    }, SYSTEM_OWNER);
+
+    expect(result.applied['status']).toBe('scheduled');
+    expect(getTask('t-sched-2')['status']).toBe('scheduled');
+  });
+});
+
+// ── objective + objective_task round-trip ────────────────────────────────────
+
+describe('applyOp — objective entity', () => {
+  beforeEach(() => resetDb());
+
+  it('round-trips a full objective op through apply', () => {
+    insertObjective('o-1');
+    const result = applyOp(sqlite, {
+      opId: 'op-o-1', entity: 'objective', entityId: 'o-1',
+      fields: { title: 'Renamed', status: 'paused', priority: 1, target_date: '2026-12-31' },
+      baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+    }, SYSTEM_OWNER);
+
+    expect(result.applied).toEqual({ title: 'Renamed', status: 'paused', priority: 1, target_date: '2026-12-31' });
+    expect(result.version).toBe(2);
+    const row = getObjective('o-1');
+    expect(row['title']).toBe('Renamed');
+    expect(row['status']).toBe('paused');
+    expect(row['priority']).toBe(1);
+    expect(row['target_date']).toBe('2026-12-31');
+  });
+
+  it('drops server-derived fields (level / progress_cache) not in the allowlist', () => {
+    insertObjective('o-2');
+    const result = applyOp(sqlite, {
+      opId: 'op-o-2', entity: 'objective', entityId: 'o-2',
+      fields: { level: 'goal', progress_cache: 0.9, title: 'Kept' },
+      baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+    }, SYSTEM_OWNER);
+    expect(result.applied).toEqual({ title: 'Kept' });
+    expect(getObjective('o-2')['level']).toBe('objective'); // unchanged
+  });
+
+  it('isolates by owner (applying as a different owner is not found)', () => {
+    insertObjective('o-3'); // owned by SYSTEM_OWNER
+    expect(() =>
+      applyOp(sqlite, {
+        opId: 'op-o-3', entity: 'objective', entityId: 'o-3',
+        fields: { title: 'x' }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+      }, 'a-different-owner'),
+    ).toThrow('not found');
+  });
+
+  it('round-trips an objective_task link tombstone (linked 1→0) through apply', () => {
+    insertObjective('o-4');
+    insertTask('t-link-1');
+    insertLink('lk-1', 'o-4', 't-link-1');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-lk-1', entity: 'objective_task', entityId: 'lk-1',
+      fields: { linked: 0 }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+    }, SYSTEM_OWNER);
+
+    expect(result.applied).toEqual({ linked: 0 });
+    const link = sqlite.prepare('SELECT linked FROM objective_tasks WHERE id = ?').get('lk-1') as { linked: number };
+    expect(link.linked).toBe(0);
+  });
+
+  it('scopes an objective_task op by its parent objective owner', () => {
+    insertObjective('o-5'); // owned by SYSTEM_OWNER
+    insertTask('t-link-2');
+    insertLink('lk-2', 'o-5', 't-link-2');
+    // Applying as a different owner must not reach the link via its parent objective.
+    expect(() =>
+      applyOp(sqlite, {
+        opId: 'op-lk-2', entity: 'objective_task', entityId: 'lk-2',
+        fields: { linked: 0 }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+      }, 'a-different-owner'),
+    ).toThrow('not found');
   });
 });
 
