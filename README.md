@@ -40,8 +40,8 @@ graph TB
         API[REST API<br/>20+ route modules]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>12 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0088 on boot]
+        Cron[Croner Jobs<br/>13 scheduled jobs]
+        Migrate[Migration runner<br/>0001 → 0091 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -97,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0088 ordered list
+                                    // migrations from the 0001–0091 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -108,7 +108,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0088_reflections_source`) produce the following tables:
+Migrations (current head: `0091_recurrence_horizon`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -129,7 +129,7 @@ Migrations (current head: `0088_reflections_source`) produce the following table
 | `pattern_blocks` | Pattern-tag-scoped scheduling windows (`workday` / `weekend` time ranges) |
 | `pattern_prefs` | Per-owner × per-pattern config: `auto_fill`, `reminder_offsets`, `icon_shape`, `color_token`, `default_minutes` |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule) |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
 | `job_runs` | Execution log per job run (status, items created/updated, log text) |
 | `reminders` | Scheduled reminders (`fire_at`, task XOR block target, `source` manual/auto) fired by the 1-min dispatcher (Phase H, 0044/0045) |
@@ -145,11 +145,12 @@ Migrations (current head: `0088_reflections_source`) produce the following table
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
 | `daily_summaries` | LLM-generated day briefings cached by content hash to avoid redundant generation |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
-| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`) (Phase N, 0080; linked focus 0088) |
+| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`); also holds the one-per-day `kind='day_note'` row (same PK-enforced uniqueness) (Phase N, 0080; linked focus 0088; day note 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083) |
 | `plan_outcomes` | Per-day planned-vs-completed block counts aggregated nightly by `aggregate_plan_outcomes` job (Phase N, 0083) |
+| `day_stars` | Frozen snapshot of the five-star day score per `(owner, date)` — today computes live via `computeStars()`, past days are immutable once frozen by the nightly `freeze_stars` job (Phase O, 0089; job seed 0090) |
 
 ## See it in action
 
@@ -172,10 +173,10 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 
 ## Screenshots
 
-| Today (with Morning Briefing + FOCUS) | Calendar (with Weekly Review) |
+| Today (with FOCUS + day stars) | Calendar (with the star heatmap + Weekly Review) |
 |---|---|
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
-| Morning Briefing prose · FOCUS card (today/weekly focus + Today's Brief) · PLANNER · Flight-plan | Day / week / month grid · Weekly Review panel (capacity · calibration · objectives) |
+| FOCUS card (today/weekly focus + Today's Brief pop-up) · day note · single-select count buckets · day-stars tally · PLANNER · Flight-plan | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (capacity · calibration · objectives) |
 
 | Inbox | Tasks |
 |---|---|
@@ -197,11 +198,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 | Settings |
 |---|
 | [![Settings view](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
-| Work hours, per-pattern fill + reminder offsets, pattern block shape/color, time-block labels, concept tags, model overrides, memory sync |
+| Work hours, per-pattern fill + reminder offsets, pattern block shape/color, time-block labels, concept tags, model overrides, memory sync, recurrence duration, Clear Date Range |
 
 ## What you get
 
-- **Ten views** — Today · Calendar · Inbox · Tasks · Routines · Objectives · Tags · Jobs · Settings (plus Morning Briefing inside Today)
+- **Nine views** — Today · Calendar · Inbox · Tasks · Routines · Objectives · Tags · Jobs · Settings
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
   hours, pattern-block windows, locked meetings, and break preferences. Placement is always
@@ -238,10 +239,13 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   client, so the UI stays in sync without polling
 - **Installable PWA** — manifest + standalone display; usable from a phone over your tailnet
 - **Objectives hierarchy** — a life-planning tree of Goals → Projects → Objectives; each leaf Objective links to Tasks whose completion rolls up into progress; height-derived level (no manual selection); a task that gains a subtask auto-promotes into its own Objective; progress is `NULL` when there's nothing to measure — a rot signal, not a zero
-- **Morning Briefing** — AI-authored prose summary of the day's tasks, capacity, focus, and objectives; shown in the Today cockpit alongside the FOCUS card
-- **FOCUS card** (formerly "Goals") — a single today focus and up to three weekly goals in the Today cockpit, toggled by a `Today | This week` switch. Each slot can **link** to a Task (today) or an Objective (weekly) via a typeahead, or hold freeform text; completing a linked task auto-checks its focus (two-way completion). A **Today's Brief** pop-up shows the AI prose, capacity, and top tasks (habits + routines excluded). Each slot optionally carries a category color stripe and a done stamp.
+- **FOCUS card** (formerly "Goals") — a single today focus and up to three weekly goals in the Today cockpit, toggled by a `Today | This week` switch. Each slot can **link** to a Task (today) or an Objective (weekly) via a typeahead, or hold freeform text; completing a linked task auto-checks its focus (two-way completion). A **Today's Brief** pop-up (replacing the old standalone Morning Briefing section) shows the AI prose, capacity, and top tasks (habits + routines excluded). Each slot optionally carries a category color stripe and a done stamp.
+- **Day note** — one free-text note per day (enforced structurally, not by convention — reuses the FOCUS card's `reflections` table with a dedicated `kind`); a header affordance and a calendar dot open/indicate it
+- **Five-star day** — a gamified daily score derived entirely from existing signal, never a manual toggle: a star each for the day's Intention, clearing all Habits, clearing all planned Tasks, an unplanned Bonus completion, and a Reflection (a done task + a saved day note). Shown as a small live tally in the Today header and as a heatmap on the Calendar (a perfect 5/5 day gets a single glowing star). Today computes live; once a day ends, a nightly job freezes its score — permanent, never recomputed
 - **Weekly Review** — summary stats (scheduled vs focus minutes, capacity, block completion %) with calibration insights and objectives progress for the week; available inside the Calendar week view
 - **Estimate calibration** — a weekly job computes your personal bias ratio (median actual/estimated), surfaced as an amber label in the Weekly Review when your pattern deviates more than 10%; helps you plan more accurately over time
+- **Recurrence horizon** — a Settings control (7/15/30/60/90/180 days) bounding how far ahead recurring Routines/Habits/Time-Blocks materialize; lowering it prunes future auto-placed instances (snapshotted first, reversible by raising it back) without touching the underlying recurrence rule
+- **Clear Date Range** — a Settings tool to preview-then-clear any date range from the Planner (bounded → skips just that window and stays reversible; open-ended → permanently caps the recurrence rule); every apply snapshots the DB first and is fully audited
 - **Multi-device sync** — IndexedDB offline write log, field-level merge (not whole-record LWW) covering Tasks, Time Blocks, and Objectives (+ objective↔task links), monotonic guards so a stale offline op can't un-complete a task or revert a `scheduled` task to `open`, `Last-Event-ID` SSE catch-up replay for reconnecting devices (Phase L)
 
 ## How it works
@@ -329,7 +333,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0088): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0091): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
   reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,
@@ -358,10 +362,11 @@ consistent snapshot.
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: pattern (direction) / intention hierarchy with many-to-many grouping
 - **Objectives** — life-planning hierarchy (Goal → Project → Objective) with task linkage, progress roll-up, and the `advance_objectives` job that auto-stages tasks for active objectives into the flight plan
-- **Reflections** — today goal + up to 3 weekly goals per ISO week, with category color stripes and done/undone toggling
-- **Morning Briefing** — AI-authored or deterministic prose summary in the Today cockpit
+- **Reflections / FOCUS card** — today focus + up to 3 weekly goals per ISO week, each optionally linked (`source_kind`/`source_ref`) to a Task or Objective, with category color stripes and done/undone toggling; a **Today's Brief** pop-up carries the AI/deterministic prose + capacity + top tasks that used to be the standalone Morning Briefing section
+- **Day note + five-star day** (Phase O) — one note per day (`reflections.kind='day_note'`, PK-enforced uniqueness); `computeStars()` derives 5 booleans (intention/habits/tasks/bonus/reflection) with zero manual toggles, cached in `day_stars` and frozen permanently by the nightly `freeze_stars` job; `GET /api/stars` serves the frozen row over a live recompute
 - **Weekly Review** — scheduled/focus minutes, capacity bar, completion rate, and calibration bias insight
 - **Estimate calibration** — weekly `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review
+- **Recurrence horizon + Clear Date Range** (Phase P) — `recurrence_horizon_days` bounds materialization in both recurrence engines (patterns + blocks); lowering it auto-prunes via a shared `clearPlannerRange` engine, which also backs `POST /api/planner/clear` (dry-run preview, DB snapshot on apply) and the original `clear-planner-from.ts` CLI script
 - **Multi-device sync** — field-level merge, `sync_events` append-only log, `Last-Event-ID` SSE catch-up; `POST /api/sync` applies offline op-log entries
 
 **Intentionally partial:**
@@ -515,7 +520,8 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | POST/DELETE | `/api/push/subscribe` | Register / remove a browser push subscription |
 | GET/POST/DELETE | `/api/reminders` · POST `/api/reminders/:id/snooze` | Reminders CRUD + snooze |
 | GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs |
-| GET/PATCH | `/api/prefs` | Scheduling preferences |
+| GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count) |
+| POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
 | GET/POST | `/api/memory` | Companion Memory sync state |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
 | GET | `/api/oauth/google/start` | Begin the standalone Google OAuth flow (Auth Code + PKCE); returns `{ url }` for the SPA to navigate to. Gated; refused under `AUTH_MODE=test`. |
@@ -523,7 +529,10 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET | `/api/oauth/google/accounts` | List connected Google accounts (status only, no secrets). |
 | DELETE | `/api/oauth/google/accounts/:account` | Disconnect an account (revoke at Google + drop its tokens and queued pushes). |
 | GET/PUT/DELETE | `/api/reflections` · `/api/reflections/today` · `/api/reflections/weekly/:pos` | Today goal + weekly goals (Phase N) |
-| POST | `/api/reflections/:kind/:pos/done` | Mark a goal done / undone |
+| POST | `/api/reflections/:kind/:pos/done` | Mark a goal done / undone (`today_goal`/`weekly_goal` only — `day_note` is 422'd here) |
+| PUT | `/api/reflections/note` | Upsert the day's note; empty body deletes (Phase O) |
+| GET | `/api/reflections/notes?from&to` | Dates in range with a non-empty day note — backs the calendar's note dots (Phase O) |
+| GET | `/api/stars?from&to` | Five-star day score per date in range; frozen row if present, else computed live (Phase O) |
 | GET/POST/PATCH/DELETE | `/api/objectives` | Objectives CRUD (Phase N) |
 | GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
 | GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
@@ -536,6 +545,8 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 
 ```bash
 pnpm test                      # server vitest suite (Ollama-dependent tests degrade/skip)
+pnpm --filter client test      # client vitest — two projects: `unit` (pure logic, node) +
+                                # `dom` (SolidJS component rendering, jsdom + vite-plugin-solid)
 cd tests/container && npm i && APP_URL=http://localhost:3848 npx playwright test   # container smoke
 ```
 
