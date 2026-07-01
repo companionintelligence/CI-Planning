@@ -129,6 +129,37 @@ on('flight_plan:reset',   () => refetchFlightPlan());
 // Auto step-2 places staged items into the day as time_blocks → refresh the PLANNER.
 on('auto:placed', () => { refetchBlocks(); refetchFlightPlan(); });
 
+/** Task ids currently staged in the flight-plan — O(1) membership for the task list
+ * (mirrors the patternByTaskId memo idiom; avoids a per-card .some() scan). */
+export const flightPlanTaskIds = createMemo<Set<string>>(() => {
+  const s = new Set<string>();
+  for (const it of flightPlan() ?? []) s.add(it.task_id);
+  return s;
+});
+
+/**
+ * A task's placement (earliest task-block) in the currently-loaded blocks range,
+ * as local date/time. Lets the task list treat "on the planner" as scheduled —
+ * regardless of which engine placed it or whether the DB `status` was flipped —
+ * so the calendar icon + Scheduled section stay honest and self-healing (a task
+ * whose block is later cleared simply drops out of this map). Range-scoped: covers
+ * the loaded day/week; out-of-range placements fall back to the task's own status.
+ */
+export const scheduledByTaskId = createMemo<Map<string, { date: string; time: string }>>(() => {
+  const m = new Map<string, { date: string; time: string; start: string }>();
+  for (const b of blocks() ?? []) {
+    if (b.block_kind !== 'task' || !b.task_id) continue;
+    const prev = m.get(b.task_id);
+    if (prev && prev.start <= b.start_at) continue; // keep the earliest placement
+    const d = new Date(b.start_at);
+    const time = b.all_day ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    m.set(b.task_id, { date: localISODate(d), time, start: b.start_at });
+  }
+  const out = new Map<string, { date: string; time: string }>();
+  for (const [id, v] of m) out.set(id, { date: v.date, time: v.time });
+  return out;
+});
+
 export const [patterns, { refetch: refetchPatterns }] = createResource(() =>
   api.patterns.list().then((r) => r.patterns)
 );
@@ -170,6 +201,13 @@ export function patternForTask(taskId?: string): { pattern: Pattern; type?: Patt
   return { pattern, type: pattern.type_id != null ? patternTypeById().get(pattern.type_id) : undefined };
 }
 
+/** Whether a task belongs to a Routine-type pattern — drives the task card's routine
+ * texture background + the Tasks-view Routine section. (Habit/Ritual patterns don't
+ * count; those subtypes have their own surfaces.) */
+export function isRoutineTask(taskId?: string): boolean {
+  return patternForTask(taskId)?.type?.name === 'Routine';
+}
+
 // ── Tags ─────────────────────────────────────────────────────────────────────
 export const [tags, { refetch: refetchTags }] = createResource(() =>
   api.tags.list().then((r) => r.tags)
@@ -184,6 +222,14 @@ export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
 export const [patternBlocks, { refetch: refetchPatternBlocks }] = createResource(() =>
   api.patternBlocks.list()
 );
+
+// ── Block templates — reusable Plan contents, applied/swapped from the block edit menu.
+export const [blockTemplates, { refetch: refetchBlockTemplates }] = createResource(() =>
+  api.blockTemplates.list().then((r) => r.block_templates)
+);
+on('block_template:created', () => refetchBlockTemplates());
+on('block_template:updated', () => refetchBlockTemplates());
+on('block_template:deleted', () => refetchBlockTemplates());
 
 // ── Pattern-prefs (T5) ───────────────────────────────────────────────────────
 export const [patternPrefs, { refetch: refetchPatternPrefs }] = createResource(() =>

@@ -43,6 +43,7 @@ export interface Task {
   is_habit?: boolean;
   is_fast_task?: boolean; // ritual-local, hidden from the task list (Step 3)
   subtype?: 'standard' | 'habit' | 'quick'; // CON-2c canonical Task subtype (is_habit/is_fast_task kept as aliases)
+  objective_id?: string | null; // §I: first linked objective — drives the 8-pointed star + its click target
 }
 
 export interface TaskInput {
@@ -233,6 +234,8 @@ export const api = {
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/block-templates/${id}`),
     instantiate: (id: string, start_at: string, end_at?: string) =>
       request<{ block: Block }>('POST', `/block-templates/${id}/instantiate`, { start_at, end_at }),
+    applyToBlock: (id: string, block_id: string) =>
+      request<{ ok: boolean }>('POST', `/block-templates/${id}/apply-to-block`, { block_id }),
   },
 
   possibles: {
@@ -734,7 +737,7 @@ export interface Objective {
   id: string;
   owner_id: string;
   parent_id: string | null;
-  level: 'goal' | 'project' | 'milestone';
+  level: 'goal' | 'project' | 'objective';
   horizon: 'year' | 'quarter' | 'month' | 'week' | 'none';
   title: string;
   description: string | null;

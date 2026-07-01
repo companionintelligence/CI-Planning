@@ -30,7 +30,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
 | 2 | **Time Block** | A named, tagged span of time. | Scheduled (was *Plan*) · Someday (was *Concept*) · Saved (was *Plan-Block/Template*) *(states)*; task · meeting · focus · break · buffer · container *(kinds, hidden)* |
 | 3 | **Routine** | A reusable bundle of tasks. (internal: `patterns`) | Ritual *(flavor, flagged off)*; surfaces Habit-subtype tasks |
 | 4 | **Tag** | A cross-cutting label. | Concept-Tag (= tag + default duration); top-level / second-level *(levels)* |
-| 9 | **Objective** | A hierarchical life goal — *Goal* at depth 0, *Project* at depth 1, *Milestone* at depth 2+. (internal: `objectives` + `objective_tasks`) | Level is server-derived from tree depth; progress is `NULL` when no tasks/children — a rot signal. |
+| 9 | **Objective** | A hierarchical life goal — *Goal* › *Project* › *Objective* (the task-bearing leaf). (internal: `objectives` + `objective_tasks`) | Level is server-derived from tree **height** (a leaf that holds tasks = *Objective*; a node of Objectives = *Project*; a node of Projects = *Goal*). Tasks link only to leaf Objectives; a task that gains a subtask is auto-promoted into its own leaf Objective. Progress is `NULL` when no tasks/children — a rot signal. |
 
 **Surfaces** (places you work):
 
