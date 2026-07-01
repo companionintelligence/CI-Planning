@@ -46,7 +46,10 @@ export function syncRouter() {
       for (const op of ops) {
         try {
           const result = applyOp(sqlite, op, ownerId);
-          const eventName = op.entity === 'task' ? 'task:updated' : 'block:updated';
+          // An objective_task link change surfaces as an objective update (the
+          // client re-derives the tree from the objective's links).
+          const eventEntity = op.entity === 'objective_task' ? 'objective' : op.entity;
+          const eventName = `${eventEntity}:updated`;
           const payload = { id: op.entityId, version: result.version, ...result.applied };
           // logSyncEvent is inside the transaction — it shares the same connection
           // and therefore the same tx; a rollback would also roll back the log row.
