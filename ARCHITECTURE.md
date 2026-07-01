@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-01 · migration head `0086`
+**Status:** Living document · last updated 2026-07-01 · migration head `0088`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,7 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → N, migration head 0086):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration). Latest: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, and block-template application (0085–0086).
+**Shipped phases (A → N, migration head 0088):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration). Latest: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, and block-template application (0085–0086); objectives added to the multi-device sync layer (0087); and the FOCUS card — linked today/weekly focus, two-way completion, and a Today's Brief pop-up (Phase O · O0, 0088).
 
 ---
 
@@ -49,7 +49,7 @@ graph TB
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>12 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0086 on boot"]
+            Migrate["Migration runner<br/>0001–0088 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -99,7 +99,7 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0086_objective_source_task
+│       │   ├── migrations/   0001_baseline → 0088_reflections_source
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
@@ -175,8 +175,8 @@ erDiagram
 | `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at callback | 0058 |
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` | 0060 |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay | 0077 |
-| `reflections` | Today goal + up to 3 weekly goals per ISO week | 0080 |
-| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes | 0081, 0085, 0086 |
+| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`) | 0080, 0088 |
+| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync | 0081, 0085, 0086, 0087 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio) | 0083 |
 | `plan_outcomes` | Per-day planned vs completed block counts | 0083 |
@@ -253,7 +253,7 @@ sequenceDiagram
 
 | View | Route | Key components |
 |---|---|---|
-| **Today** | `/` | Morning Briefing · DayGoals (today goal + weekly goals) · PLANNER (8h/expand, drag-reorder) · Flight-plan staging · ElementWizard drawer |
+| **Today** | `/` | Morning Briefing · FOCUS card (today/weekly focus, linked or freeform; Today's Brief pop-up) · PLANNER (8h/expand, drag-reorder) · Flight-plan staging · ElementWizard drawer |
 | **Calendar** | `/calendar` | Day / week / month grid · Weekly Review panel (week toggle) |
 | **Inbox** | `/inbox` | `possible_tasks` review queue — promote (`P`) / dismiss (`D`) / merge |
 | **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies |
@@ -338,7 +338,7 @@ flowchart TD
 
 ## 12. Multi-device sync (Phase L)
 
-**Two-clock merge strategy:** every mutating route increments a monotonic `version` counter and records a `field_ts` (per-field timestamp) alongside the updated row. A `sync_events` append-only log backs `Last-Event-ID` SSE catch-up.
+**Two-clock merge strategy:** every mutating route increments a monotonic `version` counter and records a `field_ts` (per-field timestamp) alongside the updated row. A `sync_events` append-only log backs `Last-Event-ID` SSE catch-up. Synced entities: **tasks, time blocks, objectives, and objective↔task links** (objectives joined the allowlist in 0087; links merge via an `unlink` tombstone so a removal round-trips under field-LWW).
 
 ```mermaid
 sequenceDiagram
@@ -353,7 +353,7 @@ sequenceDiagram
     Server-)All: SSE broadcast (other devices catch up via Last-Event-ID)
 ```
 
-**Monotonic completions:** a concurrent edit on another device can never un-complete a task — the `done_at` field is monotonically forward-only in the merge.
+**Monotonic completions:** a concurrent edit on another device can never un-complete a task — the `done_at` field is monotonically forward-only in the merge. The same guard pins task **placement**: a stale offline op carrying `status:'open'` can't revert a server-side `scheduled` (mirrors the `done` pin), so placement isn't lost across devices.
 
 **Conflict surface:** a genuine conflict (two devices edited the same field in the same version window) shows a persistent banner — not a toast — so the user can review.
 

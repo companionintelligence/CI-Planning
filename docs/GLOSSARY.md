@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-06-29 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9). The single source of truth for user-facing
+> **Status:** canonical, 2026-07-01 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9; Phase O · O0 renames the Today "Goals" card → **FOCUS** with source-linked focus (0088); Objectives joined the multi-device sync layer (0087) — no new nouns). The single source of truth for user-facing
 > nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -47,9 +47,12 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   **Setting** (managed under Settings → MCP connections). Connecting Google adds no new
   glossary entity; its data surfaces as existing nouns (calendar events → **Time Block**
   *meeting* mirrors; extracted action items → **Inbox** items).
-- **Today Goal / Weekly Goals:** **not nouns** — these are named intention slots in the Today
-  cockpit and Weekly Review surface (internal: `reflections` table, `kind` = `today_goal` /
-  `weekly_goal`). They are a feature of the **Planner** surface tied to an Objective, not
+- **Today Focus / Weekly Goals (the FOCUS card):** **not nouns** — named focus slots in the
+  Today cockpit's **FOCUS** card (renamed from "Goals") and the Weekly Review surface
+  (internal: `reflections` table, `kind` = `today_goal` / `weekly_goal`). Each slot may
+  **link** to a Task (today) or an Objective (weekly) via `source_kind`/`source_ref`, or hold
+  freeform text (`source_kind='manual'`) — a reference, not ownership; completing a linked task
+  auto-checks its focus. They are a feature of the **Planner** surface tied to an Objective, not
   a standalone entity with its own CRUD lifecycle.
 - **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each pattern-tag has
   0–N time ranges per day type. Pattern-tag-less tasks fall back to the general `workday_start`/
