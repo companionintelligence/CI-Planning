@@ -302,6 +302,8 @@ export const api = {
       return request<DaySummary>('GET', `/summary${q}`);
     },
     refresh: (date: string) => request<DaySummary>('GET', `/summary?date=${date}&refresh=1`),
+    // Phase O · O0 — Today's Brief top-tasks list (non-habit, non-routine, day-ranked).
+    topTasks: (date: string) => request<{ tasks: TopTask[] }>('GET', `/summary/top-tasks?date=${date}`),
   },
 
   review: {
@@ -650,7 +652,7 @@ export interface Integrations {
 /** One field-scoped mutation to apply on the server. */
 export interface SyncOp {
   opId: string;
-  entity: 'task' | 'block';
+  entity: 'task' | 'block' | 'objective' | 'objective_task';
   entityId: string;
   fields: Record<string, unknown>;
   baseVersion: number;
@@ -709,6 +711,9 @@ export interface ReflectionGoal {
   category_id: string | null;
   color_token: string | null;
   done_at: string | null;
+  // Phase O · O0 — optional link to the work this focus references.
+  source_kind: 'manual' | 'task' | 'objective';
+  source_ref: string | null;
 }
 
 export interface WeeklyGoal extends ReflectionGoal {
@@ -723,6 +728,19 @@ export interface ReflectionsResponse {
 export interface ReflectionWrite {
   body: string;
   category_id?: string | null;
+  // Phase O · O0 — link a focus to a task ('task') or objective ('objective').
+  source_kind?: 'manual' | 'task' | 'objective';
+  source_ref?: string | null;
+}
+
+// ── Phase O · O0: Today's Brief top-tasks row ─────────────────────────────────
+export interface TopTask {
+  id: string;
+  title: string;
+  status: string;
+  priority: number;
+  planned: boolean;
+  done: boolean;
 }
 
 // ── Phase N1: Objectives ───────────────────────────────────────────────────────
@@ -755,6 +773,7 @@ export interface Objective {
   next_action: ObjectiveNextAction | null;
   effective_target: string | null;
   pace_expected: number | null;
+  has_tasks: boolean;
   children: Objective[];
 }
 

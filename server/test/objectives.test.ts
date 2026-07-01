@@ -132,6 +132,22 @@ describe('GET /api/objectives', () => {
     expect(res.body.objectives[0].effective_target).toBe('2027-06-30');
   });
 
+  it('marks task-bearing objectives has_tasks=true and empty nodes false', async () => {
+    const withTasks = insertObjective({ title: 'Has a task' });
+    const empty = insertObjective({ title: 'Empty leaf' });
+    const t = insertTask('A task');
+    linkTask(withTasks, t);
+
+    const res = await api(srv.url, '/api/objectives');
+    const byId = (id: string) => res.body.objectives.find((o: any) => o.id === id);
+    const taskBearing = byId(withTasks);
+    const emptyNode = byId(empty);
+    expect(taskBearing).toBeDefined();
+    expect(emptyNode).toBeDefined();
+    expect(taskBearing.has_tasks).toBe(true);
+    expect(emptyNode.has_tasks).toBe(false);
+  });
+
   it('owner isolation — does not return objectives for another owner', async () => {
     insertObjective({ title: 'Mine' });
     // Attempting to insert for a nonexistent owner_id should fail at FK.
@@ -323,8 +339,10 @@ describe('DELETE /api/objectives/:id/tasks/:taskId', () => {
     linkTask(oId, tId);
     const res = await api(srv.url, `/api/objectives/${oId}/tasks/${tId}`, { method: 'DELETE' });
     expect(res.status).toBe(200);
-    const count = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objective_tasks WHERE objective_id = ? AND task_id = ?`).get(oId, tId) as { n: number }).n;
-    expect(count).toBe(0);
+    // Unlink tombstones the join row (linked=0) rather than deleting it, so the
+    // change round-trips through the Phase L sync layer. No ACTIVE link remains.
+    const active = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objective_tasks WHERE objective_id = ? AND task_id = ? AND linked = 1`).get(oId, tId) as { n: number }).n;
+    expect(active).toBe(0);
   });
 
   it('idempotent — unlinking a task that was not linked returns 200', async () => {

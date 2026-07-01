@@ -2,7 +2,7 @@ import { createSignal } from 'solid-js';
 
 export interface ConflictRecord {
   id: string;
-  entity: 'task' | 'block';
+  entity: 'task' | 'block' | 'objective' | 'objective_task';
   entityId: string;
   entityTitle: string;
   fields: string[];
