@@ -173,6 +173,10 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   planningMode: text('planning_mode').default('basic'), // 'basic' (deterministic deadline→priority sort) | 'smart' (§A0 LLM loop). Also activated implicitly when trustMode='hands_off'.
   timezone: text('timezone'), // IANA zone (e.g. America/Los_Angeles); workday hours are wall-clock here
   planningHorizonDays: integer('planning_horizon_days').default(7), // "today set" lookahead for auto-scheduling
+  // Phase P (0091): how many days ahead (from today, inclusive) the lazy recurrence
+  // engines materialize repeats. Bounds far-future auto-fill. DISTINCT from
+  // planningHorizonDays (the auto-scheduler window). Settings offers {7,15,30,60,90,180}.
+  recurrenceHorizonDays: integer('recurrence_horizon_days').default(7),
   // Time-Block container duration bounds (0017). Distinct from the Auto engine's
   // focus-session/break knobs above.
   maxTimeBlockMinutes: integer('max_time_block_minutes').default(240),

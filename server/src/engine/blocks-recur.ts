@@ -14,8 +14,8 @@
  * creates appears the moment its day is next read, like recurring Routines).
  */
 import { sqlite } from '../db/index.js';
-import { serverTimezone, zonedWallTimeToUTC, utcToZonedWallTime } from '../lib/tz.js';
-import { localISODate } from '../lib/dates.js';
+import { serverTimezone, zonedWallTimeToUTC, utcToZonedWallTime, localDateInTZ } from '../lib/tz.js';
+import { addDays } from '../lib/dates.js';
 import { occurrencesBetween } from './recurrence.js';
 import { localDaysInRange } from './patterns-place.js';
 
@@ -72,11 +72,18 @@ export function excludeBlockOccurrence(templateId: string, date: string): void {
  * intersecting [fromUtcISO, toUtcISO]. Returns how many instance rows were created.
  */
 export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string, toUtcISO: string): { blocksCreated: number } {
-  const tz =
-    (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)
-      ?.timezone || serverTimezone();
-  const today = localISODate();
-  const days = localDaysInRange(fromUtcISO, toUtcISO, tz).filter((d) => d >= today); // no backfill
+  const prefsRow = sqlite
+    .prepare(`SELECT timezone, recurrence_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { timezone: string | null; recurrence_horizon_days: number | null } | undefined;
+  const tz = prefsRow?.timezone || serverTimezone();
+  // "Today" in the OWNER's timezone (matches the prefs-tz day set from
+  // localDaysInRange); server-local would misplace the boundary when TZ differs.
+  const today = localDateInTZ(new Date().toISOString(), tz);
+  // Phase P (0091): materialize at most `recurrence_horizon_days` days from today
+  // (inclusive) — same clamp as ensurePatternsForRange, so both engines agree.
+  const horizonDays = prefsRow?.recurrence_horizon_days ?? 7;
+  const horizonEnd = addDays(today, horizonDays - 1);
+  const days = localDaysInRange(fromUtcISO, toUtcISO, tz).filter((d) => d >= today && d <= horizonEnd); // no backfill / no far-future
   if (days.length === 0) return { blocksCreated: 0 };
   const wanted = new Set(days);
   const fromDay = days[0];

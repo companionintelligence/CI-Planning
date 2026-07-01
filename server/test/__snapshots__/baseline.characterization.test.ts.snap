@@ -1139,6 +1139,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "trust_mode",
       "default_time_block_minutes",
       "enable_routines",
+      "recurrence_horizon_days",
     ],
     "table": "scheduling_prefs",
   },

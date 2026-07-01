@@ -72,6 +72,7 @@ export function resetDb(): void {
       max_focus_block_minutes = 90,
       min_break_minutes = 10,
       planning_horizon_days = 7,
+      recurrence_horizon_days = 7,
       recall_keeps_pattern = 0,
       day_theme = NULL,
       planning_mode = 'basic',
