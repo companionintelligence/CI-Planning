@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show } from 'solid-js';
+import { createResource, createSignal, For, Show, type JSX } from 'solid-js';
 import { CalendarCog, ChevronDown, ChevronRight } from 'lucide-solid';
 import { patternBlocks, refetchPatternBlocks, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
@@ -12,7 +12,7 @@ import { SchedulePatternEditor } from './SchedulePatternEditor.js';
  * The resolve fetch is keyed on the shared patternBlocks store signal so it refreshes
  * whenever a day-type mutation calls refetchPatternBlocks() (assign/clear/window-edit).
  */
-export function DayTypeControl(props: { date: string }) {
+export function DayTypeControl(props: { date: string; trailing?: JSX.Element }) {
   const [resolved] = createResource(
     () => [props.date, patternBlocks()] as const,
     ([d]) => api.dayTypes.resolve(d),
@@ -48,14 +48,19 @@ export function DayTypeControl(props: { date: string }) {
         <Show when={isOverride()}>
           <span class="text-[10px] rounded-full border border-primary/40 text-primary px-1.5 py-0.5">override</span>
         </Show>
+        {/* Edit windows sits immediately right of the select (LEFT group, T-SCHED-1). */}
         <button
           type="button"
-          class="ml-auto text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+          class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
           onClick={() => setOpen((v) => !v)}
         >
           <Show when={open()} fallback={<ChevronRight size={13} />}><ChevronDown size={13} /></Show>
           Edit windows
         </button>
+        {/* Phase O · O3 — optional right-aligned trailing content (the day-stars tally). */}
+        <Show when={props.trailing}>
+          <div class="ml-auto">{props.trailing}</div>
+        </Show>
       </div>
       <Show when={open() && currentKey()}>
         <div class="rounded-lg border border-border bg-card p-3">

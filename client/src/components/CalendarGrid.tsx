@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
-import { Lock, NotebookPen } from 'lucide-solid';
-import type { Block } from '../lib/api.js';
+import { Lock, NotebookPen, Star } from 'lucide-solid';
+import type { Block, DayStar } from '../lib/api.js';
+import { isPerfectDay, pipCount, STAR_GOLD } from '../lib/stars.js';
 import {
   PX_PER_MIN,
   DAY_HEIGHT_PX,
@@ -294,6 +295,8 @@ interface Props {
   notedDays?: () => Set<string>;
   /** Click a date's note dot → open that day's note. */
   onOpenNote?: (day: string) => void;
+  /** Phase O · O3 — per-date star tally (month view heatmap). date → DayStar. */
+  starsByDay?: () => Record<string, DayStar>;
 }
 
 export function CalendarGrid(props: Props) {
@@ -432,6 +435,9 @@ export function CalendarGrid(props: Props) {
               (props.blocksByDay()[day] ?? []).slice().sort((a, b) => a.start_at.localeCompare(b.start_at));
             const inMonth = () => day.slice(0, 7) === anchorMonth();
             const isToday = () => day === today();
+            // Phase O · O3 — the star heatmap for this cell.
+            const stars = () => props.starsByDay?.()[day];
+            const perfect = () => { const s = stars(); return !!s && isPerfectDay(s.total); };
             return (
               <div
                 class="min-h-[6rem] p-1.5 border-l border-t border-surface-700/40 first:border-l-0"
@@ -440,6 +446,8 @@ export function CalendarGrid(props: Props) {
                   'border-t-0': i() < 7,
                   'cursor-pointer': !!props.onCreateAt,
                 }}
+                // Perfect day (5/5): tint the whole cell gold — the heatmap payoff.
+                style={perfect() ? { 'background-color': `${STAR_GOLD}1a`, 'border-color': `${STAR_GOLD}66` } : undefined}
                 title={props.onCreateAt ? 'Click to add' : undefined}
                 onClick={() => props.onCreateAt?.(day, '09:00')}
               >
@@ -455,6 +463,25 @@ export function CalendarGrid(props: Props) {
                     {dayLabel(day, { day: 'numeric' })}
                   </span>
                   <div class="flex items-center gap-1">
+                    {/* Star heatmap: a perfect day collapses to one glowing star; else up to 5 gold pips. */}
+                    <Show
+                      when={stars() && stars()!.total > 0}
+                    >
+                      <Show
+                        when={perfect()}
+                        fallback={
+                          <span class="flex items-center gap-[1px]" title={`${stars()!.total} of 5 stars`}>
+                            <For each={Array.from({ length: pipCount(stars()!.total) })}>
+                              {() => <span class="w-1 h-1 rounded-full" style={{ 'background-color': STAR_GOLD }} />}
+                            </For>
+                          </span>
+                        }
+                      >
+                        <span title="Perfect day — 5 of 5 stars" class="drop-shadow-[0_0_4px_rgba(244,211,94,0.8)]">
+                          <Star size={12} color={STAR_GOLD} fill={STAR_GOLD} />
+                        </span>
+                      </Show>
+                    </Show>
                     <Show when={props.notedDays?.().has(day)}>
                       <button
                         class="text-slate-400 hover:text-accent-light transition-colors"
