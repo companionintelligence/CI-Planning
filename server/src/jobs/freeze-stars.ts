@@ -1,7 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
-import { serverTimezone } from '../lib/tz.js';
-import { localISODate } from '../lib/dates.js';
+import { serverTimezone, localDateInTZ } from '../lib/tz.js';
 import { computeStars } from '../engine/stars.js';
 
 export interface FreezeResult {
@@ -12,15 +11,19 @@ export interface FreezeResult {
 /**
  * Phase O · O2 — nightly star freeze.
  *
- * For the day that just ended (yesterday in the owner's local tz), compute the
- * five stars live and snapshot them into day_stars. Idempotent
- * (ON CONFLICT DO UPDATE) so a re-run overwrites with the same value; once the
- * day is frozen, GET /api/stars serves this row instead of recomputing, so a
- * later edit to a past task/note can't change the score.
+ * For the day that just ended (yesterday in the OWNER's local tz), compute the
+ * five stars live and snapshot them into day_stars. The frozen day is derived
+ * from the owner timezone (not the server clock) so it matches the day boundary
+ * computeStars uses (utcDayBounds(date, tz)); on a UTC server with a US/Pacific
+ * owner the 00:20 cron would otherwise freeze a day ~7h before it ends.
  *
- * `forDate`/`today` are injectable for deterministic tests (no Date.now bomb).
+ * First-freeze-wins: if a day_stars row already exists for (owner, date), this
+ * is a no-op that returns the existing total. That makes the frozen score
+ * immutable even against a manual same-day POST /api/jobs/:id/run after an edit.
+ *
+ * `forDate`/`nowISO` are injectable for deterministic tests (no Date.now bomb).
  */
-export function freezeStars(forDate?: string, today?: string): FreezeResult {
+export function freezeStars(forDate?: string, nowISO?: string): FreezeResult {
   const owner = currentOwnerId();
 
   const tzRow = sqlite
@@ -28,7 +31,8 @@ export function freezeStars(forDate?: string, today?: string): FreezeResult {
     .get(owner) as { timezone: string | null } | undefined;
   const tz = tzRow?.timezone || serverTimezone();
 
-  const todayStr = today ?? localISODate();
+  // The owner-tz "today" of the given instant, then yesterday from it.
+  const todayStr = localDateInTZ(nowISO ?? new Date().toISOString(), tz);
   const date = forDate ?? (() => {
     // yesterday in local time (noon-UTC pivot keeps DST arithmetic safe)
     const d = new Date(todayStr + 'T12:00:00Z');
@@ -36,22 +40,20 @@ export function freezeStars(forDate?: string, today?: string): FreezeResult {
     return d.toISOString().slice(0, 10);
   })();
 
+  // First-freeze-wins: never overwrite an already-frozen day.
+  const existing = sqlite
+    .prepare('SELECT total FROM day_stars WHERE owner_id = ? AND date = ?')
+    .get(owner, date) as { total: number } | undefined;
+  if (existing) return { date, total: existing.total };
+
   const stars = computeStars(owner, date);
-  const frozenAt = new Date().toISOString();
+  const frozenAt = nowISO ?? new Date().toISOString();
 
   sqlite
     .prepare(
       `INSERT INTO day_stars
          (owner_id, date, star_objective, star_habits, star_tasks, star_bonus, star_note, total, frozen_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(owner_id, date) DO UPDATE SET
-         star_objective = excluded.star_objective,
-         star_habits    = excluded.star_habits,
-         star_tasks     = excluded.star_tasks,
-         star_bonus     = excluded.star_bonus,
-         star_note      = excluded.star_note,
-         total          = excluded.total,
-         frozen_at      = excluded.frozen_at`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       owner,
