@@ -485,6 +485,22 @@ export function tasksRouter() {
       generated = generateRecurrences();
     }
 
+    // Phase O · O0 — two-way completion: when a task a today-intention links to is
+    // completed, auto-stamp that reflection's done_at so S1 (the Intention star)
+    // lights up without a second click. A task is at most one focus, so matching by
+    // (source_kind='task', source_ref) is exact — no need to reconstruct the day
+    // from a completion timestamp. COALESCE preserves an already-set done_at.
+    if (task.status === 'done') {
+      const now = new Date().toISOString();
+      sqlite
+        .prepare(
+          `UPDATE reflections SET done_at = COALESCE(done_at, ?), updated_at = ?
+             WHERE owner_id = ? AND kind = 'today_goal' AND position = 0
+               AND source_kind = 'task' AND source_ref = ?`,
+        )
+        .run(now, now, currentOwnerId(), targetId);
+    }
+
     const currentTags = taskTagNames(targetId);
     const out = {
       ...taskToApi(task),

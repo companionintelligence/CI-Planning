@@ -20,9 +20,10 @@ const NEXT_WEEK_KEY = '2026-W26';
 function reflectionRows(): {
   owner_id: string; kind: string; period_key: string; position: number;
   body: string; category_id: string | null; done_at: string | null;
+  source_kind: string; source_ref: string | null;
 }[] {
   return sqlite
-    .prepare(`SELECT owner_id, kind, period_key, position, body, category_id, done_at FROM reflections ORDER BY kind, period_key, position`)
+    .prepare(`SELECT owner_id, kind, period_key, position, body, category_id, done_at, source_kind, source_ref FROM reflections ORDER BY kind, period_key, position`)
     .all() as ReturnType<typeof reflectionRows>;
 }
 
@@ -329,5 +330,160 @@ describe('DELETE /api/reflections/:kind/:position', () => {
   it('422 when period_key query param is missing', async () => {
     const res = await api(srv.url, '/api/reflections/today_goal/0', { method: 'DELETE' });
     expect(res.status).toBe(422);
+  });
+});
+
+// ── Phase O · O0 — linked focus (source_kind / source_ref) ─────────────────────
+
+describe('O0 — reflection source links', () => {
+  const putToday = (body: Record<string, unknown>) =>
+    api(srv.url, '/api/reflections/today', { method: 'PUT', json: body });
+  const putWeekly = (position: number, body: Record<string, unknown>) =>
+    api(srv.url, `/api/reflections/weekly/${position}`, { method: 'PUT', json: body });
+
+  function makeTask(title: string, status = 'open'): string {
+    return (sqlite
+      .prepare(`INSERT INTO tasks (id, title, status, owner_id) VALUES (uuid7(), ?, ?, ?) RETURNING id`)
+      .get(title, status, SYSTEM_OWNER) as { id: string }).id;
+  }
+  function makeObjective(title: string): string {
+    const now = new Date().toISOString();
+    return (sqlite
+      .prepare(`INSERT INTO objectives (id, owner_id, title, level, created_at, updated_at) VALUES (uuid7(), ?, ?, 'objective', ?, ?) RETURNING id`)
+      .get(SYSTEM_OWNER, title, now, now) as { id: string }).id;
+  }
+
+  it('today upsert accepts + GET returns source_kind=task + ref', async () => {
+    const taskId = makeTask('Ship O0');
+    const res = await putToday({ period_key: DAY, body: 'Ship O0', source_kind: 'task', source_ref: taskId });
+    expect(res.status).toBe(200);
+
+    const row = reflectionRows()[0];
+    expect(row).toMatchObject({ source_kind: 'task', source_ref: taskId });
+
+    const get = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(get.body.today).toMatchObject({ source_kind: 'task', source_ref: taskId });
+  });
+
+  it('weekly upsert accepts + GET returns source_kind=objective + ref (any level linkable)', async () => {
+    const objId = makeObjective('Health goal');
+    const res = await putWeekly(0, { period_key: WEEK_KEY, body: 'Get healthy', source_kind: 'objective', source_ref: objId });
+    expect(res.status).toBe(200);
+    const get = await api(srv.url, `/api/reflections?period=${DAY}`);
+    expect(get.body.weekly[0]).toMatchObject({ source_kind: 'objective', source_ref: objId });
+  });
+
+  it('freeform save defaults to manual with a null ref — creates no task or objective', async () => {
+    await putToday({ period_key: DAY, body: 'Just a thought' });
+    const row = reflectionRows()[0];
+    expect(row).toMatchObject({ source_kind: 'manual', source_ref: null });
+    expect((sqlite.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare('SELECT COUNT(*) AS n FROM objectives').get() as { n: number }).n).toBe(0);
+  });
+
+  it('a task/objective kind with no ref collapses to manual', async () => {
+    await putToday({ period_key: DAY, body: 'Dangling', source_kind: 'task', source_ref: null });
+    expect(reflectionRows()[0]).toMatchObject({ source_kind: 'manual', source_ref: null });
+  });
+
+  it('an unknown source_kind falls back to manual', async () => {
+    await putToday({ period_key: DAY, body: 'Weird', source_kind: 'nonsense', source_ref: 'x' });
+    expect(reflectionRows()[0]).toMatchObject({ source_kind: 'manual', source_ref: null });
+  });
+
+  it('empty-body save still deletes even with a source link', async () => {
+    const taskId = makeTask('Temp');
+    await putToday({ period_key: DAY, body: 'Linked', source_kind: 'task', source_ref: taskId });
+    expect(reflectionRows()).toHaveLength(1);
+    await putToday({ period_key: DAY, body: '', source_kind: 'task', source_ref: taskId });
+    expect(reflectionRows()).toHaveLength(0);
+  });
+});
+
+// ── Phase O · O0 — weekly done-toggle ──────────────────────────────────────────
+
+describe('O0 — weekly done-toggle', () => {
+  function seedWeekly(pos: number, body: string) {
+    const now = new Date().toISOString();
+    sqlite.prepare(
+      `INSERT INTO reflections (owner_id, kind, period_key, position, body, created_at, updated_at)
+       VALUES (?, 'weekly_goal', ?, ?, ?, ?, ?)`
+    ).run(SYSTEM_OWNER, WEEK_KEY, pos, body, now, now);
+  }
+
+  it('sets and clears done_at at each position 0–2', async () => {
+    for (const pos of [0, 1, 2]) {
+      seedWeekly(pos, `goal ${pos}`);
+      const set = await api(srv.url, `/api/reflections/weekly_goal/${pos}/done`, {
+        method: 'POST', json: { period_key: WEEK_KEY, done: true },
+      });
+      expect(set.status).toBe(200);
+      const clear = await api(srv.url, `/api/reflections/weekly_goal/${pos}/done`, {
+        method: 'POST', json: { period_key: WEEK_KEY, done: false },
+      });
+      expect(clear.status).toBe(200);
+    }
+    expect(reflectionRows().every((r) => r.done_at === null)).toBe(true);
+  });
+
+  it('422 at position 3 (out of range for weekly)', async () => {
+    const res = await api(srv.url, '/api/reflections/weekly_goal/3/done', {
+      method: 'POST', json: { period_key: WEEK_KEY, done: true },
+    });
+    expect(res.status).toBe(422);
+  });
+});
+
+// ── Phase O · O0 — two-way completion (task → intention done_at) ────────────────
+
+describe('O0 — two-way completion', () => {
+  function makeTask(title: string): string {
+    return (sqlite
+      .prepare(`INSERT INTO tasks (id, title, status, owner_id) VALUES (uuid7(), ?, 'open', ?) RETURNING id`)
+      .get(title, SYSTEM_OWNER) as { id: string }).id;
+  }
+  function seedToday(body: string, sourceKind: string, sourceRef: string | null) {
+    const now = new Date().toISOString();
+    sqlite.prepare(
+      `INSERT INTO reflections (owner_id, kind, period_key, position, body, source_kind, source_ref, created_at, updated_at)
+       VALUES (?, 'today_goal', ?, 0, ?, ?, ?, ?, ?)`
+    ).run(SYSTEM_OWNER, DAY, body, sourceKind, sourceRef, now, now);
+  }
+
+  it('completing a linked task auto-stamps the today intention done_at', async () => {
+    const taskId = makeTask('The one thing');
+    seedToday('The one thing', 'task', taskId);
+
+    const res = await api(srv.url, `/api/tasks/${taskId}`, {
+      method: 'PATCH', json: { completed: true, completed_at: `${DAY}T12:00:00.000Z` },
+    });
+    expect(res.status).toBe(200);
+
+    const row = reflectionRows().find((r) => r.kind === 'today_goal')!;
+    expect(row.done_at).not.toBeNull();
+  });
+
+  it('completing an unlinked task does NOT stamp the intention', async () => {
+    const linked = makeTask('Linked');
+    const other = makeTask('Unrelated');
+    seedToday('Linked', 'task', linked);
+
+    await api(srv.url, `/api/tasks/${other}`, {
+      method: 'PATCH', json: { completed: true, completed_at: `${DAY}T12:00:00.000Z` },
+    });
+
+    const row = reflectionRows().find((r) => r.kind === 'today_goal')!;
+    expect(row.done_at).toBeNull();
+  });
+
+  it('a manual (freeform) intention is never auto-stamped by any completion', async () => {
+    const taskId = makeTask('Some task');
+    seedToday('Freeform focus', 'manual', null);
+
+    await api(srv.url, `/api/tasks/${taskId}`, {
+      method: 'PATCH', json: { completed: true, completed_at: `${DAY}T12:00:00.000Z` },
+    });
+
+    expect(reflectionRows().find((r) => r.kind === 'today_goal')!.done_at).toBeNull();
   });
 });
