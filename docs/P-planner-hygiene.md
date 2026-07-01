@@ -1,7 +1,7 @@
 # P — Planner hygiene: recurrence horizon + Clear Date Range (implementation spec + ticket board)
 
-**Status:** Spec'd · not started · **`main` migration head `0086`.**
-**Depends on / coordinates with:** the two lazy recurrence engines shipped by PR #181 (`enable_routines` [0073](../server/src/db/migrations/0073_enable_routines.ts), `pattern_day_optouts` [0074](../server/src/db/migrations/0074_pattern_day_optouts.ts), block `recurrence_exdates` [0075](../server/src/db/migrations/0075_block_recurrence_exdates.ts)); **Phase M** (`daily_plan`); **Phase N** follow-ups which already occupy `0085`/`0086` on `main`, so this phase's migration is the next free number after `main` head — provisionally **`0087`**. ⚠ **Concurrent branches (Phase O lanes) are also claiming `0087`+; treat the number as provisional and renumber to the next free slot at merge time** (idempotent PRAGMA-guarded, so the number is cosmetic). The one-off cleanup script [clear-planner-from.ts](../server/src/scripts/clear-planner-from.ts) (PR #188) is the seed P0 extracts from. Companion to [ROADMAP.md](ROADMAP.md), [GLOSSARY.md](GLOSSARY.md), archived [design-brief-recurrence-settings.md](archive/design-brief-recurrence-settings.md).
+**Status:** Spec'd · not started · **`main` migration head `0088`.**
+**Depends on / coordinates with:** the two lazy recurrence engines shipped by PR #181 (`enable_routines` [0073](../server/src/db/migrations/0073_enable_routines.ts), `pattern_day_optouts` [0074](../server/src/db/migrations/0074_pattern_day_optouts.ts), block `recurrence_exdates` [0075](../server/src/db/migrations/0075_block_recurrence_exdates.ts)); **Phase M** (`daily_plan`); **Phase N** follow-ups which occupy `0085`/`0086`. **`0087` (FU2B objective-sync) and `0088` (Phase O · O0, `reflections.source_kind`) are both merged, not provisional; Phase O further reserves `0089`/`0090` for its star engine** (see [O-gamified-stars.md](O-gamified-stars.md)) — this phase's migration is the next free number after all of that: **`0091`**. Re-verify against `server/src/db/migrations/index.ts` before branching, in case another lane has since claimed `0091`. The one-off cleanup script [clear-planner-from.ts](../server/src/scripts/clear-planner-from.ts) (PR #188) is the seed P0 extracts from. Companion to [ROADMAP.md](ROADMAP.md), [GLOSSARY.md](GLOSSARY.md), archived [design-brief-recurrence-settings.md](archive/design-brief-recurrence-settings.md).
 
 > **Why this phase.** The planner fills its far future with recurring blocks nobody asked for. `GET /api/blocks` does **lazy auto-placement on every read** via two independent engines — [patterns-place.ts](../server/src/engine/patterns-place.ts) (`ensurePatternsForRange`) and [blocks-recur.ts](../server/src/engine/blocks-recur.ts) (`ensureRecurringBlocksForRange`). Recurring generators with no end materialize instances for *any* future day the user navigates to, and deleting the instances doesn't stick (the next refetch re-creates them). PR #188 cleared the existing mess with a script; this phase adds the two missing product surfaces: **a knob that bounds how far ahead recurrence materializes (P1)** and **a first-class "clear a date range" action (P2)**, both built on one shared, tested engine (**P0**).
 
@@ -43,7 +43,7 @@
 | **T-P0-1** | `clear-range.ts` shared engine | 0 | — | — | `server/src/engine/clear-range.ts` (new) |
 | **T-P0-2** | Refactor script onto engine | 0 | T-P0-1 | — | `server/src/scripts/clear-planner-from.ts` |
 | **T-P0-3** | Engine unit tests | 0 | T-P0-1 | T-P0-2 | `server/test/clear-range.test.ts` (new) |
-| **T-P1-1** | Migration `0087` + schema + `Prefs` type | 1 | T-P0-1 (merge) | T-P2-1 | `0087_*.ts`, `migrations/index.ts`, `schema.ts`, `client/src/lib/api.ts` |
+| **T-P1-1** | Migration `0091` + schema + `Prefs` type | 1 | T-P0-1 (merge) | T-P2-1 | `0091_*.ts`, `migrations/index.ts`, `schema.ts`, `client/src/lib/api.ts` |
 | **T-P1-2** | Engine horizon clamps | 1 | T-P1-1 | T-P2-1 | `patterns-place.ts`, `blocks-recur.ts` |
 | **T-P1-3** | PATCH validation + auto-prune | 1 | T-P1-1, T-P0-1 | T-P2-1 | `server/src/routes/prefs.ts` |
 | **T-P1-4** | Settings "Recurrence duration" select | 2 | T-P1-1 | (client-serial) | `client/src/views/Settings.tsx` |
@@ -52,7 +52,7 @@
 | **T-P2-2** | Settings "Clear Date Range" card + api helper | 2 | T-P2-1, T-P1-1 | (client-serial) | `client/src/views/Settings.tsx`, `client/src/lib/api.ts` |
 | **T-P2-3** | P2 route tests | 1 | T-P2-1 | T-P1-5 | `server/test/planner-clear-route.test.ts` (new) |
 
-**Migration**: only **T-P1-1** (`0087`). P0 and P2 add none.
+**Migration**: only **T-P1-1** (`0091`). P0 and P2 add none.
 
 ---
 
@@ -143,15 +143,15 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 
 ---
 
-## T-P1-1 — Migration `0087` + schema + `Prefs` type
+## T-P1-1 — Migration `0091` + schema + `Prefs` type
 
 **Goal:** persist `recurrence_horizon_days` (default 7).
 **Files/edits:**
-- New `server/src/db/migrations/0087_recurrence_horizon.ts`: `ALTER TABLE scheduling_prefs ADD COLUMN recurrence_horizon_days INTEGER DEFAULT 7` with the PRAGMA-guard idempotency of [0073](../server/src/db/migrations/0073_enable_routines.ts). Register in [migrations/index.ts](../server/src/db/migrations/index.ts) (`import * as m0087` + append to `MIGRATIONS`).
+- New `server/src/db/migrations/0091_recurrence_horizon.ts`: `ALTER TABLE scheduling_prefs ADD COLUMN recurrence_horizon_days INTEGER DEFAULT 7` with the PRAGMA-guard idempotency of [0073](../server/src/db/migrations/0073_enable_routines.ts). Register in [migrations/index.ts](../server/src/db/migrations/index.ts) (`import * as m0091` + append to `MIGRATIONS`). **Re-check `index.ts`'s actual tail before branching** — confirm `0091` is still free; another lane may have claimed it since this doc was last reconciled.
 - [schema.ts:175](../server/src/db/schema.ts) region: add `recurrenceHorizonDays: integer('recurrence_horizon_days').default(7),` — comment: "recurrence materialization ceiling (distinct from planningHorizonDays, the auto-scheduler today-set window)."
 - [api.ts:547](../client/src/lib/api.ts) (`interface Prefs`, near the `planning_horizon_days` field at :564): add `recurrence_horizon_days?: number;`. *(Do NOT touch the `planner` helper here — that's T-P2-2, avoids the shared-file collision.)*
 
-**Expected project state after:** migration head **0087**; column exists; type-visible to client; no behavior change yet.
+**Expected project state after:** migration head **0091**; column exists; type-visible to client; no behavior change yet.
 **DoD:** [ ] migration idempotent + registered; [ ] schema + `Prefs` updated; [ ] typecheck (server+client) green.
 
 ---
@@ -243,7 +243,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult;
 ---
 
 ## Global definition of done (phase complete when)
-- [ ] Migration head **0087**; `recurrence_horizon_days` end-to-end (schema → route → engines → Settings).
+- [ ] Migration head **0091**; `recurrence_horizon_days` end-to-end (schema → route → engines → Settings).
 - [ ] One clear/suppress engine (`clear-range.ts`) behind the CLI, the prune, and the endpoint.
 - [ ] Templates never deleted; locked/manual preserved by P1 prune; horizon changes reversible.
 - [ ] All new `*.test.ts` green; `pnpm --filter server typecheck` + client build green in CI ("Typecheck + Unit + Integration").
