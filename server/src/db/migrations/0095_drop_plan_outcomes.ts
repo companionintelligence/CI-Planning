@@ -24,6 +24,9 @@ export const id = '0095_drop_plan_outcomes';
 export function up(db: Database): void {
   db.exec(`
     DROP TABLE IF EXISTS plan_outcomes;
+    UPDATE job_runs
+      SET job_id = NULL
+      WHERE job_id IN (SELECT id FROM scheduled_jobs WHERE kind = 'aggregate_plan_outcomes');
     DELETE FROM scheduled_jobs WHERE kind = 'aggregate_plan_outcomes';
   `);
 }
