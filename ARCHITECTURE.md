@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-01 · migration head `0088`
+**Status:** Living document · last updated 2026-07-01 · migration head `0091`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,7 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → N, plus Phase O · O0; migration head 0088):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration). Latest: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, and block-template application (0085–0086); objectives added to the multi-device sync layer (0087); and the FOCUS card — linked today/weekly focus, two-way completion, and a Today's Brief pop-up (Phase O · O0, 0088).
+**Shipped phases (A → P; migration head 0091):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `day_stars`, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
 
 ---
 
@@ -48,8 +48,8 @@ graph TB
             API["REST API<br/>20+ route modules"]
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
-            Cron["Croner Jobs<br/>12 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0088 on boot"]
+            Cron["Croner Jobs<br/>13 scheduled jobs"]
+            Migrate["Migration runner<br/>0001–0091 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -99,7 +99,7 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0088_reflections_source
+│       │   ├── migrations/   0001_baseline → 0091_recurrence_horizon
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
@@ -138,6 +138,7 @@ erDiagram
     OWNERS ||--o{ REMINDERS : scheduled_for
     OWNERS ||--o{ ESTIMATE_CALIBRATION : calibrated_by
     OWNERS ||--o{ PLAN_OUTCOMES : tracked_in
+    OWNERS ||--o{ DAY_STARS : scored_in
 ```
 
 ### 5.2 Key tables
@@ -162,7 +163,7 @@ erDiagram
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
 | `pattern_blocks` | Pattern-tag-scoped scheduling windows (workday/weekend) | 0037 |
 | `pattern_prefs` | Per-owner × per-pattern: auto_fill, reminder_offsets, shape, color | 0039 |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags | 0001 |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7) | 0001, 0091 |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
 | `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
 | `reminders` | Scheduled reminders — fired exactly once by the 1-min dispatcher | 0044 |
@@ -175,11 +176,12 @@ erDiagram
 | `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at callback | 0058 |
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` | 0060 |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay | 0077 |
-| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`) | 0080, 0088 |
+| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | 0080, 0088 |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync | 0081, 0085, 0086, 0087 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio) | 0083 |
 | `plan_outcomes` | Per-day planned vs completed block counts | 0083 |
+| `day_stars` | Frozen five-star day score per `(owner, date)`; today lives, past days are permanent once frozen | 0089 |
 
 ---
 
@@ -219,6 +221,7 @@ sequenceDiagram
     end
 
     Note over Cron,DB: Nightly ──────────────────────────────────
+    Cron->>DB: freeze_stars (00:20) — snapshot yesterday's five-star score
     Cron->>DB: review_day (01:00) — defer or surface missed tasks
     Cron->>DB: aggregate_plan_outcomes (01:30) — record planned vs done
     Cron->>DB: auto_schedule (02:00) — re-place tomorrow's flight-plan
@@ -246,6 +249,7 @@ sequenceDiagram
 | `prune_sync_events` | daily | Trim old `sync_events` rows beyond retention window |
 | `calibrate_estimates` | Sun 04:00 | Compute personal estimate bias ratio |
 | `advance_objectives` | Sun 04:00 | Stage tasks for active objectives into flight-plan |
+| `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `day_stars` (owner-tz day; idempotent, first-freeze-wins) |
 
 ---
 
@@ -253,15 +257,15 @@ sequenceDiagram
 
 | View | Route | Key components |
 |---|---|---|
-| **Today** | `/` | Morning Briefing · FOCUS card (today/weekly focus, linked or freeform; Today's Brief pop-up) · PLANNER (8h/expand, drag-reorder) · Flight-plan staging · ElementWizard drawer |
-| **Calendar** | `/calendar` | Day / week / month grid · Weekly Review panel (week toggle) |
+| **Today** | `/` | Day header (single-select count buckets + paged task list, day note, day-stars tally) · FOCUS card (today/weekly focus, linked or freeform; Today's Brief pop-up) · PLANNER (8h/expand, drag-reorder) · Flight-plan staging · ElementWizard drawer |
+| **Calendar** | `/calendar` | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (week toggle) |
 | **Inbox** | `/inbox` | `possible_tasks` review queue — promote (`P`) / dismiss (`D`) / merge |
 | **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies |
 | **Routines** | `/routines` | Pattern CRUD (Routine ▢ / Habit ◯); per-pattern fill + reminder config |
 | **Objectives** | `/objectives` | Tree of Goal › Project › Objective; create / edit / re-parent / link tasks |
 | **Tags** | `/tags` | Pattern-tag / intention taxonomy; weighted cloud; mute / delete |
 | **Jobs** | `/jobs` | Scheduled job registry; run any job on demand; execution log |
-| **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · export/import |
+| **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · export/import · recurrence duration · Clear Date Range |
 
 SSE drives live updates across all views — task / block / job / reminder events are broadcast owner-scoped.
 
