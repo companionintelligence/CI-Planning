@@ -52,7 +52,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   (internal: `reflections` table, `kind` = `today_goal` / `weekly_goal`). Each slot may
   **link** to a Task (today) or an Objective (weekly) via `source_kind`/`source_ref`, or hold
   freeform text (`source_kind='manual'`) — a reference, not ownership; completing a linked task
-  auto-checks its focus. They are a feature of the **Planner** surface tied to an Objective, not
+  auto-checks its focus. They are a feature of the Today cockpit / **Planner** surface, not
   a standalone entity with its own CRUD lifecycle.
 - **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each pattern-tag has
   0–N time ranges per day type. Pattern-tag-less tasks fall back to the general `workday_start`/
