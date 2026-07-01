@@ -7,6 +7,19 @@ import { isoWeekKey } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 
 const VALID_KINDS = new Set(['today_goal', 'weekly_goal']);
+const VALID_SOURCE_KINDS = new Set(['manual', 'task', 'objective']);
+
+/**
+ * Normalize the optional (source_kind, source_ref) link pair. An unknown/absent
+ * kind or a task/objective kind with no ref both collapse to the plain
+ * ('manual', null) default — the `body` is always the display source of truth.
+ */
+function normalizeSource(kind: unknown, ref: unknown): { source_kind: string; source_ref: string | null } {
+  const k = typeof kind === 'string' && VALID_SOURCE_KINDS.has(kind) ? kind : 'manual';
+  const r = typeof ref === 'string' && ref.trim() ? ref : null;
+  if (k === 'manual' || !r) return { source_kind: 'manual', source_ref: null };
+  return { source_kind: k, source_ref: r };
+}
 
 export function reflectionsRouter() {
   const router = new Router();
@@ -20,21 +33,21 @@ export function reflectionsRouter() {
 
     const todayRow = sqlite
       .prepare(
-        `SELECT r.body, r.category_id, r.done_at, cp.color_token
+        `SELECT r.body, r.category_id, r.done_at, r.source_kind, r.source_ref, cp.color_token
            FROM reflections r
            LEFT JOIN category_prefs cp ON cp.owner_id = r.owner_id AND cp.category_tag_id = r.category_id
           WHERE r.owner_id=? AND r.kind='today_goal' AND r.period_key=? AND r.position=0`,
       )
-      .get(owner, period) as { body: string; category_id: string | null; done_at: string | null; color_token: string | null } | undefined;
+      .get(owner, period) as { body: string; category_id: string | null; done_at: string | null; source_kind: string; source_ref: string | null; color_token: string | null } | undefined;
 
     const weeklyRows = sqlite
       .prepare(
-        `SELECT r.position, r.body, r.category_id, r.done_at, cp.color_token
+        `SELECT r.position, r.body, r.category_id, r.done_at, r.source_kind, r.source_ref, cp.color_token
            FROM reflections r
            LEFT JOIN category_prefs cp ON cp.owner_id = r.owner_id AND cp.category_tag_id = r.category_id
           WHERE r.owner_id=? AND r.kind='weekly_goal' AND r.period_key=? ORDER BY r.position`,
       )
-      .all(owner, weekKey) as { position: number; body: string; category_id: string | null; done_at: string | null; color_token: string | null }[];
+      .all(owner, weekKey) as { position: number; body: string; category_id: string | null; done_at: string | null; source_kind: string; source_ref: string | null; color_token: string | null }[];
 
     ctx.body = { today: todayRow ?? null, weekly: weeklyRows };
   });
@@ -43,10 +56,12 @@ export function reflectionsRouter() {
   // Upserts the single today goal. Empty body = delete.
   router.put('/api/reflections/today', (ctx) => {
     const owner = currentOwnerId();
-    const { period_key, body, category_id } = (ctx.request.body ?? {}) as {
+    const { period_key, body, category_id, source_kind, source_ref } = (ctx.request.body ?? {}) as {
       period_key?: string;
       body?: string;
       category_id?: string | null;
+      source_kind?: string;
+      source_ref?: string | null;
     };
 
     if (!period_key) {
@@ -57,6 +72,7 @@ export function reflectionsRouter() {
 
     const now = new Date().toISOString();
     const trimmed = (body ?? '').trim();
+    const src = normalizeSource(source_kind, source_ref);
 
     if (!trimmed) {
       sqlite
@@ -69,12 +85,14 @@ export function reflectionsRouter() {
     } else {
       sqlite
         .prepare(
-          `INSERT INTO reflections (owner_id, kind, period_key, position, body, category_id, created_at, updated_at)
-           VALUES (?, 'today_goal', ?, 0, ?, ?, ?, ?)
+          `INSERT INTO reflections (owner_id, kind, period_key, position, body, category_id, source_kind, source_ref, created_at, updated_at)
+           VALUES (?, 'today_goal', ?, 0, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(owner_id, kind, period_key, position) DO UPDATE SET
-             body=excluded.body, category_id=excluded.category_id, updated_at=excluded.updated_at`,
+             body=excluded.body, category_id=excluded.category_id,
+             source_kind=excluded.source_kind, source_ref=excluded.source_ref,
+             updated_at=excluded.updated_at`,
         )
-        .run(owner, period_key, trimmed, category_id ?? null, now, now);
+        .run(owner, period_key, trimmed, category_id ?? null, src.source_kind, src.source_ref, now, now);
       broadcast(owner, 'reflection:updated', { kind: 'today_goal', period_key, position: 0 });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'upsert', entity: `reflection:today:${period_key}` });
     }
@@ -94,10 +112,12 @@ export function reflectionsRouter() {
       return;
     }
 
-    const { period_key, body, category_id } = (ctx.request.body ?? {}) as {
+    const { period_key, body, category_id, source_kind, source_ref } = (ctx.request.body ?? {}) as {
       period_key?: string;
       body?: string;
       category_id?: string | null;
+      source_kind?: string;
+      source_ref?: string | null;
     };
 
     if (!period_key) {
@@ -108,6 +128,7 @@ export function reflectionsRouter() {
 
     const now = new Date().toISOString();
     const trimmed = (body ?? '').trim();
+    const src = normalizeSource(source_kind, source_ref);
 
     if (!trimmed) {
       sqlite
@@ -120,12 +141,14 @@ export function reflectionsRouter() {
     } else {
       sqlite
         .prepare(
-          `INSERT INTO reflections (owner_id, kind, period_key, position, body, category_id, created_at, updated_at)
-           VALUES (?, 'weekly_goal', ?, ?, ?, ?, ?, ?)
+          `INSERT INTO reflections (owner_id, kind, period_key, position, body, category_id, source_kind, source_ref, created_at, updated_at)
+           VALUES (?, 'weekly_goal', ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(owner_id, kind, period_key, position) DO UPDATE SET
-             body=excluded.body, category_id=excluded.category_id, updated_at=excluded.updated_at`,
+             body=excluded.body, category_id=excluded.category_id,
+             source_kind=excluded.source_kind, source_ref=excluded.source_ref,
+             updated_at=excluded.updated_at`,
         )
-        .run(owner, period_key, position, trimmed, category_id ?? null, now, now);
+        .run(owner, period_key, position, trimmed, category_id ?? null, src.source_kind, src.source_ref, now, now);
       broadcast(owner, 'reflection:updated', { kind: 'weekly_goal', period_key, position });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'upsert', entity: `reflection:weekly:${period_key}:${position}` });
     }
