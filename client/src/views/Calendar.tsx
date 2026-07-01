@@ -1,5 +1,6 @@
 import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
 import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList } from 'lucide-solid';
+import { useNavigate } from '@solidjs/router';
 import {
   visibleBlocks,
   setCalendarRange,
@@ -9,6 +10,7 @@ import {
   overlayPrio,
   setOverlayPrio,
   setElementModal,
+  setSelectedDay,
 } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
@@ -31,6 +33,7 @@ function defaultView(): ViewMode {
 }
 
 export function Calendar() {
+  const navigate = useNavigate();
   const [view, setView] = createSignal<ViewMode>(defaultView());
   const [anchor, setAnchor] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
@@ -73,6 +76,23 @@ export function Calendar() {
     }
     return map;
   });
+
+  // Phase O · O1 — dates in the visible range that have a day note (calendar dots).
+  const [notedDates] = createResource(visibleDays, async (days) => {
+    if (!days.length) return new Set<string>();
+    try {
+      const r = await api.reflections.notedDays(days[0], days[days.length - 1]);
+      return new Set(r.dates);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const notedDays = () => notedDates() ?? new Set<string>();
+
+  function openNote(day: string) {
+    setSelectedDay(day);
+    navigate('/');
+  }
 
   function shift(n: number) {
     const step = view() === 'day' ? 1 : view() === 'week' ? 7 : 0;
@@ -295,6 +315,8 @@ export function Calendar() {
           view={view()}
           days={visibleDays()}
           blocksByDay={blocksByDay}
+          notedDays={notedDays}
+          onOpenNote={openNote}
           onCreateAt={(day, hhmm) =>
             setElementModal({ open: true, mode: 'add', kind: null, prefill: { day, start: hhmm } })
           }
