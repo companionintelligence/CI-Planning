@@ -1042,6 +1042,8 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "done_at",
       "created_at",
       "updated_at",
+      "source_kind",
+      "source_ref",
     ],
     "table": "reflections",
   },
