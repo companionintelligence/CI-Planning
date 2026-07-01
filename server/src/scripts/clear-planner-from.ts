@@ -28,10 +28,19 @@ import { sqlite } from '../db/index.js';
 import { occurrencesBetween, MAX_SPAN_DAYS } from '../engine/recurrence.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { snapshot, backupDir } from '../lib/backup.js';
+import { SYSTEM_OWNER_ID } from '../lib/ids.js';
 
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
-const cutoff = args.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? '2026-07-03';
+const explicitCutoff = args.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a));
+// A hard-coded default is fine for an exploratory dry-run, but must never drive a
+// destructive --apply: the default drifts stale over time. Require the date be spelled out.
+if (APPLY && !explicitCutoff) {
+  console.error('Refusing to --apply without an explicit YYYY-MM-DD cutoff (the built-in default is dry-run only).');
+  console.error('Usage: tsx src/scripts/clear-planner-from.ts <YYYY-MM-DD> --apply');
+  process.exit(1);
+}
+const cutoff = explicitCutoff ?? '2026-07-03';
 
 /** Add `n` days to a YYYY-MM-DD string (UTC calendar math; date-only, tz-agnostic). */
 function addDays(day: string, n: number): string {
@@ -45,8 +54,11 @@ function addDays(day: string, n: number): string {
 // never backfill past days — so [cutoff, cutoff+MAX_SPAN_DAYS] is a complete probe.
 const horizonEnd = addDays(cutoff, MAX_SPAN_DAYS);
 
+// Resolve the cutoff/cap timezone from the canonical owner (consistent with other
+// maintenance scripts), not an arbitrary `LIMIT 1` row — with multiple owners that
+// would pick a nondeterministic tz and skew the cutoff UTC boundary + UNTIL instant.
 const tz =
-  (sqlite.prepare(`SELECT timezone FROM scheduling_prefs LIMIT 1`).get() as { timezone: string | null } | undefined)
+  (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(SYSTEM_OWNER_ID) as { timezone: string | null } | undefined)
     ?.timezone || serverTimezone();
 const cutoffUTC = zonedWallTimeToUTC(cutoff, '00:00', tz); // local midnight of the cutoff, in UTC
 
