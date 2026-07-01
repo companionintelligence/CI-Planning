@@ -72,7 +72,7 @@ export function advanceObjectives(
            FROM objective_tasks ot
            JOIN tasks t ON t.id = ot.task_id
            JOIN sub ON ot.objective_id = sub.id
-          WHERE t.status NOT IN ('done', 'cancelled', 'deferred', 'in_progress')
+          WHERE ot.linked = 1 AND t.status NOT IN ('done', 'cancelled', 'deferred', 'in_progress')
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`
       )

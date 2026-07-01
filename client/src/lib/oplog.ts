@@ -9,10 +9,13 @@
  * without needing a real IndexedDB implementation.
  */
 
+/** Entities that participate in the Phase L op-log / sync layer. */
+export type SyncEntity = 'task' | 'block' | 'objective' | 'objective_task';
+
 export interface Op {
   /** uuidv7 — monotonic, client-generated; doubles as the idempotency key. */
   opId: string;
-  entity: 'task' | 'block';
+  entity: SyncEntity;
   entityId: string;
   /** Snake_case, API-shape field names (only changed fields, not a snapshot). */
   fields: Record<string, unknown>;

@@ -1,8 +1,10 @@
 import type { Database } from 'better-sqlite3';
 
+export type SyncEntity = 'task' | 'block' | 'objective' | 'objective_task';
+
 export interface Op {
   opId: string;
-  entity: 'task' | 'block';
+  entity: SyncEntity;
   entityId: string;
   /** Snake_case, API-shape field names — only whitelisted fields are applied. */
   fields: Record<string, unknown>;
@@ -35,6 +37,32 @@ const BLOCK_FIELDS = new Set([
   'all_day', 'parent_block_id', 'category_id',
 ]);
 
+// `level` and `progress_cache` are server-DERIVED (height-leveling + rollups) and
+// deliberately excluded — a client can't author them, so they never sync.
+const OBJECTIVE_FIELDS = new Set([
+  'title', 'description', 'parent_id', 'horizon', 'status', 'cadence',
+  'target_date', 'category_id', 'priority', 'completed_at',
+]);
+
+// A link is an addressable versioned row (migration 0087). Only `linked` is a
+// mergeable field; `objective_id`/`task_id` are set once at create time.
+const OBJECTIVE_TASK_FIELDS = new Set(['linked']);
+
+/** Physical table + owner-scoping strategy for each sync entity. */
+const ENTITY_TABLE: Record<SyncEntity, string> = {
+  task: 'tasks',
+  block: 'time_blocks',
+  objective: 'objectives',
+  objective_task: 'objective_tasks',
+};
+
+const ENTITY_FIELDS: Record<SyncEntity, Set<string>> = {
+  task: TASK_FIELDS,
+  block: BLOCK_FIELDS,
+  objective: OBJECTIVE_FIELDS,
+  objective_task: OBJECTIVE_TASK_FIELDS,
+};
+
 function nowUTC(): string {
   return new Date().toISOString();
 }
@@ -44,12 +72,21 @@ function nowUTC(): string {
  *
  * - `status`: once 'done', a merge cannot silently revert it. Un-completing
  *   requires a deliberate op that explicitly carries the new status.
+ * - `status`: once 'scheduled' (a task holds a Planner placement), a stale
+ *   offline op carrying 'open' must not revert it — placement would be lost.
+ *   Only the scheduled→open regression is pinned; scheduled→done/cancelled/
+ *   in_progress/etc. are legitimate forward transitions and pass through. The
+ *   op still wins the LWW comparison by timestamp; this only clamps the one
+ *   value that would silently undo a placement (mirrors the 'done' pin).
  * - `completed_at`: once set, keep the EARLIEST timestamp; a concurrent edit
  *   can never null it out or replace it with a later stamp.
  */
 export function applyMonotonic(field: string, row: Record<string, unknown>, value: unknown): unknown {
   if (field === 'status' && row['status'] === 'done' && value !== 'done') {
     return 'done';
+  }
+  if (field === 'status' && row['status'] === 'scheduled' && value === 'open') {
+    return 'scheduled';
   }
   if (field === 'completed_at') {
     const existing = row['completed_at'] as string | null | undefined;
@@ -64,16 +101,27 @@ export function applyMonotonic(field: string, row: Record<string, unknown>, valu
  * called inside a `sqlite.transaction()` callback.
  */
 export function applyOp(sqlite: Database, op: Op, ownerId: string): ApplyResult {
-  const table = op.entity === 'task' ? 'tasks' : 'time_blocks';
-  const allowed = op.entity === 'task' ? TASK_FIELDS : BLOCK_FIELDS;
+  const table = ENTITY_TABLE[op.entity];
+  const allowed = ENTITY_FIELDS[op.entity];
+  if (!table || !allowed) throw Object.assign(new Error('unknown entity'), { status: 400 });
 
   const row = sqlite.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(op.entityId) as
     Record<string, unknown> | undefined;
   if (!row) throw Object.assign(new Error('not found'), { status: 404 });
 
-  // Tasks carry owner_id; blocks are scoped implicitly by session auth.
-  if (op.entity === 'task' && row['owner_id'] !== ownerId) {
+  // Owner isolation: tasks + objectives carry owner_id directly; blocks are
+  // scoped implicitly by session auth; an objective_task link is scoped through
+  // its parent objective (the join row has no owner_id of its own).
+  if ((op.entity === 'task' || op.entity === 'objective') && row['owner_id'] !== ownerId) {
     throw Object.assign(new Error('not found'), { status: 404 });
+  }
+  if (op.entity === 'objective_task') {
+    const parentOwner = sqlite
+      .prepare(`SELECT owner_id FROM objectives WHERE id = ?`)
+      .get(row['objective_id']) as { owner_id: string } | undefined;
+    if (!parentOwner || parentOwner.owner_id !== ownerId) {
+      throw Object.assign(new Error('not found'), { status: 404 });
+    }
   }
 
   const fieldTs: Record<string, string> = row['field_ts']
@@ -131,6 +179,26 @@ const BLOCK_CAMEL_TO_SNAKE: Record<string, string> = {
   recurrenceRule: 'recurrence_rule', recurrenceDtstart: 'recurrence_dtstart',
 };
 
+const OBJECTIVE_CAMEL_TO_SNAKE: Record<string, string> = {
+  title: 'title', description: 'description', parentId: 'parent_id',
+  horizon: 'horizon', status: 'status', cadence: 'cadence',
+  targetDate: 'target_date', categoryId: 'category_id', priority: 'priority',
+  completedAt: 'completed_at',
+  // server-derived meta — stamped (harmless) but not in the sync allowlist:
+  level: 'level', progressCache: 'progress_cache', lastAdvancedAt: 'last_advanced_at',
+};
+
+const OBJECTIVE_TASK_CAMEL_TO_SNAKE: Record<string, string> = {
+  linked: 'linked',
+};
+
+const CAMEL_TO_SNAKE: Record<SyncEntity, Record<string, string>> = {
+  task: TASK_CAMEL_TO_SNAKE,
+  block: BLOCK_CAMEL_TO_SNAKE,
+  objective: OBJECTIVE_CAMEL_TO_SNAKE,
+  objective_task: OBJECTIVE_TASK_CAMEL_TO_SNAKE,
+};
+
 /**
  * Stamp an online PATCH's modified fields with the server clock so that any
  * queued sync op with an older `clientTs` for those same fields loses the LWW
@@ -145,12 +213,13 @@ const BLOCK_CAMEL_TO_SNAKE: Record<string, string> = {
  */
 export function stampRow(
   sqlite: Database,
-  entity: 'task' | 'block',
+  entity: SyncEntity,
   entityId: string,
   camelFields: string[],
 ): void {
-  const table = entity === 'task' ? 'tasks' : 'time_blocks';
-  const map = entity === 'task' ? TASK_CAMEL_TO_SNAKE : BLOCK_CAMEL_TO_SNAKE;
+  const table = ENTITY_TABLE[entity];
+  const map = CAMEL_TO_SNAKE[entity];
+  if (!table || !map) return;
   const snakeFields = camelFields.map((f) => map[f]).filter(Boolean);
   if (snakeFields.length === 0) return;
 
