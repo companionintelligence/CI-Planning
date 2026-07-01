@@ -177,7 +177,7 @@ CREATE TABLE tag_prefs (
 );
 CREATE INDEX ix_tag_prefs_owner ON tag_prefs(owner_id);
 ```
-> `kind` is denormalized from `tags.kind` (avoids a join on every read); `UNIQUE(owner_id, tag_id)` prevents cross-axis collisions (a tag has one kind). **Behavioral divergence to preserve:** `category_prefs.color_token` is the source of the forward-only frozen stamp onto `time_blocks.color_token` (`routes/blocks.ts`); `pattern_prefs.color_token` has no such path. `category_prefs.default_minutes` **is** read (wizard prefill); `pattern_prefs.default_minutes` is **not** read by the server (vestigial).
+> `kind` is denormalized from `tags.kind` (avoids a join on every read); `UNIQUE(owner_id, tag_id)` prevents cross-axis collisions (a tag has one kind). **Behavioral divergence to preserve:** `category_prefs.color_token` is the source of the forward-only frozen stamp onto `time_blocks.color_token` (`routes/blocks.ts`); `pattern_prefs.color_token` has no such path. `category_prefs.default_minutes` **is** read (wizard prefill); `pattern_prefs.default_minutes` **is** read/returned by the server (see `services/pattern-prefs.ts`) but has no `time_blocks` stamping path.
 
 **Migration `0097_tag_prefs.ts`:** `CREATE` → `INSERT SELECT …,'pattern',auto_fill,reminder_offsets,icon_shape FROM pattern_prefs` + `INSERT SELECT …,'category',NULL,NULL,NULL FROM category_prefs` → recreate owner index → `DROP` both. Prefer `manual`+FK-off (§0.3).
 
