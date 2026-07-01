@@ -60,6 +60,8 @@ function setNote(body: string, date = DAY) {
   ).run(SYSTEM_OWNER, date, body, now, now);
 }
 const at = (date: string, hh = '12') => `${date}T${hh}:00:00.000Z`;
+// A full UTC instant (freezeStars' 2nd arg is now a `nowISO`, not a bare date).
+const iso = (date: string, hhmm = '00:20') => `${date}T${hhmm}:00.000Z`;
 const stars = (date = DAY) => runWithOwner(SYSTEM_OWNER, () => computeStars(SYSTEM_OWNER, date));
 
 let srv: TestServer;
@@ -129,6 +131,27 @@ describe('computeStars — S3 tasks', () => {
     plan(makeTask({ title: 'Real', status: 'done' }), 1);
     expect(stars().tasks).toBe(true);
   });
+  // FIX 1 — cancelling a planned task (soft-delete leaves the daily_plan row)
+  // must drop it from the "for the day" set so the star can still light.
+  it('cancelling a planned task removes it from the set (star still earns)', () => {
+    plan(makeTask({ title: 'A', status: 'done' }), 0);
+    plan(makeTask({ title: 'B', status: 'cancelled' }), 1); // soft-deleted, plan row survives
+    expect(stars().tasks).toBe(true);
+  });
+  it('a skipped planned recurring instance does not keep the star dark', () => {
+    plan(makeTask({ title: 'A', status: 'done' }), 0);
+    plan(makeTask({ title: 'Skipped', status: 'skipped' }), 1);
+    expect(stars().tasks).toBe(true);
+  });
+  it('a MISSED planned task is a genuine incompletion and keeps the star dark', () => {
+    plan(makeTask({ title: 'A', status: 'done' }), 0);
+    plan(makeTask({ title: 'Missed', status: 'missed' }), 1);
+    expect(stars().tasks).toBe(false);
+  });
+  it('only a cancelled planned task means no plannable task remains (empty-set)', () => {
+    plan(makeTask({ title: 'B', status: 'cancelled' }), 0);
+    expect(stars().tasks).toBe(false);
+  });
 });
 
 // ── S4 bonus (unplanned completion) ─────────────────────────────────────────────
@@ -178,6 +201,26 @@ describe('computeStars — S5 reflection', () => {
     setNote('Great day');
     expect(stars().note).toBe(true);
   });
+
+  // FIX 5 — pin S5's doneToday semantics: it counts ANY status='done' task with a
+  // completed_at in the local-day window (no habit/routine exclusion, unlike S3/S4),
+  // and requires a non-null completed_at (unlike S3's status-only rule).
+  it('a habit completion + a note earns S5 (no habit exclusion for the done-task predicate)', () => {
+    makeTask({ title: 'Habit', subtype: 'habit', status: 'done', completedAt: at(DAY), occurrenceDate: DAY });
+    setNote('Reflected');
+    expect(stars().note).toBe(true);
+  });
+  it('a routine-member completion + a note earns S5 (no routine exclusion either)', () => {
+    const t = makeRoutineMember('Routine');
+    sqlite.prepare(`UPDATE tasks SET status='done', completed_at=? WHERE id=?`).run(at(DAY), t);
+    setNote('Reflected');
+    expect(stars().note).toBe(true);
+  });
+  it('a done task with a NULL completed_at + a note does NOT earn S5', () => {
+    makeTask({ title: 'Done but untimed', status: 'done', completedAt: null });
+    setNote('Reflected');
+    expect(stars().note).toBe(false);
+  });
 });
 
 // ── total ────────────────────────────────────────────────────────────────────
@@ -201,19 +244,46 @@ describe('freezeStars — nightly snapshot', () => {
   function frozenRow(date = DAY) {
     return sqlite.prepare(`SELECT * FROM day_stars WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, date) as any;
   }
+  const setTz = (tz: string) =>
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone = ? WHERE owner_id = ?`).run(tz, SYSTEM_OWNER);
 
-  it('snapshots the day that just ended (yesterday relative to today)', () => {
+  it('snapshots the day that just ended (yesterday relative to now)', () => {
     setToday('Done goal', true);
-    const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, NEXT_DAY)); // yesterday = DAY
+    // now = a NEXT_DAY instant → yesterday = DAY.
+    const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, iso(NEXT_DAY, '00:20')));
     expect(r.date).toBe(DAY);
     const row = frozenRow();
     expect(row).toMatchObject({ star_objective: 1, total: 1 });
   });
 
+  // FIX 2 — the frozen day is derived from the OWNER timezone, not the server clock.
+  it('freezes the owner-tz day, not the server-local day (UTC server + LA owner)', () => {
+    setTz('America/Los_Angeles');
+    setToday('Goal', true, DAY);
+    // 2026-06-16T05:00Z is still 2026-06-15 22:00 in Los Angeles, so the owner-tz
+    // "today" is still 2026-06-15 (DAY) and yesterday is 2026-06-14 — NOT DAY.
+    // The 00:20-local cron fires when it's 07:20Z (2026-06-16T07:20Z) on that day.
+    const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, '2026-06-16T07:20:00.000Z'));
+    // 07:20Z on 06-16 = 00:20 local on 06-16 in LA → yesterday-local = 06-15 = DAY.
+    expect(r.date).toBe(DAY);
+    expect(frozenRow(DAY)).toMatchObject({ total: 1 });
+
+    // Sanity: a server-local (UTC) derivation would also give DAY here, so prove the
+    // divergence directly — an instant that is a DIFFERENT day in UTC vs LA.
+    // 2026-06-17T04:00Z is 2026-06-16 21:00 in LA. UTC-today=06-17 (yesterday 06-16);
+    // LA-today=06-16 (yesterday 06-15=DAY). The frozen day must be the LA one.
+    resetDb();
+    setTz('America/Los_Angeles');
+    setToday('Goal2', true, DAY);
+    const r2 = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, '2026-06-17T04:00:00.000Z'));
+    expect(r2.date).toBe(DAY);            // LA yesterday, not UTC yesterday (06-16)
+    expect(frozenRow(NEXT_DAY)).toBeUndefined();
+  });
+
   it('a later edit to a frozen past day leaves the frozen row unchanged', () => {
     // Freeze DAY with a single done goal → total 1.
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, TODAY));
+    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
     expect(frozenRow().total).toBe(1);
 
     // Later: complete an unplanned task on DAY (would be +1 live). Frozen row must not change.
@@ -222,10 +292,25 @@ describe('freezeStars — nightly snapshot', () => {
     expect(frozenRow().total).toBe(1); // frozen unchanged (no re-freeze)
   });
 
-  it('is idempotent — re-running overwrites with the same value', () => {
+  // FIX 4 — first-freeze-wins: a same-day manual re-run after an edit cannot overwrite.
+  it('re-running freeze after mutating the day leaves the frozen row unchanged', () => {
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, TODAY));
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, TODAY));
+    const first = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    expect(first.total).toBe(1);
+
+    // Owner edits DAY (adds an unplanned completion) then a manual job re-run fires.
+    makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
+    const second = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '09:00')));
+    expect(second.total).toBe(1);                 // returns the EXISTING total, no recompute
+    expect(frozenRow().total).toBe(1);            // row untouched
+    const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM day_stars WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number }).n;
+    expect(n).toBe(1);
+  });
+
+  it('is idempotent — re-running never creates a second row', () => {
+    setToday('Goal', true);
+    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
     const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM day_stars WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number };
     expect(rows.n).toBe(1);
     expect(frozenRow().total).toBe(1);
@@ -255,7 +340,7 @@ describe('GET /api/stars', () => {
   it('returns the FROZEN row over the live value', async () => {
     // Freeze DAY at total 1.
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, TODAY));
+    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
     // Change the live world so recompute would give 2.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
 

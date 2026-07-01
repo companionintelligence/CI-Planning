@@ -69,6 +69,11 @@ export function computeStars(
   const habits = habitStats.total > 0 && (habitStats.done ?? 0) === habitStats.total;
 
   // ── S3 — tasks (>=1 non-habit/non-routine planned task, all done) ────────────
+  // The `total` set is aligned with topTasksForDay (summary.ts): a planned task
+  // the owner cancels (soft-delete leaves the daily_plan row), or a skipped
+  // recurring instance, drops out of the "for the day" set entirely — so it can't
+  // pin total>done forever and lock the star dark. A `missed`/still-open planned
+  // task is a genuine incompletion and correctly keeps the star unlit.
   const planStats = sqlite
     .prepare(
       `SELECT COUNT(*) AS total,
@@ -76,6 +81,7 @@ export function computeStars(
          FROM daily_plan dp
          JOIN tasks t ON t.id = dp.task_id
         WHERE dp.owner_id = ? AND dp.date = ?
+          AND t.status NOT IN ('cancelled', 'recurring', 'skipped')
           AND COALESCE(t.subtype, 'standard') != 'habit'
           AND t.recurrence_parent_id IS NULL
           AND t.id NOT IN (SELECT task_id FROM pattern_tasks)`,
