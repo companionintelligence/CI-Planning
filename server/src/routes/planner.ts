@@ -54,15 +54,25 @@ export function plannerRouter() {
       }
     }
 
+    // `dry_run` must be an explicit boolean if present — otherwise a truthy non-bool
+    // (e.g. the string "false") would silently flip an intended apply into a preview.
+    if (body.dry_run !== undefined && typeof body.dry_run !== 'boolean') {
+      ctx.status = 400;
+      ctx.body = { error: 'dry_run must be a boolean' };
+      return;
+    }
     const owner = currentOwnerId();
-    const dryRun = !!body.dry_run;
+    const dryRun = body.dry_run === true;
 
-    // Snapshot BEFORE a real apply — this is a bulk destructive op.
+    // Snapshot BEFORE a real apply — this is a bulk destructive op. Return only the
+    // snapshot FILENAME to the client (not the absolute host path, which would leak
+    // the server's directory layout).
     let backup: string | undefined;
     if (!dryRun) {
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      backup = join(backupDir, `companion-preclear-${ts}.db`);
-      await snapshot(backup);
+      const filename = `companion-preclear-${ts}.db`;
+      await snapshot(join(backupDir, filename));
+      backup = filename;
     }
 
     const result = clearPlannerRange({

@@ -47,6 +47,9 @@ describe('POST /api/planner/clear — validation', () => {
     const r = await clear({ start: '2026-01-01', end: '2040-01-01' });
     expect(r.status).toBe(400); // engine would throw → route guards it first
   });
+  it('400 when dry_run is a non-boolean (no silent coercion)', async () => {
+    expect((await clear({ start: T2, dry_run: 'false' })).status).toBe(400);
+  });
 });
 
 describe('POST /api/planner/clear — dry run', () => {
