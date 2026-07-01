@@ -78,7 +78,7 @@ export function ObjectiveModal(props: Props) {
   function humanizeSaveError(msg: string): string {
     if (/task-bearing objective/i.test(msg)) {
       const parent = parentOptions().find((o) => o.id === parentId());
-      const name = parent ? `'${parent.title}'` : 'that objective';
+      const name = parent ? `"${parent.title}"` : 'that objective';
       return `Can't nest under ${name} because it already has tasks linked to it.`;
     }
     return msg;
