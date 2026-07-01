@@ -4,10 +4,10 @@ import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 
 /** Flatten the objectives tree into indented rows for the parent picker. */
-interface FlatObjective { id: string; title: string; level: string; depth: number }
+interface FlatObjective { id: string; title: string; level: string; depth: number; has_tasks: boolean }
 function flattenObjectives(nodes: Objective[], depth = 0, out: FlatObjective[] = []): FlatObjective[] {
   for (const n of nodes) {
-    out.push({ id: n.id, title: n.title, level: n.level, depth });
+    out.push({ id: n.id, title: n.title, level: n.level, depth, has_tasks: n.has_tasks });
     if (n.children?.length) flattenObjectives(n.children, depth + 1, out);
   }
   return out;
@@ -73,6 +73,17 @@ export function ObjectiveModal(props: Props) {
   const excluded = () => (props.objective ? subtreeIds(props.objective) : new Set<string>());
   const parentOptions = () => flattenObjectives(tree() ?? []).filter((o) => !excluded().has(o.id));
 
+  // Translate the backend's containment 422 into a human message that names the
+  // chosen parent, so the user understands why the nest was rejected.
+  function humanizeSaveError(msg: string): string {
+    if (/task-bearing objective/i.test(msg)) {
+      const parent = parentOptions().find((o) => o.id === parentId());
+      const name = parent ? `"${parent.title}"` : 'that objective';
+      return `Can't nest under ${name} because it already has tasks linked to it.`;
+    }
+    return msg;
+  }
+
   async function save() {
     if (!title().trim()) { showToast('Title is required', 'error'); return; }
     setSaving(true);
@@ -94,7 +105,7 @@ export function ObjectiveModal(props: Props) {
       props.onSaved();
       props.onClose();
     } catch (err) {
-      showToast((err as Error).message, 'error');
+      showToast(humanizeSaveError((err as Error).message), 'error');
     } finally {
       setSaving(false);
     }
@@ -142,7 +153,7 @@ export function ObjectiveModal(props: Props) {
             <select class="input text-sm" value={parentId()} onChange={(e) => setParentId(e.currentTarget.value)}>
               <option value="">None (top-level)</option>
               <For each={parentOptions()}>
-                {(o) => <option value={o.id}>{`${'  '.repeat(o.depth)}${o.title} · ${o.level}`}</option>}
+                {(o) => <option value={o.id} disabled={o.has_tasks}>{`${'  '.repeat(o.depth)}${o.title} · ${o.level}${o.has_tasks ? ' — has tasks' : ''}`}</option>}
               </For>
             </select>
           </label>
