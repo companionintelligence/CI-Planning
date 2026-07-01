@@ -13,11 +13,11 @@
 1. **The default worktree is probably STALE.** This repo has many concurrent branches; the session's default worktree can be many migrations behind `main`. Two separate audits for this very doc were run against a `0084`-era worktree and reported the wrong migration head. **Always** branch a fresh worktree from `origin/main`, then confirm the head:
    ```bash
    git fetch origin main
-   ls server/src/db/migrations/ | sort | tail -3     # must show 0091 as the highest
+   ls server/src/db/migrations/ | grep -E '^[0-9]{4}_' | sort | tail -3   # numbered files only (excludes index.ts); highest must be 0091
    ```
    If the highest is **not** `0091`, main has moved — re-derive the next free numbers and re-verify every column list in this doc against the actual schema before writing SQL.
 
-2. **Migration numbers are PINNED here as `0092`/`0093`/`0094`** on the assumption head is `0091`. If another lane merged migrations since, renumber (they're append-only; the number is cosmetic but must be unique and ascending). Register each new file in [`server/src/db/migrations/index.ts`](../server/src/db/migrations/index.ts) (`import * as mNNNN` + append to the `MIGRATIONS` array) — a file that isn't registered never runs.
+2. **Migration numbers are PINNED here as `0092`/`0093`/`0094`** on the assumption head is `0091`. If another lane merged migrations since, renumber (they're append-only; the number is cosmetic but must be unique and ascending). Register each new file in [`server/src/db/migrations/index.ts`](../server/src/db/migrations/index.ts) — match the existing ESM pattern exactly: `import * as mNNNN from './NNNN_name.js';` (note the **`.js`** extension — the imports use compiled-output paths) + append `mNNNN` to the `MIGRATIONS` array. A file that isn't registered never runs.
 
 3. **Migrations are forward-only and additive/idempotent.** Guard with `IF NOT EXISTS` / `PRAGMA table_info` existence checks (see [`0073_enable_routines.ts`](../server/src/db/migrations/0073_enable_routines.ts) for the PRAGMA-guard idiom). A data-reinterpreting migration warrants a release note.
 
@@ -148,7 +148,7 @@ export function up(db: Database): void {
 
 **Acceptance criteria:** all listed indexes present; suite + typecheck green; no schema.ts change needed (indexes aren't modeled in drizzle here).
 
-**Files:** new `server/src/db/migrations/0092_fk_indexes.ts`; edit `migrations/index.ts`; test `server/test/schema-indexes.test.ts` (new) or extend an existing migration test.
+**Files:** new `server/src/db/migrations/0092_fk_indexes.ts`; edit `server/src/db/migrations/index.ts`; test `server/test/schema-indexes.test.ts` (new) or extend an existing migration test.
 
 ---
 
@@ -175,7 +175,7 @@ export const id = '0093_flight_plan_notnull';
  * flight_plan is a LEAF table (no inbound FKs) with no extra indexes, so no
  * PRAGMA foreign_keys toggle and no index recreation are needed. Forward-only.
  *
- * NB: if any legacy row somehow has NULL owner_id, the INS ... SELECT below would
+ * NB: if any legacy row somehow has NULL owner_id, the INSERT ... SELECT below would
  * violate the new NOT NULL and fail the migration (correct — surface it). In
  * single-owner data there are none; if you want to be defensive, COALESCE to the
  * SYSTEM_OWNER_ID sentinel — but prefer failing loudly unless the owner asks.
@@ -226,7 +226,7 @@ ownerId: text('owner_id').references(() => owners.id).notNull(),
 
 **Acceptance criteria:** all DoD boxes; server suite + typecheck green; no other table references `flight_plan` broke (there are none).
 
-**Files:** new `0093_flight_plan_notnull.ts`; `migrations/index.ts`; `schema.ts` (flight_plan); test `server/test/flight-plan-schema.test.ts` (new). Confirm `flight_plan` is in `resetDb`'s clear list (it should be; add if missing).
+**Files:** new `server/src/db/migrations/0093_flight_plan_notnull.ts`; `server/src/db/migrations/index.ts`; `server/src/db/schema.ts` (flight_plan); test `server/test/flight-plan-schema.test.ts` (new). Confirm `flight_plan` is in `resetDb`'s clear list (it should be; add if missing).
 
 ---
 
@@ -291,7 +291,7 @@ export function up(db: Database): void {
 
 These came up in the review. They are **explicitly out of scope** — each is a refactor that touches business logic and/or needs a design decision. Attempting them here (especially by a fast implementer) risks breakage that's expensive to unwind. Listed so the next phase can plan them.
 
-- **`scheduling_prefs` god-table split (36 columns).** Mixes scheduling, AI-model config, feature flags, memory-sync, planning/concept, trust/automation. Splitting into `ai_settings` / `feature_flags` / `memory_config` etc. touches every prefs reader/writer + the Settings UI + `resetDb`'s prefs baseline. **Design-first; not a migration you write blind.**
+- **`scheduling_prefs` stays a single table — DO NOT split it (owner decision, 2026-07-01).** It has 36 columns spanning scheduling, AI-model config, feature flags, memory-sync, planning/concept, and trust/automation. A split (`ai_settings` / `feature_flags` / `memory_config` / …) was considered and **explicitly declined**: it touches every prefs reader/writer + the Settings UI + `resetDb`'s prefs baseline for no functional gain at this scale, and it would complicate — not help — the multi-tenant work. Do not split it in this phase **or** the multi-tenant phase. A wide single-row prefs table is a fine pattern here; revisiting it is a separate, owner-initiated decision only.
 - **Recurrence unification.** `tasks`, `time_blocks`, `patterns` each carry near-identical recurrence columns and each has its own expander. Consolidating is a logic refactor, not a schema tidy.
 - **Single-source "default minutes."** ~7 columns across `block_templates`, `pattern_prefs`, `pattern_types`, `category_prefs`, `scheduling_prefs` (×2), plus `tasks.estimated_minutes`. Picking a source of truth is a product decision.
 - **JSON-in-TEXT validation.** ~11 opaque JSON columns. Adding CHECK/validation is possible but low-ROI at current volume.
