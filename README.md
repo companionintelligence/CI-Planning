@@ -40,7 +40,7 @@ graph TB
         API[REST API<br/>20+ route modules]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>13 scheduled jobs]
+        Cron[Croner Jobs<br/>16 scheduled jobs]
         Migrate[Migration runner<br/>0001 → 0091 on boot]
     end
 
@@ -145,7 +145,7 @@ Migrations (current head: `0091_recurrence_horizon`) produce the following table
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
 | `daily_summaries` | LLM-generated day briefings cached by content hash to avoid redundant generation |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
-| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`); also holds the one-per-day `kind='day_note'` row (same PK-enforced uniqueness) (Phase N, 0080; linked focus 0088; day note 0088) |
+| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083) |

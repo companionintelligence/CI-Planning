@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-07-01 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a day note and a derived five-star day score (0089/0090), and retires the standalone Morning Briefing section; Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). **None of Phase O/P adds a noun** — budget stays 9). The single source of truth for user-facing
+> **Status:** canonical, 2026-07-01 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). **None of Phase O/P adds a noun** — budget stays 9). The single source of truth for user-facing
 > nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -59,7 +59,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   the one-per-day rule, no application logic required). A header affordance and a calendar
   dot surface it; it is not a journal/notes entity with its own CRUD lifecycle.
 - **Five-star day (the day-stars tally / calendar heatmap):** **not a noun** — a derived
-  score, never a manual toggle, computed from existing Task/Habit/Objective/reflection state
+  score, never a manual toggle, computed from existing Task/Habit/reflection state
   (internal: `computeStars()`, cached in `day_stars`). Today computes live; a nightly job
   freezes each day's score permanently once it ends. Visually distinct from the Objective
   deep-link star on task cards (`EightPointStar`, 8-pointed, accent color) — the day-stars

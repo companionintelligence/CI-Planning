@@ -48,7 +48,7 @@ graph TB
             API["REST API<br/>20+ route modules"]
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
-            Cron["Croner Jobs<br/>13 scheduled jobs"]
+            Cron["Croner Jobs<br/>16 scheduled jobs"]
             Migrate["Migration runner<br/>0001–0091 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
@@ -211,7 +211,7 @@ sequenceDiagram
     participant LLM as Ollama
     participant DB as SQLite
 
-    Cron->>Ing: ingest_gcal / ingest_gmail (every 15–30m)
+    Cron->>Ing: ingest_gcal / ingest_gmail (every 30m)
     Ing->>MCP: fetch deltas since last sync cursor
     MCP-->>Ing: events / messages
     loop each item
@@ -224,32 +224,35 @@ sequenceDiagram
     Cron->>DB: freeze_stars (00:20) — snapshot yesterday's five-star score
     Cron->>DB: review_day (01:00) — defer or surface missed tasks
     Cron->>DB: aggregate_plan_outcomes (01:30) — record planned vs done
-    Cron->>DB: auto_schedule (02:00) — re-place tomorrow's flight-plan
+    Cron->>DB: auto_schedule (03:00) — re-place tomorrow's flight-plan
     Cron->>LLM: nightly_grooming — embedding dedupe + priority refresh
     Cron->>DB: snapshot_db (02:00) — point-in-time SQLite backup
 
     Note over Cron,DB: Weekly ─────────────────────────────────────
     Cron->>DB: calibrate_estimates (Sun 04:00) — compute bias ratio
-    Cron->>DB: advance_objectives (Sun 04:00) — stage objective tasks
+    Cron->>DB: advance_objectives (Mon 05:00) — stage objective tasks
 ```
 
 ### 7.1 Scheduled jobs (current)
 
 | Kind | Cron | Purpose |
 |---|---|---|
-| `ingest_gcal` | every 30m | Extract tasks from Calendar events |
-| `ingest_gmail` | every 15m | Extract tasks from Gmail messages |
-| `place_patterns` | daily | Materialize recurring pattern task instances |
-| `auto_schedule` | daily 02:00 | Re-place flight-plan items for the next day |
+| `fire_reminders` | every 1m | Fire due reminders exactly once (SSE + Web Push) |
+| `sync_calendar` | every 15m | Two-way Google Calendar sync — meeting mirror + placement (Phase J) |
+| `ingest_gmail` | every 30m | Extract possible-task candidates from Gmail messages |
+| `ingest_gcal` | every 30m | Extract possible-task candidates from Calendar events |
+| `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
+| `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `day_stars` (owner-tz day; idempotent, first-freeze-wins) |
 | `review_day` | daily 01:00 | Defer / surface missed planned tasks |
 | `aggregate_plan_outcomes` | daily 01:30 | Record planned vs completed blocks per day |
-| `nightly_grooming` | daily 02:30 | Dedupe near-identical tasks with embeddings |
-| `fire_reminders` | every 1m | Fire due reminders exactly once (SSE + Web Push) |
+| `promote_possibles` | daily 02:00 | Auto-promote high-confidence inbox items into Tasks |
+| `nightly_grooming` | daily 02:00 | Dedupe near-identical tasks with embeddings |
 | `snapshot_db` | daily 02:00 | Write a point-in-time SQLite backup |
-| `prune_sync_events` | daily | Trim old `sync_events` rows beyond retention window |
+| `generate_recurrences` | daily 02:45 | Materialize recurring Task/Habit instances; flag missed habits |
+| `auto_schedule` | daily 03:00 | Re-place flight-plan items for the next day |
+| `prune_sync_events` | daily 03:00 | Trim old `sync_events` rows beyond retention window |
 | `calibrate_estimates` | Sun 04:00 | Compute personal estimate bias ratio |
-| `advance_objectives` | Sun 04:00 | Stage tasks for active objectives into flight-plan |
-| `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `day_stars` (owner-tz day; idempotent, first-freeze-wins) |
+| `advance_objectives` | Mon 05:00 | Stage tasks for active objectives into flight-plan |
 
 ---
 
