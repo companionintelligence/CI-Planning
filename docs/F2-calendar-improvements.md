@@ -15,7 +15,7 @@ Companion to [F-calendar-grid.md](F-calendar-grid.md) and [ROADMAP.md](ROADMAP.m
 6. Extend the overlay filter with a Direction/pattern-tag facet and a Hide/Highlight mode toggle (AND-combinable with tag + priority, default mode = Hide).
 
 ## Non-goals
-- **No 5-star day scoring in this phase.** [project_phase_o_gamified_stars.md] owns the derivation (intention/habits/tasks/bonus/note → 5 stars). F2 does not add a placeholder score or speculative header slot for it — that would be dead code sitting idle until Phase O ships. When Phase O lands its data source, wiring it into the Calendar header is a small follow-up, not part of F2.
+- **No 5-star day scoring in this phase.** [O-gamified-stars.md](O-gamified-stars.md) owns the derivation (intention/habits/tasks/bonus/note → 5 stars). F2 does not add a placeholder score or speculative header slot for it — that would be dead code sitting idle until Phase O ships. When Phase O lands its data source, wiring it into the Calendar header is a small follow-up, not part of F2.
 - **No axis rescale.** The grid's minute↔pixel mapping (`PX_PER_MIN`, `DAY_HEIGHT_PX`, `minutesIntoDay`/`instantFor` in [grid.ts](../client/src/lib/grid.ts)) is untouched. "Start 1h before the earliest window" is a **scroll position**, not a new coordinate origin — see F2-1's design note on why.
 - **No new migrations.** See above.
 - **No cross-day container drag** or other F-calendar-grid F′ gesture work — F2-4 is rendering only.
