@@ -1,4 +1,5 @@
-import { createResource, createSignal, For, Show } from 'solid-js';
+import { createResource, createSignal, For, Show, onMount } from 'solid-js';
+import { useSearchParams } from '@solidjs/router';
 import {
   Plus, ChevronRight, ChevronDown, Circle, Square, Diamond,
   AlertTriangle, Clock, ArrowRight, Pencil, Trash2,
@@ -7,7 +8,13 @@ import { api, type Objective } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { ObjectiveModal } from '../components/ObjectiveModal.js';
 
-// ── Level icons per spec: goal=circle, project=square, milestone=diamond ────────
+/** Whether `id` is `o` or anywhere in its subtree — used to auto-expand to a focused node. */
+function subtreeHas(o: Objective, id: string): boolean {
+  if (o.id === id) return true;
+  return (o.children ?? []).some((c) => subtreeHas(c, id));
+}
+
+// ── Level icons: goal=circle, project=square, objective (leaf)=diamond ──────────
 function LevelIcon(props: { level: string; class?: string }) {
   return (
     <Show when={props.level === 'goal'} fallback={
@@ -34,6 +41,8 @@ const STATUS_CLASSES: Record<string, string> = {
  */
 export function Objectives() {
   const [data, { refetch }] = createResource(() => api.objectives.list());
+  const [params] = useSearchParams();
+  const focusId = () => (typeof params.focus === 'string' ? params.focus : undefined); // §K: clicking a task's star deep-links here
   const [modal, setModal] = createSignal<
     null | { mode: 'create'; parentId?: string } | { mode: 'edit'; objective: Objective }
   >(null);
@@ -55,7 +64,7 @@ export function Objectives() {
       <div class="flex items-center justify-between">
         <div>
           <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mb-0.5">Objectives</div>
-          <h1 class="text-xl font-semibold text-foreground">Goals · Projects · Milestones</h1>
+          <h1 class="text-xl font-semibold text-foreground">Goals · Projects · Objectives</h1>
         </div>
         <button
           class="btn-primary text-xs px-3 py-1.5"
@@ -75,7 +84,7 @@ export function Objectives() {
               class="btn-primary text-sm px-4 py-2"
               onClick={() => setModal({ mode: 'create' })}
             >
-              <Plus size={14} /> Create your first goal
+              <Plus size={14} /> Create your first objective
             </button>
           </div>
         }
@@ -86,6 +95,7 @@ export function Objectives() {
               <ObjectiveNode
                 obj={obj}
                 depth={0}
+                focusId={focusId()}
                 onEdit={(o) => setModal({ mode: 'edit', objective: o })}
                 onDelete={deleteObjective}
                 onAddChild={(parentId) => setModal({ mode: 'create', parentId })}
@@ -127,13 +137,22 @@ export function Objectives() {
 function ObjectiveNode(props: {
   obj: Objective;
   depth: number;
+  focusId?: string;
   onEdit: (o: Objective) => void;
   onDelete: (o: Objective) => void;
   onAddChild: (parentId: string) => void;
   onRefetch: () => void;
 }) {
-  const [expanded, setExpanded] = createSignal(props.depth < 2);
+  // Expand the top two levels by default, or any branch on the path to a focused node.
+  const [expanded, setExpanded] = createSignal(
+    props.depth < 2 || (!!props.focusId && subtreeHas(props.obj, props.focusId)),
+  );
   const obj = () => props.obj;
+  const isFocus = () => !!props.focusId && props.obj.id === props.focusId;
+
+  // §K: when deep-linked (?focus=id), scroll the target node into view + highlight it.
+  let rowRef: HTMLDivElement | undefined;
+  onMount(() => { if (isFocus() && rowRef) rowRef.scrollIntoView({ block: 'center', behavior: 'smooth' }); });
 
   // Rot: progress is null OR (cadence not 'none' AND no next action).
   const isRotting = () =>
@@ -152,7 +171,8 @@ function ObjectiveNode(props: {
   const hasChildren = () => (obj().children?.length ?? 0) > 0;
 
   return (
-    <div class="rounded-xl border border-border bg-card overflow-hidden"
+    <div ref={rowRef} class="rounded-xl border bg-card overflow-hidden transition-shadow"
+         classList={{ 'border-primary ring-1 ring-primary': isFocus(), 'border-border': !isFocus() }}
          style={{ 'margin-left': `${props.depth * 20}px` }}>
       {/* Row header */}
       <div class="flex items-center gap-2 px-3 py-2.5 group">
@@ -275,7 +295,8 @@ function ObjectiveNode(props: {
             {(child) => (
               <ObjectiveNode
                 obj={child}
-                depth={0}
+                depth={props.depth + 1}
+                focusId={props.focusId}
                 onEdit={props.onEdit}
                 onDelete={props.onDelete}
                 onAddChild={props.onAddChild}

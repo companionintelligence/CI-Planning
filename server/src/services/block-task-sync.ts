@@ -16,6 +16,7 @@ import { sqlite } from '../db/index.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { localDateInTZ, utcToZonedWallTime, zonedWallTimeToUTC } from '../lib/tz.js';
 import { syncTaskReminders } from '../engine/reminders.js';
+import { stampRow } from '../sync/apply.js';
 
 interface BlockRow {
   id: string;
@@ -87,6 +88,7 @@ export function mirrorBlockStatusToTask(blockId: string, ownerId: string): strin
     sqlite
       .prepare(`UPDATE tasks SET status = 'done', completed_at = ? WHERE id = ? AND owner_id = ?`)
       .run(new Date().toISOString(), block.task_id, ownerId);
+    stampRow(sqlite, 'task', block.task_id, ['status', 'completedAt']);
     // Re-derive reminders AFTER the status flip so a same-PATCH time+complete change
     // doesn't leave auto-reminders firing for a now-done task (syncTaskReminders
     // clears them for a done task).
@@ -94,13 +96,59 @@ export function mirrorBlockStatusToTask(blockId: string, ownerId: string): strin
     return block.task_id;
   }
   if (block.status === 'planned') {
+    // Un-completing a still-placed task returns it to `scheduled` (it still owns a
+    // block), not all the way back to the open backlog.
     sqlite
-      .prepare(`UPDATE tasks SET status = 'open', completed_at = NULL WHERE id = ? AND owner_id = ?`)
+      .prepare(`UPDATE tasks SET status = 'scheduled', completed_at = NULL WHERE id = ? AND owner_id = ?`)
       .run(block.task_id, ownerId);
+    stampRow(sqlite, 'task', block.task_id, ['status', 'completedAt']);
     syncTaskReminders(ownerId, block.task_id);
     return block.task_id;
   }
   return null;
+}
+
+/**
+ * Placing a task on the Planner IS scheduling it: flip an `open` task to
+ * `scheduled` when it gains a task placement. No-op for habits (their occurrences
+ * are managed on the planner, not via this status) and for any non-open status —
+ * a placement never overrides done/cancelled/in_progress/deferred/etc. Returns the
+ * task id when the status actually changed, else null.
+ */
+export function applyTaskPlacementStatus(taskId: string, ownerId: string): string | null {
+  const task = sqlite
+    .prepare(`SELECT status, subtype FROM tasks WHERE id = ? AND owner_id = ?`)
+    .get(taskId, ownerId) as { status: string; subtype: string | null } | undefined;
+  if (!task || task.subtype === 'habit' || task.status !== 'open') return null;
+  sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ? AND owner_id = ?`).run(taskId, ownerId);
+  stampRow(sqlite, 'task', taskId, ['status']);
+  return taskId;
+}
+
+/**
+ * The inverse of [[applyTaskPlacementStatus]]: when a `scheduled` task no longer
+ * has any active placement (no `block_kind='task'` block that is still planned or
+ * overrunning), return it to the open backlog. A completed/skipped block doesn't
+ * count as an active placement. Only ever touches a `scheduled` task — done,
+ * cancelled, routine-derived, etc. are left alone. Returns the task id when the
+ * status actually changed, else null.
+ */
+export function revertTaskPlacementStatus(taskId: string, ownerId: string): string | null {
+  const task = sqlite
+    .prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`)
+    .get(taskId, ownerId) as { status: string } | undefined;
+  if (!task || task.status !== 'scheduled') return null;
+  const active = sqlite
+    .prepare(
+      `SELECT 1 FROM time_blocks
+        WHERE task_id = ? AND block_kind = 'task' AND status IN ('planned','overrun') LIMIT 1`,
+    )
+    .get(taskId);
+  if (active) return null;
+  sqlite.prepare(`UPDATE tasks SET status = 'open' WHERE id = ? AND owner_id = ?`).run(taskId, ownerId);
+  stampRow(sqlite, 'task', taskId, ['status']);
+  syncTaskReminders(ownerId, taskId);
+  return taskId;
 }
 
 /**

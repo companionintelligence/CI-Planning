@@ -21,6 +21,7 @@ import { localISODate } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { occurrencesBetween, parseRule } from './recurrence.js';
 import { taskTagNames } from '../services/tags.js';
+import { syncTaskFromBlock, applyTaskPlacementStatus } from '../services/block-task-sync.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -191,8 +192,16 @@ export function placePatternOnDay(
 
     const ins = sqlite.prepare(
       `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status, parent_block_id)
-       VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?)`
+       VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?) RETURNING id`
     );
+    // A placed routine member IS scheduled: mirror the placement onto the task's
+    // scheduling-intent fields (so its calendar icon has a date) and flip open →
+    // scheduled. syncTaskFromBlock self-guards to the earliest placement, so calling
+    // it per-session is correct; applyTaskPlacementStatus is idempotent after the flip.
+    const syncPlacedMember = (blockId: string, taskId: string) => {
+      syncTaskFromBlock(blockId, owner);
+      applyTaskPlacementStatus(taskId, owner);
+    };
     let blocksCreated = 0;
     let placed = 0;
     let unplaced = 0;
@@ -208,7 +217,8 @@ export function placePatternOnDay(
           if (!pick) break;
           const startMs = pick.gap.cursor;
           const endMs = startMs + pick.len;
-          ins.run(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId);
+          const { id: bid } = ins.get(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId) as { id: string };
+          syncPlacedMember(bid, t.task_id);
           pick.gap.cursor = endMs + breakMs;
           blocksCreated++;
           placedSessions++;
@@ -252,7 +262,8 @@ export function placePatternOnDay(
             .get(meta?.name ?? 'Routine', meta?.tag ?? null, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)) as { id: string }).id;
           const placedTaskIds = new Set<string>();
           for (const l of layout) {
-            ins.run(l.task.task_id, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId);
+            const { id: bid } = ins.get(l.task.task_id, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId) as { id: string };
+            syncPlacedMember(bid, l.task.task_id);
             blocksCreated++;
             placedTaskIds.add(l.task.task_id);
           }

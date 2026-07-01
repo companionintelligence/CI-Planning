@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
 /**
@@ -89,5 +90,20 @@ describe('POST /api/days/:date/clear', () => {
     insertBlock({ title: 'auto task', auto: true, source: 'agent' });
     expect((await api(srv.url, '/api/days/2026-06-20/clear', { method: 'POST', json: {} })).body.cleared).toBe(1);
     expect((await api(srv.url, '/api/days/2026-06-20/clear', { method: 'POST', json: {} })).body.cleared).toBe(0);
+  });
+
+  it('reverts a scheduled task to open when clear removes its last placement (no strand)', async () => {
+    // A task at status='scheduled' (as a manual placement would leave it) whose only
+    // remaining block is an agent auto-block that clear-day removes.
+    const taskId = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'Scheduled thing', ?, 'scheduled') RETURNING id`).get(SYSTEM_OWNER) as { id: string }).id;
+    sqlite.prepare(
+      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
+       VALUES (uuid7(), ?, 'Scheduled thing', 'task', '2026-06-20T10:00:00.000Z', '2026-06-20T11:00:00.000Z', 0, 1, 'agent', 'planned')`,
+    ).run(taskId);
+
+    const { body } = await api(srv.url, '/api/days/2026-06-20/clear', { method: 'POST', json: {} });
+    expect(body.cleared).toBe(1);
+    const status = (sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(taskId) as { status: string }).status;
+    expect(status).toBe('open'); // returned to the backlog, not stranded at 'scheduled'
   });
 });

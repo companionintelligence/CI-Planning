@@ -1,7 +1,23 @@
-import { createSignal, Show } from 'solid-js';
+import { createSignal, createResource, For, Show } from 'solid-js';
 import { X } from 'lucide-solid';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
+
+/** Flatten the objectives tree into indented rows for the parent picker. */
+interface FlatObjective { id: string; title: string; level: string; depth: number }
+function flattenObjectives(nodes: Objective[], depth = 0, out: FlatObjective[] = []): FlatObjective[] {
+  for (const n of nodes) {
+    out.push({ id: n.id, title: n.title, level: n.level, depth });
+    if (n.children?.length) flattenObjectives(n.children, depth + 1, out);
+  }
+  return out;
+}
+/** Ids of a node + its whole subtree — ineligible as its own parent (would cycle). */
+function subtreeIds(o: Objective, acc: Set<string> = new Set()): Set<string> {
+  acc.add(o.id);
+  for (const c of o.children ?? []) subtreeIds(c, acc);
+  return acc;
+}
 
 interface Props {
   /** undefined = create mode; defined = edit mode */
@@ -47,7 +63,15 @@ export function ObjectiveModal(props: Props) {
   const [status, setStatus] = createSignal<string>(props.objective?.status ?? 'active');
   const [cadence, setCadence] = createSignal<string>(props.objective?.cadence ?? 'none');
   const [targetDate, setTargetDate] = createSignal(props.objective?.target_date ?? '');
+  const [parentId, setParentId] = createSignal(props.objective?.parent_id ?? props.defaultParentId ?? '');
   const [saving, setSaving] = createSignal(false);
+
+  // §N: grouping — pick a parent to nest this objective under a project / goal.
+  // Options are every OTHER objective (self + its subtree excluded to avoid cycles);
+  // the server (height-based leveling + containment) is the backstop for illegal moves.
+  const [tree] = createResource(() => api.objectives.list().then((r) => r.objectives));
+  const excluded = () => (props.objective ? subtreeIds(props.objective) : new Set<string>());
+  const parentOptions = () => flattenObjectives(tree() ?? []).filter((o) => !excluded().has(o.id));
 
   async function save() {
     if (!title().trim()) { showToast('Title is required', 'error'); return; }
@@ -60,10 +84,8 @@ export function ObjectiveModal(props: Props) {
         status: status() as ObjectiveInput['status'],
         cadence: cadence() as ObjectiveInput['cadence'],
         target_date: targetDate() || null,
+        parent_id: parentId() || null, // §N: '' → top-level
       };
-      if (!isEdit() && props.defaultParentId) {
-        body.parent_id = props.defaultParentId;
-      }
       if (isEdit()) {
         await api.objectives.update(props.objective!.id, body);
       } else {
@@ -112,6 +134,17 @@ export function ObjectiveModal(props: Props) {
               value={description()}
               onInput={(e) => setDescription(e.currentTarget.value)}
             />
+          </label>
+
+          {/* §N: nest under a project / goal (or leave top-level). Grouping happens here. */}
+          <label class="flex flex-col gap-1">
+            <span class="text-[11px] text-muted-foreground">Parent</span>
+            <select class="input text-sm" value={parentId()} onChange={(e) => setParentId(e.currentTarget.value)}>
+              <option value="">None (top-level)</option>
+              <For each={parentOptions()}>
+                {(o) => <option value={o.id}>{`${'  '.repeat(o.depth)}${o.title} · ${o.level}`}</option>}
+              </For>
+            </select>
           </label>
 
           <div class="grid grid-cols-2 gap-3">

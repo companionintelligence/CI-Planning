@@ -3,6 +3,8 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
+import { applyTaskPlacementStatus, revertTaskPlacementStatus } from '../services/block-task-sync.js';
+import { removeEntityTags } from '../services/tags.js';
 
 /**
  * Reusable Time-Block templates (Phase G, G3 + PR-B). Save a named, tagged Plan
@@ -44,6 +46,32 @@ const serializeBlock = (b: Record<string, unknown>) => ({
   is_auto: !!b.is_auto,
   all_day: !!b.all_day,
 });
+
+/**
+ * Recreate a template's saved tasks near `baseMs`: for each, a real `open` task +
+ * its `block_kind='task'` block at `base + offset_minutes`. `parentBlockId` parents
+ * the task blocks to a container (apply-to-block) or leaves them loose (instantiate,
+ * pass null — byte-identical to the pre-refactor behavior). Returns the new task ids.
+ */
+function materializeTemplateTasks(owner: string, baseMs: number, templateTasks: TemplateTask[], parentBlockId: string | null): string[] {
+  const insTask = sqlite.prepare(
+    `INSERT INTO tasks (id, title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (uuid7(), ?, ?, ?, 'open', 3, 'manual') RETURNING id`,
+  );
+  const insBlock = sqlite.prepare(
+    `INSERT INTO time_blocks (id, task_id, title, block_kind, tag, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
+     VALUES (uuid7(), ?, ?, 'task', ?, ?, ?, 0, 0, 'manual', 'planned', ?)`,
+  );
+  const createdTaskIds: string[] = [];
+  for (const tk of templateTasks) {
+    const est = tk.estimated_minutes ?? 30;
+    const id = (insTask.get(tk.title, tk.estimated_minutes ?? null, owner) as { id: string }).id;
+    const s = new Date(baseMs + (tk.offset_minutes ?? 0) * 60_000).toISOString();
+    const e = new Date(Date.parse(s) + est * 60_000).toISOString();
+    insBlock.run(id, tk.title, tk.tag ?? null, s, e, parentBlockId);
+    createdTaskIds.push(id);
+  }
+  return createdTaskIds;
+}
 
 export function blockTemplatesRouter() {
   const router = new Router();
@@ -118,26 +146,52 @@ export function blockTemplatesRouter() {
       .get(t.name, t.tag, body.start_at, endAt) as Record<string, unknown>;
 
     // Recreate the saved tasks (real task + its scheduled block at the saved offset).
-    const insTask = sqlite.prepare(
-      `INSERT INTO tasks (id, title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (uuid7(), ?, ?, ?, 'open', 3, 'manual') RETURNING id`
-    );
-    const insBlock = sqlite.prepare(
-      `INSERT INTO time_blocks (id, task_id, title, block_kind, tag, start_at, end_at, is_locked, is_auto, source_kind, status)
-       VALUES (uuid7(), ?, ?, 'task', ?, ?, ?, 0, 0, 'manual', 'planned')`
-    );
-    for (const tk of parseTasks(t.tasks)) {
-      const est = tk.estimated_minutes ?? 30;
-      const id = (insTask.get(tk.title, tk.estimated_minutes ?? null, owner) as { id: string }).id;
-      const s = new Date(base + (tk.offset_minutes ?? 0) * 60_000).toISOString();
-      const e = new Date(Date.parse(s) + est * 60_000).toISOString();
-      insBlock.run(id, tk.title, tk.tag ?? null, s, e);
-    }
+    // Loose (no parent) — matches the historical instantiate behavior.
+    materializeTemplateTasks(owner, base, parseTasks(t.tasks), null);
 
     const out = serializeBlock(block);
     broadcast(owner, 'block:created', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `block-template:${ctx.params.id}` });
     ctx.status = 201;
     ctx.body = { block: out };
+  });
+
+  // Swap an EXISTING block's contents for this template's: clear the block's current
+  // child task-blocks (their tasks return to the open backlog — not deleted) and
+  // repopulate from the template, parented to the block and flipped to scheduled.
+  router.post('/api/block-templates/:id/apply-to-block', async (ctx) => {
+    const owner = currentOwnerId();
+    const t = sqlite.prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner) as TemplateRow | undefined;
+    if (!t) { ctx.status = 404; ctx.body = { error: 'template not found' }; return; }
+    const body = (ctx.request.body ?? {}) as { block_id?: string };
+    if (!body.block_id) { ctx.status = 422; ctx.body = { error: 'block_id is required' }; return; }
+    const block = sqlite
+      .prepare(`SELECT id, start_at FROM time_blocks WHERE id = ? AND block_kind = 'timeblock'`)
+      .get(body.block_id) as { id: string; start_at: string } | undefined;
+    if (!block) { ctx.status = 404; ctx.body = { error: 'block not found (must be a Plan container)' }; return; }
+
+    const touched = new Set<string>();
+    sqlite.transaction(() => {
+      // 1. Clear current child task-blocks; their tasks revert to unscheduled.
+      const children = sqlite
+        .prepare(`SELECT id, task_id, block_kind FROM time_blocks WHERE parent_block_id = ?`)
+        .all(block.id) as { id: string; task_id: string | null; block_kind: string }[];
+      for (const c of children) {
+        if (c.task_id && c.block_kind === 'task') touched.add(c.task_id);
+        removeEntityTags('time_block', c.id);
+      }
+      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(block.id);
+      for (const taskId of touched) revertTaskPlacementStatus(taskId, owner);
+
+      // 2. Repopulate from the template, parented to the block + flipped to scheduled.
+      const created = materializeTemplateTasks(owner, Date.parse(block.start_at), parseTasks(t.tasks), block.id);
+      for (const id of created) { applyTaskPlacementStatus(id, owner); touched.add(id); }
+    })();
+
+    broadcast(owner, 'block:updated', { id: block.id });
+    for (const taskId of touched) broadcast(owner, 'task:updated', { id: taskId });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'apply', entity: `block-template:${ctx.params.id}:block:${block.id}` });
+    ctx.body = { ok: true };
   });
 
   return router;
