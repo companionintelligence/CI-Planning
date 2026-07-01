@@ -8,6 +8,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { copyFileSync } from 'node:fs';
 import { config } from '../lib/config.js';
 import { runMigrations } from '../db/migrate.js';
+import { openDb } from '../db/open.js';
 import { logger } from '../lib/logger.js';
 
 const [src] = process.argv.slice(2);
@@ -42,7 +43,9 @@ try {
 
 copyFileSync(src, config.dbPath);
 
-const db = new BetterSqlite3(config.dbPath);
+// Real read-write open that runs forward migrations — FK enforcement ON via openDb.
+// (The probe + lock-check opens above are read-only / never write, so they stay raw.)
+const db = openDb(config.dbPath);
 try {
   const { applied } = runMigrations(db);
   if (applied.length) logger.info('restore: ran forward migrations', { applied });
