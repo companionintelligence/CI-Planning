@@ -140,7 +140,7 @@ export function ObjectiveModal(props: Props) {
           <label class="flex flex-col gap-1">
             <span class="text-[11px] text-muted-foreground">Parent</span>
             <select class="input text-sm" value={parentId()} onChange={(e) => setParentId(e.currentTarget.value)}>
-              <option value="">None (top-level goal)</option>
+              <option value="">None (top-level)</option>
               <For each={parentOptions()}>
                 {(o) => <option value={o.id}>{`${'  '.repeat(o.depth)}${o.title} · ${o.level}`}</option>}
               </For>

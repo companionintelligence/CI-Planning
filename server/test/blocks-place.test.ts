@@ -73,6 +73,17 @@ describe('placeTasksInBlock', () => {
     expect(kids[0].end_at <= kids[1].start_at).toBe(true);
   });
 
+  it('flips a placed task to scheduled AND mirrors scheduled_for/task_time onto it', () => {
+    const c = insertContainer(at('09:00'), at('12:00'));
+    const t = insertTask('Write A', 30);
+    placeTasksInBlock(OWNER, c, [t]);
+    const row = sqlite.prepare(`SELECT status, scheduled_for, task_time FROM tasks WHERE id = ?`).get(t) as
+      { status: string; scheduled_for: string | null; task_time: string | null };
+    expect(row.status).toBe('scheduled');
+    expect(row.scheduled_for).toBe(DAY);   // 09:00 UTC, tz=UTC → same local day
+    expect(row.task_time).toBe('09:00');   // mirrored from the earliest placement
+  });
+
   it('treats an existing child as an obstacle (new task lands after it, with a break)', () => {
     const c = insertContainer(at('09:00'), at('12:00'));
     const pre = insertTask('Existing', 60);

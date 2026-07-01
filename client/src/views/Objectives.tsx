@@ -295,7 +295,7 @@ function ObjectiveNode(props: {
             {(child) => (
               <ObjectiveNode
                 obj={child}
-                depth={0}
+                depth={props.depth + 1}
                 focusId={props.focusId}
                 onEdit={props.onEdit}
                 onDelete={props.onDelete}
