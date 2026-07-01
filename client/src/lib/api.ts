@@ -755,6 +755,7 @@ export interface Objective {
   next_action: ObjectiveNextAction | null;
   effective_target: string | null;
   pace_expected: number | null;
+  has_tasks: boolean;
   children: Objective[];
 }
 
