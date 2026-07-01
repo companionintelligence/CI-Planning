@@ -271,6 +271,14 @@ export const api = {
     update: (body: Partial<Prefs>) => request<{ prefs: Prefs; pruned?: number }>('PATCH', '/prefs', body),
   },
 
+  // Phase P · P2 — Clear Date Range. `dry_run:true` previews counts; otherwise applies
+  // (server snapshots first). Open-ended (no end) stops repeats forever from `start`;
+  // bounded skips just the window.
+  planner: {
+    clearRange: (body: { start: string; end?: string; dry_run?: boolean }) =>
+      request<ClearRangeResult>('POST', '/planner/clear', body),
+  },
+
   // ── Notifications + Web Push (Phase H) ───────────────────────────────────────
   push: {
     vapidKey: () => request<{ key: string }>('GET', '/push/vapid-key'),
@@ -584,6 +592,15 @@ export interface Prefs {
   memory_sync_enabled?: boolean; memory_sync_completed?: boolean;
   memory_sync_habits?: boolean; memory_sync_reflections?: boolean;
   memory_account?: string | null; memory_last_synced_at?: string | null;
+}
+
+// Phase P · P2 — result of POST /api/planner/clear (also the dry-run preview shape).
+export interface ClearRangeResult {
+  mode: 'open-ended' | 'bounded';
+  blocksDeleted: number;
+  dailyPlanDeleted: number;
+  generators: { kind: 'block' | 'pattern'; id: string; label: string; action: string; daysSuppressed: number }[];
+  backup?: string; // present only on a real apply (server-side snapshot path)
 }
 
 export interface MemoryStatus {
