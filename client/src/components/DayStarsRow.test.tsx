@@ -22,11 +22,18 @@ import type { DayStar } from '../lib/api.js';
  *                       for `reflection:updated` and invoke it directly — that is
  *                       precisely the reactive dependency the component subscribes
  *                       to, so firing it re-runs the resource for real.
- *  - `../stores/index.js` — provides `tasks()` / `scheduledByTaskId()` as inert
- *                       signals so importing the component doesn't pull the whole
- *                       store graph (which fetches on import). The refetch trigger
- *                       under test is the reflection seam above; these are just the
- *                       other resource dependencies, held constant here.
+ *  - `../stores/index.js` — provides `tasks()` / `scheduledByTaskId()` as REAL
+ *                       Solid signals (created with this test file's own
+ *                       `createSignal`, from a module mocked at a different
+ *                       specifier than the component's other imports). Below,
+ *                       one test drives the refetch via the SSE callback; the
+ *                       other drives it by calling the exposed setter and
+ *                       relying on the component's own `createResource` to pick
+ *                       up the change through its `[props.date, tasks(),
+ *                       scheduledByTaskId()]` source array — a genuine
+ *                       cross-module Solid dependency read, not a plain callback.
+ *                       Both must pass for the resource's dual reactive wiring to
+ *                       be proven; either one regressing fails only that test.
  */
 
 // Serve total:3 on the first call, total:4 on every call after — modelling a
@@ -53,8 +60,10 @@ vi.mock('../lib/sse.js', () => ({
   },
 }));
 
-// Inert store signals — held constant; the reflection SSE is the refetch trigger.
-const [tasksSig] = createSignal<unknown[]>([]);
+// Real signals, exposed so tests can drive the OTHER reactive dependency
+// (see the module doc above). `setTasks` models a task completion updating the
+// app-wide store — DayStarsRow never sees a "completion", it only reads `tasks()`.
+const [tasksSig, setTasks] = createSignal<unknown[]>([]);
 const [schedSig] = createSignal(new Map<string, unknown>());
 vi.mock('../stores/index.js', () => ({
   tasks: () => tasksSig(),
@@ -72,6 +81,7 @@ describe('DayStarsRow — live header reactivity', () => {
   beforeEach(() => {
     rangeMock.mockReset();
     sseHandlers.clear();
+    setTasks([]);
     rangeMock.mockResolvedValueOnce([star3]).mockResolvedValue([star4]);
   });
 
@@ -85,6 +95,27 @@ describe('DayStarsRow — live header reactivity', () => {
     // A reflection change (e.g. saving the day note) broadcasts reflection:updated.
     // DayStarsRow's handler calls refetch() → the resource re-runs → total:4.
     fireSse('reflection:updated');
+
+    await waitFor(() => expect(getByText('4/5')).toBeInTheDocument());
+    expect(rangeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('also refetches + updates the DOM when the tasks store signal changes', async () => {
+    const { findByText, getByText } = render(() => <DayStarsRow date="2026-07-01" />);
+
+    expect(await findByText('3/5')).toBeInTheDocument();
+    expect(rangeMock).toHaveBeenCalledTimes(1);
+
+    // A task completion updates the app-wide `tasks()` store signal directly —
+    // no SSE event involved. This is the OTHER half of DayStarsRow's resource
+    // key ([props.date, tasks(), scheduledByTaskId()]) and the concrete
+    // regression this pilot exists to catch: if `tasks()` is ever dropped from
+    // that key, this assertion fails even though the SSE test above still
+    // passes. Because `tasksSig`/`setTasks` live in a module mocked at a
+    // different specifier than the component under test, this read only
+    // works if Solid is correctly deduped (GOTCHA 1) — a duplicate instance
+    // would make the resource's dependency tracking miss this signal entirely.
+    setTasks([{ id: 'task-1' }]);
 
     await waitFor(() => expect(getByText('4/5')).toBeInTheDocument());
     expect(rangeMock).toHaveBeenCalledTimes(2);
