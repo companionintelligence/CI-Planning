@@ -1,7 +1,13 @@
 # Q — Schema hygiene (pre-multi-tenant) — implementation handoff
 
-**Status:** Spec'd · not started · **`main` migration head `0091`** (verify before branching — see §0). **Depends on:** nothing; **must precede** the Multi-tenant + OIDC/OAuth phase. Companion to [ROADMAP.md](ROADMAP.md), [GLOSSARY.md](GLOSSARY.md), [ARCHITECTURE.md](../ARCHITECTURE.md), the test-harness notes, and [P-planner-hygiene.md](P-planner-hygiene.md) (recent example of this repo's migration + ticket-board conventions).
+**Status:** ✅ IMPLEMENTED 2026-07-01 (Q1–Q5 all shipped) · **migration head now `0094`** (was 0091). **Depends on:** nothing; **must precede** the Multi-tenant + OIDC/OAuth phase. Companion to [ROADMAP.md](ROADMAP.md), [GLOSSARY.md](GLOSSARY.md), [ARCHITECTURE.md](../ARCHITECTURE.md), the test-harness notes, and [P-planner-hygiene.md](P-planner-hygiene.md) (recent example of this repo's migration + ticket-board conventions).
 
+> **✅ As-built note (implemented 2026-07-01).** All five tickets shipped; migration head is now `0094`; full server suite + typecheck green. Two deliberate departures from the drafts below, for correctness/consistency:
+> 1. **Q3/Q4 use the repo's `rebuildTable` helper + `export const manual = true`** (the `0030`/`0068` pattern) — **not** the hand-written, non-`manual` rebuild drafted here. Consequently **§0.5 as originally written is wrong**: `PRAGMA foreign_keys=OFF` during a rebuild *is* used and *does* work — that is exactly what `manual` migrations exist for (they run outside the runner's auto-transaction). `rebuildTable` sets it OFF for the swap and restores ON in a `finally`; blanket FK-off is the forward-safe posture for the non-leaf rebuilds the multi-tenant phase will need. §0.5 has been corrected below.
+> 2. **The rebuilds are faithful except the intended change.** Q3 preserves `flight_plan`'s live physical column order (`owner_id, task_id, selected, position, added_at, source_kind, source_ref`) and `source_kind`'s `NOT NULL DEFAULT 'manual'` (added in 0081) — the draft's column order was wrong and would have (a) failed the schema-shape characterization golden and (b) silently dropped `source_kind`'s NOT NULL. Q4 likewise preserves order + constraints, dropping only the bogus default.
+>
+> Minor corrections: **Q4's premise** — `daily_summaries.owner_id` is already **`TEXT`** today (0030 retyped it), currently `TEXT NOT NULL DEFAULT 1`; only the default is dropped (not the type). **Q1 build note** — the bundled `better-sqlite3` binary happens to default `foreign_keys` **ON**, so `openDb()` is portability/defensive hardening here rather than an active-bug fix (kept anyway; the SQLite *library* default is OFF). Also fixed a pre-existing drift: `schema.ts` `flightPlan.sourceKind` gained `.notNull()` to match the DB.
+>
 > **Who this is for.** A fresh implementation chat (assume a mid-tier model). This doc is self-contained: it states the goal, the exact scope, the migrations to write (with drafts), the tests that *prove* the goal, and — importantly — an explicit **DO NOT** list, because several tempting "simplifications" are risky refactors that must be designed first, not attempted here.
 
 > **Why now.** The app is early-stage (tiny row counts) but about to gain **multi-tenant users + OIDC/OAuth**. Multi-tenant amplifies exactly the integrity gaps that are harmless in single-owner mode (a nullable owner in a PK, an integer owner-default on a now-UUID column, FK enforcement that isn't guaranteed on every connection, missing indexes on cascade paths). This phase makes the schema **correct and consistent** first. It deliberately does **not** simplify table count — that's higher-risk, lower-ROI right now, and is fenced off in §Tier 2.
@@ -23,7 +29,7 @@
 
 4. **SQLite cannot** `ALTER COLUMN`, `DROP DEFAULT`, add `NOT NULL` to an existing column, or change a `PRIMARY KEY`. The **only** way to do any of those is the **12-step table rebuild** (§ Q3). Do not attempt `ALTER TABLE ... ALTER COLUMN` — it is not valid SQLite and will fail.
 
-5. **`PRAGMA foreign_keys` cannot be toggled inside a transaction** (SQLite silently ignores it mid-transaction). The migration runner wraps each migration in a transaction, and the app opens the connection with `foreign_keys = ON` ([`db/index.ts:11`](../server/src/db/index.ts)). **You do not need to toggle it** for the rebuilds in this doc: `flight_plan` and `daily_summaries` are **leaf tables** (nothing references them via FK — verified), so no child-FK checks fire; the copied rows reference existing parents (`owners`/`tasks`), so the outbound FK checks pass. If you find yourself writing `PRAGMA foreign_keys=OFF` inside a migration, stop — it won't work and it isn't needed here.
+5. **`PRAGMA foreign_keys` cannot be toggled inside a transaction** (SQLite silently ignores it mid-transaction). The runner wraps each **non-`manual`** migration in a transaction; a migration that needs to toggle FK must therefore export **`manual = true`** so it runs *outside* that transaction (see [`0030_uuidv7_identity`](../server/src/db/migrations/0030_uuidv7_identity.ts) and [`0068_day_types`](../server/src/db/migrations/0068_day_types.ts)). **The Q3/Q4 rebuilds do exactly this**, via the shared [`rebuildTable`](../server/src/db/migrate.ts) helper, which sets `foreign_keys = OFF` for the swap and restores `ON` in a `finally`. *(This corrects an earlier draft of this section, which claimed the toggle "isn't needed / won't work." The leaf-table observation — `flight_plan`/`daily_summaries` have no inbound FKs — is true and means a bespoke non-`manual` rebuild would also be safe; but blanket FK-off via `manual` + `rebuildTable` is the repo convention and stays safe for the **non-leaf** rebuilds the multi-tenant phase will need, so that's what shipped.)*
 
 6. **Identity is UUIDv7 TEXT, not integer.** `0001_baseline` created `owners.id` as `INTEGER PRIMARY KEY AUTOINCREMENT`; **`0030_uuidv7_identity` converted all identity to UUIDv7 TEXT** and remapped legacy owner `1` → the `SYSTEM_OWNER_ID` sentinel. Some *old* migrations still literally say `INTEGER` for owner/task columns (e.g. `flight_plan` in `0016`, `daily_summaries` in `0001`); those columns now hold TEXT UUIDs via SQLite's flexible typing. `schema.ts` reflects the logical (post-0030) TEXT reality. Never assume a column's declared type in an old migration is what it holds today. `currentOwnerId()` ([`server/src/lib/context.ts`](../server/src/lib/context.ts)) returns a `string`.
 
@@ -43,14 +49,14 @@ Make the schema **integrity-correct and owner-identity-consistent** so the multi
 
 ## Definition of done (phase-level)
 
-- [ ] FK enforcement is guaranteed on **every** connection the app opens (main + backup + restore + migrate), proven by a test.
-- [ ] Every FK column on a hot cascade/join path has a supporting index (additive migration `0092`).
-- [ ] `flight_plan.owner_id` is `TEXT NOT NULL` and correctly typed; the composite PK can no longer admit a NULL/duplicate owner (rebuild `0093`).
-- [ ] `daily_summaries.owner_id` no longer carries the bogus integer `DEFAULT 1`; it's `TEXT NOT NULL` (rebuild `0094`).
-- [ ] `PRAGMA integrity_check` = `ok` and `PRAGMA foreign_key_check` = no rows, asserted in a test after all migrations.
-- [ ] `schema.ts` matches the post-migration reality (e.g. `flight_plan.owner_id` gains `.notNull()`).
-- [ ] Server test suite + typecheck green; migration head is `0094`.
-- [ ] The **Tier 2 / multi-tenant-bridge** items in this doc are left untouched (they are explicitly out of scope) and remain documented for the next phase.
+- [x] FK enforcement is guaranteed on **every** connection the app opens (main + backup + restore + migrate), proven by a test. *(via shared `openDb()`; read-only/never-writing opens intentionally left raw.)*
+- [x] Every FK column on a hot cascade/join path has a supporting index (additive migration `0092`).
+- [x] `flight_plan.owner_id` is `TEXT NOT NULL` and correctly typed; the composite PK can no longer admit a NULL/duplicate owner (rebuild `0093`). *(column order + `source_kind` NOT NULL preserved.)*
+- [x] `daily_summaries.owner_id` no longer carries the bogus integer `DEFAULT 1`; it's `TEXT NOT NULL` (rebuild `0094`).
+- [x] `PRAGMA integrity_check` = `ok` and `PRAGMA foreign_key_check` = no rows, asserted in a test after all migrations.
+- [x] `schema.ts` matches the post-migration reality (`flight_plan.owner_id` + `sourceKind` gained `.notNull()`).
+- [x] Server test suite (113 files / 1075 tests) + typecheck green; migration head is `0094`.
+- [x] The **Tier 2 / multi-tenant-bridge** items in this doc are left untouched (they are explicitly out of scope) and remain documented for the next phase.
 
 ---
 
@@ -232,7 +238,7 @@ ownerId: text('owner_id').references(() => owners.id).notNull(),
 
 ## Q4 — `daily_summaries` default fix rebuild (migration `0094`)
 
-**Problem.** `daily_summaries` ([`0001_baseline.ts`](../server/src/db/migrations/0001_baseline.ts)) declares `owner_id INTEGER NOT NULL DEFAULT 1` — an **integer literal default on a column that now holds UUID TEXT** (post-0030). It works only because nothing relies on the default (the app always supplies `owner_id`); a row that ever fell back to `1` would be a broken owner reference under multi-tenant.
+**Problem.** `daily_summaries` ([`0001_baseline.ts`](../server/src/db/migrations/0001_baseline.ts)) declared `owner_id INTEGER NOT NULL DEFAULT 1`; **0030 retyped it to `TEXT`** but kept the default, so today it's `TEXT NOT NULL DEFAULT 1` — an **integer literal default naming no real owner** (owners are UUIDv7 TEXT post-0030). It works only because nothing relies on the default (the app always supplies `owner_id`); a row that ever fell back to `1` would be a broken owner reference under multi-tenant.
 
 **Goal.** Rebuild `daily_summaries` so `owner_id` is `TEXT NOT NULL` with **no** bogus default. `daily_summaries` is a **regenerable cache** (day briefings, keyed by `inputs_hash`) and a **leaf table** — lowest-consequence rebuild in the phase.
 

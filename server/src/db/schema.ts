@@ -390,9 +390,9 @@ export const patternTasks = sqliteTable(
 export const flightPlan = sqliteTable(
   'flight_plan',
   {
-    ownerId: text('owner_id').references(() => owners.id),
+    ownerId: text('owner_id').references(() => owners.id).notNull(),
     taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }).notNull(),
-    sourceKind: text('source_kind').default('manual'),
+    sourceKind: text('source_kind').default('manual').notNull(), // DB has NOT NULL since 0081; drift fixed here
     sourceRef: text('source_ref'),
     selected: integer('selected', { mode: 'boolean' }).default(true),
     position: integer('position').default(0),
