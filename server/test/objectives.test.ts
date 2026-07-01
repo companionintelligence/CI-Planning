@@ -140,8 +140,12 @@ describe('GET /api/objectives', () => {
 
     const res = await api(srv.url, '/api/objectives');
     const byId = (id: string) => res.body.objectives.find((o: any) => o.id === id);
-    expect(byId(withTasks).has_tasks).toBe(true);
-    expect(byId(empty).has_tasks).toBe(false);
+    const taskBearing = byId(withTasks);
+    const emptyNode = byId(empty);
+    expect(taskBearing).toBeDefined();
+    expect(emptyNode).toBeDefined();
+    expect(taskBearing.has_tasks).toBe(true);
+    expect(emptyNode.has_tasks).toBe(false);
   });
 
   it('owner isolation — does not return objectives for another owner', async () => {

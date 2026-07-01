@@ -119,6 +119,14 @@ function buildTree(owner: string) {
     byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, has_tasks: false, children: [] });
   }
 
+  // Task-bearing set — one bulk query, not a per-objective existence check. A node with
+  // directly-linked tasks is an illegal parent (nesting under it would create a
+  // task-bearing non-leaf); the client disables it in the picker.
+  const withTasks = new Set(
+    (sqlite.prepare(`SELECT DISTINCT objective_id FROM objective_tasks`).all() as { objective_id: string }[])
+      .map((r) => r.objective_id)
+  );
+
   // Compute next_action + effective_target per objective.
   for (const id of objIds) {
     const decorated = byId.get(id)!;
@@ -143,12 +151,7 @@ function buildTree(owner: string) {
 
     decorated.next_action = nextAction ?? null;
 
-    // Task-bearing? A node with directly-linked tasks is an illegal parent (nesting
-    // under it would create a task-bearing non-leaf). The client disables it in the picker.
-    const hasTasks = sqlite
-      .prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? LIMIT 1`)
-      .get(id) as { 1: number } | undefined;
-    decorated.has_tasks = hasTasks !== undefined;
+    decorated.has_tasks = withTasks.has(id);
 
     const effectiveTarget = sqlite
       .prepare(
