@@ -202,7 +202,7 @@ export function AllTasks() {
                 value={taskFilter().status ?? ''}
                 onChange={(e) => setTaskFilter((f) => ({ ...f, status: e.currentTarget.value }))}
               >
-                {statusOptions.map((s) => <option value={s}>{s || 'All statuses'}</option>)}
+                {statusOptions.map((s) => <option value={s}>{s || 'All Active'}</option>)}
               </select>
               <select
                 class="input w-auto"
