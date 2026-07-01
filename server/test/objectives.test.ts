@@ -323,8 +323,10 @@ describe('DELETE /api/objectives/:id/tasks/:taskId', () => {
     linkTask(oId, tId);
     const res = await api(srv.url, `/api/objectives/${oId}/tasks/${tId}`, { method: 'DELETE' });
     expect(res.status).toBe(200);
-    const count = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objective_tasks WHERE objective_id = ? AND task_id = ?`).get(oId, tId) as { n: number }).n;
-    expect(count).toBe(0);
+    // Unlink tombstones the join row (linked=0) rather than deleting it, so the
+    // change round-trips through the Phase L sync layer. No ACTIVE link remains.
+    const active = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objective_tasks WHERE objective_id = ? AND task_id = ? AND linked = 1`).get(oId, tId) as { n: number }).n;
+    expect(active).toBe(0);
   });
 
   it('idempotent — unlinking a task that was not linked returns 200', async () => {

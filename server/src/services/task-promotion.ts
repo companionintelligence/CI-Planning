@@ -21,8 +21,9 @@
 import { sqlite } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { broadcast } from '../routes/sse.js';
-import { recomputeProgress } from '../routes/objectives.js';
+import { recomputeProgress, linkObjectiveTask } from '../routes/objectives.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 
 /** Active (non-ephemeral, non-cancelled) subtasks of a parent — the objective's work.
  * Excludes `quick` ritual-local tasks and materialized recurrence instances, which
@@ -70,17 +71,20 @@ export function ensureTaskPromoted(parentTaskId: string, ownerId: string): strin
          VALUES (?, ?, NULL, ?, NULL, 'none', 'active', 'none', NULL, NULL, 3, ?, ?, 'objective', ?)`,
       )
       .run(objId, ownerId, parent.title, now, now, parentTaskId);
+    // Sync: stamp the created objective's fields so an older queued op can't clobber them.
+    stampRow(sqlite, 'objective', objId, ['title', 'status', 'horizon', 'cadence', 'priority']);
     created = true;
   }
 
-  // Link the parent + its linkable subtasks (idempotent). The objective stays a leaf,
-  // so this never violates the "tasks only on leaves" containment rule.
-  const link = sqlite.prepare(`INSERT OR IGNORE INTO objective_tasks (objective_id, task_id) VALUES (?, ?)`);
+  // Link the parent + its linkable subtasks (idempotent). Each link is a
+  // sync-versioned join row (0087). The objective stays a leaf, so this never
+  // violates the "tasks only on leaves" containment rule.
   const linkedTaskIds = [parentTaskId, ...linkableSubtaskIds(parentTaskId, ownerId)];
-  for (const tid of linkedTaskIds) link.run(objId, tid);
+  const linkIds = linkedTaskIds.map((tid) => linkObjectiveTask(objId, tid));
 
   recomputeProgress(objId);
   broadcast(ownerId, created ? 'objective:created' : 'objective:updated', { id: objId });
+  for (const linkId of linkIds) broadcast(ownerId, 'objective_task:updated', { id: linkId });
   for (const tid of linkedTaskIds) broadcast(ownerId, 'task:updated', { id: tid });
   writeAudit({ ownerId, actor: 'owner', action: created ? 'create' : 'link', entity: `objective:${objId}` });
   return objId;
@@ -129,7 +133,7 @@ export function dropSourceObjective(taskId: string, ownerId: string): void {
 /** Recompute progress for every objective a task is linked to (e.g. after the task is
  * cancelled, so a lingering link's rollup reflects the drop). */
 export function recomputeObjectivesForTask(taskId: string): void {
-  const objs = sqlite.prepare(`SELECT objective_id FROM objective_tasks WHERE task_id = ?`).all(taskId) as { objective_id: string }[];
+  const objs = sqlite.prepare(`SELECT objective_id FROM objective_tasks WHERE task_id = ? AND linked = 1`).all(taskId) as { objective_id: string }[];
   for (const o of objs) recomputeProgress(o.objective_id);
 }
 
@@ -142,7 +146,7 @@ export function firstObjectiveByTaskIds(taskIds: string[]): Map<string, string> 
   const map = new Map<string, string>();
   if (taskIds.length === 0) return map;
   const rows = sqlite
-    .prepare(`SELECT task_id, objective_id FROM objective_tasks WHERE task_id IN (${taskIds.map(() => '?').join(',')}) ORDER BY objective_id`)
+    .prepare(`SELECT task_id, objective_id FROM objective_tasks WHERE linked = 1 AND task_id IN (${taskIds.map(() => '?').join(',')}) ORDER BY objective_id`)
     .all(...taskIds) as { task_id: string; objective_id: string }[];
   for (const r of rows) if (!map.has(r.task_id)) map.set(r.task_id, r.objective_id);
   return map;
