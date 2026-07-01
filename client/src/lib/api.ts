@@ -379,6 +379,19 @@ export const api = {
       request<{ ok: boolean }>('POST', `/reflections/${kind}/${position}/done`, { period_key, done }),
     delete: (kind: 'today_goal' | 'weekly_goal', position: number, period_key: string) =>
       request<{ ok: boolean }>('DELETE', `/reflections/${kind}/${position}?period_key=${encodeURIComponent(period_key)}`),
+    // Phase O · O1 — the one-per-day free-text note. Empty body deletes.
+    setNote: (period_key: string, body: string) =>
+      request<{ ok: boolean }>('PUT', '/reflections/note', { period_key, body }),
+    // Phase O · O1 — dates in [from, to] that have a day note (calendar dots).
+    notedDays: (from: string, to: string) =>
+      request<{ dates: string[] }>('GET', `/reflections/notes?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  },
+
+  // ── Phase O · O2/O3: the five-star day score ─────────────────────────────────
+  stars: {
+    // One range call backs a whole calendar month; per date: frozen row or live.
+    range: (from: string, to: string) =>
+      request<DayStar[]>('GET', `/stars?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   },
 
   // ── Phase N1: objectives ──────────────────────────────────────────────────────
@@ -720,9 +733,16 @@ export interface WeeklyGoal extends ReflectionGoal {
   position: number;
 }
 
+// Phase O · O1 — the one free-text note per day (reflections kind='day_note').
+export interface DayNote {
+  body: string;
+  updated_at: string;
+}
+
 export interface ReflectionsResponse {
   today: ReflectionGoal | null;
   weekly: WeeklyGoal[];
+  note: DayNote | null;
 }
 
 export interface ReflectionWrite {
@@ -731,6 +751,23 @@ export interface ReflectionWrite {
   // Phase O · O0 — link a focus to a task ('task') or objective ('objective').
   source_kind?: 'manual' | 'task' | 'objective';
   source_ref?: string | null;
+}
+
+// ── Phase O · O2/O3: the five-star day score ──────────────────────────────────
+/** The five derived booleans for a day (GET /api/stars). Live for today, frozen for the past. */
+export interface DayStars {
+  objective: boolean;
+  habits: boolean;
+  tasks: boolean;
+  bonus: boolean;
+  note: boolean;
+  total: number;
+}
+
+/** One row of GET /api/stars — a date's stars plus whether it's the frozen snapshot. */
+export interface DayStar extends DayStars {
+  date: string;
+  frozen: boolean;
 }
 
 // ── Phase O · O0: Today's Brief top-tasks row ─────────────────────────────────

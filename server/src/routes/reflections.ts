@@ -4,9 +4,14 @@ import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import { broadcast } from './sse.js';
 import { isoWeekKey } from '../lib/tz.js';
-import { localISODate } from '../lib/dates.js';
+import { localISODate, isValidISODate } from '../lib/dates.js';
 
-const VALID_KINDS = new Set(['today_goal', 'weekly_goal']);
+// The two goal kinds the generic /done + DELETE /:kind/:position routes accept.
+// day_note is deliberately NOT here: it toggles no done_at and is only ever
+// written/read through the dedicated /note, /notes, and GET routes — routing it
+// through the goal endpoints would contradict the "today_goal or weekly_goal"
+// contract those routes advertise.
+const GOAL_KINDS = new Set(['today_goal', 'weekly_goal']);
 const VALID_SOURCE_KINDS = new Set(['manual', 'task', 'objective']);
 
 /**
@@ -49,7 +54,89 @@ export function reflectionsRouter() {
       )
       .all(owner, weekKey) as { position: number; body: string; category_id: string | null; done_at: string | null; source_kind: string; source_ref: string | null; color_token: string | null }[];
 
-    ctx.body = { today: todayRow ?? null, weekly: weeklyRows };
+    const noteRow = sqlite
+      .prepare(
+        `SELECT body, updated_at
+           FROM reflections
+          WHERE owner_id=? AND kind='day_note' AND period_key=? AND position=0`,
+      )
+      .get(owner, period) as { body: string; updated_at: string } | undefined;
+
+    ctx.body = {
+      today: todayRow ?? null,
+      weekly: weeklyRows,
+      note: noteRow ? { body: noteRow.body, updated_at: noteRow.updated_at } : null,
+    };
+  });
+
+  // GET /api/reflections/notes?from=YYYY-MM-DD&to=YYYY-MM-DD
+  // Returns the local dates in [from, to] that have a (non-empty) day note — the
+  // calendar note-dot source. One query backs a whole visible month.
+  router.get('/api/reflections/notes', (ctx) => {
+    const owner = currentOwnerId();
+    const from = ctx.query.from as string | undefined;
+    const to = ctx.query.to as string | undefined;
+    if (!isValidISODate(from) || !isValidISODate(to)) {
+      ctx.status = 422;
+      ctx.body = { error: 'from and to are required (YYYY-MM-DD)' };
+      return;
+    }
+    // Only rows with a non-empty body count — guards legacy/manual whitespace-only
+    // rows so the calendar never dots a day that has no real note.
+    const rows = sqlite
+      .prepare(
+        `SELECT period_key AS date FROM reflections
+          WHERE owner_id=? AND kind='day_note' AND period_key>=? AND period_key<=?
+            AND TRIM(body) <> ''
+          ORDER BY period_key`,
+      )
+      .all(owner, from, to) as { date: string }[];
+    ctx.body = { dates: rows.map((r) => r.date) };
+  });
+
+  // PUT /api/reflections/note { period_key, body }
+  // Upserts the single day note (kind='day_note', period_key=YYYY-MM-DD, position 0).
+  // Empty body = delete (same rule as goals).
+  router.put('/api/reflections/note', (ctx) => {
+    const owner = currentOwnerId();
+    const { period_key, body } = (ctx.request.body ?? {}) as {
+      period_key?: string;
+      body?: string;
+    };
+
+    // period_key IS the day the note belongs to, so it must be a real date —
+    // a malformed key would silently create an unreachable row.
+    if (!isValidISODate(period_key)) {
+      ctx.status = 422;
+      ctx.body = { error: 'period_key is required (YYYY-MM-DD)' };
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const trimmed = (body ?? '').trim();
+
+    if (!trimmed) {
+      sqlite
+        .prepare(
+          `DELETE FROM reflections WHERE owner_id=? AND kind='day_note' AND period_key=? AND position=0`,
+        )
+        .run(owner, period_key);
+      broadcast(owner, 'reflection:deleted', { kind: 'day_note', period_key, position: 0 });
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `reflection:day_note:${period_key}` });
+    } else {
+      sqlite
+        .prepare(
+          `INSERT INTO reflections (owner_id, kind, period_key, position, body, created_at, updated_at)
+           VALUES (?, 'day_note', ?, 0, ?, ?, ?)
+           ON CONFLICT(owner_id, kind, period_key, position) DO UPDATE SET
+             body=excluded.body, updated_at=excluded.updated_at`,
+        )
+        .run(owner, period_key, trimmed, now, now);
+      broadcast(owner, 'reflection:updated', { kind: 'day_note', period_key, position: 0 });
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'upsert', entity: `reflection:day_note:${period_key}` });
+    }
+
+    ctx.body = { ok: true };
   });
 
   // PUT /api/reflections/today { period_key, body, category_id? }
@@ -163,7 +250,7 @@ export function reflectionsRouter() {
     const kind = ctx.params.kind;
     const position = Number(ctx.params.position);
 
-    if (!VALID_KINDS.has(kind)) {
+    if (!GOAL_KINDS.has(kind)) {
       ctx.status = 422;
       ctx.body = { error: 'kind must be today_goal or weekly_goal' };
       return;
@@ -208,7 +295,7 @@ export function reflectionsRouter() {
     const kind = ctx.params.kind;
     const period_key = ctx.query.period_key as string | undefined;
 
-    if (!VALID_KINDS.has(kind)) {
+    if (!GOAL_KINDS.has(kind)) {
       ctx.status = 422;
       ctx.body = { error: 'invalid kind' };
       return;

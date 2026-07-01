@@ -1,17 +1,18 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
-import { Plus, AlertCircle, Ban, ListTodo, X, Repeat, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-solid';
-import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay } from '../stores/index.js';
+import { Plus, AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen } from 'lucide-solid';
+import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay, scheduledByTaskId, isRoutineTask } from '../stores/index.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
-import { api, type DaySummary } from '../lib/api.js';
+import { api, type Task } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
+import { bucketCounts, tasksInBucket, pageWindow, type BucketKey } from '../lib/task-buckets.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
+import { DayStarsRow } from '../components/DayStarsRow.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { PlanInstruct } from '../components/PlanInstruct.js';
 import { DayGoals } from '../components/DayGoals.js';
-import { MorningBriefing } from '../components/MorningBriefing.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
@@ -20,7 +21,25 @@ import { MorningBriefing } from '../components/MorningBriefing.js';
  * never-closing **drawer** floating at the bottom.
  */
 export function Today() {
-  const [summary, { mutate: mutateSummary }] = createResource(selectedDay, (date) => api.summary.get(date));
+  const [summary] = createResource(selectedDay, (date) => api.summary.get(date));
+
+  // Phase O · O1 — the one free-text note per day. Outline affordance when empty,
+  // accent-filled when a note exists; opens an inline editor (no modal).
+  const [reflections, { refetch: refetchReflections }] = createResource(selectedDay, (date) => api.reflections.get(date));
+  const note = () => reflections()?.note ?? null;
+  const [editingNote, setEditingNote] = createSignal(false);
+  const [noteDraft, setNoteDraft] = createSignal('');
+  function startEditNote() {
+    setNoteDraft(note()?.body ?? '');
+    setEditingNote(true);
+  }
+  async function saveNote() {
+    try {
+      await api.reflections.setNote(selectedDay(), noteDraft());
+      refetchReflections();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    setEditingNote(false);
+  }
 
   const today = () => localISODate();
   const isToday = () => selectedDay() === today();
@@ -39,9 +58,44 @@ export function Today() {
     return [...set];
   });
 
-  const overdue = () => summary()?.stats.overdue ?? 0;
-  const open = () => summary()?.stats.open ?? (tasks() ?? []).filter((t) => t.status === 'open' && !t.parent_id).length;
-  const blocked = () => (tasks() ?? []).filter((t) => t.blocked).length;
+  // ── Header count buttons (Phase O · O3) ────────────────────────────────────
+  // Four single-select buckets over the loaded task set, mirroring the server's
+  // summary stats. Selecting one reveals its task list below; selecting another
+  // swaps; re-selecting closes. The list pages one item at a time.
+  const bucketDeps = () => ({
+    scheduledIds: new Set([...scheduledByTaskId().keys()]),
+    isRoutine: (id: string) => isRoutineTask(id),
+  });
+  const counts = createMemo(() => bucketCounts(tasks() ?? [], selectedDay(), bucketDeps()));
+  const countOf = (key: BucketKey) => counts().find((c) => c.key === key)?.count ?? 0;
+
+  const [selectedBucket, setSelectedBucket] = createSignal<BucketKey | null>(null);
+  const [pageOffset, setPageOffset] = createSignal(0);
+  const PAGE_SIZE = 3;
+
+  function toggleBucket(key: BucketKey) {
+    if (selectedBucket() === key) { setSelectedBucket(null); return; }
+    setSelectedBucket(key);
+    setPageOffset(0);
+  }
+
+  const bucketTasks = createMemo<Task[]>(() => {
+    const b = selectedBucket();
+    return b ? tasksInBucket(b, tasks() ?? [], selectedDay(), bucketDeps()) : [];
+  });
+  const pageView = createMemo(() => pageWindow(bucketTasks(), pageOffset(), PAGE_SIZE));
+
+  function openTask(t: Task) {
+    setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: t.id } });
+  }
+
+  // ── Capacity bar (relocated from the removed Morning Briefing, Phase O · O3) ──
+  const capacity = () => summary()?.capacity;
+  const capacityPct = () => {
+    const c = capacity();
+    if (!c || c.workday_minutes === 0) return 0;
+    return Math.min(100, Math.round((c.scheduled_minutes / c.workday_minutes) * 100));
+  };
 
   // ── Multi-select → "Create Routine" (Phase F) ──────────────────────────────
   // The Shift+= chord (the literal "Shift + +" keys) opens a small modal listing
@@ -108,11 +162,52 @@ export function Today() {
               </Show>
             </div>
           </div>
-          {/* Right column: Add button (Suggest/Schedule toggle moved to top bar) */}
-          <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5 flex-shrink-0 self-start">
-            <Plus size={13} /> Add
-          </button>
+          {/* Right column: day note affordance + Add button */}
+          <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
+            <button
+              onClick={startEditNote}
+              class="btn-icon"
+              classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }}
+              title={note() ? 'Edit day note' : 'Add a note for the day'}
+            >
+              <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
+            </button>
+            <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5">
+              <Plus size={13} /> Add
+            </button>
+          </div>
         </div>
+
+        {/* Phase O · O1 — inline day-note editor (matches the card inline-edit idiom) */}
+        <Show when={editingNote()}>
+          <div class="mt-3 flex flex-col gap-2">
+            <textarea
+              autofocus
+              rows={3}
+              class="input text-sm w-full resize-y"
+              placeholder="A note for the day — how it went, what stood out…"
+              value={noteDraft()}
+              onInput={(e) => setNoteDraft(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setEditingNote(false);
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveNote();
+              }}
+            />
+            <div class="flex justify-end gap-2">
+              <button class="btn-ghost text-xs px-2 py-1" onClick={() => setEditingNote(false)}>Cancel</button>
+              <button class="btn-primary text-xs px-3 py-1" onClick={saveNote}>Save note</button>
+            </div>
+          </div>
+        </Show>
+        <Show when={!editingNote() && note()}>
+          <button
+            class="mt-3 w-full text-left text-sm text-muted-foreground rounded-lg px-3 py-2 border border-border hover:border-primary/50 transition-colors whitespace-pre-line"
+            onClick={startEditNote}
+            title="Edit day note"
+          >
+            {note()!.body}
+          </button>
+        </Show>
 
         <Show
           when={todayTags().length > 0}
@@ -123,27 +218,84 @@ export function Today() {
           </div>
         </Show>
 
-        <div class="flex flex-wrap gap-2 mt-3">
-          <Pill icon={AlertCircle} value={overdue()} label="overdue" tone={overdue() > 0 ? 'destructive' : 'muted'} />
-          <Pill icon={Ban}         value={blocked()} label="blocked" tone={blocked() > 0 ? 'foreground' : 'muted'} />
-          <Pill icon={ListTodo}    value={open()}    label="open"    tone="foreground" />
+        {/* Count buttons (Phase O · O3) — single-select; capacity bar on the right. */}
+        <div class="flex flex-wrap items-center gap-2 mt-3">
+          <CountButton icon={AlertCircle}   value={countOf('overdue')}   label="overdue"   tone="destructive" active={selectedBucket() === 'overdue'}   onClick={() => toggleBucket('overdue')} />
+          <CountButton icon={CalendarClock} value={countOf('dueToday')}  label="due today" tone="foreground"  active={selectedBucket() === 'dueToday'}  onClick={() => toggleBucket('dueToday')} />
+          <CountButton icon={CalendarCheck} value={countOf('scheduled')} label="scheduled" tone="foreground"  active={selectedBucket() === 'scheduled'} onClick={() => toggleBucket('scheduled')} />
+          <CountButton icon={ListTodo}      value={countOf('open')}      label="open"      tone="foreground"  active={selectedBucket() === 'open'}      onClick={() => toggleBucket('open')} />
+          <Show when={capacity() && capacity()!.workday_minutes > 0}>
+            <div class="ml-auto flex items-center gap-2 min-w-[9rem]">
+              <span class={`text-[10px] tabular-nums ${capacityPct() >= 90 ? 'text-destructive' : capacityPct() >= 70 ? 'text-amber-400' : 'text-primary'}`}>
+                {capacity()!.scheduled_minutes}m / {capacity()!.workday_minutes}m
+              </span>
+              <div class="relative h-1.5 w-20 rounded-full bg-background border border-border overflow-hidden">
+                <div
+                  class="absolute inset-y-0 left-0 rounded-full bg-primary transition-all"
+                  classList={{ 'bg-amber-400': capacityPct() >= 70, 'bg-destructive': capacityPct() >= 90 }}
+                  style={{ width: `${capacityPct()}%` }}
+                />
+              </div>
+            </div>
+          </Show>
         </div>
 
-        {/* Day type for this date — assign + edit its windows (T-SCHED-1). */}
+        {/* Selected-bucket task list — ~3 rows + a paging stepper. Each row links to the task. */}
+        <Show when={selectedBucket()}>
+          <div class="mt-2 rounded-lg border border-border bg-background/40">
+            <Show
+              when={bucketTasks().length > 0}
+              fallback={<p class="px-3 py-2 text-xs text-muted-foreground">Nothing in this bucket.</p>}
+            >
+              <ul class="divide-y divide-border/60">
+                <For each={pageView().visible}>
+                  {(t) => (
+                    <li>
+                      <button
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-primary/5 transition-colors"
+                        onClick={() => openTask(t)}
+                        title="Open task"
+                      >
+                        <span class="flex-1 truncate">{t.title}</span>
+                        <Show when={t.priority}><span class="text-[10px] text-muted-foreground flex-shrink-0">P{t.priority}</span></Show>
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
+              <Show when={pageView().remaining > 0 || pageView().canUp}>
+                <div class="flex items-center justify-between px-3 py-1 border-t border-border/60">
+                  <span class="text-[10px] text-muted-foreground">
+                    <Show when={pageView().remaining > 0} fallback="end of list">+{pageView().remaining} more</Show>
+                  </span>
+                  <div class="flex items-center gap-1">
+                    <button
+                      class="btn-icon disabled:opacity-30"
+                      disabled={!pageView().canUp}
+                      onClick={() => setPageOffset((o) => Math.max(0, o - 1))}
+                      title="Show previous"
+                    ><ChevronUp size={14} /></button>
+                    <button
+                      class="btn-icon disabled:opacity-30"
+                      disabled={!pageView().canDown}
+                      onClick={() => setPageOffset((o) => o + 1)}
+                      title="Show next"
+                    ><ChevronDown size={14} /></button>
+                  </div>
+                </div>
+              </Show>
+            </Show>
+          </div>
+        </Show>
+
+        {/* DAY TYPE row — select + Edit windows on the LEFT, small day-stars on the RIGHT. */}
         <div class="mt-3 pt-3 border-t border-border">
-          <DayTypeControl date={selectedDay()} />
+          <DayTypeControl date={selectedDay()} trailing={<DayStarsRow date={selectedDay()} />} />
         </div>
       </div>
 
-      {/* Phase N0: daily + weekly goals card */}
+      {/* Phase N0: FOCUS card (holds the Today's Brief pop-up — prose + capacity + top tasks) */}
       <DayGoals date={selectedDay()} />
-
-      {/* Phase N3: morning briefing — prose + focus items + capacity bar */}
-      <MorningBriefing
-        date={selectedDay()}
-        summary={summary()}
-        onRefresh={(updated) => mutateSummary(updated)}
-      />
 
       {/* Natural-language planning instruction — pins become blocks, hints are noted (A4) */}
       <PlanInstruct />
@@ -207,26 +359,31 @@ export function Today() {
 }
 
 /**
- * A Day-Overview stat pill — icon · count · label in a rounded pill, the count
- * toned by urgency. Replaces the proportional bars (cockpit-v2 Phase 2).
+ * A Day-Overview count BUTTON — icon · count · label (Phase O · O3). Single-select:
+ * clicking reveals its task list below the row; the active button gets a ring +
+ * accent fill. No caret. Overdue keeps its danger tone.
  */
-function Pill(props: { icon: any; value: number; label: string; tone: 'destructive' | 'foreground' | 'muted' }) {
-  const toneText = () => ({
-    'text-destructive': props.tone === 'destructive',
-    'text-foreground': props.tone === 'foreground',
-    'text-muted-foreground': props.tone === 'muted',
-  });
+function CountButton(props: {
+  icon: any; value: number; label: string;
+  tone: 'destructive' | 'foreground';
+  active: boolean; onClick: () => void;
+}) {
+  const isDanger = () => props.tone === 'destructive' && props.value > 0;
   return (
-    <span
-      class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs"
+    <button
+      type="button"
+      onClick={props.onClick}
+      aria-pressed={props.active}
+      class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors"
       classList={{
-        'border-destructive/40 bg-destructive/5': props.tone === 'destructive',
-        'border-border bg-background/40': props.tone !== 'destructive',
+        'border-primary ring-1 ring-primary/40 bg-primary/10': props.active,
+        'border-destructive/40 bg-destructive/5': !props.active && isDanger(),
+        'border-border bg-background/40 hover:border-primary/50': !props.active && !isDanger(),
       }}
     >
-      <props.icon size={12} classList={toneText()} />
-      <span class="tabular-nums font-semibold" classList={toneText()}>{props.value}</span>
+      <props.icon size={12} classList={{ 'text-destructive': isDanger(), 'text-foreground': !isDanger() }} />
+      <span class="tabular-nums font-semibold" classList={{ 'text-destructive': isDanger(), 'text-foreground': !isDanger() }}>{props.value}</span>
       <span class="text-muted-foreground">{props.label}</span>
-    </span>
+    </button>
   );
 }
