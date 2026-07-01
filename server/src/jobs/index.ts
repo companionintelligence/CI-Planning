@@ -16,7 +16,6 @@ import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { syncAll } from '../agents/sync.js';
 import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
-import { aggregatePlanOutcomes } from './aggregate-plan-outcomes.js';
 import { freezeStars } from './freeze-stars.js';
 import { config } from '../lib/config.js';
 import { gmailLiveAllowed } from '../mcp/gmail-flag.js';
@@ -189,14 +188,6 @@ async function execute(kind: string): Promise<JobOutcome> {
         ? `bias_ratio=${r.bias_ratio.toFixed(2)} (n=${r.sample_count})`
         : 'no timed tasks yet';
       return { itemsCreated: 0, itemsUpdated: r.sample_count, log: `Estimate calibration: ${label}` };
-    }
-    case 'aggregate_plan_outcomes': {
-      const r = aggregatePlanOutcomes();
-      return {
-        itemsCreated: 0,
-        itemsUpdated: 1,
-        log: `Plan outcomes for ${r.date}: planned=${r.planned}, completed=${r.completed}`,
-      };
     }
     case 'freeze_stars': {
       // Freezing is an INSERT (first-freeze-wins): a create, or a no-op if the

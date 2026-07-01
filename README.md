@@ -149,7 +149,6 @@ Migrations (current head: `0094_daily_summaries_owner_default`) produce the foll
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083) |
-| `plan_outcomes` | Per-day planned-vs-completed block counts aggregated nightly by `aggregate_plan_outcomes` job (Phase N, 0083) |
 | `day_stars` | Frozen snapshot of the five-star day score per `(owner, date)` — today computes live via `computeStars()`, past days are immutable once frozen by the nightly `freeze_stars` job (Phase O, 0089; job seed 0090) |
 
 ## See it in action
@@ -337,7 +336,7 @@ consistent snapshot.
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
   reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,
-  reflections, objectives, objective_tasks, estimate_calibration, plan_outcomes
+  reflections, objectives, objective_tasks, estimate_calibration
 - All ten SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,

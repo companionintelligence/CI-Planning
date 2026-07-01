@@ -1,13 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { calibrateEstimates } from '../src/jobs/calibrate-estimates.js';
-import { aggregatePlanOutcomes } from '../src/jobs/aggregate-plan-outcomes.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb } from './helpers.js';
-
-// Pinned date: a Wednesday (so "yesterday" is Tuesday for the outcomes job).
-const TODAY = '2026-06-17';
-const YESTERDAY = '2026-06-16';
 
 function insertTask(opts: {
   estimatedMinutes: number | null;
@@ -27,15 +22,6 @@ function insertTask(opts: {
       opts.actualMinutes,
       opts.completedAt ?? null,
     ) as { id: string };
-}
-
-function insertBlock(taskId: string, date: string, status = 'done') {
-  sqlite
-    .prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, task_id, status)
-       VALUES (uuid7(), 'B', 'task', ?, ?, ?, ?)`,
-    )
-    .run(`${date}T10:00:00.000Z`, `${date}T11:00:00.000Z`, taskId, status);
 }
 
 describe('calibrateEstimates', () => {
@@ -105,102 +91,6 @@ describe('calibrateEstimates', () => {
     calibrateEstimates();
     calibrateEstimates();
     const count = (sqlite.prepare(`SELECT COUNT(*) as n FROM estimate_calibration WHERE owner_id=?`).get(SYSTEM_OWNER) as { n: number }).n;
-    expect(count).toBe(1);
-  });
-});
-
-describe('aggregatePlanOutcomes', () => {
-  beforeEach(() => {
-    resetDb();
-    sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC' WHERE owner_id=?`).run(SYSTEM_OWNER);
-  });
-
-  it('returns planned=0 completed=0 when no blocks exist for the date', () => {
-    const r = aggregatePlanOutcomes(YESTERDAY, TODAY);
-    expect(r.planned).toBe(0);
-    expect(r.completed).toBe(0);
-  });
-
-  it('counts task-bearing blocks for the date as planned', () => {
-    const { id: t1 } = insertTask({ estimatedMinutes: 30, actualMinutes: 0, status: 'open' });
-    const { id: t2 } = insertTask({ estimatedMinutes: 30, actualMinutes: 0, status: 'open' });
-    insertBlock(t1, YESTERDAY);
-    insertBlock(t2, YESTERDAY);
-    // A block for today — should NOT count
-    insertBlock(t1, TODAY);
-
-    const r = aggregatePlanOutcomes(YESTERDAY, TODAY);
-    expect(r.planned).toBe(2);
-  });
-
-  it('counts completed tasks among planned as completed', () => {
-    const { id: t1 } = insertTask({
-      estimatedMinutes: 30, actualMinutes: 45, status: 'done',
-      completedAt: `${YESTERDAY}T15:00:00.000Z`,
-    });
-    const { id: t2 } = insertTask({
-      estimatedMinutes: 30, actualMinutes: 0, status: 'open',
-    });
-    insertBlock(t1, YESTERDAY);
-    insertBlock(t2, YESTERDAY);
-
-    const r = aggregatePlanOutcomes(YESTERDAY, TODAY);
-    expect(r.planned).toBe(2);
-    expect(r.completed).toBe(1);
-  });
-
-  it('does not count meeting blocks as planned tasks', () => {
-    const { id: t1 } = insertTask({ estimatedMinutes: 30, actualMinutes: 0, status: 'done' });
-    sqlite
-      .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, task_id, status)
-         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, ?, 'done')`,
-      )
-      .run(`${YESTERDAY}T09:00:00.000Z`, `${YESTERDAY}T09:30:00.000Z`, t1);
-
-    const r = aggregatePlanOutcomes(YESTERDAY, TODAY);
-    expect(r.planned).toBe(0);
-  });
-
-  it('does not count blocks with no task_id as planned tasks', () => {
-    sqlite
-      .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, status)
-         VALUES (uuid7(), 'Event', 'task', ?, ?, 'done')`,
-      )
-      .run(`${YESTERDAY}T10:00:00.000Z`, `${YESTERDAY}T11:00:00.000Z`);
-
-    const r = aggregatePlanOutcomes(YESTERDAY, TODAY);
-    expect(r.planned).toBe(0);
-  });
-
-  it('persists the result to plan_outcomes', () => {
-    const { id: t1 } = insertTask({
-      estimatedMinutes: 30, actualMinutes: 45, status: 'done',
-      completedAt: `${YESTERDAY}T15:00:00.000Z`,
-    });
-    insertBlock(t1, YESTERDAY);
-    aggregatePlanOutcomes(YESTERDAY, TODAY);
-
-    const row = sqlite
-      .prepare(`SELECT * FROM plan_outcomes WHERE owner_id=? AND date=?`)
-      .get(SYSTEM_OWNER, YESTERDAY) as { planned: number; completed: number } | undefined;
-    expect(row).toBeDefined();
-    expect(row!.planned).toBe(1);
-    expect(row!.completed).toBe(1);
-  });
-
-  it('is idempotent — re-running overwrites the row', () => {
-    const { id: t1 } = insertTask({ estimatedMinutes: 30, actualMinutes: 0, status: 'open' });
-    insertBlock(t1, YESTERDAY);
-    aggregatePlanOutcomes(YESTERDAY, TODAY);
-    aggregatePlanOutcomes(YESTERDAY, TODAY);
-
-    const count = (
-      sqlite
-        .prepare(`SELECT COUNT(*) as n FROM plan_outcomes WHERE owner_id=? AND date=?`)
-        .get(SYSTEM_OWNER, YESTERDAY) as { n: number }
-    ).n;
     expect(count).toBe(1);
   });
 });
