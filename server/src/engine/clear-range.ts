@@ -143,6 +143,21 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
   const suppress = input.suppress ?? 'auto';
   const autoOnly = input.autoOnly ?? false;
   const dryRun = input.dryRun ?? true;
+
+  // Guardrails: bounded clears can become extremely expensive (occurrence expansion + per-day suppression rows).
+  if (end) {
+    const startMs = Date.parse(`${start}T00:00:00Z`);
+    const endMs = Date.parse(`${end}T00:00:00Z`);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      throw new Error('clearPlannerRange: start/end must be local YYYY-MM-DD');
+    }
+    const spanDays = Math.floor((endMs - startMs) / 86_400_000);
+    if (spanDays < 0) throw new Error('clearPlannerRange: end must be on/after start');
+    if (spanDays > MAX_SPAN_DAYS) {
+      throw new Error(`clearPlannerRange: bounded range exceeds ${MAX_SPAN_DAYS} days`);
+    }
+  }
+
   const mode: 'open-ended' | 'bounded' = end ? 'bounded' : 'open-ended';
 
   const tz = ownerTimezone(owner);
@@ -152,7 +167,6 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
   // Bounded rules are capped at MAX_SPAN_DAYS at parse time and the lazy engines
   // never backfill, so [start, start+MAX_SPAN_DAYS] is a complete probe window.
   const probeEnd = end ?? addDays(start, MAX_SPAN_DAYS);
-
   const isBlockTemplate = `recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL`;
   // "engine-generated, non-locked": pattern placements (is_auto=1, source_kind='pattern'),
   // recurring block INSTANCES (recurrence_parent_id set — NB these are is_auto=0, so an
