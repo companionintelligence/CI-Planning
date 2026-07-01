@@ -82,8 +82,22 @@ export function summaryRouter() {
   // GET /api/summary/top-tasks?date=YYYY-MM-DD — the Today's Brief top-tasks list
   // (Phase O · O0). Non-habit, non-routine tasks for the day, daily_plan-ranked.
   router.get('/api/summary/top-tasks', async (ctx) => {
-    const { date } = ctx.query as Record<string, string>;
-    const day = date ?? localISODate();
+    const raw = (ctx.query as Record<string, unknown>).date;
+    if (raw !== undefined) {
+      if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        ctx.status = 422;
+        ctx.body = { error: 'date must be YYYY-MM-DD' };
+        return;
+      }
+      const d = new Date(raw + 'T00:00:00Z');
+      if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) {
+        ctx.status = 422;
+        ctx.body = { error: 'date must be YYYY-MM-DD' };
+        return;
+      }
+    }
+
+    const day = typeof raw === 'string' ? raw : localISODate();
     ctx.body = { tasks: topTasksForDay(day) };
   });
 
