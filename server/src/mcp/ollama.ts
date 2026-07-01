@@ -27,6 +27,30 @@ interface GenerateOpts {
   timeoutMs?: number;
 }
 
+/**
+ * Build an OllamaUnavailable for a non-OK response. A missing model is detected by
+ * Ollama's body ("model '...' not found, try pulling it first"), NOT by the 404 status
+ * alone — a bare 404 can also mean a wrong OLLAMA_URL, an API-path mismatch, or a proxy.
+ * So we only give the pull/override hint when the body confirms it, and otherwise return
+ * a generic error that names the endpoint (to surface URL problems) with a trimmed body.
+ */
+async function ollamaError(op: string, res: Response, model: string): Promise<OllamaUnavailable> {
+  const bodyTrimmed = (await res.text().catch(() => '')).trim();
+  const bodySnippet = bodyTrimmed.length > 500 ? `${bodyTrimmed.slice(0, 500)}…` : bodyTrimmed;
+
+  // 404 *usually* means the model isn't pulled, but avoid misdiagnosing endpoint/proxy 404s.
+  if (res.status === 404 && /model\s+['"].+['"]\s+not\s+found/i.test(bodyTrimmed)) {
+    return new OllamaUnavailable(
+      `Model '${model}' is not installed in Ollama. Run \`ollama pull ${model}\`, or set ` +
+        `OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED in server/.env to a model from \`ollama list\`.`,
+    );
+  }
+  // Name the endpoint so a wrong OLLAMA_URL / proxy 404 is diagnosable from the message.
+  return new OllamaUnavailable(
+    `Ollama ${op} failed at ${config.ollamaUrl}: ${res.status}${bodySnippet ? ` ${bodySnippet}` : ''}`,
+  );
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -60,7 +84,7 @@ export async function generate(prompt: string, opts: GenerateOpts = {}): Promise
     opts.timeoutMs ?? 60_000
   );
 
-  if (!res.ok) throw new OllamaUnavailable(`Ollama generate failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw await ollamaError('generate', res, model);
   const data = (await res.json()) as { response?: string };
   return data.response ?? '';
 }
@@ -95,16 +119,17 @@ export function parseJsonLoose<T = unknown>(raw: string): T {
 
 /** Return an embedding vector for a single piece of text. */
 export async function embed(text: string, timeoutMs = 30_000): Promise<number[]> {
+  const model = resolveEmbedModel();
   const res = await fetchWithTimeout(
     `${config.ollamaUrl}/api/embeddings`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: resolveEmbedModel(), prompt: text }),
+      body: JSON.stringify({ model, prompt: text }),
     },
     timeoutMs
   );
-  if (!res.ok) throw new OllamaUnavailable(`Ollama embeddings failed: ${res.status}`);
+  if (!res.ok) throw await ollamaError('embeddings', res, model);
   const data = (await res.json()) as { embedding?: number[] };
   if (!data.embedding?.length) throw new OllamaUnavailable('Ollama returned an empty embedding');
   return data.embedding;

@@ -52,7 +52,7 @@ graph TB
     subgraph AI["AI — optional"]
         Ollama[Ollama<br/>local LLM]
         Small["qwen2.5:0.5b<br/>extraction / triage"]
-        Medium["gemma4:e4b<br/>briefings"]
+        Medium["gemma3n:e4b<br/>briefings"]
         Embed["nomic-embed-text<br/>dedupe embeddings"]
     end
 
@@ -400,8 +400,8 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `PORT` | `3848` | HTTP port (API + UI) |
 | `DB_PATH` | `/data/companion.db` in Docker; `~/Library/Application Support/CompanionPlanning/companion.db` on macOS; **set explicitly on Linux / Windows** | SQLite file path. The containing directory is created automatically. |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint. Unreachable ⇒ AI features degrade gracefully (template briefings, dedupe off). |
-| `OLLAMA_SMALL` | `qwen2.5:0.5b` | Fast model for extraction/triage |
-| `OLLAMA_MEDIUM` | `gemma4:e4b` | Better model for briefings |
+| `OLLAMA_SMALL` | `qwen2.5:0.5b` | Fast model for extraction/triage. Must be pulled (`ollama pull`) or set to an installed model. |
+| `OLLAMA_MEDIUM` | `gemma3n:e4b` | Better model for briefings. Must be pulled (`ollama pull`) or set to an installed model. |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
 | `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (JWKS-signed Bearer JWT). |
@@ -454,6 +454,22 @@ corepack enable
 pnpm install
 pnpm dev          # server :3848 + Vite client :5173 (proxies /api)
 ```
+
+AI features (briefings, extraction, grooming, dedupe) are **optional** and need a
+local [Ollama](https://ollama.com) — the app degrades gracefully without it. To
+enable them, start the Ollama server and pull the default models once:
+
+```bash
+ollama serve                       # or launch the Ollama desktop app
+ollama pull qwen2.5:0.5b           # OLLAMA_SMALL  — extraction / triage
+ollama pull gemma3n:e4b            # OLLAMA_MEDIUM — briefings / planning
+ollama pull nomic-embed-text       # OLLAMA_EMBED  — dedupe embeddings
+```
+
+Already have other models? Skip the pulls and set `OLLAMA_SMALL` / `OLLAMA_MEDIUM` /
+`OLLAMA_EMBED` in `server/.env` to any name from `ollama list`. Check health anytime
+at `GET /api/llm/status` (`available` + installed `models`). A model that's configured
+but not pulled fails with an actionable `ollama pull …` error.
 
 > **Note (Node 24):** `pnpm dev` uses `tsx watch` which silently crashes under
 > Node 24. If you can't upgrade, run the server without watch mode:
