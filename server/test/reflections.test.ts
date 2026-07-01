@@ -478,6 +478,54 @@ describe('O1 — day note', () => {
     const res = await api(srv.url, '/api/reflections/notes');
     expect(res.status).toBe(422);
   });
+
+  // FIX 2 — from/to must be real YYYY-MM-DD dates (shape + calendar validity).
+  it('GET /api/reflections/notes 422 on malformed or impossible dates', async () => {
+    expect((await api(srv.url, '/api/reflections/notes?from=nope&to=2026-06-16')).status).toBe(422);
+    expect((await api(srv.url, `/api/reflections/notes?from=${DAY}&to=2026-13-40`)).status).toBe(422);
+    expect((await api(srv.url, `/api/reflections/notes?from=2026-02-31&to=${NEXT_DAY}`)).status).toBe(422);
+  });
+
+  // FIX 3 — a whitespace-only (legacy/manual) row is not reported as a noted day.
+  it('GET /api/reflections/notes skips whitespace-only day_note rows', async () => {
+    const now = new Date().toISOString();
+    // Insert a whitespace-only row directly (the route can't create one — it deletes).
+    sqlite.prepare(
+      `INSERT INTO reflections (owner_id, kind, period_key, position, body, created_at, updated_at)
+       VALUES (?, 'day_note', ?, 0, '   ', ?, ?)`,
+    ).run(SYSTEM_OWNER, DAY, now, now);
+    await putNote({ period_key: NEXT_DAY, body: 'real note' });
+
+    const res = await api(srv.url, `/api/reflections/notes?from=${DAY}&to=${NEXT_WEEK_DAY}`);
+    expect(res.status).toBe(200);
+    expect(res.body.dates).toEqual([NEXT_DAY]); // DAY (whitespace) excluded
+  });
+
+  // FIX 4 — period_key must be a real YYYY-MM-DD date.
+  it('PUT /api/reflections/note 422 on malformed period_key', async () => {
+    expect((await putNote({ period_key: 'not-a-date', body: 'x' })).status).toBe(422);
+    expect((await putNote({ period_key: '2026-13-01', body: 'x' })).status).toBe(422);
+    expect(noteRows()).toHaveLength(0);
+  });
+
+  // FIX 1 — day_note is not a goal kind: the generic /done + DELETE routes reject it.
+  it('POST /api/reflections/day_note/0/done → 422 (not a goal kind)', async () => {
+    await putNote({ period_key: DAY, body: 'A note' });
+    const res = await api(srv.url, '/api/reflections/day_note/0/done', {
+      method: 'POST', json: { period_key: DAY, done: true },
+    });
+    expect(res.status).toBe(422);
+    // The note row is untouched (no done_at column semantics apply).
+    expect(noteRows()).toHaveLength(1);
+    expect(noteRows()[0].done_at).toBeNull();
+  });
+
+  it('DELETE /api/reflections/day_note/0 → 422 (not a goal kind)', async () => {
+    await putNote({ period_key: DAY, body: 'A note' });
+    const res = await api(srv.url, `/api/reflections/day_note/0?period_key=${DAY}`, { method: 'DELETE' });
+    expect(res.status).toBe(422);
+    expect(noteRows()).toHaveLength(1); // still there — must use PUT /note to clear
+  });
 });
 
 // ── Phase O · O0 — weekly done-toggle ──────────────────────────────────────────
