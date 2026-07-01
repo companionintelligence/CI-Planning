@@ -34,13 +34,18 @@ interface GenerateOpts {
  */
 async function ollamaError(op: string, res: Response, model: string): Promise<OllamaUnavailable> {
   const body = await res.text().catch(() => '');
-  if (res.status === 404) {
+  const bodyTrimmed = body.trim();
+  const bodySnippet = bodyTrimmed.length > 500 ? `${bodyTrimmed.slice(0, 500)}…` : bodyTrimmed;
+
+  // 404 *usually* means the model isn't pulled, but avoid misdiagnosing endpoint/proxy 404s.
+  if (res.status === 404 && /model\s+['"].+['"]\s+not\s+found/i.test(bodyTrimmed)) {
     return new OllamaUnavailable(
       `Model '${model}' is not installed in Ollama. Run \`ollama pull ${model}\`, or set ` +
         `OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED in server/.env to a model from \`ollama list\`.`,
     );
   }
-  return new OllamaUnavailable(`Ollama ${op} failed: ${res.status} ${body}`);
+
+  return new OllamaUnavailable(`Ollama ${op} failed: ${res.status}${bodySnippet ? ` ${bodySnippet}` : ''}`);
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
