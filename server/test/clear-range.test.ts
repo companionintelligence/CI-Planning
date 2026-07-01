@@ -14,8 +14,10 @@ import { placePatternOnDay } from '../src/engine/patterns-place.js';
  */
 const OWNER = SYSTEM_OWNER;
 const pad = (n: number) => String(n).padStart(2, '0');
+
+const BASE_DAY = new Date();
 function isoDay(offset: number): string {
-  const d = new Date();
+  const d = new Date(BASE_DAY);
   d.setUTCDate(d.getUTCDate() + offset);
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
