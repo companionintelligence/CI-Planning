@@ -20,7 +20,7 @@ const DEFAULT_PREF: PatternPref = {
 type RawRow = {
   id: string;
   owner_id: string;
-  pattern_tag_id: string;
+  tag_id: string;
   auto_fill: number;
   reminder_offsets: string;
   icon_shape: string;
@@ -41,26 +41,28 @@ function rowToPref(r: PrefCols): PatternPref {
 }
 
 /**
- * Returns all pattern_prefs for an owner, keyed by pattern_tag_id.
+ * Returns all pattern-axis tag_prefs for an owner, keyed by tag id.
  * Missing rows are NOT included — callers fold in defaults via DEFAULT_PREF.
+ * (Since 0097 the pattern + category prefs share one `tag_prefs` table,
+ * partitioned by `kind`; this reads only the 'pattern' rows.)
  */
 export function getPatternPrefs(ownerId: string): Record<string, PatternPref> {
   const rows = sqlite
     .prepare(
-      `SELECT id, owner_id, pattern_tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
-         FROM pattern_prefs
-        WHERE owner_id = ?`
+      `SELECT id, owner_id, tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
+         FROM tag_prefs
+        WHERE owner_id = ? AND kind = 'pattern'`
     )
     .all(ownerId) as RawRow[];
 
   const result: Record<string, PatternPref> = {};
-  for (const r of rows) result[r.pattern_tag_id] = rowToPref(r);
+  for (const r of rows) result[r.tag_id] = rowToPref(r);
   return result;
 }
 
 /**
- * Upsert a single pattern_prefs row. Merges `patch` on top of any existing
- * values (fetch-then-merge), then persists. Returns the final row.
+ * Upsert a single pattern-axis tag_prefs row (kind='pattern'). Merges `patch` on
+ * top of any existing values (fetch-then-merge), then persists. Returns the final row.
  */
 export function setPatternPref(
   ownerId: string,
@@ -70,7 +72,7 @@ export function setPatternPref(
   const existing = sqlite
     .prepare(
       `SELECT auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
-         FROM pattern_prefs WHERE owner_id = ? AND pattern_tag_id = ?`
+         FROM tag_prefs WHERE owner_id = ? AND tag_id = ? AND kind = 'pattern'`
     )
     .get(ownerId, patternTagId) as PrefCols | undefined;
 
@@ -88,9 +90,9 @@ export function setPatternPref(
 
   sqlite
     .prepare(
-      `INSERT INTO pattern_prefs (id, owner_id, pattern_tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(owner_id, pattern_tag_id)
+      `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
+       VALUES (?, ?, ?, 'pattern', ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_id, tag_id)
        DO UPDATE SET auto_fill = excluded.auto_fill,
                      reminder_offsets = excluded.reminder_offsets,
                      icon_shape = excluded.icon_shape,

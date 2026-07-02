@@ -41,7 +41,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>16 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0096 on boot]
+        Migrate[Migration runner<br/>0001 → 0097 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -97,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0096 ordered list
+                                    // migrations from the 0001–0097 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -108,7 +108,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0096_daily_recap`) produce the following tables:
+Migrations (current head: `0097_tag_prefs`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -127,7 +127,7 @@ Migrations (current head: `0096_daily_recap`) produce the following tables:
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
 | `pattern_blocks` | Pattern-tag-scoped scheduling windows (`workday` / `weekend` time ranges) |
-| `pattern_prefs` | Per-owner × per-pattern config: `auto_fill`, `reminder_offsets`, `icon_shape`, `color_token`, `default_minutes` |
+| `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`pattern` \| `category`): shared `color_token`/`default_minutes`, plus pattern-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
@@ -331,8 +331,8 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0096): tasks, subtasks, time blocks, tags,
-  entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
+- SQLite schema (migrations 0001–0097): tasks, subtasks, time blocks, tags,
+  entity_tags, tag_patterns, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
   reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,
   reflections, objectives, objective_tasks, estimate_calibration

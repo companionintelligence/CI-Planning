@@ -4,7 +4,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from './sse.js';
 import { writeAudit } from '../lib/audit.js';
 
-const EXPORT_VERSION = '2';
+const EXPORT_VERSION = '3';
 
 // Tables that require only the owner_id for a direct export query.
 const OWNER_TABLES = [
@@ -15,8 +15,7 @@ const OWNER_TABLES = [
   'tasks',
   'block_templates',
   'pattern_blocks',
-  'pattern_prefs',
-  'category_prefs',
+  'tag_prefs',
   'flight_plan',
   'time_entries',
   'reminders',
@@ -112,8 +111,7 @@ export function backupRouter() {
       task_dependencies: taskDeps,
       block_templates: ownerData['block_templates'],
       pattern_blocks: ownerData['pattern_blocks'],
-      pattern_prefs: ownerData['pattern_prefs'],
-      category_prefs: ownerData['category_prefs'],
+      tag_prefs: ownerData['tag_prefs'],
       flight_plan: ownerData['flight_plan'],
       time_entries: ownerData['time_entries'],
       entity_tags: entityTags,
@@ -187,8 +185,7 @@ export function backupRouter() {
       sqlite.prepare(`DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
       sqlite.exec('DELETE FROM time_blocks'); // v0.2 single-owner: full wipe (incl. containers)
       sqlite.prepare('DELETE FROM flight_plan WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM pattern_prefs WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM category_prefs WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM tag_prefs WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM pattern_blocks WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM block_templates WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM tasks WHERE owner_id = ?').run(ownerId);
@@ -218,8 +215,7 @@ export function backupRouter() {
       counts['task_dependencies']= insertRows('task_dependencies', g('task_dependencies'));
       counts['block_templates']  = insertRows('block_templates', g('block_templates'));
       counts['pattern_blocks']   = insertRows('pattern_blocks', g('pattern_blocks'));
-      counts['pattern_prefs']    = insertRows('pattern_prefs', g('pattern_prefs'));
-      counts['category_prefs']   = insertRows('category_prefs', g('category_prefs'));
+      counts['tag_prefs']        = insertRows('tag_prefs', g('tag_prefs'));
       counts['flight_plan']      = insertRows('flight_plan', g('flight_plan'));
       counts['time_entries']     = insertRows('time_entries', g('time_entries'));
       counts['entity_tags']      = insertRows('entity_tags', g('entity_tags'));
