@@ -25,7 +25,7 @@ function insertTask(title: string, extra?: { parentId?: string; recurrenceParent
 }
 
 function seedTag(name: string): string {
-  sqlite.prepare(`INSERT OR IGNORE INTO tags (id, name) VALUES (uuid7(), ?)`).run(name);
+  sqlite.prepare(`INSERT OR IGNORE INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?)`).run(name, OWNER);
   return (sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(name) as { id: string }).id;
 }
 

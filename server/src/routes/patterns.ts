@@ -271,7 +271,7 @@ export function patternsRouter() {
       catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
     }
     // CON-3: mirror the routine's (denormalized) tag string into the normalized store.
-    if (body.tag !== undefined) syncEntityTags('routine', p.id, splitTagString(body.tag));
+    if (body.tag !== undefined) syncEntityTags('routine', p.id, splitTagString(body.tag), owner);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
@@ -310,7 +310,7 @@ export function patternsRouter() {
       catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
     }
     // CON-3: keep the normalized store in sync when the tag string changes (null/'' clears).
-    if (body.tag !== undefined) syncEntityTags('routine', id, splitTagString(body.tag));
+    if (body.tag !== undefined) syncEntityTags('routine', id, splitTagString(body.tag), owner);
     const out = serializePattern(row);
     broadcast(owner, 'pattern:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `routine:${id}` });

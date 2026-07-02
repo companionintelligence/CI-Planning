@@ -20,8 +20,8 @@ export function patternPrefsRouter() {
     const { patternTagId } = ctx.params;
 
     const tag = sqlite
-      .prepare(`SELECT kind FROM tags WHERE id = ?`)
-      .get(patternTagId) as { kind: string } | undefined;
+      .prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`)
+      .get(patternTagId, owner) as { kind: string } | undefined;
     if (!tag) { ctx.status = 404; ctx.body = { error: 'Tag not found' }; return; }
     if (tag.kind !== 'pattern') { ctx.status = 422; ctx.body = { error: 'Tag is not a pattern' }; return; }
 

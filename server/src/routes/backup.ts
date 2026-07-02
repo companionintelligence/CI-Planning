@@ -13,8 +13,11 @@ import { writeAudit } from '../lib/audit.js';
 // owner_id, so its exported rows now carry owner_id and a pre-T1 ('4') export can't be
 // restored into the new schema — the version check rejects it cleanly. time_blocks is now
 // an OWNER_TABLES entry (owner-scoped export) and its restore-wipe + the entity_tags UNION
-// are owner-scoped (F-ETAGS).
-const EXPORT_VERSION = '5';
+// are owner-scoped (F-ETAGS) · '6' T2 (multi-tenant): tags gained a NOT NULL owner_id
+// (UNIQUE(owner_id, name) replaces the global UNIQUE(name)); the tag axis + its junctions are
+// now owner-scoped on export/restore, so the tags/junction wipe no longer cross-tenant-
+// cascades another owner's entity_tags — completing the entity_tags restore-isolation T1 began.
+const EXPORT_VERSION = '6';
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
@@ -26,6 +29,7 @@ const OWNER_TABLES = [
   'tasks',
   'block_templates',
   'time_blocks',
+  'tags',
   'pattern_blocks',
   'tag_prefs',
   'flight_plan',
@@ -154,10 +158,12 @@ export function backupRouter() {
       owner_id: ownerId,
       exported_at: new Date().toISOString(),
       scheduling_prefs: ownerData['scheduling_prefs'],
-      tags: sqlite.prepare('SELECT * FROM tags').all(),
-      tag_patterns: sqlite.prepare('SELECT * FROM tag_patterns').all(),
-      tag_categories: sqlite.prepare('SELECT * FROM tag_categories').all(),
-      category_direction_optouts: sqlite.prepare('SELECT * FROM category_direction_optouts').all(),
+      // T2: tags are owner-scoped (an OWNER_TABLES entry); the 3 junctions carry no owner_id,
+      // so they scope through their parent tags (tag_id IN this owner's tags).
+      tags: ownerData['tags'],
+      tag_patterns: sqlite.prepare(`SELECT * FROM tag_patterns WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
+      tag_categories: sqlite.prepare(`SELECT * FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
+      category_direction_optouts: sqlite.prepare(`SELECT * FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
       pattern_types: ownerData['pattern_types'],
       patterns: ownerData['patterns'],
       tasks: ownerData['tasks'],
@@ -273,11 +279,14 @@ export function backupRouter() {
       sqlite.prepare('DELETE FROM tasks WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM patterns WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM pattern_types WHERE owner_id = ?').run(ownerId);
-      // tags + junctions have no owner_id — full wipe (v0.2 single-owner).
-      sqlite.exec('DELETE FROM tag_categories');
-      sqlite.exec('DELETE FROM category_direction_optouts');
-      sqlite.exec('DELETE FROM tag_patterns');
-      sqlite.exec('DELETE FROM tags');
+      // T2: tags are owner-scoped; the 3 junctions scope through their parent tags. Delete
+      // junctions first (by parent-tag membership), then the owner's tags. This owner-scoped
+      // tags DELETE is the final lock on entity_tags restore-isolation: the old global
+      // `DELETE FROM tags` cascade-wiped OTHER owners' entity_tags via entity_tags.tag_id.
+      sqlite.prepare(`DELETE FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
+      sqlite.prepare(`DELETE FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
+      sqlite.prepare(`DELETE FROM tag_patterns WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
+      sqlite.prepare('DELETE FROM tags WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM daily_recap WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM scheduling_prefs WHERE owner_id = ?').run(ownerId);
 

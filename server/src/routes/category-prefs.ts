@@ -23,7 +23,7 @@ export function categoryPrefsRouter() {
     const owner = currentOwnerId();
     const { categoryTagId } = ctx.params;
 
-    const tag = sqlite.prepare(`SELECT kind FROM tags WHERE id = ?`).get(categoryTagId) as { kind: string } | undefined;
+    const tag = sqlite.prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(categoryTagId, owner) as { kind: string } | undefined;
     if (!tag) { ctx.status = 404; ctx.body = { error: 'Tag not found' }; return; }
     if (tag.kind !== 'category') { ctx.status = 422; ctx.body = { error: 'Tag is not a category' }; return; }
 

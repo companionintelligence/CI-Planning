@@ -643,8 +643,8 @@ function ownerTimezone(owner: string): string {
   const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined;
   return row?.timezone || serverTimezone();
 }
-function allTagNames(): Set<string> {
-  return new Set((sqlite.prepare(`SELECT name FROM tags`).all() as { name: string }[]).map((r) => r.name));
+function allTagNames(owner: string): Set<string> {
+  return new Set((sqlite.prepare(`SELECT name FROM tags WHERE owner_id = ?`).all(owner) as { name: string }[]).map((r) => r.name));
 }
 
 function instructSystem(): string {
@@ -716,7 +716,7 @@ export async function parseInstruction(owner: string, date: string, text: string
   if (!(await isAvailable())) throw new InstructError('unavailable', 'AI is unavailable');
   const prefs = loadPlanningPrefs(owner);
   const tz = ownerTimezone(owner);
-  const tagSet = allTagNames();
+  const tagSet = allTagNames(owner);
   let raw: unknown;
   try {
     raw = await generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {

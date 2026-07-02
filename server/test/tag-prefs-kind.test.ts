@@ -16,8 +16,8 @@ describe('tag_prefs kind normalization on upsert', () => {
   beforeEach(() => resetDb()); // clears tags -> cascades tag_prefs
 
   const newTag = (kind: string) =>
-    (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), ?, ?) RETURNING id`)
-      .get(`t-${kind}`, kind) as { id: string }).id;
+    (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, ?, ?) RETURNING id`)
+      .get(`t-${kind}`, kind, SYSTEM_OWNER) as { id: string }).id;
   const row = (tagId: string) =>
     sqlite.prepare(`SELECT * FROM tag_prefs WHERE owner_id=? AND tag_id=?`).get(SYSTEM_OWNER, tagId) as any;
 
