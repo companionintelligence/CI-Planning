@@ -116,7 +116,7 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
     const ft = await api(srv.url, `/api/patterns/${patId}/fast-tasks`, { method: 'POST', json: { title: 'Stretch' } });
     const ftId = ft.body.task.id as string;
     // fast tasks aren't tagged by the route — simulate a user tagging one.
-    syncEntityTags('task', ftId, ['mobility']);
+    syncEntityTags('task', ftId, ['mobility'], OWNER);
     expect(tagRows('routine', patId)).toEqual(['morning']);
     expect(tagRows('task', ftId)).toEqual(['mobility']);
 
@@ -131,7 +131,7 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
     const patId = pat.body.pattern.id as string;
     const ft = await api(srv.url, `/api/patterns/${patId}/fast-tasks`, { method: 'POST', json: { title: 'Quick' } });
     const ftId = ft.body.task.id as string;
-    syncEntityTags('task', ftId, ['x']);
+    syncEntityTags('task', ftId, ['x'], OWNER);
     expect(tagRows('task', ftId)).toEqual(['x']);
 
     await api(srv.url, `/api/patterns/${patId}/fast-tasks/${ftId}`, { method: 'DELETE' });
