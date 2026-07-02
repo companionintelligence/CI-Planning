@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-07-01 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). **None of Phase O/P adds a noun** — budget stays 9). The single source of truth for user-facing
+> **Status:** canonical, 2026-07-01 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). Phase T makes multi-tenant real (`owner_id` scoping across time_blocks/tags/sync_events, 0098–0100) and ratifies **owner ≡ user** (decision #1); Phase U adds auth-identity columns to `owners` (U0 / 0101). **None of Phase O/P/T/U adds a noun** — owner is an internal model concept, budget stays 9). The single source of truth for user-facing
 > nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -43,6 +43,14 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
 
 ## States, subtypes & kinds (demoted — not nouns)
 
+- **Owner ≡ User (multi-tenant):** **not a user-facing noun** — the internal `owners`
+  table **is** the user/account table (Phase T decision #1: 1:1, tenant = user). Each
+  person who signs in owns exactly one isolated workspace; every owner-scoped table's
+  `owner_id` references `owners(id)`. Phase U adds the auth-identity columns directly to
+  `owners` — `external_subject` (OIDC/CI-Portal token `sub`, U1), `username` +
+  `password_hash` (local login, U2) — so there is **no separate `users` table**. All
+  three are nullable; which are set implies the auth mode. The `SYSTEM_OWNER` sentinel
+  is the single owner in dev/test/standalone mode and is auth-inert (all three NULL).
 - **Connection / Integration (e.g. a connected Google account):** **not a noun** — it is a
   **Setting** (managed under Settings → MCP connections). Connecting Google adds no new
   glossary entity; its data surfaces as existing nouns (calendar events → **Time Block**
