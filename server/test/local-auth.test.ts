@@ -224,4 +224,22 @@ describe('U2 — boot bootstrap (ensureLocalAuthBootstrap)', () => {
       config.auth.defaultPassword = saved;
     }
   });
+
+  it('does NOT count a username-only owner (null password_hash) as a usable login path', async () => {
+    resetDb();
+    // An owner with a username but no password_hash can never authenticate
+    // (verifyLoginPassword always fails against the decoy), so it must not satisfy the
+    // boot guard — otherwise we'd skip seeding AND skip failing closed, leaving no login.
+    sqlite
+      .prepare(`INSERT INTO owners (id, name, username) VALUES ('00000000-0000-7000-8000-0000000000c3', 'stub', 'stub-user')`)
+      .run();
+    expect(localOwnerCount()).toBe(0); // not counted — can't log in
+    const saved = config.auth.defaultPassword;
+    config.auth.defaultPassword = undefined;
+    try {
+      await expect(ensureLocalAuthBootstrap()).rejects.toThrow(/no way to log in|AUTH_DEFAULT_PASSWORD/i);
+    } finally {
+      config.auth.defaultPassword = saved;
+    }
+  });
 });
