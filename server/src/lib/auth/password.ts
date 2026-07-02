@@ -10,9 +10,9 @@ import { SYSTEM_OWNER_ID } from '../ids.js';
  * which matters given this repo's native-build constraints (see the better-sqlite3
  * build allow-list in pnpm-workspace.yaml).
  *
- * Only ever exercised when `mode === 'sso' && disableOidc` (see requireAuth dispatch);
- * every other mode never touches this module.
- */
+ * Only invoked in local-login mode (`mode === 'sso' && disableOidc`) via the `/api/auth/login`
+ * handler. Other auth modes don't call into this module's hashing/verification functions, but the
+ * module may still be imported at boot because the auth router is mounted unconditionally.
 
 // argon2id with library defaults (m=19MiB, t=2, p=1 in @node-rs/argon2 v2) — OWASP-
 // aligned and encoded self-describingly in the `$argon2id$…` string, so a later
