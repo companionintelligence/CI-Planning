@@ -426,9 +426,14 @@ export function blocksRouter() {
   router.delete('/api/blocks/:id', async (ctx) => {
     const id = ctx.params.id;
     const owner = currentOwnerId();
+
+    // Verify ownership before any side effects (e.g. remote deletes).
+    if (!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, owner)) {
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+
     // Push remote deletes before the block (and its external_events rows) are CASCADE-removed.
     await pushOutboundDeletes(id);
-    // REQ2: collect the task ids of every task-block about to be removed (the block
     // itself + cascade-deleted children + recurring instances) BEFORE deletion, so we
     // can return their tasks to the open backlog afterward. This handler isn't
     // transactional, so gather up front.
