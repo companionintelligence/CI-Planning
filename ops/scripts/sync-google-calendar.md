@@ -7,7 +7,7 @@
 >
 > **Current docs:**
 > - Setup runbook → [docs/google-cloud-setup.md](../../docs/google-cloud-setup.md)
-> - Architecture → [ARCHITECTURE.md §12 — MCP Integration](../../ARCHITECTURE.md#12-mcp-integration)
+> - Architecture → [ARCHITECTURE.md §10 — Google connector](../../ARCHITECTURE.md#10-google-connector)
 >
 > The original text is kept below for historical reference only — do not follow it.
 

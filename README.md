@@ -6,7 +6,7 @@ optional local LLM (Ollama) adds AI briefings, task extraction, grooming, and
 auto-scheduling. No cloud, no account, no telemetry — everything runs on your
 hardware and stays there.
 
-Companion Planning is currently in **v0.2 active development**. The core app is
+Companion Planning is currently in **v0.3 active development**. The core app is
 fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
 Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
 Google Calendar sync** are built in, gated behind `GOOGLE_MODE=live` plus
@@ -30,7 +30,7 @@ SQLite is the single source of truth for data.
 ```mermaid
 graph TB
     subgraph Browser["Browser (SolidJS PWA)"]
-        UI[Ten Views<br/>Today · Calendar · Inbox · Tasks<br/>Routines · Objectives · Tags · Jobs · Settings]
+        UI[Nine Views<br/>Today · Calendar · Inbox · Tasks<br/>Routines · Objectives · Tags · Jobs · Settings]
         Store[Reactive Stores<br/>createResource / createSignal]
         SW[Service Worker<br/>Web Push + installable PWA]
         BN[Reminders<br/>in-app toast + Web Push]
@@ -40,7 +40,7 @@ graph TB
         API[REST API<br/>20+ route modules]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>16 scheduled jobs]
+        Cron[Croner Jobs<br/>15 scheduled jobs]
         Migrate[Migration runner<br/>0001 → 0097 on boot]
     end
 
@@ -112,7 +112,7 @@ Migrations (current head: `0097_tag_prefs`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
-| `owners` | User identity (single-owner in v0.2) |
+| `owners` | User identity (single-owner in v0.3) |
 | `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype |
 | `task_dependencies` | Blocked-by edges between tasks |
 | `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support |
@@ -333,10 +333,11 @@ consistent snapshot.
 - Koa + TypeScript backend serving both the API and the built client on port 3848
 - SQLite schema (migrations 0001–0097): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, tag_prefs, flight_plan,
-  daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
-  reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,
-  reflections, objectives, objective_tasks, estimate_calibration
-- All ten SolidJS views, with full task CRUD (tags, notes, priorities, due
+  daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
+  block_templates, scheduled_jobs, reminders, push_subscriptions,
+  replan_suggestions, audit_log, sync_events, reflections, objectives,
+  objective_tasks, estimate_calibration
+- All nine SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
   and break preferences; per-pattern auto-fill gating
