@@ -12,6 +12,12 @@ import { mountRoutes } from './routes/index.js';
 export function buildApp(): Koa {
   const app = new Koa();
 
+  // Behind a trusted TLS-terminating proxy (CI-Hub tunnel): honor X-Forwarded-Proto
+  // (⇒ ctx.protocol='https' ⇒ Secure session cookie) and X-Forwarded-For (⇒ ctx.ip is
+  // the real client, for per-IP login rate-limiting). Off by default (don't trust
+  // spoofable headers when directly reachable).
+  if (config.trustProxy) app.proxy = true;
+
   // Sign the local-login session cookie (U2). config.ts fails boot when
   // DISABLE_OIDC=true without SESSION_SECRET, so local mode always has keys here;
   // harmless (unset) in every other mode, which never sets a signed cookie.

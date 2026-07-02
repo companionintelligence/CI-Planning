@@ -18,9 +18,12 @@ import { SCOPE_READ, SCOPE_WRITE, type VerifiedClaims } from './types.js';
 export const SESSION_COOKIE = 'cp_session';
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-// `secure` is derived per-request from the protocol: the Secure flag is set only over
-// HTTPS, so cookies still work over plain http on the tailnet, but get Secure
-// automatically once the app is fronted by TLS. (Mirrors CI-Import-Tools' cookieOpts.)
+// `secure` is derived per-request from ctx.protocol: the Secure flag is set only over
+// HTTPS, so cookies still work over plain http on the tailnet but get Secure once TLS-
+// fronted. Behind a TLS-terminating proxy the app listens on http, so ctx.protocol is
+// 'https' ONLY when TRUST_PROXY=true enables Koa proxy mode (then ctx.protocol honors
+// X-Forwarded-Proto). Koa also refuses to emit a Secure cookie unless it considers the
+// connection secure, so this + app.proxy are what actually make Secure work behind a proxy.
 function cookieOpts(ctx: Koa.Context, maxAge?: number) {
   return {
     signed: true,

@@ -23,6 +23,7 @@ export interface OidcDiscoveryDoc {
 }
 
 const TTL_MS = 60 * 60 * 1000; // 1h, matching CI-Import-Tools
+const TIMEOUT_MS = 5_000; // fail fast if the issuer is slow/unreachable (aligns with the Ollama client)
 const cache = new Map<string, { at: number; doc: OidcDiscoveryDoc }>();
 
 /**
@@ -35,7 +36,8 @@ export async function discoverOidc(issuer: string): Promise<OidcDiscoveryDoc> {
   if (hit && Date.now() - hit.at < TTL_MS) return hit.doc;
 
   const url = `${key}/.well-known/openid-configuration`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  // Bounded fetch: a slow/unreachable issuer must not hang /api/auth/ciportal/start.
+  const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) throw new Error(`OIDC discovery failed: ${url} → HTTP ${res.status}`);
   const doc = (await res.json()) as OidcDiscoveryDoc;
   if (!doc.issuer || !doc.authorization_endpoint || !doc.token_endpoint || !doc.jwks_uri) {
