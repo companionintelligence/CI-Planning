@@ -43,7 +43,7 @@
 **Verified already owner-scoped (NOT blockers):** `daily_recap`, `tag_prefs`, `daily_plan`, `reflections`, `objectives`, `estimate_calibration`, `replan_suggestions`, `plan_hints`, `pattern_day_optouts`. The consolidation/hygiene tables buy nothing for tenancy — the owner-*less* tables above are the whole job.
 
 **Cross-cutting facts (feed T0/T3):**
-- `backup.ts` (= **`server/src/routes/backup.ts`**, *not* `lib/backup.ts`) full-wipes the owner-less tables on restore and exports them unfiltered; `EXPORT_VERSION='3'`. The moment a table gains `owner_id`, that wipe is cross-tenant data loss — **the correctness/security gate** (§3).
+- `backup.ts` (= **`server/src/routes/backup.ts`**, *not* `lib/backup.ts`) full-wipes the owner-less tables on restore and exports them unfiltered; `EXPORT_VERSION` is now `'4'` (PR #215 rewrote this file — match by symbol, not line). The moment a table gains `owner_id`, that wipe is cross-tenant data loss — **the correctness/security gate** (§3).
 - `applyOp` has no owner check for `block` ops (**L Gap 5**).
 - ⚠️ **No cron iterates owners** (`startCronJobs` binds `runWithOwner(SYSTEM_OWNER)`) → under multi-tenant every owner-scoped cron serves **only owner #1** (the biggest latent fault).
 - ⚠️ `currentOwnerId()` **defaults to `SYSTEM_OWNER` outside any `runWithOwner` context** → an unwrapped path silently reads owner #1.
@@ -57,7 +57,7 @@ Full detail per ticket in [T-multitenant-tickets.md](T-multitenant-tickets.md).
 
 - **T0 — Multi-tenant test & enforcement scaffolding** (prerequisite, no migration): a 2nd-owner test factory; a test-mode owner-binding hook (route-level isolation is untestable today — test-mode pins `SYSTEM_OWNER`); make `currentOwnerId()` throw outside a context in non-test builds; widen the owner-literal grep gate to `src/services`+`src/jobs` + UUID/`SYSTEM_OWNER`; decide the `EXPORT_VERSION` bump policy.
 - **T1 — owner-scope `time_blocks`** (mig `0098`): the blocker; ~24 reader/writer files; closes L Gap 5; carries the `backup.ts` gate (incl. the `entity_tags` UNION). The heaviest slice.
-- **T2 — owner-scope the tag axis** (mig `0099`): `tags.owner_id` + **`UNIQUE(owner_id, name)`**; junctions via parent; ~a dozen owner-blind readers; per-owner base-tag provisioning dependency.
+- **T2 — owner-scope the tag axis** (mig `0099`): `tags.owner_id` + **`UNIQUE(owner_id, name)`**; junctions via parent; ~a dozen owner-blind readers; per-owner base-tag provisioning dependency. **Runs after T1.**
 - **T3 — cron per-owner fan-out** (code; no migration unless per-owner run visibility is wanted): iterate owners in the runner; manual-vs-cron split; fix `prune_sync_events`. **A correctness PR, not a decision.**
 - **T4 — `sync_events` FK + `proposed_owner_id` doc + owner-delete cascade consistency** (mig `0100`): the low-risk cleanup.
 - **T5 — `owners` auth columns + `GLOSSARY`** (mig, with Phase U): reserve U's columns; make owner ≡ user canon.
@@ -77,10 +77,11 @@ Full detail per ticket in [T-multitenant-tickets.md](T-multitenant-tickets.md).
 
 ## 4 · PR order & dependencies
 
-**Order: T0 → T3 → T4 → T2 → T1 → T5.** *(Corrected from time_blocks-first: T0 unblocks testing; T3 is schema-free and fixes a latent blocker independently; T4 is tiny; **T2/T1 are the two heavy rebuilds** — the design's original time_blocks-first order front-loaded all risk into the single hardest rebuild. [F-ORDER](T-multitenant-tickets.md#fault-f-order).)*
+**Order: T0 → T3 ∥ T4 → T1 → T2 → T5.** *(Owner decision 2026-07-02. T0 first (unblocks isolation testing); **T3 ∥ T4** are disjoint, parallel-safe (T3 schema-free, T4 a tiny migration); then **T1 → T2** serial (shared `blocks.ts`/`backup.ts`/`schema.ts`/golden; T1-first isolates `entity_tags` sooner, T2 rebases on it); T5 with U. [F-ORDER](T-multitenant-tickets.md#fault-f-order).)*
 
 - **Depends on:** Q + S merged (done, head `0097`).
-- **T2 is intentionally before T1** (it’s the smaller rebuild to validate the migration/backup/test pattern first); ensure `entity_tags` export/restore scopes via `tags.owner_id`/tag membership so `time_block` rows remain tenant-safe even before `time_blocks.owner_id` exists.
+- **T2 runs after T1** (serial — shared `blocks.ts`/`backup.ts`/`schema.ts`/golden). T1-first fixes the `entity_tags` backup UNION and isolates `time_block`-kind `entity_tags` rows, so T2 then only rebases its small `blocks.ts` category-check on T1.
+- **Serialization hotspots** (coordinate even across the parallel T3 ∥ T4 tracks): pre-assign migration numbers (T1 `0098`, T2 `0099`, T4 `0100`); single-writer regen of the `baseline` golden; coordinate `backup.ts` + `EXPORT_VERSION` (also just touched by merged #215); and lock T0's `currentOwnerId()`-throws + widened grep-gate contract first (T1/T2/T3 depend on it).
 - **T5 with Phase U** (decision #3).
 - **Blocks:** U (needs T's `owners` shape) and softly W's final GraphQL owner-scoping shape.
 - **Parallel-safe with:** Y (env audit), X (MCP vocab); W's non-ownership design.
