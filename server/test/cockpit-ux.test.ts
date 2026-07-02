@@ -19,7 +19,7 @@ function insertTask(title: string, est = 30, opts: { tag?: string; priority?: nu
     .get(title, OWNER, est, opts.priority ?? 3, opts.dueAt ?? null) as { id: string }).id;
   if (opts.tag) {
     let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(opts.tag) as { id: string } | undefined;
-    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id`).get(opts.tag) as { id: string };
+    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?) RETURNING id`).get(opts.tag, OWNER) as { id: string };
     sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(id, tg.id);
   }
   return id;
@@ -150,8 +150,8 @@ describe('fill_order toggle', () => {
 describe('per-direction fill gate', () => {
   it('fill off for one direction stops its tasks from being placed; others unaffected', async () => {
     // Create two direction-tagged tasks; turn off auto_fill for 'work' direction
-    const workTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'work', 'pattern') RETURNING id`).get() as { id: string }).id;
-    const homeTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'home', 'pattern') RETURNING id`).get() as { id: string }).id;
+    const workTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'work', 'pattern', ?) RETURNING id`).get(OWNER) as { id: string }).id;
+    const homeTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'home', 'pattern', ?) RETURNING id`).get(OWNER) as { id: string }).id;
     // Pattern prefs: work fill = off, home fill = on
     sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'pattern', 0)`).run(OWNER, workTag);
     sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'pattern', 1)`).run(OWNER, homeTag);

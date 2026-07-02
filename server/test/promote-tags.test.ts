@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { taskTagNames, entityTagLevels } from '../src/services/tags.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 
@@ -15,7 +16,7 @@ describe('promote carries possible-task tags onto the task (linchpin)', () => {
   beforeEach(() => resetDb());
 
   const seedTag = (name: string, kind: 'pattern' | 'intention'): string =>
-    (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), ?, ?) RETURNING id`).get(name, kind) as { id: string }).id;
+    (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, ?, ?) RETURNING id`).get(name, kind, SYSTEM_OWNER) as { id: string }).id;
 
   it('copies the direction (pattern) tag at level 1 and content tags at level 2', async () => {
     const work = seedTag('work', 'pattern');

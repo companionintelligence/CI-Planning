@@ -37,7 +37,7 @@ function mergeTags(llm: string[], heuristic: string[], vocabulary: string[]): st
 }
 
 const selectVocab = sqlite.prepare(
-  `SELECT name FROM tags WHERE muted = 0 ORDER BY name`,
+  `SELECT name FROM tags WHERE owner_id = ? AND muted = 0 ORDER BY name`,
 );
 
 // Only top-level, non-recurrence, open tasks — mirrors AllTasks.tsx baseList filter.
@@ -79,7 +79,7 @@ export interface AutoTagResult {
  *   replaces existing user-applied tags.
  */
 export async function tagUntaggedTasks(ownerId: string): Promise<AutoTagResult> {
-  const vocabulary = (selectVocab.all() as { name: string }[]).map((r) => r.name);
+  const vocabulary = (selectVocab.all(ownerId) as { name: string }[]).map((r) => r.name);
   if (vocabulary.length === 0) {
     return { tagged: 0, total: 0, log: 'No tag vocabulary yet; skipped' };
   }
@@ -97,7 +97,7 @@ export async function tagUntaggedTasks(ownerId: string): Promise<AutoTagResult> 
     if (llm.length > 0) ollamaHit = true;
     const merged = mergeTags(llm, tagTitleFallback(task.title, vocabulary), vocabulary);
     if (merged.length > 0) {
-      for (const name of merged) insertEntityTag.run(task.id, resolveTagId(name));
+      for (const name of merged) insertEntityTag.run(task.id, resolveTagId(name, ownerId));
       tagged++;
     }
   }

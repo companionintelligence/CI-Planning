@@ -26,7 +26,7 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 const DATE = '2026-06-24';
 
 function insertTag(name: string): void {
-  sqlite.prepare(`INSERT OR IGNORE INTO tags (id, name, kind) VALUES (uuid7(), ?, 'intention')`).run(name);
+  sqlite.prepare(`INSERT OR IGNORE INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, 'intention', ?)`).run(name, SYSTEM_OWNER);
 }
 function instructBlocks(): { title: string; start_at: string; end_at: string; is_locked: number; block_kind: string }[] {
   return sqlite

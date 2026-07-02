@@ -40,10 +40,10 @@ if (!plan.source_ref) throw new Error('plan is missing source_ref');
 // Resolve a tag name to its id, creating it if absent (matches routes/tasks.ts attachTags).
 const tagId = (raw: string): string => {
   const name = normalizeTagName(raw);
-  const existing = sqlite.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: string } | undefined;
+  const existing = sqlite.prepare('SELECT id FROM tags WHERE owner_id = ? AND name = ?').get(SYSTEM_OWNER_ID, name) as { id: string } | undefined;
   return existing
     ? existing.id
-    : (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string }).id;
+    : (sqlite.prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get(SYSTEM_OWNER_ID, name) as { id: string }).id;
 };
 
 const insTask = sqlite.prepare(

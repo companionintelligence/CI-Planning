@@ -23,8 +23,8 @@ function seedDirections(kind: string = 'pattern'): Record<string, string> {
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (
       sqlite
-        .prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, ?, 1) RETURNING id`)
-        .get(name, kind) as { id: string }
+        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, ?, 1, ?) RETURNING id`)
+        .get(name, kind, OWNER) as { id: string }
     ).id;
   }
   return ids;
@@ -195,7 +195,7 @@ describe('PUT /api/pattern-blocks/:dirTagId/:dayType', () => {
   });
 
   it('422 when tag is not a direction', async () => {
-    const intId = (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'focus', 'intention') RETURNING id`).get() as { id: string }).id;
+    const intId = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'focus', 'intention', ?) RETURNING id`).get(OWNER) as { id: string }).id;
     const r = await api(srv.url, `/api/pattern-blocks/${intId}/workday`, {
       method: 'PUT', json: { ranges: [] },
     });

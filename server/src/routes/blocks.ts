@@ -33,7 +33,7 @@ function applyBlockTagLevels(
   syncLeveledEntityTags('time_block', blockId, [
     { level: 1, names: top },
     { level: 2, names: secondary },
-  ]);
+  ], currentOwnerId());
 }
 
 /** A block's secondary (level>1) tag names, for the read surface. */
@@ -156,7 +156,7 @@ export function blocksRouter() {
     const hasCat = body.category_id != null && body.category_id !== '';
     if (hasTag && hasCat) { ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return; }
     if (hasCat) {
-      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND kind = 'category' LIMIT 1`).get(body.category_id);
+      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(body.category_id, currentOwnerId());
       if (!ok) { ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return; }
     }
     const colorToken = hasCat
@@ -262,7 +262,7 @@ export function blocksRouter() {
       ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return;
     }
     if (body.category_id != null && body.category_id !== '') {
-      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND kind = 'category' LIMIT 1`).get(body.category_id);
+      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(body.category_id, currentOwnerId());
       if (!ok) { ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return; }
     }
 
@@ -434,6 +434,7 @@ export function blocksRouter() {
 
     // Push remote deletes before the block (and its external_events rows) are CASCADE-removed.
     await pushOutboundDeletes(id);
+    // REQ2: collect the task ids of every task-block about to be removed (the block
     // itself + cascade-deleted children + recurring instances) BEFORE deletion, so we
     // can return their tasks to the open backlog afterward. This handler isn't
     // transactional, so gather up front.

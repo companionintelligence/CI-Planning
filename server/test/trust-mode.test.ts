@@ -25,7 +25,7 @@ function makeTask(title: string, opts: { est?: number | null; tag?: string } = {
   ).id;
   if (opts.tag) {
     let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(opts.tag) as { id: string } | undefined;
-    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), ?, 'pattern') RETURNING id`).get(opts.tag) as { id: string };
+    if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, 'pattern', ?) RETURNING id`).get(opts.tag, OWNER) as { id: string };
     sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(id, tg.id);
   }
   return id;

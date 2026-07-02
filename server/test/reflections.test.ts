@@ -161,13 +161,13 @@ describe('PUT /api/reflections/today', () => {
   });
 
   it('stores category_id when provided', async () => {
-    const tagId = sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'family', 'category') RETURNING id`).get() as { id: string };
+    const tagId = sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'family', 'category', ?) RETURNING id`).get(SYSTEM_OWNER) as { id: string };
     await put({ period_key: DAY, body: 'Family time', category_id: tagId.id });
     expect(reflectionRows()[0].category_id).toBe(tagId.id);
   });
 
   it('GET returns color_token from category_prefs when a category is assigned', async () => {
-    const tag = sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'family', 'category') RETURNING id`).get() as { id: string };
+    const tag = sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'family', 'category', ?) RETURNING id`).get(SYSTEM_OWNER) as { id: string };
     sqlite.prepare(`INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token) VALUES (uuid7(), ?, ?, 'category', 'chart-1')`).run(SYSTEM_OWNER, tag.id);
     await put({ period_key: DAY, body: 'Family time', category_id: tag.id });
     const res = await api(srv.url, `/api/reflections?period=${DAY}`);

@@ -44,7 +44,7 @@ describe('jobs', () => {
          VALUES (uuid7(), 'Tagged task', 'text', 't1#0', 0.95, 'pending') RETURNING id`
       )
       .get() as { id: string };
-    const tag = sqlite.prepare("INSERT INTO tags (id, name) VALUES (uuid7(), 'legal') RETURNING id").get() as { id: string };
+    const tag = sqlite.prepare("INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), 'legal', ?) RETURNING id").get(SYSTEM_OWNER) as { id: string };
     sqlite.prepare('INSERT INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)').run(p.id, tag.id);
 
     await runJob('promote_possibles');

@@ -22,7 +22,7 @@ function seedDirections(): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (
-      sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, 'pattern', 1) RETURNING id`).get(name) as { id: string }
+      sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'pattern', 1, ?) RETURNING id`).get(name, OWNER) as { id: string }
     ).id;
   }
   return ids;

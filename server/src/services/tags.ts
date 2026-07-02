@@ -35,8 +35,8 @@ export function splitTagString(raw: string | null | undefined): string[] {
     .filter((n) => n.length > 0);
 }
 
-const findTag = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`);
-const makeTag = sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id`);
+const findTag = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`);
+const makeTag = sqlite.prepare(`INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id`);
 const insertAssoc = sqlite.prepare(
   `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES (?, ?, ?, ?)`,
 );
@@ -48,11 +48,15 @@ const selectNames = sqlite.prepare(
     ORDER BY entity_tags.level, tags.name`,
 );
 
-/** Resolve a tag id by (normalized) name, creating the `tags` row if absent. */
-export function resolveTagId(name: string): string {
+/**
+ * Resolve a tag id by (normalized) name within an owner's namespace, creating the
+ * tag for that owner if absent. Owner-scoped since T2: `name` is unique PER-OWNER
+ * (UNIQUE(owner_id, name)), so the same name resolves to a DIFFERENT tag per owner.
+ */
+export function resolveTagId(name: string, owner: string): string {
   const norm = normalizeTagName(name);
-  const existing = findTag.get(norm) as { id: string } | undefined;
-  return existing ? existing.id : (makeTag.get(norm) as { id: string }).id;
+  const existing = findTag.get(owner, norm) as { id: string } | undefined;
+  return existing ? existing.id : (makeTag.get(owner, norm) as { id: string }).id;
 }
 
 /**
@@ -70,8 +74,8 @@ export function setEntityTagIds(kind: EntityKind, entityId: string, tagIds: stri
  * each, then replace). Used by the time-block / routine write paths, whose tags
  * arrive as a denormalized string.
  */
-export function syncEntityTags(kind: EntityKind, entityId: string, names: string[], level = 1): void {
-  setEntityTagIds(kind, entityId, names.map(resolveTagId), level);
+export function syncEntityTags(kind: EntityKind, entityId: string, names: string[], owner: string, level = 1): void {
+  setEntityTagIds(kind, entityId, names.map((n) => resolveTagId(n, owner)), level);
 }
 
 /**
@@ -184,12 +188,13 @@ export function syncLeveledEntityTags(
   kind: EntityKind,
   entityId: string,
   groups: { level: number; names: string[] }[],
+  owner: string,
 ): void {
   deleteEntity.run(kind, entityId);
   for (const g of groups) {
     for (const name of g.names) {
       const norm = normalizeTagName(name);
-      if (norm) insertAssoc.run(kind, entityId, resolveTagId(norm), g.level);
+      if (norm) insertAssoc.run(kind, entityId, resolveTagId(norm, owner), g.level);
     }
   }
 }
@@ -268,10 +273,9 @@ export function directionOptoutsOf(categoryTagId: string): string[] {
 
 // A category's references live in time_blocks.category_id + tag_categories — NEITHER of
 // which writes entity_tags, so tagIsUsed() (entity_tags-only) does NOT cover categories.
-// Intentionally NOT owner-scoped in T1: `tags` are still tenant-global (owner-scoping is
-// T2), so a category may be referenced by several owners' blocks — the deletion-safety
-// check must consider ALL of them (a global `category_id` delete SET-NULLs every owner's
-// blocks). T2 owner-scopes this alongside the tag axis.
+// Owner-correct since T2: a category tag id is owner-unique (UNIQUE(owner_id, name)) and
+// block category-validation is owner-scoped, so only its own owner's blocks can reference
+// it — callers pass an owner-validated category id (routes/tags.ts 404s a foreign one).
 const catRefByBlock = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE category_id = ? LIMIT 1`);
 const catRefByMember = sqlite.prepare(`SELECT 1 FROM tag_categories WHERE category_tag_id = ? LIMIT 1`);
 /** True if a category tag is assigned to any time block or has any member intention. */
