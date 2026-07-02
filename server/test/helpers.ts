@@ -138,6 +138,7 @@ export function createOwner(id: string = SECOND_OWNER_ID, name = 'Owner B', tz =
     const params: unknown[] = [];
     const sel = cols
       .map((c) => {
+        if (c === 'id') return 'uuid7()'; // fresh PK — copying the source row's id PK-collides (silently swallowed by OR IGNORE)
         if (c === 'owner_id') {
           params.push(id);
           return '?';
