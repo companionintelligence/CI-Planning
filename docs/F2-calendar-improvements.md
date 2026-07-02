@@ -1,10 +1,10 @@
 # F2 — Calendar view improvements (implementation spec)
 
-Companion to [F-calendar-grid.md](F-calendar-grid.md) and [ROADMAP.md](ROADMAP.md). F2 revises the **Calendar** view (`client/src/views/Calendar.tsx` + `client/src/components/CalendarGrid.tsx`) — day/week/month — as distinct from the **Planner** (`Planner.tsx`, the 8h-window TODAY view). It ports two things the Planner already has and the Calendar doesn't (day-type texture, per-day availability), adds container framing the F-calendar-grid F′-4 ticket specced but never built, and upgrades the overlay filter.
+Companion to [F-calendar-grid.md](archive/F-calendar-grid.md) and [ROADMAP.md](ROADMAP.md). F2 revises the **Calendar** view (`client/src/views/Calendar.tsx` + `client/src/components/CalendarGrid.tsx`) — day/week/month — as distinct from the **Planner** (`Planner.tsx`, the 8h-window TODAY view). It ports two things the Planner already has and the Calendar doesn't (day-type texture, per-day availability), adds container framing the F-calendar-grid F′-4 ticket specced but never built, and upgrades the overlay filter.
 
-**Migration head as of `origin/main`: `0088`.** `0087` (FU2B objective-sync versioning) and `0088` (Phase O · O0, `reflections.source_kind`/`source_ref`) are both **merged, not provisional** — O0 (the FOCUS card) shipped in [#192](https://github.com/companionintelligence/Companion-Planning/pull/192). Phase O further **reserves `0089`/`0090`** for its `day_stars` table + freeze job ([O-gamified-stars.md](O-gamified-stars.md)). **The next free slot for anyone is `0091`.** **F2 is designed to need zero new migrations** — every ticket below reads columns/tables that already exist (`block_kind`, `parent_block_id`, `pattern_blocks`, `day_types`) or adds pure aggregation routes over them. This sidesteps migration numbering entirely; nothing here should renumber regardless of what else lands at `0091+`.
+**Migration head as of `origin/main`: `0088`.** `0087` (FU2B objective-sync versioning) and `0088` (Phase O · O0, `reflections.source_kind`/`source_ref`) are both **merged, not provisional** — O0 (the FOCUS card) shipped in [#192](https://github.com/companionintelligence/Companion-Planning/pull/192). Phase O further **reserves `0089`/`0090`** for its `day_stars` table + freeze job ([O-gamified-stars.md](archive/O-gamified-stars.md)). **The next free slot for anyone is `0091`.** **F2 is designed to need zero new migrations** — every ticket below reads columns/tables that already exist (`block_kind`, `parent_block_id`, `pattern_blocks`, `day_types`) or adds pure aggregation routes over them. This sidesteps migration numbering entirely; nothing here should renumber regardless of what else lands at `0091+`.
 
-**A live coordination risk, not a numbering one:** [O-gamified-stars.md](O-gamified-stars.md)'s Lane C (O1/O3, not yet started) plans to edit `CalendarGrid.tsx`'s date cells directly — a note-dot (O1) and up to 5 star pips + a perfect-day tint (O3), backed by a new `GET /api/stars?from&to`. That is the same DOM region F2-2 (clickable date → day-type popover) and F2-4 (container hover labels) touch. See the **Coordination with Phase O** risk note below for the layout convention this doc adopts up front to avoid a collision.
+**A live coordination risk, not a numbering one:** [O-gamified-stars.md](archive/O-gamified-stars.md)'s Lane C (O1/O3, not yet started) plans to edit `CalendarGrid.tsx`'s date cells directly — a note-dot (O1) and up to 5 star pips + a perfect-day tint (O3), backed by a new `GET /api/stars?from&to`. That is the same DOM region F2-2 (clickable date → day-type popover) and F2-4 (container hover labels) touch. See the **Coordination with Phase O** risk note below for the layout convention this doc adopts up front to avoid a collision.
 
 ## Goal
 1. Open day/week scrolled to ~1h before the day's earliest availability window, instead of always defaulting to midnight.
@@ -15,7 +15,7 @@ Companion to [F-calendar-grid.md](F-calendar-grid.md) and [ROADMAP.md](ROADMAP.m
 6. Extend the overlay filter with a Direction/pattern-tag facet and a Hide/Highlight mode toggle (AND-combinable with tag + priority, default mode = Hide).
 
 ## Non-goals
-- **No 5-star day scoring in this phase.** [O-gamified-stars.md](O-gamified-stars.md) owns the derivation (intention/habits/tasks/bonus/note → 5 stars). F2 does not add a placeholder score or speculative header slot for it — that would be dead code sitting idle until Phase O ships. When Phase O lands its data source, wiring it into the Calendar header is a small follow-up, not part of F2.
+- **No 5-star day scoring in this phase.** [O-gamified-stars.md](archive/O-gamified-stars.md) owns the derivation (intention/habits/tasks/bonus/note → 5 stars). F2 does not add a placeholder score or speculative header slot for it — that would be dead code sitting idle until Phase O ships. When Phase O lands its data source, wiring it into the Calendar header is a small follow-up, not part of F2.
 - **No axis rescale.** The grid's minute↔pixel mapping (`PX_PER_MIN`, `DAY_HEIGHT_PX`, `minutesIntoDay`/`instantFor` in [grid.ts](../client/src/lib/grid.ts)) is untouched. "Start 1h before the earliest window" is a **scroll position**, not a new coordinate origin — see F2-1's design note on why.
 - **No new migrations.** See above.
 - **No cross-day container drag** or other F-calendar-grid F′ gesture work — F2-4 is rendering only.
@@ -104,7 +104,7 @@ Client: one `createResource` keyed on the visible day set → `resolve-many` →
 
 ### F2-4 — Time-Block containers: 10px handle + outline
 
-This is the unbuilt "F′-4" half from [F-calendar-grid.md](F-calendar-grid.md#f′-4—time-block-outlines--pattern-textures-in-the-grid) concerning container outlines (the pattern-texture half is now F2-3, generalized to every day rather than just "today"). Both `block_kind` and `parent_block_id` already exist on `timeBlocks` — no schema work.
+This is the unbuilt "F′-4" half from [F-calendar-grid.md](archive/F-calendar-grid.md#f′-4—time-block-outlines--pattern-textures-in-the-grid) concerning container outlines (the pattern-texture half is now F2-3, generalized to every day rather than just "today"). Both `block_kind` and `parent_block_id` already exist on `timeBlocks` — no schema work.
 
 ```ts
 // CalendarGrid.tsx — group placed blocks per day
@@ -127,7 +127,7 @@ Render containers as a background layer **behind** member chips: a 10px solid le
 
 ### F2-5 — Per-day stars (owned by Phase O, not F2 — but the cell layout must anticipate it)
 
-[O-gamified-stars.md](O-gamified-stars.md) now specs this concretely, not vaguely: **O3** renders "up to five tiny amber pips (one per earned star)" in each month cell, collapsing to a single glowing star + tinted cell on a perfect day, backed by one `GET /api/stars?from&to` range call per visible month. **O1** additionally adds a small note-dot to any date with a saved day-note. Both are **Phase O's Lane C, not started yet** — F2 still writes zero star/note code.
+[O-gamified-stars.md](archive/O-gamified-stars.md) now specs this concretely, not vaguely: **O3** renders "up to five tiny amber pips (one per earned star)" in each month cell, collapsing to a single glowing star + tinted cell on a perfect day, backed by one `GET /api/stars?from&to` range call per visible month. **O1** additionally adds a small note-dot to any date with a saved day-note. Both are **Phase O's Lane C, not started yet** — F2 still writes zero star/note code.
 
 What F2 *does* need to do, because both efforts land in the same file: **reserve a stable layout convention for the month cell now**, in F2-2 and F2-4, so Phase O's O1/O3 slot in without a redesign later. Adopt this region split in `MonthGrid`'s cell:
 - **top-left:** the date number (F2-2's click target → day-type popover).
@@ -185,7 +185,7 @@ export const visibleBlocks = createMemo(() =>
 7. Zero new migrations. Head stays at `0088` (`0089`/`0090` reserved by Phase O); F2 never needs to claim `0091`.
 
 ## Risks / notes
-- **Coordination with Phase O (new).** [O-gamified-stars.md](O-gamified-stars.md)'s Lane C (O1 note-dot, O3 star heatmap) is not started but is specced to edit the same `CalendarGrid.tsx` month cells F2-2 and F2-4 touch. F2 adopts the region convention in F2-5 above specifically so this composes. If Phase O's Lane C starts *before* F2-2 lands, re-check the convention against whatever O1/O3 actually ship rather than assuming this doc's guess was exact — the goal is non-overlap, not a specific pixel layout.
+- **Coordination with Phase O (new).** [O-gamified-stars.md](archive/O-gamified-stars.md)'s Lane C (O1 note-dot, O3 star heatmap) is not started but is specced to edit the same `CalendarGrid.tsx` month cells F2-2 and F2-4 touch. F2 adopts the region convention in F2-5 above specifically so this composes. If Phase O's Lane C starts *before* F2-2 lands, re-check the convention against whatever O1/O3 actually ship rather than assuming this doc's guess was exact — the goal is non-overlap, not a specific pixel layout.
 - **Scroll-vs-axis discipline (F2-1).** The temptation is to shift the coordinate origin instead of scrolling. Don't — that reopens the exact DST/tz-drift class of bug F-calendar-grid.md's `minutesIntoDay`/`instantFor` pair was built to close. Grep-gate (mirroring the existing hardcoded-`Z` gate) should reject any new offset term inside those two functions.
 - **Request fan-out (F2-3).** Without the batched routes, week/month would fire 7–42 `resolve` + `forDay` calls per load. The batched routes are the whole point — don't let F2-2 or F2-4 accidentally reintroduce per-cell fetches when they need resolved day-type data.
 - **Popover reuse (F2-2/F2-4).** Building the popover primitive once in F2-2 and reusing it for F2-4's hover label avoids two slightly-different floating-UI implementations drifting apart.
