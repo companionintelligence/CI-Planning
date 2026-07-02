@@ -98,6 +98,11 @@ export interface KekConfig {
 
 export interface Config {
   port: number;
+  // Behind a trusted reverse proxy / TLS terminator (e.g. CI-Hub's tunnel)? Enables Koa
+  // app.proxy so ctx.protocol honors X-Forwarded-Proto (⇒ Secure cookies over external
+  // HTTPS) and ctx.ip is the real client IP (⇒ correct per-IP login rate-limiting).
+  // Default false — safe when the app is directly reachable (don't trust spoofable XFF).
+  trustProxy: boolean;
   dbPath: string;
   ollamaUrl: string;
   ollamaSmallModel: string;
@@ -132,6 +137,7 @@ const googleMode: 'live' | 'fixture' = process.env.GOOGLE_MODE === 'live' ? 'liv
 
 export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
+  trustProxy: process.env.TRUST_PROXY === 'true',
   dbPath,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
   // Defaults are real, currently-pullable Ollama tags. They are only a fallback:
@@ -249,6 +255,24 @@ if (
       '(defaults to https://hub.companionintelligence.com/api/auth; endpoints are discovered from it) ' +
       '— or set DISABLE_OIDC=true for local username/password login',
   );
+}
+
+// Fail fast (U1): the CIPORTAL_*_URI endpoint overrides are all-or-nothing — set all
+// three to bypass discovery, or none to use it. A PARTIAL set is almost always a typo
+// that would silently fall back to discovery (ignoring the vars that were set), so
+// refuse to boot with a clear message instead.
+{
+  const overridesSet = [
+    config.ciportal.authorizeUri,
+    config.ciportal.tokenUri,
+    config.ciportal.jwksUri,
+  ].filter(Boolean).length;
+  if (overridesSet > 0 && overridesSet < 3) {
+    throw new Error(
+      'CIPORTAL_AUTHORIZE_URI, CIPORTAL_TOKEN_URI and CIPORTAL_JWKS_URI are all-or-nothing: set all three to ' +
+        'override discovery, or leave all unset to discover from CIPORTAL_ISSUER — not a partial subset.',
+    );
+  }
 }
 
 // Fail closed (Wave 0): GOOGLE_MODE=live without OAuth credentials would silently fall
