@@ -207,6 +207,16 @@ describe('GET /api/auth/ciportal/callback — state handling', () => {
     expect((await rawGet('/api/auth/ciportal/callback?state=abc')).status).toBe(400);
   });
 
+  it('503s (fail closed) when CIPORTAL_* is not configured — not a confusing 502/invalid_id_token', async () => {
+    const saved = config.ciportal.clientId;
+    config.ciportal.clientId = undefined; // makes ciportalConfigured() false
+    try {
+      expect((await rawGet('/api/auth/ciportal/callback?state=x&code=y')).status).toBe(503);
+    } finally {
+      config.ciportal.clientId = saved;
+    }
+  });
+
   it('rejects a state not bound to this browser (login-CSRF): no login-state cookie → 400', async () => {
     // Attacker starts a flow (gets state + its cookie); the victim's browser hits the
     // callback with that state but WITHOUT the cookie → rejected, no session.
