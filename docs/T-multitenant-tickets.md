@@ -101,7 +101,7 @@
 - `routes/backup.ts` — add `tags` to `OWNER_TABLES` (`WHERE owner_id=?`); export/delete the three junctions by parent-tag membership (`… tag_id IN (SELECT id FROM tags WHERE owner_id=?)`, [Gap G-JUNCTION](#gap-g-junction)); bump `EXPORT_VERSION` per policy.
 - **New-owner base-tag provisioning** ([Gap G-BASETAG](#gap-g-basetag)) — belongs with T5/U owner-creation; **T2 documents the dependency** so Auto isn't silently broken for owner #2.
 
-**DoD:** migration + all tag readers + backup + junction scoping in one PR; **depends on T1 merged** (`entity_tags` time_block rows need `time_blocks.owner_id`); base-tag provisioning dependency recorded; integrity/golden/parity green.
+**DoD:** migration + all tag readers + backup + junction scoping in one PR; base-tag provisioning dependency recorded; integrity/golden/parity green.
 
 **Acceptance criteria:**
 1. Two owners can both hold a tag named `errands` (proves `UNIQUE(owner_id, name)`).
