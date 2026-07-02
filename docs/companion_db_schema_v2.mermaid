@@ -1,0 +1,621 @@
+erDiagram
+    %% companion.db — EXPECTED schema after Phase Q (docs/Q-schema-hygiene.md)
+    %% Base: migration head 0091 (main). Plus Q2(0092)/Q3(0093)/Q4(0094).
+    %% Q3/Q4 changes are marked inline below. Q2 adds indexes only (not shown; see companion_db_data_dictionary_v2.md).
+
+    OBJECTIVES ||--o{ OBJECTIVE_TASKS : "objective_id"
+    OBJECTIVES ||--o{ OBJECTIVES : "parent_id"
+    OWNERS ||--o{ API_KEYS : "owner_id"
+    OWNERS ||--o{ AUDIT_LOG : "owner_id"
+    OWNERS ||--o{ BLOCK_TEMPLATES : "owner_id"
+    OWNERS ||--o{ CATEGORY_PREFS : "owner_id"
+    OWNERS ||--o{ CONNECTION_TOKENS : "owner_id"
+    OWNERS ||--o{ DAILY_PLAN : "owner_id"
+    OWNERS ||--o{ DAILY_SUMMARIES : "owner_id"
+    OWNERS ||--o{ DAY_ASSIGNMENTS : "owner_id"
+    OWNERS ||--o{ DAY_OF_WEEK_MAP : "owner_id"
+    OWNERS ||--o{ DAY_STARS : "owner_id"
+    OWNERS ||--o{ DAY_TYPES : "owner_id"
+    OWNERS ||--o{ ESTIMATE_CALIBRATION : "owner_id"
+    OWNERS ||--o{ EXTERNAL_EVENTS : "owner_id"
+    OWNERS ||--o{ FLIGHT_PLAN : "owner_id"
+    OWNERS ||--o{ OAUTH_STATES : "owner_id"
+    OWNERS ||--o{ OBJECTIVES : "owner_id"
+    OWNERS ||--o{ OUTBOUND_QUEUE : "owner_id"
+    OWNERS ||--o{ PATTERN_BLOCKS : "owner_id"
+    OWNERS ||--o{ PATTERN_DAY_OPTOUTS : "owner_id"
+    OWNERS ||--o{ PATTERN_PREFS : "owner_id"
+    OWNERS ||--o{ PATTERN_TYPES : "owner_id"
+    OWNERS ||--o{ PATTERNS : "owner_id"
+    OWNERS ||--o{ PLAN_HINTS : "owner_id"
+    OWNERS ||--o{ PLAN_OUTCOMES : "owner_id"
+    OWNERS ||--o{ POSSIBLE_TASKS : "proposed_owner_id"
+    OWNERS ||--o{ PUSH_SUBSCRIPTIONS : "owner_id"
+    OWNERS ||--o{ REFLECTIONS : "owner_id"
+    OWNERS ||--o{ REMINDERS : "owner_id"
+    OWNERS ||--o{ REPLAN_SUGGESTIONS : "owner_id"
+    OWNERS ||--o{ SCHEDULING_PREFS : "owner_id"
+    OWNERS ||--o{ SYNC_STATE : "owner_id"
+    OWNERS ||--o{ TASKS : "owner_id"
+    OWNERS ||--o{ TIME_ENTRIES : "owner_id"
+    PATTERN_TYPES ||--o{ PATTERNS : "type_id"
+    PATTERNS ||--o{ PATTERN_DAY_OPTOUTS : "pattern_id"
+    PATTERNS ||--o{ PATTERN_TASKS : "pattern_id"
+    POSSIBLE_TASKS ||--o{ POSSIBLE_TASK_TAGS : "possible_task_id"
+    SCHEDULED_JOBS ||--o{ JOB_RUNS : "job_id"
+    TAGS ||--o{ CATEGORY_DIRECTION_OPTOUTS : "category_tag_id"
+    TAGS ||--o{ CATEGORY_DIRECTION_OPTOUTS : "pattern_tag_id"
+    TAGS ||--o{ CATEGORY_PREFS : "category_tag_id"
+    TAGS ||--o{ ENTITY_TAGS : "tag_id"
+    TAGS ||--o{ OBJECTIVES : "category_id"
+    TAGS ||--o{ PATTERN_BLOCKS : "pattern_tag_id"
+    TAGS ||--o{ PATTERN_PREFS : "pattern_tag_id"
+    TAGS ||--o{ POSSIBLE_TASK_TAGS : "tag_id"
+    TAGS ||--o{ REFLECTIONS : "category_id"
+    TAGS ||--o{ TAG_CATEGORIES : "category_tag_id"
+    TAGS ||--o{ TAG_CATEGORIES : "intention_tag_id"
+    TAGS ||--o{ TAG_PATTERNS : "intention_tag_id"
+    TAGS ||--o{ TAG_PATTERNS : "pattern_tag_id"
+    TAGS ||--o{ TIME_BLOCKS : "category_id"
+    TASKS ||--o{ DAILY_PLAN : "task_id"
+    TASKS ||--o{ FLIGHT_PLAN : "task_id"
+    TASKS ||--o{ OBJECTIVE_TASKS : "task_id"
+    TASKS ||--o{ PATTERN_TASKS : "task_id"
+    TASKS ||--o{ POSSIBLE_TASKS : "promoted_task_id"
+    TASKS ||--o{ REMINDERS : "task_id"
+    TASKS ||--o{ TASK_DEPENDENCIES : "depends_on_id"
+    TASKS ||--o{ TASK_DEPENDENCIES : "task_id"
+    TASKS ||--o{ TASKS : "parent_id"
+    TASKS ||--o{ TASKS : "recurrence_parent_id"
+    TASKS ||--o{ TIME_BLOCKS : "task_id"
+    TASKS ||--o{ TIME_ENTRIES : "task_id"
+    TIME_BLOCKS ||--o{ DAILY_PLAN : "block_id"
+    TIME_BLOCKS ||--o{ EXTERNAL_EVENTS : "block_id"
+    TIME_BLOCKS ||--o{ OUTBOUND_QUEUE : "block_id"
+    TIME_BLOCKS ||--o{ REMINDERS : "block_id"
+    TIME_BLOCKS ||--o{ TIME_BLOCKS : "parent_block_id"
+    TIME_BLOCKS ||--o{ TIME_ENTRIES : "block_id"
+
+    API_KEYS {
+        string id PK
+        string owner_id FK
+        string prefix
+        string key_hash
+        string scopes
+        string expires_at
+        string last_used_at
+        string created_at
+        string revoked_at
+    }
+
+    AUDIT_LOG {
+        string id PK
+        string owner_id FK
+        string actor
+        string action
+        string entity
+        string at
+    }
+
+    BLOCK_TEMPLATES {
+        string id PK
+        string owner_id FK
+        string name
+        string tag
+        int default_minutes
+        string tasks
+    }
+
+    CATEGORY_DIRECTION_OPTOUTS {
+        string category_tag_id PK,FK
+        string pattern_tag_id PK,FK
+    }
+
+    CATEGORY_PREFS {
+        string id PK
+        string owner_id FK
+        string category_tag_id FK
+        string color_token
+        int default_minutes
+    }
+
+    CONNECTION_TOKENS {
+        string id PK
+        string owner_id FK
+        string provider
+        string account
+        string iv
+        string auth_tag
+        string ciphertext
+        int key_version
+        string status
+        string created_at
+        string updated_at
+    }
+
+    DAILY_PLAN {
+        string owner_id PK,FK
+        string date PK
+        string task_id PK,FK
+        int position
+        string rationale
+        string source
+        string block_id FK
+        string outcome
+    }
+
+    DAILY_SUMMARIES {
+        string owner_id PK,FK
+        string date PK
+        string prose
+        string stats
+        string focus
+        int llm
+        string inputs_hash
+        string created_at
+        string updated_at
+    }
+
+    DAY_ASSIGNMENTS {
+        string owner_id PK,FK
+        string date PK
+        string day_type_key
+    }
+
+    DAY_OF_WEEK_MAP {
+        string owner_id PK,FK
+        int dow PK
+        string day_type_key
+    }
+
+    DAY_STARS {
+        string owner_id PK,FK
+        string date PK
+        int star_objective
+        int star_habits
+        int star_tasks
+        int star_bonus
+        int star_note
+        int total
+        string frozen_at
+    }
+
+    DAY_TYPES {
+        string id PK
+        string owner_id FK
+        string key
+        string name
+        int is_builtin
+    }
+
+    ENTITY_TAGS {
+        string entity_kind PK
+        string entity_id PK
+        string tag_id PK,FK
+        int level
+    }
+
+    ESTIMATE_CALIBRATION {
+        string owner_id PK,FK
+        string computed_at
+        int sample_count
+        float bias_ratio
+        float p25
+        float p50
+        float p75
+    }
+
+    EXTERNAL_EVENTS {
+        string id PK
+        string owner_id FK
+        string provider
+        string account
+        string external_id
+        string block_id FK
+        string etag
+        string direction
+        string last_synced_at
+    }
+
+    FLIGHT_PLAN {
+        string owner_id PK,FK
+        string task_id PK,FK
+        string source_kind
+        string source_ref
+        int selected
+        int position
+        string added_at
+    }
+
+    JOB_RUNS {
+        string id PK
+        string job_id FK
+        string started_at
+        string finished_at
+        string status
+        int items_created
+        int items_updated
+        string log
+    }
+
+    OAUTH_STATES {
+        string id PK
+        string owner_id FK
+        string provider
+        string state
+        string code_verifier
+        string nonce
+        string redirect_uri
+        string created_at
+        string expires_at
+    }
+
+    OBJECTIVE_TASKS {
+        string objective_id PK,FK
+        string task_id PK,FK
+        string id
+        int linked
+        int version
+        string updated_at
+        string field_ts
+    }
+
+    OBJECTIVES {
+        string id PK
+        string owner_id FK
+        string parent_id FK
+        string level
+        string horizon
+        string title
+        string description
+        string target_date
+        string status
+        string category_id FK
+        float progress_cache
+        string cadence
+        string last_advanced_at
+        int priority
+        string created_at
+        string updated_at
+        string completed_at
+        string source_task_id
+        int version
+        string field_ts
+    }
+
+    OUTBOUND_QUEUE {
+        string id PK
+        string owner_id FK
+        string block_id FK
+        string provider
+        string account
+        string created_at
+    }
+
+    OWNERS {
+        string id PK
+        string name
+        string email
+        string last_auto_run_id
+    }
+
+    PATTERN_BLOCKS {
+        string id PK
+        string owner_id FK
+        string pattern_tag_id FK
+        string day_type
+        string start_time
+        string end_time
+    }
+
+    PATTERN_DAY_OPTOUTS {
+        string owner_id PK,FK
+        string pattern_id PK,FK
+        string date PK
+    }
+
+    PATTERN_PREFS {
+        string id PK
+        string owner_id FK
+        string pattern_tag_id FK
+        int auto_fill
+        string reminder_offsets
+        string icon_shape
+        string color_token
+        int default_minutes
+    }
+
+    PATTERN_TASKS {
+        string pattern_id PK,FK
+        string task_id PK,FK
+        int position
+    }
+
+    PATTERN_TYPES {
+        string id PK
+        string owner_id FK
+        string name
+        string icon_shape
+        string reminder_config
+        int is_builtin
+        string color_token
+        string texture
+        int default_est_minutes
+        int notify
+        int catch_all
+    }
+
+    PATTERNS {
+        string id PK
+        string owner_id FK
+        string type_id FK
+        string name
+        string tag
+        string notes
+        string recurrence_rule
+        string recurrence_dtstart
+        string created_at
+    }
+
+    PLAN_HINTS {
+        string id PK
+        string owner_id FK
+        string date
+        string kind
+        string tag
+        string time
+        string created_at
+    }
+
+    PLAN_OUTCOMES {
+        string owner_id PK,FK
+        string date PK
+        int planned
+        int completed
+    }
+
+    POSSIBLE_TASK_TAGS {
+        string possible_task_id PK,FK
+        string tag_id PK,FK
+    }
+
+    POSSIBLE_TASKS {
+        string id PK
+        string raw_title
+        string raw_summary
+        string proposed_due_at
+        int proposed_priority
+        string proposed_owner_id FK
+        string source_kind
+        string source_ref
+        string source_payload
+        float confidence
+        string status
+        string promoted_task_id FK
+        string created_at
+    }
+
+    PUSH_SUBSCRIPTIONS {
+        string id PK
+        string owner_id FK
+        string endpoint
+        string p256dh
+        string auth
+        string user_agent
+        string created_at
+    }
+
+    REFLECTIONS {
+        string owner_id PK,FK
+        string kind PK
+        string period_key PK
+        int position PK
+        string body
+        string category_id FK
+        string done_at
+        string created_at
+        string updated_at
+        string source_kind
+        string source_ref
+    }
+
+    REMINDERS {
+        string id PK
+        string owner_id FK
+        string task_id FK
+        string block_id FK
+        string fire_at
+        string status
+        string fired_at
+        string source
+        string created_at
+    }
+
+    REPLAN_SUGGESTIONS {
+        string owner_id PK,FK
+        string date
+        string reason
+        string summary
+        int at_risk
+        string created_at
+    }
+
+    SCHEDULED_JOBS {
+        string id PK
+        string name
+        string kind
+        string cron
+        int enabled
+        string last_run_at
+        string next_run_at
+        string config
+    }
+
+    SCHEDULING_PREFS {
+        string id PK
+        string owner_id FK
+        string workday_start
+        string workday_end
+        string deep_work_windows
+        int max_focus_block_minutes
+        int min_break_minutes
+        string day_theme
+        string planning_mode
+        string timezone
+        int planning_horizon_days
+        int recurrence_horizon_days
+        int max_time_block_minutes
+        int min_time_block_minutes
+        int default_time_block_minutes
+        int plan_allday_always
+        int plan_daylong_for_promoted
+        int plan_autofill_gaps
+        int auto_fill_workday
+        string auto_mode
+        string trust_mode
+        string fill_order
+        int concept_default_minutes
+        int concept_autosurface
+        int concept_horizon_days
+        string concept_tags
+        int enable_rituals
+        int enable_routines
+        int recall_keeps_pattern
+        string fast_model
+        string quality_model
+        string embed_model
+        int memory_sync_enabled
+        int memory_sync_completed
+        int memory_sync_habits
+        int memory_sync_reflections
+        string memory_account
+        string memory_last_synced_at
+        int auto_defense_enabled
+    }
+
+    SCHEMA_MIGRATIONS {
+        string id PK
+        string applied_at
+        string checksum
+    }
+
+    SYNC_EVENTS {
+        int seq PK
+        string owner_id
+        string entity
+        string entity_id
+        int version
+        string event
+        string payload
+        string at
+    }
+
+    SYNC_STATE {
+        string id PK
+        string owner_id FK
+        string provider
+        string account
+        string resource
+        string cursor
+        string updated_at
+    }
+
+    TAG_CATEGORIES {
+        string intention_tag_id PK,FK
+        string category_tag_id PK,FK
+    }
+
+    TAG_PATTERNS {
+        string intention_tag_id PK,FK
+        string pattern_tag_id PK,FK
+    }
+
+    TAGS {
+        string id PK
+        string name
+        string kind
+        int muted
+        int is_base
+    }
+
+    TASK_DEPENDENCIES {
+        string task_id PK,FK
+        string depends_on_id PK,FK
+        string created_at
+    }
+
+    TASKS {
+        string id PK
+        string title
+        string description
+        string notes
+        string due_at
+        string scheduled_for
+        string defer_until
+        string task_time
+        int estimated_minutes
+        int actual_minutes
+        int priority
+        string status
+        string parent_id FK
+        string recurrence_rule
+        string recurrence_parent_id FK
+        string recurrence_dtstart
+        string recurrence_exdates
+        string occurrence_date
+        string subtype
+        int defer_count
+        string owner_id FK
+        string source_kind
+        string source_ref
+        string created_at
+        string completed_at
+        int version
+        string updated_at
+        string field_ts
+    }
+
+    TIME_BLOCKS {
+        string id PK
+        string task_id FK
+        string title
+        string block_kind
+        string tag
+        string block_type
+        string goal_start_date
+        int duration_minutes
+        string note
+        string start_at
+        string end_at
+        int is_locked
+        int is_auto
+        int all_day
+        string source_kind
+        string source_ref
+        string status
+        string parent_block_id FK
+        string category_id FK
+        string color_token
+        string recurrence_rule
+        string recurrence_dtstart
+        string recurrence_parent_id
+        string recurrence_exdates
+        string occurrence_date
+        string auto_run_id
+        string last_moved_at
+        string created_at
+        int version
+        string updated_at
+        string field_ts
+    }
+
+    TIME_ENTRIES {
+        string id PK
+        string task_id FK
+        string owner_id FK
+        string block_id FK
+        string started_at
+        string ended_at
+        string source
+        string created_at
+    }
