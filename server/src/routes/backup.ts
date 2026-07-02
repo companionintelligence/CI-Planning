@@ -4,14 +4,17 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from './sse.js';
 import { writeAudit } from '../lib/audit.js';
 
-// Bump whenever the export payload SHAPE changes (a table added / removed / renamed).
+// Bump whenever the export payload SHAPE changes (a table added / removed / renamed, or a
+// column becomes REQUIRED on an exported table).
 // History: '1' initial · '2' time-block categories · '3' daily_recap (0096) + tag_prefs
 // (0097) merges · '4' the previously-omitted owner-scoped tables below — objectives,
 // reflections, daily_plan, day-types, calibration, hints, optouts (gap G-EXPORT-MISSING:
-// export→import silently lost them). ⚠️ Phase T (multi-tenant) also edits this file and
-// this constant; if both land, the later PR must reconcile to ONE next integer — not two
-// parallel '4's — and re-run the owner_id audit below against any new owner-scoped tables.
-const EXPORT_VERSION = '4';
+// export→import silently lost them) · '5' T1 (multi-tenant): time_blocks gained a NOT NULL
+// owner_id, so its exported rows now carry owner_id and a pre-T1 ('4') export can't be
+// restored into the new schema — the version check rejects it cleanly. time_blocks is now
+// an OWNER_TABLES entry (owner-scoped export) and its restore-wipe + the entity_tags UNION
+// are owner-scoped (F-ETAGS).
+const EXPORT_VERSION = '5';
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
@@ -22,6 +25,7 @@ const OWNER_TABLES = [
   'patterns',
   'tasks',
   'block_templates',
+  'time_blocks',
   'pattern_blocks',
   'tag_prefs',
   'flight_plan',
@@ -100,10 +104,11 @@ export function backupRouter() {
     const taskIds = taskIdsRaw.map((r) => r.id);
     const patternIds = patternIdsRaw.map((r) => r.id);
 
-    // v0.2 single-owner: full table dump so CONTAINER blocks (block_kind='timeblock',
-    // task_id IS NULL — incl. Time Block Category containers) are exported too. A
-    // task_id-scoped query silently dropped them (and now their category_id/color_token).
-    const timeBlocks = sqlite.prepare(`SELECT * FROM time_blocks`).all();
+    // T1 (multi-tenant): time_blocks is now an OWNER_TABLES entry, so the loop above already
+    // fetched THIS owner's blocks — CONTAINER blocks (block_kind='timeblock', task_id IS NULL,
+    // incl. Time Block Category containers) and synced meetings included, since they carry
+    // owner_id directly rather than relying on a task_id → tasks.owner_id path.
+    const timeBlocks = ownerData['time_blocks'];
     const blockIds = (timeBlocks as { id: string }[]).map((b) => b.id);
 
     const patternTasks = patternIds.length
@@ -255,12 +260,12 @@ export function backupRouter() {
       sqlite.prepare(`DELETE FROM entity_tags WHERE entity_id IN (
         SELECT id FROM tasks WHERE owner_id = ?
         UNION SELECT id FROM patterns WHERE owner_id = ?
-        UNION SELECT id FROM time_blocks
-      )`).run(ownerId, ownerId);
+        UNION SELECT id FROM time_blocks WHERE owner_id = ?
+      )`).run(ownerId, ownerId, ownerId);
       sqlite.prepare('DELETE FROM time_entries WHERE owner_id = ?').run(ownerId);
       sqlite.prepare(`DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
       sqlite.prepare(`DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
-      sqlite.exec('DELETE FROM time_blocks'); // v0.2 single-owner: full wipe (incl. containers)
+      sqlite.prepare('DELETE FROM time_blocks WHERE owner_id = ?').run(ownerId); // T1: owner-scoped wipe (incl. containers)
       sqlite.prepare('DELETE FROM flight_plan WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM tag_prefs WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM pattern_blocks WHERE owner_id = ?').run(ownerId);

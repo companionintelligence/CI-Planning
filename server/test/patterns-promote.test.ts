@@ -64,10 +64,10 @@ describe('POST /api/patterns/promote-from-plan', () => {
     const a = insertTask('A');
     const b = insertTask('B');
     // Attach two task blocks to the plan (PR-C parent_block_id).
-    sqlite.prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, parent_block_id, status) VALUES (uuid7(), ?, 'A', 'task', ?, ?, ?, 'planned')`)
-      .run(a, `${DAY}T14:00:00.000Z`, `${DAY}T15:00:00.000Z`, plan.id);
-    sqlite.prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, parent_block_id, status) VALUES (uuid7(), ?, 'B', 'task', ?, ?, ?, 'planned')`)
-      .run(b, `${DAY}T15:00:00.000Z`, `${DAY}T16:00:00.000Z`, plan.id);
+    sqlite.prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, parent_block_id, status, owner_id) VALUES (uuid7(), ?, 'A', 'task', ?, ?, ?, 'planned', ?)`)
+      .run(a, `${DAY}T14:00:00.000Z`, `${DAY}T15:00:00.000Z`, plan.id, OWNER);
+    sqlite.prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, parent_block_id, status, owner_id) VALUES (uuid7(), ?, 'B', 'task', ?, ?, ?, 'planned', ?)`)
+      .run(b, `${DAY}T15:00:00.000Z`, `${DAY}T16:00:00.000Z`, plan.id, OWNER);
 
     const r = await api(srv.url, '/api/patterns/promote-from-plan', { method: 'POST', json: { plan_block_id: plan.id, name: 'Routine from Big Plan' } });
     expect(r.status).toBe(201);

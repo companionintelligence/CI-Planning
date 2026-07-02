@@ -446,10 +446,10 @@ describe('accounts listing + disconnect', () => {
     const blockId = newId();
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, start_at, end_at, all_day)
-         VALUES (?, 'b', ?, ?, 0)`,
+        `INSERT INTO time_blocks (id, title, start_at, end_at, all_day, owner_id)
+         VALUES (?, 'b', ?, ?, 0, ?)`,
       )
-      .run(blockId, new Date().toISOString(), new Date(Date.now() + 3600_000).toISOString());
+      .run(blockId, new Date().toISOString(), new Date(Date.now() + 3600_000).toISOString(), SYSTEM_OWNER);
     sqlite
       .prepare(
         `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)

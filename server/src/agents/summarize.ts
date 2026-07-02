@@ -57,41 +57,44 @@ export interface DaySummary {
 function gather(date: string) {
   // "Today" is the user's local calendar day, not the UTC day — so overdue/
   // due-today/blocks line up with what the scheduler placed.
+  // Owner-scoped throughout (multi-tenant): the day summary must reflect only the
+  // caller's own tasks + blocks, never every tenant's.
+  const owner = currentOwnerId();
   const tzRow = sqlite
     .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-    .get(currentOwnerId()) as { timezone: string | null } | undefined;
+    .get(owner) as { timezone: string | null } | undefined;
   const tz = tzRow?.timezone || serverTimezone();
   const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
 
   const overdue = sqlite
     .prepare(
       `SELECT id, title, priority, due_at, status, estimated_minutes FROM tasks
-       WHERE status IN ('open','scheduled') AND due_at IS NOT NULL AND due_at < ?
+       WHERE owner_id = ? AND status IN ('open','scheduled') AND due_at IS NOT NULL AND due_at < ?
        ORDER BY due_at ASC LIMIT 25`
     )
-    .all(dayStart) as TaskRow[];
+    .all(owner, dayStart) as TaskRow[];
 
   const dueToday = sqlite
     .prepare(
       `SELECT id, title, priority, due_at, status, estimated_minutes FROM tasks
-       WHERE status IN ('open','scheduled') AND due_at >= ? AND due_at < ?
+       WHERE owner_id = ? AND status IN ('open','scheduled') AND due_at >= ? AND due_at < ?
        ORDER BY priority ASC LIMIT 25`
     )
-    .all(dayStart, dayEnd) as TaskRow[];
+    .all(owner, dayStart, dayEnd) as TaskRow[];
 
   const open = sqlite
     .prepare(
       `SELECT id, title, priority, due_at, status, estimated_minutes FROM tasks
-       WHERE status = 'open' ORDER BY priority ASC, created_at ASC LIMIT 25`
+       WHERE owner_id = ? AND status = 'open' ORDER BY priority ASC, created_at ASC LIMIT 25`
     )
-    .all() as TaskRow[];
+    .all(owner) as TaskRow[];
 
   const blocks = sqlite
     .prepare(
       `SELECT title, block_kind, start_at, end_at, status FROM time_blocks
-       WHERE start_at >= ? AND start_at < ? ORDER BY start_at ASC`
+       WHERE owner_id = ? AND start_at >= ? AND start_at < ? ORDER BY start_at ASC`
     )
-    .all(dayStart, dayEnd) as BlockRow[];
+    .all(owner, dayStart, dayEnd) as BlockRow[];
 
   return { overdue, dueToday, open, blocks };
 }

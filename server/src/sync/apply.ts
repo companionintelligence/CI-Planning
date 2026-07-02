@@ -109,10 +109,11 @@ export function applyOp(sqlite: Database, op: Op, ownerId: string): ApplyResult 
     Record<string, unknown> | undefined;
   if (!row) throw Object.assign(new Error('not found'), { status: 404 });
 
-  // Owner isolation: tasks + objectives carry owner_id directly; blocks are
-  // scoped implicitly by session auth; an objective_task link is scoped through
-  // its parent objective (the join row has no owner_id of its own).
-  if ((op.entity === 'task' || op.entity === 'objective') && row['owner_id'] !== ownerId) {
+  // Owner isolation: tasks, objectives, AND blocks (T1) carry owner_id directly and are
+  // checked here; an objective_task link is scoped through its parent objective (the join
+  // row has no owner_id of its own). owner_id stays OUT of BLOCK_FIELDS, so a synced op can
+  // never author or reassign a block's owner (L Gap 5 closed).
+  if ((op.entity === 'task' || op.entity === 'objective' || op.entity === 'block') && row['owner_id'] !== ownerId) {
     throw Object.assign(new Error('not found'), { status: 404 });
   }
   if (op.entity === 'objective_task') {

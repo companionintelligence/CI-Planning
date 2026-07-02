@@ -206,8 +206,8 @@ describe('Undo', () => {
 // ── 6. No-overlap: workday fill flows around existing blocks ───────────────────
 describe('no overlap on workday fill', () => {
   it('does not stack on a manual block', () => {
-    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
-      .run(at('09:00'), at('12:00'));
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned', ?)`)
+      .run(at('09:00'), at('12:00'), OWNER);
     const t = insertTask('Auto task', 60);
     stage(t);
     placeFlightPlan(OWNER, { date: DAY });

@@ -50,7 +50,7 @@ export function topTasksForDay(date: string): TopTask[] {
             dp.task_id IS NOT NULL
             OR EXISTS (
               SELECT 1 FROM time_blocks tb
-               WHERE tb.task_id = t.id AND tb.start_at >= ? AND tb.start_at < ?
+               WHERE tb.task_id = t.id AND tb.owner_id = t.owner_id AND tb.start_at >= ? AND tb.start_at < ?
             )
           )
         ORDER BY (dp.position IS NULL), dp.position ASC, t.priority ASC, t.id ASC`,

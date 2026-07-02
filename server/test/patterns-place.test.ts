@@ -140,8 +140,8 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     const pid = insertPattern('Routine', 'Pair', [t1, t2]);
 
     sqlite
-      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, status) VALUES (uuid7(), 'Meeting', 'task', ?, ?, 1, 0, 'planned')`)
-      .run(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`);
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, status, owner_id) VALUES (uuid7(), 'Meeting', 'task', ?, ?, 1, 0, 'planned', ?)`)
+      .run(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`, OWNER);
 
     placePatternOnDay(OWNER, pid, { date: DAY });
     expect(patternBlocks(pid).length).toBe(2);

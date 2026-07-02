@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { getTableColumns } from 'drizzle-orm';
 import { sqlite } from '../src/db/index.js';
-import { tagPrefs } from '../src/db/schema.js';
+import { tagPrefs, timeBlocks } from '../src/db/schema.js';
 
 /**
  * Guards against Drizzle-vs-migration column drift. `pattern_prefs.default_minutes`
@@ -16,6 +16,19 @@ describe('Drizzle ↔ DB schema parity', () => {
       .map((c) => c.name)
       .sort();
     const drizzleCols = Object.values(getTableColumns(tagPrefs))
+      .map((c) => c.name)
+      .sort();
+    expect(drizzleCols).toEqual(dbCols);
+  });
+
+  // T1 (multi-tenant): time_blocks gained owner_id via migration 0099. Guard the whole
+  // column set so the Drizzle `ownerId` field and the migration's physical rebuild can
+  // never drift (the rebuild reproduces 31 legacy columns + owner_id = 32).
+  it('time_blocks Drizzle columns cover every DB column', () => {
+    const dbCols = (sqlite.prepare(`PRAGMA table_info(time_blocks)`).all() as { name: string }[])
+      .map((c) => c.name)
+      .sort();
+    const drizzleCols = Object.values(getTableColumns(timeBlocks))
       .map((c) => c.name)
       .sort();
     expect(drizzleCols).toEqual(dbCols);

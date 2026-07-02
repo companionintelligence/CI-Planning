@@ -16,10 +16,10 @@ const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 function insertBlock(title: string, startISO: string, endISO: string): void {
   sqlite
     .prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, block_type, start_at, end_at, is_locked, is_auto, source_kind, status)
-       VALUES (uuid7(), ?, 'timeblock', 'scheduled', ?, ?, 0, 0, 'manual', 'planned')`,
+      `INSERT INTO time_blocks (id, title, block_kind, block_type, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+       VALUES (uuid7(), ?, 'timeblock', 'scheduled', ?, ?, 0, 0, 'manual', 'planned', ?)`,
     )
-    .run(title, startISO, endISO);
+    .run(title, startISO, endISO, OWNER);
 }
 
 let srv: TestServer;

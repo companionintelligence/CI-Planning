@@ -117,10 +117,10 @@ describe('scheduler', () => {
     setPrefs({ start: '09:00', end: '12:00', maxFocus: 90, brk: 10 });
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, status)
-         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 1, 0, 'planned')`
+        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, status, owner_id)
+         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 1, 0, 'planned', ?)`
       )
-      .run('2026-06-15T17:00:00.000Z', '2026-06-15T17:30:00.000Z');
+      .run('2026-06-15T17:00:00.000Z', '2026-06-15T17:30:00.000Z', OWNER);
 
     addTask('Big', 80, 1);   // only fits the 80m gap
     addTask('Small', 50, 2); // lower priority, fits the skipped 60m gap

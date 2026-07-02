@@ -22,8 +22,8 @@ function insertBlock(taskId: string, endOffsetHrs: number, status = 'planned'): 
   const end = new Date(Date.now() + endOffsetHrs * 3600_000);
   const start = new Date(end.getTime() - 3600_000);
   return (sqlite
-    .prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, status) VALUES (uuid7(), ?, 'b', 'task', ?, ?, 1, ?) RETURNING id`)
-    .get(taskId, start.toISOString(), end.toISOString(), status) as { id: string }).id;
+    .prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, status, owner_id) VALUES (uuid7(), ?, 'b', 'task', ?, ?, 1, ?, ?) RETURNING id`)
+    .get(taskId, start.toISOString(), end.toISOString(), status, OWNER) as { id: string }).id;
 }
 const task = (id: string) => sqlite.prepare(`SELECT status, scheduled_for, defer_count FROM tasks WHERE id = ?`).get(id) as
   { status: string; scheduled_for: string | null; defer_count: number };

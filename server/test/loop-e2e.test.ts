@@ -79,10 +79,10 @@ describe('loop invariants (fixture, offline)', () => {
     try {
       const { id: blockId } = sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-           VALUES (uuid7(), 'Focus block', 'task', ?, ?, 0, 0, 'manual', 'planned') RETURNING id`,
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'Focus block', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
         )
-        .get(futureDate(3), futureDate(3, 2)) as { id: string };
+        .get(futureDate(3), futureDate(3, 2), SYSTEM_OWNER) as { id: string };
       sqlite
         .prepare(
           `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
@@ -182,10 +182,10 @@ describe('loop invariants (fixture, offline)', () => {
     try {
       const { id: blockId } = sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-           VALUES (uuid7(), 'Task A', 'task', ?, ?, 0, 0, 'manual', 'planned') RETURNING id`,
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'Task A', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
         )
-        .get(futureDate(2), futureDate(2, 1)) as { id: string };
+        .get(futureDate(2), futureDate(2, 1), SYSTEM_OWNER) as { id: string };
       sqlite
         .prepare(
           `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
