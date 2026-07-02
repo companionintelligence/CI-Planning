@@ -12,7 +12,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('3'); // bumped by the daily_recap (0096) + tag_prefs (0097) merges
+    expect(body.version).toBe('4'); // '4' added the omitted owner-scoped tables (G-EXPORT-MISSING)
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {
@@ -112,6 +112,51 @@ describe('POST /api/import', () => {
       .prepare(`SELECT date FROM daily_recap WHERE date = '2026-06-22'`)
       .get() as { date: string } | undefined;
     expect(restored?.date).toBe('2026-06-22');
+  });
+
+  it('restores objectives, objective_tasks, and reflections on a round-trip (G-EXPORT-MISSING)', async () => {
+    const { id: ownerId } = sqlite.prepare('SELECT id FROM owners LIMIT 1').get() as { id: string };
+    const taskId = (sqlite.prepare('SELECT uuid7() AS id').get() as { id: string }).id;
+    const objId = (sqlite.prepare('SELECT uuid7() AS id').get() as { id: string }).id;
+    const linkId = (sqlite.prepare('SELECT uuid7() AS id').get() as { id: string }).id;
+
+    // A task, an objective linked to it, and a today-goal reflection — the three
+    // owner-scoped kinds that a pre-v4 export → import silently dropped.
+    sqlite.prepare(`INSERT INTO tasks (id, title, owner_id) VALUES (?, 'obj-task', ?)`).run(taskId, ownerId);
+    sqlite.prepare(
+      `INSERT INTO objectives (id, owner_id, title, created_at, updated_at)
+       VALUES (?, ?, 'Ship the thing', '2026-06-22T00:00:00.000Z', '2026-06-22T00:00:00.000Z')`
+    ).run(objId, ownerId);
+    sqlite.prepare(`INSERT INTO objective_tasks (id, objective_id, task_id) VALUES (?, ?, ?)`).run(linkId, objId, taskId);
+    sqlite.prepare(
+      `INSERT INTO reflections (owner_id, kind, period_key, position, body, created_at, updated_at)
+       VALUES (?, 'today_goal', '2026-06-22', 0, 'Focus on export coverage', '2026-06-22T00:00:00.000Z', '2026-06-22T00:00:00.000Z')`
+    ).run(ownerId);
+
+    const exp = await (await fetch(`${srv.url}/api/export`)).json() as Record<string, unknown>;
+    expect((exp.objectives as { id: string }[]).some((o) => o.id === objId)).toBe(true);
+    expect((exp.objective_tasks as { objective_id: string }[]).some((l) => l.objective_id === objId)).toBe(true);
+    expect((exp.reflections as { body: string }[]).some((r) => r.body === 'Focus on export coverage')).toBe(true);
+
+    resetDb();
+    // Prove the wipe really cleared them, so a surviving import isn't a false positive.
+    expect((sqlite.prepare('SELECT count(*) as n FROM objectives').get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare('SELECT count(*) as n FROM reflections').get() as { n: number }).n).toBe(0);
+
+    const { status, body } = await api<{ imported: Record<string, number> }>(
+      srv.url, '/api/import', { method: 'POST', json: exp }
+    );
+    expect(status).toBe(200);
+    expect(body.imported.objectives).toBe(1);
+    expect(body.imported.objective_tasks).toBe(1);
+    expect(body.imported.reflections).toBe(1);
+
+    const obj = sqlite.prepare('SELECT title FROM objectives WHERE id = ?').get(objId) as { title: string } | undefined;
+    expect(obj?.title).toBe('Ship the thing');
+    const link = sqlite.prepare('SELECT task_id FROM objective_tasks WHERE objective_id = ?').get(objId) as { task_id: string } | undefined;
+    expect(link?.task_id).toBe(taskId);
+    const refl = sqlite.prepare(`SELECT body FROM reflections WHERE period_key = '2026-06-22'`).get() as { body: string } | undefined;
+    expect(refl?.body).toBe('Focus on export coverage');
   });
 
   it('rolls back entirely when a row violates a NOT NULL constraint', async () => {

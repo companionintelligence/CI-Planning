@@ -4,9 +4,17 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from './sse.js';
 import { writeAudit } from '../lib/audit.js';
 
-const EXPORT_VERSION = '3';
+// Bump whenever the export payload SHAPE changes (a table added / removed / renamed).
+// History: '1' initial · '2' time-block categories · '3' daily_recap (0096) + tag_prefs
+// (0097) merges · '4' the previously-omitted owner-scoped tables below — objectives,
+// reflections, daily_plan, day-types, calibration, hints, optouts (gap G-EXPORT-MISSING:
+// export→import silently lost them). ⚠️ Phase T (multi-tenant) also edits this file and
+// this constant; if both land, the later PR must reconcile to ONE next integer — not two
+// parallel '4's — and re-run the owner_id audit below against any new owner-scoped tables.
+const EXPORT_VERSION = '4';
 
-// Tables that require only the owner_id for a direct export query.
+// Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
+// (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
 const OWNER_TABLES = [
   'scheduling_prefs',
   'daily_recap',
@@ -20,7 +28,40 @@ const OWNER_TABLES = [
   'time_entries',
   'reminders',
   'push_subscriptions',
+  // Added in v4 (G-EXPORT-MISSING): owner-scoped data that resetDb() clears but the
+  // export silently dropped — a round-trip lost the owner's objectives, reflections,
+  // day-type calendar, plan order, calibration, and pattern opt-outs. Each carries an
+  // owner_id, so a direct query is enough (objective_tasks is a junction, handled below).
+  'objectives',
+  'reflections',
+  'daily_plan',
+  'day_types',
+  'day_of_week_map',
+  'day_assignments',
+  'pattern_day_optouts',
+  'plan_hints',
+  'replan_suggestions',
+  'estimate_calibration',
 ] as const;
+
+// Owner-scoped tables INTENTIONALLY excluded from export/import. Audited against every
+// owner_id-bearing table in server/src/db/migrations (0001–0097); each is either a
+// non-portable secret, ephemeral/re-derivable sync state, or the identity/audit spine:
+//   • owners            — the tenant row itself; owner_id is carried at the payload top
+//                         level and validated on import (a foreign owner_id → 403).
+//   • api_keys          — host-issued API credentials (key_hash / scopes); re-issued per
+//                         host, security-sensitive, not portable content.
+//   • connection_tokens — OAuth tokens encrypted with a host-local key (key_version); the
+//                         ciphertext can't decrypt elsewhere. Secrets, re-linked per host.
+//   • oauth_states      — ephemeral OAuth CSRF/PKCE state (expires in minutes).
+//   • external_events   — calendar sync mirror; re-derived from the provider on next sync.
+//   • outbound_queue    — pending calendar-push queue; ephemeral sync plumbing.
+//   • sync_events       — multi-device sync change-log; re-derived, device-scoped.
+//   • sync_state        — per-provider sync cursors; host/provider-specific.
+//   • audit_log         — append-only audit trail; import writes its OWN 'import' row, and
+//                         a restore must not fabricate historical actor history.
+// (scheduled_jobs + job_runs have NO owner_id — a global system registry seeded by
+//  migrations — so they're outside an owner-scoped export by construction.)
 
 /** Insert rows using their own column names. */
 function insertRows(table: string, rows: Record<string, unknown>[]): number {
@@ -94,6 +135,15 @@ export function backupRouter() {
           .all(ptIds)
       : [];
 
+    // objective_tasks has no owner_id — scope via the owner's objectives (both ends of a
+    // link belong to the same owner). Carries tombstones (linked=0) too, via SELECT *.
+    const objectiveIds = (ownerData['objectives'] as { id: string }[]).map((o) => o.id);
+    const objectiveTasks = objectiveIds.length
+      ? sqlite
+          .prepare(`SELECT * FROM objective_tasks WHERE objective_id IN (${objectiveIds.map(() => '?').join(',')})`)
+          .all(objectiveIds)
+      : [];
+
     const payload = {
       version: EXPORT_VERSION,
       owner_id: ownerId,
@@ -120,6 +170,18 @@ export function backupRouter() {
       reminders: ownerData['reminders'],
       push_subscriptions: ownerData['push_subscriptions'],
       daily_recap: ownerData['daily_recap'],
+      // v4 owner-scoped tables (G-EXPORT-MISSING).
+      objectives: ownerData['objectives'],
+      objective_tasks: objectiveTasks,
+      reflections: ownerData['reflections'],
+      daily_plan: ownerData['daily_plan'],
+      day_types: ownerData['day_types'],
+      day_of_week_map: ownerData['day_of_week_map'],
+      day_assignments: ownerData['day_assignments'],
+      pattern_day_optouts: ownerData['pattern_day_optouts'],
+      plan_hints: ownerData['plan_hints'],
+      replan_suggestions: ownerData['replan_suggestions'],
+      estimate_calibration: ownerData['estimate_calibration'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -174,6 +236,21 @@ export function backupRouter() {
       sqlite.prepare(`DELETE FROM possible_task_tags
         WHERE possible_task_id IN (SELECT id FROM possible_tasks WHERE proposed_owner_id = ?)`).run(ownerId);
       sqlite.prepare('DELETE FROM possible_tasks WHERE proposed_owner_id = ?').run(ownerId);
+      // ── v4 owner-scoped tables (G-EXPORT-MISSING) — children before parents ─────
+      // objective_tasks & daily_plan FK tasks/objectives/time_blocks; delete them before
+      // those parents. pattern_day_optouts FKs patterns (deleted further down).
+      sqlite.prepare(`DELETE FROM objective_tasks
+        WHERE objective_id IN (SELECT id FROM objectives WHERE owner_id = ?)`).run(ownerId);
+      sqlite.prepare('DELETE FROM objectives WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM reflections WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM daily_plan WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM day_assignments WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM day_of_week_map WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM day_types WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM pattern_day_optouts WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM plan_hints WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM replan_suggestions WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM estimate_calibration WHERE owner_id = ?').run(ownerId);
       // entity_tags has no direct owner_id — delete by entity membership.
       sqlite.prepare(`DELETE FROM entity_tags WHERE entity_id IN (
         SELECT id FROM tasks WHERE owner_id = ?
@@ -223,6 +300,19 @@ export function backupRouter() {
       counts['possible_task_tags'] = insertRows('possible_task_tags', g('possible_task_tags'));
       counts['reminders']        = insertRows('reminders', g('reminders'));
       counts['push_subscriptions'] = insertRows('push_subscriptions', g('push_subscriptions'));
+      // v4 owner-scoped tables (G-EXPORT-MISSING). defer_foreign_keys=ON (above) makes the
+      // intra-transaction insert order FK-safe; listed parents-before-children for clarity.
+      counts['objectives']          = insertRows('objectives', g('objectives'));
+      counts['objective_tasks']     = insertRows('objective_tasks', g('objective_tasks'));
+      counts['reflections']         = insertRows('reflections', g('reflections'));
+      counts['daily_plan']          = insertRows('daily_plan', g('daily_plan'));
+      counts['day_types']           = insertRows('day_types', g('day_types'));
+      counts['day_of_week_map']     = insertRows('day_of_week_map', g('day_of_week_map'));
+      counts['day_assignments']     = insertRows('day_assignments', g('day_assignments'));
+      counts['pattern_day_optouts'] = insertRows('pattern_day_optouts', g('pattern_day_optouts'));
+      counts['plan_hints']          = insertRows('plan_hints', g('plan_hints'));
+      counts['replan_suggestions']  = insertRows('replan_suggestions', g('replan_suggestions'));
+      counts['estimate_calibration']= insertRows('estimate_calibration', g('estimate_calibration'));
     })();
 
     writeAudit({ ownerId, actor: 'owner', action: 'import', entity: 'import' });
