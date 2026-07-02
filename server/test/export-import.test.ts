@@ -12,7 +12,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('1');
+    expect(body.version).toBe('2'); // bumped by the daily_recap merge (0096)
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {
@@ -92,24 +92,24 @@ describe('POST /api/import', () => {
     expect(status).toBe(400);
   });
 
-  it('includes daily_summaries in export and restores them on import', async () => {
+  it('includes daily_recap in export and restores it on import', async () => {
     const { id: ownerId } = sqlite.prepare('SELECT id FROM owners LIMIT 1').get() as { id: string };
     sqlite
       .prepare(
-        `INSERT INTO daily_summaries (owner_id, date, prose, stats, focus, inputs_hash)
+        `INSERT INTO daily_recap (owner_id, date, prose, stats, focus, inputs_hash)
          VALUES (?, '2026-06-22', 'Test briefing', '{}', '[]', 'hash-abc')`
       )
       .run(ownerId);
 
     const exp = await (await fetch(`${srv.url}/api/export`)).json() as Record<string, unknown>;
-    expect(Array.isArray(exp['daily_summaries'])).toBe(true);
-    expect((exp['daily_summaries'] as { date: string }[]).some((r) => r.date === '2026-06-22')).toBe(true);
+    expect(Array.isArray(exp['daily_recap'])).toBe(true);
+    expect((exp['daily_recap'] as { date: string }[]).some((r) => r.date === '2026-06-22')).toBe(true);
 
     resetDb();
     await api(srv.url, '/api/import', { method: 'POST', json: exp });
 
     const restored = sqlite
-      .prepare(`SELECT date FROM daily_summaries WHERE date = '2026-06-22'`)
+      .prepare(`SELECT date FROM daily_recap WHERE date = '2026-06-22'`)
       .get() as { date: string } | undefined;
     expect(restored?.date).toBe('2026-06-22');
   });

@@ -50,7 +50,7 @@ export interface DaySummary {
   capacity: Capacity;
   /** True when the prose came from the LLM; false when it's the deterministic fallback. */
   llm: boolean;
-  /** True when served from the daily_summaries cache (no regeneration this call). */
+  /** True when served from the daily_recap cache (no regeneration this call). */
   cached?: boolean;
 }
 
@@ -200,7 +200,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
 
   if (!opts.refresh) {
     const row = sqlite
-      .prepare('SELECT prose, stats, focus, llm, inputs_hash FROM daily_summaries WHERE owner_id = ? AND date = ?')
+      .prepare('SELECT prose, stats, focus, llm, inputs_hash FROM daily_recap WHERE owner_id = ? AND date = ?')
       .get(currentOwnerId(), date) as
       | { prose: string; stats: string; focus: string; llm: number; inputs_hash: string }
       | undefined;
@@ -232,7 +232,9 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
 
   sqlite
     .prepare(
-      `INSERT INTO daily_summaries (owner_id, date, prose, stats, focus, llm, inputs_hash, updated_at)
+      // Partial upsert of ONLY the summary columns — never touches the star
+      // group, so refreshing a briefing can't disturb a frozen day_recap row.
+      `INSERT INTO daily_recap (owner_id, date, prose, stats, focus, llm, inputs_hash, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(owner_id, date) DO UPDATE SET
          prose = excluded.prose, stats = excluded.stats, focus = excluded.focus,
