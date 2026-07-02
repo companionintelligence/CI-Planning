@@ -56,7 +56,7 @@ function insertTaskDue(dueAt: string | null): string {
 function setReminderOffsets(offsets: number[]): void {
   const tagId = (sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (?, ?, 'pattern', 1) RETURNING id`)
     .get(newId(), `pat-${newId().slice(0, 8)}`) as { id: string }).id;
-  sqlite.prepare(`INSERT INTO pattern_prefs (id, owner_id, pattern_tag_id, reminder_offsets) VALUES (?, ?, ?, ?)`)
+  sqlite.prepare(`INSERT INTO tag_prefs (id, owner_id, tag_id, kind, reminder_offsets) VALUES (?, ?, ?, 'pattern', ?)`)
     .run(newId(), SYSTEM_OWNER, tagId, JSON.stringify(offsets));
 }
 const autoCount = (taskId: string) =>

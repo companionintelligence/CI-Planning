@@ -12,7 +12,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('2'); // bumped by the daily_recap merge (0096)
+    expect(body.version).toBe('3'); // bumped by the daily_recap (0096) + tag_prefs (0097) merges
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {

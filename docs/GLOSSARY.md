@@ -100,7 +100,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   > ratified for now (README marks `pattern_types` load-bearing). Until/unless §3b is revived,
   > use the table name and the `kind` value as the disambiguator: `patterns`/`pattern_types`/
   > `pattern_tasks` = the Routine collection system; `tags.kind='pattern'` + `pattern_blocks`/
-  > `pattern_prefs`/`tag_patterns` = the tag-category axis.
+  > `tag_prefs`/`tag_patterns` = the tag-category axis.
 
 ## Translation (old term → canonical)
 

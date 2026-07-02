@@ -39,7 +39,7 @@ function seedIntention(name: string): string {
 }
 
 const prefRowCount = (tagId: string) =>
-  (sqlite.prepare(`SELECT COUNT(*) c FROM pattern_prefs WHERE pattern_tag_id = ?`).get(tagId) as { c: number }).c;
+  (sqlite.prepare(`SELECT COUNT(*) c FROM tag_prefs WHERE tag_id = ? AND kind = 'pattern'`).get(tagId) as { c: number }).c;
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -224,8 +224,8 @@ describe('ON DELETE CASCADE', () => {
     const dirs = seedDirections();
     sqlite
       .prepare(
-        `INSERT INTO pattern_prefs (id, owner_id, pattern_tag_id, auto_fill, reminder_offsets, icon_shape, color_token)
-         VALUES (?, ?, ?, 1, '[]', 'circle', 'primary')`,
+        `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token)
+         VALUES (?, ?, ?, 'pattern', 1, '[]', 'circle', 'primary')`,
       )
       .run(newId(), OWNER, dirs.work);
     expect(prefRowCount(dirs.work)).toBe(1);

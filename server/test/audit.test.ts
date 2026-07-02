@@ -65,7 +65,7 @@ beforeEach(() => {
     DELETE FROM patterns;
     DELETE FROM pattern_types WHERE is_builtin = 0;
     DELETE FROM block_templates;
-    DELETE FROM pattern_prefs;
+    DELETE FROM tag_prefs;
   `);
 });
 

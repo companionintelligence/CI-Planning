@@ -168,7 +168,7 @@ describe('PUT /api/reflections/today', () => {
 
   it('GET returns color_token from category_prefs when a category is assigned', async () => {
     const tag = sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'family', 'category') RETURNING id`).get() as { id: string };
-    sqlite.prepare(`INSERT INTO category_prefs (id, owner_id, category_tag_id, color_token) VALUES (uuid7(), ?, ?, 'chart-1')`).run(SYSTEM_OWNER, tag.id);
+    sqlite.prepare(`INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token) VALUES (uuid7(), ?, ?, 'category', 'chart-1')`).run(SYSTEM_OWNER, tag.id);
     await put({ period_key: DAY, body: 'Family time', category_id: tag.id });
     const res = await api(srv.url, `/api/reflections?period=${DAY}`);
     expect(res.status).toBe(200);

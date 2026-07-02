@@ -697,16 +697,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "id",
       "owner_id",
-      "category_tag_id",
-      "color_token",
-      "default_minutes",
-    ],
-    "table": "category_prefs",
-  },
-  {
-    "columns": [
-      "id",
-      "owner_id",
       "provider",
       "account",
       "iv",
@@ -931,19 +921,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
-      "id",
-      "owner_id",
-      "pattern_tag_id",
-      "auto_fill",
-      "reminder_offsets",
-      "icon_shape",
-      "color_token",
-      "default_minutes",
-    ],
-    "table": "pattern_prefs",
-  },
-  {
-    "columns": [
       "pattern_id",
       "task_id",
       "position",
@@ -1165,6 +1142,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "pattern_tag_id",
     ],
     "table": "tag_patterns",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "tag_id",
+      "kind",
+      "auto_fill",
+      "reminder_offsets",
+      "icon_shape",
+      "color_token",
+      "default_minutes",
+    ],
+    "table": "tag_prefs",
   },
   {
     "columns": [
