@@ -242,7 +242,7 @@ describe('computeStars — total', () => {
 // ── freeze job ──────────────────────────────────────────────────────────────────
 describe('freezeStars — nightly snapshot', () => {
   function frozenRow(date = DAY) {
-    return sqlite.prepare(`SELECT * FROM day_stars WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, date) as any;
+    return sqlite.prepare(`SELECT * FROM daily_recap WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, date) as any;
   }
   const setTz = (tz: string) =>
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = ? WHERE owner_id = ?`).run(tz, SYSTEM_OWNER);
@@ -307,7 +307,7 @@ describe('freezeStars — nightly snapshot', () => {
     expect(second.total).toBe(1);                 // returns the EXISTING total, no recompute
     expect(second.created).toBe(false);           // no-op, not a create
     expect(frozenRow().total).toBe(1);            // row untouched
-    const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM day_stars WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number }).n;
+    const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM daily_recap WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number }).n;
     expect(n).toBe(1);
   });
 
@@ -315,7 +315,7 @@ describe('freezeStars — nightly snapshot', () => {
     setToday('Goal', true);
     runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
     runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
-    const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM day_stars WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number };
+    const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM daily_recap WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number };
     expect(rows.n).toBe(1);
     expect(frozenRow().total).toBe(1);
   });
@@ -350,5 +350,69 @@ describe('GET /api/stars', () => {
 
     const res = await api(srv.url, `/api/stars?from=${DAY}&to=${DAY}`);
     expect(res.body[0]).toMatchObject({ date: DAY, total: 1, frozen: true });
+  });
+});
+
+// ── daily_recap merge (S1-B): summary + stars co-located in one (owner,date) row ──
+describe('daily_recap co-location (summary cache + immutable star freeze)', () => {
+  beforeEach(() => {
+    resetDb();
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC' WHERE owner_id=?`).run(SYSTEM_OWNER);
+  });
+
+  const recapRow = (date = DAY) =>
+    sqlite.prepare(`SELECT * FROM daily_recap WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, date) as any;
+
+  it('freezes stars even when a summary row already exists (guard keys on frozen_at, not existence)', () => {
+    // A summarizeDay upsert created the (owner,date) row first, frozen_at NULL.
+    sqlite
+      .prepare(
+        `INSERT INTO daily_recap (owner_id, date, prose, stats, focus, llm, inputs_hash)
+         VALUES (?, ?, 'Morning brief', '{}', '[]', 0, 'hash-1')`,
+      )
+      .run(SYSTEM_OWNER, DAY);
+
+    setToday('Done goal', true); // objective star → total 1
+    const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+
+    expect(r.created).toBe(true); // it actually froze — the bug an existence-guard would introduce is that it would NOT
+    const row = recapRow();
+    expect(row.frozen_at).not.toBeNull();
+    expect(row.star_objective).toBe(1);
+    expect(row.prose).toBe('Morning brief'); // summary group PRESERVED by the partial star upsert
+  });
+
+  it('a summary refresh never disturbs a frozen star row', () => {
+    setToday('Done goal', true);
+    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    const beforeFrozenAt = recapRow().frozen_at;
+
+    // Simulate summarizeDay's partial upsert onto the already-frozen row.
+    sqlite
+      .prepare(
+        `INSERT INTO daily_recap (owner_id, date, prose, stats, focus, llm, inputs_hash, updated_at)
+         VALUES (?, ?, 'New brief', '{}', '[]', 1, 'hash-2', CURRENT_TIMESTAMP)
+         ON CONFLICT(owner_id, date) DO UPDATE SET
+           prose=excluded.prose, stats=excluded.stats, focus=excluded.focus,
+           llm=excluded.llm, inputs_hash=excluded.inputs_hash, updated_at=CURRENT_TIMESTAMP`,
+      )
+      .run(SYSTEM_OWNER, DAY);
+
+    const row = recapRow();
+    expect(row.prose).toBe('New brief'); // summary updated
+    expect(row.star_objective).toBe(1); // stars untouched
+    expect(row.frozen_at).toBe(beforeFrozenAt); // frozen stamp untouched
+  });
+
+  it('re-freeze stays a no-op even after the live world changed (first-freeze-wins)', () => {
+    setToday('Done goal', true);
+    const first = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    expect(first.created).toBe(true);
+
+    // An unplanned completion that would raise the live score, then re-freeze.
+    makeTask({ title: 'Late win', status: 'done', completedAt: `${DAY}T15:00:00.000Z` });
+    const second = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T09:00:00.000Z`));
+    expect(second.created).toBe(false);
+    expect(recapRow().total).toBe(first.total);
   });
 });

@@ -22,7 +22,7 @@ export function starsRouter() {
   const router = new Router();
 
   // GET /api/stars?from=YYYY-MM-DD&to=YYYY-MM-DD
-  // For each date in range: the frozen day_stars row if present, else live
+  // For each date in range: the frozen daily_recap row if present, else live
   // computeStars. One range query backs a whole calendar month.
   router.get('/api/stars', (ctx) => {
     const owner = currentOwnerId();
@@ -36,9 +36,11 @@ export function starsRouter() {
 
     const frozenRows = sqlite
       .prepare(
+        // Only rows with frozen_at set are frozen; un-frozen daily_recap rows
+        // (created by the summary writer) fall through to a live computeStars.
         `SELECT date, star_objective, star_habits, star_tasks, star_bonus, star_note, total
-           FROM day_stars
-          WHERE owner_id = ? AND date >= ? AND date <= ?`,
+           FROM daily_recap
+          WHERE owner_id = ? AND frozen_at IS NOT NULL AND date >= ? AND date <= ?`,
       )
       .all(owner, from, to) as {
         date: string; star_objective: number; star_habits: number; star_tasks: number;

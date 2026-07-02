@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-01 · migration head `0094`
+**Status:** Living document · last updated 2026-07-01 · migration head `0096`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,7 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → Q; migration head 0094):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `day_stars`, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
+**Shipped phases (A → S; migration head 0096):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
 
 ---
 
@@ -99,7 +99,7 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0094_daily_summaries_owner_default
+│       │   ├── migrations/   0001_baseline → 0096_daily_recap
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
@@ -180,7 +180,7 @@ erDiagram
 | `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync | 0081, 0085, 0086, 0087 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio) | 0083 |
-| `day_stars` | Frozen five-star day score per `(owner, date)`; today lives, past days are permanent once frozen | 0089 |
+| `daily_recap` | One row per `(owner, date)`: the day-briefing cache (`prose`/`stats`/`focus`/`inputs_hash`) + the frozen five-star score (`star_*`/`total`/`frozen_at`); today lives, past days permanent once frozen. Merged `daily_summaries` + `day_stars` | 0089, 0094, 0096 |
 
 ---
 
@@ -240,7 +240,7 @@ sequenceDiagram
 | `ingest_gmail` | every 30m | Extract possible-task candidates from Gmail messages |
 | `ingest_gcal` | every 30m | Extract possible-task candidates from Calendar events |
 | `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
-| `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `day_stars` (owner-tz day; idempotent, first-freeze-wins) |
+| `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `daily_recap` (owner-tz day; idempotent, first-freeze-wins on `frozen_at`) |
 | `review_day` | daily 01:00 | Defer / surface missed planned tasks |
 | `promote_possibles` | daily 02:00 | Auto-promote high-confidence inbox items into Tasks |
 | `nightly_grooming` | daily 02:00 | Dedupe near-identical tasks with embeddings |
