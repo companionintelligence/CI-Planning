@@ -69,11 +69,11 @@ export function findOwnerByUsername(username: string): LocalOwnerRow | undefined
     .get(username, SYSTEM_OWNER_ID) as LocalOwnerRow | undefined;
 }
 
-/** Count real local owners (username set), excluding the sentinel — drives boot seeding. */
+/** Count usable local owners (username + password hash set), excluding the sentinel — drives boot seeding. */
 export function localOwnerCount(): number {
   return (
     sqlite
-      .prepare(`SELECT COUNT(*) AS n FROM owners WHERE username IS NOT NULL AND id <> ?`)
+      .prepare(`SELECT COUNT(*) AS n FROM owners WHERE username IS NOT NULL AND password_hash IS NOT NULL AND id <> ?`)
       .get(SYSTEM_OWNER_ID) as { n: number }
   ).n;
 }
