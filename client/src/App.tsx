@@ -1,7 +1,9 @@
-import { Navigate, Route, Router, useLocation } from '@solidjs/router';
-import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { Plus, Cpu } from 'lucide-solid';
+import { Navigate, Route, Router, useLocation, useNavigate } from '@solidjs/router';
+import { Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { Plus, Cpu, Loader2 } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
+import { Login }    from './views/Login.js';
+import { authGateActive } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
 import { ConflictBanner } from './components/ConflictBanner.js';
@@ -152,7 +154,86 @@ function Shell(props: { children?: any }) {
   );
 }
 
+/**
+ * U3 — auth gate. Fetches `GET /api/auth/config` ONCE at boot:
+ *   - test / standalone (or config unreachable) → render the app unchanged. Zero
+ *     behavioral change for existing dev/Docker/api-key deployments — the guard is
+ *     a pass-through and no /login route exists in their world.
+ *   - sso (CI-Portal OR local) → the SPA is auth-gated: `/login` renders bare (no
+ *     shell), and `SessionGate` wraps the shell to bounce unauthenticated users
+ *     there. Which login UI shows is the server's call (Login.tsx reads the config).
+ */
+function SessionGate(props: { children?: any }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [me] = createResource(() => api.auth.me().then(() => true).catch(() => false));
+
+  createEffect(() => {
+    if (me.loading) return;
+    if (me() === false && location.pathname !== '/login') {
+      navigate('/login', { replace: true });
+    }
+  });
+
+  return (
+    <Show
+      when={!me.loading}
+      fallback={
+        <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
+          <Loader2 class="animate-spin" size={20} />
+        </div>
+      }
+    >
+      <Show
+        when={me()}
+        fallback={
+          <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
+            <Loader2 class="animate-spin" size={20} />
+          </div>
+        }
+      >
+        <Shell>{props.children}</Shell>
+      </Show>
+    </Show>
+  );
+}
+
 export function App() {
+  const [cfg] = createResource(() => api.auth.config().catch(() => ({ mode: 'test' as const, disableOidc: false })));
+
+  return (
+    <Show
+      when={!cfg.loading}
+      fallback={
+        <div class="min-h-screen flex items-center justify-center bg-surface-950 text-muted-foreground">
+          <Loader2 class="animate-spin" size={20} />
+        </div>
+      }
+    >
+      {/* Auth-gated deployments: /login is bare, everything else runs behind SessionGate.
+          Ungated (test/standalone): the original Shell root, no login route — unchanged. */}
+      <Show when={authGateActive(cfg()!)} fallback={<UngatedRouter />}>
+        <Router>
+          <Route path="/login" component={Login} />
+          <Route path="/" component={SessionGate}>
+            <Route path="/"         component={Today} />
+            <Route path="/calendar" component={Calendar} />
+            <Route path="/inbox"    component={Inbox} />
+            <Route path="/tasks"       component={AllTasks} />
+            <Route path="/objectives"  component={Objectives} />
+            <Route path="/patterns" component={() => <Navigate href="/tasks" />} />
+            <Route path="/tags"     component={Tags} />
+            <Route path="/settings" component={Settings} />
+            <Route path="/jobs"     component={Jobs} />
+          </Route>
+        </Router>
+      </Show>
+    </Show>
+  );
+}
+
+/** The pre-U3 router, unchanged — used verbatim in test/standalone (ungated) mode. */
+function UngatedRouter() {
   return (
     <Router root={Shell}>
       <Route path="/"         component={Today} />

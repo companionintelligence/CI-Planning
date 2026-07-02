@@ -1,10 +1,11 @@
-import { A } from '@solidjs/router';
-import { Show } from 'solid-js';
+import { A, useNavigate } from '@solidjs/router';
+import { Show, createResource } from 'solid-js';
 import {
   CheckSquare, Inbox, Tag, Settings, Activity,
-  Sun, Cpu, CalendarDays, Target,
+  Sun, Cpu, CalendarDays, Target, LogOut,
 } from 'lucide-solid';
-import { possibles } from '../stores/index.js';
+import { possibles, showToast } from '../stores/index.js';
+import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 const links = [
@@ -20,6 +21,19 @@ const links = [
 
 export function Nav() {
   const pendingCount = () => possibles()?.length ?? 0;
+  const navigate = useNavigate();
+  // Sign-out is only meaningful when the deployment gates on auth (sso mode);
+  // test/standalone have no session to end, so the affordance stays hidden.
+  const [cfg] = createResource(() => api.auth.config().catch(() => null));
+  const showSignOut = () => { const c = cfg(); return !!c && authGateActive(c); };
+  async function signOut() {
+    try {
+      await api.auth.logout();
+      navigate('/login', { replace: true });
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
 
   return (
     <nav class="hidden md:flex w-52 flex-shrink-0 border-r border-surface-700/50 flex-col py-5 px-3 gap-0.5 bg-surface-900">
@@ -71,6 +85,16 @@ export function Nav() {
       ))}
 
       <div class="flex-1" />
+      <Show when={showSignOut()}>
+        <button
+          onClick={signOut}
+          class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-surface-800/60 transition-colors"
+          title="Sign out"
+        >
+          <LogOut size={15} class="flex-shrink-0" />
+          Sign out
+        </button>
+      </Show>
       <ThemeToggle />
     </nav>
   );
