@@ -48,7 +48,7 @@ graph TB
             API["REST API<br/>20+ route modules"]
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
-            Cron["Croner Jobs<br/>16 scheduled jobs"]
+            Cron["Croner Jobs<br/>15 scheduled jobs"]
             Migrate["Migration runner<br/>0001–0097 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
@@ -137,8 +137,7 @@ erDiagram
     OWNERS ||--o{ POSSIBLE_TASKS : proposed_for
     OWNERS ||--o{ REMINDERS : scheduled_for
     OWNERS ||--o{ ESTIMATE_CALIBRATION : calibrated_by
-    OWNERS ||--o{ PLAN_OUTCOMES : tracked_in
-    OWNERS ||--o{ DAY_STARS : scored_in
+    OWNERS ||--o{ DAILY_RECAP : recapped_in
 ```
 
 ### 5.2 Key tables
