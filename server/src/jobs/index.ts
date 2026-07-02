@@ -164,14 +164,13 @@ async function execute(kind: string): Promise<JobOutcome> {
     case 'prune_sync_events': {
       // Phase L: delete sync_events rows older than 30 days. Devices offline longer
       // than that receive sync:resync and do a full refetch anyway, so older rows
-      // serve no catch-up purpose. Runs owner-scoped so multi-owner isolation holds.
+      // serve no catch-up purpose. Retention is age-based + per-row, so prune ALL
+      // owners in one pass (T3: this kind runs once globally, not per owner — the
+      // old owner-scoped predicate would have left every non-first owner's rows to
+      // grow unbounded under multi-tenant).
       const { changes } = sqlite
-        .prepare(
-          `DELETE FROM sync_events
-            WHERE owner_id = ?
-              AND at < datetime('now', '-30 days')`,
-        )
-        .run(currentOwnerId());
+        .prepare(`DELETE FROM sync_events WHERE at < datetime('now', '-30 days')`)
+        .run();
       return { itemsCreated: 0, itemsUpdated: changes, log: `Pruned ${changes} sync_event row(s) older than 30 days` };
     }
     case 'advance_objectives': {
@@ -223,7 +222,9 @@ export async function runJob(kind: string): Promise<void> {
 
   try {
     outcome = await execute(kind);
-    writeAudit({ ownerId: SYSTEM_OWNER, actor: 'system', action: 'job', entity: `job:${kind}` });
+    // Audit under the owner this run is bound to (the cron fans owner-scoped kinds
+    // out per owner via runWithOwner), not a hardcoded SYSTEM_OWNER.
+    writeAudit({ ownerId: currentOwnerId(), actor: 'system', action: 'job', entity: `job:${kind}` });
   } catch (err) {
     status = 'error';
     outcome.log = (err as Error).message;
@@ -244,14 +245,60 @@ export async function runJob(kind: string): Promise<void> {
   logger.info(`Job ${kind} ${status}`, { ...outcome });
 }
 
+/**
+ * Kinds whose work is per-owner: the cron must run them once PER owner, or under
+ * multi-tenant they'd silently serve only owner #1. Everything else runs once —
+ * review_day and fire_reminders iterate owners internally, snapshot_db is a single
+ * DB-file copy, and prune_sync_events prunes globally by age.
+ */
+const OWNER_SCOPED_KINDS = new Set([
+  'ingest_gmail',
+  'ingest_gcal',
+  'promote_possibles',
+  'nightly_grooming',
+  'auto_schedule',
+  'generate_recurrences',
+  'tag_tasks',
+  'sync_calendar',
+  'advance_objectives',
+  'calibrate_estimates',
+  'freeze_stars',
+]);
+
+function allOwnerIds(): string[] {
+  return (sqlite.prepare('SELECT id FROM owners').all() as { id: string }[]).map((o) => o.id);
+}
+
+/**
+ * Run a job the way the scheduler does: once per owner for owner-scoped kinds (each
+ * inside its own runWithOwner, so currentOwnerId() — and thus every owner-scoped
+ * read/write, SSE broadcast and audit row — is that owner), once under the system
+ * owner for global kinds. Owners are enumerated at run time so a freshly-provisioned
+ * owner is picked up on the next tick. runJob never throws (it catches internally),
+ * so one owner's failure doesn't stop the rest.
+ *
+ * The manual POST /api/jobs/:id/run path calls runJob directly under the requesting
+ * owner's context — it does NOT fan out (a user "run now" is for their own account).
+ */
+export async function runScheduledJob(kind: string): Promise<void> {
+  if (OWNER_SCOPED_KINDS.has(kind)) {
+    for (const ownerId of allOwnerIds()) {
+      await runWithOwner(ownerId, () => runJob(kind));
+    }
+  } else {
+    await runWithOwner(SYSTEM_OWNER, () => runJob(kind));
+  }
+}
+
 export function startCronJobs() {
   const jobs = sqlite
     .prepare('SELECT id, kind, cron FROM scheduled_jobs WHERE enabled = 1')
     .all() as { id: string; kind: string; cron: string }[];
 
   for (const job of jobs) {
-    // Cron has no request context — bind the system owner for the job body.
-    new Cron(job.cron, () => runWithOwner(SYSTEM_OWNER, () => runJob(job.kind)));
-    logger.info(`Cron registered: ${job.kind} [${job.cron}]`);
+    new Cron(job.cron, () => runScheduledJob(job.kind));
+    logger.info(
+      `Cron registered: ${job.kind} [${job.cron}]${OWNER_SCOPED_KINDS.has(job.kind) ? ' (per-owner)' : ''}`
+    );
   }
 }
