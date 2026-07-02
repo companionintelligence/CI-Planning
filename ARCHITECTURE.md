@@ -180,7 +180,6 @@ erDiagram
 | `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync | 0081, 0085, 0086, 0087 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio) | 0083 |
-| `plan_outcomes` | Per-day planned vs completed block counts | 0083 |
 | `day_stars` | Frozen five-star day score per `(owner, date)`; today lives, past days are permanent once frozen | 0089 |
 
 ---
@@ -223,7 +222,6 @@ sequenceDiagram
     Note over Cron,DB: Nightly ──────────────────────────────────
     Cron->>DB: freeze_stars (00:20) — snapshot yesterday's five-star score
     Cron->>DB: review_day (01:00) — defer or surface missed tasks
-    Cron->>DB: aggregate_plan_outcomes (01:30) — record planned vs done
     Cron->>DB: auto_schedule (03:00) — re-place tomorrow's flight-plan
     Cron->>LLM: nightly_grooming — embedding dedupe + priority refresh
     Cron->>DB: snapshot_db (02:00) — point-in-time SQLite backup
@@ -244,7 +242,6 @@ sequenceDiagram
 | `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
 | `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `day_stars` (owner-tz day; idempotent, first-freeze-wins) |
 | `review_day` | daily 01:00 | Defer / surface missed planned tasks |
-| `aggregate_plan_outcomes` | daily 01:30 | Record planned vs completed blocks per day |
 | `promote_possibles` | daily 02:00 | Auto-promote high-confidence inbox items into Tasks |
 | `nightly_grooming` | daily 02:00 | Dedupe near-identical tasks with embeddings |
 | `snapshot_db` | daily 02:00 | Write a point-in-time SQLite backup |
@@ -322,14 +319,12 @@ flowchart TD
     DP["daily_plan"]
     R["reflections"]
     EC["estimate_calibration"]
-    PO["plan_outcomes"]
 
     O -->|progress roll-up| OT
     OT -->|links| T
     T -->|staged into| FP
     FP -->|AI-ordered into| DP
     DP -->|outcome stamped by review_day| DP
-    DP -->|aggregated by nightly job| PO
     R -->|today goal + weekly goals| O
     T -->|actual vs estimated minutes| EC
 ```
