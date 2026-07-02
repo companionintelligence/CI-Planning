@@ -153,8 +153,8 @@ describe('per-direction fill gate', () => {
     const workTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'work', 'pattern') RETURNING id`).get() as { id: string }).id;
     const homeTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), 'home', 'pattern') RETURNING id`).get() as { id: string }).id;
     // Pattern prefs: work fill = off, home fill = on
-    sqlite.prepare(`INSERT OR REPLACE INTO pattern_prefs (id, owner_id, pattern_tag_id, auto_fill) VALUES (uuid7(), ?, ?, 0)`).run(OWNER, workTag);
-    sqlite.prepare(`INSERT OR REPLACE INTO pattern_prefs (id, owner_id, pattern_tag_id, auto_fill) VALUES (uuid7(), ?, ?, 1)`).run(OWNER, homeTag);
+    sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'pattern', 0)`).run(OWNER, workTag);
+    sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'pattern', 1)`).run(OWNER, homeTag);
     // Pattern blocks (windows) for both directions
     const makeRange = (tagId: string) =>
       sqlite.prepare(`INSERT INTO pattern_blocks (id, owner_id, pattern_tag_id, day_type, start_time, end_time) VALUES (uuid7(), ?, ?, 'workday', '13:00', '17:00')`).run(OWNER, tagId);

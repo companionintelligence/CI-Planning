@@ -27,21 +27,21 @@ function rowToPref(r: PrefCols): CategoryPref {
 }
 
 /**
- * All category_prefs for an owner, keyed by category_tag_id. Missing rows are NOT
- * included — callers fold in defaults via DEFAULT_PREF.
+ * All category-axis tag_prefs (kind='category') for an owner, keyed by tag id.
+ * Missing rows are NOT included — callers fold in defaults via DEFAULT_PREF.
  */
 export function getCategoryPrefs(ownerId: string): Record<string, CategoryPref> {
   const rows = sqlite
-    .prepare(`SELECT category_tag_id, color_token, default_minutes FROM category_prefs WHERE owner_id = ?`)
-    .all(ownerId) as (PrefCols & { category_tag_id: string })[];
+    .prepare(`SELECT tag_id, color_token, default_minutes FROM tag_prefs WHERE owner_id = ? AND kind = 'category'`)
+    .all(ownerId) as (PrefCols & { tag_id: string })[];
   const result: Record<string, CategoryPref> = {};
-  for (const r of rows) result[r.category_tag_id] = rowToPref(r);
+  for (const r of rows) result[r.tag_id] = rowToPref(r);
   return result;
 }
 
 /**
- * Upsert a single category_prefs row. Merges `patch` over any existing values
- * (fetch-then-merge), then persists. Returns the final row.
+ * Upsert a single category-axis tag_prefs row (kind='category'). Merges `patch`
+ * over any existing values (fetch-then-merge), then persists. Returns the final row.
  */
 export function setCategoryPref(
   ownerId: string,
@@ -49,7 +49,7 @@ export function setCategoryPref(
   patch: Partial<CategoryPref>,
 ): CategoryPref {
   const existing = sqlite
-    .prepare(`SELECT color_token, default_minutes FROM category_prefs WHERE owner_id = ? AND category_tag_id = ?`)
+    .prepare(`SELECT color_token, default_minutes FROM tag_prefs WHERE owner_id = ? AND tag_id = ? AND kind = 'category'`)
     .get(ownerId, categoryTagId) as PrefCols | undefined;
 
   const current: CategoryPref = existing ? rowToPref(existing) : { ...DEFAULT_PREF };
@@ -61,10 +61,18 @@ export function setCategoryPref(
 
   sqlite
     .prepare(
-      `INSERT INTO category_prefs (id, owner_id, category_tag_id, color_token, default_minutes)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(owner_id, category_tag_id)
-       DO UPDATE SET color_token = excluded.color_token, default_minutes = excluded.default_minutes`,
+      // On conflict, normalize the row to the category axis: rewrite kind and NULL
+      // the pattern-only columns. Belt-and-suspenders — a tag's kind is immutable at
+      // runtime today, so a stale-kind row shouldn't exist, but this keeps a category
+      // pref self-consistent (visible to getCategoryPrefs' kind='category' filter, no
+      // stale pattern-only values) regardless of how the row got there.
+      `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
+       VALUES (?, ?, ?, 'category', ?, ?)
+       ON CONFLICT(owner_id, tag_id)
+       DO UPDATE SET kind = 'category',
+                     color_token = excluded.color_token,
+                     default_minutes = excluded.default_minutes,
+                     auto_fill = NULL, reminder_offsets = NULL, icon_shape = NULL`,
     )
     .run(newId(), ownerId, categoryTagId, merged.color_token, merged.default_minutes);
 

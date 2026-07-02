@@ -40,7 +40,7 @@ export function reflectionsRouter() {
       .prepare(
         `SELECT r.body, r.category_id, r.done_at, r.source_kind, r.source_ref, cp.color_token
            FROM reflections r
-           LEFT JOIN category_prefs cp ON cp.owner_id = r.owner_id AND cp.category_tag_id = r.category_id
+           LEFT JOIN tag_prefs cp ON cp.owner_id = r.owner_id AND cp.tag_id = r.category_id AND cp.kind = 'category'
           WHERE r.owner_id=? AND r.kind='today_goal' AND r.period_key=? AND r.position=0`,
       )
       .get(owner, period) as { body: string; category_id: string | null; done_at: string | null; source_kind: string; source_ref: string | null; color_token: string | null } | undefined;
@@ -49,7 +49,7 @@ export function reflectionsRouter() {
       .prepare(
         `SELECT r.position, r.body, r.category_id, r.done_at, r.source_kind, r.source_ref, cp.color_token
            FROM reflections r
-           LEFT JOIN category_prefs cp ON cp.owner_id = r.owner_id AND cp.category_tag_id = r.category_id
+           LEFT JOIN tag_prefs cp ON cp.owner_id = r.owner_id AND cp.tag_id = r.category_id AND cp.kind = 'category'
           WHERE r.owner_id=? AND r.kind='weekly_goal' AND r.period_key=? ORDER BY r.position`,
       )
       .all(owner, weekKey) as { position: number; body: string; category_id: string | null; done_at: string | null; source_kind: string; source_ref: string | null; color_token: string | null }[];

@@ -55,8 +55,8 @@ function seedPatternBlock(dirTagId: string, dayType: string, start: string, end:
 function seedPatternPref(dirTagId: string, autoFill: boolean): void {
   sqlite
     .prepare(
-      `INSERT INTO pattern_prefs (id, owner_id, pattern_tag_id, auto_fill, reminder_offsets, icon_shape, color_token)
-       VALUES (?, ?, ?, ?, '[]', 'circle', 'primary')`,
+      `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token)
+       VALUES (?, ?, ?, 'pattern', ?, '[]', 'circle', 'primary')`,
     )
     .run(newId(), OWNER, dirTagId, autoFill ? 1 : 0);
 }

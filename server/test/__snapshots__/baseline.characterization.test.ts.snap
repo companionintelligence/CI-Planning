@@ -697,16 +697,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "id",
       "owner_id",
-      "category_tag_id",
-      "color_token",
-      "default_minutes",
-    ],
-    "table": "category_prefs",
-  },
-  {
-    "columns": [
-      "id",
-      "owner_id",
       "provider",
       "account",
       "iv",
@@ -741,10 +731,17 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "focus",
       "llm",
       "inputs_hash",
+      "star_objective",
+      "star_habits",
+      "star_tasks",
+      "star_bonus",
+      "star_note",
+      "total",
+      "frozen_at",
       "created_at",
       "updated_at",
     ],
-    "table": "daily_summaries",
+    "table": "daily_recap",
   },
   {
     "columns": [
@@ -761,20 +758,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "day_type_key",
     ],
     "table": "day_of_week_map",
-  },
-  {
-    "columns": [
-      "owner_id",
-      "date",
-      "star_objective",
-      "star_habits",
-      "star_tasks",
-      "star_bonus",
-      "star_note",
-      "total",
-      "frozen_at",
-    ],
-    "table": "day_stars",
   },
   {
     "columns": [
@@ -935,19 +918,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "date",
     ],
     "table": "pattern_day_optouts",
-  },
-  {
-    "columns": [
-      "id",
-      "owner_id",
-      "pattern_tag_id",
-      "auto_fill",
-      "reminder_offsets",
-      "icon_shape",
-      "color_token",
-      "default_minutes",
-    ],
-    "table": "pattern_prefs",
   },
   {
     "columns": [
@@ -1172,6 +1142,20 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "pattern_tag_id",
     ],
     "table": "tag_patterns",
+  },
+  {
+    "columns": [
+      "id",
+      "owner_id",
+      "tag_id",
+      "kind",
+      "auto_fill",
+      "reminder_offsets",
+      "icon_shape",
+      "color_token",
+      "default_minutes",
+    ],
+    "table": "tag_prefs",
   },
   {
     "columns": [
