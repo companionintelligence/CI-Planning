@@ -5,11 +5,20 @@ import { newId } from '../lib/ids.js';
 // CON-1: entity ids are TEXT UUIDv7 (see lib/ids.ts). Drizzle inserts mint via
 // $defaultFn(newId); raw-SQL inserts use the uuid7() function (db/index.ts).
 
+// owner ≡ user (Phase T decision #1, 1:1 tenant = user). The auth-identity columns
+// (0101, U0) are all nullable — an owner's auth mode is inferred from which are set:
+// external_subject ⇒ OIDC/CI-Portal (U1); username+password_hash ⇒ local login (U2);
+// all NULL ⇒ the SYSTEM_OWNER sentinel. Uniqueness is enforced by partial unique
+// indexes in the migration (SQLite can't ADD COLUMN with UNIQUE), so it isn't
+// modelled here — .unique() would emit an inline constraint the migration doesn't use.
 export const owners = sqliteTable('owners', {
   id: text('id').primaryKey().$defaultFn(newId),
   name: text('name').notNull(),
   email: text('email'),
   lastAutoRunId: text('last_auto_run_id'), // most recent Auto placement run, for Undo (0052)
+  externalSubject: text('external_subject'), // OIDC token `sub` → owner (U1); UNIQUE via ux_owners_external_subject
+  username: text('username'),                // local-login handle (U2); UNIQUE via ux_owners_username
+  passwordHash: text('password_hash'),       // argon2id hash (U2)
 });
 
 // Phase I (0049): standalone API keys. SHA-256 at rest; the raw key is shown once
