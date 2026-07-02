@@ -44,7 +44,13 @@ export function up(db: Database): void {
   // Seed the three brand directions (insert-if-absent by name). A pre-existing tag of
   // the same name is promoted to a base direction.
   const findByName = db.prepare(`SELECT id FROM tags WHERE name = ?`);
-  const insDir = db.prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (?, ?, 'direction', 1)`);
+  // Forward-compat: a later migration (T2 / 0100) adds tags.owner_id NOT NULL. In the real
+  // forward chain owner_id doesn't exist when 0036 runs, so `cols` lacks it and we take the
+  // original insert. On a REPLAY against the evolved schema (a test re-running this backfill),
+  // supply owner_id — backfilled to the single owner, matching 0100's own backfill.
+  const insDir = cols.includes('owner_id')
+    ? db.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (?, ?, 'direction', 1, (SELECT id FROM owners ORDER BY id LIMIT 1))`)
+    : db.prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (?, ?, 'direction', 1)`);
   const promote = db.prepare(`UPDATE tags SET kind = 'direction', is_base = 1 WHERE id = ?`);
   const dirId: Record<string, string> = {};
   for (const name of BASE_DIRECTIONS) {
