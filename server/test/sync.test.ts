@@ -218,10 +218,10 @@ describe('calendar sync — fixture mode (offline)', () => {
     it('creates a remote event for a queued block and clears the queue', async () => {
       const { id: blockId } = sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-           VALUES (uuid7(), 'Project Planning', 'task', ?, ?, 0, 0, 'manual', 'planned') RETURNING id`,
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'Project Planning', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
         )
-        .get(futureDate(3), futureDate(3, 2)) as { id: string };
+        .get(futureDate(3), futureDate(3, 2), SYSTEM_OWNER) as { id: string };
       sqlite
         .prepare(
           `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
@@ -244,10 +244,10 @@ describe('calendar sync — fixture mode (offline)', () => {
     it('updates the remote event when a re-queued block already has a mapping', async () => {
       const { id: blockId } = sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-           VALUES (uuid7(), 'Original', 'task', ?, ?, 0, 0, 'manual', 'planned') RETURNING id`,
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'Original', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
         )
-        .get(futureDate(3), futureDate(3, 2)) as { id: string };
+        .get(futureDate(3), futureDate(3, 2), SYSTEM_OWNER) as { id: string };
       sqlite
         .prepare(
           `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
@@ -281,10 +281,10 @@ describe('calendar sync — fixture mode (offline)', () => {
 
       const { id: blockId } = sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-           VALUES (uuid7(), 'Local Version', 'task', ?, ?, 0, 0, 'manual', 'planned') RETURNING id`,
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'Local Version', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
         )
-        .get(futureDate(3), futureDate(3, 2)) as { id: string };
+        .get(futureDate(3), futureDate(3, 2), SYSTEM_OWNER) as { id: string };
       // Map to remote but with a stale etag
       sqlite
         .prepare(
@@ -334,10 +334,10 @@ describe('calendar sync — fixture mode (offline)', () => {
       // One outbound block to push
       const { id: blockId } = sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-           VALUES (uuid7(), 'Task Block', 'task', ?, ?, 0, 0, 'manual', 'planned') RETURNING id`,
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'Task Block', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
         )
-        .get(futureDate(5), futureDate(5, 1)) as { id: string };
+        .get(futureDate(5), futureDate(5, 1), SYSTEM_OWNER) as { id: string };
       sqlite
         .prepare(`INSERT INTO outbound_queue (id, owner_id, block_id, provider, account) VALUES (uuid7(), ?, ?, 'google', 'sync-test@example.com')`)
         .run(SYSTEM_OWNER, blockId);

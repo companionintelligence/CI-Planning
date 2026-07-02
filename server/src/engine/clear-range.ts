@@ -18,9 +18,8 @@
  * prevents re-materialization, so raising the horizon later stays reversible.
  *
  * Recurring *templates* (`recurrence_rule` set, `recurrence_parent_id` NULL) are
- * NEVER deleted — only their tails are trimmed. `time_blocks` has no `owner_id`
- * (single-owner era, mig 0059), so block/template queries are global; `daily_plan`
- * and `pattern_day_optouts` are owner-scoped.
+ * NEVER deleted — only their tails are trimmed. Every `time_blocks`, `daily_plan`,
+ * and `pattern_day_optouts` query here is owner-scoped (T1 multi-tenant).
  *
  * ⚠ `parseRule` (recurrence.ts) uses a fixed year-2000 validation ceiling, so a
  * far-future `UNTIL` (open-ended cap) would be rejected if a capped rule is later
@@ -185,8 +184,8 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
   const autoPredicate = `is_locked = 0 AND (is_auto = 1 OR recurrence_parent_id IS NOT NULL OR source_kind = 'pattern')`;
 
   // ---- blocks to delete ------------------------------------------------------
-  const blockWhere = [`start_at >= ?`];
-  const blockArgs: unknown[] = [startUTC];
+  const blockWhere = [`owner_id = ?`, `start_at >= ?`];
+  const blockArgs: unknown[] = [owner, startUTC];
   if (endExclusiveUTC) {
     blockWhere.push(`start_at < ?`);
     blockArgs.push(endExclusiveUTC);
@@ -215,13 +214,13 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
   const optoutOps: { patternId: string; day: string }[] = [];
 
   if (suppress === 'auto') {
-    // Block templates (global — time_blocks has no owner_id).
+    // Block templates (owner-scoped, T1).
     const templates = sqlite
       .prepare(
         `SELECT id, title, recurrence_rule AS rule, recurrence_dtstart AS dtstart, start_at, recurrence_exdates AS ex
-           FROM time_blocks WHERE ${isBlockTemplate}`,
+           FROM time_blocks WHERE owner_id = ? AND ${isBlockTemplate}`,
       )
-      .all() as BlockTemplateRow[];
+      .all(owner) as BlockTemplateRow[];
     for (const t of templates) {
       const existing = parseExdates(t.ex);
       let hits: string[] = [];
@@ -321,21 +320,26 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
 
   // ---- write (one atomic transaction: suppress first, then delete) -----------
   const delTags = sqlite.prepare(`DELETE FROM entity_tags WHERE entity_kind = 'time_block' AND entity_id = ?`);
-  const delBlock = sqlite.prepare(`DELETE FROM time_blocks WHERE id = ?`);
-  const capTB = sqlite.prepare(`UPDATE time_blocks SET recurrence_rule = ? WHERE id = ?`);
+  const delBlock = sqlite.prepare(`DELETE FROM time_blocks WHERE id = ? AND owner_id = ?`);
+  const capTB = sqlite.prepare(`UPDATE time_blocks SET recurrence_rule = ? WHERE id = ? AND owner_id = ?`);
   const capPat = sqlite.prepare(`UPDATE patterns SET recurrence_rule = ? WHERE id = ?`);
   const capTask = sqlite.prepare(`UPDATE tasks SET recurrence_rule = ? WHERE id = ?`);
-  const setExdates = sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ?`);
+  const setExdates = sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ? AND owner_id = ?`);
   const insOptout = sqlite.prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`);
   const dpDeleteSql = `DELETE FROM daily_plan WHERE ${dpWhere.join(' AND ')}`;
 
   const run = sqlite.transaction(() => {
-    for (const c of capOps) (c.table === 'time_blocks' ? capTB : c.table === 'patterns' ? capPat : capTask).run(c.rule, c.id);
-    for (const e of exdateOps) setExdates.run(e.merged, e.id);
+    // time_blocks caps carry owner_id; pattern/task caps (owner-scoped via their reads
+    // above) update their own tables by id.
+    for (const c of capOps) {
+      if (c.table === 'time_blocks') capTB.run(c.rule, c.id, owner);
+      else (c.table === 'patterns' ? capPat : capTask).run(c.rule, c.id);
+    }
+    for (const e of exdateOps) setExdates.run(e.merged, e.id, owner);
     for (const o of optoutOps) insOptout.run(owner, o.patternId, o.day);
     for (const b of blocksToDelete) {
       delTags.run(b.id);
-      delBlock.run(b.id);
+      delBlock.run(b.id, owner);
     }
     if (clearDailyPlan) sqlite.prepare(dpDeleteSql).run(...dpArgs);
   });

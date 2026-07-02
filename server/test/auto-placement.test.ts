@@ -98,8 +98,8 @@ describe('Plans-first placement', () => {
 describe('no double-booking (shared obstacle set)', () => {
   it('does not stack on a manually-placed task block; workday fallback flows around it', () => {
     // a manual block 09:00–10:00 (source_kind manual, not agent → survives re-place)
-    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
-      .run(at('09:00'), at('10:00'));
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned', ?)`)
+      .run(at('09:00'), at('10:00'), OWNER);
     const t = insertTask('Auto task', 60);
     stage(t);
 
@@ -214,10 +214,10 @@ describe('catch-all Plan (Community pattern type)', () => {
   function makeCommunityPlan(start: string, end: string) {
     return (sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status)
-         VALUES (uuid7(), 'Community', 'timeblock', 'scheduled', 'Community', ?, ?, 0, 'manual', 'planned') RETURNING id`,
+        `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status, owner_id)
+         VALUES (uuid7(), 'Community', 'timeblock', 'scheduled', 'Community', ?, ?, 0, 'manual', 'planned', ?) RETURNING id`,
       )
-      .get(start, end) as { id: string }).id;
+      .get(start, end, OWNER) as { id: string }).id;
   }
 
   it('accepts every staged task regardless of tag, placed in priority order', async () => {
@@ -279,10 +279,10 @@ describe('DST-correct day slab (clearPriorAuto)', () => {
     // Stale agent auto block at local 23:00–23:30 on the fall-back day.
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, is_locked, source_kind, status)
-         VALUES (uuid7(), NULL, 'Stale auto', 'task', ?, ?, 1, 0, 'agent', 'planned')`,
+        `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, is_locked, source_kind, status, owner_id)
+         VALUES (uuid7(), NULL, 'Stale auto', 'task', ?, ?, 1, 0, 'agent', 'planned', ?)`,
       )
-      .run('2026-11-02T04:00:00.000Z', '2026-11-02T04:30:00.000Z');
+      .run('2026-11-02T04:00:00.000Z', '2026-11-02T04:30:00.000Z', OWNER);
 
     // Empty flight plan → placeFlightPlan does nothing but run clearPriorAuto for the day.
     placeFlightPlan(OWNER, { date: DST_DAY });
@@ -300,10 +300,10 @@ describe('idempotent re-place', () => {
     const t = insertTask('Coding', 30, 'work');
     stage(t);
     // a pattern-marked block + a manual block must survive a re-place
-    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, source_ref, status) VALUES (uuid7(), 'Routine task', 'task', ?, ?, 1, 'pattern', '999', 'planned')`)
-      .run(at('13:00'), at('13:30'));
-    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned')`)
-      .run(at('16:00'), at('16:30'));
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, source_ref, status, owner_id) VALUES (uuid7(), 'Routine task', 'task', ?, ?, 1, 'pattern', '999', 'planned', ?)`)
+      .run(at('13:00'), at('13:30'), OWNER);
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned', ?)`)
+      .run(at('16:00'), at('16:30'), OWNER);
 
     placeFlightPlan(OWNER, { date: DAY }); // first run: places 'Coding', removes it from flight plan (item 5)
     placeFlightPlan(OWNER, { date: DAY }); // second run: clearPriorAuto removes the prior block; not re-placed (de-staged)

@@ -18,10 +18,10 @@ const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 function insertContainer(startISO: string, endISO: string): string {
   return (sqlite
     .prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, block_type, start_at, end_at, is_locked, is_auto, source_kind, status)
-       VALUES (uuid7(), 'Focus', 'timeblock', 'scheduled', ?, ?, 0, 0, 'manual', 'planned') RETURNING id`,
+      `INSERT INTO time_blocks (id, title, block_kind, block_type, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+       VALUES (uuid7(), 'Focus', 'timeblock', 'scheduled', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
     )
-    .get(startISO, endISO) as { id: string }).id;
+    .get(startISO, endISO, OWNER) as { id: string }).id;
 }
 function insertTask(title: string, est = 30): string {
   return (sqlite
@@ -31,10 +31,10 @@ function insertTask(title: string, est = 30): string {
 function insertChild(parentId: string, taskId: string, startISO: string, endISO: string): void {
   sqlite
     .prepare(
-      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-       VALUES (uuid7(), ?, 'pre', 'task', ?, ?, 0, 0, 'manual', 'planned', ?)`,
+      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, owner_id)
+       VALUES (uuid7(), ?, 'pre', 'task', ?, ?, 0, 0, 'manual', 'planned', ?, ?)`,
     )
-    .run(taskId, startISO, endISO, parentId);
+    .run(taskId, startISO, endISO, parentId, OWNER);
 }
 const childrenOf = (blockId: string) =>
   sqlite
@@ -123,8 +123,8 @@ describe('placeTasksInBlock', () => {
 
     // A plain task block (not a container) accepts nothing.
     const taskBlockId = (sqlite
-      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, status) VALUES (uuid7(), 'loose', 'task', ?, ?, 'manual', 'planned') RETURNING id`)
-      .get(at('09:00'), at('09:30')) as { id: string }).id;
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, status, owner_id) VALUES (uuid7(), 'loose', 'task', ?, ?, 'manual', 'planned', ?) RETURNING id`)
+      .get(at('09:00'), at('09:30'), OWNER) as { id: string }).id;
     expect(placeTasksInBlock(OWNER, taskBlockId, [t]).blocksCreated).toBe(0);
   });
 });

@@ -36,8 +36,8 @@ function insertTask(title = 'T'): string {
     .get(newId(), title, SYSTEM_OWNER) as { id: string }).id;
 }
 function insertBlock(title = 'B'): string {
-  return (sqlite.prepare(`INSERT INTO time_blocks (id, title, start_at, end_at) VALUES (?, ?, ?, ?) RETURNING id`)
-    .get(newId(), title, FUTURE, FUTURE) as { id: string }).id;
+  return (sqlite.prepare(`INSERT INTO time_blocks (id, title, start_at, end_at, owner_id) VALUES (?, ?, ?, ?, ?) RETURNING id`)
+    .get(newId(), title, FUTURE, FUTURE, SYSTEM_OWNER) as { id: string }).id;
 }
 function insertReminder(o: { taskId?: string; blockId?: string; fireAt: string; status?: string; owner?: string }): string {
   return (sqlite.prepare(

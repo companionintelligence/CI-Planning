@@ -50,10 +50,10 @@ function insertMeeting(startAt: string, endAt: string): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind)
-         VALUES (uuid7(), 'Meeting', 'meeting', ?, ?, 1, 0, 'manual') RETURNING id`
+        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, owner_id)
+         VALUES (uuid7(), 'Meeting', 'meeting', ?, ?, 1, 0, 'manual', ?) RETURNING id`
       )
-      .get(startAt, endAt) as { id: string }
+      .get(startAt, endAt, OWNER) as { id: string }
   ).id;
 }
 

@@ -95,6 +95,9 @@ export const possibleTasks = sqliteTable('possible_tasks', {
 export const timeBlocks = sqliteTable('time_blocks', {
   id: text('id').primaryKey().$defaultFn(newId),
   taskId: text('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+  // T1 (multi-tenant): every block belongs to an owner. Task-backed blocks inherit
+  // their task's owner; container/meeting blocks (task_id NULL) carry it directly.
+  ownerId: text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
   title: text('title').notNull(),
   blockKind: text('block_kind').default('task'),     // task | meeting | habit | focus | break | buffer | timeblock (container)
   tag: text('tag'),                                  // grouping tag for 'timeblock' containers (Phase G)

@@ -153,11 +153,11 @@ describe('clearPlannerRange — autoOnly filter', () => {
     await instancesOf(tpl.id); // materialize (instances are is_auto=0, recurrence_parent_id set)
     // user-placed manual block + a locked block, both on T2
     sqlite
-      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'timeblock', ?, ?, 0, 0, 'manual', 'planned')`)
-      .run(at(T2, '14:00'), at(T2, '15:00'));
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'timeblock', ?, ?, 0, 0, 'manual', 'planned', ?)`)
+      .run(at(T2, '14:00'), at(T2, '15:00'), OWNER);
     sqlite
-      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned')`)
-      .run(at(T2, '16:00'), at(T2, '17:00'));
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned', ?)`)
+      .run(at(T2, '16:00'), at(T2, '17:00'), OWNER);
 
     clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', autoOnly: true, dryRun: false });
 
@@ -174,11 +174,11 @@ describe('clearPlannerRange — autoOnly filter', () => {
 
   it('autoOnly:false (default) removes locked + manual blocks too', async () => {
     sqlite
-      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'timeblock', ?, ?, 0, 0, 'manual', 'planned')`)
-      .run(at(T2, '14:00'), at(T2, '15:00'));
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'timeblock', ?, ?, 0, 0, 'manual', 'planned', ?)`)
+      .run(at(T2, '14:00'), at(T2, '15:00'), OWNER);
     sqlite
-      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned')`)
-      .run(at(T2, '16:00'), at(T2, '17:00'));
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned', ?)`)
+      .run(at(T2, '16:00'), at(T2, '17:00'), OWNER);
 
     const res = clearPlannerRange({ owner: OWNER, start: T2, suppress: 'none', autoOnly: false, dryRun: false });
     expect(res.blocksDeleted).toBe(2);

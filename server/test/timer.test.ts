@@ -34,10 +34,10 @@ function insertBlock(taskId: string, startAt: string, endAt: string): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, task_id, title, start_at, end_at, status)
-         VALUES (uuid7(), ?, 'planned block', ?, ?, 'planned') RETURNING id`
+        `INSERT INTO time_blocks (id, task_id, title, start_at, end_at, status, owner_id)
+         VALUES (uuid7(), ?, 'planned block', ?, ?, 'planned', ?) RETURNING id`
       )
-      .get(taskId, startAt, endAt) as { id: string }
+      .get(taskId, startAt, endAt, OWNER) as { id: string }
   ).id;
 }
 

@@ -55,9 +55,9 @@ export function weeklyReview(anchor: string): WeekReview {
   const { blocks_count } = sqlite
     .prepare(
       `SELECT COUNT(*) AS blocks_count FROM time_blocks
-       WHERE start_at >= ? AND start_at <= ?`,
+       WHERE owner_id = ? AND start_at >= ? AND start_at <= ?`,
     )
-    .get(rangeStart, rangeEnd) as { blocks_count: number };
+    .get(owner, rangeStart, rangeEnd) as { blocks_count: number };
 
   const weekly_goals = sqlite
     .prepare(

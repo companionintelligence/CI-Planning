@@ -26,8 +26,8 @@ function insertTask(title = 'Timed'): string {
 }
 function insertBlock(taskId: string, startAt: string, endAt: string): string {
   return (sqlite
-    .prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, status) VALUES (uuid7(), ?, 'Block', 'task', ?, ?, 'planned') RETURNING id`)
-    .get(taskId, startAt, endAt) as { id: string }).id;
+    .prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, status, owner_id) VALUES (uuid7(), ?, 'Block', 'task', ?, ?, 'planned', ?) RETURNING id`)
+    .get(taskId, startAt, endAt, OWNER) as { id: string }).id;
 }
 /** Start a timer on (task, block) and backdate its start so the session lasts `sessionMin`. */
 function startBackdated(task: string, block: string | undefined, sessionMin: number): void {

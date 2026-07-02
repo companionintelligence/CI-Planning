@@ -73,8 +73,8 @@ export function stopRunning(owner: string): StoppedEntry | null {
   let overran = false;
   if (running.block_id) {
     const block = sqlite
-      .prepare(`SELECT start_at, end_at FROM time_blocks WHERE id = ?`)
-      .get(running.block_id) as { start_at: string; end_at: string } | undefined;
+      .prepare(`SELECT start_at, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get(running.block_id, owner) as { start_at: string; end_at: string } | undefined;
     if (block) {
       const sessionElapsedMs =
         new Date(endedAt).getTime() - new Date(running.started_at).getTime();
@@ -83,8 +83,8 @@ export function stopRunning(owner: string): StoppedEntry | null {
       const TOLERANCE_MS = 120_000; // 2 minutes
       if (sessionElapsedMs > blockSpanMs + TOLERANCE_MS) {
         sqlite
-          .prepare(`UPDATE time_blocks SET status = 'overrun' WHERE id = ?`)
-          .run(running.block_id);
+          .prepare(`UPDATE time_blocks SET status = 'overrun' WHERE id = ? AND owner_id = ?`)
+          .run(running.block_id, owner);
         overran = true;
       }
     }

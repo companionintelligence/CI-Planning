@@ -268,6 +268,10 @@ export function directionOptoutsOf(categoryTagId: string): string[] {
 
 // A category's references live in time_blocks.category_id + tag_categories — NEITHER of
 // which writes entity_tags, so tagIsUsed() (entity_tags-only) does NOT cover categories.
+// Intentionally NOT owner-scoped in T1: `tags` are still tenant-global (owner-scoping is
+// T2), so a category may be referenced by several owners' blocks — the deletion-safety
+// check must consider ALL of them (a global `category_id` delete SET-NULLs every owner's
+// blocks). T2 owner-scopes this alongside the tag axis.
 const catRefByBlock = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE category_id = ? LIMIT 1`);
 const catRefByMember = sqlite.prepare(`SELECT 1 FROM tag_categories WHERE category_tag_id = ? LIMIT 1`);
 /** True if a category tag is assigned to any time block or has any member intention. */

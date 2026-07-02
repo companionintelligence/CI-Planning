@@ -38,9 +38,9 @@ function plan(taskId: string, position: number) {
 function blockOn(taskId: string, date: string) {
   const now = new Date().toISOString();
   sqlite.prepare(
-    `INSERT INTO time_blocks (id, title, task_id, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, created_at)
-     VALUES (uuid7(), 'blk', ?, 'task', ?, ?, 0, 1, 'auto', 'scheduled', ?)`,
-  ).run(taskId, `${date}T10:00:00.000Z`, `${date}T11:00:00.000Z`, now);
+    `INSERT INTO time_blocks (id, title, task_id, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, created_at, owner_id)
+     VALUES (uuid7(), 'blk', ?, 'task', ?, ?, 0, 1, 'auto', 'scheduled', ?, ?)`,
+  ).run(taskId, `${date}T10:00:00.000Z`, `${date}T11:00:00.000Z`, now, SYSTEM_OWNER);
 }
 
 const get = () => api(srv.url, `/api/summary/top-tasks?date=${DAY}`);
