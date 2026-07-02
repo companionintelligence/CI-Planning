@@ -16,11 +16,11 @@ const DAY = '2026-06-22';
 const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 
 function makeCategory(name: string): string {
-  return (sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, 'category', 0) RETURNING id`).get(name) as { id: string }).id;
+  return (sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'category', 0, ?) RETURNING id`).get(name, OWNER) as { id: string }).id;
 }
 function tagId(name: string, kind: 'intention' | 'pattern'): string {
   const found = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(name) as { id: string } | undefined;
-  return found ? found.id : (sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), ?, ?) RETURNING id`).get(name, kind) as { id: string }).id;
+  return found ? found.id : (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, ?, ?) RETURNING id`).get(name, kind, OWNER) as { id: string }).id;
 }
 function fileUnderCategory(intention: string, categoryId: string) {
   sqlite.prepare(`INSERT OR IGNORE INTO tag_categories (intention_tag_id, category_tag_id) VALUES (?, ?)`).run(tagId(intention, 'intention'), categoryId);

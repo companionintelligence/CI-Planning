@@ -161,7 +161,7 @@ function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlan
  * randomness). NB: `staged.tags` is level-1 only, so category matching MUST read
  * entity_tags level>1 directly. A direction-less task is included on the tag match alone.
  */
-function categoryCandidates(staged: StagedTask[], categoryId: string): StagedTask[] {
+function categoryCandidates(staged: StagedTask[], categoryId: string, owner: string): StagedTask[] {
   const candIds = new Set(
     (sqlite
       .prepare(
@@ -178,7 +178,7 @@ function categoryCandidates(staged: StagedTask[], categoryId: string): StagedTas
       .all(categoryId) as { pattern_tag_id: string }[]).map((r) => r.pattern_tag_id),
   );
   const patNameToId = new Map<string, string>();
-  for (const pt of sqlite.prepare(`SELECT id, name FROM tags WHERE kind = 'pattern'`).all() as { id: string; name: string }[]) {
+  for (const pt of sqlite.prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND kind = 'pattern'`).all(owner) as { id: string; name: string }[]) {
     patNameToId.set(pt.name, pt.id);
   }
   return staged.filter((t) => {
@@ -441,7 +441,7 @@ export function placeFlightPlan(
     if (block.category_id) {
       // 0069 category Plan: fill ONLY its category candidates (NOT every staged task) —
       // the same secondary-tag + opt-out filter as the general Pass 1.5.
-      cands = categoryCandidates(staged, block.category_id);
+      cands = categoryCandidates(staged, block.category_id, owner);
       ordered = cands; // preserve staged order (deterministic)
     } else {
       const catchAll = !!(sqlite
@@ -508,7 +508,7 @@ export function placeFlightPlan(
   // Pass 1 and before the direction-window pass, so category blocks supersede pattern
   // windows for their span (via dayObstacles includePlans) just like tag-Plans.
   for (const plan of dayCategoryPlans(owner, date, tz)) {
-    const filtered = categoryCandidates(staged, plan.category_id).filter((t) => !placedIds.has(t.task_id));
+    const filtered = categoryCandidates(staged, plan.category_id, owner).filter((t) => !placedIds.has(t.task_id));
     if (filtered.length === 0) continue;
     const r = placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
@@ -542,8 +542,8 @@ export function placeFlightPlan(
     const dirNameToId = new Map<string, string>(); // direction tag name → id
     const ids = Object.keys(patWindows);
     const dirTags = sqlite
-      .prepare(`SELECT id, name FROM tags WHERE id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
-      .all(...ids) as { id: string; name: string }[];
+      .prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
+      .all(owner, ...ids) as { id: string; name: string }[];
     for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
 
     for (const t of staged.filter((s) => !placedIds.has(s.task_id) && !hintConstrainedIds.has(s.task_id))) {

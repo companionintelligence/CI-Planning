@@ -24,20 +24,22 @@ function normTag(name: string): string {
 }
 
 function tagId(name: string): string {
-  const existing = sqlite.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: string } | undefined;
+  const owner = currentOwnerId();
+  const existing = sqlite.prepare('SELECT id FROM tags WHERE owner_id = ? AND name = ?').get(owner, name) as { id: string } | undefined;
   if (existing) return existing.id;
-  return (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get(name) as { id: string }).id;
+  return (sqlite.prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get(owner, name) as { id: string }).id;
 }
 
 /** Resolve a direction tag id, ensuring it exists as a `pattern` tag (the kind the
  *  Auto engine matches pattern windows against). Self-heals if a reset wiped the seed. */
 function directionTagId(name: string): string {
+  const owner = currentOwnerId();
   const existing = sqlite
-    .prepare(`SELECT id FROM tags WHERE name = ? AND kind = 'pattern'`)
-    .get(name) as { id: string } | undefined;
+    .prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'pattern'`)
+    .get(owner, name) as { id: string } | undefined;
   if (existing) return existing.id;
   return (
-    sqlite.prepare(`INSERT INTO tags (id, name, kind) VALUES (uuid7(), ?, 'pattern') RETURNING id`).get(name) as { id: string }
+    sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'pattern') RETURNING id`).get(owner, name) as { id: string }
   ).id;
 }
 

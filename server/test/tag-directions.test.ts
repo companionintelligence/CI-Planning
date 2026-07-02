@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { up as backfill0036 } from '../src/db/migrations/0036_tag_directions.js';
 
@@ -13,8 +14,8 @@ function seedDirections(): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (sqlite
-      .prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES (uuid7(), ?, 'pattern', 1) RETURNING id`)
-      .get(name) as { id: string }).id;
+      .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'pattern', 1, ?) RETURNING id`)
+      .get(name, SYSTEM_OWNER) as { id: string }).id;
   }
   return ids;
 }
@@ -48,7 +49,7 @@ describe('0036 migration backfill', () => {
   it('seeds the 3 base directions, heuristically assigns obvious tags, leaves the rest Unsorted', () => {
     // pre-existing intention tags (as if from before the migration)
     for (const n of ['yard-work', 'product', 'socialize', 'personal'])
-      sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?)`).run(n);
+      sqlite.prepare(`INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?)`).run(n, SYSTEM_OWNER);
 
     backfill0036(sqlite); // idempotent; columns already exist
 
@@ -66,7 +67,7 @@ describe('0036 migration backfill', () => {
   });
 
   it('promotes a pre-existing same-named tag to the base direction', () => {
-    sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), 'work')`).run();
+    sqlite.prepare(`INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), 'work', ?)`).run(SYSTEM_OWNER);
     backfill0036(sqlite);
     expect(tagByName('work')).toMatchObject({ kind: 'direction', isBase: 1 });
     expect((sqlite.prepare(`SELECT COUNT(*) c FROM tags WHERE name='work'`).get() as { c: number }).c).toBe(1);

@@ -34,7 +34,7 @@ function insertTask(title: string, priority = 3, dueAt: string | null = null, es
 
 function addTag(taskId: string, tagName: string): void {
   let tag = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tagName) as { id: string } | undefined;
-  if (!tag) tag = sqlite.prepare(`INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id`).get(tagName) as { id: string };
+  if (!tag) tag = sqlite.prepare(`INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?) RETURNING id`).get(tagName, OWNER) as { id: string };
   sqlite
     .prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`)
     .run(taskId, tag.id);
