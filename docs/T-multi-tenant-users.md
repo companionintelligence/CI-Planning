@@ -14,7 +14,7 @@
 
 **#2 — Table naming: keep `owners`. ✅ LOCKED 2026-07-02.** No rename to `users` (would touch every `references(() => owners.id)` + raw-SQL `REFERENCES owners(id)` across 40+ tables). "owner" ≡ "user" in product vocabulary; **T5 makes it canon in `GLOSSARY.md`**.
 
-**#3 — Exact `owners` auth-identity columns: ⏳ OPEN, jointly with Phase U.** At minimum `external_subject TEXT UNIQUE` (OIDC `sub`), and for local login `username TEXT UNIQUE` + `password_hash TEXT` (argon2id, nullable). **T does not add these itself** (T5 reserves the slot; U finalizes the set). The `SYSTEM_OWNER` sentinel row will have NULL auth columns — U's provisioning/login must exclude it (no id collision: the sentinel has zero timestamp bytes, real signups can't reproduce it).
+**#3 — Exact `owners` auth-identity columns: ⏳ OPEN, jointly with Phase U.** At minimum `external_subject TEXT UNIQUE` (OIDC `sub`), and for local login `username TEXT UNIQUE` + `password_hash TEXT` (argon2id, nullable). **Phase T does not implement auth/login behavior** (T5 may add nullable placeholder columns once U finalizes the exact set). The `SYSTEM_OWNER` sentinel row will have NULL auth columns — U's provisioning/login must exclude it (no id collision: the sentinel has zero timestamp bytes, real signups can't reproduce it).
 
 **Smaller implementation decisions (flag if you disagree):**
 - **Junctions scope through their parent, not their own column** — recommended (avoids redundant columns). Applies to `tag_patterns`, `tag_categories`, `category_direction_optouts`, `entity_tags`, `task_dependencies`, `pattern_tasks`, `possible_task_tags`, `objective_tasks`.
