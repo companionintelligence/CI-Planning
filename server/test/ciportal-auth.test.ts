@@ -5,6 +5,7 @@ import { sqlite } from '../src/db/index.js';
 import { newId, SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 import { startTestServer, resetDb, type TestServer } from './helpers.js';
 import { __resetAuthRateLimit } from '../src/routes/auth.js';
+import { __resetOidcDiscoveryCache } from '../src/lib/auth/oidcDiscovery.js';
 
 /**
  * U1 — CI-Portal SSO (OAuth 2.1 + PKCE Relying-Party login).
@@ -422,5 +423,95 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     expect(out.status).toBe(200);
     const cleared = cookieHeader(out.headers.getSetCookie?.() ?? []);
     expect((await realFetch(`${srv.url}/api/tasks`, { headers: { Cookie: cleared } })).status).toBe(401);
+  });
+});
+
+// ── Discovery-driven endpoints + iss-from-doc (real CI-Portal / better-auth shape) ──
+// The tests above set the endpoint overrides (exercising the air-gapped override path,
+// which validates `iss` against the configured issuer). These exercise the DEFAULT path:
+// endpoints + the canonical `iss` come from <issuer>/.well-known/openid-configuration.
+describe('GET /api/auth/ciportal — discovery-driven', () => {
+  const DISCOVERY = {
+    issuer: 'https://portal.test', // NOTE: bare origin — differs from the …/api/auth discovery URL
+    authorization_endpoint: 'https://portal.test/authorize',
+    token_endpoint: 'https://portal.test/token',
+    jwks_uri: 'https://portal.test/jwks',
+  };
+  let saved: { a?: string; t?: string; j?: string; iss?: string };
+
+  beforeEach(() => {
+    __resetOidcDiscoveryCache();
+    saved = {
+      a: config.ciportal.authorizeUri, t: config.ciportal.tokenUri,
+      j: config.ciportal.jwksUri, iss: config.ciportal.issuer,
+    };
+    // Discovery mode: clear the endpoint overrides so ciportalEndpoints() discovers.
+    config.ciportal.authorizeUri = undefined;
+    config.ciportal.tokenUri = undefined;
+    config.ciportal.jwksUri = undefined;
+    config.ciportal.issuer = 'https://portal.test';
+  });
+  afterEach(() => {
+    Object.assign(config.ciportal, { authorizeUri: saved.a, tokenUri: saved.t, jwksUri: saved.j, issuer: saved.iss });
+    __resetOidcDiscoveryCache();
+    vi.unstubAllGlobals();
+  });
+
+  function stubDisc(opts: { token?: unknown; jwks?: unknown[]; tokenStatus?: number; discoveryStatus?: number; doc?: typeof DISCOVERY } = {}) {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      if (u.includes('/.well-known/openid-configuration'))
+        return new Response(JSON.stringify(opts.doc ?? DISCOVERY), { status: opts.discoveryStatus ?? 200, headers: { 'Content-Type': 'application/json' } });
+      if (u === DISCOVERY.token_endpoint)
+        return new Response(JSON.stringify(opts.token ?? {}), { status: opts.tokenStatus ?? 200, headers: { 'Content-Type': 'application/json' } });
+      if (u === DISCOVERY.jwks_uri)
+        return new Response(JSON.stringify({ keys: opts.jwks ?? [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      throw new Error(`unexpected fetch in test: ${u}`);
+    }));
+  }
+  async function startDisc(): Promise<{ state: string; cookie: string; nonce: string; location: string }> {
+    stubDisc();
+    const res = await realFetch(`${srv.url}/api/auth/ciportal/start`, { redirect: 'manual' });
+    const cookie = cookieHeader(res.headers.getSetCookie?.() ?? []);
+    const location = res.headers.get('location')!;
+    const state = new URL(location).searchParams.get('state')!;
+    const row = sqlite.prepare('SELECT nonce FROM auth_states WHERE state = ?').get(state) as { nonce: string };
+    return { state, cookie, nonce: row.nonce, location };
+  }
+
+  it('/start builds the authorize URL from the DISCOVERED authorization_endpoint', async () => {
+    const { location } = await startDisc();
+    expect(location.startsWith('https://portal.test/authorize?')).toBe(true); // from the doc, not a config override (unset)
+  });
+
+  it('logs in end-to-end via discovery (no endpoint overrides set)', async () => {
+    const { state, cookie, nonce } = await startDisc();
+    const { idToken, jwks } = makeIdToken({ sub: 'disc-sub', nonce });
+    stubDisc({ token: { access_token: 'A', id_token: idToken }, jwks }); // discovery now cached
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+    expect(res.status).toBe(302);
+    expect(res.location).toBe('/');
+    expect(sqlite.prepare(`SELECT id FROM owners WHERE external_subject = 'disc-sub'`).get()).toBeTruthy();
+  });
+
+  it('/start 503s when discovery is unreachable — and mints no state row', async () => {
+    stubDisc({ discoveryStatus: 500 });
+    const res = await rawGet('/api/auth/ciportal/start');
+    expect(res.status).toBe(503);
+    expect(sqlite.prepare('SELECT COUNT(*) n FROM auth_states').get()).toEqual({ n: 0 });
+  });
+
+  it('validates `iss` against the discovery doc issuer, NOT the configured URL (better-auth quirk)', async () => {
+    // Discovery URL is `…/api/auth`, but the doc's issuer (and the token `iss`) is the
+    // bare origin. The OLD code validated `iss === config.issuer` (…/api/auth) → would
+    // 400. Validating against doc.issuer (bare origin) is what makes real tokens verify.
+    config.ciportal.issuer = 'https://portal.test/api/auth';
+    __resetOidcDiscoveryCache();
+    const { state, cookie, nonce } = await startDisc(); // discovers at …/api/auth; doc.issuer = bare origin
+    const { idToken, jwks } = makeIdToken({ sub: 'iss-sub', nonce, iss: 'https://portal.test' });
+    stubDisc({ token: { access_token: 'A', id_token: idToken }, jwks });
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+    expect(res.status).toBe(302); // accepted — iss matched doc.issuer, not the …/api/auth config URL
+    expect(sqlite.prepare(`SELECT id FROM owners WHERE external_subject = 'iss-sub'`).get()).toBeTruthy();
   });
 });

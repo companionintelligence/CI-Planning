@@ -35,19 +35,23 @@ async function login(username: string, password: string) {
   return { status: res.status, setCookies, cookie: cookieHeader(setCookies) };
 }
 
+const savedTrustProxy = config.trustProxy;
+
 beforeAll(async () => {
   savedAuth = { ...config.auth };
-  // Enter local-login mode BEFORE building the app (app.keys is read at build time).
+  // Enter local-login mode BEFORE building the app (app.keys + app.proxy are read at build time).
   config.auth.mode = 'sso';
   config.auth.disableOidc = true;
   config.auth.sessionSecret = 'test-session-secret';
   config.auth.rateLimit = { ...config.auth.rateLimit, issueMax: 1000 }; // don't trip during functional tests
+  config.trustProxy = true; // behind-a-TLS-terminator posture, so X-Forwarded-Proto is honored
   srv = await startTestServer();
 });
 
 afterAll(async () => {
   await srv.close();
   Object.assign(config.auth, savedAuth); // restore singleton for other files
+  config.trustProxy = savedTrustProxy;
 });
 
 beforeEach(() => {
@@ -79,6 +83,20 @@ describe('U2 — login / session / logout', () => {
     expect(joined).toMatch(/cp_session=/);
     expect(joined).toMatch(/cp_session\.sig=/);
     expect(r.setCookies.every((c) => /httponly/i.test(c))).toBe(true);
+    // Plain http (no proxy header): not Secure, so the cookie still works on the tailnet.
+    expect(r.setCookies.join('\n')).not.toMatch(/;\s*secure/i);
+  });
+
+  it('sets the Secure flag when X-Forwarded-Proto is https (TLS-terminated / proxied deploy)', async () => {
+    await seedUser();
+    const res = await fetch(`${srv.url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-Proto': 'https' },
+      body: JSON.stringify({ username: USER, password: PW }),
+    });
+    expect(res.status).toBe(200);
+    const session = (res.headers.getSetCookie?.() ?? []).find((c) => c.startsWith('cp_session='));
+    expect(session).toMatch(/;\s*secure/i); // Secure applied even though the socket is http
   });
 
   it('the session cookie authenticates a gated request; missing cookie is 401', async () => {

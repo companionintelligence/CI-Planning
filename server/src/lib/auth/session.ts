@@ -18,22 +18,32 @@ import { SCOPE_READ, SCOPE_WRITE, type VerifiedClaims } from './types.js';
 export const SESSION_COOKIE = 'cp_session';
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-const COOKIE_OPTS = {
-  signed: true,
-  httpOnly: true,
-  sameSite: 'lax' as const,
-  overwrite: true,
-  path: '/',
-};
+// `secure` is derived per-request from ctx.protocol: the Secure flag is set only over
+// HTTPS, so cookies still work over plain http on the tailnet but get Secure once TLS-
+// fronted. Behind a TLS-terminating proxy the app listens on http, so ctx.protocol is
+// 'https' ONLY when TRUST_PROXY=true enables Koa proxy mode (then ctx.protocol honors
+// X-Forwarded-Proto). Koa also refuses to emit a Secure cookie unless it considers the
+// connection secure, so this + app.proxy are what actually make Secure work behind a proxy.
+function cookieOpts(ctx: Koa.Context, maxAge?: number) {
+  return {
+    signed: true,
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: ctx.protocol === 'https',
+    overwrite: true,
+    path: '/',
+    ...(maxAge !== undefined ? { maxAge } : {}),
+  };
+}
 
 /** Issue a session for a freshly-authenticated local owner. */
 export function setSession(ctx: Koa.Context, ownerId: string): void {
-  ctx.cookies.set(SESSION_COOKIE, ownerId, { ...COOKIE_OPTS, maxAge: MAX_AGE_MS });
+  ctx.cookies.set(SESSION_COOKIE, ownerId, cookieOpts(ctx, MAX_AGE_MS));
 }
 
 /** Clear the session cookie (logout). Passing null deletes both it and its `.sig`. */
 export function clearSession(ctx: Koa.Context): void {
-  ctx.cookies.set(SESSION_COOKIE, null, COOKIE_OPTS);
+  ctx.cookies.set(SESSION_COOKIE, null, cookieOpts(ctx));
 }
 
 // ── Pre-login state binding (U1, login-CSRF defense) ─────────────────────────
@@ -48,13 +58,13 @@ const LOGIN_STATE_MAX_AGE_MS = 10 * 60 * 1000; // matches the auth_states TTL
 
 /** Bind the initiating browser to `state` at /start. */
 export function setLoginState(ctx: Koa.Context, state: string): void {
-  ctx.cookies.set(LOGIN_STATE_COOKIE, state, { ...COOKIE_OPTS, maxAge: LOGIN_STATE_MAX_AGE_MS });
+  ctx.cookies.set(LOGIN_STATE_COOKIE, state, cookieOpts(ctx, LOGIN_STATE_MAX_AGE_MS));
 }
 
 /** Read AND clear the login-state cookie at /callback (single-use). */
 export function consumeLoginState(ctx: Koa.Context): string | null {
   const state = ctx.cookies.get(LOGIN_STATE_COOKIE, { signed: true }) ?? null;
-  ctx.cookies.set(LOGIN_STATE_COOKIE, null, COOKIE_OPTS);
+  ctx.cookies.set(LOGIN_STATE_COOKIE, null, cookieOpts(ctx));
   return state;
 }
 

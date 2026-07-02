@@ -63,14 +63,23 @@ export interface GoogleConfig {
  * retire is the dev team's call — flagged in docs, not silently decided here).
  */
 export interface CiPortalConfig {
-  clientId?: string;
-  clientSecret?: string; // only if CI-Portal registers us as a confidential client
-  issuer?: string; // expected id_token `iss`
+  // Discovery-driven (matches CI-Import-Tools, the sibling consumer): the only
+  // required config is `issuer` + `clientId`; the authorize/token/jwks endpoints and
+  // the expected token `iss` are read from `<issuer>/.well-known/openid-configuration`
+  // at runtime. NOTE (better-auth): CI-Portal serves discovery at `…/api/auth` but the
+  // id_token `iss` claim is the BARE ORIGIN — so `issuer` here is the discovery URL,
+  // and the callback validates `iss` against the discovery doc's `issuer`, never this
+  // string. (See routes/auth.ts + lib/auth/oidcDiscovery.ts.)
+  issuer?: string;
+  clientId?: string;      // our registered client id at CI-Portal (public PKCE)
+  clientSecret?: string;  // only if CI-Portal registers us as a confidential client
+  redirectUri: string;
+  scopes: string;
+  // Optional endpoint overrides — normally left unset (discovered). Set to bypass
+  // discovery (air-gapped deploys, or a provider without a discovery document).
   authorizeUri?: string;
   tokenUri?: string;
   jwksUri?: string;
-  redirectUri: string;
-  scopes: string;
 }
 
 /** Sync engine toggles (Wave 0). */
@@ -89,6 +98,11 @@ export interface KekConfig {
 
 export interface Config {
   port: number;
+  // Behind a trusted reverse proxy / TLS terminator (e.g. CI-Hub's tunnel)? Enables Koa
+  // app.proxy so ctx.protocol honors X-Forwarded-Proto (⇒ Secure cookies over external
+  // HTTPS) and ctx.ip is the real client IP (⇒ correct per-IP login rate-limiting).
+  // Default false — safe when the app is directly reachable (don't trust spoofable XFF).
+  trustProxy: boolean;
   dbPath: string;
   ollamaUrl: string;
   ollamaSmallModel: string;
@@ -123,6 +137,7 @@ const googleMode: 'live' | 'fixture' = process.env.GOOGLE_MODE === 'live' ? 'liv
 
 export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
+  trustProxy: process.env.TRUST_PROXY === 'true',
   dbPath,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
   // Defaults are real, currently-pullable Ollama tags. They are only a fallback:
@@ -157,14 +172,18 @@ export const config: Config = {
     sessionSecret: process.env.SESSION_SECRET,
   },
   ciportal: {
-    clientId: process.env.CIPORTAL_CLIENT_ID,
+    // Real CI-Portal discovery issuer (confirmed against CI-Import-Tools). Overridable
+    // for the fixture portal / other providers. The token `iss` claim is validated
+    // against the DISCOVERED doc's issuer, not this URL (see the interface note).
+    issuer: process.env.CIPORTAL_ISSUER ?? 'https://hub.companionintelligence.com/api/auth',
+    clientId: process.env.CIPORTAL_CLIENT_ID, // must be registered with CI-Portal; no default
     clientSecret: process.env.CIPORTAL_CLIENT_SECRET,
-    issuer: process.env.CIPORTAL_ISSUER,
+    redirectUri: process.env.CIPORTAL_REDIRECT_URI ?? `${publicBaseUrl}/api/auth/ciportal/callback`,
+    scopes: process.env.CIPORTAL_SCOPES ?? 'openid profile email',
+    // Optional overrides — normally discovered from the issuer.
     authorizeUri: process.env.CIPORTAL_AUTHORIZE_URI,
     tokenUri: process.env.CIPORTAL_TOKEN_URI,
     jwksUri: process.env.CIPORTAL_JWKS_URI,
-    redirectUri: process.env.CIPORTAL_REDIRECT_URI ?? `${publicBaseUrl}/api/auth/ciportal/callback`,
-    scopes: process.env.CIPORTAL_SCOPES ?? 'openid profile email',
   },
   google: {
     clientId: process.env.CP_GOOGLE_CLIENT_ID,
@@ -221,24 +240,39 @@ if (config.auth.mode === 'sso' && !config.auth.sessionSecret) {
 }
 
 // Fail closed (U1): production SSO with OIDC enabled but no CI-Portal wiring would
-// present a login screen whose only button dead-ends. Require the full endpoint set
-// up front (mirrors the GOOGLE_MODE=live guard below). Non-production is exempt so
-// dev/fixture flows can wire endpoints at runtime.
+// present a login screen whose only button dead-ends. The endpoints are now DISCOVERED
+// from the issuer, so we only require issuer + client_id up front (issuer has a real
+// default; client_id must be registered). Non-production is exempt so dev/fixture flows
+// can wire it at runtime.
 if (
   config.auth.mode === 'sso' &&
   !config.auth.disableOidc &&
   process.env.NODE_ENV === 'production' &&
-  (!config.ciportal.clientId ||
-    !config.ciportal.issuer ||
-    !config.ciportal.authorizeUri ||
-    !config.ciportal.tokenUri ||
-    !config.ciportal.jwksUri)
+  (!config.ciportal.clientId || !config.ciportal.issuer)
 ) {
   throw new Error(
-    'AUTH_MODE=sso (OIDC enabled) requires CIPORTAL_CLIENT_ID, CIPORTAL_ISSUER, CIPORTAL_AUTHORIZE_URI, ' +
-      'CIPORTAL_TOKEN_URI and CIPORTAL_JWKS_URI — fetch them from CI-Portal\'s /.well-known/openid-configuration ' +
-      '(or set DISABLE_OIDC=true for local username/password login)',
+    'AUTH_MODE=sso (OIDC enabled) requires CIPORTAL_CLIENT_ID (registered with CI-Portal) and CIPORTAL_ISSUER ' +
+      '(defaults to https://hub.companionintelligence.com/api/auth; endpoints are discovered from it) ' +
+      '— or set DISABLE_OIDC=true for local username/password login',
   );
+}
+
+// Fail fast (U1): the CIPORTAL_*_URI endpoint overrides are all-or-nothing — set all
+// three to bypass discovery, or none to use it. A PARTIAL set is almost always a typo
+// that would silently fall back to discovery (ignoring the vars that were set), so
+// refuse to boot with a clear message instead.
+{
+  const overridesSet = [
+    config.ciportal.authorizeUri,
+    config.ciportal.tokenUri,
+    config.ciportal.jwksUri,
+  ].filter(Boolean).length;
+  if (overridesSet > 0 && overridesSet < 3) {
+    throw new Error(
+      'CIPORTAL_AUTHORIZE_URI, CIPORTAL_TOKEN_URI and CIPORTAL_JWKS_URI are all-or-nothing: set all three to ' +
+        'override discovery, or leave all unset to discover from CIPORTAL_ISSUER — not a partial subset.',
+    );
+  }
 }
 
 // Fail closed (Wave 0): GOOGLE_MODE=live without OAuth credentials would silently fall
