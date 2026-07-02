@@ -1,7 +1,7 @@
 import { createSignal, createResource, createEffect, Show } from 'solid-js';
 import { useNavigate, useSearchParams } from '@solidjs/router';
 import { Cpu, LogIn, Loader2 } from 'lucide-solid';
-import { api, authGateActive, CIPORTAL_START } from '../lib/api.js';
+import { api, CIPORTAL_START } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 
 /**
