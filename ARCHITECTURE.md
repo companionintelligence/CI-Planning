@@ -49,7 +49,7 @@ graph TB
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>16 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0094 on boot"]
+            Migrate["Migration runner<br/>0001–0097 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]

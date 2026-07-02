@@ -4,10 +4,10 @@
 > #140 merged this doc to `main`, and the **live Calendar/Gmail MCP** shipped (#141,
 > `GOOGLE_MODE=live`), so real items now flow into the Inbox — the dedup gap this plan
 > closes is **live, not hypothetical**. Implements the **`compare_and_merge`** grooming
-> step named in [ingestion-plan.md §5–6](ingestion-plan.md) for the *generic* "tasks
+> step named in [ingestion-plan.md §5–6](archive/ingestion-plan.md) for the *generic* "tasks
 > coming in" case (not just Gmail/Calendar). Companion to [GLOSSARY.md](GLOSSARY.md)
 > (canonical nouns) and the README pipeline; the optional semantic tier aligns with
-> **Phase M** ([M-ai-scheduler.md](M-ai-scheduler.md), Workstream C). Authoritative
+> **Phase M** ([M-ai-scheduler.md](archive/M-ai-scheduler.md), Workstream C). Authoritative
 > future-phase list remains [ROADMAP.md](ROADMAP.md).
 >
 > **DB-compatibility review folded in (2026-06-25, verified against source):** corrected the
@@ -58,11 +58,11 @@ subtasks) are out of scope — see Non-goals.
   Ollama down; the embedding tier is "LLM only for the ambiguous middle" and
   degrades to a no-op when embeddings are unavailable (README: "dedupe off"). When
   **Phase M** lands `sqlite-vec` KNN dedupe (cosine fallback)
-  ([M-ai-scheduler.md](M-ai-scheduler.md) Workstream C), the semantic tier **reuses
+  ([M-ai-scheduler.md](archive/M-ai-scheduler.md) Workstream C), the semantic tier **reuses
   that** instead of adding a parallel embedding path.
 - **Migrations** are numbered TS functions, additive + idempotent, registered in
   `db/migrations/index.ts` (live head **0061**). **Do not hardcode `0062`.** **Phase M**
-  ([M-ai-scheduler.md](M-ai-scheduler.md)) already reserves **0062–0064** (0062 →
+  ([M-ai-scheduler.md](archive/M-ai-scheduler.md)) already reserves **0062–0064** (0062 →
   `time_blocks.last_moved_at`; `ROADMAP.md` repeats this). Take the next free number *after
   coordinating with the Phase M track*, confirmed at branch time — whichever merges first takes
   0062, the other rebases (expect a baseline-snapshot merge conflict between the two branches,
@@ -97,7 +97,7 @@ Data-flow boundaries (system-level):
   the flat `possible_tasks` shape; that stays the [import-plan.ts](../server/src/scripts/import-plan.ts)
   admin seed (writes straight to `tasks`, outside this loop). Route B, separate.
 - **No `/api/import` merge mode.** That endpoint is replace-owner-partition;
-  `?mode=merge` is explicitly deferred ([R-backups-restore.md](R-backups-restore.md)). Not touched here.
+  `?mode=merge` is explicitly deferred ([R-backups-restore.md](archive/R-backups-restore.md)). Not touched here.
 - **No new noun, no new top-level view, no auto-promote.**
 - **No change to `dedupePossibles` or the existing grooming behavior.**
 - **No live Google MCP work** (that's the ingestion-plan's own track).
@@ -288,7 +288,7 @@ the no-auto-write confirm step.
 
 - **Title-only matching is weak** — PI-3 deliberately matches on title **+ due + tags** to cut false-collapses; thresholds are first guesses and must be tuned against real Inbox data (track false-merge rate via `audit_log`).
 - **Embedding non-determinism** — outcomes differ with Ollama on vs off; `CompareMergeResult.embeddingTierUsed` records which ran, and the fuzzy tier is the deterministic floor. Embeddings on short titles are noisy → they only adjudicate the ambiguous band, never override exact/fuzzy. When Phase M's `sqlite-vec` KNN dedupe lands
-  ([M-ai-scheduler.md](M-ai-scheduler.md) Workstream C), this tier reuses it (cosine
+  ([M-ai-scheduler.md](archive/M-ai-scheduler.md) Workstream C), this tier reuses it (cosine
   fallback) instead of a bespoke embedding loop.
 - **App-enforced integrity** — `possible_task_sources` and any new links must be cleaned on Inbox-item delete/dismiss (mirror the tag-repo discipline; the orphan-free test is the gate).
 - **Idempotency** — keyed on `(source_kind, source_ref)` at stage and on `status='duplicate'` skip at groom; re-import and re-groom are both no-ops on settled data.
