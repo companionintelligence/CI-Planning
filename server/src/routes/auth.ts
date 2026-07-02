@@ -9,6 +9,7 @@ import { httpError } from '../lib/http-error.js';
 import { provisionOwner } from '../lib/owners.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
 import { verifyOidcIdToken } from '../lib/auth/verifyOidcIdToken.js';
+import { discoverOidc, type OidcDiscoveryDoc } from '../lib/auth/oidcDiscovery.js';
 import { findOwnerByUsername, verifyLoginPassword } from '../lib/auth/password.js';
 import { setSession, clearSession, setLoginState, consumeLoginState } from '../lib/auth/session.js';
 
@@ -52,10 +53,31 @@ function rateLimited(ip: string): boolean {
 const localLoginEnabled = () => config.auth.mode === 'sso' && config.auth.disableOidc;
 const ssoLoginEnabled = () => config.auth.mode === 'sso' && !config.auth.disableOidc;
 
-/** All CI-Portal endpoint values present? (No invented defaults — see config.ts.) */
+/** Minimal config to attempt a login: issuer (for discovery) + our client id. */
 function ciportalConfigured(): boolean {
   const c = config.ciportal;
-  return Boolean(c.clientId && c.issuer && c.authorizeUri && c.tokenUri && c.jwksUri);
+  return Boolean(c.clientId && c.issuer);
+}
+
+/**
+ * Resolve the CI-Portal endpoints + canonical issuer. Discovery-driven by default
+ * (fetch `<issuer>/.well-known/openid-configuration`); if all three endpoint overrides
+ * are set, use them verbatim and skip discovery (air-gapped/test — the operator then
+ * owns making CIPORTAL_ISSUER equal the token's `iss` claim). `doc.issuer` is what the
+ * callback validates the id_token `iss` against — for better-auth that's the bare
+ * origin, NOT the `…/api/auth` discovery URL.
+ */
+async function ciportalEndpoints(): Promise<OidcDiscoveryDoc> {
+  const c = config.ciportal;
+  if (c.authorizeUri && c.tokenUri && c.jwksUri) {
+    return {
+      issuer: c.issuer!,
+      authorization_endpoint: c.authorizeUri,
+      token_endpoint: c.tokenUri,
+      jwks_uri: c.jwksUri,
+    };
+  }
+  return discoverOidc(c.issuer!);
 }
 
 /** Test-only: clear the in-memory login rate-limiter so tests don't bleed attempts into each other. */
@@ -138,12 +160,22 @@ export function authRouter() {
   // Public: begins the login. The SPA does a TOP-LEVEL navigation here (not a
   // fetch), so unlike Google's /start (credentialed JSON) this 302s straight to the
   // portal. Rate-limited: each hit writes an auth_states row pre-authentication.
-  router.get('/api/auth/ciportal/start', (ctx) => {
+  router.get('/api/auth/ciportal/start', async (ctx) => {
     if (!ssoLoginEnabled()) throw httpError(404, 'CI-Portal login is not enabled');
     if (!ciportalConfigured()) {
-      throw httpError(503, 'CI-Portal is not configured — set the CIPORTAL_* variables (see .env.example)');
+      throw httpError(503, 'CI-Portal is not configured — set CIPORTAL_ISSUER + CIPORTAL_CLIENT_ID (see .env.example)');
     }
     if (rateLimited(ctx.ip)) throw httpError(429, 'too many login attempts — try again shortly');
+
+    // Resolve endpoints via discovery FIRST — if the portal is unreachable/misconfigured
+    // we 503 without minting a state row or setting the login cookie.
+    let doc: OidcDiscoveryDoc;
+    try {
+      doc = await ciportalEndpoints();
+    } catch (err) {
+      logger.warn('CI-Portal discovery failed', { err: (err as Error).message });
+      throw httpError(503, 'CI-Portal discovery failed — check CIPORTAL_ISSUER / tailnet connectivity');
+    }
 
     // Opportunistic hygiene: expired rows are minted unauthenticated and abandoned
     // logins never consume theirs, so prune on every start.
@@ -173,10 +205,10 @@ export function authRouter() {
     // will require the returned `state` to match this cookie before proceeding.
     setLoginState(ctx, state);
 
-    // redirect_uri is taken VERBATIM from config — never recomputed from the request
-    // host (an attacker-controlled Host header must not steer the OAuth redirect).
-    // The code_verifier is NEVER placed in the URL — only the S256 challenge.
-    const authUrl = new URL(config.ciportal.authorizeUri!);
+    // authorization_endpoint from discovery. redirect_uri is taken VERBATIM from config
+    // — never recomputed from the request host (an attacker-controlled Host header must
+    // not steer the OAuth redirect). The code_verifier is NEVER in the URL — only S256.
+    const authUrl = new URL(doc.authorization_endpoint);
     const params = authUrl.searchParams;
     params.set('client_id', config.ciportal.clientId!);
     params.set('redirect_uri', config.ciportal.redirectUri);
@@ -247,6 +279,18 @@ export function authRouter() {
       return;
     }
 
+    // Resolve endpoints via discovery (the state is already consumed; a discovery
+    // failure here is a genuine in-flight fault → 503).
+    let doc: OidcDiscoveryDoc;
+    try {
+      doc = await ciportalEndpoints();
+    } catch (err) {
+      logger.warn('CI-Portal discovery failed in callback', { err: (err as Error).message });
+      ctx.status = 503;
+      ctx.body = { error: 'ci_portal_unavailable' };
+      return;
+    }
+
     // Exchange the authorization code (+ PKCE verifier) for tokens.
     const tokenParams: Record<string, string> = {
       grant_type: 'authorization_code',
@@ -259,7 +303,7 @@ export function authRouter() {
 
     let tok: PortalTokenResponse;
     try {
-      const res = await fetch(config.ciportal.tokenUri!, {
+      const res = await fetch(doc.token_endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(tokenParams).toString(),
@@ -286,10 +330,13 @@ export function authRouter() {
       ctx.body = { error: 'no_id_token' };
       return;
     }
+    // Validate `iss` against the DISCOVERY DOC's issuer, not the configured discovery
+    // URL: better-auth serves discovery at `…/api/auth` but stamps the bare origin as
+    // the token `iss`. Using doc.issuer is what makes real CI-Portal tokens verify.
     const claims = await verifyOidcIdToken(tok.id_token, {
-      issuers: new Set([config.ciportal.issuer!]),
+      issuers: new Set([doc.issuer]),
       audience: config.ciportal.clientId,
-      jwksUri: config.ciportal.jwksUri!,
+      jwksUri: doc.jwks_uri,
       expectedNonce: row.nonce,
     });
     if (!claims || typeof claims.sub !== 'string' || !claims.sub) {
