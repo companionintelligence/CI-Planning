@@ -189,10 +189,10 @@
            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent
            active:scale-95 select-none cursor-pointer;
   }
-  /* Signature CI mint CTA — kept across modes; text stays dark on the bright gradient. */
+  /* Signature CI teal CTA — kept across modes; text stays dark on the teal gradient. */
   .btn-primary {
     color: #041620;
-    background: linear-gradient(135deg, #58ebbf, #409b9b);
+    background: linear-gradient(135deg, #abd4d8, #70a6af);
   }
   .btn-secondary {
     @apply border;
@@ -315,14 +315,14 @@
     100% { box-shadow: 0 0 0 0 var(--done-glow, rgba(88,235,191,.0)); }
   }
 
-  /* ── FAB (signature mint CTA) ─────────────────────────────────── */
+  /* ── FAB (signature teal CTA) ─────────────────────────────────── */
   .fab {
     @apply fixed bottom-6 right-6 z-30 flex items-center gap-2
            px-5 py-3 font-semibold rounded-full
            transition-all duration-150 active:scale-95 select-none cursor-pointer;
     color: #041620;
-    background: linear-gradient(135deg, #58ebbf, #409b9b);
-    box-shadow: 0 8px 24px rgba(88,235,191,.25);
+    background: linear-gradient(135deg, #abd4d8, #70a6af);
+    box-shadow: 0 8px 24px rgba(171,212,216,.25);
     letter-spacing: .03em;
   }
 
@@ -335,7 +335,7 @@
   }
   .nav-item:hover { color: var(--foreground); background: var(--sidebar-accent); }
   .nav-item-active {
-    color: #58ebbf;
+    color: #abd4d8;
     background: var(--sidebar-accent);
   }
 
@@ -352,21 +352,21 @@
     border-color: var(--border);
   }
   .checkbox-checked {
-    background: linear-gradient(135deg, #58ebbf, #409b9b);
-    border-color: #58ebbf;
+    background: linear-gradient(135deg, #abd4d8, #70a6af);
+    border-color: #abd4d8;
   }
 }
 
 /* ── Hover overrides (outside @layer to avoid @apply nesting limit) ── */
-.btn-primary:hover  { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 4px 16px rgba(88,235,191,.3); }
-.btn-secondary:hover { background: rgba(64,155,155,.1); border-color: #58ebbf; color: #82ffe1; }
+.btn-primary:hover  { background: linear-gradient(135deg, #c7e5e8, #abd4d8); box-shadow: 0 4px 16px rgba(171,212,216,.3); }
+.btn-secondary:hover { background: rgba(112,166,175,.1); border-color: #abd4d8; color: #c7e5e8; }
 .btn-ghost:hover    { color: var(--foreground); background-color: var(--sidebar-accent); }
 .btn-icon:hover     { color: var(--foreground); background-color: var(--sidebar-accent); }
 .btn-danger:hover   { background-color: rgba(127,29,29,.3); color: #fca5a5; }
 .card-hover:hover   { border-color: var(--ring); box-shadow: 0 4px 20px rgba(88,235,191,.08); transform: translateY(-1px); }
-.fab:hover          { background: linear-gradient(135deg, #82ffe1, #58ebbf); box-shadow: 0 12px 32px rgba(88,235,191,.4); transform: scale(1.03) translateY(-1px); }
-.checkbox:hover     { border-color: #409b9b; }
-.nav-item-active    { border-left: 2px solid #58ebbf; }
+.fab:hover          { background: linear-gradient(135deg, #c7e5e8, #abd4d8); box-shadow: 0 12px 32px rgba(171,212,216,.4); transform: scale(1.03) translateY(-1px); }
+.checkbox:hover     { border-color: #70a6af; }
+.nav-item-active    { border-left: 2px solid #abd4d8; }
 
 /* CI glow effect on focused inputs */
 .input:focus,
