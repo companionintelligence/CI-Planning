@@ -57,7 +57,7 @@ Full detail per ticket in [T-multitenant-tickets.md](T-multitenant-tickets.md).
 
 - **T0 — Multi-tenant test & enforcement scaffolding** (prerequisite, no migration): a 2nd-owner test factory; a test-mode owner-binding hook (route-level isolation is untestable today — test-mode pins `SYSTEM_OWNER`); make `currentOwnerId()` throw outside a context in non-test builds; widen the owner-literal grep gate to `src/services`+`src/jobs` + UUID/`SYSTEM_OWNER`; decide the `EXPORT_VERSION` bump policy.
 - **T1 — owner-scope `time_blocks`** (mig `0098`): the blocker; ~24 reader/writer files; closes L Gap 5; carries the `backup.ts` gate (incl. the `entity_tags` UNION). The heaviest slice.
-- **T2 — owner-scope the tag axis** (mig `0099`): `tags.owner_id` + **`UNIQUE(owner_id, name)`**; junctions via parent; ~a dozen owner-blind readers; per-owner base-tag provisioning dependency. Depends on T1.
+- **T2 — owner-scope the tag axis** (mig `0099`): `tags.owner_id` + **`UNIQUE(owner_id, name)`**; junctions via parent; ~a dozen owner-blind readers; per-owner base-tag provisioning dependency.
 - **T3 — cron per-owner fan-out** (code; no migration unless per-owner run visibility is wanted): iterate owners in the runner; manual-vs-cron split; fix `prune_sync_events`. **A correctness PR, not a decision.**
 - **T4 — `sync_events` FK + `proposed_owner_id` doc + owner-delete cascade consistency** (mig `0100`): the low-risk cleanup.
 - **T5 — `owners` auth columns + `GLOSSARY`** (mig, with Phase U): reserve U's columns; make owner ≡ user canon.
