@@ -80,6 +80,8 @@ export const possibleTasks = sqliteTable('possible_tasks', {
   rawSummary: text('raw_summary'),
   proposedDueAt: text('proposed_due_at'),
   proposedPriority: integer('proposed_priority'),
+  // Intentionally named `proposed_owner_id` (not `owner_id`): a *proposed*, not
+  // yet confirmed, owner assignment for an inbox item. Documented, NOT renamed (T4).
   proposedOwnerId: text('proposed_owner_id').references(() => owners.id),
   sourceKind: text('source_kind'),
   sourceRef: text('source_ref'),
@@ -535,7 +537,9 @@ export const outboundQueue = sqliteTable('outbound_queue', {
 // --- Phase L (0077): Append-only SSE event log for Last-Event-ID catch-up. ---
 export const syncEvents = sqliteTable('sync_events', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
-  ownerId: text('owner_id').notNull(),
+  // T4 (0098): enforced FK to owners(id) — no ON DELETE CASCADE (owners aren't
+  // deleted yet; cascade normalization is deferred to Phase U).
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
   entity: text('entity').notNull().default(''),
   entityId: text('entity_id').notNull().default(''),
   version: integer('version'),
