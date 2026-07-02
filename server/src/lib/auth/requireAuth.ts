@@ -2,6 +2,7 @@ import type Koa from 'koa';
 import { config } from '../config.js';
 import { runWithOwner, SYSTEM_OWNER } from '../context.js';
 import { verifyApiKey } from './apiKey.js';
+import { verifySession } from './session.js';
 import { hasScope } from './scopes.js';
 import type { VerifiedClaims } from './types.js';
 
@@ -19,10 +20,18 @@ import type { VerifiedClaims } from './types.js';
  */
 
 // Reachable without authentication: liveness + the auth-bootstrap config a client
-// needs *before* it has a credential, plus the Google OAuth callback — Google's
-// redirect arrives with no app credential and the owner is resolved SOLELY from the
-// matched oauth_states row (I2). Everything else under /api is gated.
-const PUBLIC_PREFIXES = ['/api/health', '/api/auth/config', '/api/oauth/google/callback'];
+// needs *before* it has a credential, the local-login endpoints (U2 — you can't
+// present a session before you've logged in; logout just clears the cookie), plus
+// the Google OAuth callback — Google's redirect arrives with no app credential and
+// the owner is resolved SOLELY from the matched oauth_states row (I2). Everything
+// else under /api is gated.
+const PUBLIC_PREFIXES = [
+  '/api/health',
+  '/api/auth/config',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/oauth/google/callback',
+];
 
 function isPublic(path: string): boolean {
   return PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
@@ -59,13 +68,26 @@ export function requireAuth(): Koa.Middleware {
 
     let claims: VerifiedClaims;
     try {
-      const apiKey = presentedApiKey(ctx);
-      if (!apiKey) {
-        ctx.status = 401;
-        ctx.body = { error: 'unauthenticated' };
-        return;
+      if (config.auth.mode === 'sso' && config.auth.disableOidc) {
+        // U2: OIDC is disabled → this owner logged in locally; trust the signed,
+        // httpOnly session cookie instead of a Bearer JWT / api-key. (The full SSO
+        // Bearer path — DISABLE_OIDC=false — is added in U1.)
+        const session = verifySession(ctx);
+        if (!session) {
+          ctx.status = 401;
+          ctx.body = { error: 'unauthenticated' };
+          return;
+        }
+        claims = session;
+      } else {
+        const apiKey = presentedApiKey(ctx);
+        if (!apiKey) {
+          ctx.status = 401;
+          ctx.body = { error: 'unauthenticated' };
+          return;
+        }
+        claims = verifyApiKey(apiKey); // SSO Bearer path is added in U1
       }
-      claims = verifyApiKey(apiKey); // SSO Bearer path is added in PR2
     } catch (e) {
       ctx.status = (e as { status?: number }).status ?? 401;
       ctx.body = { error: 'unauthenticated' };

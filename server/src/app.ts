@@ -12,6 +12,11 @@ import { mountRoutes } from './routes/index.js';
 export function buildApp(): Koa {
   const app = new Koa();
 
+  // Sign the local-login session cookie (U2). config.ts fails boot when
+  // DISABLE_OIDC=true without SESSION_SECRET, so local mode always has keys here;
+  // harmless (unset) in every other mode, which never sets a signed cookie.
+  if (config.auth.sessionSecret) app.keys = [config.auth.sessionSecret];
+
   app.use(async (ctx, next) => {
     try {
       await next();

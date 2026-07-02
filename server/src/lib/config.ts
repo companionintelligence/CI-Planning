@@ -7,19 +7,28 @@ import { fileURLToPath } from 'node:url';
  * Auth mode (Phase I). `test` injects a fixed system owner with no credentials so
  * the existing suite + local dev run unchanged — it is hard-rejected at boot under
  * NODE_ENV=production (fail closed). `standalone` requires a hashed `x-api-key`
- * (public Docker image). `sso` verifies a JWKS-signed Bearer JWT (CI-Server hub).
+ * (public Docker image). `sso` verifies a JWKS-signed Bearer JWT from CI-Portal
+ * (the OAuth server at hub.companionintelligence.com; U1). When `DISABLE_OIDC=true`,
+ * `sso` mode instead serves a **local username/password** login (U2): a signed,
+ * httpOnly session cookie replaces the Bearer JWT. `test`/`standalone` ignore
+ * `DISABLE_OIDC` entirely, so dev/CI and the headless Docker image are unaffected.
  */
 export type AuthMode = 'test' | 'standalone' | 'sso';
 
 export interface AuthConfig {
   mode: AuthMode;
-  jwksUrl?: string;        // required when mode === 'sso' (PR2)
-  issuer?: string;         // documented contract value (PR2)
+  jwksUrl?: string;        // required when mode === 'sso' (U1)
+  issuer?: string;         // documented contract value (U1)
   audience: string;        // expected JWT `aud`
-  contractVersion: string; // pinned versioned-contract assertion (PR2)
+  contractVersion: string; // pinned versioned-contract assertion (U1)
   autoProvision: boolean;  // first unknown SSO `sub` → provision owner row vs 403
   kekB64?: string;         // 32-byte base64 KEK for the connection-token store (PR4)
   rateLimit: { windowMs: number; max: number; issueMax: number };
+  // U2 — local username/password mode (only when mode === 'sso' && disableOidc):
+  disableOidc: boolean;    // true ⇒ local login instead of JWKS Bearer verification
+  defaultUsername?: string; // seeds the first local owner on boot if none exist
+  defaultPassword?: string; // required to seed that owner; boot fails closed without a login path
+  sessionSecret?: string;   // Koa app.keys secret signing the local-login session cookie
 }
 
 /**
@@ -120,6 +129,10 @@ export const config: Config = {
       max: Number(process.env.AUTH_RATE_MAX ?? 60),
       issueMax: Number(process.env.AUTH_RATE_ISSUE_MAX ?? 5),
     },
+    disableOidc: process.env.DISABLE_OIDC === 'true',
+    defaultUsername: process.env.AUTH_DEFAULT_USERNAME,
+    defaultPassword: process.env.AUTH_DEFAULT_PASSWORD,
+    sessionSecret: process.env.SESSION_SECRET,
   },
   google: {
     clientId: process.env.CP_GOOGLE_CLIENT_ID,
@@ -160,6 +173,17 @@ export const config: Config = {
 if (config.auth.mode === 'test' && process.env.NODE_ENV === 'production') {
   throw new Error(
     'AUTH_MODE=test is forbidden in production — set AUTH_MODE=standalone or sso',
+  );
+}
+
+// Fail closed (U2): local username/password mode (AUTH_MODE=sso + DISABLE_OIDC=true) signs its
+// session cookie with SESSION_SECRET via Koa's app.keys. Without it, ctx.cookies.set(…, { signed:
+// true }) throws at request time — refuse to boot instead of serving an unsigned/forgeable session.
+// The companion "no login path" guard (no default password + zero local users) is DB-dependent and
+// lives in ensureLocalAuthBootstrap() (runs at boot after the DB is up).
+if (config.auth.mode === 'sso' && config.auth.disableOidc && !config.auth.sessionSecret) {
+  throw new Error(
+    'DISABLE_OIDC=true requires SESSION_SECRET (signs the local-login session cookie)',
   );
 }
 
