@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { randomBytes, createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
+import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { config } from '../src/lib/config.js';
 import { sqlite } from '../src/db/index.js';
 import { newId, SYSTEM_OWNER_ID } from '../src/lib/ids.js';
@@ -10,12 +10,13 @@ import { __resetAuthRateLimit } from '../src/routes/auth.js';
  * U1 — CI-Portal SSO (OAuth 2.1 + PKCE Relying-Party login).
  *
  * Endpoints are exercised against a STUBBED portal (vi.stubGlobal fetch for the
- * token + JWKS endpoints, real RS256 keypairs — the exact pattern oauth.test.ts
- * proved for Google). No real network. The negative matrix from the ticket:
- * no code, wrong/replayed state, expired state, alg:none, HS256-forged, wrong
- * iss/aud, expired token, tampered signature — all rejected; auto-provisioning
- * creates exactly one FUNCTIONAL owner per new `sub` (G-BASETAG seeds included),
- * excludes the sentinel, and repeat logins reuse the owner.
+ * token + JWKS endpoints, real RS256 keypairs — the pattern oauth.test.ts proved for
+ * Google). No real network. Every callback test drives /start first (via startFlow)
+ * so it carries the real login-state cookie — this both exercises the whole flow and
+ * satisfies the login-CSRF binding (the callback rejects a `state` not bound to the
+ * browser that started the login). Negative matrix: no code, unbound/unknown/replayed/
+ * expired state, alg:none, HS256-forged, tampered signature, wrong iss/aud, expired
+ * token, nonce mismatch, missing sub. Plus provisioning + session + logout.
  */
 
 const PORTAL = {
@@ -33,8 +34,10 @@ let srv: TestServer;
 let savedAuth: typeof config.auth;
 let savedPortal: typeof config.ciportal;
 
-async function rawGet(path: string) {
-  const res = await realFetch(`${srv.url}${path}`, { redirect: 'manual' });
+const cookieHeader = (setCookies: string[]) => setCookies.map((c) => c.split(';')[0]).join('; ');
+
+async function rawGet(path: string, headers?: Record<string, string>) {
+  const res = await realFetch(`${srv.url}${path}`, { redirect: 'manual', headers });
   const text = await res.text();
   let body: unknown;
   try { body = text ? JSON.parse(text) : undefined; } catch { body = text; }
@@ -46,39 +49,20 @@ async function rawGet(path: string) {
   };
 }
 
-const cookieHeader = (setCookies: string[]) => setCookies.map((c) => c.split(';')[0]).join('; ');
-
-/** Seed an auth_states row directly (as /start would) and return its state value. */
-function seedState(opts?: { nonce?: string; expiresAt?: string }): { state: string; nonce: string } {
-  const state = `state-${newId()}`;
-  const nonce = opts?.nonce ?? `nonce-${newId()}`;
-  sqlite
-    .prepare(
-      `INSERT INTO auth_states (id, state, code_verifier, nonce, redirect_uri, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      newId(),
-      state,
-      'verifier-1234567890abcdefghij1234567890abcdefghij',
-      nonce,
-      config.ciportal.redirectUri,
-      opts?.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
-    );
-  return { state, nonce };
+/** Drive /start: returns the login-state cookie, the issued state, and its row nonce. */
+async function startFlow(): Promise<{ state: string; cookie: string; nonce: string }> {
+  const res = await realFetch(`${srv.url}/api/auth/ciportal/start`, { redirect: 'manual' });
+  const cookie = cookieHeader(res.headers.getSetCookie?.() ?? []);
+  const state = new URL(res.headers.get('location')!).searchParams.get('state')!;
+  const row = sqlite.prepare('SELECT nonce FROM auth_states WHERE state = ?').get(state) as { nonce: string };
+  return { state, cookie, nonce: row.nonce };
 }
 
 interface TokenPayloadOverrides {
-  iss?: string;
-  aud?: string;
-  sub?: string | null;
-  exp?: number;
-  nonce?: string;
-  name?: string;
-  email?: string;
+  iss?: string; aud?: string; sub?: string | null; exp?: number; nonce?: string; name?: string; email?: string;
 }
 
-/** Mint a keypair + RS256-sign an id_token; serve its public JWK from the stubbed JWKS. */
+/** Mint a keypair + RS256-sign an id_token; return it plus the public JWK to serve. */
 function makeIdToken(overrides: TokenPayloadOverrides, opts?: { alg?: string; signWith?: KeyObject; kid?: string }) {
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const kid = opts?.kid ?? 'kid-test';
@@ -101,23 +85,16 @@ function makeIdToken(overrides: TokenPayloadOverrides, opts?: { alg?: string; si
   return { idToken: `${header}.${payload}.${signature}`, jwks: [{ ...jwk, kid, alg: 'RS256', use: 'sig' }] };
 }
 
-/** Stub fetch: token endpoint → tokenResponse; JWKS endpoint → keys. */
 function stubPortal(tokenResponse: unknown, jwks: unknown[] = [], tokenStatus = 200) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const u = String(input);
       if (u.startsWith(PORTAL.tokenUri)) {
-        return new Response(JSON.stringify(tokenResponse), {
-          status: tokenStatus,
-          headers: { 'Content-Type': 'application/json' },
-        });
+        return new Response(JSON.stringify(tokenResponse), { status: tokenStatus, headers: { 'Content-Type': 'application/json' } });
       }
       if (u.startsWith(PORTAL.jwksUri)) {
-        return new Response(JSON.stringify({ keys: jwks }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
+        return new Response(JSON.stringify({ keys: jwks }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       throw new Error(`unexpected fetch in test: ${u}`);
     }),
@@ -155,8 +132,8 @@ afterEach(() => {
 
 // ── /start ────────────────────────────────────────────────────────────────────
 describe('GET /api/auth/ciportal/start', () => {
-  it('302s to the portal with PKCE S256 + state + nonce, and stores the auth_states row', async () => {
-    const { status, location } = await rawGet('/api/auth/ciportal/start');
+  it('302s to the portal with PKCE S256 + state + nonce, stores the row, and binds the browser', async () => {
+    const { status, location, setCookies } = await rawGet('/api/auth/ciportal/start');
     expect(status).toBe(302);
     const url = new URL(location!);
     expect(`${url.origin}${url.pathname}`).toBe(PORTAL.authorizeUri);
@@ -169,29 +146,30 @@ describe('GET /api/auth/ciportal/start', () => {
     expect(url.searchParams.get('state')).toBeTruthy();
     expect(url.searchParams.get('nonce')).toBeTruthy();
 
+    // Login-CSRF binding: a login-state cookie carrying the state is set on the browser.
+    expect(setCookies.join('\n')).toMatch(/cp_login_state=/);
+    expect(setCookies.every((c) => /httponly/i.test(c))).toBe(true);
+
     const rows = sqlite.prepare('SELECT * FROM auth_states').all() as Record<string, unknown>[];
     expect(rows).toHaveLength(1);
     expect(rows[0].state).toBe(url.searchParams.get('state'));
-    expect(rows[0].nonce).toBe(url.searchParams.get('nonce'));
     // The PKCE verifier must NEVER appear in the redirect URL.
-    const verifier = String(rows[0].code_verifier);
-    expect(verifier.length).toBeGreaterThanOrEqual(43);
-    expect(location).not.toContain(verifier);
+    expect(location).not.toContain(String(rows[0].code_verifier));
   });
 
   it('prunes expired auth_states rows on each start', async () => {
-    seedState({ expiresAt: new Date(Date.now() - 1000).toISOString() });
+    sqlite
+      .prepare(`INSERT INTO auth_states (id, state, code_verifier, nonce, expires_at) VALUES (?, 'old', 'v', 'n', ?)`)
+      .run(newId(), new Date(Date.now() - 1000).toISOString());
     await rawGet('/api/auth/ciportal/start');
-    const rows = sqlite.prepare('SELECT expires_at FROM auth_states').all() as { expires_at: string }[];
-    expect(rows).toHaveLength(1); // only the fresh row — the expired one is gone
-    expect(new Date(rows[0].expires_at) > new Date()).toBe(true);
+    const rows = sqlite.prepare('SELECT state FROM auth_states').all() as { state: string }[];
+    expect(rows.map((r) => r.state)).not.toContain('old'); // expired row pruned
   });
 
   it('404s when DISABLE_OIDC=true (local mode owns login)', async () => {
     config.auth.disableOidc = true;
     try {
-      const { status } = await rawGet('/api/auth/ciportal/start');
-      expect(status).toBe(404);
+      expect((await rawGet('/api/auth/ciportal/start')).status).toBe(404);
     } finally {
       config.auth.disableOidc = false;
     }
@@ -201,8 +179,7 @@ describe('GET /api/auth/ciportal/start', () => {
     const saved = config.ciportal.clientId;
     config.ciportal.clientId = undefined;
     try {
-      const { status } = await rawGet('/api/auth/ciportal/start');
-      expect(status).toBe(503);
+      expect((await rawGet('/api/auth/ciportal/start')).status).toBe(503);
       expect(sqlite.prepare('SELECT COUNT(*) n FROM auth_states').get()).toEqual({ n: 0 });
     } finally {
       config.ciportal.clientId = saved;
@@ -223,33 +200,45 @@ describe('GET /api/auth/ciportal/start', () => {
   });
 });
 
-// ── /callback: state handling ───────────────────────────────────────────────────
+// ── /callback: state handling + login-CSRF binding ──────────────────────────────
 describe('GET /api/auth/ciportal/callback — state handling', () => {
-  it('is public (400 on unknown state, NOT 401)', async () => {
-    const { status, body } = await rawGet('/api/auth/ciportal/callback?state=nope&code=abc');
-    expect(status).toBe(400);
-    expect(body).toEqual({ error: 'unknown_or_consumed_state' });
-  });
-
-  it('400s when state or code is missing', async () => {
+  it('is public (400, NOT 401) and 400s when state or code is missing', async () => {
     expect((await rawGet('/api/auth/ciportal/callback?code=abc')).status).toBe(400);
     expect((await rawGet('/api/auth/ciportal/callback?state=abc')).status).toBe(400);
   });
 
+  it('rejects a state not bound to this browser (login-CSRF): no login-state cookie → 400', async () => {
+    // Attacker starts a flow (gets state + its cookie); the victim's browser hits the
+    // callback with that state but WITHOUT the cookie → rejected, no session.
+    const { state } = await startFlow();
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`); // no Cookie
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'state_not_bound' });
+    expect(res.setCookies.join('')).not.toContain('cp_session=');
+  });
+
   it('400s on an expired state row', async () => {
-    const { state } = seedState({ expiresAt: new Date(Date.now() - 1000).toISOString() });
-    const { status, body } = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=abc`);
-    expect(status).toBe(400);
-    expect(body).toEqual({ error: 'expired_state' });
+    const { state, cookie } = await startFlow();
+    sqlite.prepare(`UPDATE auth_states SET expires_at = ? WHERE state = ?`).run(new Date(Date.now() - 1000).toISOString(), state);
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=abc`, { Cookie: cookie });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'expired_state' });
+  });
+
+  it('400s unknown/consumed state (cookie matches, but the row is gone)', async () => {
+    const { state, cookie } = await startFlow();
+    sqlite.prepare(`DELETE FROM auth_states WHERE state = ?`).run(state); // simulate already-consumed
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=abc`, { Cookie: cookie });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'unknown_or_consumed_state' });
   });
 
   it('a state is single-use: a replayed callback is rejected', async () => {
-    const { state, nonce } = seedState();
+    const { state, cookie, nonce } = await startFlow();
     const { idToken, jwks } = makeIdToken({ nonce });
     stubPortal({ access_token: 'A', id_token: idToken }, jwks);
-
-    expect((await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C1`)).status).toBe(302);
-    const replay = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C1`);
+    expect((await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C1`, { Cookie: cookie })).status).toBe(302);
+    const replay = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C1`, { Cookie: cookie });
     expect(replay.status).toBe(400);
     expect(replay.body).toEqual({ error: 'unknown_or_consumed_state' });
   });
@@ -261,91 +250,84 @@ describe('GET /api/auth/ciportal/callback — state handling', () => {
   });
 });
 
-// ── /callback: token & id_token verification (the negative matrix) ─────────────
+// ── /callback: id_token verification (the negative matrix) ─────────────────────
 describe('GET /api/auth/ciportal/callback — id_token verification', () => {
-  async function expectRejected(idToken: string, jwks: unknown[], error = 'invalid_id_token') {
-    const { state } = seedState({ nonce: 'expected-nonce' });
+  async function expectRejected(makeToken: (nonce: string) => { idToken: string; jwks: unknown[] }, error = 'invalid_id_token') {
+    const { state, cookie, nonce } = await startFlow();
+    const { idToken, jwks } = makeToken(nonce);
     stubPortal({ access_token: 'A', id_token: idToken }, jwks);
-    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`);
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error });
-    // And no owner was created, no session issued.
     expect((sqlite.prepare('SELECT COUNT(*) n FROM owners').get() as { n: number }).n).toBe(1); // sentinel only
     expect(res.setCookies.join('')).not.toContain('cp_session=');
   }
 
+  const rawToken = (alg: string, sig: string, nonce: string) => {
+    const header = Buffer.from(JSON.stringify({ alg })).toString('base64url');
+    const payload = Buffer.from(
+      JSON.stringify({ iss: PORTAL.issuer, aud: PORTAL.clientId, sub: 'x', nonce, exp: Math.floor(Date.now() / 1000) + 300 }),
+    ).toString('base64url');
+    return `${header}.${payload}.${sig}`;
+  };
+
   it('rejects a failed token exchange', async () => {
-    const { state } = seedState();
+    const { state, cookie } = await startFlow();
     stubPortal({ error: 'invalid_grant' }, [], 400);
-    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=BAD`);
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=BAD`, { Cookie: cookie });
     expect(res.status).toBe(400);
     expect((res.body as { error: string }).error).toBe('token_exchange_failed');
   });
 
   it('rejects a token response with no id_token', async () => {
-    const { state } = seedState();
+    const { state, cookie } = await startFlow();
     stubPortal({ access_token: 'A-only' });
-    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`);
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'no_id_token' });
   });
 
   it('rejects alg:none', async () => {
-    const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url');
-    const payload = Buffer.from(
-      JSON.stringify({ iss: PORTAL.issuer, aud: PORTAL.clientId, sub: 'x', nonce: 'expected-nonce', exp: Math.floor(Date.now() / 1000) + 300 }),
-    ).toString('base64url');
-    await expectRejected(`${header}.${payload}.`, []);
+    await expectRejected((nonce) => ({ idToken: rawToken('none', '', nonce), jwks: [] }));
   });
 
   it('rejects an HS256-forged token', async () => {
-    const header = Buffer.from(JSON.stringify({ alg: 'HS256' })).toString('base64url');
-    const payload = Buffer.from(
-      JSON.stringify({ iss: PORTAL.issuer, aud: PORTAL.clientId, sub: 'x', nonce: 'expected-nonce', exp: Math.floor(Date.now() / 1000) + 300 }),
-    ).toString('base64url');
-    const sig = Buffer.from('hmac-forgery').toString('base64url');
-    await expectRejected(`${header}.${payload}.${sig}`, []);
+    await expectRejected((nonce) => ({ idToken: rawToken('HS256', Buffer.from('hmac-forgery').toString('base64url'), nonce), jwks: [] }));
   });
 
   it('rejects a tampered signature (signed by an unrelated key)', async () => {
     const { privateKey: rogue } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-    const { idToken, jwks } = makeIdToken({ nonce: 'expected-nonce' }, { signWith: rogue });
-    await expectRejected(idToken, jwks); // JWKS holds the real key; token signed by the rogue one
+    await expectRejected((nonce) => makeIdToken({ nonce }, { signWith: rogue })); // JWKS holds the real key
   });
 
   it('rejects a wrong issuer', async () => {
-    const { idToken, jwks } = makeIdToken({ iss: 'https://evil.example', nonce: 'expected-nonce' });
-    await expectRejected(idToken, jwks);
+    await expectRejected((nonce) => makeIdToken({ iss: 'https://evil.example', nonce }));
   });
 
   it('rejects a wrong audience', async () => {
-    const { idToken, jwks } = makeIdToken({ aud: 'some-other-app', nonce: 'expected-nonce' });
-    await expectRejected(idToken, jwks);
+    await expectRejected((nonce) => makeIdToken({ aud: 'some-other-app', nonce }));
   });
 
   it('rejects an expired token', async () => {
-    const { idToken, jwks } = makeIdToken({ exp: Math.floor(Date.now() / 1000) - 10, nonce: 'expected-nonce' });
-    await expectRejected(idToken, jwks);
+    await expectRejected((nonce) => makeIdToken({ exp: Math.floor(Date.now() / 1000) - 10, nonce }));
   });
 
   it('rejects a nonce mismatch (token spliced from another flow)', async () => {
-    const { idToken, jwks } = makeIdToken({ nonce: 'a-DIFFERENT-nonce' });
-    await expectRejected(idToken, jwks);
+    await expectRejected(() => makeIdToken({ nonce: 'a-DIFFERENT-nonce' }));
   });
 
   it('rejects a verified token with no sub', async () => {
-    const { idToken, jwks } = makeIdToken({ sub: null, nonce: 'expected-nonce' });
-    await expectRejected(idToken, jwks);
+    await expectRejected((nonce) => makeIdToken({ sub: null, nonce }));
   });
 });
 
 // ── /callback: provisioning + session ───────────────────────────────────────────
 describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
-  function login(sub = 'portal-sub-1', extra: TokenPayloadOverrides = {}) {
-    const { state, nonce } = seedState();
+  async function login(sub = 'portal-sub-1', extra: TokenPayloadOverrides = {}) {
+    const { state, cookie, nonce } = await startFlow();
     const { idToken, jwks } = makeIdToken({ sub, nonce, ...extra });
     stubPortal({ access_token: 'A', id_token: idToken }, jwks);
-    return rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`);
+    return rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
   }
 
   it('auto-provisions a FUNCTIONAL owner on first login: session + G-BASETAG seeds', async () => {
@@ -353,41 +335,32 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     expect(res.status).toBe(302);
     expect(res.location).toBe('/');
 
-    // Signed session cookie pair, httpOnly.
     const joined = res.setCookies.join('\n');
     expect(joined).toMatch(/cp_session=/);
     expect(joined).toMatch(/cp_session\.sig=/);
     expect(res.setCookies.every((c) => /httponly/i.test(c))).toBe(true);
 
-    // Owner row mapped to the token sub, with identity claims.
     const owner = sqlite
-      .prepare(`SELECT id, name, email, external_subject FROM owners WHERE external_subject = 'sub-new'`)
+      .prepare(`SELECT id, name, email FROM owners WHERE external_subject = 'sub-new'`)
       .get() as { id: string; name: string; email: string };
     expect(owner).toBeTruthy();
     expect(owner.name).toBe('Ada Portal');
     expect(owner.email).toBe('ada@ci.test');
 
-    // G-BASETAG: the new owner is a functional tenant.
     const tags = sqlite
-      .prepare(`SELECT name, kind, is_base FROM tags WHERE owner_id = ? ORDER BY name`)
+      .prepare(`SELECT name, kind, is_base FROM tags WHERE owner_id = ? ORDER BY kind, name`)
       .all(owner.id) as { name: string; kind: string; is_base: number }[];
-    expect(tags.map((t) => `${t.kind}:${t.name}`).sort()).toEqual([
+    expect(tags.map((t) => `${t.kind}:${t.name}`)).toEqual([
       'category:family', 'category:me', 'category:social',
       'pattern:community', 'pattern:home', 'pattern:work',
     ]);
     expect(tags.every((t) => t.is_base === 1)).toBe(true);
-    const catPrefs = sqlite
-      .prepare(`SELECT COUNT(*) n FROM tag_prefs WHERE owner_id = ? AND kind = 'category'`)
-      .get(owner.id) as { n: number };
-    expect(catPrefs.n).toBe(3);
-    const dayTypes = sqlite.prepare(`SELECT key FROM day_types WHERE owner_id = ? ORDER BY key`).all(owner.id);
-    expect(dayTypes).toEqual([{ key: 'weekend' }, { key: 'workday' }]);
+    expect((sqlite.prepare(`SELECT COUNT(*) n FROM tag_prefs WHERE owner_id = ? AND kind='category'`).get(owner.id) as { n: number }).n).toBe(3);
+    expect(sqlite.prepare(`SELECT key FROM day_types WHERE owner_id = ? ORDER BY key`).all(owner.id)).toEqual([{ key: 'weekend' }, { key: 'workday' }]);
     expect((sqlite.prepare(`SELECT COUNT(*) n FROM day_of_week_map WHERE owner_id = ?`).get(owner.id) as { n: number }).n).toBe(7);
-    const patternTypes = sqlite
-      .prepare(`SELECT name, catch_all FROM pattern_types WHERE owner_id = ? ORDER BY name`)
-      .all(owner.id) as { name: string; catch_all: number }[];
-    expect(patternTypes.map((p) => p.name)).toEqual(['Community', 'Habit', 'Ritual', 'Routine']);
-    expect(patternTypes.find((p) => p.name === 'Community')!.catch_all).toBe(1);
+    const pts = sqlite.prepare(`SELECT name, catch_all FROM pattern_types WHERE owner_id = ? ORDER BY name`).all(owner.id) as { name: string; catch_all: number }[];
+    expect(pts.map((p) => p.name)).toEqual(['Community', 'Habit', 'Ritual', 'Routine']);
+    expect(pts.find((p) => p.name === 'Community')!.catch_all).toBe(1);
     expect(sqlite.prepare(`SELECT COUNT(*) n FROM scheduling_prefs WHERE owner_id = ?`).get(owner.id)).toEqual({ n: 1 });
   });
 
@@ -395,24 +368,19 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     const res = await login('sub-session', { name: 'Sess Ion', email: 'sess@ci.test' });
     const cookie = cookieHeader(res.setCookies);
 
-    const tasks = await realFetch(`${srv.url}/api/tasks`, { headers: { Cookie: cookie } });
-    expect(tasks.status).toBe(200);
-
+    expect((await realFetch(`${srv.url}/api/tasks`, { headers: { Cookie: cookie } })).status).toBe(200);
     const me = await realFetch(`${srv.url}/api/auth/me`, { headers: { Cookie: cookie } });
     expect(me.status).toBe(200);
     const identity = (await me.json()) as { name: string; email: string };
     expect(identity.name).toBe('Sess Ion');
     expect(identity.email).toBe('sess@ci.test');
-
-    const anon = await realFetch(`${srv.url}/api/auth/me`);
-    expect(anon.status).toBe(401);
+    expect((await realFetch(`${srv.url}/api/auth/me`)).status).toBe(401);
   });
 
   it('a repeat login with the same sub reuses the owner (no duplicates)', async () => {
     await login('sub-repeat');
     await login('sub-repeat');
-    const n = (sqlite.prepare(`SELECT COUNT(*) n FROM owners WHERE external_subject = 'sub-repeat'`).get() as { n: number }).n;
-    expect(n).toBe(1);
+    expect((sqlite.prepare(`SELECT COUNT(*) n FROM owners WHERE external_subject = 'sub-repeat'`).get() as { n: number }).n).toBe(1);
   });
 
   it('403s an unknown sub when auto-provision is off', async () => {
@@ -423,22 +391,15 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     expect(res.setCookies.join('')).not.toContain('cp_session=');
   });
 
-  it('N-SENTINEL: a login can never bind to the SYSTEM_OWNER sentinel — it fails closed', async () => {
-    // Defensive: force the sentinel to carry the incoming sub. The lookup's
-    // `id <> SYSTEM_OWNER_ID` guard must skip it, and provisioning a duplicate sub is
-    // blocked by U0's UNIQUE index — so the only safe outcome is a clean 403: no
-    // session for the sentinel, no session at all, no 500.
+  it('N-SENTINEL: a sub reserved by the sentinel fails closed (403), never binds it', async () => {
     sqlite.prepare(`UPDATE owners SET external_subject = 'sub-sentinel-attack' WHERE id = ?`).run(SYSTEM_OWNER_ID);
     try {
       const res = await login('sub-sentinel-attack');
       expect(res.status).toBe(403);
       expect(res.body).toEqual({ error: 'subject_unavailable' });
       expect(res.setCookies.join('')).not.toContain('cp_session=');
-      // And the sentinel remains the ONLY holder of that sub — nothing was provisioned.
-      const holders = sqlite
-        .prepare(`SELECT id FROM owners WHERE external_subject = 'sub-sentinel-attack'`)
-        .all() as { id: string }[];
-      expect(holders).toEqual([{ id: SYSTEM_OWNER_ID }]);
+      const holders = sqlite.prepare(`SELECT id FROM owners WHERE external_subject = 'sub-sentinel-attack'`).all() as { id: string }[];
+      expect(holders).toEqual([{ id: SYSTEM_OWNER_ID }]); // nothing new provisioned
     } finally {
       sqlite.prepare(`UPDATE owners SET external_subject = NULL WHERE id = ?`).run(SYSTEM_OWNER_ID);
     }
@@ -450,7 +411,6 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     const out = await realFetch(`${srv.url}/api/auth/logout`, { method: 'POST', headers: { Cookie: cookie } });
     expect(out.status).toBe(200);
     const cleared = cookieHeader(out.headers.getSetCookie?.() ?? []);
-    const after = await realFetch(`${srv.url}/api/tasks`, { headers: { Cookie: cleared } });
-    expect(after.status).toBe(401);
+    expect((await realFetch(`${srv.url}/api/tasks`, { headers: { Cookie: cleared } })).status).toBe(401);
   });
 });

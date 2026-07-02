@@ -14,7 +14,12 @@ import type { VerifiedClaims } from './types.js';
  *
  *   - `test` mode  → fixed SYSTEM_OWNER, no credential (dev + the test suite). This
  *                    path is hard-rejected at boot under NODE_ENV=production.
- *   - otherwise    → a hashed `x-api-key` (standalone). SSO Bearer JWTs land in PR2.
+ *   - `sso` mode   → the signed httpOnly session cookie (verifySession), for BOTH
+ *                    sub-modes: CI-Portal SSO (U1) and DISABLE_OIDC local login (U2).
+ *                    The JWKS/RS256 id_token check runs ONCE during the CI-Portal
+ *                    login callback (to mint the session) — never per request; there
+ *                    is no Bearer path.
+ *   - `standalone` → a hashed `x-api-key`.
  *
  * Read methods need `planning:read`, mutations `planning:write` (403 on mismatch).
  */

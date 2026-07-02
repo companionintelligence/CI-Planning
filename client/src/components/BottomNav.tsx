@@ -1,7 +1,8 @@
-import { A } from '@solidjs/router';
-import { createSignal, Show, For } from 'solid-js';
-import { CheckSquare, Inbox, Tag, Settings, Activity, Sun, MoreHorizontal, CalendarDays, Target } from 'lucide-solid';
-import { possibles } from '../stores/index.js';
+import { A, useNavigate } from '@solidjs/router';
+import { createSignal, createResource, Show, For } from 'solid-js';
+import { CheckSquare, Inbox, Tag, Settings, Activity, Sun, MoreHorizontal, CalendarDays, Target, LogOut } from 'lucide-solid';
+import { possibles, showToast } from '../stores/index.js';
+import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 const primary = [
@@ -21,6 +22,18 @@ const overflow = [
 export function BottomNav() {
   const pendingCount = () => possibles()?.length ?? 0;
   const [moreOpen, setMoreOpen] = createSignal(false);
+  const navigate = useNavigate();
+  const [cfg] = createResource(() => api.auth.config().catch(() => null));
+  const showSignOut = () => { const c = cfg(); return !!c && authGateActive(c); };
+  async function signOut() {
+    setMoreOpen(false);
+    try {
+      await api.auth.logout();
+      navigate('/login', { replace: true });
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
 
   return (
     <>
@@ -41,6 +54,12 @@ export function BottomNav() {
             </For>
             <div class="border-t border-border my-1" />
             <ThemeToggle />
+            <Show when={showSignOut()}>
+              <button type="button" onClick={signOut} class="nav-item w-full text-left">
+                <LogOut size={16} class="flex-shrink-0" />
+                <span class="flex-1">Sign out</span>
+              </button>
+            </Show>
           </div>
         </div>
       </Show>

@@ -10,7 +10,7 @@ import { provisionOwner } from '../lib/owners.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
 import { verifyOidcIdToken } from '../lib/auth/verifyOidcIdToken.js';
 import { findOwnerByUsername, verifyLoginPassword } from '../lib/auth/password.js';
-import { setSession, clearSession } from '../lib/auth/session.js';
+import { setSession, clearSession, setLoginState, consumeLoginState } from '../lib/auth/session.js';
 
 /**
  * The `/api/auth/*` router.
@@ -169,6 +169,10 @@ export function authRouter() {
         new Date(now + STATE_TTL_MS).toISOString(),
       );
 
+    // Bind this login to the initiating browser (login-CSRF defense): the callback
+    // will require the returned `state` to match this cookie before proceeding.
+    setLoginState(ctx, state);
+
     // redirect_uri is taken VERBATIM from config — never recomputed from the request
     // host (an attacker-controlled Host header must not steer the OAuth redirect).
     // The code_verifier is NEVER placed in the URL — only the S256 challenge.
@@ -207,6 +211,17 @@ export function authRouter() {
     if (!state || !code) {
       ctx.status = 400;
       ctx.body = { error: 'missing_state_or_code' };
+      return;
+    }
+
+    // Login-CSRF defense (BEFORE consuming the state row): the returned `state` must
+    // match the login-state cookie set on THIS browser at /start. A response replayed
+    // into another browser has no matching cookie → rejected, so a victim can't be
+    // silently logged into the attacker's account. Single-use (consume clears it).
+    const boundState = consumeLoginState(ctx);
+    if (!boundState || boundState !== state) {
+      ctx.status = 400;
+      ctx.body = { error: 'state_not_bound' };
       return;
     }
 
@@ -306,16 +321,21 @@ export function authRouter() {
         // index makes the loser's insert throw — re-read and use the winner's row.
         owner = findBySub.get(claims.sub, SYSTEM_OWNER_ID) as { id: string } | undefined;
         if (!owner) {
-          // UNIQUE violation with no visible row ⇒ the sub is held by a row the
-          // lookup EXCLUDES — i.e. the sentinel (N-SENTINEL). Fail the login
-          // closed: it must neither bind the sentinel nor 500.
-          if ((err as { code?: string }).code?.startsWith('SQLITE_CONSTRAINT')) {
+          // Re-read still empty. Distinguish the one benign case — the sub is held by
+          // the sentinel, which the owner lookup EXCLUDES (N-SENTINEL) — from a real
+          // provisioning failure (a constraint deeper in provisionOwner's ~15 inserts).
+          // Query INCLUDING the sentinel: only if IT holds the sub do we fail closed
+          // with 403; anything else is a genuine internal fault that must surface (500).
+          const held = sqlite
+            .prepare(`SELECT id FROM owners WHERE external_subject = ?`)
+            .get(claims.sub) as { id: string } | undefined;
+          if (held?.id === SYSTEM_OWNER_ID) {
             logger.warn('CI-Portal login rejected: subject is reserved (N-SENTINEL)');
             ctx.status = 403;
             ctx.body = { error: 'subject_unavailable' };
             return;
           }
-          throw err;
+          throw err; // real provisioning failure — do not mask as a 403
         }
       }
     }

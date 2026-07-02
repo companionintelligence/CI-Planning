@@ -1,4 +1,4 @@
-import { createSignal, createResource, Show } from 'solid-js';
+import { createSignal, createResource, createEffect, Show } from 'solid-js';
 import { useNavigate, useSearchParams } from '@solidjs/router';
 import { Cpu, LogIn, Loader2 } from 'lucide-solid';
 import { api, authGateActive, CIPORTAL_START } from '../lib/api.js';
@@ -20,6 +20,13 @@ export function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [cfg] = createResource(() => api.auth.config());
+
+  // Already signed in (bookmark, back button after login, stale callback tab)? Bounce
+  // to the app rather than showing the sign-in screen to an authenticated user.
+  const [alreadyIn] = createResource(() => api.auth.me().then(() => true).catch(() => false));
+  createEffect(() => {
+    if (!alreadyIn.loading && alreadyIn()) navigate('/', { replace: true });
+  });
 
   const [username, setUsername] = createSignal('');
   const [password, setPassword] = createSignal('');

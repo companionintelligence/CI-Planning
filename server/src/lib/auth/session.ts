@@ -36,6 +36,28 @@ export function clearSession(ctx: Koa.Context): void {
   ctx.cookies.set(SESSION_COOKIE, null, COOKIE_OPTS);
 }
 
+// ── Pre-login state binding (U1, login-CSRF defense) ─────────────────────────
+// The OAuth `state` alone is only a server-side lookup key; to actually bind the
+// login to the browser that STARTED it (RFC 6749 §10.12), /start also drops this
+// short-lived signed httpOnly cookie carrying the same `state`, and /callback
+// requires the query `state` to equal it before doing anything. A replayed
+// authorization response opened in a DIFFERENT browser lacks the cookie → rejected,
+// so an attacker can't silently log a victim into the attacker's account.
+export const LOGIN_STATE_COOKIE = 'cp_login_state';
+const LOGIN_STATE_MAX_AGE_MS = 10 * 60 * 1000; // matches the auth_states TTL
+
+/** Bind the initiating browser to `state` at /start. */
+export function setLoginState(ctx: Koa.Context, state: string): void {
+  ctx.cookies.set(LOGIN_STATE_COOKIE, state, { ...COOKIE_OPTS, maxAge: LOGIN_STATE_MAX_AGE_MS });
+}
+
+/** Read AND clear the login-state cookie at /callback (single-use). */
+export function consumeLoginState(ctx: Koa.Context): string | null {
+  const state = ctx.cookies.get(LOGIN_STATE_COOKIE, { signed: true }) ?? null;
+  ctx.cookies.set(LOGIN_STATE_COOKIE, null, COOKIE_OPTS);
+  return state;
+}
+
 /**
  * Resolve the session cookie to owner claims, or null if absent/tampered/stale.
  * A full-owner local session carries both scopes (read+write). Re-checks that the
