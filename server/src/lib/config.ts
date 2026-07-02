@@ -52,6 +52,27 @@ export interface GoogleConfig {
   mode: 'live' | 'fixture';
 }
 
+/**
+ * CI-Portal OIDC consumer config (U1). Companion Planning is an OAuth 2.1 + PKCE
+ * Relying Party of CI-Portal (hub.companionintelligence.com, reachable over
+ * Tailscale) — the same consumer role CI-Import Tools and CI-Hub play. Endpoint
+ * values come from CI-Portal's discovery document
+ * (`/.well-known/openid-configuration`) or the CI-Portal team; there are NO
+ * invented defaults — a deployment must set them explicitly. Deliberately separate
+ * from the older generic AUTH_JWKS_URL/AUTH_ISSUER vars (kept for now; repoint or
+ * retire is the dev team's call — flagged in docs, not silently decided here).
+ */
+export interface CiPortalConfig {
+  clientId?: string;
+  clientSecret?: string; // only if CI-Portal registers us as a confidential client
+  issuer?: string; // expected id_token `iss`
+  authorizeUri?: string;
+  tokenUri?: string;
+  jwksUri?: string;
+  redirectUri: string;
+  scopes: string;
+}
+
 /** Sync engine toggles (Wave 0). */
 export interface SyncConfig {
   /** When false, the sync layer never pushes local changes back to providers. */
@@ -79,6 +100,7 @@ export interface Config {
   vapidSubject: string;
   snapshotRetain: number;
   auth: AuthConfig;
+  ciportal: CiPortalConfig;
   google: GoogleConfig;
   sync: SyncConfig;
   kek: KekConfig;
@@ -134,6 +156,16 @@ export const config: Config = {
     defaultPassword: process.env.AUTH_DEFAULT_PASSWORD,
     sessionSecret: process.env.SESSION_SECRET,
   },
+  ciportal: {
+    clientId: process.env.CIPORTAL_CLIENT_ID,
+    clientSecret: process.env.CIPORTAL_CLIENT_SECRET,
+    issuer: process.env.CIPORTAL_ISSUER,
+    authorizeUri: process.env.CIPORTAL_AUTHORIZE_URI,
+    tokenUri: process.env.CIPORTAL_TOKEN_URI,
+    jwksUri: process.env.CIPORTAL_JWKS_URI,
+    redirectUri: process.env.CIPORTAL_REDIRECT_URI ?? `${publicBaseUrl}/api/auth/ciportal/callback`,
+    scopes: process.env.CIPORTAL_SCOPES ?? 'openid profile email',
+  },
   google: {
     clientId: process.env.CP_GOOGLE_CLIENT_ID,
     clientSecret: process.env.CP_GOOGLE_CLIENT_SECRET,
@@ -176,14 +208,36 @@ if (config.auth.mode === 'test' && process.env.NODE_ENV === 'production') {
   );
 }
 
-// Fail closed (U2): local username/password mode (AUTH_MODE=sso + DISABLE_OIDC=true) signs its
-// session cookie with SESSION_SECRET via Koa's app.keys. Without it, ctx.cookies.set(…, { signed:
-// true }) throws at request time — refuse to boot instead of serving an unsigned/forgeable session.
-// The companion "no login path" guard (no default password + zero local users) is DB-dependent and
-// lives in ensureLocalAuthBootstrap() (runs at boot after the DB is up).
-if (config.auth.mode === 'sso' && config.auth.disableOidc && !config.auth.sessionSecret) {
+// Fail closed (U2, widened in U1): BOTH sso sub-modes — CI-Portal SSO and the
+// DISABLE_OIDC local fallback — end a login by minting the signed session cookie, so
+// AUTH_MODE=sso always requires SESSION_SECRET. Without it, ctx.cookies.set(…, {
+// signed: true }) throws at request time — refuse to boot instead of serving an
+// unsigned/forgeable session. The companion "no login path" guard (no default
+// password + zero local users) is DB-dependent and lives in ensureLocalAuthBootstrap().
+if (config.auth.mode === 'sso' && !config.auth.sessionSecret) {
   throw new Error(
-    'DISABLE_OIDC=true requires SESSION_SECRET (signs the local-login session cookie)',
+    'AUTH_MODE=sso requires SESSION_SECRET (signs the login session cookie)',
+  );
+}
+
+// Fail closed (U1): production SSO with OIDC enabled but no CI-Portal wiring would
+// present a login screen whose only button dead-ends. Require the full endpoint set
+// up front (mirrors the GOOGLE_MODE=live guard below). Non-production is exempt so
+// dev/fixture flows can wire endpoints at runtime.
+if (
+  config.auth.mode === 'sso' &&
+  !config.auth.disableOidc &&
+  process.env.NODE_ENV === 'production' &&
+  (!config.ciportal.clientId ||
+    !config.ciportal.issuer ||
+    !config.ciportal.authorizeUri ||
+    !config.ciportal.tokenUri ||
+    !config.ciportal.jwksUri)
+) {
+  throw new Error(
+    'AUTH_MODE=sso (OIDC enabled) requires CIPORTAL_CLIENT_ID, CIPORTAL_ISSUER, CIPORTAL_AUTHORIZE_URI, ' +
+      'CIPORTAL_TOKEN_URI and CIPORTAL_JWKS_URI — fetch them from CI-Portal\'s /.well-known/openid-configuration ' +
+      '(or set DISABLE_OIDC=true for local username/password login)',
   );
 }
 

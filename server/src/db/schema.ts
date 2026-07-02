@@ -512,6 +512,19 @@ export const oauthStates = sqliteTable('oauth_states', {
   expiresAt: text('expires_at'),
 });
 
+// U1 (0102): pre-login OAuth state for the CI-Portal login flow — oauth_states minus
+// owner_id (no owner exists yet when the login starts; the Google table's NOT NULL
+// owner binding is correct for account-linking and stays untouched).
+export const authStates = sqliteTable('auth_states', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  state: text('state').notNull().unique(),
+  codeVerifier: text('code_verifier').notNull(),
+  nonce: text('nonce').notNull(),
+  redirectUri: text('redirect_uri'),
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  expiresAt: text('expires_at').notNull(),
+});
+
 // --- Wave 0 (0060): Per-(owner, provider, account, resource) sync cursor store. ---
 // `resource` distinguishes 'calendar_synctoken' vs 'gmail_history'; `cursor` is opaque.
 export const syncState = sqliteTable('sync_state', {
