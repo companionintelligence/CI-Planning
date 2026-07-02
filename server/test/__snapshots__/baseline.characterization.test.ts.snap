@@ -741,10 +741,17 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "focus",
       "llm",
       "inputs_hash",
+      "star_objective",
+      "star_habits",
+      "star_tasks",
+      "star_bonus",
+      "star_note",
+      "total",
+      "frozen_at",
       "created_at",
       "updated_at",
     ],
-    "table": "daily_summaries",
+    "table": "daily_recap",
   },
   {
     "columns": [
@@ -761,20 +768,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "day_type_key",
     ],
     "table": "day_of_week_map",
-  },
-  {
-    "columns": [
-      "owner_id",
-      "date",
-      "star_objective",
-      "star_habits",
-      "star_tasks",
-      "star_bonus",
-      "star_note",
-      "total",
-      "frozen_at",
-    ],
-    "table": "day_stars",
   },
   {
     "columns": [

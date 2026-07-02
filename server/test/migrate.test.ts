@@ -26,7 +26,7 @@ describe('migration runner', () => {
     // 0030 remaps the legacy integer owner `1` to the fixed UUIDv7 sentinel.
     expect(db.prepare('SELECT id FROM owners WHERE id = ?').get(SYSTEM_OWNER_ID)).toBeTruthy();
     expect(count(db, 'scheduled_jobs')).toBeGreaterThan(0);
-    expect(cols(db, 'daily_summaries')).toContain('focus');
+    expect(cols(db, 'daily_recap')).toContain('focus'); // daily_summaries merged into daily_recap (0096)
     // 0010: all_day column on time_blocks (Phase F PR-3).
     expect(cols(db, 'time_blocks')).toContain('all_day');
     db.close();

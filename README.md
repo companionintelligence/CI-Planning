@@ -41,7 +41,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>16 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0094 on boot]
+        Migrate[Migration runner<br/>0001 → 0096 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -97,7 +97,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0094 ordered list
+                                    // migrations from the 0001–0096 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -108,7 +108,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0094_daily_summaries_owner_default`) produce the following tables:
+Migrations (current head: `0096_daily_recap`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -143,13 +143,12 @@ Migrations (current head: `0094_daily_summaries_owner_default`) produce the foll
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` — calendar syncToken, Gmail watermark, dead-letter (0060) |
 | `daily_plan` | AI-authored task order for a day — one row per `(owner, date, task)` with a "why now" rationale and `outcome` stamp (0062, 0084) |
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
-| `daily_summaries` | LLM-generated day briefings cached by content hash to avoid redundant generation; `owner_id` `TEXT NOT NULL` with no default (0094) |
+| `daily_recap` | One row per `(owner, date)` — the day-briefing cache (`prose`/`stats`/`focus`, keyed by `inputs_hash`) **and** the frozen five-star score (`star_*`/`total`/`frozen_at`); merged from `daily_summaries` + `day_stars` (0096) |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083) |
-| `day_stars` | Frozen snapshot of the five-star day score per `(owner, date)` — today computes live via `computeStars()`, past days are immutable once frozen by the nightly `freeze_stars` job (Phase O, 0089; job seed 0090) |
 
 ## See it in action
 
@@ -332,7 +331,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0094): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0096): tasks, subtasks, time blocks, tags,
   entity_tags, tag_patterns, patterns, pattern_blocks, pattern_prefs, flight_plan,
   daily_plan, possible_tasks, scheduling_prefs, time_entries, block_templates, jobs,
   reminders, push_subscriptions, replan_suggestions, audit_log, sync_events,
@@ -362,7 +361,7 @@ consistent snapshot.
 - Tag taxonomy: pattern (direction) / intention hierarchy with many-to-many grouping
 - **Objectives** — life-planning hierarchy (Goal → Project → Objective) with task linkage, progress roll-up, and the `advance_objectives` job that auto-stages tasks for active objectives into the flight plan
 - **Reflections / FOCUS card** — today focus + up to 3 weekly goals per ISO week, each optionally linked (`source_kind`/`source_ref`) to a Task or Objective, with category color stripes and done/undone toggling; a **Today's Brief** pop-up carries the AI/deterministic prose + capacity + top tasks that used to be the standalone Morning Briefing section
-- **Day note + five-star day** (Phase O) — one note per day (`reflections.kind='day_note'`, PK-enforced uniqueness); `computeStars()` derives 5 booleans (intention/habits/tasks/bonus/reflection) with zero manual toggles, cached in `day_stars` and frozen permanently by the nightly `freeze_stars` job; `GET /api/stars` serves the frozen row over a live recompute
+- **Day note + five-star day** (Phase O) — one note per day (`reflections.kind='day_note'`, PK-enforced uniqueness); `computeStars()` derives 5 booleans (intention/habits/tasks/bonus/reflection) with zero manual toggles, cached in `daily_recap` and frozen permanently by the nightly `freeze_stars` job; `GET /api/stars` serves the frozen row over a live recompute
 - **Weekly Review** — scheduled/focus minutes, capacity bar, completion rate, and calibration bias insight
 - **Estimate calibration** — weekly `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review
 - **Recurrence horizon + Clear Date Range** (Phase P) — `recurrence_horizon_days` bounds materialization in both recurrence engines (patterns + blocks); lowering it auto-prunes via a shared `clearPlannerRange` engine, which also backs `POST /api/planner/clear` (dry-run preview, DB snapshot on apply) and the original `clear-planner-from.ts` CLI script

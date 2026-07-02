@@ -4,12 +4,12 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from './sse.js';
 import { writeAudit } from '../lib/audit.js';
 
-const EXPORT_VERSION = '1';
+const EXPORT_VERSION = '2';
 
 // Tables that require only the owner_id for a direct export query.
 const OWNER_TABLES = [
   'scheduling_prefs',
-  'daily_summaries',
+  'daily_recap',
   'pattern_types',
   'patterns',
   'tasks',
@@ -121,7 +121,7 @@ export function backupRouter() {
       possible_task_tags: possibleTaskTags,
       reminders: ownerData['reminders'],
       push_subscriptions: ownerData['push_subscriptions'],
-      daily_summaries: ownerData['daily_summaries'],
+      daily_recap: ownerData['daily_recap'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -199,13 +199,13 @@ export function backupRouter() {
       sqlite.exec('DELETE FROM category_direction_optouts');
       sqlite.exec('DELETE FROM tag_patterns');
       sqlite.exec('DELETE FROM tags');
-      sqlite.prepare('DELETE FROM daily_summaries WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM daily_recap WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM scheduling_prefs WHERE owner_id = ?').run(ownerId);
 
       // ── Insert in FK-safe forward order ────────────────────────────────────
       const g = (key: string) => (Array.isArray(body[key]) ? (body[key] as Record<string, unknown>[]) : []);
       counts['scheduling_prefs'] = insertRows('scheduling_prefs', g('scheduling_prefs'));
-      counts['daily_summaries']  = insertRows('daily_summaries', g('daily_summaries'));
+      counts['daily_recap']      = insertRows('daily_recap', g('daily_recap'));
       counts['tags']             = insertRows('tags', g('tags'));
       counts['tag_patterns']     = insertRows('tag_patterns', g('tag_patterns'));
       counts['tag_categories']   = insertRows('tag_categories', g('tag_categories'));
