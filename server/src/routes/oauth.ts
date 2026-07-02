@@ -1,11 +1,13 @@
 import Router from '@koa/router';
-import { createHash, createPublicKey, randomBytes, verify as cryptoVerify } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { sqlite } from '../db/index.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { newId } from '../lib/ids.js';
 import { currentOwnerId, runWithOwner } from '../lib/context.js';
 import { loadKek, open } from '../lib/crypto/index.js';
+import { verifyOidcIdToken, type OidcClaims } from '../lib/auth/verifyOidcIdToken.js';
+import { base64url, s256 } from '../lib/auth/pkce.js';
 import { BaseOAuth2Client, revoke } from '../connectors/index.js';
 import { buildGoogleScopes } from '../mcp/gmail-flag.js';
 
@@ -26,16 +28,6 @@ import { buildGoogleScopes } from '../mcp/gmail-flag.js';
  */
 
 const STATE_TTL_MS = 10 * 60 * 1000; // authorize redirects are short-lived (10 min)
-
-/** base64url-encode a buffer (RFC 7636 / 4648 §5) — no padding, URL-safe alphabet. */
-function base64url(buf: Buffer): string {
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-/** PKCE S256 challenge: base64url(SHA-256(verifier)). */
-function s256(verifier: string): string {
-  return base64url(createHash('sha256').update(verifier).digest());
-}
 
 /** Where the SPA settings page lives; the callback bounces back here. */
 function settingsRedirect(query: string): string {
@@ -67,96 +59,23 @@ async function resolveAccountEmail(tok: GoogleTokenResponse, expectedNonce: stri
   return null;
 }
 
-interface IdTokenClaims {
-  iss?: string;
-  aud?: string;
-  exp?: number;
-  email?: string;
-  nonce?: string;
-  [k: string]: unknown;
-}
-
 const GOOGLE_ISSUERS = new Set(['accounts.google.com', 'https://accounts.google.com']);
 const GOOGLE_JWKS_URI = process.env.CP_GOOGLE_JWKS_URI ?? 'https://www.googleapis.com/oauth2/v3/certs';
 
-interface Jwk {
-  kid?: string;
-  kty?: string;
-  alg?: string;
-  use?: string;
-  n?: string;
-  e?: string;
-}
-
-/** Fetch Google's signing keys (JWKS). Returns [] on any failure (treated as unverifiable). */
-async function fetchGoogleJwks(): Promise<Jwk[]> {
-  try {
-    const res = await fetch(GOOGLE_JWKS_URI);
-    if (!res.ok) return [];
-    const json = (await res.json()) as { keys?: Jwk[] };
-    return Array.isArray(json.keys) ? json.keys : [];
-  } catch {
-    return [];
-  }
-}
-
 /**
- * Verify a Google id_token end to end (I1). Returns the claims ONLY if:
- *  - it is a well-formed 3-segment RS256 JWT,
- *  - its signature checks against a JWKS key (matched by `kid`),
- *  - iss ∈ {accounts.google.com, https://accounts.google.com},
- *  - aud === config.google.clientId,
- *  - exp is in the future,
- *  - nonce matches the one we stored (when we issued one).
- * A tampered / unsigned / alg=none token returns null — it can NEVER establish identity.
+ * Verify a Google id_token end to end (I1) — delegates to the SHARED OIDC verifier
+ * (lib/auth/verifyOidcIdToken.ts, extracted from this file's original implementation
+ * in U1 so the CI-Portal login and this connector share one copy of the JWKS/RS256/
+ * claims-contract code). Same guarantees as before: tampered / unsigned / alg=none /
+ * wrong-iss / wrong-aud / expired / nonce-mismatched tokens can NEVER establish identity.
  */
-async function verifyIdToken(idToken: string, expectedNonce: string | null): Promise<IdTokenClaims | null> {
-  const parts = idToken.split('.');
-  if (parts.length !== 3) return null;
-  const [headerB64, payloadB64, signatureB64] = parts;
-
-  let header: { alg?: string; kid?: string };
-  let claims: IdTokenClaims;
-  try {
-    header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
-    claims = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-  } catch {
-    return null;
-  }
-
-  // Reject anything that isn't an asymmetric RS256 signature (notably alg=none).
-  if (header.alg !== 'RS256') return null;
-  if (!signatureB64) return null;
-
-  const jwks = await fetchGoogleJwks();
-  const candidates = header.kid ? jwks.filter((k) => k.kid === header.kid) : jwks;
-  if (candidates.length === 0) return null;
-
-  const signingInput = Buffer.from(`${headerB64}.${payloadB64}`);
-  const signature = Buffer.from(signatureB64, 'base64url');
-
-  let signatureValid = false;
-  for (const jwk of candidates) {
-    if (jwk.kty !== 'RSA' || !jwk.n || !jwk.e) continue;
-    try {
-      const key = createPublicKey({ key: jwk as object, format: 'jwk' });
-      if (cryptoVerify('RSA-SHA256', signingInput, key, signature)) {
-        signatureValid = true;
-        break;
-      }
-    } catch {
-      // try the next key
-    }
-  }
-  if (!signatureValid) return null;
-
-  // Signature is genuine — now enforce the registered-claims contract.
-  if (!claims.iss || !GOOGLE_ISSUERS.has(claims.iss)) return null;
-  if (!config.google.clientId || claims.aud !== config.google.clientId) return null;
-  if (typeof claims.exp !== 'number' || claims.exp * 1000 <= Date.now()) return null;
-  if (expectedNonce && claims.nonce !== expectedNonce) return null;
-
-  return claims;
+function verifyIdToken(idToken: string, expectedNonce: string | null): Promise<OidcClaims | null> {
+  return verifyOidcIdToken(idToken, {
+    issuers: GOOGLE_ISSUERS,
+    audience: config.google.clientId,
+    jwksUri: GOOGLE_JWKS_URI,
+    expectedNonce,
+  });
 }
 
 interface OAuthStateRow {

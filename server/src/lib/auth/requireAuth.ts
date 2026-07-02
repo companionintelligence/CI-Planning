@@ -21,15 +21,19 @@ import type { VerifiedClaims } from './types.js';
 
 // Reachable without authentication: liveness + the auth-bootstrap config a client
 // needs *before* it has a credential, the local-login endpoints (U2 — you can't
-// present a session before you've logged in; logout just clears the cookie), plus
-// the Google OAuth callback — Google's redirect arrives with no app credential and
-// the owner is resolved SOLELY from the matched oauth_states row (I2). Everything
-// else under /api is gated.
+// present a session before you've logged in; logout just clears the cookie), the
+// CI-Portal login redirect pair (U1 — /start begins the login so it runs pre-
+// session; the portal's redirect to /callback arrives with no app credential and
+// the flow is resolved SOLELY from the matched auth_states row + verified
+// id_token), plus the Google OAuth callback (same shape, oauth_states, I2).
+// Everything else under /api is gated.
 const PUBLIC_PREFIXES = [
   '/api/health',
   '/api/auth/config',
   '/api/auth/login',
   '/api/auth/logout',
+  '/api/auth/ciportal/start',
+  '/api/auth/ciportal/callback',
   '/api/oauth/google/callback',
 ];
 
@@ -68,10 +72,11 @@ export function requireAuth(): Koa.Middleware {
 
     let claims: VerifiedClaims;
     try {
-      if (config.auth.mode === 'sso' && config.auth.disableOidc) {
-        // U2: OIDC is disabled → this owner logged in locally; trust the signed,
-        // httpOnly session cookie instead of a Bearer JWT / api-key. (The full SSO
-        // Bearer path — DISABLE_OIDC=false — is added in U1.)
+      if (config.auth.mode === 'sso') {
+        // Both sso sub-modes end their login by minting the signed, httpOnly session
+        // cookie — CI-Portal SSO (U1) via the OAuth callback, local username/password
+        // (U2, DISABLE_OIDC) via /api/auth/login — so the request-time check is the
+        // same for both: trust only the verified session.
         const session = verifySession(ctx);
         if (!session) {
           ctx.status = 401;
@@ -86,7 +91,7 @@ export function requireAuth(): Koa.Middleware {
           ctx.body = { error: 'unauthenticated' };
           return;
         }
-        claims = verifyApiKey(apiKey); // SSO Bearer path is added in U1
+        claims = verifyApiKey(apiKey); // standalone: hashed x-api-key
       }
     } catch (e) {
       ctx.status = (e as { status?: number }).status ?? 401;
