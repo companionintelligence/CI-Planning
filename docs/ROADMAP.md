@@ -2,7 +2,7 @@
 
 **Status (2026-07-01, migration head 0086):** **A · B0 · C · D · E · F · G · H · R · I · J · L · M · N shipped & merged**, plus a standalone **Google-connector track** (OAuth 2.1 + MCP + live Calendar/Gmail — #130–#139) and a **tag-driven autoplan engine** (#121–#129). **Phase L** (multi-device sync & offline writes, migs 0076–0079, #184) is complete — field-level merge, SSE catch-up, IndexedDB op-log, 3 P3 gaps remain deferred. **Phase M** (AI scheduler — real LLM planning, reactive reflow, `daily_plan`, calibration, migs 0062–0067, #146–#148) is merged. **Phase N** (life-planning layer — objectives hierarchy, reflections/goals, morning briefing, weekly review, estimate calibration & plan outcomes, migs 0080–0084, #185) is merged. **Task-list + strategic-layer upgrade** (placement lifecycle open↔scheduled, task→objective auto-promotion with height-based leveling, block-template application, migs 0085–0086, #189) is in review. The §3b `patterns`→`routines` rename stays **deferred** (the as-built `patterns` naming stands; see GLOSSARY). *Superseded planning docs now live in [archive/](archive/); see [archive/README.md](archive/README.md).*
 
-> **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). Each phase has its own `docs/<id>-*.md` spec; the new G UX is canonical in [design-today-cockpit.md](design-today-cockpit.md).
+> **v2 supersedes the original A–K plan.** See [§ What changed](#what-changed-from-v1). Each phase has its own `docs/<id>-*.md` spec; the new G UX is canonical in [design-today-cockpit.md](archive/design-today-cockpit.md).
 
 > **Phase G reconception (2026-06-20).** The old "Rituals & reflection / wire `planning_mode` / AI-ordering" G is **replaced**. Planning is now **manual-or-Auto, flight-plan-centric**: you drag, or **Auto** schedules *only staged flight-plan items* per **Time-Block** (tag) or **Pattern** rules. The `planning_mode` (`auto | ritual`) toggle is **retired** — "ritual" becomes a **Pattern type** (Routine ▢ / Habit ◯ / Ritual △, user-extensible). A's deterministic scheduler is **reframed** as that Auto engine (no longer auto-packs the whole backlog), and **overlap becomes allowed-but-flagged**. The "before work" relative-timing / proximity / learned-ordering intelligence is **deferred** (`G-INT`). Full spec: [G-rituals-reflection.md](archive/G-rituals-reflection.md).
 
@@ -45,13 +45,13 @@
 | | **G** **Time-Blocking, Patterns & the TODAY cockpit** | B0, C, E, F | **L** | ✅ done (#60–#65, #77) — cockpit, PLANNER, flight-plan, textures all landed; drawer superseded by ElementWizard |
 | | **H** Notifications + service worker / Web Push | B0 (G for pattern-reminder content) | M | ✅ done (#100–#102) — live once VAPID keys are set |
 | 2 Resilience | **R** Backups, restore, export/import | B0 | S–M | ✅ done (#108–#110) — every mutating route writes an audit row |
-| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | ✅ done (#116–#120) — JWKS verify-only · API-key store · encrypted tokens (`0049`/`0050`) · rate-limit · threat model |
+| 3 Multi-user & cloud *(gated on a real driver)* | **I** Identity, auth & connector infra | B0, R | L | ⚠️ **partial** (#116–#120) — **shipped:** API-key "standalone" store (PR1), `requireAuth` guard, encrypted tokens (`0049`/`0050`), rate-limit, threat model. **NOT shipped:** the JWKS verify-only SSO Bearer path (PR2) — `requireAuth.ts`/`config.ts` still carry `// (PR2)` markers, no `auth/jwks.ts`, no `owners.external_subject` → completed in **Phase U** (detail in [recap_state_A-S.md](recap_state_A-S.md) §5) |
 | | **J** Two-way calendar sync | I, F | L | ✅ done (#128, `external_events` `0051`) — inbound; extended by the Connectors track below |
 | | **Connectors** Google OAuth 2.1 + MCP + live Calendar/Gmail | I, J | L | ✅ done (#130–#139, migrations `0058`–`0061`) |
-| | **K** Auto-defense (continuous re-plan) | A, F, J | M | ↪ **folded into M** — see [M-ai-scheduler.md](M-ai-scheduler.md) |
-| | **L** Multi-device sync & offline writes | B0, I, H | L | ✅ done (migs 0076–0079, #184); P1+P2 gaps closed; 3 P3 items deferred — see [L-multi-device-sync.md](L-multi-device-sync.md) |
-| | **M** AI scheduler — real LLM planning · reactive reflow (absorbs K) · back stubbed claims | A, F, G, J | L | ✅ done (migs 0062–0067, #146–#148) — [M-ai-scheduler.md](M-ai-scheduler.md) |
-| | **N** Life-planning layer — objectives, reflections, morning briefing, weekly review, learning loops | M, G | L | ✅ done (migs 0080–0084, #185) — [N-life-planning.md](N-life-planning.md) |
+| | **K** Auto-defense (continuous re-plan) | A, F, J | M | ↪ **folded into M** — see [M-ai-scheduler.md](archive/M-ai-scheduler.md) |
+| | **L** Multi-device sync & offline writes | B0, I, H | L | ✅ done (migs 0076–0079, #184); P1+P2 gaps closed; 3 P3 items deferred — see [L-multi-device-sync.md](archive/L-multi-device-sync.md) |
+| | **M** AI scheduler — real LLM planning · reactive reflow (absorbs K) · back stubbed claims | A, F, G, J | L | ✅ done (migs 0062–0067, #146–#148) — [M-ai-scheduler.md](archive/M-ai-scheduler.md) |
+| | **N** Life-planning layer — objectives, reflections, morning briefing, weekly review, learning loops | M, G | L | ✅ done (migs 0080–0084, #185) — [N-life-planning.md](archive/N-life-planning.md) |
 
 **G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). **G7** custom Routine-type management UI is **shipped** (#115, W1-C); **G-INT** (timing intelligence) remains deferred. The detailed spec [archive/G-rituals-reflection.md](archive/G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — archived for history only.
 
@@ -60,7 +60,7 @@
 ## Track 0 — Foundation
 
 ### B0 — Migration runner + owner-scoped data model (no auth)
-**Goal:** a real migration runner and an owner-scoped schema, so all later schema work is safe and multi-tenant is a cheap flip — **without** building auth. Full implementation spec: [B0-migration-runner.md](B0-migration-runner.md).
+**Goal:** a real migration runner and an owner-scoped schema, so all later schema work is safe and multi-tenant is a cheap flip — **without** building auth. Full implementation spec: [B0-migration-runner.md](archive/B0-migration-runner.md).
 
 **Components**
 - **Migration runner** + `schema_migrations` table. Ordered, idempotent, forward-only (expand/contract); `pnpm migrate`. Supersedes the ad-hoc `migrateColumns()` `addCol` helper and the cross-branch `CREATE TABLE IF NOT EXISTS` drift (folded into migration `0001`).
@@ -132,7 +132,7 @@ Time-Block's tag filter or a Pattern's rules.
   block outlines, pattern textures).
 - **Tickets, acceptance, tests, and per-ticket state:**
   [G-rituals-reflection.md](archive/G-rituals-reflection.md) · UX:
-  [design-today-cockpit.md](design-today-cockpit.md).
+  [design-today-cockpit.md](archive/design-today-cockpit.md).
 - **Acceptance (phase):** cockpit renders (Day Overview · Summary+NewTask · PLANNER ·
   Flight-plan · never-closing drawer); Time-Blocks + Patterns exist end-to-end;
   scheduling is flight-plan-only with the two-step Auto; PLANNER shows the 8h/pin/
@@ -152,7 +152,7 @@ Time-Block's tag filter or a Pattern's rules.
 
 ### R — Backups, restore, export/import *(new — was missing)*
 **Goal:** recoverability for hardware you *sell*, and portability for "UnCloud Your Life."
-- **Infra:** scheduled SQLite snapshots and/or **Litestream** continuous replication; one-command restore; the rule "replicate the `.db`, never sync `.db` over Syncthing." Full spec: [R-backups-restore.md](R-backups-restore.md).
+- **Infra:** scheduled SQLite snapshots and/or **Litestream** continuous replication; one-command restore; the rule "replicate the `.db`, never sync `.db` over Syncthing." Full spec: [R-backups-restore.md](archive/R-backups-restore.md).
 - **API/Client:** `GET /api/export` (full JSON), `POST /api/import` (validated, owner-scoped); a Settings "Back up / restore / export" panel.
 - **Audit log (foundation):** append-only `audit_log(owner_id, actor, action, entity, at)` — lightweight now, essential before auth/multi-device.
 - **Tests:** snapshot→wipe→restore yields byte-identical state; export→import round-trips with stable ids; import rejects malformed/foreign-owner data.
@@ -194,7 +194,7 @@ Time-Block's tag filter or a Pattern's rules.
 
 ### K — Auto-defense (continuous re-plan)
 
-> ↪ **Folded into Phase M.** The reactive reflow is now specified, code-accurately, as **Workstream B** of [M-ai-scheduler.md](M-ai-scheduler.md) — it wraps the live `placeFlightPlan` engine (the "auto_schedule cron calls `runScheduler`" line below is stale; the cron calls `fillFlightPlanCandidates`). This section is retained for the anti-thrash rules M reuses.
+> ↪ **Folded into Phase M.** The reactive reflow is now specified, code-accurately, as **Workstream B** of [M-ai-scheduler.md](archive/M-ai-scheduler.md) — it wraps the live `placeFlightPlan` engine (the "auto_schedule cron calls `runScheduler`" line below is stale; the cron calls `fillFlightPlanCandidates`). This section is retained for the anti-thrash rules M reuses.
 **Goal:** re-plan when meetings appear or blocks are missed — **without thrashing**.
 - **Engine:** triggers — inbound sync (J), missed-block detection, task changes. Reflow only auto/unlocked blocks. **Anti-thrash is the feature, not a footnote:** never move the block the user is currently in, never move locked/meeting/completed, cap displacement per run, require a minimum stability window before re-moving the same block. Debounce on top.
 - **Tests:** a new meeting reflows overlapping auto-blocks, never moves locked/meeting/in-progress; missed block re-queues its task; identical input is a no-op; in-progress block never displaced; reflow idempotent.
@@ -202,18 +202,18 @@ Time-Block's tag filter or a Pattern's rules.
 
 ### L — Multi-device sync & offline writes (D3, **revised**)
 
-> 🚧 **Core built** — migrations 0076–0079, field-level merge, `POST /api/sync`, SSE catch-up (`Last-Event-ID` replay + overflow `id:` cursor advance), client op-log (IndexedDB), optimistic mutations + 404-rollback, persistent conflict banner, SW push-wake flush, `sync_events` daily prune job, `field_ts` seeding from `updated_at`. All P1 + P2 gaps closed. Full implementation spec: [L-multi-device-sync.md](L-multi-device-sync.md).
+> 🚧 **Core built** — migrations 0076–0079, field-level merge, `POST /api/sync`, SSE catch-up (`Last-Event-ID` replay + overflow `id:` cursor advance), client op-log (IndexedDB), optimistic mutations + 404-rollback, persistent conflict banner, SW push-wake flush, `sync_events` daily prune job, `field_ts` seeding from `updated_at`. All P1 + P2 gaps closed. Full implementation spec: [L-multi-device-sync.md](archive/L-multi-device-sync.md).
 **Goal:** PWA offline write path; converge across a single owner's devices.
 - **Infra:** client offline op-log (IndexedDB); server apply with a **monotonic per-record version** and **field-level merge** (not whole-record LWW); **completions are monotonic** — a concurrent edit can't silently un-complete a task. SSE pushes authoritative state; genuine conflicts surface a persistent banner (not a toast).
 - **Tests:** 25 server-side (22 apply + 3 SSE catch-up) + 18 client-side (10 oplog + 8 conflict-store); 96 server test files green.
 - **Acceptance:** offline edits appear after reconnect with no data loss; concurrent edits converge predictably; **no lost completions** (now actually achievable, vs v1's LWW which contradicted this).
-- **Deferred (P3 only):** `baseVersion` staleness fence (gap 1/2), `time_blocks` owner check (gap 5), client version in optimistic state (gap 6). None affect current correctness. See [known gaps](L-multi-device-sync.md#known-gaps-prioritized-backlog).
+- **Deferred (P3 only):** `baseVersion` staleness fence (gap 1/2), `time_blocks` owner check (gap 5), client version in optimistic state (gap 6). None affect current correctness. See [known gaps](archive/L-multi-device-sync.md#known-gaps-prioritized-backlog).
 
 ---
 
 ### M — AI scheduler (real LLM planning + reactive reflow + stub-backing) *(new — absorbs K)*
 
-> 📋 **Spec'd — next build.** Full implementation spec: [M-ai-scheduler.md](M-ai-scheduler.md). Renamed from the draft `L-ai-scheduler-plan.md` (L is Multi-device sync). Dependencies A/F/G/J are all shipped, so it is buildable now; it builds on the autoplan engine (#121–#129).
+> 📋 **Spec'd — next build.** Full implementation spec: [M-ai-scheduler.md](archive/M-ai-scheduler.md). Renamed from the draft `L-ai-scheduler-plan.md` (L is Multi-device sync). Dependencies A/F/G/J are all shipped, so it is buildable now; it builds on the autoplan engine (#121–#129).
 
 **Goal:** close the gap between the marketed "local-LLM auto-block" and the code. The LLM **authors** a durable day order once per day (into a `daily_plan` table); placement and reflow **execute it deterministically**; a Phase-K reactive reflow defends the day without thrash. Also backs three stubbed claims (`overrun`, `day_theme`, `sqlite-vec`).
 - **Workstream A — real LLM planning** behind the §A0 generate→evaluate→iterate harness (generator ≠ judge, deterministic-gated rubric, bounded recursion, append-only `audit_log`, escape hatch on stall).
