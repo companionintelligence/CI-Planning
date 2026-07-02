@@ -93,7 +93,8 @@ export function setPatternPref(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
        VALUES (?, ?, ?, 'pattern', ?, ?, ?, ?, ?)
        ON CONFLICT(owner_id, tag_id)
-       DO UPDATE SET auto_fill = excluded.auto_fill,
+       DO UPDATE SET kind = 'pattern',
+                     auto_fill = excluded.auto_fill,
                      reminder_offsets = excluded.reminder_offsets,
                      icon_shape = excluded.icon_shape,
                      color_token = excluded.color_token,

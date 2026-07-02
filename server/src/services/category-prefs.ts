@@ -61,10 +61,18 @@ export function setCategoryPref(
 
   sqlite
     .prepare(
+      // On conflict, normalize the row to the category axis: rewrite kind and NULL
+      // the pattern-only columns. Belt-and-suspenders — a tag's kind is immutable at
+      // runtime today, so a stale-kind row shouldn't exist, but this keeps a category
+      // pref self-consistent (visible to getCategoryPrefs' kind='category' filter, no
+      // stale pattern-only values) regardless of how the row got there.
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
        VALUES (?, ?, ?, 'category', ?, ?)
        ON CONFLICT(owner_id, tag_id)
-       DO UPDATE SET color_token = excluded.color_token, default_minutes = excluded.default_minutes`,
+       DO UPDATE SET kind = 'category',
+                     color_token = excluded.color_token,
+                     default_minutes = excluded.default_minutes,
+                     auto_fill = NULL, reminder_offsets = NULL, icon_shape = NULL`,
     )
     .run(newId(), ownerId, categoryTagId, merged.color_token, merged.default_minutes);
 
