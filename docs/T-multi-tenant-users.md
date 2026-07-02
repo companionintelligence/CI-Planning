@@ -80,7 +80,7 @@ Full detail per ticket in [T-multitenant-tickets.md](T-multitenant-tickets.md).
 **Order: T0 → T3 → T4 → T2 → T1 → T5.** *(Corrected from time_blocks-first: T0 unblocks testing; T3 is schema-free and fixes a latent blocker independently; T4 is tiny; **T2/T1 are the two heavy rebuilds** — the design's original time_blocks-first order front-loaded all risk into the single hardest rebuild. [F-ORDER](T-multitenant-tickets.md#fault-f-order).)*
 
 - **Depends on:** Q + S merged (done, head `0097`).
-- **T2 depends on T1** (`entity_tags` `time_block` rows need `time_blocks.owner_id`).
+- **T2 is intentionally before T1** (it’s the smaller rebuild to validate the migration/backup/test pattern first); ensure `entity_tags` export/restore scopes via `tags.owner_id`/tag membership so `time_block` rows remain tenant-safe even before `time_blocks.owner_id` exists.
 - **T5 with Phase U** (decision #3).
 - **Blocks:** U (needs T's `owners` shape) and softly W's final GraphQL owner-scoping shape.
 - **Parallel-safe with:** Y (env audit), X (MCP vocab); W's non-ownership design.
