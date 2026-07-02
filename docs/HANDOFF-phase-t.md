@@ -25,7 +25,7 @@
   - `server/src/jobs/index.ts`: `startCronJobs` fans **owner-scoped kinds** out over `SELECT id FROM owners` via the exported **`runScheduledJob(kind)`** (each owner inside its own `runWithOwner`, so `currentOwnerId()`/SSE-broadcast/audit target that owner). **Global kinds** run once: `review_day`, `fire_reminders` (they iterate owners internally), `snapshot_db`, `prune_sync_events`. `prune_sync_events` now prunes **all** owners by age (dropped the owner predicate). `runJob` audits under `currentOwnerId()`. **Manual `POST /api/jobs/:id/run` stays single-owner** (calls `runJob` directly under the requesting owner). Test: `jobs-multiowner.test.ts`.
 - **T4 — `sync_events.owner_id` → real FK (PR #219).** Migration **`0098_sync_events_owner_fk`** (`rebuildTable`, `manual`; recreates the `sync_events_owner_seq (owner_id,seq)` index; **no** `ON DELETE CASCADE`). `schema.ts` `.references(() => owners.id)` + a documenting comment on `possible_tasks.proposed_owner_id` (documented, not renamed). Test: `sync-events-schema.test.ts`.
 
-*Also merged earlier this session (context):* A–S archival + `recap_state_A-S.md` (#213); Phase-T design + tickets (#214); **backup export-completeness fix (#215** — added the omitted owner-scoped tables to export/import, **`EXPORT_VERSION` → `'4'`**, closed gap G-EXPORT-MISSING); doc-staleness fixes (#216); Phase-Y `.env.example` completion (#217).
+*Also merged earlier this session (context):* A–S archival + `recap_state_A-S.md` (#213); Phase-T design + tickets (#214); **backup export-completeness fix (#215)** — added the omitted owner-scoped tables to export/import, **`EXPORT_VERSION` → `'4'`**, closed gap G-EXPORT-MISSING; doc-staleness fixes (#216); Phase-Y `.env.example` completion (#217).
 
 ---
 
