@@ -115,12 +115,22 @@ sequenceDiagram
    connection token. `sub` → `owners.external_subject`; a new `sub` with `AUTH_AUTO_PROVISION=true`
    provisions a fresh owner (see below), otherwise 403.
 
+**Discovery-driven** (matches CI-Import-Tools, the sibling consumer). The only required
+config is `CIPORTAL_ISSUER` + `CIPORTAL_CLIENT_ID`; the authorize/token/JWKS endpoints — and the
+canonical token `iss` — are read at runtime from `<issuer>/.well-known/openid-configuration`
+(`lib/auth/oidcDiscovery.ts`, 1h cache). The explicit `CIPORTAL_*_URI` vars remain as optional
+overrides to bypass discovery (air-gapped / a provider without a discovery doc).
+
 **Security properties** (enforced in `verifyOidcIdToken.ts` + the callback):
 
 - Only an **RS256** signature is accepted — `alg:none`, `HS256`, `ES256`, `EdDSA` are all rejected.
 - Signature is checked against the portal's JWKS (matched by `kid`); a token signed by any other key
   is rejected.
-- `iss` must equal `CIPORTAL_ISSUER`; `aud` must equal `CIPORTAL_CLIENT_ID`; `exp` must be future.
+- `iss` must equal the **discovery document's `issuer`** (not the configured discovery URL); `aud`
+  must equal `CIPORTAL_CLIENT_ID`; `exp` must be future. This distinction is load-bearing: CI-Portal
+  runs **better-auth**, which serves discovery at `…/api/auth` but stamps the **bare origin**
+  (`https://hub.companionintelligence.com`) as the token `iss` — validating against `doc.issuer`
+  is what makes real tokens verify.
 - The **nonce is always enforced** (`auth_states.nonce` is `NOT NULL`), so a token minted for a
   different flow can't be spliced in.
 - `state` is single-use (`DELETE … RETURNING`) and expires (10 min). It is also **bound to the
@@ -204,20 +214,23 @@ All auth env vars (see [`server/.env.example`](../server/.env.example) for the a
 | `DISABLE_OIDC` | — | `sso` only: `true` ⇒ local login instead of CI-Portal |
 | `AUTH_AUTO_PROVISION` | — | `true` ⇒ an unknown CI-Portal `sub` provisions a new owner; else 403 |
 | `AUTH_DEFAULT_USERNAME` / `AUTH_DEFAULT_PASSWORD` | local, first boot | seed the first local owner (fails closed if no login path) |
-| `CIPORTAL_CLIENT_ID` | prod `sso`+OIDC | our client registration at CI-Portal |
+| `CIPORTAL_ISSUER` | — | discovery base; **default `https://hub.companionintelligence.com/api/auth`**. Endpoints + canonical `iss` come from `<issuer>/.well-known/openid-configuration` |
+| `CIPORTAL_CLIENT_ID` | prod `sso`+OIDC | our client registered at CI-Portal (public PKCE); no default |
 | `CIPORTAL_CLIENT_SECRET` | confidential clients only | omit for public/PKCE-only |
-| `CIPORTAL_ISSUER` | prod `sso`+OIDC | expected id_token `iss` (discovery `issuer`) |
-| `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | prod `sso`+OIDC | discovery endpoints |
 | `CIPORTAL_REDIRECT_URI` | — | default `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` — must match the URI registered at CI-Portal |
+| `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | — | **optional** overrides — set all three to bypass discovery (then `CIPORTAL_ISSUER` must equal the token's actual `iss`) |
 
 **Boot guards** (`config.ts`, fail-closed): `AUTH_MODE=test` forbidden in production;
-`AUTH_MODE=sso` requires `SESSION_SECRET`; production `sso`+OIDC requires the full `CIPORTAL_*` set.
+`AUTH_MODE=sso` requires `SESSION_SECRET`; production `sso`+OIDC requires `CIPORTAL_ISSUER` +
+`CIPORTAL_CLIENT_ID` (endpoints are discovered, so they're no longer required up front).
 
-> **Still needed from the CI-Portal team** to point at the *real* portal: the discovery values (fetch
-> `https://hub.companionintelligence.com/.well-known/openid-configuration` over Tailscale) and the
-> client-registration mechanics (self-service vs hand-provisioned; public+PKCE vs confidential). Until
-> then, use the fixture portal below. The older generic `AUTH_JWKS_URL`/`AUTH_ISSUER` vars predate the
-> `CIPORTAL_*` set and are unused — repoint-or-retire is an open dev-team decision.
+> **Confirmed against CI-Import-Tools** (the sibling consumer, `backend/src/auth/`): CI-Portal runs
+> **better-auth**; the discovery issuer is `https://hub.companionintelligence.com/api/auth` (now the
+> default); consumers are **public PKCE clients** (CI-Import-Tools registers `ci-import-tools`).
+> **The one thing still needed from the CI-Portal team**: register a client for this app (public PKCE)
+> and set `CIPORTAL_CLIENT_ID`. Until then, use the fixture portal below. The older generic
+> `AUTH_JWKS_URL`/`AUTH_ISSUER` vars predate the `CIPORTAL_*` set and are unused — repoint-or-retire is
+> an open dev-team decision.
 
 ---
 
