@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
@@ -12,7 +12,12 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
  */
 const OWNER = SYSTEM_OWNER;
 const pad = (n: number) => String(n).padStart(2, '0');
-const BASE = new Date();
+// Pinned "now" so this suite is deterministic at any wall-clock hour. The recurrence
+// engines derive `today` from the system clock (localDateInTZ(new Date(), tz)); we
+// freeze that clock in beforeAll. Noon UTC = 05:00 America/Los_Angeles the SAME
+// calendar day, so the non-UTC-tz clamp test has no midnight-boundary off-by-one.
+const NOW_ISO = '2026-06-15T12:00:00.000Z';
+const BASE = new Date(NOW_ISO);
 function isoDay(offset: number): string {
   const d = new Date(BASE);
   d.setUTCDate(d.getUTCDate() + offset);
@@ -41,8 +46,14 @@ const setHorizon = (n: number) => sqlite.prepare(`UPDATE scheduling_prefs SET re
 const typeId = (name: string) => (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = ? AND owner_id = ?`).get(name, OWNER) as { id: string }).id;
 
 let srv: TestServer;
-beforeAll(async () => { srv = await startTestServer(); });
-afterAll(async () => { await srv.close(); });
+beforeAll(async () => {
+  // Freeze the clock (Date only — leaves setTimeout/await real) so `new Date()` in
+  // the recurrence engines AND in this file's date anchors is deterministic.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(NOW_ISO));
+  srv = await startTestServer();
+});
+afterAll(async () => { await srv.close(); vi.useRealTimers(); });
 beforeEach(() => {
   resetDb(); // pins timezone='UTC' + recurrence_horizon_days=7
   sqlite.exec(`DELETE FROM pattern_day_optouts; DELETE FROM pattern_tasks; DELETE FROM patterns; DELETE FROM flight_plan;`);
