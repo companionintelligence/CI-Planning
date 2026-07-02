@@ -29,10 +29,10 @@ interface BlockRow {
   status: string;
 }
 
-function blockRow(id: string): BlockRow | undefined {
+function blockRow(id: string, ownerId: string): BlockRow | undefined {
   return sqlite
-    .prepare(`SELECT id, task_id, block_kind, start_at, end_at, all_day, is_locked, status FROM time_blocks WHERE id = ?`)
-    .get(id) as BlockRow | undefined;
+    .prepare(`SELECT id, task_id, block_kind, start_at, end_at, all_day, is_locked, status FROM time_blocks WHERE id = ? AND owner_id = ?`)
+    .get(id, ownerId) as BlockRow | undefined;
 }
 
 /**
@@ -45,13 +45,13 @@ function blockRow(id: string): BlockRow | undefined {
  * clears `task_time` (it has no clock time). Returns the synced task id, or null.
  */
 export function syncTaskFromBlock(blockId: string, ownerId: string): string | null {
-  const block = blockRow(blockId);
+  const block = blockRow(blockId, ownerId);
   if (!block || !block.task_id || block.block_kind !== 'task') return null;
 
   // Only the earliest placement of the task owns its scheduling fields.
   const earliest = sqlite
-    .prepare(`SELECT MIN(start_at) AS s FROM time_blocks WHERE task_id = ? AND block_kind = 'task'`)
-    .get(block.task_id) as { s: string | null } | undefined;
+    .prepare(`SELECT MIN(start_at) AS s FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'`)
+    .get(block.task_id, ownerId) as { s: string | null } | undefined;
   if (earliest?.s && block.start_at > earliest.s) return null;
 
   const tz = ownerTimezone(ownerId);
@@ -82,7 +82,7 @@ export function syncTaskFromBlock(blockId: string, ownerId: string): string | nu
  * task id when a mirror was applied.
  */
 export function mirrorBlockStatusToTask(blockId: string, ownerId: string): string | null {
-  const block = blockRow(blockId);
+  const block = blockRow(blockId, ownerId);
   if (!block || !block.task_id || block.block_kind !== 'task') return null;
   if (block.status === 'completed') {
     sqlite
@@ -141,9 +141,9 @@ export function revertTaskPlacementStatus(taskId: string, ownerId: string): stri
   const active = sqlite
     .prepare(
       `SELECT 1 FROM time_blocks
-        WHERE task_id = ? AND block_kind = 'task' AND status IN ('planned','overrun') LIMIT 1`,
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('planned','overrun') LIMIT 1`,
     )
-    .get(taskId);
+    .get(taskId, ownerId);
   if (active) return null;
   sqlite.prepare(`UPDATE tasks SET status = 'open' WHERE id = ? AND owner_id = ?`).run(taskId, ownerId);
   stampRow(sqlite, 'task', taskId, ['status']);
@@ -172,10 +172,10 @@ export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resiz
   const block = sqlite
     .prepare(
       `SELECT id, start_at, end_at, all_day, is_locked FROM time_blocks
-       WHERE task_id = ? AND block_kind = 'task' AND status = 'planned'
+       WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned'
        ORDER BY start_at ASC LIMIT 1`,
     )
-    .get(taskId) as { id: string; start_at: string; end_at: string; all_day: number; is_locked: number } | undefined;
+    .get(taskId, ownerId) as { id: string; start_at: string; end_at: string; all_day: number; is_locked: number } | undefined;
   if (!block || block.all_day || block.is_locked) return null;
 
   const tz = ownerTimezone(ownerId);
@@ -194,7 +194,7 @@ export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resiz
 
   if (newStart === block.start_at && newEnd === block.end_at) return null; // no change
   sqlite
-    .prepare(`UPDATE time_blocks SET start_at = ?, end_at = ?, is_auto = 0 WHERE id = ?`)
-    .run(newStart, newEnd, block.id);
+    .prepare(`UPDATE time_blocks SET start_at = ?, end_at = ?, is_auto = 0 WHERE id = ? AND owner_id = ?`)
+    .run(newStart, newEnd, block.id, ownerId);
   return block.id;
 }

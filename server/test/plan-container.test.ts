@@ -27,14 +27,14 @@ function insertTask(title: string, est = 30, tag?: string): string {
 /** A Plan container (block_kind='timeblock', block_type='plan'). */
 function insertPlan(startISO: string, endISO: string, tag?: string): string {
   return (sqlite
-    .prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, status) VALUES (uuid7(), 'Plan', 'timeblock', 'plan', ?, ?, ?, 0, 'planned') RETURNING id`)
-    .get(tag ?? null, startISO, endISO) as { id: string }).id;
+    .prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, status, owner_id) VALUES (uuid7(), 'Plan', 'timeblock', 'plan', ?, ?, ?, 0, 'planned', ?) RETURNING id`)
+    .get(tag ?? null, startISO, endISO, OWNER) as { id: string }).id;
 }
 /** A task block inside a Plan (parent_block_id set). */
 function insertChild(parentId: string | null, startISO: string, endISO: string, title = 'task'): string {
   return (sqlite
-    .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, status, parent_block_id) VALUES (uuid7(), ?, 'task', ?, ?, 1, 'planned', ?) RETURNING id`)
-    .get(title, startISO, endISO, parentId) as { id: string }).id;
+    .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, status, parent_block_id, owner_id) VALUES (uuid7(), ?, 'task', ?, ?, 1, 'planned', ?, ?) RETURNING id`)
+    .get(title, startISO, endISO, parentId, OWNER) as { id: string }).id;
 }
 const row = (id: string) => sqlite.prepare(`SELECT * FROM time_blocks WHERE id = ?`).get(id) as
   { id: string; start_at: string; end_at: string; parent_block_id: string | null } | undefined;

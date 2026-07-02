@@ -123,7 +123,7 @@ function applyInbound(
         .get(connector.provider, connector.account, event.id, ownerId) as { block_id: string } | undefined;
       if (mapping) {
         // Deleting the block cascades the external_events mapping (ON DELETE CASCADE).
-        sqlite.prepare('DELETE FROM time_blocks WHERE id = ?').run(mapping.block_id);
+        sqlite.prepare('DELETE FROM time_blocks WHERE id = ? AND owner_id = ?').run(mapping.block_id, ownerId);
         result.deleted++;
       }
       continue;
@@ -148,10 +148,10 @@ function applyInbound(
       sqlite.transaction(() => {
         sqlite
           .prepare(
-            `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-             VALUES (?, NULL, ?, 'meeting', ?, ?, 1, 0, ?, ?, 'planned')`,
+            `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+             VALUES (?, NULL, ?, ?, 'meeting', ?, ?, 1, 0, ?, ?, 'planned')`,
           )
-          .run(blockId, event.title, event.start, event.end, connector.provider, event.id);
+          .run(blockId, ownerId, event.title, event.start, event.end, connector.provider, event.id);
         sqlite
           .prepare(
             `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id, etag, direction, last_synced_at)
@@ -164,8 +164,8 @@ function applyInbound(
       // Inbound event changed remotely — update the local mirror + its etag atomically.
       sqlite.transaction(() => {
         sqlite
-          .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ?`)
-          .run(event.title, event.start, event.end, mapping.block_id);
+          .prepare(`UPDATE time_blocks SET title = ?, start_at = ?, end_at = ? WHERE id = ? AND owner_id = ?`)
+          .run(event.title, event.start, event.end, mapping.block_id, ownerId);
         sqlite
           .prepare(
             `UPDATE external_events SET etag = ?, last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`,
@@ -198,7 +198,7 @@ async function applyOutbound(
       `SELECT oq.id AS queue_id, oq.block_id,
               tb.title, tb.start_at, tb.end_at, tb.all_day
        FROM outbound_queue oq
-       JOIN time_blocks tb ON tb.id = oq.block_id
+       JOIN time_blocks tb ON tb.id = oq.block_id AND tb.owner_id = oq.owner_id
        WHERE oq.provider = ? AND oq.account = ? AND oq.owner_id = ?`,
     )
     .all(connector.provider, connector.account, ownerId) as Array<{

@@ -20,6 +20,7 @@ import { promotePossibles } from '../agents/groom.js';
 import { createFixtureGoogleClient, type EmailMessage, type CalendarEvent } from '../mcp/google.js';
 import { isAvailable, type ModelTier } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
+import { SYSTEM_OWNER } from '../lib/context.js';
 
 const _dir = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(_dir, '..', '..', 'test', 'fixtures');
@@ -132,14 +133,14 @@ async function main() {
   const events = await google.listEvents();
   await pool(events, 3, async (event: CalendarEvent) => {
     // Mirror the event as a read-only meeting block.
-    const exists = sqlite.prepare("SELECT id FROM time_blocks WHERE source_kind='gcal' AND source_ref=?").get(event.id);
+    const exists = sqlite.prepare("SELECT id FROM time_blocks WHERE source_kind='gcal' AND source_ref=? AND owner_id=?").get(event.id, SYSTEM_OWNER);
     if (!exists) {
       sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-           VALUES (uuid7(), NULL, ?, 'meeting', ?, ?, 1, 0, 'gcal', ?, 'planned')`
+          `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+           VALUES (uuid7(), NULL, ?, ?, 'meeting', ?, ?, 1, 0, 'gcal', ?, 'planned')`
         )
-        .run(event.title, event.start, event.end, event.id);
+        .run(SYSTEM_OWNER, event.title, event.start, event.end, event.id);
     }
     const text = `${event.title}\n${event.description}`.trim();
     let tasks: ExtractedTask[];

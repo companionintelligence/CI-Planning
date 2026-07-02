@@ -16,9 +16,9 @@ const count = (db: Database, table: string) =>
 // Insert a legacy gcal meeting block (mirrored by the OLD path: no external_events row).
 function seedLegacyGcalBlock(db: Database, blockId: string, sourceRef: string) {
   db.prepare(
-    `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, source_ref, status)
-     VALUES (?, 'Legacy Meeting', 'meeting', '2026-07-01T09:00:00Z', '2026-07-01T10:00:00Z', 'gcal', ?, 'planned')`,
-  ).run(blockId, sourceRef);
+    `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, source_ref, status, owner_id)
+     VALUES (?, 'Legacy Meeting', 'meeting', '2026-07-01T09:00:00Z', '2026-07-01T10:00:00Z', 'gcal', ?, 'planned', ?)`,
+  ).run(blockId, sourceRef, SYSTEM_OWNER_ID);
 }
 
 describe('Wave 0 migrations', () => {
@@ -99,14 +99,14 @@ describe('Wave 0 migrations', () => {
 
     // A manual meeting (wrong source_kind) — not adopted.
     db.prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, source_ref, status)
-       VALUES ('00000000-0000-7000-8000-0000000000e1', 'Manual', 'meeting', '2026-07-01T09:00:00Z', '2026-07-01T10:00:00Z', 'manual', 'ref-x', 'planned')`,
-    ).run();
+      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, source_ref, status, owner_id)
+       VALUES ('00000000-0000-7000-8000-0000000000e1', 'Manual', 'meeting', '2026-07-01T09:00:00Z', '2026-07-01T10:00:00Z', 'manual', 'ref-x', 'planned', ?)`,
+    ).run(SYSTEM_OWNER_ID);
     // A gcal task block (wrong block_kind) — not adopted.
     db.prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, source_ref, status)
-       VALUES ('00000000-0000-7000-8000-0000000000e2', 'Gcal Task', 'task', '2026-07-01T09:00:00Z', '2026-07-01T10:00:00Z', 'gcal', 'ref-y', 'planned')`,
-    ).run();
+      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, source_ref, status, owner_id)
+       VALUES ('00000000-0000-7000-8000-0000000000e2', 'Gcal Task', 'task', '2026-07-01T09:00:00Z', '2026-07-01T10:00:00Z', 'gcal', 'ref-y', 'planned', ?)`,
+    ).run(SYSTEM_OWNER_ID);
     // A gcal meeting that ALREADY has a mapping — not duplicated.
     seedLegacyGcalBlock(db, '00000000-0000-7000-8000-0000000000e3', 'gcal-evt-mapped');
     db.prepare(

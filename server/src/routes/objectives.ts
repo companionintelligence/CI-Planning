@@ -185,7 +185,7 @@ function buildTree(owner: string) {
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
          )
          SELECT t.id, t.title, t.status,
-                (SELECT MIN(start_at) FROM time_blocks tb WHERE tb.task_id = t.id AND DATE(tb.start_at) >= DATE('now')) AS scheduled_date
+                (SELECT MIN(start_at) FROM time_blocks tb WHERE tb.task_id = t.id AND tb.owner_id = t.owner_id AND DATE(tb.start_at) >= DATE('now')) AS scheduled_date
            FROM objective_tasks ot
            JOIN tasks t ON t.id = ot.task_id
            JOIN sub ON ot.objective_id = sub.id

@@ -58,8 +58,8 @@ function materializeTemplateTasks(owner: string, baseMs: number, templateTasks: 
     `INSERT INTO tasks (id, title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (uuid7(), ?, ?, ?, 'open', 3, 'manual') RETURNING id`,
   );
   const insBlock = sqlite.prepare(
-    `INSERT INTO time_blocks (id, task_id, title, block_kind, tag, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-     VALUES (uuid7(), ?, ?, 'task', ?, ?, ?, 0, 0, 'manual', 'planned', ?)`,
+    `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, tag, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
+     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, ?, 0, 0, 'manual', 'planned', ?)`,
   );
   const createdTaskIds: string[] = [];
   for (const tk of templateTasks) {
@@ -67,7 +67,7 @@ function materializeTemplateTasks(owner: string, baseMs: number, templateTasks: 
     const id = (insTask.get(tk.title, tk.estimated_minutes ?? null, owner) as { id: string }).id;
     const s = new Date(baseMs + (tk.offset_minutes ?? 0) * 60_000).toISOString();
     const e = new Date(Date.parse(s) + est * 60_000).toISOString();
-    insBlock.run(id, tk.title, tk.tag ?? null, s, e, parentBlockId);
+    insBlock.run(id, owner, tk.title, tk.tag ?? null, s, e, parentBlockId);
     createdTaskIds.push(id);
   }
   return createdTaskIds;
@@ -140,10 +140,10 @@ export function blockTemplatesRouter() {
 
     const block = sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, status)
-         VALUES (uuid7(), ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 0, 'manual', 'planned') RETURNING *`
+        `INSERT INTO time_blocks (id, owner_id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, status)
+         VALUES (uuid7(), ?, ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 0, 'manual', 'planned') RETURNING *`
       )
-      .get(t.name, t.tag, body.start_at, endAt) as Record<string, unknown>;
+      .get(owner, t.name, t.tag, body.start_at, endAt) as Record<string, unknown>;
 
     // Recreate the saved tasks (real task + its scheduled block at the saved offset).
     // Loose (no parent) — matches the historical instantiate behavior.
@@ -166,21 +166,21 @@ export function blockTemplatesRouter() {
     const body = (ctx.request.body ?? {}) as { block_id?: string };
     if (!body.block_id) { ctx.status = 422; ctx.body = { error: 'block_id is required' }; return; }
     const block = sqlite
-      .prepare(`SELECT id, start_at FROM time_blocks WHERE id = ? AND block_kind = 'timeblock'`)
-      .get(body.block_id) as { id: string; start_at: string } | undefined;
+      .prepare(`SELECT id, start_at FROM time_blocks WHERE id = ? AND owner_id = ? AND block_kind = 'timeblock'`)
+      .get(body.block_id, owner) as { id: string; start_at: string } | undefined;
     if (!block) { ctx.status = 404; ctx.body = { error: 'block not found (must be a Plan container)' }; return; }
 
     const touched = new Set<string>();
     sqlite.transaction(() => {
       // 1. Clear current child task-blocks; their tasks revert to unscheduled.
       const children = sqlite
-        .prepare(`SELECT id, task_id, block_kind FROM time_blocks WHERE parent_block_id = ?`)
-        .all(block.id) as { id: string; task_id: string | null; block_kind: string }[];
+        .prepare(`SELECT id, task_id, block_kind FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`)
+        .all(block.id, owner) as { id: string; task_id: string | null; block_kind: string }[];
       for (const c of children) {
         if (c.task_id && c.block_kind === 'task') touched.add(c.task_id);
         removeEntityTags('time_block', c.id);
       }
-      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(block.id);
+      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(block.id, owner);
       for (const taskId of touched) revertTaskPlacementStatus(taskId, owner);
 
       // 2. Repopulate from the template, parented to the block + flipped to scheduled.

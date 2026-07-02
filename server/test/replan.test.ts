@@ -37,10 +37,10 @@ function insertAutoBlock(taskId: string, startAt: string, endAt: string, status 
   return (
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, source_kind, status)
-         VALUES (uuid7(), ?, 'B', 'task', ?, ?, 1, 'agent', ?) RETURNING id`
+        `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id)
+         VALUES (uuid7(), ?, 'B', 'task', ?, ?, 1, 'agent', ?, ?) RETURNING id`
       )
-      .get(taskId, startAt, endAt, status) as { id: string }
+      .get(taskId, startAt, endAt, status, OWNER) as { id: string }
   ).id;
 }
 

@@ -24,8 +24,8 @@ function insertBlock(o: {
 }): string {
   const row = sqlite
     .prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .get(
       o.title,
@@ -36,6 +36,7 @@ function insertBlock(o: {
       o.auto ? 1 : 0,
       o.source ?? 'agent',
       o.status ?? 'open',
+      SYSTEM_OWNER,
     ) as { id: string };
   return row.id;
 }
@@ -97,9 +98,9 @@ describe('POST /api/days/:date/clear', () => {
     // remaining block is an agent auto-block that clear-day removes.
     const taskId = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'Scheduled thing', ?, 'scheduled') RETURNING id`).get(SYSTEM_OWNER) as { id: string }).id;
     sqlite.prepare(
-      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-       VALUES (uuid7(), ?, 'Scheduled thing', 'task', '2026-06-20T10:00:00.000Z', '2026-06-20T11:00:00.000Z', 0, 1, 'agent', 'planned')`,
-    ).run(taskId);
+      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+       VALUES (uuid7(), ?, 'Scheduled thing', 'task', '2026-06-20T10:00:00.000Z', '2026-06-20T11:00:00.000Z', 0, 1, 'agent', 'planned', ?)`,
+    ).run(taskId, SYSTEM_OWNER);
 
     const { body } = await api(srv.url, '/api/days/2026-06-20/clear', { method: 'POST', json: {} });
     expect(body.cleared).toBe(1);

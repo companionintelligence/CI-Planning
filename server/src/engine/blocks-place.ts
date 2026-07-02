@@ -44,8 +44,8 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
     const empty: PlaceTasksResult = { blockId, blocksCreated: 0, placed: 0, unplaced: 0, skipped: 0 };
 
     const block = sqlite
-      .prepare(`SELECT start_at, end_at, block_kind FROM time_blocks WHERE id = ?`)
-      .get(blockId) as BlockRow | undefined;
+      .prepare(`SELECT start_at, end_at, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get(blockId, owner) as BlockRow | undefined;
     if (!block || block.block_kind !== 'timeblock') return empty;
     const windowStartMs = Date.parse(block.start_at);
     const windowEndMs = Date.parse(block.end_at);
@@ -59,7 +59,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
 
     // Tasks already inside this block — never double-add the same task.
     const already = new Set(
-      (sqlite.prepare(`SELECT task_id FROM time_blocks WHERE parent_block_id = ? AND task_id IS NOT NULL`).all(blockId) as { task_id: string }[])
+      (sqlite.prepare(`SELECT task_id FROM time_blocks WHERE parent_block_id = ? AND owner_id = ? AND task_id IS NOT NULL`).all(blockId, owner) as { task_id: string }[])
         .map((r) => r.task_id),
     );
 
@@ -80,12 +80,12 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
 
     // Obstacles = the container's existing children + other fixed blocks overlapping the
     // window (the container itself is excluded; default !includePlans drops it anyway).
-    const fixed = dayObstacles(windowStartMs, windowEndMs, { excludeBlockId: blockId });
+    const fixed = dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: blockId });
     const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
     const ins = sqlite.prepare(
-      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-       VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
+      `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
+       VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
     );
     let blocksCreated = 0;
     let placed = 0;
@@ -99,7 +99,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
         if (!pick) break;
         const startMs = pick.gap.cursor;
         const endMs = startMs + pick.len;
-        const { id: bid } = ins.get(t.id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId) as { id: string };
+        const { id: bid } = ins.get(t.id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId) as { id: string };
         firstBlockId ??= bid;
         pick.gap.cursor = endMs + breakMs;
         blocksCreated++;

@@ -9,13 +9,13 @@ import { authorPlanOrder, parseInstruction, InstructError, type PlanPin, type Pl
 import { reflow, clearSuggestion, outstandingSuggestion } from '../engine/auto-defense.js';
 
 /** Apply parsed time pins as locked, non-auto obstacle blocks the placer routes around. */
-function applyPins(pins: PlanPin[]): number {
+function applyPins(owner: string, pins: PlanPin[]): number {
   if (pins.length === 0) return 0;
   const ins = sqlite.prepare(
-    `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-     VALUES (?, ?, 'meeting', ?, ?, 1, 0, 'instruct', 'planned')`,
+    `INSERT INTO time_blocks (id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
+     VALUES (?, ?, ?, 'meeting', ?, ?, 1, 0, 'instruct', 'planned')`,
   );
-  sqlite.transaction(() => { for (const p of pins) ins.run(newId(), p.title, p.start_at, p.end_at); })();
+  sqlite.transaction(() => { for (const p of pins) ins.run(newId(), owner, p.title, p.start_at, p.end_at); })();
   return pins.length;
 }
 
@@ -68,7 +68,7 @@ export function planRouter() {
 
     // Both writes run ONLY after a clean parse (parseInstruction threw on invalid), so a
     // rejected instruction never leaves a partial pin or hint behind.
-    const created = applyPins(result.pins);
+    const created = applyPins(owner, result.pins);
     applyHints(owner, date, result.hints);
     if (created > 0) broadcast(owner, 'block:created', { added: created });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'instruct', entity: `plan:${date}` });

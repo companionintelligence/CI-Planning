@@ -47,7 +47,8 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     deferred: 0,
   };
 
-  const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, currentOwnerId()));
+  const owner = currentOwnerId();
+  const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, owner));
   if (!prefs) return empty;
 
   // Workday hours are wall-clock in the user's zone; convert to real UTC instants.
@@ -65,11 +66,11 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
   const removed = sqlite
     .prepare(
       `DELETE FROM time_blocks
-       WHERE start_at >= ? AND start_at < ? AND is_auto = 1 AND is_locked = 0
+       WHERE owner_id = ? AND start_at >= ? AND start_at < ? AND is_auto = 1 AND is_locked = 0
          AND status NOT IN ('completed','skipped')
        RETURNING id`
     )
-    .all(dayLoISO, dayHiISO) as { id: string }[];
+    .all(owner, dayLoISO, dayHiISO) as { id: string }[];
 
   // Fixed events (locked blocks + meetings) that overlap the workday window.
   const dayStartISO = new Date(dayStartMs).toISOString();
@@ -78,9 +79,9 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     sqlite
       .prepare(
         `SELECT start_at, end_at FROM time_blocks
-         WHERE start_at < ? AND end_at > ? AND (is_locked = 1 OR block_kind = 'meeting')`
+         WHERE owner_id = ? AND start_at < ? AND end_at > ? AND (is_locked = 1 OR block_kind = 'meeting')`
       )
-      .all(dayEndISO, dayStartISO) as { start_at: string; end_at: string }[]
+      .all(owner, dayEndISO, dayStartISO) as { start_at: string; end_at: string }[]
   ).map((r) => ({ start: new Date(r.start_at).getTime(), end: new Date(r.end_at).getTime() }));
 
   let blocksCreated = 0;
@@ -124,6 +125,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
     const endMs = startMs + (t.estimatedMinutes ?? 30) * MS_PER_MIN;
     await db.insert(timeBlocks).values({
       taskId: t.id,
+      ownerId: owner,
       title: t.title,
       blockKind: 'task',
       startAt: startISO,
@@ -172,6 +174,7 @@ export async function runScheduler(date: string): Promise<ScheduleResult> {
       const endMs = startMs + pick.len;
       await db.insert(timeBlocks).values({
         taskId: task.id,
+        ownerId: owner,
         title: total > 1 ? `${task.title} (${placed + 1}/${total})` : task.title,
         blockKind: 'task',
         startAt: new Date(startMs).toISOString(),
@@ -262,6 +265,7 @@ export function pickGap(gaps: Gap[], wantMs: number): { gap: Gap; len: number } 
  * obstacle to placing inside itself.
  */
 export function dayObstacles(
+  owner: string,
   windowStartMs: number,
   windowEndMs: number,
   opts: { includePlans?: boolean; excludeBlockId?: string | null } = {}
@@ -271,7 +275,7 @@ export function dayObstacles(
   const rows = sqlite
     .prepare(
       `SELECT id, start_at, end_at FROM time_blocks
-        WHERE start_at < ? AND end_at > ?
+        WHERE owner_id = ? AND start_at < ? AND end_at > ?
           AND (
                is_locked = 1
             OR block_kind = 'meeting'
@@ -279,7 +283,7 @@ export function dayObstacles(
             OR (? = 1 AND block_kind = 'timeblock' AND block_type = 'scheduled')
           )`
     )
-    .all(windowEndISO, windowStartISO, opts.includePlans ? 1 : 0) as { id: string; start_at: string; end_at: string }[];
+    .all(owner, windowEndISO, windowStartISO, opts.includePlans ? 1 : 0) as { id: string; start_at: string; end_at: string }[];
   return rows
     .filter((r) => r.id !== opts.excludeBlockId)
     .map((r) => ({ start: Date.parse(r.start_at), end: Date.parse(r.end_at) }));

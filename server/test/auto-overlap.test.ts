@@ -18,8 +18,8 @@ const overlaps = (a: { start_at: string; end_at: string }, b: { start_at: string
 
 function insertObstacle(title: string, kind: string, start: string, end: string, locked = 0, source = 'manual', status = 'planned'): { start_at: string; end_at: string } {
   sqlite
-    .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), ?, ?, ?, ?, ?, 0, ?, ?)`)
-    .run(title, kind, start, end, locked, source, status);
+    .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), ?, ?, ?, ?, ?, 0, ?, ?, ?)`)
+    .run(title, kind, start, end, locked, source, status, OWNER);
   return { start_at: start, end_at: end };
 }
 function insertTask(title: string, est = 60, tag?: string): string {
@@ -63,7 +63,7 @@ describe('no-overlap guarantee', () => {
   });
 
   it('re-running placement is idempotent (no duplication, still no overlap)', () => {
-    const plan = (sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', 'work', ?, ?, 0, 'manual', 'planned') RETURNING id`).get(at('09:00'), at('17:00')) as { id: string }).id;
+    const plan = (sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', 'work', ?, ?, 0, 'manual', 'planned', ?) RETURNING id`).get(at('09:00'), at('17:00'), OWNER) as { id: string }).id;
     const locked = insertObstacle('Locked', 'task', at('09:00'), at('10:00'), 1);
     for (let i = 0; i < 3; i++) stage(insertTask(`Work ${i}`, 60, 'work'));
 

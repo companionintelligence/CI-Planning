@@ -32,10 +32,10 @@ function insertTask(
 function insertBlock(startAt: string, endAt: string) {
   sqlite
     .prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, status)
-       VALUES (uuid7(), 'Block', 'task', ?, ?, 'done')`,
+      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, status, owner_id)
+       VALUES (uuid7(), 'Block', 'task', ?, ?, 'done', ?)`,
     )
-    .run(startAt, endAt);
+    .run(startAt, endAt, SYSTEM_OWNER);
 }
 
 function insertWeeklyGoal(position: number, body: string, doneAt: string | null = null) {

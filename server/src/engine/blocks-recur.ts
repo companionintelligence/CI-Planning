@@ -55,16 +55,16 @@ function parseExdates(raw: string | null): string[] {
  * the task `skipInstance` EXDATE behavior. Idempotent. The DELETE route calls
  * this when removing a materialized instance, so deleting an occurrence sticks.
  */
-export function excludeBlockOccurrence(templateId: string, date: string): void {
+export function excludeBlockOccurrence(owner: string, templateId: string, date: string): void {
   const tpl = sqlite
-    .prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ?`)
-    .get(templateId) as { recurrence_exdates: string | null } | undefined;
+    .prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ? AND owner_id = ?`)
+    .get(templateId, owner) as { recurrence_exdates: string | null } | undefined;
   if (!tpl) return;
   const ex = parseExdates(tpl.recurrence_exdates);
   if (ex.includes(date)) return;
   ex.push(date);
   ex.sort();
-  sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ?`).run(JSON.stringify(ex), templateId);
+  sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ? AND owner_id = ?`).run(JSON.stringify(ex), templateId, owner);
 }
 
 /**
@@ -94,16 +94,16 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
       `SELECT id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, source_kind,
               recurrence_rule, recurrence_dtstart, recurrence_exdates, category_id, color_token
          FROM time_blocks
-        WHERE recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL`,
+        WHERE owner_id = ? AND recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL`,
     )
-    .all() as BlockTemplate[];
+    .all(owner) as BlockTemplate[];
   if (templates.length === 0) return { blocksCreated: 0 };
 
   const ins = sqlite.prepare(
     `INSERT OR IGNORE INTO time_blocks
-       (id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, is_auto,
+       (id, owner_id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, is_auto,
         source_kind, status, recurrence_parent_id, occurrence_date, category_id, color_token)
-     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'planned', ?, ?, ?, ?)
+     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'planned', ?, ?, ?, ?)
      RETURNING id`,
   );
   // Carry the template's normalized tags (with levels) onto the instance so Phase 5
@@ -135,7 +135,7 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
         const startISO = zonedWallTimeToUTC(day, wall, tz);
         const endISO = new Date(Date.parse(startISO) + durationMs).toISOString();
         const row = ins.get(
-          t.title, t.block_kind ?? 'timeblock', t.tag, t.block_type, t.note,
+          owner, t.title, t.block_kind ?? 'timeblock', t.tag, t.block_type, t.note,
           startISO, endISO, t.is_locked ?? 0, t.source_kind ?? 'manual', t.id, day,
           t.category_id, t.color_token, // 0069: frozen stamp copied verbatim (not re-derived)
         ) as { id: string } | undefined;

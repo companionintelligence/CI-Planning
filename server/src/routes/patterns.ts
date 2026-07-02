@@ -442,12 +442,12 @@ export function patternsRouter() {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { plan_block_id?: number; name?: string };
     if (body.plan_block_id == null) { ctx.status = 422; ctx.body = { error: 'plan_block_id is required' }; return; }
-    const plan = sqlite.prepare(`SELECT id, title, block_kind FROM time_blocks WHERE id = ?`).get(body.plan_block_id) as
+    const plan = sqlite.prepare(`SELECT id, title, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`).get(body.plan_block_id, owner) as
       | { id: string; title: string; block_kind: string } | undefined;
     if (!plan || plan.block_kind !== 'timeblock') { ctx.status = 404; ctx.body = { error: 'plan not found' }; return; }
     const taskIds = (sqlite
-      .prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE parent_block_id = ? AND task_id IS NOT NULL`)
-      .all(plan.id) as { task_id: string }[]).map((r) => r.task_id);
+      .prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE parent_block_id = ? AND owner_id = ? AND task_id IS NOT NULL`)
+      .all(plan.id, owner) as { task_id: string }[]).map((r) => r.task_id);
     const p = createRoutineWithTasks(body.name?.trim() || plan.title, taskIds);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
@@ -521,11 +521,11 @@ export function patternsRouter() {
     const blocks = sqlite
       .prepare(
         `SELECT * FROM time_blocks
-          WHERE source_kind = 'pattern' AND source_ref = ?
+          WHERE owner_id = ? AND source_kind = 'pattern' AND source_ref = ?
             AND date(start_at) = date(?)
           ORDER BY start_at`
       )
-      .all(String(id), `${result.date}T00:00:00`) as Record<string, unknown>[];
+      .all(owner, String(id), `${result.date}T00:00:00`) as Record<string, unknown>[];
     writeAudit({ ownerId: owner, actor: 'owner', action: 'place', entity: `routine:${id}` });
     ctx.body = {
       result,

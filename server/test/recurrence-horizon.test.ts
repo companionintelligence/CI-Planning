@@ -102,8 +102,8 @@ describe('auto-prune on shorten', () => {
 
     // A locked block deep in the future must survive the prune.
     sqlite
-      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned')`)
-      .run(at(isoDay(20), '14:00'), at(isoDay(20), '15:00'));
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Locked', 'timeblock', ?, ?, 1, 0, 'manual', 'planned', ?)`)
+      .run(at(isoDay(20), '14:00'), at(isoDay(20), '15:00'), OWNER);
     // An authored daily_plan row beyond the new horizon must SURVIVE — the recurrence
     // ceiling has no bearing on Phase-M day plans (clearDailyPlan:false).
     const planTask = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), 'P', ?, 'open', 30, 3) RETURNING id`).get(OWNER) as { id: string }).id;
