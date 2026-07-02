@@ -138,7 +138,7 @@ export function placePatternOnDay(
     let blockTag: string | null = null;
     let parentBlockId: string | null = opts.blockId ?? null;
     if (parentBlockId != null) {
-      const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ?`).get(parentBlockId) as
+      const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(parentBlockId, owner) as
         | { start_at: string; end_at: string; tag: string | null }
         | undefined;
       if (!block) {
@@ -164,11 +164,11 @@ export function placePatternOnDay(
     const marker = sqlite
       .prepare(
         `SELECT 1 FROM time_blocks
-          WHERE source_kind = 'pattern' AND source_ref = ?
+          WHERE owner_id = ? AND source_kind = 'pattern' AND source_ref = ?
             AND start_at >= ? AND start_at < ?
           LIMIT 1`
       )
-      .get(String(patternId), dayStartISO, dayEndISO);
+      .get(owner, String(patternId), dayStartISO, dayEndISO);
     if (marker) {
       broadcast(owner, 'pattern:place_skipped', { patternId, date });
       return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: true };
@@ -184,15 +184,15 @@ export function placePatternOnDay(
     // Shared obstacle set: locked + meetings + every non-completed task block,
     // so a pattern never stacks on existing work (manual or auto). When scoped
     // to a Plan we exclude that Plan from its own obstacle set (it's the target).
-    const fixed = dayObstacles(windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
+    const fixed = dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
 
     const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
     const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
     const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
     const ins = sqlite.prepare(
-      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status, parent_block_id)
-       VALUES (uuid7(), ?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?) RETURNING id`
+      `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status, parent_block_id)
+       VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'pattern', ?, 'planned', ?) RETURNING id`
     );
     // A placed routine member IS scheduled: mirror the placement onto the task's
     // scheduling-intent fields (so its calendar icon has a date) and flip open →
@@ -217,7 +217,7 @@ export function placePatternOnDay(
           if (!pick) break;
           const startMs = pick.gap.cursor;
           const endMs = startMs + pick.len;
-          const { id: bid } = ins.get(t.task_id, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId) as { id: string };
+          const { id: bid } = ins.get(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId) as { id: string };
           syncPlacedMember(bid, t.task_id);
           pick.gap.cursor = endMs + breakMs;
           blocksCreated++;
@@ -256,13 +256,13 @@ export function placePatternOnDay(
           const containerEndMs = layout[layout.length - 1].endMs;
           const containerId = (sqlite
             .prepare(
-              `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
-               VALUES (uuid7(), ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
+              `INSERT INTO time_blocks (id, owner_id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
+               VALUES (uuid7(), ?, ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
             )
-            .get(meta?.name ?? 'Routine', meta?.tag ?? null, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)) as { id: string }).id;
+            .get(owner, meta?.name ?? 'Routine', meta?.tag ?? null, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)) as { id: string }).id;
           const placedTaskIds = new Set<string>();
           for (const l of layout) {
-            const { id: bid } = ins.get(l.task.task_id, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId) as { id: string };
+            const { id: bid } = ins.get(l.task.task_id, owner, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId) as { id: string };
             syncPlacedMember(bid, l.task.task_id);
             blocksCreated++;
             placedTaskIds.add(l.task.task_id);

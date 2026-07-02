@@ -47,7 +47,7 @@ function contentFor(r: DueReminder): { title: string; body: string; url: string 
     const t = sqlite.prepare(`SELECT title FROM tasks WHERE id = ?`).get(r.task_id) as { title: string } | undefined;
     return { title: 'Task reminder', body: t?.title ?? 'A task is due', url: '/' };
   }
-  const b = sqlite.prepare(`SELECT title FROM time_blocks WHERE id = ?`).get(r.block_id!) as { title: string } | undefined;
+  const b = sqlite.prepare(`SELECT title FROM time_blocks WHERE id = ? AND owner_id = ?`).get(r.block_id!, r.owner_id) as { title: string } | undefined;
   return { title: 'Upcoming block', body: b?.title ?? 'A block is starting', url: '/' };
 }
 

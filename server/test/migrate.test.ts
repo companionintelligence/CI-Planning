@@ -39,8 +39,8 @@ describe('migration runner', () => {
     // column is TEXT NOT NULL with no SQL default (this isolated in-memory DB has no
     // uuid7() UDF), so supply a literal UUIDv7-shaped id.
     db.prepare(
-      `INSERT INTO time_blocks (id, title, start_at, end_at) VALUES ('00000000-0000-7000-8000-0000000000b1', 'B', '2026-06-15T16:00:00Z', '2026-06-15T17:00:00Z')`,
-    ).run();
+      `INSERT INTO time_blocks (id, title, start_at, end_at, owner_id) VALUES ('00000000-0000-7000-8000-0000000000b1', 'B', '2026-06-15T16:00:00Z', '2026-06-15T17:00:00Z', ?)`,
+    ).run(SYSTEM_OWNER_ID);
     const row = db.prepare('SELECT all_day FROM time_blocks LIMIT 1').get() as { all_day: number };
     expect(row.all_day).toBe(0);
     // Re-running the whole runner is a no-op (the add-column guard holds).

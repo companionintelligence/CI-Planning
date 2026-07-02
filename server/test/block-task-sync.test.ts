@@ -26,10 +26,10 @@ function insertBlock(opts: {
 }): string {
   return (sqlite
     .prepare(
-      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, source_kind, status, all_day, parent_block_id)
-       VALUES (uuid7(), ?, 'B', ?, ?, ?, 0, 'manual', 'planned', ?, ?) RETURNING id`,
+      `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, source_kind, status, all_day, parent_block_id, owner_id)
+       VALUES (uuid7(), ?, 'B', ?, ?, ?, 0, 'manual', 'planned', ?, ?, ?) RETURNING id`,
     )
-    .get(opts.taskId ?? null, opts.kind ?? 'task', opts.start, opts.end, opts.allDay ?? 0, opts.parent ?? null) as { id: string }).id;
+    .get(opts.taskId ?? null, opts.kind ?? 'task', opts.start, opts.end, opts.allDay ?? 0, opts.parent ?? null, OWNER) as { id: string }).id;
 }
 
 const taskRow = (id: string) =>

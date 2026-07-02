@@ -22,10 +22,10 @@ function makePlan(tag: string, start: string, end: string): string {
   return (
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status)
-         VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', ?, ?, ?, 0, 'manual', 'planned') RETURNING id`,
+        `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status, owner_id)
+         VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', ?, ?, ?, 0, 'manual', 'planned', ?) RETURNING id`,
       )
-      .get(tag, start, end) as { id: string }
+      .get(tag, start, end, OWNER) as { id: string }
   ).id;
 }
 

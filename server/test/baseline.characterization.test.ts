@@ -89,10 +89,10 @@ function seedApiFixture(): void {
   insertNoId('entity_tags', { entity_kind: 'task', entity_id: post, tag_id: errands, level: 1 });
   insertNoId('task_dependencies', { task_id: post, depends_on_id: spec }); // Post office blocked by Write spec
 
-  const plan = insert('time_blocks', { title: 'Work block', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
-  insert('time_blocks', { task_id: spec, title: 'Write spec', block_kind: 'task', parent_block_id: plan, start_at: at('09:00'), end_at: at('09:45'), is_auto: 0, source_kind: 'manual', status: 'planned' });
-  insert('time_blocks', { title: 'Read paper', block_kind: 'timeblock', block_type: 'someday', tag: 'work', goal_start_date: DAY, duration_minutes: 60, all_day: 1, start_at: MIDNIGHT, end_at: at('01:00'), source_kind: 'manual', status: 'planned' });
-  insert('time_blocks', { title: 'Standup mtg', block_kind: 'meeting', start_at: at('13:00'), end_at: at('13:30'), is_locked: 1, is_auto: 0, source_kind: 'gcal', source_ref: 'evt-123', status: 'planned' });
+  const plan = insert('time_blocks', { owner_id: OWNER, title: 'Work block', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
+  insert('time_blocks', { owner_id: OWNER, task_id: spec, title: 'Write spec', block_kind: 'task', parent_block_id: plan, start_at: at('09:00'), end_at: at('09:45'), is_auto: 0, source_kind: 'manual', status: 'planned' });
+  insert('time_blocks', { owner_id: OWNER, title: 'Read paper', block_kind: 'timeblock', block_type: 'someday', tag: 'work', goal_start_date: DAY, duration_minutes: 60, all_day: 1, start_at: MIDNIGHT, end_at: at('01:00'), source_kind: 'manual', status: 'planned' });
+  insert('time_blocks', { owner_id: OWNER, title: 'Standup mtg', block_kind: 'meeting', start_at: at('13:00'), end_at: at('13:30'), is_locked: 1, is_auto: 0, source_kind: 'gcal', source_ref: 'evt-123', status: 'planned' });
 
   const routineType = (sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Routine'`).get() as { id: string }).id;
   const pattern = insert('patterns', { owner_id: OWNER, type_id: routineType, name: 'Morning routine', tag: 'morning' });
@@ -130,7 +130,7 @@ describe('behavior baseline — Auto placement engine', () => {
   it('places Plans-first (tap 2), then the explicit priority fill, deterministically', () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC', workday_start='09:00', workday_end='18:00', auto_fill_workday=1 WHERE owner_id=?`).run(OWNER);
 
-    const plan = insert('time_blocks', { title: 'work plan', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
+    const plan = insert('time_blocks', { owner_id: OWNER, title: 'work plan', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
     const work = insert('tags', { name: 'work' });
     const code = insert('tasks', { title: 'Write code', owner_id: OWNER, status: 'open', estimated_minutes: 60, priority: 2 });
     const milk = insert('tasks', { title: 'Buy milk', owner_id: OWNER, status: 'open', estimated_minutes: 30, priority: 3 });

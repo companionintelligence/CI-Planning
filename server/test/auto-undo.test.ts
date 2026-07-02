@@ -24,7 +24,7 @@ function insertTask(title: string, est = 30, tag?: string, priority = 3): string
 }
 const stage = (taskId: string) => sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`).run(OWNER, taskId);
 const makePlan = (tag: string, start: string, end: string) =>
-  (sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', ?, ?, ?, 0, 'manual', 'planned') RETURNING id`).get(tag, start, end) as { id: string }).id;
+  (sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', ?, ?, ?, 0, 'manual', 'planned', ?) RETURNING id`).get(tag, start, end, OWNER) as { id: string }).id;
 const agentTaskBlocks = () =>
   (sqlite.prepare(`SELECT title FROM time_blocks WHERE block_kind = 'task' AND source_kind = 'agent'`).all() as { title: string }[]).map((b) => b.title);
 const fpRow = (taskId: string) =>
@@ -77,8 +77,8 @@ describe('undoLastAuto', () => {
   });
 
   it('never touches manual or meeting blocks', () => {
-    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned')`).run(at('09:00'), at('10:00'));
-    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, source_ref, status) VALUES (uuid7(), 'Mtg', 'meeting', ?, ?, 1, 'gcal', 'e1', 'planned')`).run(at('11:00'), at('12:00'));
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned', ?)`).run(at('09:00'), at('10:00'), OWNER);
+    sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, source_ref, status, owner_id) VALUES (uuid7(), 'Mtg', 'meeting', ?, ?, 1, 'gcal', 'e1', 'planned', ?)`).run(at('11:00'), at('12:00'), OWNER);
     stage(insertTask('Loose', 30));
     fillByPriority(OWNER, { date: DAY });
 

@@ -64,17 +64,19 @@ type TaskTimeMap = Map<string, { block_id: string; start_at: string; end_at: str
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function snapshotAutoBlocks(dayStartISO: string, dayEndISO: string): BlockSnapshot[] {
+function snapshotAutoBlocks(owner: string, dayStartISO: string, dayEndISO: string): BlockSnapshot[] {
+  // Owner-scoped (F-REFLOW): without `owner_id = ?` a reflow would snapshot — then
+  // re-place/stamp — another owner's overlapping blocks. Silent cross-tenant corruption.
   return sqlite
     .prepare(
       `SELECT id, task_id, start_at, end_at, is_locked, status, last_moved_at
          FROM time_blocks
-        WHERE task_id IS NOT NULL
+        WHERE owner_id = ? AND task_id IS NOT NULL
           AND is_auto = 1 AND block_kind = 'task' AND source_kind = 'agent'
           AND start_at < ? AND end_at > ?
           AND status NOT IN ('completed', 'skipped', 'cancelled')`
     )
-    .all(dayEndISO, dayStartISO) as BlockSnapshot[];
+    .all(owner, dayEndISO, dayStartISO) as BlockSnapshot[];
 }
 
 /** Build a task_id-keyed map from a snapshot, keeping the earliest block per task. */
@@ -192,7 +194,7 @@ export function reflow(
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(d, tz);
 
   // 1. Snapshot auto blocks before any changes.
-  const snapshot = snapshotAutoBlocks(dayStartISO, dayEndISO);
+  const snapshot = snapshotAutoBlocks(owner, dayStartISO, dayEndISO);
   const beforeMap = toTaskMap(snapshot);
 
   // 2. Which blocks are protected (in-progress or recently moved)?
@@ -214,14 +216,14 @@ export function reflow(
   placeFlightPlan(owner, { date: d, onlyTaskIds: stagedTaskIds, protectIds: protectedIds });
 
   // 5. Snapshot after and compute the diff.
-  const afterSnapshot = snapshotAutoBlocks(dayStartISO, dayEndISO);
+  const afterSnapshot = snapshotAutoBlocks(owner, dayStartISO, dayEndISO);
   const afterMap = toTaskMap(afterSnapshot);
   const { moved, removed, added } = diffBlocks(beforeMap, afterMap);
 
   // 6. Stamp last_moved_at on blocks that actually changed time.
   const nowISO = new Date(nowMs).toISOString();
-  const stamp = sqlite.prepare(`UPDATE time_blocks SET last_moved_at = ? WHERE id = ?`);
-  for (const m of moved) stamp.run(nowISO, m.block_id);
+  const stamp = sqlite.prepare(`UPDATE time_blocks SET last_moved_at = ? WHERE id = ? AND owner_id = ?`);
+  for (const m of moved) stamp.run(nowISO, m.block_id, owner);
 
   // 7. Unplaced = tasks we re-staged but that didn't end up with a block.
   const unplaced = [...stagedTaskIds].filter((id) => !afterMap.has(id));
@@ -329,24 +331,24 @@ export function sweepMissedBlocks(
   const missed = sqlite
     .prepare(
       `SELECT id, task_id FROM time_blocks
-        WHERE task_id IS NOT NULL
+        WHERE owner_id = ? AND task_id IS NOT NULL
           AND is_auto = 1 AND block_kind = 'task' AND source_kind = 'agent'
           AND status = 'planned'
           AND end_at <= ?
           AND start_at < ? AND end_at > ?`
     )
-    .all(nowISO, dayEndISO, dayStartISO) as { id: string; task_id: string }[];
+    .all(owner, nowISO, dayEndISO, dayStartISO) as { id: string; task_id: string }[];
 
   if (missed.length === 0) return { skipped: 0, requeued: 0 };
 
-  const markSkipped = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ?`);
+  const markSkipped = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`);
   const restage = sqlite.prepare(
     `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`
   );
   let requeued = 0;
   sqlite.transaction(() => {
     for (const blk of missed) {
-      markSkipped.run(blk.id);
+      markSkipped.run(blk.id, owner);
       // Only re-queue tasks that are still open (a completed task's stale block isn't work).
       const open = sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'open'`).get(blk.task_id);
       if (open) { restage.run(owner, blk.task_id); requeued++; }

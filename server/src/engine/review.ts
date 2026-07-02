@@ -74,11 +74,11 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
     `UPDATE tasks SET scheduled_for = ?, defer_count = defer_count + 1, status = 'open' WHERE id = ?`
   );
   const dropBlocks = sqlite.prepare(
-    `DELETE FROM time_blocks WHERE task_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ? RETURNING id`
+    `DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ? RETURNING id`
   );
   const markMissed = sqlite.prepare(`UPDATE tasks SET status = 'missed' WHERE id = ?`);
   const markBlocksMissed = sqlite.prepare(
-    `UPDATE time_blocks SET status = 'missed' WHERE task_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ?`
+    `UPDATE time_blocks SET status = 'missed' WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ?`
   );
   // N4 lossy-slip fix: stamp daily_plan.outcome before block hard-delete so the
   // nightly aggregate can record planned-vs-done even after the block is gone.
@@ -96,13 +96,13 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
         stampPlanOutcome.run('deferred', m.owner_id, m.task_id);
         bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
         // CON-3 cascade: dropped blocks are HARD-deleted — clear their tag rows.
-        for (const b of dropBlocks.all(m.task_id, nowISO) as { id: string }[]) removeEntityTags('time_block', b.id);
+        for (const b of dropBlocks.all(m.task_id, m.owner_id, nowISO) as { id: string }[]) removeEntityTags('time_block', b.id);
         deferred++;
       } else {
         // High priority → surface for the user; don't move it silently.
         stampPlanOutcome.run('missed', m.owner_id, m.task_id);
         markMissed.run(m.task_id);
-        markBlocksMissed.run(m.task_id, nowISO);
+        markBlocksMissed.run(m.task_id, m.owner_id, nowISO);
         surfaced++;
       }
     }
@@ -123,7 +123,7 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
           AND (t.scheduled_for IS NULL OR t.scheduled_for <= date(@now))
           AND NOT EXISTS (
             SELECT 1 FROM time_blocks tb
-            WHERE tb.task_id = t.id AND tb.block_kind = 'task' AND tb.start_at > @now
+            WHERE tb.task_id = t.id AND tb.owner_id = t.owner_id AND tb.block_kind = 'task' AND tb.start_at > @now
           )
           AND NOT EXISTS (
             SELECT 1 FROM flight_plan fp
@@ -160,12 +160,12 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
  * bumps scheduled_for + defer_count, and removes any stale missed/planned
  * blocks so it re-places cleanly on the new day.
  */
-export function rescheduleTask(taskId: string, days: number): { scheduled_for: string } {
+export function rescheduleTask(taskId: string, days: number, owner: string): { scheduled_for: string } {
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   const tx = sqlite.transaction(() => {
-    sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ?`).run(scheduledFor, taskId);
+    sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
     // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
-    for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND block_kind = 'task' AND status IN ('missed','planned') RETURNING id`).all(taskId) as { id: string }[]) {
+    for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') RETURNING id`).all(taskId, owner) as { id: string }[]) {
       removeEntityTags('time_block', b.id);
     }
   });

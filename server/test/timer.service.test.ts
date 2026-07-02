@@ -115,10 +115,10 @@ describe('timer service', () => {
     const blockId = (
       sqlite
         .prepare(
-          `INSERT INTO time_blocks (id, task_id, title, start_at, end_at, status)
-           VALUES (uuid7(), ?, 'block', '2026-06-15T10:00:00Z', '2026-06-15T11:00:00Z', 'planned') RETURNING id`
+          `INSERT INTO time_blocks (id, task_id, title, start_at, end_at, status, owner_id)
+           VALUES (uuid7(), ?, 'block', '2026-06-15T10:00:00Z', '2026-06-15T11:00:00Z', 'planned', ?) RETURNING id`
         )
-        .get(task) as { id: string }
+        .get(task, OWNER) as { id: string }
     ).id;
     runWithOwner(OWNER, () => {
       const { entry } = startTimer(task, blockId);

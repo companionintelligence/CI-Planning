@@ -46,10 +46,10 @@ describe('summarize agent', () => {
   it('counts scheduled blocks for the day', async () => {
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, status)
-         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 'gcal', 'planned')`
+        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, source_kind, status, owner_id)
+         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 'gcal', 'planned', ?)`
       )
-      .run(`${TODAY}T16:00:00.000Z`, `${TODAY}T16:30:00.000Z`);
+      .run(`${TODAY}T16:00:00.000Z`, `${TODAY}T16:30:00.000Z`, SYSTEM_OWNER);
     const summary = await summarizeDay(TODAY);
     expect(summary.stats.blocks).toBe(1);
   });
@@ -94,13 +94,13 @@ describe('summarize agent', () => {
     // Scheduled blocks: 30 min standup + 60 min deep work = 90 min
     sqlite
       .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, status)
-         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 'done'),
-                (uuid7(), 'Deep Work', 'task', ?, ?, 'done')`
+        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, status, owner_id)
+         VALUES (uuid7(), 'Standup', 'meeting', ?, ?, 'done', ?),
+                (uuid7(), 'Deep Work', 'task', ?, ?, 'done', ?)`
       )
       .run(
-        `${TODAY}T09:00:00.000Z`, `${TODAY}T09:30:00.000Z`,
-        `${TODAY}T10:00:00.000Z`, `${TODAY}T11:00:00.000Z`,
+        `${TODAY}T09:00:00.000Z`, `${TODAY}T09:30:00.000Z`, SYSTEM_OWNER,
+        `${TODAY}T10:00:00.000Z`, `${TODAY}T11:00:00.000Z`, SYSTEM_OWNER,
       );
 
     // A focused task with estimated_minutes — it'll appear in focus[]

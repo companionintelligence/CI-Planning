@@ -60,7 +60,7 @@ async function fetchBlocksForRange(from: string, to: string): Promise<Record<str
   ensurePatternsForRange(currentOwnerId(), from, to);
   ensureRecurringBlocksForRange(currentOwnerId(), from, to);
   const fetched = await db.select().from(timeBlocks)
-    .where(and(gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));
+    .where(and(eq(timeBlocks.ownerId, currentOwnerId()), gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));
   const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
   return toApiList(rows).map((b) => ({
     ...b,
@@ -87,14 +87,12 @@ export function blocksRouter() {
     }
 
     // `state=someday` (no range) and partial-range reads keep the conditional select.
-    const conditions = [];
+    const conditions = [eq(timeBlocks.ownerId, currentOwnerId())];
     if (from) conditions.push(gte(timeBlocks.startAt, from));
     if (to)   conditions.push(lte(timeBlocks.endAt, to));
     if (state) conditions.push(eq(timeBlocks.blockType, state));
 
-    const fetched = conditions.length
-      ? await db.select().from(timeBlocks).where(and(...conditions))
-      : await db.select().from(timeBlocks);
+    const fetched = await db.select().from(timeBlocks).where(and(...conditions));
     // CON-4: recurrence *templates* (rule set, no parent) are never rendered — only
     // their materialized instances are. Drop them from the read surface.
     const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
@@ -169,6 +167,7 @@ export function blocksRouter() {
       .insert(timeBlocks)
       .values({
         taskId: body.task_id,
+        ownerId: currentOwnerId(),
         title: body.title,
         blockKind: body.block_kind ?? 'task',
         tag: body.tag,
@@ -254,8 +253,8 @@ export function blocksRouter() {
 
     // 0069: enforce the tag XOR category_id partition on the MERGED row + validate the
     // category kind. (color re-stamp is handled below, only when category_id changes.)
-    const existing = sqlite.prepare(`SELECT tag, category_id FROM time_blocks WHERE id = ?`)
-      .get(id) as { tag: string | null; category_id: string | null } | undefined;
+    const existing = sqlite.prepare(`SELECT tag, category_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get(id, currentOwnerId()) as { tag: string | null; category_id: string | null } | undefined;
     if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const effTag = body.tag !== undefined ? body.tag : existing.tag;
     const effCat = body.category_id !== undefined ? body.category_id : existing.category_id;
@@ -307,8 +306,8 @@ export function blocksRouter() {
     // A tags-only PATCH (e.g. secondary_tags) has no column changes; drizzle
     // rejects an empty .set(), so fetch the row instead of updating it.
     const [block] = Object.keys(update).length
-      ? await db.update(timeBlocks).set(update).where(eq(timeBlocks.id, id)).returning()
-      : await db.select().from(timeBlocks).where(eq(timeBlocks.id, id));
+      ? await db.update(timeBlocks).set(update).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId()))).returning()
+      : await db.select().from(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId())));
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     // Phase L: stamp version/field_ts for sync versioning (mirrors tasks PATCH).
@@ -327,8 +326,8 @@ export function blocksRouter() {
     if (body.recurrence_rule !== undefined || body.recurrence_dtstart !== undefined) {
       const today = localISODate();
       for (const inst of sqlite
-        .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND occurrence_date >= ? RETURNING id`)
-        .all(id, today) as { id: string }[]) {
+        .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND occurrence_date >= ? AND owner_id = ? RETURNING id`)
+        .all(id, today, currentOwnerId()) as { id: string }[]) {
         removeEntityTags('time_block', inst.id);
       }
     }
@@ -358,30 +357,31 @@ export function blocksRouter() {
   // relative offsets are preserved and delta 0 is a byte-identical no-op.
   router.post('/api/blocks/:id/move-group', async (ctx) => {
     const id = ctx.params.id;
+    const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { delta_minutes?: number };
     const delta = Math.round(Number(body.delta_minutes ?? 0));
 
     const anchor = sqlite
-      .prepare(`SELECT id, block_kind, parent_block_id FROM time_blocks WHERE id = ?`)
-      .get(id) as { id: string; block_kind: string; parent_block_id: string | null } | undefined;
+      .prepare(`SELECT id, block_kind, parent_block_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get(id, owner) as { id: string; block_kind: string; parent_block_id: string | null } | undefined;
     if (!anchor) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     // The group's parent: the container itself, the member's parent, or (a loose
     // block) itself alone.
     const parentId = anchor.block_kind === 'timeblock' ? anchor.id : anchor.parent_block_id ?? anchor.id;
     const members = sqlite
-      .prepare(`SELECT id, start_at, end_at FROM time_blocks WHERE id = ? OR parent_block_id = ?`)
-      .all(parentId, parentId) as { id: string; start_at: string; end_at: string }[];
+      .prepare(`SELECT id, start_at, end_at FROM time_blocks WHERE (id = ? OR parent_block_id = ?) AND owner_id = ?`)
+      .all(parentId, parentId, owner) as { id: string; start_at: string; end_at: string }[];
 
     const deltaMs = delta * 60_000;
     const shift = (iso: string) => new Date(Date.parse(iso) + deltaMs).toISOString();
-    const upd = sqlite.prepare(`UPDATE time_blocks SET start_at = ?, end_at = ? WHERE id = ?`);
+    const upd = sqlite.prepare(`UPDATE time_blocks SET start_at = ?, end_at = ? WHERE id = ? AND owner_id = ?`);
     sqlite.transaction(() => {
-      for (const m of members) upd.run(shift(m.start_at), shift(m.end_at), m.id);
+      for (const m of members) upd.run(shift(m.start_at), shift(m.end_at), m.id, owner);
     })();
 
     const ids = members.map((m) => m.id);
-    const rows = ids.length ? await db.select().from(timeBlocks).where(inArray(timeBlocks.id, ids)) : [];
+    const rows = ids.length ? await db.select().from(timeBlocks).where(and(inArray(timeBlocks.id, ids), eq(timeBlocks.ownerId, owner))) : [];
     broadcast(currentOwnerId(), 'block:updated', { moved_group: parentId, count: ids.length });
 
     // REQ2: mirror each moved task member's new placement onto its task (non-task
@@ -401,14 +401,14 @@ export function blocksRouter() {
     const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { start_at?: string; end_at?: string; all_day?: boolean };
     if (!body.start_at) { ctx.status = 422; ctx.body = { error: 'start_at is required to promote' }; return; }
-    const [existing] = await db.select().from(timeBlocks).where(eq(timeBlocks.id, id));
+    const [existing] = await db.select().from(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId())));
     if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const dur = existing.durationMinutes ?? 60;
     const endAt = body.end_at ?? new Date(Date.parse(body.start_at) + dur * 60_000).toISOString();
     const [block] = await db
       .update(timeBlocks)
       .set({ blockType: 'scheduled', allDay: body.all_day ?? false, startAt: body.start_at, endAt, goalStartDate: null })
-      .where(eq(timeBlocks.id, id))
+      .where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId())))
       .returning();
     const out = toApi(block);
     broadcast(currentOwnerId(), 'block:updated', out);
@@ -425,37 +425,43 @@ export function blocksRouter() {
   // (PR-C: the "remove tasks" choice in the delete-Plan confirm dialog).
   router.delete('/api/blocks/:id', async (ctx) => {
     const id = ctx.params.id;
+    const owner = currentOwnerId();
+
+    // Verify ownership before any side effects (e.g. remote deletes).
+    if (!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, owner)) {
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+
     // Push remote deletes before the block (and its external_events rows) are CASCADE-removed.
     await pushOutboundDeletes(id);
-    // REQ2: collect the task ids of every task-block about to be removed (the block
     // itself + cascade-deleted children + recurring instances) BEFORE deletion, so we
     // can return their tasks to the open backlog afterward. This handler isn't
     // transactional, so gather up front.
     const affectedTaskIds = new Set<string>();
     const collectTaskId = (blockId: string) => {
       const row = sqlite
-        .prepare(`SELECT task_id, block_kind FROM time_blocks WHERE id = ?`)
-        .get(blockId) as { task_id: string | null; block_kind: string } | undefined;
+        .prepare(`SELECT task_id, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`)
+        .get(blockId, owner) as { task_id: string | null; block_kind: string } | undefined;
       if (row?.task_id && row.block_kind === 'task') affectedTaskIds.add(row.task_id);
     };
     collectTaskId(id);
     if ((ctx.query.children as string) === 'delete') {
       // CON-3 cascade: members are HARD-deleted here — drop their tag rows first.
       const members = sqlite
-        .prepare(`SELECT id FROM time_blocks WHERE parent_block_id = ?`)
-        .all(id) as { id: string }[];
+        .prepare(`SELECT id FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`)
+        .all(id, owner) as { id: string }[];
       for (const m of members) { collectTaskId(m.id); removeEntityTags('time_block', m.id); }
-      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(id);
+      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(id, owner);
     }
     // CON-4: deleting a recurring template also removes its materialized instances
     // (+ their tag rows) — otherwise orphan instances would linger with a dead parent.
     for (const inst of sqlite
-      .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? RETURNING id, task_id, block_kind`)
-      .all(id) as { id: string; task_id: string | null; block_kind: string }[]) {
+      .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND owner_id = ? RETURNING id, task_id, block_kind`)
+      .all(id, owner) as { id: string; task_id: string | null; block_kind: string }[]) {
       if (inst.task_id && inst.block_kind === 'task') affectedTaskIds.add(inst.task_id);
       removeEntityTags('time_block', inst.id);
     }
-    const [block] = await db.delete(timeBlocks).where(eq(timeBlocks.id, id)).returning();
+    const [block] = await db.delete(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, owner))).returning();
     if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     // CON-3 cascade: the block itself is HARD-deleted — drop its tag rows.
     removeEntityTags('time_block', id);
@@ -475,7 +481,7 @@ export function blocksRouter() {
     // won't re-materialize it on the next read. Without this, recurring blocks with
     // no tasks inside (e.g. a "Deep-focus" block) were impossible to delete.
     if (block.recurrenceParentId && block.occurrenceDate) {
-      excludeBlockOccurrence(block.recurrenceParentId, block.occurrenceDate);
+      excludeBlockOccurrence(owner, block.recurrenceParentId, block.occurrenceDate);
     }
     broadcast(currentOwnerId(), 'block:deleted', { id });
     // REQ2: a task with no remaining active placement returns to the open backlog.
@@ -508,12 +514,13 @@ export function blocksRouter() {
     const removed = sqlite
       .prepare(
         `DELETE FROM time_blocks
-          WHERE is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
+          WHERE owner_id = ?
+            AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
             AND status NOT IN ('completed','skipped')
             AND start_at < ? AND end_at > ?
           RETURNING id, task_id`,
       )
-      .all(dayEndISO, dayStartISO) as { id: string; task_id: string | null }[];
+      .all(owner, dayEndISO, dayStartISO) as { id: string; task_id: string | null }[];
     for (const r of removed) removeEntityTags('time_block', r.id);
     // REQ2: a task whose last active placement was just cleared returns to the open
     // backlog — otherwise it's stranded at status='scheduled' with no block.

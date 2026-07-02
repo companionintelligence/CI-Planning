@@ -52,8 +52,8 @@ function seedDailyPlan(taskId: string, position: number): void {
 function fullDayMeeting(): void {
   // Locked, non-auto meeting spanning the whole workday → zero free capacity.
   sqlite
-    .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status) VALUES (uuid7(), 'All-day mtg', 'meeting', ?, ?, 1, 0, 'manual', 'planned')`)
-    .run(`${DATE}T09:00:00.000Z`, `${DATE}T18:00:00.000Z`);
+    .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'All-day mtg', 'meeting', ?, ?, 1, 0, 'manual', 'planned', ?)`)
+    .run(`${DATE}T09:00:00.000Z`, `${DATE}T18:00:00.000Z`, OWNER);
 }
 /**
  * Place `taskId` on an otherwise-open day, then fill the day so a subsequent reflow
