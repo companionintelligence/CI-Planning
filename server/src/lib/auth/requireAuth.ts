@@ -50,7 +50,11 @@ export function requireAuth(): Koa.Middleware {
     // Read mode per-request (config is a singleton the tests flip), so a single
     // built app can serve every mode.
     if (config.auth.mode === 'test') {
-      return runWithOwner(SYSTEM_OWNER, () => next());
+      // Test-only: let a test drive a request AS a specific owner (multi-tenant
+      // isolation tests) via the `x-test-owner` header. Honored ONLY in test mode,
+      // so it adds zero auth surface to standalone/SSO. Defaults to SYSTEM_OWNER.
+      const testOwner = ctx.get('x-test-owner').trim();
+      return runWithOwner(testOwner || SYSTEM_OWNER, () => next());
     }
 
     let claims: VerifiedClaims;
