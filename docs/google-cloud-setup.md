@@ -3,7 +3,7 @@
 > **Scope.** This runbook is the operator guide for connecting Companion Planning to
 > Google with its **own** OAuth flow (Authorization Code + PKCE/S256, run in-process).
 > Tokens are encrypted at rest in the `connection_tokens` store — there is no macOS
-> Keychain dependency and no external agent bridge. Architecture: [ARCHITECTURE.md §12](../ARCHITECTURE.md#12-mcp-integration).
+> Keychain dependency and no external agent bridge. Architecture: [ARCHITECTURE.md §10](../ARCHITECTURE.md#10-google-connector).
 > The README env table is the canonical list of variable names.
 >
 > Some route/flag names below are **assumed, in-flight contracts** from sibling work
@@ -138,8 +138,9 @@ contradict the implementation:
 
 - **Identity comes from the token endpoint, not the front channel.** Account identity is
   taken from the `id_token` returned by the **token endpoint** (`CP_GOOGLE_TOKEN_URI`),
-  not from any browser-supplied parameter. Treat the account label CP assigns as
-  authoritative.
+  not from any browser-supplied parameter. The `id_token`'s signature is verified
+  against Google's published keys at `CP_GOOGLE_JWKS_URI` before its identity claim is
+  trusted. Treat the account label CP assigns as authoritative.
 - **Revoke targets the token endpoint in the request body.** Disconnecting an account
   POSTs the token to `CP_GOOGLE_REVOKE_URI` **in the request body** (not the URL query),
   so the secret is never placed in a URL. After revocation CP drops the
@@ -172,6 +173,8 @@ Run the CP server process with the `server/` directory as its working directory 
   deployment connects cleanly. Gmail (the RESTRICTED scope) is rung 4 of the staged order
   below.
 - **Primary calendar.** The server operates on the connected account's `primary` calendar.
+- **Account key.** The live client currently binds its MCP session to a single account
+  key, `CP_GOOGLE_ACCOUNT` (default `primary`), until in-app multi-account selection lands.
 
 ---
 
@@ -200,6 +203,6 @@ live deploy fails fast rather than silently.
 
 ## See also
 
-- [ARCHITECTURE.md §12 — MCP Integration](../ARCHITECTURE.md#12-mcp-integration)
-- [ARCHITECTURE.md §16 — Security / Privacy Posture](../ARCHITECTURE.md#16-security--privacy-posture)
+- [ARCHITECTURE.md §10 — Google connector](../ARCHITECTURE.md#10-google-connector)
+- [ARCHITECTURE.md §9 — Authentication & security](../ARCHITECTURE.md#9-authentication--security)
 - [README — Environment variables](../README.md#environment-variables)
