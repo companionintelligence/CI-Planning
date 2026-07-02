@@ -73,7 +73,7 @@ describe('0098 sync_events.owner_id FK', () => {
   it('rejects a non-existent owner_id and accepts a valid one', () => {
     const db = fresh();
     runMigrations(db);
-    // better-sqlite3 defaults foreign_keys ON, but be explicit for the assertion.
+    // SQLite defaults FK enforcement OFF; enable `foreign_keys` explicitly for this in-memory DB.
     db.pragma('foreign_keys = ON');
 
     // (a) inserting with an owner_id that names no owner now fails with an FK error.
