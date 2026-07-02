@@ -15,7 +15,7 @@
 **Before:**
 - No 2nd-owner test factory; the only multi-owner tests insert `owners` inline ad-hoc (`server/test/reminders.test.ts:147`, `daily-recap.test.ts:49`).
 - `requireAuth` **test-mode always binds `SYSTEM_OWNER`** (`server/src/lib/auth/requireAuth.ts:52-54`) → an HTTP request **cannot** be issued as owner B; route-level isolation is untestable.
-- `currentOwnerId()` **silently defaults to `SYSTEM_OWNER` outside any `runWithOwner` context** (`lib/context.ts:24-26`) → a missing wrapper reads owner #1 with no error.
+- `currentOwnerId()` **silently defaults to `SYSTEM_OWNER` outside any `runWithOwner` context** (`server/src/lib/context.ts:24-26`) → a missing wrapper reads owner #1 with no error.
 - The "grep gate" (`server/test/owner-literals.test.ts:10-14,27`) only matches the **integer** literal `1`, scans **only** `src/routes|engine|agents` (NOT `src/services`, `src/jobs`), and never catches a hardcoded `SYSTEM_OWNER` UUID.
 - `schema-parity.test.ts:14-22` guards **only `tag_prefs`**; `resetDb()` (`helpers.ts:26-55`) does **not** delete the `owners` table (a seeded 2nd owner leaks across the shared pid-keyed DB into later files).
 
