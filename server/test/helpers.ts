@@ -57,10 +57,8 @@ export function resetDb(): void {
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
-  // system owner before). Clear their prefs first — not every owner_id FK cascades:
-  // scheduling_prefs, tag_prefs, patterns and pattern_types are all NO-ACTION FKs
-  // (U1's provisionOwner seeds pattern_types + tag_prefs per owner, so a provisioned
-  // owner can't be deleted while they remain). patterns before pattern_types
+  // system owner before). Clear owner-scoped tables first — several `owner_id` FKs are NO-ACTION:
+  // scheduling_prefs, tag_prefs (owner_id), patterns and pattern_types. patterns before pattern_types
   // (patterns.type_id), pattern_tasks cascades off patterns.
   sqlite.prepare(`DELETE FROM scheduling_prefs WHERE owner_id != ?`).run(SYSTEM_OWNER);
   sqlite.prepare(`DELETE FROM tag_prefs WHERE owner_id != ?`).run(SYSTEM_OWNER);
