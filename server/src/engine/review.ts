@@ -163,7 +163,7 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
 export function rescheduleTask(taskId: string, days: number, owner: string): { scheduled_for: string } {
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   const tx = sqlite.transaction(() => {
-    sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ?`).run(scheduledFor, taskId);
+    sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
     // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
     for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') RETURNING id`).all(taskId, owner) as { id: string }[]) {
       removeEntityTags('time_block', b.id);
