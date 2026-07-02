@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { buildApp } from '../src/app.js';
 import { sqlite } from '../src/db/index.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { status } from '../src/mcp/ollama.js';
 
 export interface TestServer {
@@ -26,6 +27,7 @@ export async function startTestServer(): Promise<TestServer> {
 export function resetDb(): void {
   sqlite.exec(`
     DELETE FROM audit_log;
+    DELETE FROM sync_events;
     DELETE FROM reminders;
     DELETE FROM push_subscriptions;
     DELETE FROM task_dependencies;
@@ -53,6 +55,11 @@ export function resetDb(): void {
     DELETE FROM objectives;
     DELETE FROM estimate_calibration;
   `);
+  // Prune any extra owners a multi-tenant isolation test created, so they don't
+  // leak across the shared pid-keyed DB into later files (resetDb kept only the
+  // system owner before). Clear their prefs first — not every owner_id FK cascades.
+  sqlite.prepare(`DELETE FROM scheduling_prefs WHERE owner_id != ?`).run(SYSTEM_OWNER);
+  sqlite.prepare(`DELETE FROM owners WHERE id != ?`).run(SYSTEM_OWNER);
   // Pin the scheduling prefs that drive Auto placement / recurrence / recall back to
   // a deterministic baseline. resetDb keeps the prefs ROW, and files run in a
   // non-guaranteed order sharing one DB — so a test that leaves e.g.
@@ -109,5 +116,51 @@ export async function ollamaAvailable(): Promise<boolean> {
       models.has(s.embedModel);
   }
   return _ollamaUp;
+}
+
+/** Deterministic 2nd-owner id for multi-tenant isolation tests. */
+export const SECOND_OWNER_ID = '00000000-0000-7000-8000-0000000000b2';
+
+/**
+ * Create an additional owner for multi-tenant isolation tests, with a valid
+ * scheduling_prefs row cloned from the system owner (so we needn't enumerate the
+ * 30+ prefs columns — schema-drift-proof), timezone overridable. Returns the id.
+ * Cleaned up by resetDb(), which prunes non-system owners.
+ */
+export function createOwner(id: string = SECOND_OWNER_ID, name = 'Owner B', tz = 'UTC'): string {
+  sqlite
+    .prepare(`INSERT OR IGNORE INTO owners (id, name, email) VALUES (?, ?, ?)`)
+    .run(id, name, `${id}@test.local`);
+  const cols = (sqlite.prepare(`PRAGMA table_info(scheduling_prefs)`).all() as { name: string }[]).map(
+    (c) => c.name
+  );
+  if (cols.length) {
+    const params: unknown[] = [];
+    const sel = cols
+      .map((c) => {
+        if (c === 'owner_id') {
+          params.push(id);
+          return '?';
+        }
+        if (c === 'timezone') {
+          params.push(tz);
+          return '?';
+        }
+        return c;
+      })
+      .join(', ');
+    params.push(SYSTEM_OWNER); // WHERE owner_id = ?
+    sqlite
+      .prepare(
+        `INSERT OR IGNORE INTO scheduling_prefs (${cols.join(', ')}) SELECT ${sel} FROM scheduling_prefs WHERE owner_id = ? LIMIT 1`
+      )
+      .run(...params);
+  }
+  return id;
+}
+
+/** Create a 2nd owner (thin alias; T1/T2 extend with owned domain rows). */
+export function seedSecondOwnerData(id: string = SECOND_OWNER_ID): string {
+  return createOwner(id);
 }
 

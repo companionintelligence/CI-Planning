@@ -4,7 +4,7 @@
 
 > **`backup.ts` disambiguation (applies everywhere below):** the export/import/wipe logic is in **`server/src/routes/backup.ts`**. `server/src/lib/backup.ts` is only `snapshot()`/`pruneOldSnapshots()` — unrelated. Line numbers cited are `0097`-current; prefer matching by symbol (`OWNER_TABLES`, `DELETE FROM time_blocks`).
 
-**Recommended PR order:** **T0 → T3 → T4 → T2 → T1 → T5.** (Rationale: T0 unblocks testing; T3 is schema-free and fixes a latent blocker independently; T4 is tiny; **T2/T1 are the two heavy rebuilds** — do the simpler-shaped one that shakes out the migration+backup+test pattern first. The design doc's time_blocks-first order front-loads all risk into the single hardest rebuild; see [Fault F-ORDER](#fault-f-order).) Every PR is `main`-based; verify content reached `main` after each merge.
+**Recommended PR order:** **T0 → T3 ∥ T4 → T1 → T2 → T5.** (T0 unblocks isolation testing; **T3 ∥ T4** are disjoint-file, parallel-safe tracks — T3 is schema-free, T4 is a tiny migration; then **T1 → T2** run serial — they co-edit `blocks.ts`/`backup.ts`/`schema.ts`/the golden, and T1-first isolates `entity_tags` sooner so T2 just rebases its small `blocks.ts` change on T1; T5 with Phase U. See [F-ORDER](#fault-f-order).) Every PR is `main`-based; verify content reached `main` after each merge.
 
 ---
 
@@ -47,7 +47,7 @@
 - Indexes today: `ix_time_blocks_task`, `ix_time_blocks_category`, `ix_time_blocks_parent`, `ix_time_blocks_pattern_source` (partial), `ux_block_occurrence` (partial unique), `ux_time_blocks_ingest_source`. **No `start_at`/`owner_id` index.**
 - **~24 reader/writer files, all owner-blind** (only the lazy materializers already take an owner): `routes/blocks.ts` (range `:62-63`, fallback `:96-97`, POST insert `:168-192`, by-id `:257/330/365/373/378/437/445/448/453`), `engine/{autoplan,blocks-place,blocks-recur,clear-range,patterns-place,reminders,review,scheduler,auto-defense}.ts`, `routes/{block-templates,plan}.ts`, `agents/sync.ts`, `services/{block-task-sync,timer}.ts`, `scripts/seed-test-data.ts:139`. ~13 raw `INSERT INTO time_blocks` + 2 Drizzle inserts.
 - **`applyOp` has no owner check for `block` ops** (`sync/apply.ts:112-117`) — L Gap 5.
-- `backup.ts` exports `time_blocks` **unfiltered** (`:65`), import **full-wipes** it (`:186`), and the `entity_tags` delete `UNION SELECT id FROM time_blocks` (`:178-182`) spans **all** owners. `EXPORT_VERSION='3'`.
+- `backup.ts` exports `time_blocks` **unfiltered** (`SELECT * FROM time_blocks`), import **full-wipes** it (`DELETE FROM time_blocks`), and the `entity_tags` restore-delete `UNION SELECT id FROM time_blocks` spans **all** owners. ⚠️ **`EXPORT_VERSION` is now `'4'`** — PR #215 rewrote `backup.ts` (closing G-EXPORT-MISSING) and **shifted its line numbers, so match by symbol not line**; #215 did **not** touch the owner-less `time_blocks` full-wipe, so the T1 gate stands.
 
 **After:** every `time_blocks` row carries `owner_id`; all reads/writes/mutations are owner-scoped; `backup.ts` export/restore is per-owner; `applyOp` rejects cross-owner block ops; an owner-scoped range index exists.
 
@@ -61,7 +61,7 @@
 - `engine/clear-range.ts:21,196-198,218-224` — owner-scope `blocksToDelete` + template enumeration; fix the two "no owner_id" comments.
 - `engine/{autoplan,blocks-place,patterns-place,scheduler,review}.ts`, `routes/{block-templates,plan}.ts`, `agents/sync.ts:148-161`, `scripts/seed-test-data.ts:139` — add `owner_id` to every `INSERT INTO time_blocks` (bind the in-scope owner) and owner-scope their `time_blocks` SELECT/DELETE.
 - `sync/apply.ts:115` — add `|| op.entity === 'block'` to the owner check (keep `owner_id` **out** of `BLOCK_FIELDS`).
-- `routes/backup.ts` — add `time_blocks` to `OWNER_TABLES`; export `WHERE owner_id=?` (`:65`); restore `DELETE … WHERE owner_id=?` (`:186`); **`entity_tags` UNION → `UNION SELECT id FROM time_blocks WHERE owner_id=?`** (`:181`, [Fault F-ETAGS](#fault-f-etags)); bump `EXPORT_VERSION` per T0 policy.
+- `routes/backup.ts` — add `time_blocks` to `OWNER_TABLES`; scope its export `SELECT` + restore `DELETE FROM time_blocks` by `owner_id=?`; **the `entity_tags` restore UNION → `UNION SELECT id FROM time_blocks WHERE owner_id=?`** ([Fault F-ETAGS](#fault-f-etags)); bump `EXPORT_VERSION` (from `'4'`) per the T0 policy. (Line numbers shifted post-#215 — match by symbol.)
 
 **DoD:** migration + all reader/writer scoping + backup gate + `applyOp` guard land in **one PR**; `pnpm snapshot` pre-migration; `foreign_key_check`/`integrity_check` clean; baseline golden regenerated + eyeballed (only diff = `time_blocks.owner_id`); `schema-parity` extended to `time_blocks`; suite + typecheck green under `TZ=UTC`.
 
@@ -101,7 +101,7 @@
 - `routes/backup.ts` — add `tags` to `OWNER_TABLES` (`WHERE owner_id=?`); export/delete the three junctions by parent-tag membership (`… tag_id IN (SELECT id FROM tags WHERE owner_id=?)`, [Gap G-JUNCTION](#gap-g-junction)); bump `EXPORT_VERSION` per policy.
 - **New-owner base-tag provisioning** ([Gap G-BASETAG](#gap-g-basetag)) — belongs with T5/U owner-creation; **T2 documents the dependency** so Auto isn't silently broken for owner #2.
 
-**DoD:** migration + all tag readers + backup + junction scoping in one PR; base-tag provisioning dependency recorded; integrity/golden/parity green.
+**DoD:** **runs after T1** (co-edits `blocks.ts`; `entity_tags` isolation completes once `time_blocks.owner_id` exists); migration + all tag readers + backup + junction scoping in one PR; base-tag provisioning dependency recorded; integrity/golden/parity green.
 
 **Acceptance criteria:**
 1. Two owners can both hold a tag named `errands` (proves `UNIQUE(owner_id, name)`).
@@ -204,7 +204,7 @@ Ranked; each notes the correction folded into the tickets above.
 - <a id="fault-f-context"></a>**F-CONTEXT (fault):** `currentOwnerId()` defaults to `SYSTEM_OWNER` outside a context → any unwrapped path silently serves owner #1, invisible in test-mode. → **T0** makes it throw in non-test builds + mandates an audit.
 - <a id="fault-f-tblrebuild"></a>**F-TBLREBUILD (fault):** `time_blocks` has never been rebuilt (6 inbound FKs, self-ref, ~30 cols, 6 indexes); under FK-off any `createNewSql` omission passes silently. → **T1** enumerates the full column/FK/index list + mandates `foreign_key_check` + eyeballed golden.
 - <a id="gap-g-basetag"></a>**G-BASETAG (gap):** base `Home/Work/Community` seeded once globally → owner #2 gets zero pattern tags → Auto silently places nothing. → **T2** documents the per-owner-provisioning dependency (owned by T5/U).
-- <a id="fault-f-order"></a>**F-ORDER (drift):** time_blocks-first front-loads all risk (hardest rebuild + first backup gate + Gap-5 close). → recommended order **T0→T3→T4→T2→T1→T5**.
+- <a id="fault-f-order"></a>**F-ORDER (resolved 2026-07-02):** T1 and T2 are serial (they co-edit `blocks.ts`/`backup.ts`/`schema.ts`/the golden). Final order **T0 → T3 ∥ T4 → T1 → T2 → T5**: T0 first; T3 ∥ T4 parallel (disjoint); then **T1 before T2** — T1-first isolates `entity_tags` sooner and T2 rebases its small `blocks.ts` change on T1. (The earlier "time_blocks-first front-loads risk" concern is moot: T1/T2 are serial regardless, and T0/T3/T4 land the low-risk groundwork first.)
 
 ### Medium
 
@@ -216,7 +216,7 @@ Ranked; each notes the correction folded into the tickets above.
 - <a id="fault-f-import"></a>**F-IMPORT:** `POST /api/import` `INSERT OR REPLACE` trusts row-level `owner_id`; a colliding PK could clobber another owner's row. → per-row owner validation in the scoping PR + adversarial colliding-PK test.
 - <a id="fault-f-cascade"></a>**F-CASCADE:** `pattern_day_optouts.owner_id` lacks `ON DELETE CASCADE`; `time_blocks` T1 adds CASCADE while `flight_plan` (0093) deliberately omitted it — inconsistent owner-delete behavior. → **T4** normalizes (or defers to U with a note).
 - <a id="gap-g-gate"></a>**G-GATE:** the grep gate only catches integer `1` literals and skips `src/services`/`src/jobs` and UUID `SYSTEM_OWNER`. → **T0** widens it.
-- <a id="gap-g-export-missing"></a>**G-EXPORT-MISSING (pre-existing bug):** export/import silently **omits** owner-scoped `daily_plan`, `reflections`, `objectives`, `objective_tasks`, `estimate_calibration`, `replan_suggestions`, `plan_hints`, `day_assignments` — a round-trip data-loss bug unrelated to tenancy, but T is the PR touching this file. → audit every `owner_id`-bearing table against the export payload; fold in or document.
+- <a id="gap-g-export-missing"></a>**G-EXPORT-MISSING — ✅ RESOLVED (PR #215, merged 2026-07-02):** export/import previously omitted owner-scoped `daily_plan`/`reflections`/`objectives`/`objective_tasks`/`estimate_calibration`/`replan_suggestions`/`plan_hints`/`day_assignments` (round-trip data loss). #215 added them and bumped `EXPORT_VERSION → '4'`. T1/T2's `backup.ts` edits build on the #215 shape (match by symbol; line numbers shifted).
 
 ### Low / notes
 
