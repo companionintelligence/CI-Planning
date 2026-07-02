@@ -283,10 +283,23 @@ function allOwnerIds(): string[] {
 export async function runScheduledJob(kind: string): Promise<void> {
   if (OWNER_SCOPED_KINDS.has(kind)) {
     for (const ownerId of allOwnerIds()) {
-      await runWithOwner(ownerId, () => runJob(kind));
+      try {
+        await runWithOwner(ownerId, () => runJob(kind));
+      } catch (err) {
+        logger.error(`Scheduled job ${kind} failed for owner ${ownerId}`, {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-  } else {
+    return;
+  }
+
+  try {
     await runWithOwner(SYSTEM_OWNER, () => runJob(kind));
+  } catch (err) {
+    logger.error(`Scheduled job ${kind} failed`, {
+      err: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
