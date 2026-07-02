@@ -60,7 +60,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   dot surface it; it is not a journal/notes entity with its own CRUD lifecycle.
 - **Five-star day (the day-stars tally / calendar heatmap):** **not a noun** — a derived
   score, never a manual toggle, computed from existing Task/Habit/reflection state
-  (internal: `computeStars()`, cached in `day_stars`). Today computes live; a nightly job
+  (internal: `computeStars()`, frozen into `daily_recap`). Today computes live; a nightly job
   freezes each day's score permanently once it ends. Visually distinct from the Objective
   deep-link star on task cards (`EightPointStar`, 8-pointed, accent color) — the day-stars
   are 5-pointed and gold, and only ever appear as the header tally or the calendar heatmap,
@@ -100,7 +100,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   > ratified for now (README marks `pattern_types` load-bearing). Until/unless §3b is revived,
   > use the table name and the `kind` value as the disambiguator: `patterns`/`pattern_types`/
   > `pattern_tasks` = the Routine collection system; `tags.kind='pattern'` + `pattern_blocks`/
-  > `pattern_prefs`/`tag_patterns` = the tag-category axis.
+  > `tag_prefs`/`tag_patterns` = the tag-category axis.
 
 ## Translation (old term → canonical)
 

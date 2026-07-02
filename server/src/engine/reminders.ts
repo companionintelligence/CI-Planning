@@ -132,7 +132,7 @@ export function syncTaskReminders(ownerId: string, taskId: string): number {
   }
   if (!Number.isFinite(anchorMs)) return 0;
 
-  const rows = sqlite.prepare(`SELECT reminder_offsets FROM pattern_prefs WHERE owner_id = ?`).all(ownerId) as
+  const rows = sqlite.prepare(`SELECT reminder_offsets FROM tag_prefs WHERE owner_id = ? AND kind = 'pattern'`).all(ownerId) as
     { reminder_offsets: string }[];
   const offsets = new Set<number>();
   for (const r of rows) {

@@ -4,19 +4,18 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from './sse.js';
 import { writeAudit } from '../lib/audit.js';
 
-const EXPORT_VERSION = '1';
+const EXPORT_VERSION = '3';
 
 // Tables that require only the owner_id for a direct export query.
 const OWNER_TABLES = [
   'scheduling_prefs',
-  'daily_summaries',
+  'daily_recap',
   'pattern_types',
   'patterns',
   'tasks',
   'block_templates',
   'pattern_blocks',
-  'pattern_prefs',
-  'category_prefs',
+  'tag_prefs',
   'flight_plan',
   'time_entries',
   'reminders',
@@ -112,8 +111,7 @@ export function backupRouter() {
       task_dependencies: taskDeps,
       block_templates: ownerData['block_templates'],
       pattern_blocks: ownerData['pattern_blocks'],
-      pattern_prefs: ownerData['pattern_prefs'],
-      category_prefs: ownerData['category_prefs'],
+      tag_prefs: ownerData['tag_prefs'],
       flight_plan: ownerData['flight_plan'],
       time_entries: ownerData['time_entries'],
       entity_tags: entityTags,
@@ -121,7 +119,7 @@ export function backupRouter() {
       possible_task_tags: possibleTaskTags,
       reminders: ownerData['reminders'],
       push_subscriptions: ownerData['push_subscriptions'],
-      daily_summaries: ownerData['daily_summaries'],
+      daily_recap: ownerData['daily_recap'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -187,8 +185,7 @@ export function backupRouter() {
       sqlite.prepare(`DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
       sqlite.exec('DELETE FROM time_blocks'); // v0.2 single-owner: full wipe (incl. containers)
       sqlite.prepare('DELETE FROM flight_plan WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM pattern_prefs WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM category_prefs WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM tag_prefs WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM pattern_blocks WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM block_templates WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM tasks WHERE owner_id = ?').run(ownerId);
@@ -199,13 +196,13 @@ export function backupRouter() {
       sqlite.exec('DELETE FROM category_direction_optouts');
       sqlite.exec('DELETE FROM tag_patterns');
       sqlite.exec('DELETE FROM tags');
-      sqlite.prepare('DELETE FROM daily_summaries WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM daily_recap WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM scheduling_prefs WHERE owner_id = ?').run(ownerId);
 
       // ── Insert in FK-safe forward order ────────────────────────────────────
       const g = (key: string) => (Array.isArray(body[key]) ? (body[key] as Record<string, unknown>[]) : []);
       counts['scheduling_prefs'] = insertRows('scheduling_prefs', g('scheduling_prefs'));
-      counts['daily_summaries']  = insertRows('daily_summaries', g('daily_summaries'));
+      counts['daily_recap']      = insertRows('daily_recap', g('daily_recap'));
       counts['tags']             = insertRows('tags', g('tags'));
       counts['tag_patterns']     = insertRows('tag_patterns', g('tag_patterns'));
       counts['tag_categories']   = insertRows('tag_categories', g('tag_categories'));
@@ -218,8 +215,7 @@ export function backupRouter() {
       counts['task_dependencies']= insertRows('task_dependencies', g('task_dependencies'));
       counts['block_templates']  = insertRows('block_templates', g('block_templates'));
       counts['pattern_blocks']   = insertRows('pattern_blocks', g('pattern_blocks'));
-      counts['pattern_prefs']    = insertRows('pattern_prefs', g('pattern_prefs'));
-      counts['category_prefs']   = insertRows('category_prefs', g('category_prefs'));
+      counts['tag_prefs']        = insertRows('tag_prefs', g('tag_prefs'));
       counts['flight_plan']      = insertRows('flight_plan', g('flight_plan'));
       counts['time_entries']     = insertRows('time_entries', g('time_entries'));
       counts['entity_tags']      = insertRows('entity_tags', g('entity_tags'));
