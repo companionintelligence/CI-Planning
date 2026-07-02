@@ -195,7 +195,9 @@ export function authRouter() {
   // SOLELY from the matched auth_states row + the verified id_token.
   router.get('/api/auth/ciportal/callback', async (ctx) => {
     if (!ssoLoginEnabled()) throw httpError(404, 'CI-Portal login is not enabled');
-
+    if (!ciportalConfigured()) {
+      throw httpError(503, 'CI-Portal is not configured — set the CIPORTAL_* variables (see .env.example)');
+    }
     const error = typeof ctx.query.error === 'string' ? ctx.query.error : undefined;
     const code = typeof ctx.query.code === 'string' ? ctx.query.code : undefined;
     const state = typeof ctx.query.state === 'string' ? ctx.query.state : undefined;
