@@ -1,19 +1,37 @@
 import { createSignal } from 'solid-js';
 
 /**
- * Light/dark theme, driven by the `.dark` class on <html> (which flips the
- * CI-Hub design tokens in index.css). The initial class is set by a tiny inline
- * script in index.html to avoid a flash; this module owns runtime toggling and
- * persistence. Dark-first default preserves the app's established look.
+ * Light/dark theme, driven by the `.dark` / `.light` class on <html> (which
+ * flips the CI-Hub design tokens in index.css: :root = light, .dark = dark).
+ * The initial class is set by a tiny inline script in index.html to avoid a
+ * flash; this module owns runtime toggling and persistence.
+ *
+ * The stored preference is `light | dark | system`. `system` resolves live via
+ * `matchMedia('(prefers-color-scheme: dark)')`. Dark-first default preserves the
+ * app's established look when nothing is persisted.
  */
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'dark' | 'system';
+export type ResolvedTheme = 'light' | 'dark';
 
-const KEY = 'ci-theme';
+// Canonical CI storage key (matches the shadcn/vite-ui ThemeProvider convention
+// used across the CI frontends). Previously 'ci-theme'.
+const KEY = 'vite-ui-theme';
+
+const media = () =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+
+/** Resolve a stored preference to a concrete light/dark value. */
+function resolve(t: Theme): ResolvedTheme {
+  if (t === 'system') return media()?.matches ? 'dark' : 'light';
+  return t;
+}
 
 function initial(): Theme {
   try {
     const t = localStorage.getItem(KEY);
-    if (t === 'light' || t === 'dark') return t;
+    if (t === 'light' || t === 'dark' || t === 'system') return t;
   } catch {
     /* localStorage unavailable (private mode / SSR) */
   }
@@ -23,12 +41,22 @@ function initial(): Theme {
 const [theme, setThemeSignal] = createSignal<Theme>(initial());
 export { theme };
 
-/** Apply a theme to <html> (adds/removes the `.dark` class the tokens key off). */
+// Effective light/dark, tracking both the stored preference and (when it is
+// 'system') the OS colour-scheme. Consumers that need the concrete appearance
+// (icon, label, class checks) should read this, not `theme()`.
+const [resolvedTheme, setResolvedSignal] = createSignal<ResolvedTheme>(resolve(theme()));
+export { resolvedTheme };
+
+/** Apply a preference to <html> (adds `.dark`/`.light`, the tokens key off `.dark`). */
 export function applyTheme(t: Theme): void {
-  document.documentElement.classList.toggle('dark', t === 'dark');
+  const r = resolve(t);
+  const el = document.documentElement;
+  el.classList.toggle('dark', r === 'dark');
+  el.classList.toggle('light', r === 'light');
+  setResolvedSignal(r);
 }
 
-/** Set, persist, and apply a theme. */
+/** Set, persist, and apply a preference. */
 export function setTheme(t: Theme): void {
   setThemeSignal(t);
   try {
@@ -39,6 +67,13 @@ export function setTheme(t: Theme): void {
   applyTheme(t);
 }
 
+/** Cycle the visible appearance: flip between light and dark. */
 export function toggleTheme(): void {
-  setTheme(theme() === 'dark' ? 'light' : 'dark');
+  setTheme(resolvedTheme() === 'dark' ? 'light' : 'dark');
 }
+
+// When the preference is 'system', re-apply on OS colour-scheme changes so the
+// UI tracks light/dark live. Guarded for SSR / no-matchMedia environments.
+media()?.addEventListener?.('change', () => {
+  if (theme() === 'system') applyTheme('system');
+});

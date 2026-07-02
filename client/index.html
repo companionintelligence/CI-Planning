@@ -6,15 +6,24 @@
     <meta name="description" content="Companion Planning — private, local-first todo & planning with optional local-LLM triage." />
     <meta name="theme-color" content="#041620" />
     <title>Companion Planning</title>
-    <!-- Set the theme class before first paint to avoid a flash (dark-first default). -->
+    <!-- Set the theme class before first paint to avoid a flash. Preference is
+         'light' | 'dark' | 'system' under key 'vite-ui-theme'; 'system' follows
+         the OS scheme, and any missing/invalid value defaults dark (dark-first). -->
     <script>
       (function () {
-        try {
-          var t = localStorage.getItem('ci-theme');
-          document.documentElement.classList.toggle('dark', t !== 'light');
-        } catch (e) {
-          document.documentElement.classList.add('dark');
+        function prefersDark() {
+          return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
         }
+        var dark = true; // dark-first default when nothing valid is stored
+        try {
+          var t = localStorage.getItem('vite-ui-theme');
+          if (t === 'light') dark = false;
+          else if (t === 'dark') dark = true;
+          else if (t === 'system') dark = prefersDark();
+        } catch (e) { /* localStorage unavailable */ }
+        var el = document.documentElement;
+        el.classList.toggle('dark', dark);
+        el.classList.toggle('light', !dark);
       })();
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
