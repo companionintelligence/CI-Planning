@@ -10,9 +10,16 @@ import { SYSTEM_OWNER_ID } from '../ids.js';
  * which matters given this repo's native-build constraints (see the better-sqlite3
  * build allow-list in pnpm-workspace.yaml).
  *
- * Only invoked in local-login mode (`mode === 'sso' && disableOidc`) via the `/api/auth/login`
- * handler. Other auth modes don't call into this module's hashing/verification functions, but the
- * module may still be imported at boot because the auth router is mounted unconditionally.
+ * Scope note: the login LOGIC here only *runs* under `mode === 'sso' && disableOidc`
+ * (requireAuth dispatch + the /api/auth/login handler gate on it). But the MODULE is
+ * imported unconditionally — routes/auth.ts (mounted for every mode via mountRoutes)
+ * and localBootstrap.ts both import it — so importing it loads the `@node-rs/argon2`
+ * native binary AND computes the decoy hash below at boot in EVERY mode, including
+ * test/standalone. That's deliberate operational coupling: a platform without a
+ * working argon2 binary fails at startup regardless of AUTH_MODE (@node-rs ships
+ * prebuilts for the supported targets; CI runs on Node 22 with them). Don't assume
+ * non-local deployments skip this file.
+ */
 
 // argon2id with library defaults (m=19MiB, t=2, p=1 in @node-rs/argon2 v2) — OWASP-
 // aligned and encoded self-describingly in the `$argon2id$…` string, so a later
@@ -69,11 +76,21 @@ export function findOwnerByUsername(username: string): LocalOwnerRow | undefined
     .get(username, SYSTEM_OWNER_ID) as LocalOwnerRow | undefined;
 }
 
-/** Count usable local owners (username + password hash set), excluding the sentinel — drives boot seeding. */
+/**
+ * Count owners who can ACTUALLY log in locally — both `username` AND `password_hash`
+ * set — excluding the sentinel. This drives the boot seeding/fail-closed decision, so
+ * it must match verifyLoginPassword's precondition exactly: a row with a username but a
+ * NULL password_hash can never authenticate (verify always fails against the decoy), so
+ * counting it as a "local owner" would let the boot guard skip seeding AND skip failing
+ * closed, leaving no usable login path. Count only genuinely-usable accounts.
+ */
 export function localOwnerCount(): number {
   return (
     sqlite
-      .prepare(`SELECT COUNT(*) AS n FROM owners WHERE username IS NOT NULL AND password_hash IS NOT NULL AND id <> ?`)
+      .prepare(
+        `SELECT COUNT(*) AS n FROM owners
+           WHERE username IS NOT NULL AND password_hash IS NOT NULL AND id <> ?`,
+      )
       .get(SYSTEM_OWNER_ID) as { n: number }
   ).n;
 }
