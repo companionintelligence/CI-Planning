@@ -53,7 +53,7 @@ export function requireAuth(): Koa.Middleware {
       // Test-only: let a test drive a request AS a specific owner (multi-tenant
       // isolation tests) via the `x-test-owner` header. Honored ONLY in test mode,
       // so it adds zero auth surface to standalone/SSO. Defaults to SYSTEM_OWNER.
-      const testOwner = ctx.get('x-test-owner');
+      const testOwner = ctx.get('x-test-owner').trim();
       return runWithOwner(testOwner || SYSTEM_OWNER, () => next());
     }
 
