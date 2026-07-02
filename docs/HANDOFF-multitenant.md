@@ -8,7 +8,7 @@
 
 - **`main` migration head: `0097_tag_prefs`.** All schema-cleanup work (Phases Q + S) is merged.
 - The app is single-owner (`owners.id` = the `SYSTEM_OWNER_ID` UUIDv7 sentinel), local-first SQLite (better-sqlite3 + drizzle), Koa API + SolidJS client. Identity is UUIDv7 TEXT everywhere (since `0030`).
-- **Verify on arrival:** `git fetch origin main && ls server/src/db/migrations/ | grep -E '^[0-9]{4}_' | sort | tail -1` → should be `0097_tag_prefs`. `pnpm --filter server test` (under `TZ=UTC`) + `pnpm --filter server typecheck` should be green.
+- **Verify on arrival:** `git fetch origin main && ls server/src/db/migrations/ | grep -E '^[0-9]{4}_' | sort | tail -1` → should be `0097_tag_prefs.ts`. `pnpm --filter server test` (under `TZ=UTC`) + `pnpm --filter server typecheck` should be green.
 
 ## 2. What shipped in the Q + S work (all merged to `main`)
 
