@@ -5,7 +5,11 @@ import { runMigrations } from '../src/db/migrate.js';
 import * as m0095 from '../src/db/migrations/0095_drop_plan_outcomes.js';
 
 // Isolated in-memory DBs — never touch the shared file DB.
-const fresh = () => new BetterSqlite3(':memory:');
+const fresh = () => {
+  const db = new BetterSqlite3(':memory:');
+  db.pragma('foreign_keys = ON');
+  return db;
+};
 const tableExists = (db: Database, name: string) =>
   !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(name);
 
