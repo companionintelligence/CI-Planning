@@ -166,8 +166,8 @@ async function main() {
   let taskCount = (sqlite.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number }).n;
   const fillerNeeded = Math.max(0, args.target - taskCount);
   if (fillerNeeded > 0) {
-    const fillerTagId = (sqlite.prepare("INSERT OR IGNORE INTO tags (id, name) VALUES (uuid7(), 'seed-filler')").run(),
-      sqlite.prepare("SELECT id FROM tags WHERE name='seed-filler'").get() as { id: string }).id;
+    const fillerTagId = (sqlite.prepare("INSERT OR IGNORE INTO tags (id, owner_id, name) VALUES (uuid7(), ?, 'seed-filler')").run(SYSTEM_OWNER),
+      sqlite.prepare("SELECT id FROM tags WHERE owner_id = ? AND name='seed-filler'").get(SYSTEM_OWNER) as { id: string }).id;
     const insert = sqlite.prepare(
       `INSERT INTO tasks (id, title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (uuid7(), ?, ?, 1, 'agent', 'open', ?) RETURNING id`
     );

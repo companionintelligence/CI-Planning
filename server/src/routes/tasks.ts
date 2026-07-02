@@ -292,7 +292,7 @@ export function tasksRouter() {
   // (the client still has its offline heuristic). Literal path; no clash with /:id/*.
   router.post('/api/tasks/suggest-tags', async (ctx) => {
     const { title } = (ctx.request.body ?? {}) as { title?: string };
-    const vocab = (sqlite.prepare('SELECT name FROM tags ORDER BY name').all() as { name: string }[]).map((r) => r.name);
+    const vocab = (sqlite.prepare('SELECT name FROM tags WHERE owner_id = ? ORDER BY name').all(currentOwnerId()) as { name: string }[]).map((r) => r.name);
     const tags = await suggestTags(title ?? '', vocab);
     ctx.body = { tags };
   });
@@ -634,7 +634,7 @@ function applyTaskTagLevels(taskId: string, opts: { tags?: string[]; secondary?:
   syncLeveledEntityTags('task', taskId, [
     { level: 1, names: top },
     { level: 2, names: secondary },
-  ]);
+  ], currentOwnerId());
 }
 
 /** A task's secondary (level>1) tag names — the read surface (mirrors blocks). */

@@ -75,8 +75,8 @@ beforeEach(() => {
 
 // A representative dataset touching every FK + serializer CON-1 will migrate.
 function seedApiFixture(): void {
-  const work = insert('tags', { name: 'work' });
-  const errands = insert('tags', { name: 'errands' });
+  const work = insert('tags', { owner_id: OWNER, name: 'work' });
+  const errands = insert('tags', { owner_id: OWNER, name: 'errands' });
 
   const spec = insert('tasks', { title: 'Write spec', owner_id: OWNER, status: 'open', priority: 2, estimated_minutes: 45, scheduled_for: DAY });
   const post = insert('tasks', { title: 'Post office', owner_id: OWNER, status: 'open', priority: 3, estimated_minutes: 30, due_at: at('17:00') });
@@ -131,7 +131,7 @@ describe('behavior baseline — Auto placement engine', () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC', workday_start='09:00', workday_end='18:00', auto_fill_workday=1 WHERE owner_id=?`).run(OWNER);
 
     const plan = insert('time_blocks', { owner_id: OWNER, title: 'work plan', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
-    const work = insert('tags', { name: 'work' });
+    const work = insert('tags', { owner_id: OWNER, name: 'work' });
     const code = insert('tasks', { title: 'Write code', owner_id: OWNER, status: 'open', estimated_minutes: 60, priority: 2 });
     const milk = insert('tasks', { title: 'Buy milk', owner_id: OWNER, status: 'open', estimated_minutes: 30, priority: 3 });
     const loose = insert('tasks', { title: 'Loose end', owner_id: OWNER, status: 'open', estimated_minutes: 45, priority: 4 });

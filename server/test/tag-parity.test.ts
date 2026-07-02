@@ -63,7 +63,7 @@ describe('CON-3 — entity_tags is the sole task-tag store (Wave 2)', () => {
   });
 
   it('groom promotion carries inbox tags into entity_tags', async () => {
-    const tagId = (sqlite.prepare('INSERT INTO tags (id, name) VALUES (uuid7(), ?) RETURNING id').get('inbox') as { id: string }).id;
+    const tagId = (sqlite.prepare('INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?) RETURNING id').get('inbox', OWNER) as { id: string }).id;
     const pid = (sqlite
       .prepare(`INSERT INTO possible_tasks (id, raw_title, confidence, status, proposed_owner_id) VALUES (uuid7(), ?, ?, 'pending', ?) RETURNING id`)
       .get('Promote me', 0.9, OWNER) as { id: string }).id;
@@ -79,8 +79,8 @@ describe('CON-3 — entity_tags is the sole task-tag store (Wave 2)', () => {
   // relies on for tags[0]); the baseline snapshot can't catch it (its normalizer sorts).
   it('serialized tag order follows tag_id, not alphabetical', async () => {
     // Two tags whose id order is the REVERSE of alphabetical: 'zzz' gets the smaller id.
-    sqlite.prepare('INSERT INTO tags (id, name) VALUES (?, ?)').run('11111111-1111-7111-8111-111111111111', 'zzz');
-    sqlite.prepare('INSERT INTO tags (id, name) VALUES (?, ?)').run('22222222-2222-7222-8222-222222222222', 'aaa');
+    sqlite.prepare('INSERT INTO tags (id, name, owner_id) VALUES (?, ?, ?)').run('11111111-1111-7111-8111-111111111111', 'zzz', OWNER);
+    sqlite.prepare('INSERT INTO tags (id, name, owner_id) VALUES (?, ?, ?)').run('22222222-2222-7222-8222-222222222222', 'aaa', OWNER);
     const c = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'Ordered', tags: ['aaa', 'zzz'] } });
     // tag_id order (zzz < aaa); alphabetical would be ['aaa','zzz'].
     expect(await apiTags(c.body.task.id)).toEqual(['zzz', 'aaa']);

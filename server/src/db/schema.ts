@@ -233,7 +233,10 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
 
 export const tags = sqliteTable('tags', {
   id: text('id').primaryKey().$defaultFn(newId),
-  name: text('name').notNull().unique(),
+  // T2 (multi-tenant): every tag belongs to an owner; `name` is unique PER-OWNER
+  // (see the table-level unique below), not globally.
+  ownerId: text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
   // Tag taxonomy (0036/0043; 'category' added 0069) — a SECOND axis, orthogonal to
   // entity_tags.level (Phase-5 per-entity dilution). `kind` is the taxonomy LEVEL: a
   // 'pattern' is a top-level GROUPING (brand-set Home/Work/Community + user-added); an
@@ -243,7 +246,7 @@ export const tags = sqliteTable('tags', {
   kind: text('kind').notNull().default('intention'),       // 'pattern' | 'intention' | 'category'
   muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
   isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
-});
+}, (t) => ({ ownerName: unique().on(t.ownerId, t.name) }));
 
 // 0036/0043: intention→pattern-tag membership (many-to-many). An intention tag with
 // no row here is "Unsorted". Both sides FK tags(id) cascade. Renamed from
