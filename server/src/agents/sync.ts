@@ -39,7 +39,7 @@ function syncWindow(): { from: string; to: string } {
  * an inbound calendar mirror — we never push meeting mirrors back (I9).
  */
 export function enqueueOutbound(blockId: string): void {
-  if (!config.sync.writeback) return;
+  if (config.sync.disabled || !config.sync.writeback) return;
   // I9: inbound-mirrored blocks must never be pushed back to the provider. Checked
   // inside this function (not only at call sites) so future callers can't bypass it.
   const isInbound = sqlite
@@ -63,6 +63,7 @@ export function enqueueOutbound(blockId: string): void {
  * mapping. Errors are logged but do not block the local delete.
  */
 export async function pushOutboundDeletes(blockId: string): Promise<void> {
+  if (config.sync.disabled) return;
   const outbound = sqlite
     .prepare(
       `SELECT provider, account, external_id, etag
@@ -349,6 +350,15 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
     errors: [],
   };
 
+  // CP_SYNC_DISABLED master kill switch — do no reconcile work when the sync agent is off.
+  if (config.sync.disabled) {
+    logger.debug('syncConnector: sync disabled (CP_SYNC_DISABLED)', {
+      provider: connector.provider,
+      account: connector.account,
+    });
+    return result;
+  }
+
   const ownerId = currentOwnerId();
   const window = syncWindow();
 
@@ -399,6 +409,10 @@ export async function syncConnector(connector: CalendarConnector): Promise<SyncR
 
 /** Sync all connectors registered for the current owner. Broadcasts SSE events. */
 export async function syncAll(): Promise<SyncResult[]> {
+  if (config.sync.disabled) {
+    logger.debug('syncAll: sync disabled (CP_SYNC_DISABLED)');
+    return [];
+  }
   const connectors = getConnectors();
   if (connectors.length === 0) {
     logger.debug('syncAll: no connectors registered for this owner');
