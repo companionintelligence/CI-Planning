@@ -104,6 +104,14 @@ export function overlayAxesCount(deselected: AxisDeselected): number {
   return TAG_AXES.reduce((n, axis) => n + deselected[axis].size, 0);
 }
 
+// ── Tags ─────────────────────────────────────────────────────────────────────
+// Defined here — above the memos that read it (tagKindLookup / visibleBlocks) —
+// because createMemo evaluates eagerly at module init: a memo that calls tags()
+// before this const initializes would throw a TDZ error and abort the module.
+export const [tags, { refetch: refetchTags }] = createResource(() =>
+  api.tags.list().then((r) => r.tags)
+);
+
 /** Build a task lookup by id from the current tasks resource. */
 const taskById = createMemo<Map<string, Task>>(() => {
   const m = new Map<string, Task>();
@@ -238,11 +246,6 @@ export function patternForTask(taskId?: string): { pattern: Pattern; type?: Patt
 export function isRoutineTask(taskId?: string): boolean {
   return patternForTask(taskId)?.type?.name === 'Routine';
 }
-
-// ── Tags ─────────────────────────────────────────────────────────────────────
-export const [tags, { refetch: refetchTags }] = createResource(() =>
-  api.tags.list().then((r) => r.tags)
-);
 
 // ── Prefs ────────────────────────────────────────────────────────────────────
 export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
