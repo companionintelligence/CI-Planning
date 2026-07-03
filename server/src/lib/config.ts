@@ -3,6 +3,12 @@ import { join, dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+/** Parse a positive integer env var, falling back when it's unset, non-numeric, or ≤ 0. */
+function positiveIntOr(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /**
  * Auth mode (Phase I). `test` injects a fixed system owner with no credentials so
  * the existing suite + local dev run unchanged — it is hard-rejected at boot under
@@ -102,7 +108,7 @@ export interface CiPortalConfig {
 
 /** GraphQL surface (Phase W). Additive to REST; mounted at /api/graphql. */
 export interface GraphqlConfig {
-  /** Max query complexity (graphql-query-complexity), mirroring CI-Server's ComplexityPlugin. */
+  /** Reject a query whose estimated cost exceeds this (the ComplexityPlugin analog). */
   maxComplexity: number;
 }
 
@@ -222,7 +228,9 @@ export const config: Config = {
     appBaseUrl: process.env.APP_BASE_URL ?? publicBaseUrl,
   },
   graphql: {
-    maxComplexity: Number(process.env.GRAPHQL_MAX_COMPLEXITY ?? 1000),
+    // Guard against a non-numeric / non-positive override: a NaN limit would make
+    // `complexity > NaN` always false and silently disable the limiter.
+    maxComplexity: positiveIntOr(process.env.GRAPHQL_MAX_COMPLEXITY, 1000),
   },
   google: {
     clientId: process.env.CP_GOOGLE_CLIENT_ID,

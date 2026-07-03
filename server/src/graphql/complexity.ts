@@ -3,6 +3,7 @@ import {
   GraphQLError,
   Kind,
   type DocumentNode,
+  type OperationDefinitionNode,
   type SelectionSetNode,
   type FragmentDefinitionNode,
 } from 'graphql';
@@ -24,43 +25,46 @@ import { logger } from '../lib/logger.js';
  * `simpleEstimator({ defaultComplexity: 1 })`. Per-field custom weights (their
  * `fieldExtensionsEstimator`) can be layered in later; no field defines one yet.
  */
+// `activeSpreads` is the current fragment-spread PATH (a recursion stack): a name is
+// added before descending and removed after, so a genuine cycle (A→…→A) is bounded while
+// a fragment legitimately spread more than once — in siblings or repeated — is still
+// counted each time (a single never-cleared "seen" set would undercount and let a query
+// bypass the limiter by duplicating expensive selections via one fragment).
 function countFields(
   selectionSet: SelectionSetNode,
   fragments: Map<string, FragmentDefinitionNode>,
-  seenFragments: Set<string>,
+  activeSpreads: Set<string>,
 ): number {
   let cost = 0;
   for (const node of selectionSet.selections) {
     if (node.kind === Kind.FIELD) {
       cost += 1;
-      if (node.selectionSet) cost += countFields(node.selectionSet, fragments, seenFragments);
+      if (node.selectionSet) cost += countFields(node.selectionSet, fragments, activeSpreads);
     } else if (node.kind === Kind.INLINE_FRAGMENT) {
-      if (node.selectionSet) cost += countFields(node.selectionSet, fragments, seenFragments);
+      if (node.selectionSet) cost += countFields(node.selectionSet, fragments, activeSpreads);
     } else if (node.kind === Kind.FRAGMENT_SPREAD) {
       const name = node.name.value;
-      if (seenFragments.has(name)) continue; // guard against cyclic fragment spreads
+      if (activeSpreads.has(name)) continue; // cycle: this fragment is already on the path
       const frag = fragments.get(name);
       if (frag) {
-        seenFragments.add(name);
-        cost += countFields(frag.selectionSet, fragments, seenFragments);
+        activeSpreads.add(name);
+        cost += countFields(frag.selectionSet, fragments, activeSpreads);
+        activeSpreads.delete(name); // pop — a later/sibling spread of the same fragment still counts
       }
     }
   }
   return cost;
 }
 
-function estimateComplexity(document: DocumentNode): number {
+// Cost only the operation Apollo actually resolved (didResolveOperation gives us the one
+// selected via operationName) — NOT every operation definition in the document, which
+// would over-count a multi-operation request and reject otherwise-valid queries.
+function estimateComplexity(operation: OperationDefinitionNode, document: DocumentNode): number {
   const fragments = new Map<string, FragmentDefinitionNode>();
   for (const def of document.definitions) {
     if (def.kind === Kind.FRAGMENT_DEFINITION) fragments.set(def.name.value, def);
   }
-  let total = 0;
-  for (const def of document.definitions) {
-    if (def.kind === Kind.OPERATION_DEFINITION) {
-      total += countFields(def.selectionSet, fragments, new Set());
-    }
-  }
-  return total;
+  return countFields(operation.selectionSet, fragments, new Set());
 }
 
 // `getMaxComplexity` is read per request (not captured once) so the limit can be changed
@@ -69,9 +73,10 @@ export function complexityPlugin(getMaxComplexity: () => number): ApolloServerPl
   return {
     async requestDidStart() {
       return {
-        async didResolveOperation({ document }) {
+        async didResolveOperation({ operation, document }) {
+          if (!operation) return; // no resolved operation to cost (shouldn't happen post-resolve)
           const maxComplexity = getMaxComplexity();
-          const complexity = estimateComplexity(document);
+          const complexity = estimateComplexity(operation, document);
           if (complexity > maxComplexity) {
             throw new GraphQLError(
               `Query is too complex: ${complexity}. Maximum allowed complexity: ${maxComplexity}`,

@@ -28,10 +28,10 @@ export interface GraphqlContext {
  *     AsyncLocalStorage — GraphQL never re-derives auth (Decision 5).
  * Additive to REST; nothing existing changes.
  *
- * Scope note: requireAuth maps HTTP method → scope (POST ⇒ planning:write). GraphQL
- * queries also POST, so a read-only credential (standalone api-key with only
- * planning:read) can't reach GraphQL yet. Session modes carry both scopes, so this is a
- * no-op for them; per-operation scoping is a later refinement, tracked in the design doc.
+ * Scope note: requireAuth maps HTTP method → scope (POST ⇒ planning:write). The route is
+ * restricted to POST (below) so it can't be reached by a read-only credential through a
+ * GET, and so the scope model stays a single, predictable "GraphQL needs write" until
+ * per-operation (query vs mutation) scoping is added. Session modes carry both scopes.
  */
 export async function mountGraphql(app: Koa): Promise<void> {
   const server = new ApolloServer<GraphqlContext>({
@@ -52,6 +52,8 @@ export async function mountGraphql(app: Koa): Promise<void> {
   const gqlMiddleware = koaMiddleware(server as unknown as Parameters<typeof koaMiddleware>[0], {
     context: async () => ({ ownerId: currentOwnerId() }),
   });
-  router.all('/api/graphql', gqlMiddleware);
+  // POST-only: GraphQL queries + mutations all POST, and this keeps the method→scope
+  // mapping unambiguous (a GET would map to planning:read and let a read-only credential in).
+  router.post('/api/graphql', gqlMiddleware);
   app.use(router.routes()).use(router.allowedMethods());
 }

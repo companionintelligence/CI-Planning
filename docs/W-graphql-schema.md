@@ -1,17 +1,19 @@
 # W — GraphQL schema design + SDL skeleton (for review)
 
-**Status:** Design / SDL skeleton — **no resolvers, no library wired yet.** This is the
-review artifact called for by `W-graphql-crud.md`'s Definition of Done ("a representation
-doc — type ↔ REST route ↔ underlying table — published"). Nothing here is mounted.
+**Status:** This began as the design / SDL-skeleton review artifact called for by
+`W-graphql-crud.md`'s Definition of Done ("a representation doc — type ↔ REST route ↔
+underlying table — published"). **Step 1 (bootstrap) is now built and mounted** (Apollo at
+`/api/graphql`, base SDL + `viewer` + scalars + complexity limiter — see §6); the entity
+types below (TagType, Task, TimeBlock, …) are the remaining, not-yet-wired skeleton.
 
 **Decisions locked (owner, 2026-07-03):**
-- **D1 Library = Apollo** (`apollo-server-koa` / Apollo standalone + Koa mount) — convention-parity with CI-Server; lift their `graphql-query-complexity` `ComplexityPlugin`.
+- **D1 Library = Apollo** — as-built: **Apollo Server 5 + `@as-integrations/koa`** (Koa 3 mount), convention-parity with CI-Server. Complexity limiting is a custom Apollo plugin on `graphql` directly (see §5), NOT `graphql-query-complexity`.
 - **D2 Authoring = schema-first** — hand-authored SDL (this file), kept **diff-comparable to CI-Server's `__generated__/schema.graphql`** for shared types.
 - **D4 Subscriptions = skipped** — SSE stays the one real-time channel.
 - **D6 Tag model = hybrid** (already decided in `W-graphql-crud.md` §6) — specified in full below.
 - **D3 (constraint):** every resolver calls the existing `services/*.ts` / route service functions — no business logic re-implemented against the DB. **D5 (mechanical):** the GraphQL context reads `currentOwnerId()` exactly as REST handlers do, across all of U's auth modes.
 
-**Grounding (verified 2026-07-03 against live code):** CI-Server HEAD `619ec65e` (fresh); its schema at `backend/apps/api/src/domains/graphql/__generated__/schema.graphql` (1473 lines) is the convention source below. CI-Planner has **no** GraphQL dep and **31** route files. Core entities `tasks`/`blocks` have **no service layer** (logic inline in routers) — the extraction that D3 requires before their resolvers can be thin.
+**Grounding (verified 2026-07-03 against live code):** CI-Server HEAD `619ec65e` (fresh); its schema at `backend/apps/api/src/domains/graphql/__generated__/schema.graphql` (1473 lines) is the convention source below. CI-Planner had **no** GraphQL dep before this phase (step 1 adds Apollo + `graphql@16`) and **31** route files. Core entities `tasks`/`blocks` have **no service layer** (logic inline in routers) — the extraction that D3 requires before their resolvers can be thin.
 
 ---
 
