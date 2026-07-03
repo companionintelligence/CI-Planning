@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { FixtureConnector } from '../src/connectors/fixture.js';
-import { syncConnector } from '../src/agents/sync.js';
+import { syncConnector, syncAll, enqueueOutbound } from '../src/agents/sync.js';
 import { config } from '../src/lib/config.js';
 import { resetDb } from './helpers.js';
 
@@ -349,6 +349,94 @@ describe('calendar sync — fixture mode (offline)', () => {
       expect(r.deleted).toBe(0);
       expect(r.errors).toHaveLength(0);
       config.sync.writeback = false;
+    });
+  });
+
+  // ── CP_SYNC_DISABLED master kill switch (Phase Y wiring) ────────────────────
+
+  describe('CP_SYNC_DISABLED kill switch', () => {
+    afterEach(() => {
+      config.sync.disabled = false;
+      config.sync.writeback = false;
+    });
+
+    it('syncConnector does no inbound work when sync is disabled', async () => {
+      connector.seed({ id: 'evt-1', title: 'Should not mirror', start: futureDate(1), end: futureDate(1, 1), etag: 'v1' });
+      config.sync.disabled = true;
+
+      const r = await sync(connector);
+
+      expect(r.created).toBe(0);
+      expect(r.updated).toBe(0);
+      expect(r.deleted).toBe(0);
+      expect(blocks()).toHaveLength(0);
+      expect(externalEvents()).toHaveLength(0);
+    });
+
+    it('syncConnector leaves the outbound queue untouched when disabled (even with writeback on)', async () => {
+      config.sync.writeback = true;
+      const { id: blockId } = sqlite
+        .prepare(
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'Queued', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
+        )
+        .get(futureDate(3), futureDate(3, 1), SYSTEM_OWNER) as { id: string };
+      sqlite
+        .prepare(
+          `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
+           VALUES (uuid7(), ?, ?, 'google', 'sync-test@example.com')`,
+        )
+        .run(SYSTEM_OWNER, blockId);
+      config.sync.disabled = true;
+
+      const r = await sync(connector);
+
+      expect(r.created).toBe(0);
+      expect(r.updated).toBe(0);
+      expect(outboundQueue()).toHaveLength(1); // still pending — never pushed
+      expect(externalEvents().filter((e) => e.direction === 'outbound')).toHaveLength(0);
+    });
+
+    it('enqueueOutbound queues nothing when disabled, even with writeback on + an active connector', () => {
+      // Seed an ACTIVE connector so enqueueOutbound WOULD queue when enabled (distinguishing control).
+      sqlite
+        .prepare(
+          `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext, key_version, status)
+           VALUES (uuid7(), ?, 'google', 'sync-test@example.com', 'aa', 'bb', 'cc', 1, 'active')`,
+        )
+        .run(SYSTEM_OWNER);
+      const { id: blockId } = sqlite
+        .prepare(
+          `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+           VALUES (uuid7(), 'X', 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
+        )
+        .get(futureDate(3), futureDate(3, 1), SYSTEM_OWNER) as { id: string };
+      config.sync.writeback = true;
+
+      // Control: enabled → the block is queued for the active connector.
+      runWithOwner(SYSTEM_OWNER, () => enqueueOutbound(blockId));
+      expect(outboundQueue()).toHaveLength(1);
+
+      // Kill switch: disabled → a fresh enqueue adds nothing.
+      sqlite.prepare('DELETE FROM outbound_queue').run();
+      config.sync.disabled = true;
+      runWithOwner(SYSTEM_OWNER, () => enqueueOutbound(blockId));
+      expect(outboundQueue()).toHaveLength(0);
+    });
+
+    it('syncAll short-circuits to [] before touching connectors when disabled', async () => {
+      // Seed an ACTIVE google token so getConnectors() would otherwise return a live connector;
+      // the disabled gate must return [] before that (no getConnectors, no network sync attempt).
+      sqlite
+        .prepare(
+          `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext, key_version, status)
+           VALUES (uuid7(), ?, 'google', 'sync-test@example.com', 'aa', 'bb', 'cc', 1, 'active')`,
+        )
+        .run(SYSTEM_OWNER);
+      config.sync.disabled = true;
+
+      const results = await runWithOwner(SYSTEM_OWNER, () => syncAll());
+      expect(results).toEqual([]);
     });
   });
 

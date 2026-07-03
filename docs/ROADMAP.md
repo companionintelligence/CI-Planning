@@ -27,8 +27,8 @@
 | D1 | Auth model | Single-owner now; owner-scoped data model | unchanged |
 | D2 | Two-way sync | Native OAuth connectors + encrypted token store; agent-bridge (scoped API key) fallback | **moved to the cloud track** |
 | D3 | Multi-device merge | Op-log + **field-level** merge; completions are **monotonic** (never un-done by a concurrent edit) | **revised** — whole-record LWW silently dropped completions |
-| D4 | Auth deployment | SSO-first **verify-only** resource server **+ minimal standalone** (single scoped API key) | **revised** — no full standalone mirror |
-| D5 *(new)* | Token crypto | **Asymmetric (RS256/EdDSA + JWKS)**; Planning **verifies only**, never holds a minting secret | replaces HS256 shared-secret |
+| D4 | Auth deployment | SSO-first **verify-only** resource server **+ minimal standalone** (single scoped API key) | **revised** — no full standalone mirror. ⚠️ **Superseded by Phase U/V:** SSO is now a CI-Portal **OIDC (OAuth 2.1 + PKCE) login** that mints a signed, httpOnly session cookie (+ optional local username/password via `DISABLE_OIDC`, argon2id, and password reset), not a Bearer verify-only resource server. |
+| D5 *(new)* | Token crypto | **Asymmetric (RS256/EdDSA + JWKS)**; Planning **verifies only**, never holds a minting secret | replaces HS256 shared-secret. ⚠️ **Refined in Phase U:** the CI-Portal id_token is still JWKS-verified (once, at the OIDC callback) and Planning still mints no *identity/Bearer tokens* — but it now signs its own **session cookie** with `SESSION_SECRET`. |
 | D6 *(new)* | Contract coupling | Depend on a **published, versioned** CI auth contract (JWKS + documented claims), not reverse-engineered internals | new guardrail |
 
 ## Phase map (resequenced)
@@ -168,7 +168,7 @@ Time-Block's tag filter or a Pattern's rules.
 **Goal:** real identity + the encrypted token store, matching CI's **security semantics and a versioned contract** — not its framework or internals.
 
 **Deployment modes**
-- **SSO mode (primary, Hub/Core Server):** Planning is a **verify-only** resource server, validating CI-Server tokens against a **JWKS endpoint (asymmetric, D5)** — it never holds a signing secret and cannot mint tokens. OAuth delegated to CI-Server's connections / `CloudOAuthProxyService` (one identity + token store on the appliance).
+- **SSO mode (primary, Hub/Core Server):** Planning is a **verify-only** resource server, validating CI-Server tokens against a **JWKS endpoint (asymmetric, D5)** — it never holds a signing secret and cannot mint tokens. OAuth delegated to CI-Server's connections / `CloudOAuthProxyService` (one identity + token store on the appliance). *(Phase I design; **superseded by Phase U** — SSO became a CI-Portal OIDC (OAuth 2.1 + PKCE) login that mints a signed session cookie, with an optional local username/password fallback. See D4 and ARCHITECTURE §9.)*
 - **Standalone mode (public image, minimal — D4):** **not a faithful mirror.** A single scoped **API key** (`x-api-key`, `randomBytes(32)` hex, 5-char prefix, **SHA-256 at rest**, `scopes[]`, `expires_at`, `last_used_at`) plus optional local login. Covers the public Docker image without reproducing CI-Server's full session/CSRF/refresh machinery in a second codebase.
 
 **Adopt from CI-Server (security-relevant, as-is)**
