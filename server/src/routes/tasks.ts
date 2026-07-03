@@ -36,10 +36,11 @@ export function tasksRouter() {
   router.get('/api/tasks', async (ctx) => {
     const { status, owner_id, tag, q, due_before, priority, include_fast } = ctx.query as Record<string, string>;
 
-    let rows = db.select().from(tasks);
-
-    // Build WHERE conditions
-    const conditions = [];
+    // The list is ALWAYS scoped to the current owner — a plain `db.select()` here
+    // is a cross-tenant read leak (IDOR). An explicit `owner_id` param can only
+    // narrow *within* the current owner (a mismatch yields no rows); the owner
+    // scope is ANDed unconditionally, so it can never widen past the caller.
+    const conditions = [eq(tasks.ownerId, currentOwnerId())];
     if (status)    conditions.push(eq(tasks.status, status));
     if (owner_id)  conditions.push(eq(tasks.ownerId, owner_id));
     if (priority)  conditions.push(eq(tasks.priority, Number(priority)));
@@ -49,9 +50,11 @@ export function tasksRouter() {
     // Filter on the canonical subtype (W1-A); equivalent to the is_fast_task alias.
     if (include_fast !== '1') conditions.push(ne(tasks.subtype, 'quick'));
 
-    const result = conditions.length
-      ? await rows.where(and(...conditions)).orderBy(asc(tasks.priority), asc(tasks.dueAt))
-      : await rows.orderBy(asc(tasks.priority), asc(tasks.dueAt));
+    const result = await db
+      .select()
+      .from(tasks)
+      .where(and(...conditions))
+      .orderBy(asc(tasks.priority), asc(tasks.dueAt));
 
     // Attach tags + dependency info, serialize to snake_case
     const blocked = blockedTaskIds();
@@ -162,7 +165,13 @@ export function tasksRouter() {
   // GET /api/tasks/:id/subtasks
   router.get('/api/tasks/:id/subtasks', async (ctx) => {
     const parentId = ctx.params.id;
-    const result = await db.select().from(tasks).where(eq(tasks.parentId, parentId)).orderBy(asc(tasks.priority));
+    // Owner-scoped: a caller must never read another owner's subtree, even by
+    // guessing a foreign parent id (IDOR). Subtasks share their parent's owner.
+    const result = await db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.parentId, parentId), eq(tasks.ownerId, currentOwnerId())))
+      .orderBy(asc(tasks.priority));
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
@@ -195,7 +204,20 @@ export function tasksRouter() {
   // GET /api/tasks/:id/streak — habit streak + last-7 occurrence strip for a
   // recurring task (pass a template or any instance id). 404 if not recurring.
   router.get('/api/tasks/:id/streak', async (ctx) => {
-    const res = computeStreak(ctx.params.id);
+    const id = ctx.params.id;
+    // Owner-scope the read first: a streak request for a task the caller doesn't
+    // own must be indistinguishable from a non-recurring/absent task (same 404),
+    // so a foreign id can't be probed for existence (IDOR). An instance shares
+    // its template's owner, so checking the passed id is sufficient.
+    const owner = currentOwnerId();
+    const [owned] = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
+    if (!owned) {
+      ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return;
+    }
+    const res = computeStreak(id);
     if (!res) { ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return; }
     ctx.body = res;
   });
