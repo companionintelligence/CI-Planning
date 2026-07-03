@@ -154,13 +154,13 @@ erDiagram
 | `daily_plan` | AI-authored task order for a day (`outcome` stamp for plan tracking) | 0062, 0084 |
 | `replan_suggestions` | Pending "re-plan with AI?" nudges on big-disruption reflows | 0067 |
 | `possible_tasks` | Inbox — AI-proposed items pending promote / dismiss | 0001 |
-| `tags` | Cross-cutting labels; `kind`: `pattern` or `intention` or `category` | 0001 |
-| `tag_patterns` | Many-to-many: intention tags grouped under pattern tags | 0043 |
+| `tags` | Cross-cutting labels; `kind`: `direction` or `intention` or `category` | 0001 |
+| `tag_directions` | Many-to-many: intention tags grouped under direction tags | 0043/0105 |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, routines (CON-3) | 0033 |
 | `patterns` | Routines — typed, reusable task collections (Habit ◯ / Routine ▢) | 0013 |
 | `pattern_types` | Routine taxonomy — **load-bearing, do not rename** | 0019 |
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
-| `pattern_blocks` | Pattern-tag-scoped scheduling windows (workday/weekend) | 0037 |
+| `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
 | `tag_prefs` | Per-owner × per-tag config by `kind` (pattern/category): shared color_token/default_minutes + pattern-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs` | 0039, 0069, 0097 |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7) | 0001, 0091 |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
@@ -262,7 +262,7 @@ sequenceDiagram
 | **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies |
 | **Routines** | `/routines` | Pattern CRUD (Routine ▢ / Habit ◯); per-pattern fill + reminder config |
 | **Objectives** | `/objectives` | Tree of Goal › Project › Objective; create / edit / re-parent / link tasks |
-| **Tags** | `/tags` | Pattern-tag / intention taxonomy; weighted cloud; mute / delete |
+| **Tags** | `/tags` | direction / intention taxonomy; weighted cloud; mute / delete |
 | **Jobs** | `/jobs` | Scheduled job registry; run any job on demand; execution log |
 | **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · export/import · recurrence duration · Clear Date Range |
 

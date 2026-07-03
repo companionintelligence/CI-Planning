@@ -57,7 +57,7 @@ describe('time-block category (0069)', () => {
   });
 
   it('rejects a category_id that is not a kind=category tag (422)', async () => {
-    const patternId = (await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'work', kind: 'pattern' } })).body.tag.id;
+    const patternId = (await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'work', kind: 'direction' } })).body.tag.id;
     const res = await api(srv.url, '/api/blocks', {
       method: 'POST',
       json: { title: 'Nope', block_kind: 'timeblock', category_id: patternId, start_at: at('09'), end_at: at('10') },

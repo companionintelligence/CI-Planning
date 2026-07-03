@@ -15,10 +15,10 @@ const OWNER = SYSTEM_OWNER;
 const WEEKDAY = '2026-06-22';
 const WEEKEND = '2026-06-21';
 
-// Runtime code looks up pattern tags by kind='pattern' (post-0038 rename). The
-// 0037-migration-isolation test, however, runs up0037 directly — which predates the
-// rename and matches kind='direction' — so it seeds with that older value.
-function seedDirections(kind: string = 'pattern'): Record<string, string> {
+// Runtime code looks up direction tags by kind='direction' (0038/0043 briefly renamed this
+// axis to 'pattern'; 0105 reverted it). The 0037-migration-isolation test also uses
+// 'direction' when it runs up0037 directly.
+function seedDirections(kind: string = 'direction'): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (
@@ -47,7 +47,7 @@ function insertTask(title: string, est = 30, dirTagId?: string): string {
 
 function seedPatternBlock(dirTagId: string, dayType: string, start: string, end: string): void {
   sqlite
-    .prepare(`INSERT INTO pattern_blocks (id, owner_id, pattern_tag_id, day_type, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)`)
+    .prepare(`INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(newId(), OWNER, dirTagId, dayType, start, end);
 }
 
@@ -56,7 +56,7 @@ function seedPatternPref(dirTagId: string, autoFill: boolean): void {
   sqlite
     .prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token)
-       VALUES (?, ?, ?, 'pattern', ?, '[]', 'circle', 'primary')`,
+       VALUES (?, ?, ?, 'direction', ?, '[]', 'circle', 'primary')`,
     )
     .run(newId(), OWNER, dirTagId, autoFill ? 1 : 0);
 }
@@ -83,7 +83,7 @@ beforeEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Skipped: 0043 renamed direction_tag_id → pattern_tag_id; up0037 prepares an
+// Skipped: 0043 renamed direction_tag_id → direction_tag_id; up0037 prepares an
 // INSERT using direction_tag_id which fails on a post-0043 DB. Historical
 // seeding is covered by the direction-aware placement tests below.
 describe.skip('0037 migration', () => {
@@ -170,7 +170,7 @@ describe('PUT /api/pattern-blocks/:dirTagId/:dayType', () => {
     });
     expect(r2.status).toBe(200);
     expect(r2.body.ranges).toHaveLength(2);
-    const dbCount = (sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE pattern_tag_id = ?`).get(dirs.work) as { c: number }).c;
+    const dbCount = (sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE direction_tag_id = ?`).get(dirs.work) as { c: number }).c;
     expect(dbCount).toBe(2);
   });
 
@@ -183,7 +183,7 @@ describe('PUT /api/pattern-blocks/:dirTagId/:dayType', () => {
     });
     expect(r.status).toBe(200);
     expect(r.body.ranges).toHaveLength(0);
-    const count = (sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE pattern_tag_id = ?`).get(dirs.work) as { c: number }).c;
+    const count = (sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE direction_tag_id = ?`).get(dirs.work) as { c: number }).c;
     expect(count).toBe(0);
   });
 
@@ -225,9 +225,9 @@ describe('ON DELETE CASCADE', () => {
     const dirs = seedDirections();
     seedPatternBlock(dirs.work, 'workday', '09:00', '18:00');
 
-    expect((sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE pattern_tag_id = ?`).get(dirs.work) as { c: number }).c).toBe(1);
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE direction_tag_id = ?`).get(dirs.work) as { c: number }).c).toBe(1);
     sqlite.prepare(`DELETE FROM tags WHERE id = ?`).run(dirs.work);
-    expect((sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE pattern_tag_id = ?`).get(dirs.work) as { c: number }).c).toBe(0);
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM pattern_blocks WHERE direction_tag_id = ?`).get(dirs.work) as { c: number }).c).toBe(0);
   });
 });
 

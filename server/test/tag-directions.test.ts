@@ -14,7 +14,7 @@ function seedDirections(): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (sqlite
-      .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'pattern', 1, ?) RETURNING id`)
+      .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'direction', 1, ?) RETURNING id`)
       .get(name, SYSTEM_OWNER) as { id: string }).id;
   }
   return ids;
@@ -25,7 +25,7 @@ const tagByName = (name: string) =>
     | undefined;
 const memberDirs = (intentionId: string) =>
   (sqlite
-    .prepare(`SELECT d.name FROM tag_patterns tp JOIN tags d ON d.id = tp.pattern_tag_id WHERE tp.intention_tag_id = ? ORDER BY d.name`)
+    .prepare(`SELECT d.name FROM tag_directions tp JOIN tags d ON d.id = tp.direction_tag_id WHERE tp.intention_tag_id = ? ORDER BY d.name`)
     .all(intentionId) as { name: string }[]).map((r) => r.name);
 // Used only in the 0036 backfill test: backfill0036 creates a fresh tag_directions
 // table (0043 renamed it away) with the original direction_tag_id column name.
@@ -40,11 +40,11 @@ afterAll(async () => { await srv.close(); });
 beforeEach(() => resetDb()); // clears all tags incl. base directions
 
 describe('0036 migration backfill', () => {
-  // backfill0036 runs `CREATE TABLE IF NOT EXISTS tag_directions`, which RESURRECTS the
-  // pre-0043 table on the shared (already-migrated) DB — 0043 renamed it to tag_patterns.
-  // resetDb only deletes rows, so the stray table would otherwise linger and leak into a
-  // later file's schema snapshot (baseline.characterization). Drop it once this block ends.
-  afterAll(() => { sqlite.exec(`DROP TABLE IF EXISTS tag_directions`); });
+  // backfill0036 runs `CREATE TABLE IF NOT EXISTS tag_directions`. Post-Z (mig 0105) that IS
+  // the real, current table name (0036 created it → 0043 renamed it to tag_patterns → 0105
+  // reverted it back to tag_directions), so the CREATE is a harmless no-op and the rows it
+  // seeds are cleared by resetDb's cascade. Do NOT drop it — that would nuke the real schema
+  // table for later test files.
 
   it('seeds the 3 base directions, heuristically assigns obvious tags, leaves the rest Unsorted', () => {
     // pre-existing intention tags (as if from before the migration)
@@ -81,7 +81,7 @@ describe('tags API — taxonomy', () => {
     const { tags } = (await api(srv.url, '/api/tags')).body;
     const work = tags.find((t: any) => t.name === 'work');
     const product = tags.find((t: any) => t.name === 'product');
-    expect(work).toMatchObject({ kind: 'pattern', is_base: true });
+    expect(work).toMatchObject({ kind: 'direction', is_base: true });
     expect(product).toMatchObject({ kind: 'intention', is_base: false, muted: false, used: false, directions: ['work'] });
   });
 
