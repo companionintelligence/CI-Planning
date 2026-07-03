@@ -339,7 +339,7 @@ export function createTag(owner: string, input: CreateTagInput): CreateTagResult
   if (!input.name?.trim()) return { ok: false, error: 'name_required' };
   const name = normalizeTagName(input.name);
   if (!name) return { ok: false, error: 'name_required' };
-  const kind = input.kind === 'direction' ? 'direction' : input.kind === 'category' ? 'category' : 'intention';
+  const kind = input.kind === 'direction' || input.kind === 'pattern' ? 'direction' : input.kind === 'category' ? 'category' : 'intention';
 
   let tag = sqlite.prepare(`SELECT * FROM tags WHERE owner_id = ? AND name = ?`).get(owner, name) as FullTagRow | undefined;
   if (!tag) {
