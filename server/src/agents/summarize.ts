@@ -4,7 +4,8 @@ import { generate } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
-import { detectComboSuggestions, CONFIDENCE_FLOOR, type ComboSuggestion } from '../services/calibration.js';
+import { addDays } from '../lib/dates.js';
+import { detectComboSuggestions, scopeLabel, CONFIDENCE_FLOOR, type ComboSuggestion, type ScopeKind } from '../services/calibration.js';
 
 interface TaskRow {
   id: string;
@@ -343,30 +344,7 @@ export function gatherEvening(date: string): EveningPayload {
     )
     .all(owner, dayStart, dayEnd) as { task_id: string; title: string; status: string }[];
 
-  // Label the scope refs so the modal never shows raw ids. tag_combo refs are
-  // '+'-joined tag-id tuples; unknown ids (deleted tags) fall back to the ref.
-  const tagName = sqlite.prepare(`SELECT name FROM tags WHERE id = ? AND owner_id = ?`);
-  const label = (kind: string, ref: string): string => {
-    if (kind === 'global') return 'overall';
-    if (kind === 'subtype') return ref;
-    if (kind === 'tag' || kind === 'category') {
-      return (tagName.get(ref, owner) as { name: string } | undefined)?.name ?? ref;
-    }
-    if (kind === 'tag_combo') {
-      return ref
-        .split('+')
-        .map((id) => (tagName.get(id, owner) as { name: string } | undefined)?.name ?? id)
-        .join(' + ');
-    }
-    if (kind === 'objective') {
-      const row = sqlite.prepare(`SELECT title FROM objectives WHERE id = ? AND owner_id = ?`).get(ref, owner) as
-        | { title: string }
-        | undefined;
-      return row?.title ?? ref;
-    }
-    return ref;
-  };
-
+  // Label the scope refs so the modal never shows raw ids (shared with the Z6 chip).
   const calibration = (sqlite
     .prepare(
       `SELECT scope_kind, scope_ref, bias_ratio, sample_count FROM estimate_calibration
@@ -374,7 +352,7 @@ export function gatherEvening(date: string): EveningPayload {
         ORDER BY sample_count DESC, scope_kind, scope_ref LIMIT 5`,
     )
     .all(owner, CONFIDENCE_FLOOR) as { scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }[])
-    .map((r) => ({ ...r, label: label(r.scope_kind, r.scope_ref) }));
+    .map((r) => ({ ...r, label: scopeLabel(owner, r.scope_kind as ScopeKind, r.scope_ref) }));
 
   return {
     date,
@@ -437,6 +415,37 @@ export interface EveningSummary {
   prose: string;
   llm: boolean;
   payload: EveningPayload;
+}
+
+export interface MorningCarryover {
+  /** Yesterday's date (the EOD Alignment folded into this morning's Brief). */
+  date: string;
+  /** Yesterday's evening narrative if the user opened the modal; null → degrade to carry_forward only. */
+  prose: string | null;
+  /** Yesterday's incomplete tasks (§2.7 "fill incomplete-first") — always available. */
+  carry_forward: { task_id: string; title: string; status: string }[];
+}
+
+/**
+ * Phase Z · Z2 — the morning Daily Brief's fold-in of last night's EOD Alignment.
+ * Computed OUTSIDE summarizeDay's cache (which is keyed on today's inputs only),
+ * so it's always fresh and never couples the cached prose to yesterday's state.
+ * Degrades gracefully: no evening row (modal never opened) → prose null, but the
+ * deterministic carry_forward still surfaces (§2.6/§2.7 — the Brief never blocks
+ * on an Alignment having been written).
+ */
+export function morningCarryover(date: string): MorningCarryover {
+  const yesterday = addDays(date, -1);
+  const row = sqlite
+    .prepare(
+      `SELECT body FROM reflections WHERE owner_id = ? AND kind = 'evening' AND period_key = ? AND position = 0`,
+    )
+    .get(currentOwnerId(), yesterday) as { body: string } | undefined;
+  return {
+    date: yesterday,
+    prose: row?.body ?? null,
+    carry_forward: gatherEvening(yesterday).carry_forward,
+  };
 }
 
 /**

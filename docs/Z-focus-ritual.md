@@ -323,18 +323,20 @@ Default a channel **on** only if it shows a positive calibration-slope effect **
 
 ## 6. Build order & migrations
 
-**PR 1 (built this branch):** the **Time-Sense master flag** (`0105`, `time_sense_enabled` on `scheduling_prefs`, default OFF, per-owner; Settings → Preferences toggle labelled "Time-Sense") + **Z0** + **Z1**. Everything ships dark: with the flag off the calibration job is byte-identical to Phase N and every Z endpoint 404s. Per-cue toggles and experiment arms are deferred to Z5 (the flag set is one master gate for now, not the full §5.1 matrix). Follow-up PRs carry the client ritual and the voice loop.
+**PR 1 (built):** the **Time-Sense master flag** (`0105`, `time_sense_enabled` on `scheduling_prefs`, default OFF, per-owner; Settings → Preferences toggle labelled "Time-Sense") + **Z0** + **Z1**. Everything ships dark: with the flag off the calibration job is byte-identical to Phase N and every Z endpoint 404s.
+
+**PR 2 (built):** **Z6** (suggest-only estimate chip) + **Z2** (Daily Brief folds in last night's EOD Alignment). Both flag-gated; no new migrations (they build on 0106/Z1). Per-cue toggles and experiment arms are still deferred to Z5. Follow-up PRs carry the Focus-Ritual client render layer (Z3/Z4) and the voice loop (Z7).
 
 | Step | Work | Migration | Dep | Status |
 |---|---|---|---|---|
 | — | **Time-Sense master flag** (`time_sense_enabled`, Settings toggle, `lib/flags.ts` helper) | `0105_time_sense_flag` | — | ✅ **built** |
 | Z0 | `estimate_calibration` scope-keyed PK + `calibration_combo_pins` + backfill; robust per-scope math (cap + median±3·MAD) in `services/calibration.ts`; scope fallback ladder (`resolveCalibration`); combo auto-suggest (`detectComboSuggestions`); read/pin routes; cron Sun→nightly | `0106_calibration_scope` | N (exists) | ✅ **built** |
 | Z1 | `reflections(kind='evening')` + `summarizeEvening` (mirror `summarizeDay`, deterministic fallback) + on-open authorship routes (`GET`/`POST open`/`PUT`) | none (new kind) | N, M | ✅ **built** |
-| Z2 | Daily Brief extension: fold in EOD Alignment + incomplete-first fill suggestion (in `client/src/components/DayGoals.tsx`'s `TodaysBrief`) | none | O (Today's Brief), Z1 | ⬜ next |
+| Z2 | Daily Brief extension: fold in EOD Alignment (`morningCarryover` in summarize.ts, attached to `GET /api/summary` when flag on; "Last night" section in `DayGoals.tsx` `TodaysBrief`, degrades to carry-forward when prose null). ⚠️ incomplete-first is surfaced as a *recommendation* (carry_forward list shown first) — the flight-plan **staging-order** change is deferred to the Z3 client work, so the deterministic placement path stays untouched | none | O (Today's Brief), Z1 | ✅ **built** |
 | Z3 | Focus Ritual client render layer: 4 timers, ambient depletion, breathing, T4 modal; capability + `prefers-reduced-motion` gates. ⚠️ no live "current block" SSE channel exists — client derives in-progress from the clock vs `start_at`/`end_at` (M's convention) or a new SSE event | none (client) | Categories color tokens | ⬜ |
 | Z4 | `reminders` rows for T1/T3/T4 (background delivery) + push `vibrate` payload (sw.js currently sends only title/body/tag/url — add `vibrate`) | none (reuses H) | H | ⬜ |
 | Z5 | Prefs flag set (per-timer × per-channel) + Settings UI + experiment arm assignment (expands the master flag into the §5.1 matrix) | `≥0107_focus_prefs` | Z3 | ⬜ |
-| Z6 | Suggest-only calibration chip — **build `suggestEstimate` new** on `resolveCalibration`; wire to editor (accept = human write) | none | Z0 | ⬜ |
+| Z6 | Suggest-only calibration chip — `suggestEstimate` (services/calibration.ts, snapped to 5m, null below floor / <15% bias / <5m delta) + `GET /api/calibration/suggest/:taskId` (flag-gated) + dismissible chip in `ElementWizard` task fields (accept sets the estimate field → human write on Save) | none | Z0 | ✅ **built** |
 | Z7 | **Voice loop** (2V): `renderCopy` service + small-model tier + deterministic gate + `copy_history` anti-repetition memory + fallback pools per surface | `≥0108_copy_history` | M (Ollama seam) | ⬜ |
 
 **GLOSSARY amendment:** declare `reflections(kind='evening')`, the `estimate_calibration` scope columns + `calibration_combo_pins`, and the Focus-Ritual `reminders` rows as **non-noun support state**; confirm no label in the ritual/brief/alignment introduces a new user-facing noun.

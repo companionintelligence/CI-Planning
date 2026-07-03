@@ -4,7 +4,7 @@ import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
-import { comboRef, detectComboSuggestions } from '../services/calibration.js';
+import { comboRef, detectComboSuggestions, suggestEstimate } from '../services/calibration.js';
 import { calibrateEstimates } from '../jobs/calibrate-estimates.js';
 
 /**
@@ -47,6 +47,13 @@ export function calibrationRouter() {
       .prepare(`SELECT scope_ref, created_at FROM calibration_combo_pins WHERE owner_id = ? ORDER BY scope_ref`)
       .all(owner);
     ctx.body = { rows, pins, suggestions: detectComboSuggestions(owner) };
+  });
+
+  // GET /api/calibration/suggest/:taskId — Z6 suggest-only estimate nudge for one
+  // task, or { suggestion: null } when there's nothing worth surfacing. Read-only.
+  router.get('/suggest/:taskId', (ctx) => {
+    if (!gate(ctx)) return;
+    ctx.body = { suggestion: suggestEstimate(currentOwnerId(), ctx.params.taskId) };
   });
 
   // POST /api/calibration/pins { tag_ids: string[] } — confirm a combo suggestion.
