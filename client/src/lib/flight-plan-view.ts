@@ -93,7 +93,9 @@ export function nextQuarterHourHHMM(now: Date = new Date()): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-/** ISO instant for a local 'HH:MM' on a 'YYYY-MM-DD' day (local timezone). */
 export function localDayTimeToISO(day: string, hhmm: string): string {
-  return new Date(`${day}T${hhmm}:00`).toISOString();
+  const [y, m, d] = day.split('-').map(Number);
+  const [h, mi] = hhmm.split(':').map(Number);
+  if (!y || !m || !d || Number.isNaN(h) || Number.isNaN(mi)) throw new Error('Invalid day/time');
+  return new Date(y, m - 1, d, h, mi, 0, 0).toISOString();
 }
