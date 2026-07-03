@@ -54,9 +54,9 @@ function insertTaskDue(dueAt: string | null): string {
 }
 /** Mimic Settings "Reminder Defaults": write the offsets onto a (fresh) pattern tag's prefs. */
 function setReminderOffsets(offsets: number[]): void {
-  const tagId = (sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (?, ?, 'pattern', 1, ?) RETURNING id`)
+  const tagId = (sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (?, ?, 'direction', 1, ?) RETURNING id`)
     .get(newId(), `pat-${newId().slice(0, 8)}`, SYSTEM_OWNER) as { id: string }).id;
-  sqlite.prepare(`INSERT INTO tag_prefs (id, owner_id, tag_id, kind, reminder_offsets) VALUES (?, ?, ?, 'pattern', ?)`)
+  sqlite.prepare(`INSERT INTO tag_prefs (id, owner_id, tag_id, kind, reminder_offsets) VALUES (?, ?, ?, 'direction', ?)`)
     .run(newId(), SYSTEM_OWNER, tagId, JSON.stringify(offsets));
 }
 const autoCount = (taskId: string) =>

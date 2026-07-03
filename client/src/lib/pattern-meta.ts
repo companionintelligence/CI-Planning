@@ -76,7 +76,7 @@ export function colorVar(token: string | null | undefined): string {
  *
  * Pure + store-free so it's unit-testable: the caller passes the `tags` resource
  * and the per-pattern prefs (keyed by tag id). Resolution order:
- *   1. the pattern-tag among the task's tag names (`tags.kind === 'pattern'`)
+ *   1. the pattern-tag among the task's tag names (`tags.kind === 'direction'`)
  *   2. its saved `color_token` (pattern_prefs) wins
  *   3. else the brand default by lowercased name ([[BASE_TAG_DEFAULTS]])
  *   4. else `var(--primary)` (no direction / unknown)
@@ -87,7 +87,7 @@ export function directionColorForTask(
   prefs: Record<string, { color_token?: string | null }> = {},
 ): string {
   const names = task.tags ?? [];
-  const dir = tagDefs.find((t) => t.kind === 'pattern' && names.includes(t.name));
+  const dir = tagDefs.find((t) => t.kind === 'direction' && names.includes(t.name));
   if (!dir) return 'var(--primary)';
   const saved = prefs[dir.id]?.color_token;
   if (saved) return colorVar(saved);
@@ -98,7 +98,7 @@ export function directionColorForTask(
  * The **shape** for a Task's direction (its pattern-tag) — the sibling of
  * [[directionColorForTask]], used to draw a task's status/direction icon
  * ([[ShapeIcon]]). Same resolution order:
- *   1. the pattern-tag among the task's tag names (`tags.kind === 'pattern'`)
+ *   1. the pattern-tag among the task's tag names (`tags.kind === 'direction'`)
  *   2. its saved `icon_shape` (pattern_prefs) wins
  *   3. else the brand default by lowercased name ([[BASE_TAG_DEFAULTS]])
  *   4. else `'circle'` (no direction / unknown)
@@ -110,7 +110,7 @@ export function directionShapeForTask(
   prefs: Record<string, { icon_shape?: string | null }> = {},
 ): string {
   const names = task.tags ?? [];
-  const dir = tagDefs.find((t) => t.kind === 'pattern' && names.includes(t.name));
+  const dir = tagDefs.find((t) => t.kind === 'direction' && names.includes(t.name));
   if (!dir) return 'circle';
   return prefs[dir.id]?.icon_shape ?? BASE_TAG_DEFAULTS[dir.name.toLowerCase()]?.icon_shape ?? 'circle';
 }

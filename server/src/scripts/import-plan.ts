@@ -118,7 +118,7 @@ const run = sqlite.transaction(() => {
       WHERE l2.entity_kind = 'task' AND l2.level > 1 AND t.source_ref = ?`,
   ).all(plan.source_ref) as { intention: string; direction: string }[];
   const fileTag = sqlite.prepare(
-    'INSERT OR IGNORE INTO tag_patterns (intention_tag_id, pattern_tag_id) VALUES (?, ?)',
+    'INSERT OR IGNORE INTO tag_directions (intention_tag_id, direction_tag_id) VALUES (?, ?)',
   );
   let filed = 0;
   for (const { intention, direction } of cooccur) {

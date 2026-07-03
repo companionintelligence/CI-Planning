@@ -70,7 +70,7 @@ Each entity type gets a matching `type XConnection implements Connection` + `typ
 | `TimeBlockType` (Node, Taggable) | `blocksRouter` | `time_blocks`, `entity_tags` | **none — extract**; `services/block-task-sync.ts` partial |
 | `BlockTemplateType` (Node) | `blockTemplatesRouter` | `block_templates` | none — extract |
 | `PossibleTaskType` (Node) | `possiblesRouter` | `possible_tasks` | `services/task-promotion.ts` (promote = mutation w/ side effects) |
-| `TagType` (Node, + hybrid) | `tagsRouter` | `tags`, `tag_patterns`, `tag_categories`, `entity_tags` | **`services/tags.ts` (rich)** — pilot-ready |
+| `TagType` (Node, + hybrid) | `tagsRouter` | `tags`, `tag_directions`, `tag_categories`, `entity_tags` | **`services/tags.ts` (rich)** — pilot-ready |
 | `PatternType`†, `PatternBlockType`, `PatternPrefType` | `patternsRouter`, `patternBlocksRouter`, `patternPrefsRouter` | `patterns`, `pattern_tasks`, `pattern_blocks`, `tag_prefs` | `services/patterns.ts`, `pattern-blocks.ts`, `pattern-prefs.ts` |
 | `TagPrefType` (was CategoryPref) | `categoryPrefsRouter` | `tag_prefs` (post-S2) | `services/category-prefs.ts` |
 | `DayTypeType` | `dayTypesRouter` | `day_types`, `day_of_week_map`, `day_assignments` | `services/day-types.ts` |
@@ -82,14 +82,14 @@ Each entity type gets a matching `type XConnection implements Connection` + `typ
 | **Mutations only (not CRUD types):** autoplan / find-slot / instruct | `scheduleRouter`, `planRouter`, `plannerRouter` | — | existing engine fns |
 | **Excluded from GraphQL** | `backupRouter`, `oauthRouter`, `syncRouter`, `sseRouter`, `memoryRouter`, `llmRouter`, `healthRouter` | — | file I/O, OAuth redirects, SSE, AI-facing, liveness — don't map to CRUD |
 
-† `PatternType` here is CI-Planner's routine/habit *pattern* entity — unrelated to CI-Server's `type XType` naming. Named `PatternType` (its `XType` form); the pattern *category* (`pattern_types` table) becomes `PatternKindType` to avoid the collision.
+† `PatternType` here is CI-Planner's routine/habit *pattern* entity — unrelated to CI-Server's `type XType` naming. Named `PatternType` (its `XType` form); the pattern *category* (`pattern_types` table) becomes `PatternKindType` to avoid the collision. **Sequencing (Phase Z / W1):** the planned `patterns`→`routines` rename (Z-W1) renames these tables + `/api/patterns`; if W1 lands before this resolver group is authored, name them `RoutineType`/`RoutineKindType` from the start — if this group ships first, W1 renames the GraphQL types with it.
 
 ---
 
 ## 3. SDL skeleton — Decision 6 `TagType` (the pilot, fully specified)
 
 ```graphql
-enum TagKind { PATTERN INTENTION CATEGORY }
+enum TagKind { DIRECTION INTENTION CATEGORY }
 
 type TagType implements Node {
   id: ID!
@@ -103,9 +103,9 @@ type TagType implements Node {
   entities(after: String, before: String, first: Int, last: Int): TaggableEntityConnection!
 
   # Hierarchy as relationship connections, NOT new top-level types. Which are populated
-  # is governed by `kind`: PATTERN→childIntentions; INTENTION→parentPatterns+parentCategories;
+  # is governed by `kind`: DIRECTION→childIntentions; INTENTION→parentDirections+parentCategories;
   # CATEGORY→childIntentions. Unpopulated edges return an EMPTY connection, never an error.
-  parentPatterns(after: String, before: String, first: Int, last: Int): TagConnection!
+  parentDirections(after: String, before: String, first: Int, last: Int): TagConnection!
   childIntentions(after: String, before: String, first: Int, last: Int): TagConnection!
   parentCategories(after: String, before: String, first: Int, last: Int): TagConnection!
 }
@@ -132,7 +132,7 @@ type UpdateTagPayload { tag: TagType   success: Boolean! }
 type DeleteTagPayload { deletedId: ID  success: Boolean! }
 ```
 
-New service work this needs (both cursor-paginated, added to `services/tags.ts`): `TagType.entities` (tag→entities over `entity_tags`) and `childIntentions` (pattern/category→intentions, the reverse of `tag_patterns`/`tag_categories`). Everything else maps to existing `services/tags.ts` functions.
+New service work this needs (both cursor-paginated, added to `services/tags.ts`): `TagType.entities` (tag→entities over `entity_tags`) and `childIntentions` (pattern/category→intentions, the reverse of `tag_directions`/`tag_categories`). Everything else maps to existing `services/tags.ts` functions.
 
 ---
 
@@ -218,7 +218,7 @@ type SchedulingPrefsType implements Node {
 ## 6. Build order
 
 1. **Bootstrap — ✅ DONE (this PR).** Apollo Server 5 + `@as-integrations/koa` mounted at **`/api/graphql`** (under `/api` so `requireAuth` gates it and the resolver context reads the AsyncLocalStorage owner). Base SDL (§1) in `server/src/graphql/schema.graphql` + a `viewer` probe; custom `DateTime`/`JSON` scalars; the complexity plugin (see §5); `buildApp` is now async (`await`s Apollo `start()`). `GRAPHQL_MAX_COMPLEXITY` env (default 1000). Verified over HTTP: `graphql.test.ts` (viewer/auth-context, introspection, complexity reject, 401 when unauthenticated); full server suite green.
-2. **TagType pilot (§3) — ✅ DONE.** `TagType implements Node` (id/label/description + additive kind/muted/isBase) with the hierarchy as Relay cursor connections (`parentPatterns`/`parentCategories`/`childIntentions`), `tag(id)` + `tags(first,after,kind)` queries, and `createTag`/`updateTag`/`deleteTag` mutations. The CRUD was **extracted** from `routes/tags.ts` into `services/tags.ts` (`createTag`/`updateTag`/`deleteTag`) so REST + GraphQL share ONE implementation (Decision 3) — byte-equivalent REST behavior (adversarially verified). New keyset-paginated reverse-lookups (`pagePatternChildren`/`pageCategoryChildren`/`pageParentPatterns`/`pageParentCategories`/`pageOwnerTags` + counts). SDL in `server/src/graphql/tag.graphql`; the loader now globs all `*.graphql`. `TagType.entities` (tag→Task/TimeBlock) deferred to step 3. **Vocabulary: `kind` = PATTERN|INTENTION|CATEGORY tracks the live DB; Phase Z W2 flips it to DIRECTION atomically.** Verified: `graphql-tag.test.ts` (13 tests) + full suite 1219 pass; 3-lens adversarial review 0 findings.
+2. **TagType pilot (§3) — ✅ DONE.** `TagType implements Node` (id/label/description + additive kind/muted/isBase) with the hierarchy as Relay cursor connections (`parentDirections`/`parentCategories`/`childIntentions`), `tag(id)` + `tags(first,after,kind)` queries, and `createTag`/`updateTag`/`deleteTag` mutations. The CRUD was **extracted** from `routes/tags.ts` into `services/tags.ts` (`createTag`/`updateTag`/`deleteTag`) so REST + GraphQL share ONE implementation (Decision 3) — byte-equivalent REST behavior (adversarially verified). New keyset-paginated reverse-lookups (`pageDirectionChildren`/`pageCategoryChildren`/`pageParentDirections`/`pageParentCategories`/`pageOwnerTags` + counts). SDL in `server/src/graphql/tag.graphql`; the loader now globs all `*.graphql`. `TagType.entities` (tag→Task/TimeBlock) deferred to step 3. **Vocabulary: `kind` = DIRECTION|INTENTION|CATEGORY (Phase Z / W2, PR #239, flipped the enum + underlying `tags.kind` value from the transitional `PATTERN` atomically).** Verified: `graphql-tag.test.ts` (13 tests) + full suite 1219 pass; 3-lens adversarial review 0 findings.
 3. **Service extraction + core entities** — `TaskType`, `TimeBlockType` (extract services first), then the rest of the map, one resolver group per PR. Then `TagType.entities` (needs those Taggable types).
 
 The base SDL lives at `server/src/graphql/schema.graphql`; per-type SDL alongside it (`tag.graphql`).

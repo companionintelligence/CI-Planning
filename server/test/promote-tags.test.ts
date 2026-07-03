@@ -15,11 +15,11 @@ describe('promote carries possible-task tags onto the task (linchpin)', () => {
   afterAll(() => srv.close());
   beforeEach(() => resetDb());
 
-  const seedTag = (name: string, kind: 'pattern' | 'intention'): string =>
+  const seedTag = (name: string, kind: 'direction' | 'intention'): string =>
     (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, ?, ?) RETURNING id`).get(name, kind, SYSTEM_OWNER) as { id: string }).id;
 
   it('copies the direction (pattern) tag at level 1 and content tags at level 2', async () => {
-    const work = seedTag('work', 'pattern');
+    const work = seedTag('work', 'direction');
     const finance = seedTag('finance', 'intention');
     const pid = (
       sqlite

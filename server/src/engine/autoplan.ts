@@ -174,11 +174,11 @@ function categoryCandidates(staged: StagedTask[], categoryId: string, owner: str
   if (candIds.size === 0) return [];
   const optOut = new Set(
     (sqlite
-      .prepare(`SELECT pattern_tag_id FROM category_direction_optouts WHERE category_tag_id = ?`)
-      .all(categoryId) as { pattern_tag_id: string }[]).map((r) => r.pattern_tag_id),
+      .prepare(`SELECT direction_tag_id FROM category_direction_optouts WHERE category_tag_id = ?`)
+      .all(categoryId) as { direction_tag_id: string }[]).map((r) => r.direction_tag_id),
   );
   const patNameToId = new Map<string, string>();
-  for (const pt of sqlite.prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND kind = 'pattern'`).all(owner) as { id: string; name: string }[]) {
+  for (const pt of sqlite.prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND kind = 'direction'`).all(owner) as { id: string; name: string }[]) {
     patNameToId.set(pt.name, pt.id);
   }
   return staged.filter((t) => {
@@ -542,7 +542,7 @@ export function placeFlightPlan(
     const dirNameToId = new Map<string, string>(); // direction tag name → id
     const ids = Object.keys(patWindows);
     const dirTags = sqlite
-      .prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')}) AND kind = 'pattern'`)
+      .prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')}) AND kind = 'direction'`)
       .all(owner, ...ids) as { id: string; name: string }[];
     for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
 

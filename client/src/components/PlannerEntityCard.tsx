@@ -79,7 +79,7 @@ export function PlannerEntityCard(props: {
   const dirTag = () => {
     const t = task();
     if (!t) return undefined;
-    return (tags() ?? []).find((x) => x.kind === 'pattern' && (t.tags ?? []).includes(x.name));
+    return (tags() ?? []).find((x) => x.kind === 'direction' && (t.tags ?? []).includes(x.name));
   };
   const dirShape = () => {
     const d = dirTag();

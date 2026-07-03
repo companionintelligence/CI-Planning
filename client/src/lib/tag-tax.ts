@@ -38,7 +38,7 @@ export interface Grouped {
  * cards), split active vs muted, plus the Unsorted bucket (no direction).
  */
 export function groupByDirection(tags: Tag[]): Grouped {
-  const directions = sortDirections(tags.filter((t) => t.kind === 'pattern'));
+  const directions = sortDirections(tags.filter((t) => t.kind === 'direction'));
   const intentions = tags.filter((t) => t.kind === 'intention');
   const groups: DirGroup[] = directions.map((direction) => {
     const inDir = intentions.filter((t) => t.directions.includes(direction.name));
@@ -62,7 +62,7 @@ export function groupByDirection(tags: Tag[]): Grouped {
  * they surface only on the Tags "Time Block Categories" tab + the timeblock picker.
  */
 export function directionsFirst(tags: Tag[]): Tag[] {
-  return [...sortDirections(tags.filter((t) => t.kind === 'pattern')), ...tags.filter((t) => t.kind === 'intention')];
+  return [...sortDirections(tags.filter((t) => t.kind === 'direction')), ...tags.filter((t) => t.kind === 'intention')];
 }
 
 // ── Category axis (0069): mirror of the direction grouping, on tags.kind='category' ──
