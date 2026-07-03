@@ -1,10 +1,11 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { Plus, AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen } from 'lucide-solid';
-import { blocks, tasks, taskOf, setElementModal, refetchPatterns, showToast, selectedDay, setSelectedDay, scheduledByTaskId, isRoutineTask } from '../stores/index.js';
+import { blocks, tasks, taskOf, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, scheduledByTaskId, isRoutineTask } from '../stores/index.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { bucketCounts, tasksInBucket, pageWindow, type BucketKey } from '../lib/task-buckets.js';
+import { QuickAdd } from '../components/QuickAdd.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
@@ -21,7 +22,7 @@ import { DayGoals } from '../components/DayGoals.js';
  * never-closing **drawer** floating at the bottom.
  */
 export function Today() {
-  const [summary] = createResource(selectedDay, (date) => api.summary.get(date));
+  const [summary, { refetch: refetchSummary }] = createResource(selectedDay, (date) => api.summary.get(date));
 
   // Phase O · O1 — the one free-text note per day. Outline affordance when empty,
   // accent-filled when a note exists; opens an inline editor (no modal).
@@ -134,6 +135,11 @@ export function Today() {
 
   return (
     <div class="flex flex-col gap-4 p-4 md:p-6 page-enter min-h-full">
+      {/* Quick task entry — one line of natural language, Enter to add. QuickAdd
+          refetches the tasks store itself; onAdded refreshes this view's summary
+          resource + the flight-plan so the new task shows up without a reload. */}
+      <QuickAdd onAdded={() => { refetchSummary(); refetchFlightPlan(); }} />
+
       {/* Day Overview — date · tag set · counts, with + New Task top-right */}
       <div class="rounded-xl border border-border bg-card p-4">
         <div class="flex items-start justify-between gap-3">
