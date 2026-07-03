@@ -7,15 +7,23 @@
   <string>com.companion-planning.server</string>
 
   <key>ProgramArguments</key>
+  <!-- The server runs via tsx (there is no dist/ build step). Keep the explicit
+       node path so launchd's minimal PATH still finds it, and load tsx in-process
+       via node's import flag (the two args below) so node stays the tracked
+       process and SIGTERM reaches the graceful-shutdown handler in src/index.ts.
+       The server binds all interfaces by default, so no host argument is needed. -->
   <array>
     <string>/usr/local/bin/node</string>
-    <string>REPO_PATH/server/dist/index.js</string>
-    <string>--host</string>
-    <string>0.0.0.0</string>
+    <string>--import</string>
+    <string>tsx</string>
+    <string>REPO_PATH/server/src/index.ts</string>
   </array>
 
+  <!-- server package dir: tsx resolves from server/node_modules and matches the
+       Dockerfile's WORKDIR. Server startup is cwd-independent (DB path + config
+       come from env/homedir), so this only affects module resolution. -->
   <key>WorkingDirectory</key>
-  <string>REPO_PATH</string>
+  <string>REPO_PATH/server</string>
 
   <key>EnvironmentVariables</key>
   <dict>

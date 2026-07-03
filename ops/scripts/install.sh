@@ -59,7 +59,7 @@ if [[ "$(uname)" == "Darwin" ]]; then
   echo "✓ launchd services installed. Server will auto-start on login."
 else
   echo "  ⚠  Non-macOS: skipping launchd registration. Start manually:"
-  echo "     node $REPO_ROOT/server/dist/index.js --host 0.0.0.0"
+  echo "     cd $REPO_ROOT && pnpm --filter server start"
 fi
 
 echo ""
