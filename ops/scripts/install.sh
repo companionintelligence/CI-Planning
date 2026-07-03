@@ -8,23 +8,24 @@ echo "→ Repo root: $REPO_ROOT"
 
 # Detect node
 if ! command -v node &>/dev/null; then
-  echo "Error: node not found. Install Node.js 22+ first." >&2
+  echo "Error: node not found. Install Node.js 26+ first." >&2
   exit 1
 fi
 
-# Install npm deps
-echo "→ Installing dependencies…"
-npm ci --prefix "$REPO_ROOT"
-
-# Build TypeScript server
-echo "→ Building TypeScript server…"
-npm run build --prefix "$REPO_ROOT"
-
-# Build Svelte UI
-if [ -f "$REPO_ROOT/ui/package.json" ]; then
-  echo "→ Building Svelte UI…"
-  npm run build --prefix "$REPO_ROOT/ui"
+# Detect pnpm — this is a pnpm workspace (see packageManager in package.json).
+if ! command -v pnpm &>/dev/null; then
+  echo "Error: pnpm not found. Enable it with 'corepack enable' (Node ships corepack) or install pnpm 11+." >&2
+  exit 1
 fi
+
+# Install workspace deps (client + server)
+echo "→ Installing dependencies…"
+pnpm -C "$REPO_ROOT" install --frozen-lockfile
+
+# Build the SolidJS client (vite → server/public). The server itself has no build
+# step — it runs via tsx (see the launchd plist / Dockerfile).
+echo "→ Building client…"
+pnpm -C "$REPO_ROOT" build
 
 # Create logs dir
 mkdir -p "$REPO_ROOT/logs"
@@ -59,9 +60,9 @@ if [[ "$(uname)" == "Darwin" ]]; then
   echo "✓ launchd services installed. Server will auto-start on login."
 else
   echo "  ⚠  Non-macOS: skipping launchd registration. Start manually:"
-  echo "     node $REPO_ROOT/server/dist/index.js --host 0.0.0.0"
+  echo "     cd $REPO_ROOT && pnpm --filter server start"
 fi
 
 echo ""
 echo "✓ Companion Planning installed."
-echo "  App: http://127.0.0.1:$(node -e "const c=require('$REPO_ROOT/config.json');console.log(c.port||3847)")"
+echo "  App: http://127.0.0.1:${PORT:-3848}"
