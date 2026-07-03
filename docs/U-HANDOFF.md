@@ -94,7 +94,7 @@ Boot fails closed on: `AUTH_MODE=test` in prod; `sso` without `SESSION_SECRET`; 
   is vestigial *and out-of-sync with `package.json`* (`npm ci` fails). Never `npm install` here — it
   de-junctions `node_modules` and rewrites the wrong lockfile. Use `pnpm add --filter server` etc.
 - **A fresh worktree has no `node_modules`.** `pnpm install` at the root works (better-sqlite3 fetches a
-  Node-22/24 prebuild; `@node-rs/argon2` is prebuilt — no node-gyp).
+  prebuild on supported platforms; `@node-rs/argon2` is prebuilt — no node-gyp).
 - **Shared pid-keyed test DB:** running exactly two test files together can flake (co-scheduled DB
   contention); the **full suite is deterministic and green**. `resetDb()` prunes non-sentinel owners and
   must delete owner-scoped tables (scheduling_prefs/tag_prefs/patterns/pattern_types) before `owners`
