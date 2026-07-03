@@ -45,8 +45,8 @@ export function AllTasks() {
   const baseList = () => (tasks() ?? []).filter(isTopLevel);
 
   // Direction (pattern-tag) helpers for the sort/filter control.
-  const patternNames = () => new Set((tags() ?? []).filter((t) => t.kind === 'pattern').map((t) => t.name));
-  const directions = () => (tags() ?? []).filter((t) => t.kind === 'pattern').map((t) => t.name);
+  const patternNames = () => new Set((tags() ?? []).filter((t) => t.kind === 'direction').map((t) => t.name));
+  const directions = () => (tags() ?? []).filter((t) => t.kind === 'direction').map((t) => t.name);
   const taskDirection = (t: Task) => (t.tags ?? []).find((n) => patternNames().has(n));
 
   // Active list — excludes archived (done/cancelled); filtered by tab + direction; sorted.

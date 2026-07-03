@@ -53,7 +53,7 @@ function useTaskReminders() {
     // Pattern-tag name → id, for blocks/tasks that carry tag names rather than ids.
     const patternIdByName = new Map<string, string>();
     for (const t of tags() ?? []) {
-      if (t.kind === 'pattern') patternIdByName.set(t.name, t.id);
+      if (t.kind === 'direction') patternIdByName.set(t.name, t.id);
     }
 
     const now = Date.now();

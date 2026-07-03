@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { groupByDirection, groupByCategory, directionsFirst, sortDirections, sortCategories, displayTag } from './tag-tax.js';
 import type { Tag } from './api.js';
 
-const dir = (name: string, is_base = true): Tag => ({ id: name, name, count: 0, kind: 'pattern', muted: false, is_base, used: false, directions: [] });
+const dir = (name: string, is_base = true): Tag => ({ id: name, name, count: 0, kind: 'direction', muted: false, is_base, used: false, directions: [] });
 const tag = (name: string, directions: string[], muted = false): Tag => ({ id: name, name, count: 0, kind: 'intention', muted, is_base: false, used: false, directions });
 const cat = (name: string, is_base = true, direction_optouts: string[] = []): Tag =>
   ({ id: name, name, count: 0, kind: 'category', muted: false, is_base, used: false, directions: [], direction_optouts });
