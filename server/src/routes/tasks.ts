@@ -209,7 +209,12 @@ export function tasksRouter() {
     // own must be indistinguishable from a non-recurring/absent task (same 404),
     // so a foreign id can't be probed for existence (IDOR). An instance shares
     // its template's owner, so checking the passed id is sufficient.
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, currentOwnerId())) {
+    const owner = currentOwnerId();
+    const [owned] = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
+    if (!owned) {
       ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return;
     }
     const res = computeStreak(id);
