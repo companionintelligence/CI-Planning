@@ -120,7 +120,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0097_tag_prefs`) produce the following tables:
+Migrations (current head: `0105_revert_direction_axis`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
