@@ -13,8 +13,9 @@ export const id = '0103_owner_reset_columns';
  *     to invalidate server-side, so a password reset could not otherwise sign other
  *     devices out. The cookie now carries `${ownerId}.${epoch}`; verifySession
  *     rejects a cookie whose epoch != this column. Bumping it on password reset
- *     (V4, "sign out other devices") instantly invalidates every existing cookie for
- *     the owner — the user then signs in again to mint a fresh session cookie.
+ *     (V4) instantly invalidates every existing cookie for the owner (there is no
+ *     per-device choice — a reset always signs out everywhere) — the user then signs
+ *     in again to mint a fresh session cookie.
  *     NOT NULL DEFAULT 0 so every existing owner (incl. the sentinel) starts at epoch 0
  *     and their live cookies (epoch-less, read as 0) keep validating across the upgrade.
  *

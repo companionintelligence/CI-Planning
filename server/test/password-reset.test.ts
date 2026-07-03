@@ -152,6 +152,21 @@ describe('V — POST /api/auth/reset-request', () => {
     expect(__getLastConsoleMail()?.to).toBe('backup@example.com');
   });
 
+  it('an email-looking identifier matches ONLY on email — a colliding username can\'t shadow it', async () => {
+    // Owner A's USERNAME equals owner B's EMAIL. A reset for that string must reach B
+    // (the email owner), never A — the username/email disambiguation (looks-like-email
+    // ⇒ email lookup) prevents the LIMIT 1 cross-account shadowing Copilot flagged.
+    const shared = 'shared@example.com';
+    await provisionOwner({ name: 'A', username: shared, passwordHash: await hashPassword(PW) });
+    await provisionOwner({ name: 'B', username: 'owner-b', email: shared, passwordHash: await hashPassword(PW) });
+    const r = await post('/api/auth/reset-request', { identifier: shared });
+    expect(r.status).toBe(200);
+    expect(__getLastConsoleMail()?.to).toBe(shared); // delivered to B's email, not A
+    const tokens = sqlite.prepare(`SELECT owner_id FROM password_reset_tokens`).all() as { owner_id: string }[];
+    const bId = findOwnerByUsername('owner-b')!.id;
+    expect(tokens).toEqual([{ owner_id: bId }]); // token issued for B only
+  });
+
   it('never targets the sentinel owner', async () => {
     // Even if the sentinel is forced to carry a username, reset-request must not resolve it.
     sqlite.prepare(`UPDATE owners SET username = 'root' WHERE id = ?`).run(SYSTEM_OWNER_ID);
