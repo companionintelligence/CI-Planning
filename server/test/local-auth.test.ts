@@ -122,6 +122,14 @@ describe('U2 — login / session / logout', () => {
     expect(after.status).toBe(401);
   });
 
+  it('logout WITHOUT a session cookie is a no-op — no forced Set-Cookie (logout-CSRF defense)', async () => {
+    const res = await fetch(`${srv.url}/api/auth/logout`, { method: 'POST' }); // no Cookie presented
+    expect(res.status).toBe(200);
+    // Nothing to clear ⇒ no cp_session deletion cookie, so a cross-site POST can't force logout.
+    const setCookies = res.headers.getSetCookie?.() ?? [];
+    expect(setCookies.some((c) => c.startsWith('cp_session=') || c.startsWith('cp_session.sig='))).toBe(false);
+  });
+
   it('rejects a wrong password and an unknown username with an identical generic 401', async () => {
     await seedUser();
     const wrong = await login(USER, 'nope');

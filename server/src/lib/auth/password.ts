@@ -17,8 +17,8 @@ import { SYSTEM_OWNER_ID } from '../ids.js';
  * native binary AND computes the decoy hash below at boot in EVERY mode, including
  * test/standalone. That's deliberate operational coupling: a platform without a
  * working argon2 binary fails at startup regardless of AUTH_MODE (@node-rs ships
- * prebuilts for the supported targets; CI runs on Node 22 with them). Don't assume
- * non-local deployments skip this file.
+ * prebuilt binaries for the supported Node targets, so no compiler is needed at
+ * install). Don't assume non-local deployments skip this file.
  */
 
 // argon2id with library defaults (m=19MiB, t=2, p=1 in @node-rs/argon2 v2) — OWASP-
