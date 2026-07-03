@@ -1,7 +1,14 @@
 packages:
   - 'server'
   - 'client'
+# Force a single graphql version across the workspace (Phase W). Apollo Server 5 +
+# @as-integrations/koa target 16.x (matching CI-Server); without this pin a stray
+# graphql@17 resolution produced two @apollo/server copies (duplicate type identity).
+overrides:
+  graphql: 16.14.2
 allowBuilds:
+  # protobufjs's build is Apollo usage-reporting only (we don't use it) — skip it.
+  '@apollo/protobufjs': false
   better-sqlite3: true
   esbuild: true
 onlyBuiltDependencies:
