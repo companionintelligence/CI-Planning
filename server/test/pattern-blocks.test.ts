@@ -83,8 +83,8 @@ beforeEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Skipped: 0043 renamed direction_tag_id → direction_tag_id; up0037 prepares an
-// INSERT using direction_tag_id which fails on a post-0043 DB. Historical
+// Skipped: 0043 temporarily renamed direction_tag_id → pattern_tag_id; up0037 prepares an
+// INSERT using direction_tag_id which failed on the post-0043 (pre-0105) schema. Historical
 // seeding is covered by the direction-aware placement tests below.
 describe.skip('0037 migration', () => {
   it('is idempotent (table already exists from server startup)', () => {
