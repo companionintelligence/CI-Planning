@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { tasks } from '../db/schema.js';
 import { setDependencies, DependencyCycleError } from '../engine/deps.js';
@@ -22,11 +22,16 @@ import { writeAudit } from '../lib/audit.js';
  * `ok` result carries the row / generated counts / synced block id the route needs
  * to emit the exact same events as before).
  *
- * Extracted VERBATIM — including the pre-extraction owner-scoping: `updateTask` /
- * `deleteTask` / `promoteToHabit` / `skipRecurringInstance` look tasks up by id
- * only (as their routes always did); `ownerId` is used exactly where the routes
- * used `currentOwnerId()` (tag resolution, reminders, promotion, audit). Engine
- * calls (parseRule, generateRecurrences, setDependencies, …) stay engine-side.
+ * All mutators are OWNER-SCOPED (W3.1a hardening — docs/W-step3-extraction-audit.md
+ * §"Owner-scoping finding"): `updateTask` / `deleteTask` / `promoteToHabit` resolve +
+ * mutate by (id, owner_id), and `skipRecurringInstance` gates on ownership before the
+ * engine skip. A cross-owner id therefore returns `not_found` (REST still 404s,
+ * unchanged for the legit owner) — closing the pre-extraction IDOR that keyed by id
+ * alone (the routes on main did too; dormant while single-owner, live since Phase T).
+ * `recallTask` already guarded by (id, owner_id). `ownerId` is otherwise used exactly
+ * where the routes used `currentOwnerId()` (tag resolution, reminders, promotion,
+ * audit). Engine calls (parseRule, generateRecurrences, setDependencies, …) stay
+ * engine-side.
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase
  * row shape for `taskToApi`), so the writers are async; better-sqlite3 executes
@@ -316,11 +321,13 @@ export async function updateTask(
   }
 
   // Only issue an UPDATE when there are column changes; a tags/depends-only
-  // PATCH still resolves the task (drizzle rejects an empty .set()).
+  // PATCH still resolves the task (drizzle rejects an empty .set()). Both branches
+  // are owner-scoped (W3.1a): a cross-owner id matches no row → not_found (404),
+  // and no column/tag/dependency mutation runs (all of it is gated below the guard).
   const updatedFields = Object.keys(update);
   const [task] = updatedFields.length
-    ? await db.update(tasks).set(update).where(eq(tasks.id, targetId)).returning()
-    : await db.select().from(tasks).where(eq(tasks.id, targetId));
+    ? await db.update(tasks).set(update).where(and(eq(tasks.id, targetId), eq(tasks.ownerId, ownerId))).returning()
+    : await db.select().from(tasks).where(and(eq(tasks.id, targetId), eq(tasks.ownerId, ownerId)));
   if (!task) return { ok: false, error: 'not_found' };
 
   if (Array.isArray(input.tags) || Array.isArray(input.secondary_tags)) {
@@ -392,7 +399,7 @@ export async function deleteTask(ownerId: string, id: string): Promise<DeleteTas
   const [task] = await db
     .update(tasks)
     .set({ status: 'cancelled' })
-    .where(eq(tasks.id, id))
+    .where(and(eq(tasks.id, id), eq(tasks.ownerId, ownerId))) // W3.1a: owner-scoped
     .returning();
   if (!task) return { ok: false, error: 'not_found' };
   syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
@@ -413,7 +420,7 @@ export async function promoteToHabit(ownerId: string, id: string): Promise<Promo
   const [task] = await db
     .update(tasks)
     .set({ subtype: 'habit' })
-    .where(eq(tasks.id, id))
+    .where(and(eq(tasks.id, id), eq(tasks.ownerId, ownerId))) // W3.1a: owner-scoped
     .returning();
   if (!task) return { ok: false, error: 'not_found' };
   ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
@@ -477,6 +484,13 @@ export type SkipInstanceResult =
  * EXDATE so a regenerate won't resurrect it (engine skipInstance does both).
  */
 export async function skipRecurringInstance(ownerId: string, id: string): Promise<SkipInstanceResult> {
+  // W3.1a: the engine `skipInstance` resolves the task by id alone, so gate on
+  // ownership here (mirrors recallTask) before it can mark another owner's instance
+  // skipped / write an EXDATE onto their template. A cross-owner id → not_found (404),
+  // exactly what a non-existent id already returned — the legit-owner path is unchanged.
+  if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId)) {
+    return { ok: false, error: 'not_found' };
+  }
   const res = skipInstance(id);
   if (!res.ok) return { ok: false, error: res.reason };
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
