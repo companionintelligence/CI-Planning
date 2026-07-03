@@ -184,7 +184,7 @@
 
 ## 7 · GraphQL / MCP notes (feed **W** / **X**)
 - **W:** ~29 REST routers; resolvers must **call the same `services/*.ts` the REST routes call** — S proved the danger of raw-SQL readers bypassing services. Design types against the **post-S shapes** (`daily_recap`, `tag_prefs`) and **post-T owner scoping**; note the `/api/pattern-prefs` **and** `/api/category-prefs` contracts both persist over the single `tag_prefs` table.
-- **X:** the "~36 MCP tools" premise was **wrong** — that surface belonged to the pre-rebuild app (deleted `1510cd8`; see `archive/CLAUDE_COWORK.md`). The real surface is **7 tools** in an MCP *client* for Google Calendar/Gmail (`calendar_*` ×4, `gmail_*` ×3 — `server/src/mcp/`), already one consistent `domain_verb_object` shape. CI-Server alignment is **stylistic, not an integration requirement**: CI-Server's `McpToolProvider` namespaces (`serverName:tool`) and passes external tool names through verbatim. No rename is forced.
+- **X:** the "~36 MCP tools" premise was **wrong** — that surface belonged to the pre-rebuild app (deleted `1510cd8`; see `archive/CLAUDE_COWORK.md`). Companion Planning is an MCP *client*: it always depends on **4 calendar tools** (`calendar_*`), and **optionally** on **3 Gmail tools** (`gmail_*`) only when `CP_GOOGLE_ENABLE_GMAIL=true` (`server/src/mcp/client.ts`). CI-Server alignment is **stylistic, not an integration requirement**: CI-Server's `McpToolProvider` namespaces (`serverName:tool`) and passes external tool names through verbatim. No rename is forced.
 
 ---
 
