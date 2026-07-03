@@ -1,5 +1,5 @@
 import { createResource, createSignal, createMemo, For, Show } from 'solid-js';
-import { Check, X, Link as LinkIcon, Target, Cpu, RefreshCw, Circle } from 'lucide-solid';
+import { Check, X, Link as LinkIcon, Target, Cpu, RefreshCw, Circle, Moon } from 'lucide-solid';
 import { api, type WeeklyGoal, type ReflectionWrite, type DaySummary, type TopTask } from '../lib/api.js';
 import { isoWeekKey } from '../lib/dates.js';
 import { flattenObjectives, matchObjectives, type FlatObjective } from '../lib/objectives.js';
@@ -463,6 +463,44 @@ function TodaysBrief(props: { date: string; onClose: () => void }) {
           {/* Prose */}
           <Show when={summary()} fallback={<p class="text-sm text-muted-foreground">Loading…</p>}>
             <p class="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">{summary()!.prose}</p>
+          </Show>
+
+          {/* Phase Z · Z2 — last night's EOD Alignment folded in (Time-Sense on).
+              Present only when the server attaches it; degrades to carry-forward
+              alone when the evening modal was never opened (prose null). */}
+          <Show when={summary()?.evening && (summary()!.evening!.prose || summary()!.evening!.carry_forward.length)}>
+            {(() => {
+              const ev = () => summary()!.evening!;
+              const openCarry = (taskId: string) => {
+                setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: taskId } });
+                props.onClose();
+              };
+              return (
+                <div class="border-t border-border/50 pt-3">
+                  <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                    <Moon size={11} /> Last night
+                  </div>
+                  <Show when={ev().prose}>
+                    <p class="text-sm text-muted-foreground leading-relaxed whitespace-pre-line mb-2">{ev().prose}</p>
+                  </Show>
+                  <Show when={ev().carry_forward.length}>
+                    <div class="text-[10px] text-muted-foreground mb-1">Carry forward first</div>
+                    <ul class="flex flex-col gap-1.5">
+                      <For each={ev().carry_forward}>
+                        {(c) => (
+                          <li class="flex items-center gap-2 text-sm">
+                            <Circle size={8} class="flex-shrink-0 text-amber-400" />
+                            <button class="flex-1 text-left truncate hover:underline text-foreground" onClick={() => openCarry(c.task_id)}>
+                              {c.title}
+                            </button>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                </div>
+              );
+            })()}
           </Show>
 
           {/* Capacity line */}

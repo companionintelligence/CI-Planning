@@ -25,7 +25,7 @@ vi.mock('../src/mcp/ollama.js', async (importOriginal) => {
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { calibrateEstimates } from '../src/jobs/calibrate-estimates.js';
-import { comboRef, resolveCalibration, detectComboSuggestions } from '../src/services/calibration.js';
+import { comboRef, resolveCalibration, detectComboSuggestions, suggestEstimate } from '../src/services/calibration.js';
 import { resetDb, startTestServer, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 
 const DAY = '2026-06-15';
@@ -347,5 +347,128 @@ describe('EOD Alignment (flag on)', () => {
     expect((await api(srv.url, '/api/calibration/scopes', asB)).status).toBe(404);
     // …while the system owner (flag on) is served.
     expect((await api(srv.url, `/api/reflections/evening?period=${DAY}`)).status).toBe(200);
+  });
+});
+
+// ── Z6: suggest-only estimate nudge (flag on) ────────────────────────────────────
+
+describe('suggestEstimate (Z6, flag on)', () => {
+  beforeEach(() => setFlag(true));
+
+  function makeOpenTask(estimate: number | null, tags: string[] = []): string {
+    const id = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes) VALUES (uuid7(), 'Live', ?, 'open', ?) RETURNING id`)
+      .get(SYSTEM_OWNER, estimate) as { id: string }).id;
+    for (const t of tags) sqlite.prepare(`INSERT INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(id, t);
+    return id;
+  }
+
+  it('proposes a bumped estimate from the resolved scope bias, snapped to 5m', async () => {
+    const taxes = makeTag('taxes');
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] }); // ratio 1.5
+    calibrateEstimates();
+
+    const live = makeOpenTask(60, [taxes]);
+    const s = suggestEstimate(SYSTEM_OWNER, live);
+    expect(s).not.toBeNull();
+    expect(s!.suggested_minutes).toBe(90); // 60 * 1.5
+    expect(s!.delta_minutes).toBe(30);
+    expect(s!.scope_kind).toBe('tag');
+    expect(s!.scope_label).toBe('taxes');
+    expect(s!.confidence).toBe('tentative'); // 6 samples
+
+    const viaApi = await api(srv.url, `/api/calibration/suggest/${live}`);
+    expect(viaApi.status).toBe(200);
+    expect(viaApi.body.suggestion.suggested_minutes).toBe(90);
+  });
+
+  it('returns null when there is nothing worth saying', () => {
+    const taxes = makeTag('taxes');
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
+    calibrateEstimates();
+
+    expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(null, [taxes]))).toBeNull(); // no current estimate
+
+    // near-1.0 bias: a scope whose actuals ≈ estimates.
+    const steady = makeTag('steady');
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 30, tags: [steady] });
+    calibrateEstimates();
+    expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [steady]))).toBeNull();
+
+    // below the confidence floor everywhere (fresh owner, only 2 samples): no scope resolves.
+    resetDb();
+    setFlag(true);
+    const t2 = makeTag('sparse');
+    for (let i = 0; i < 2; i++) makeDoneTask({ est: 30, act: 60, tags: [t2] });
+    calibrateEstimates();
+    expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [t2]))).toBeNull();
+  });
+
+  it('never writes — suggest-only', () => {
+    const taxes = makeTag('taxes');
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
+    calibrateEstimates();
+    const live = makeOpenTask(60, [taxes]);
+    suggestEstimate(SYSTEM_OWNER, live);
+    const after = sqlite.prepare(`SELECT estimated_minutes FROM tasks WHERE id = ?`).get(live) as { estimated_minutes: number };
+    expect(after.estimated_minutes).toBe(60);
+  });
+
+  it('the suggest endpoint 404s when the flag is off', async () => {
+    setFlag(false);
+    const live = makeOpenTask(60);
+    expect((await api(srv.url, `/api/calibration/suggest/${live}`)).status).toBe(404);
+  });
+});
+
+// ── Z2: Daily Brief folds in last night's EOD Alignment ──────────────────────────
+
+describe('Daily Brief fold-in (Z2)', () => {
+  const PREV = '2026-06-14'; // yesterday of DAY
+
+  function makeBlockOn(day: string, taskId: string) {
+    sqlite
+      .prepare(
+        `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, task_id, owner_id)
+         VALUES (uuid7(), 'B', 'task', ?, ?, ?, ?)`,
+      )
+      .run(`${day}T10:00:00.000Z`, `${day}T11:00:00.000Z`, taskId, SYSTEM_OWNER);
+  }
+  function makeOpenTask(title: string): string {
+    return (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), ?, ?, 'open') RETURNING id`)
+      .get(title, SYSTEM_OWNER) as { id: string }).id;
+  }
+
+  it('flag off: /api/summary carries no evening field', async () => {
+    setFlag(false);
+    const res = await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(res.status).toBe(200);
+    expect(res.body.evening).toBeUndefined();
+  });
+
+  it('flag on, evening authored: folds prose + yesterday carry-forward into the morning brief', async () => {
+    setFlag(true);
+    const carry = makeOpenTask('Unfinished thing');
+    makeBlockOn(PREV, carry); // an incomplete task that had a block yesterday
+    // Author yesterday's EOD Alignment (mocked Ollama → fallback prose).
+    await api(srv.url, '/api/reflections/evening/open', { method: 'POST', json: { period_key: PREV } });
+
+    const res = await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(res.status).toBe(200);
+    expect(res.body.evening).toBeDefined();
+    expect(res.body.evening.date).toBe(PREV);
+    expect(res.body.evening.prose).toContain(`${PREV} in review`);
+    expect(res.body.evening.carry_forward.map((c: { title: string }) => c.title)).toContain('Unfinished thing');
+  });
+
+  it('flag on, no evening row: degrades to carry-forward only (prose null)', async () => {
+    setFlag(true);
+    const carry = makeOpenTask('Still open');
+    makeBlockOn(PREV, carry);
+    const res = await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(res.body.evening).toBeDefined();
+    expect(res.body.evening.prose).toBeNull(); // modal never opened
+    expect(res.body.evening.carry_forward.map((c: { title: string }) => c.title)).toContain('Still open');
   });
 });

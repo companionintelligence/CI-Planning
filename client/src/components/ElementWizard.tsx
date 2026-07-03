@@ -1,4 +1,4 @@
-import { createSignal, createEffect, Show, For } from 'solid-js';
+import { createSignal, createEffect, createResource, Show, For } from 'solid-js';
 import { X, ChevronLeft, Plus, ListTodo, Flame, Boxes, Clock, Calendar } from 'lucide-solid';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
@@ -101,6 +101,19 @@ export function ElementWizard() {
   };
   const addDep = (id: string) => { if (!dependsOn().includes(id)) setDependsOn([...dependsOn(), id]); setDepDraft(''); };
   const removeDep = (id: string) => setDependsOn(dependsOn().filter((x) => x !== id));
+
+  // Phase Z · Z6 — suggest-only estimate nudge. Fetch once when editing an
+  // existing task/habit with Time-Sense on; the endpoint 404s (→ null) when the
+  // flag is off, so no chip ever shows in the default build. Accept sets the
+  // estimate field (the human write happens on Save); dismiss clears it.
+  const [estimateSuggestion, { mutate: mutateSuggestion }] = createResource(
+    () =>
+      open() && m().mode === 'edit' && !!prefs()?.time_sense_enabled &&
+      (m().editTarget?.kind === 'task' || m().editTarget?.kind === 'habit') && m().editTarget?.id
+        ? m().editTarget!.id
+        : null,
+    (taskId) => api.calibration.suggest(taskId).then((r) => r.suggestion).catch(() => null),
+  );
 
   // ── Time-block membership: add existing tasks/habits/routines, manage current ones ──
   const enableRoutines = () => !!prefs()?.enable_routines;
@@ -596,6 +609,23 @@ export function ElementWizard() {
                     <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Due</span>
                       <input type="date" class="input py-1 text-sm" value={dueAt()} onInput={(e) => setDueAt(e.currentTarget.value)} /></label>
                   </div>
+                  {/* Phase Z · Z6 — suggest-only estimate chip (Time-Sense). */}
+                  <Show when={estimateSuggestion()}>
+                    {(s) => (
+                      <div class="flex items-center gap-2 text-[11px] rounded-md border border-border bg-background/60 px-2 py-1.5">
+                        <span class="flex-1 text-muted-foreground">
+                          <span class="text-foreground">{s().scope_label}</span> tends to run{' '}
+                          {Math.abs(s().delta_minutes)}m {s().delta_minutes > 0 ? 'longer' : 'shorter'} than you estimate — set{' '}
+                          {s().suggested_minutes}m?
+                          <Show when={s().confidence === 'tentative'}><span class="opacity-60"> (early signal)</span></Show>
+                        </span>
+                        <button type="button" class="text-primary hover:underline flex-shrink-0"
+                          onClick={() => { setEstimate(s().suggested_minutes); mutateSuggestion(null); }}>Set</button>
+                        <button type="button" class="text-muted-foreground hover:text-foreground flex-shrink-0"
+                          onClick={() => mutateSuggestion(null)}>Dismiss</button>
+                      </div>
+                    )}
+                  </Show>
                 </Show>
 
                 {/* Repeat */}
