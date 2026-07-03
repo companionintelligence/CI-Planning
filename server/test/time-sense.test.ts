@@ -77,7 +77,7 @@ beforeEach(() => {
 
 // ── Migration shape (0105 + 0106) ────────────────────────────────────────────────
 
-describe('migrations 0105/0106', () => {
+describe('migrations 0106/0107', () => {
   it('scheduling_prefs gained time_sense_enabled, default OFF', () => {
     const cols = (sqlite.prepare(`PRAGMA table_info(scheduling_prefs)`).all() as { name: string; dflt_value: unknown }[]);
     const col = cols.find((c) => c.name === 'time_sense_enabled');
@@ -165,6 +165,21 @@ describe('scoped calibration (flag on)', () => {
     const scopes = await api(srv.url, '/api/calibration/scopes');
     expect(scopes.status).toBe(200);
     expect(scopes.body.rows.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('turning the flag OFF and recomputing purges stale scoped rows (back to one global row)', () => {
+    const taxes = makeTag('taxes');
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
+    calibrateEstimates(); // flag ON → scoped rows written
+    expect(calRow('tag', taxes)).toBeDefined();
+
+    setFlag(false);
+    calibrateEstimates(); // flag OFF → must leave ONLY the global row
+    expect(calRow('tag', taxes)).toBeUndefined();
+    expect(calRow('subtype', 'standard')).toBeUndefined();
+    expect(calRow('global', '')?.sample_count).toBe(6);
+    const total = (sqlite.prepare(`SELECT COUNT(*) AS n FROM estimate_calibration WHERE owner_id = ?`).get(SYSTEM_OWNER) as { n: number }).n;
+    expect(total).toBe(1);
   });
 
   it('drops MAD outliers and caps extreme ratios', () => {
@@ -380,6 +395,16 @@ describe('suggestEstimate (Z6, flag on)', () => {
     const viaApi = await api(srv.url, `/api/calibration/suggest/${live}`);
     expect(viaApi.status).toBe(200);
     expect(viaApi.body.suggestion.suggested_minutes).toBe(90);
+  });
+
+  it('suggests at exactly the 15% boundary (float-safe: bias 1.15 is not swallowed)', () => {
+    const errand = makeTag('errand');
+    // ratio 23/20 = exactly the IEEE-754 float 1.15 → median bias 1.15.
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 20, act: 23, tags: [errand] });
+    calibrateEstimates();
+    const s = suggestEstimate(SYSTEM_OWNER, makeOpenTask(100, [errand]));
+    expect(s).not.toBeNull();          // 0.14999… < 0.15 must NOT suppress a true 15% bias
+    expect(s!.suggested_minutes).toBe(115); // round(100 * 1.15 / 5) * 5
   });
 
   it('returns null when there is nothing worth saying', () => {

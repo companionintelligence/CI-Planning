@@ -61,6 +61,15 @@ export function calibrateEstimates(): CalibrationResult {
   }
 
   // ── Legacy (flag off) — Phase N math, byte-for-byte ─────────────────────────
+  // Purge any scoped rows left behind from a prior flag-ON run, so flag-off is a
+  // true single-global-row state: otherwise a stale tag/category/objective row
+  // could still bias a suggestion if the flag is flipped back on before the next
+  // nightly recompute (the flag-ON branch's wholesale delete would fix it, but
+  // only once it runs).
+  sqlite
+    .prepare(`DELETE FROM estimate_calibration WHERE owner_id = ? AND NOT (scope_kind = 'global' AND scope_ref = '')`)
+    .run(owner);
+
   // Fetch all qualifying ratios. SQLite has no built-in PERCENTILE, so we sort in JS.
   const rows = sqlite
     .prepare(

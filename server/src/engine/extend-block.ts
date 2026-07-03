@@ -46,19 +46,28 @@ interface Row {
   start_at: string;
   end_at: string;
   block_kind: string;
+  block_type: string | null;
   is_locked: number;
   status: string;
 }
 
 /**
  * Fixed = never silently displaced: meetings (incl. external-event mirrors, which
- * are locked meeting blocks), user-locked blocks, and in-progress blocks.
- * Everything else — auto/manual task blocks, soft buffers (break/buffer) — is
- * movable. Mirrors auto-defense's computeProtected intent, generalized to any
- * subsequent entity rather than just the auto snapshot.
+ * are locked meeting blocks), user-locked blocks, in-progress blocks, and
+ * user-drawn Plan containers (`block_kind='timeblock'`). Only loose task blocks
+ * are movable. Plan containers are treated as fixed rather than pushed because a
+ * container carries child blocks that must move *with* it (move-group semantics);
+ * shoving a container independently would shear its children out of it. So an
+ * extension that runs into a Plan escalates to blockedBy instead — the obstacle
+ * query below only surfaces top-level blocks, so children never appear here.
  */
 function isFixed(r: Row): boolean {
-  return r.block_kind === 'meeting' || r.is_locked === 1 || r.status === 'in_progress';
+  return (
+    r.block_kind === 'meeting' ||
+    r.block_kind === 'timeblock' ||
+    r.is_locked === 1 ||
+    r.status === 'in_progress'
+  );
 }
 
 /**
@@ -78,7 +87,7 @@ export function extendBlock(
 
   const block = sqlite
     .prepare(
-      `SELECT id, task_id, title, start_at, end_at, block_kind, is_locked, status
+      `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status
          FROM time_blocks WHERE id = ? AND owner_id = ?`,
     )
     .get(blockId, owner) as Row | undefined;
@@ -89,15 +98,25 @@ export function extendBlock(
   const newEnd = origEnd + overflowMs;
   const newEndAt = new Date(newEnd).toISOString();
 
-  // Entities that start at/after the block's ORIGINAL end, in time order — the
-  // only ones an end-extension can run into. Completed/skipped/cancelled blocks
-  // aren't obstacles (mirrors dayObstacles).
+  // Top-level timeline entities starting at/after this block's ORIGINAL end, in
+  // order — the only things an end-extension can run into. Scoped to real
+  // obstacles (mirrors dayObstacles): locked, meetings, live task blocks, and
+  // scheduled Plan containers. `parent_block_id IS NULL` excludes child blocks —
+  // they live inside a container (itself fixed here) and must never be pushed
+  // independently. Someday Plans and completed/skipped/cancelled blocks aren't
+  // timeline obstacles.
   const subsequent = sqlite
     .prepare(
-      `SELECT id, task_id, title, start_at, end_at, block_kind, is_locked, status
+      `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status
          FROM time_blocks
-        WHERE owner_id = ? AND id != ? AND start_at >= ?
+        WHERE owner_id = ? AND id != ? AND parent_block_id IS NULL AND start_at >= ?
           AND status NOT IN ('completed','skipped','cancelled')
+          AND (
+               is_locked = 1
+            OR block_kind = 'meeting'
+            OR block_kind = 'task'
+            OR (block_kind = 'timeblock' AND block_type = 'scheduled')
+          )
         ORDER BY start_at ASC`,
     )
     .all(owner, blockId, block.end_at) as Row[];
