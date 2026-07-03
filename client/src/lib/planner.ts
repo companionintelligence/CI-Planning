@@ -1,9 +1,10 @@
 /**
  * Pure helpers for the PLANNER (Phase G, G6). The view (`Planner.tsx`) renders the
- * full day on the tz-safe grid math from `grid.ts` inside a windowed scroll
- * container; these functions decide the **next-up** item and where to scroll so it
- * sits pinned to the second slot. Kept pure + DOM-free so they're unit-testable in
- * the node vitest harness, like `grid.ts`/`drag.ts`.
+ * full day on the tz-safe grid math from `grid.ts` inside a fixed, NON-scrolling
+ * zoom window (4/8/16h); these functions decide the **next-up** item and the
+ * window's top offset (px from the day's midnight) so that item sits pinned to the
+ * second slot. Kept pure + DOM-free so they're unit-testable in the node vitest
+ * harness, like `grid.ts`/`drag.ts`.
  */
 import { minutesIntoDay, PX_PER_MIN } from './grid.js';
 
@@ -35,16 +36,18 @@ export function pickNextUp<T extends TimedLike>(items: T[], nowISO: string): T |
 }
 
 /**
- * The scrollTop (px) that pins a next-up item to the second slot: keep `SLOT_MIN`
- * minutes of context above it, clamped at the top of the day. `nextUpStartMin` is
- * minutes-into-day of the next-up block's start.
+ * The zoom window's top offset (px from the day's midnight) that pins a next-up
+ * item to the second slot: keep `SLOT_MIN` minutes of context above it, clamped at
+ * the top of the day. `nextUpStartMin` is minutes-into-day of the next-up block's
+ * start. (Formerly a scrollTop; the Planner no longer scrolls internally — the same
+ * value now shifts the full-day grid up inside the clipped window.)
  */
-export function nextUpScrollTopPx(nextUpStartMin: number, slotMin = SLOT_MIN): number {
+export function nextUpWindowOffsetPx(nextUpStartMin: number, slotMin = SLOT_MIN): number {
   return Math.max(0, (nextUpStartMin - slotMin) * PX_PER_MIN);
 }
 
-/** Convenience: scrollTop for a next-up block, computed in the column's local day. */
-export function scrollTopForBlock(block: TimedLike | undefined, day: string): number {
+/** Convenience: window offset for a next-up block, computed in the column's local day. */
+export function windowOffsetForBlock(block: TimedLike | undefined, day: string): number {
   if (!block) return 0;
-  return nextUpScrollTopPx(minutesIntoDay(block.start_at, day));
+  return nextUpWindowOffsetPx(minutesIntoDay(block.start_at, day));
 }
