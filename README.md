@@ -410,11 +410,11 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `OLLAMA_MEDIUM` | `gemma3n:e4b` | Better model for briefings. Must be pulled (`ollama pull`) or set to an installed model. |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
-| `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (JWKS-signed Bearer JWT). |
-| `AUTH_JWKS_URL` | (unset) | JWKS endpoint for JWT public-key verification. Required when `AUTH_MODE=sso`. |
-| `AUTH_ISSUER` | (unset) | Expected JWT `iss` claim. Required when `AUTH_MODE=sso`. |
-| `AUTH_AUDIENCE` | `companion-planning` | Expected JWT `aud` claim (`AUTH_MODE=sso`). |
-| `AUTH_CONTRACT_VERSION` | `1` | Pinned contract version asserted in incoming JWT claims (`AUTH_MODE=sso`). |
+| `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (CI-Portal OIDC login or local username/password — mints a signed session cookie). |
+| `AUTH_JWKS_URL` | (unset) | **Currently unused.** Predates the CI-Portal OIDC (`CIPORTAL_*`) vars from Phase U; parsed into config but read by no code path. SSO derives the JWKS endpoint from CI-Portal discovery (`CIPORTAL_ISSUER`). Retained pending a repoint-or-retire decision. |
+| `AUTH_ISSUER` | (unset) | **Currently unused** (see `AUTH_JWKS_URL`). Not read by any code path — the expected token `iss` comes from the discovered CI-Portal document. |
+| `AUTH_AUDIENCE` | `companion-planning` | Legacy/unused. The effective `aud` check uses the OIDC client_id (`CIPORTAL_CLIENT_ID` for portal login, the Google client id for Google OAuth), not this value. |
+| `AUTH_CONTRACT_VERSION` | `1` | Reserved — populated into config but not currently enforced (no JWT contract-version assertion is performed). |
 | `AUTH_AUTO_PROVISION` | `false` | When `true`, an unknown SSO `sub` automatically provisions a new owner row instead of returning 403. |
 | `AUTH_RATE_WINDOW_MS` | `60000` | Rate-limit sliding window in milliseconds. |
 | `AUTH_RATE_MAX` | `60` | Max requests per window per IP across all endpoints. |
