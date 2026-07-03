@@ -704,6 +704,14 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "owner_id",
+      "scope_ref",
+      "created_at",
+    ],
+    "table": "calibration_combo_pins",
+  },
+  {
+    "columns": [
       "category_tag_id",
       "pattern_tag_id",
     ],
@@ -797,6 +805,8 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "owner_id",
+      "scope_kind",
+      "scope_ref",
       "computed_at",
       "sample_count",
       "bias_ratio",
@@ -1133,6 +1143,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "default_time_block_minutes",
       "enable_routines",
       "recurrence_horizon_days",
+      "time_sense_enabled",
     ],
     "table": "scheduling_prefs",
   },
