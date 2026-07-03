@@ -21,6 +21,7 @@ import { notificationsRouter } from './notifications.js';
 import { backupRouter } from './backup.js';
 import { healthRouter } from './health.js';
 import { authRouter } from './auth.js';
+import { ownerRouter } from './owner.js';
 import { oauthRouter } from './oauth.js';
 import { planRouter } from './plan.js';
 import { syncRouter } from './sync.js';
@@ -34,6 +35,7 @@ export function mountRoutes(app: Koa) {
   for (const router of [
     healthRouter(),
     authRouter(),
+    ownerRouter(),
     sseRouter(),
     tasksRouter(),
     blocksRouter(),

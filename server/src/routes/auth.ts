@@ -10,8 +10,10 @@ import { provisionOwner } from '../lib/owners.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
 import { verifyOidcIdToken } from '../lib/auth/verifyOidcIdToken.js';
 import { discoverOidc, type OidcDiscoveryDoc } from '../lib/auth/oidcDiscovery.js';
-import { findOwnerByUsername, verifyLoginPassword } from '../lib/auth/password.js';
-import { setSession, clearSession, setLoginState, consumeLoginState, SESSION_COOKIE } from '../lib/auth/session.js';
+import { findOwnerByUsername, verifyLoginPassword, hashPassword } from '../lib/auth/password.js';
+import { setSession, clearSession, setLoginState, consumeLoginState, bumpSessionEpoch, SESSION_COOKIE } from '../lib/auth/session.js';
+import { issueResetToken, consumeResetToken } from '../lib/auth/resetToken.js';
+import { sendMail } from '../lib/mail/index.js';
 
 /**
  * The `/api/auth/*` router.
@@ -34,20 +36,26 @@ import { setSession, clearSession, setLoginState, consumeLoginState, SESSION_COO
  */
 
 const STATE_TTL_MS = 10 * 60 * 1000; // authorize redirects are short-lived (10 min)
+const MIN_PASSWORD_LENGTH = 8;       // V: server-side floor for a reset password (client also checks)
 
-// Minimal in-memory sliding-window limiter — the first real consumer of
-// config.auth.rateLimit. Keyed by client IP; bounds `issueMax` login attempts per
-// `windowMs`. In-process only (single-node deployment); resets on restart. Also
-// applied to /ciportal/start: it's public and writes an auth_states row per hit.
+// Minimal in-memory sliding-window limiter — the consumer of config.auth.rateLimit.
+// Bounds `issueMax` attempts per `windowMs` for a given KEY. In-process only (single-node
+// deployment); resets on restart. Keys are namespaced so different axes don't collide:
+// `ip:<addr>` for per-IP (login, ciportal start, reset-request) and `reset:<identifier>`
+// for the per-account reset-request axis (V9 — hammering one account's mailbox).
 const attempts = new Map<string, number[]>();
-function rateLimited(ip: string): boolean {
+function rateLimitedKey(key: string): boolean {
   const { windowMs, issueMax } = config.auth.rateLimit;
   const now = Date.now();
-  const recent = (attempts.get(ip) ?? []).filter((t) => now - t < windowMs);
-  attempts.set(ip, recent);
+  const recent = (attempts.get(key) ?? []).filter((t) => now - t < windowMs);
+  attempts.set(key, recent);
   if (recent.length >= issueMax) return true;
   recent.push(now);
   return false;
+}
+/** Per-IP limiter (login, ciportal start). */
+function rateLimited(ip: string): boolean {
+  return rateLimitedKey(`ip:${ip}`);
 }
 
 const localLoginEnabled = () => config.auth.mode === 'sso' && config.auth.disableOidc;
@@ -114,10 +122,12 @@ export function authRouter() {
   router.get('/api/auth/me', (ctx) => {
     const ownerId = currentOwnerId();
     const row = sqlite
-      .prepare(`SELECT id, name, email, username FROM owners WHERE id = ?`)
-      .get(ownerId) as { id: string; name: string; email: string | null; username: string | null } | undefined;
+      .prepare(`SELECT id, name, email, username, backup_email FROM owners WHERE id = ?`)
+      .get(ownerId) as
+      | { id: string; name: string; email: string | null; username: string | null; backup_email: string | null }
+      | undefined;
     if (!row) throw httpError(401, 'unknown owner');
-    ctx.body = { ownerId: row.id, name: row.name, email: row.email, username: row.username };
+    ctx.body = { ownerId: row.id, name: row.name, email: row.email, username: row.username, backupEmail: row.backup_email };
   });
 
   // ── U2: local username/password ─────────────────────────────────────────────
@@ -155,6 +165,107 @@ export function authRouter() {
     // keeps the cookie off cross-site POSTs, so a forged cross-site logout sees no cookie
     // here and is a no-op — defeating logout-CSRF (a forced Set-Cookie deletion).
     if (ctx.cookies.get(SESSION_COOKIE, { signed: true })) clearSession(ctx);
+    ctx.body = { ok: true };
+  });
+
+  // ── V: password reset (local sign-in only) ──────────────────────────────────
+
+  // Public: begin a reset. Body { identifier } — a username OR email. ALWAYS returns the
+  // same neutral 200 regardless of whether the account exists or has a deliverable
+  // address, so it can't be used to enumerate accounts. Rate-limited per-IP AND per
+  // supplied identifier (V9). Only meaningful in local-login mode — SSO owners reset in
+  // CI-Portal.
+  router.post('/api/auth/reset-request', async (ctx) => {
+    if (!localLoginEnabled()) throw httpError(404, 'password reset is not enabled');
+
+    const { identifier } = (ctx.request.body ?? {}) as { identifier?: unknown };
+    if (typeof identifier !== 'string' || !identifier.trim()) {
+      throw httpError(400, 'identifier (username or email) is required');
+    }
+    const id = identifier.trim();
+
+    // Per-IP and per-account limits. The per-IP bucket is shared with login/start (all
+    // "issue" ops); the per-account bucket stops one mailbox being hammered. Keyed on the
+    // SUPPLIED identifier (not a resolved owner) so it leaks nothing about existence.
+    if (rateLimitedKey(`ip:${ctx.ip}`) || rateLimitedKey(`reset:${id.toLowerCase()}`)) {
+      throw httpError(429, 'too many reset requests — try again shortly');
+    }
+
+    // Resolve by username OR email, excluding the sentinel (N-SENTINEL). Prefer an email match
+    // when the identifier looks like an email to avoid ambiguity with email-shaped usernames.
+    const looksLikeEmail = id.includes('@');
+    const owner = (looksLikeEmail
+      ? sqlite
+          .prepare(`SELECT id, email, backup_email FROM owners WHERE email = ? AND id <> ? LIMIT 1`)
+          .get(id, SYSTEM_OWNER_ID)
+      : sqlite
+          .prepare(`SELECT id, email, backup_email FROM owners WHERE username = ? AND id <> ? LIMIT 1`)
+          .get(id, SYSTEM_OWNER_ID)) as { id: string; email: string | null; backup_email: string | null } | undefined;
+
+    // The neutral response is returned in every branch below.
+    const NEUTRAL = { ok: true, message: 'If an account matches, a reset link is on its way.' };
+
+    if (owner) {
+      // Primary destination is owners.email; backup_email is the fallback. A local owner
+      // seeded with only a username has NEITHER — we can't email them, but we still return
+      // the neutral 200 (never reveal "no address on file"). Operator sees the warning.
+      const dest = owner.email ?? owner.backup_email;
+      if (!dest) {
+        logger.warn('reset-request: account has no email or backup_email — cannot send', { owner: owner.id });
+      } else {
+        const rawToken = issueResetToken(owner.id);
+        const link = `${config.mail.appBaseUrl}/reset-password?token=${encodeURIComponent(rawToken)}`;
+        const subject = 'Reset your Companion Planning password';
+        const text =
+          `Someone requested a password reset for your Companion Planning account.\n\n` +
+          `Reset your password: ${link}\n\n` +
+          `This link expires in ${Math.round(config.auth.resetTokenTtlMs / 60000)} minutes and can be used once. ` +
+          `If you didn't request this, you can ignore this email.`;
+        const html =
+          `<p>Someone requested a password reset for your Companion Planning account.</p>` +
+          `<p><a href="${link}">Reset your password</a></p>` +
+          `<p>This link expires in ${Math.round(config.auth.resetTokenTtlMs / 60000)} minutes and can be used once. ` +
+          `If you didn't request this, you can ignore this email.</p>`;
+        // Fire-and-forget: don't let SMTP latency (or failure) shape the response time —
+        // that would be an enumeration timing oracle — and don't leak a send error to the
+        // caller. The token is already persisted; a failed send just means no link arrived.
+        void sendMail({ to: dest, subject, text, html }).catch((err) =>
+          logger.error('reset-request: sendMail failed', { owner: owner.id, err: (err as Error).message }),
+        );
+      }
+    }
+
+    ctx.body = NEUTRAL;
+  });
+
+  // Public: complete a reset. Body { token, newPassword }. Validates + consumes the
+  // single-use token, argon2id-hashes the new password, and ALWAYS bumps the owner's
+  // session epoch (D5 = invalidate every existing session, matching CI-Portal's
+  // revokeSessionsOnPasswordReset). The user is then sent to /login to sign in fresh.
+  router.post('/api/auth/reset', async (ctx) => {
+    if (!localLoginEnabled()) throw httpError(404, 'password reset is not enabled');
+    if (rateLimited(ctx.ip)) throw httpError(429, 'too many attempts — try again shortly');
+
+    const { token, newPassword } = (ctx.request.body ?? {}) as { token?: unknown; newPassword?: unknown };
+    if (typeof token !== 'string' || !token || typeof newPassword !== 'string') {
+      throw httpError(400, 'token and newPassword are required');
+    }
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      throw httpError(400, `password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    }
+
+    const ownerId = consumeResetToken(token);
+    if (!ownerId) throw httpError(400, 'this reset link is invalid or has expired — request a new one');
+
+    const passwordHash = await hashPassword(newPassword);
+    // Belt-and-suspenders sentinel guard (tokens are only ever issued for real owners).
+    sqlite
+      .prepare(`UPDATE owners SET password_hash = ? WHERE id = ? AND id <> ?`)
+      .run(passwordHash, ownerId, SYSTEM_OWNER_ID);
+    // Invalidate all existing sessions for this owner (every device is signed out).
+    bumpSessionEpoch(ownerId);
+
+    logger.info('password reset completed', { owner: ownerId });
     ctx.body = { ok: true };
   });
 

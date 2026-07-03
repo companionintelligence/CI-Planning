@@ -19,6 +19,10 @@ export const owners = sqliteTable('owners', {
   externalSubject: text('external_subject'), // OIDC token `sub` → owner (U1); UNIQUE via ux_owners_external_subject
   username: text('username'),                // local-login handle (U2); UNIQUE via ux_owners_username
   passwordHash: text('password_hash'),       // argon2id hash (U2)
+  backupEmail: text('backup_email'),         // fallback password-reset destination (V; 0103). email tried first
+  // Auth epoch (V; 0103): the session cookie carries `${id}.${epoch}`; a password reset
+  // bumps this to invalidate every existing cookie (the stateless session's revocation).
+  sessionEpoch: integer('session_epoch').notNull().default(0),
 });
 
 // Phase I (0049): standalone API keys. SHA-256 at rest; the raw key is shown once
@@ -523,6 +527,19 @@ export const authStates = sqliteTable('auth_states', {
   redirectUri: text('redirect_uri'),
   createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   expiresAt: text('expires_at').notNull(),
+});
+
+// V (0104): single-use, expiring password-reset tokens for local sign-in. One row per
+// outstanding reset, bound to an owner (ON DELETE CASCADE). `token_hash` = sha256 of the
+// raw token — the raw value lives only in the emailed link, never at rest. `used_at`
+// marks single-use consumption. See lib/auth/resetToken.ts.
+export const passwordResetTokens = sqliteTable('password_reset_tokens', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+  tokenHash: text('token_hash').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  usedAt: text('used_at'),
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
 });
 
 // --- Wave 0 (0060): Per-(owner, provider, account, resource) sync cursor store. ---
