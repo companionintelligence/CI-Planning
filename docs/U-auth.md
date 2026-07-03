@@ -8,7 +8,7 @@ service, in four slices:
 | Slice | What it adds | PR |
 |---|---|---|
 | **U0** | `owners` gains auth-identity columns (`external_subject`, `username`, `password_hash`) + `owner ≡ user` becomes canon | #225 |
-| **U1** | **CI-Portal SSO** — OAuth 2.1 + PKCE Relying-Party login against `hub.companionintelligence.com` | #227 |
+| **U1** | **CI-Portal SSO** — OAuth 2.1 + PKCE Relying-Party login against `hub.companionintelligence.com` | #228 |
 | **U2** | **Local username/password** login (`DISABLE_OIDC`) + session cookie | #226 |
 | **U3** | **SolidJS `/login` screen** + auth-gated route guard | #227 |
 
