@@ -22,7 +22,7 @@ export function reviewRouter() {
     const owner = currentOwnerId();
     const row = sqlite
       .prepare(
-        // Z0 (0106) scope-keyed this table; this legacy surface reads the global
+        // Z0 (0107) scope-keyed this table; this legacy surface reads the global
         // row explicitly — without the filter it would grab an arbitrary scope.
         `SELECT computed_at, sample_count, bias_ratio, p25, p50, p75
          FROM estimate_calibration WHERE owner_id = ? AND scope_kind = 'global' AND scope_ref = ''`,

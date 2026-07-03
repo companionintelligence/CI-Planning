@@ -17,15 +17,17 @@ const D = '2026-06-15';
 const at = (hhmm: string) => `${D}T${hhmm}:00.000Z`;
 
 function makeBlock(opts: {
-  start: string; end: string; kind?: string; locked?: boolean; status?: string; task?: string | null; title?: string;
+  start: string; end: string; kind?: string; type?: string | null; parent?: string | null;
+  locked?: boolean; status?: string; task?: string | null; title?: string;
 }): string {
   return (sqlite
     .prepare(
-      `INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, status, task_id, owner_id)
-       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO time_blocks (id, title, block_kind, block_type, parent_block_id, start_at, end_at, is_locked, status, task_id, owner_id)
+       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .get(
-      opts.title ?? 'B', opts.kind ?? 'task', at(opts.start), at(opts.end),
+      opts.title ?? 'B', opts.kind ?? 'task', opts.type ?? null, opts.parent ?? null,
+      at(opts.start), at(opts.end),
       opts.locked ? 1 : 0, opts.status ?? 'planned', opts.task ?? null, SYSTEM_OWNER,
     ) as { id: string }).id;
 }
@@ -224,5 +226,64 @@ describe('POST /api/blocks/:id/reschedule ("Schedule again", §1.1b)', () => {
     const b = makeBlock({ start: '10:00', end: '11:00', task: inst });
     expect((await api(srv.url, `/api/blocks/${b}/reschedule`, { method: 'POST' })).status).toBe(422);
     expect(statusOf(b)).toBe('planned'); // rejected before any write
+  });
+
+  it('422s an already-done task (nothing to reschedule)', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET time_sense_enabled = 1 WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const t = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'Done', ?, 'done') RETURNING id`)
+      .get(SYSTEM_OWNER) as { id: string }).id;
+    const b = makeBlock({ start: '10:00', end: '11:00', task: t });
+    const res = await api(srv.url, `/api/blocks/${b}/reschedule`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(statusOf(b)).toBe('planned'); // not skipped
+    expect(flightRow(t)).toBeUndefined(); // not staged
+  });
+});
+
+// ── Review-fix regressions (adversarial review, 2026-07-03) ──────────────────────
+
+describe('extend — Plan container / child-block correctness', () => {
+  it('treats a scheduled Plan container as fixed and never shears its children', () => {
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
+    const c = makeBlock({ start: '11:00', end: '12:00', kind: 'timeblock', type: 'scheduled', title: 'Plan' });
+    const ch = makeBlock({ start: '11:00', end: '11:30', kind: 'task', parent: c, title: 'child' });
+    // +30 → newEnd 11:30. The container is the only top-level obstacle (the child is
+    // excluded by parent_block_id IS NULL); a container is fixed → blockedBy, no write.
+    const r = extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.fits).toBe(false);
+    expect(r.blockedBy?.block_id).toBe(c);
+    expect(r.movedSet).toHaveLength(0);
+    expect(endOf(a)).toBe(at('11:00'));   // unchanged
+    expect(startOf(c)).toBe(at('11:00'));  // container not moved
+    expect(startOf(ch)).toBe(at('11:00')); // child not sheared out
+  });
+
+  it('a someday Plan (block_type=someday) is not a timeline obstacle', () => {
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
+    // Someday container overlapping the window but not a scheduled timeline block.
+    makeBlock({ start: '11:00', end: '12:00', kind: 'timeblock', type: 'someday', title: 'Someday' });
+    const r = extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.fits).toBe(true);
+    expect(r.movedSet).toHaveLength(0); // someday ignored → silent fit
+    expect(endOf(a)).toBe(at('11:30'));
+  });
+});
+
+describe('extend route — moved blocks re-sync their task scheduling intent', () => {
+  it('mirrors the new start onto a cascade-moved task block (task_time follows)', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET time_sense_enabled = 1 WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const t = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, task_time, scheduled_for) VALUES (uuid7(), 'T', ?, 'scheduled', '11:00', ?) RETURNING id`)
+      .get(SYSTEM_OWNER, D) as { id: string }).id;
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
+    const b1 = makeBlock({ start: '11:00', end: '11:30', task: t, title: 'B1' });
+
+    const res = await api(srv.url, `/api/blocks/${a}/extend`, { method: 'POST', json: { minutes: 30, confirm: true } });
+    expect(res.body.committed).toBe(true);
+    expect(res.body.movedSet.map((m: { block_id: string }) => m.block_id)).toEqual([b1]);
+    expect(startOf(b1)).toBe(at('11:30')); // block moved
+    const task = sqlite.prepare(`SELECT task_time FROM tasks WHERE id = ?`).get(t) as { task_time: string | null };
+    expect(task.task_time).toBe('11:30'); // task intent re-synced to the moved block, not left at 11:00
   });
 });

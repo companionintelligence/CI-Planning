@@ -426,8 +426,15 @@ export function blocksRouter() {
     // Silent fit, or a confirmed move → apply.
     const applied = extendBlock(ctx.params.id, minutes, { commit: true }, owner);
     broadcast(owner, 'block:updated', { id: ctx.params.id, extended: minutes, moved: applied.movedSet.length });
-    const t = syncTaskFromBlock(ctx.params.id, owner);
-    if (t) broadcast(owner, 'task:updated', { id: t });
+    // Mirror the new times back onto every affected task — the extended block AND
+    // each cascade-moved block — so task_time/scheduled_for and armed reminders
+    // don't drift from the block that actually moved (as move-group does).
+    const affectedTasks = new Set<string>();
+    for (const bid of [ctx.params.id, ...applied.movedSet.map((m) => m.block_id)]) {
+      const t = syncTaskFromBlock(bid, owner);
+      if (t) affectedTasks.add(t);
+    }
+    for (const t of affectedTasks) broadcast(owner, 'task:updated', { id: t });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block:${ctx.params.id}` });
     ctx.body = applied;
   });
@@ -448,9 +455,14 @@ export function blocksRouter() {
     if (!block.task_id) { ctx.status = 422; ctx.body = { error: 'block has no task to reschedule' }; return; }
 
     const t = sqlite
-      .prepare(`SELECT recurrence_parent_id FROM tasks WHERE id = ? AND owner_id = ?`)
-      .get(block.task_id, owner) as { recurrence_parent_id: string | null } | undefined;
+      .prepare(`SELECT recurrence_parent_id, status FROM tasks WHERE id = ? AND owner_id = ?`)
+      .get(block.task_id, owner) as { recurrence_parent_id: string | null; status: string } | undefined;
     if (!t) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
+    // "Schedule again" is for unfinished work only — a done/cancelled task must not
+    // be re-staged (Auto would place a fresh block for already-closed work).
+    if (t.status === 'done' || t.status === 'cancelled') {
+      ctx.status = 422; ctx.body = { error: 'task is already closed — nothing to reschedule' }; return;
+    }
     // Same guard as the stage endpoint: series instances re-land via their RRULE.
     if (t.recurrence_parent_id) { ctx.status = 422; ctx.body = { error: 'series instances re-land via their rule, not reschedule' }; return; }
 
