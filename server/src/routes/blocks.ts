@@ -17,6 +17,8 @@ import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus } from '../services/block-task-sync.js';
+import { timeSenseEnabled } from '../lib/flags.js';
+import { extendBlock } from '../engine/extend-block.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -392,6 +394,42 @@ export function blocksRouter() {
 
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${parentId}` });
     ctx.body = { blocks: toApiList(rows) };
+  });
+
+  // POST /api/blocks/:id/extend { minutes, confirm? } — Phase Z · Z3 "Keep working".
+  // Flag-gated (404 when Time-Sense off). Extends the block's end by `minutes`,
+  // via a minimal forward cascade (§1.1a). Two-phase: a silent fit commits at
+  // once; a fit that must move other entities returns them for confirmation and
+  // only applies when `confirm` is true; a fixed obstacle returns blockedBy and
+  // never writes.
+  router.post('/api/blocks/:id/extend', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const body = (ctx.request.body ?? {}) as { minutes?: number; confirm?: boolean };
+    const minutes = Math.round(Number(body.minutes ?? 10));
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      ctx.status = 422; ctx.body = { error: 'minutes must be a positive number' }; return;
+    }
+
+    let plan;
+    try {
+      plan = extendBlock(ctx.params.id, minutes, { commit: false }, owner);
+    } catch (err) {
+      ctx.status = 404; ctx.body = { error: (err as Error).message }; return;
+    }
+
+    // Blocked by a fixed entity → surface it, no write.
+    if (!plan.fits) { ctx.body = plan; return; }
+    // Needs a move the user hasn't confirmed yet → return the move set, no write.
+    if (plan.movedSet.length > 0 && !body.confirm) { ctx.body = { ...plan, committed: false }; return; }
+
+    // Silent fit, or a confirmed move → apply.
+    const applied = extendBlock(ctx.params.id, minutes, { commit: true }, owner);
+    broadcast(owner, 'block:updated', { id: ctx.params.id, extended: minutes, moved: applied.movedSet.length });
+    const t = syncTaskFromBlock(ctx.params.id, owner);
+    if (t) broadcast(owner, 'task:updated', { id: t });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block:${ctx.params.id}` });
+    ctx.body = applied;
   });
 
   // POST /api/blocks/:id/promote — turn a Concept into a scheduled Plan.

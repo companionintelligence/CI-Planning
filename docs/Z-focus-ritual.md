@@ -95,6 +95,8 @@ Principle: **extend in place, disturb nothing that doesn't have to move, and ask
 
 **Reuse vs. new.** The movable/fixed classification reuses `computeProtected`; the gap/obstacle math reuses `dayObstacles` / `utcDayBounds`. What's genuinely new is (a) the **bounded forward cascade** (push the minimum, stop at the first absorbing gap) and (b) the **conditional confirmation gate**. Implement as a distinct engine entry — e.g. `extendBlock(blockId, +minutes)` returning `{ fits, movedSet, blockedBy }` — **not** by routing through `reflow`, whose job (structural re-place from the frozen `daily_plan` after a disruption) is the opposite of surgical.
 
+> **As built (PR 3 — engine only).** [`engine/extend-block.ts`](../server/src/engine/extend-block.ts) `extendBlock(blockId, minutes, { commit })` returns `{ fits, committed, newEndAt, movedSet, blockedBy }`. `isFixed` = meeting / `is_locked` / `in_progress` (generalizes `computeProtected` to any following entity, since the cascade walks all subsequent blocks, not just the auto snapshot). Two-phase: `POST /api/blocks/:id/extend { minutes, confirm? }` (flag-gated, 404 off) commits a silent fit immediately, returns `movedSet` for confirmation when a move is needed, applies on `confirm:true`, and returns `blockedBy` (no write) when a fixed entity can't be absorbed. The **client "Keep working" button** lands with the Z3 focus screen — there's no surface for it yet.
+
 > **Why this matters:** auto-defense reflow is *reactive, silent, structural*; "Keep working" is *user-initiated, minimal, confirmed*. Conflating them would make a 10-minute nudge reshuffle the afternoon — exactly the thrash the anti-thrash rules elsewhere fight. Keep them separate engine paths.
 
 ### 1.1b "Schedule again" — re-stage semantics (reuse, don't rebuild)
@@ -325,7 +327,9 @@ Default a channel **on** only if it shows a positive calibration-slope effect **
 
 **PR 1 (built):** the **Time-Sense master flag** (`0105`, `time_sense_enabled` on `scheduling_prefs`, default OFF, per-owner; Settings → Preferences toggle labelled "Time-Sense") + **Z0** + **Z1**. Everything ships dark: with the flag off the calibration job is byte-identical to Phase N and every Z endpoint 404s.
 
-**PR 2 (built):** **Z6** (suggest-only estimate chip) + **Z2** (Daily Brief folds in last night's EOD Alignment). Both flag-gated; no new migrations (they build on 0106/Z1). Per-cue toggles and experiment arms are still deferred to Z5. Follow-up PRs carry the Focus-Ritual client render layer (Z3/Z4) and the voice loop (Z7).
+**PR 2 (built):** **Z6** (suggest-only estimate chip) + **Z2** (Daily Brief folds in last night's EOD Alignment). Both flag-gated; no new migrations (they build on 0106/Z1).
+
+**PR 3 (built):** the **`extendBlock` engine + `POST /api/blocks/:id/extend`** ("Keep working", §1.1a) — the deterministic, unit-tested server half of the T4 modal. The client focus screen that calls it (Z3), background reminder delivery (Z4), the per-cue prefs matrix + experiment arms (Z5), and the voice loop (Z7) are the remaining slices.
 
 | Step | Work | Migration | Dep | Status |
 |---|---|---|---|---|
@@ -333,7 +337,8 @@ Default a channel **on** only if it shows a positive calibration-slope effect **
 | Z0 | `estimate_calibration` scope-keyed PK + `calibration_combo_pins` + backfill; robust per-scope math (cap + median±3·MAD) in `services/calibration.ts`; scope fallback ladder (`resolveCalibration`); combo auto-suggest (`detectComboSuggestions`); read/pin routes; cron Sun→nightly | `0106_calibration_scope` | N (exists) | ✅ **built** |
 | Z1 | `reflections(kind='evening')` + `summarizeEvening` (mirror `summarizeDay`, deterministic fallback) + on-open authorship routes (`GET`/`POST open`/`PUT`) | none (new kind) | N, M | ✅ **built** |
 | Z2 | Daily Brief extension: fold in EOD Alignment (`morningCarryover` in summarize.ts, attached to `GET /api/summary` when flag on; "Last night" section in `DayGoals.tsx` `TodaysBrief`, degrades to carry-forward when prose null). ⚠️ incomplete-first is surfaced as a *recommendation* (carry_forward list shown first) — the flight-plan **staging-order** change is deferred to the Z3 client work, so the deterministic placement path stays untouched | none | O (Today's Brief), Z1 | ✅ **built** |
-| Z3 | Focus Ritual client render layer: 4 timers, ambient depletion, breathing, T4 modal; capability + `prefers-reduced-motion` gates. ⚠️ no live "current block" SSE channel exists — client derives in-progress from the clock vs `start_at`/`end_at` (M's convention) or a new SSE event | none (client) | Categories color tokens | ⬜ |
+| Z3a | **"Keep working" engine** (`extendBlock` + `POST /api/blocks/:id/extend`, §1.1a) — bounded forward cascade, confirm-before-move, blockedBy escalation | none | — | ✅ **built** |
+| Z3b | Focus Ritual client render layer: 4 timers, ambient depletion, breathing, T4 modal (wires the Z3a engine + §1.1b "Schedule again"); capability + `prefers-reduced-motion` gates. ⚠️ no live "current block" SSE channel exists — client derives in-progress from the clock vs `start_at`/`end_at` (M's convention) or a new SSE event | none (client) | Categories color tokens | ⬜ |
 | Z4 | `reminders` rows for T1/T3/T4 (background delivery) + push `vibrate` payload (sw.js currently sends only title/body/tag/url — add `vibrate`) | none (reuses H) | H | ⬜ |
 | Z5 | Prefs flag set (per-timer × per-channel) + Settings UI + experiment arm assignment (expands the master flag into the §5.1 matrix) | `≥0107_focus_prefs` | Z3 | ⬜ |
 | Z6 | Suggest-only calibration chip — `suggestEstimate` (services/calibration.ts, snapped to 5m, null below floor / <15% bias / <5m delta) + `GET /api/calibration/suggest/:taskId` (flag-gated) + dismissible chip in `ElementWizard` task fields (accept sets the estimate field → human write on Save) | none | Z0 | ✅ **built** |
