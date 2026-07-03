@@ -80,7 +80,7 @@ describe('task-block vs container partitioning', () => {
 
   it('container kinds are never task blocks, even if a task_id is present', () => {
     for (const kind of ['timeblock', 'meeting', 'focus', 'habit', 'break', 'buffer']) {
-      expect(isTaskBlock(blk({ block_kind: kind, task_id: 10 }))).toBe(false);
+      expect(isTaskBlock(blk({ block_kind: kind, task_id: '10' }))).toBe(false);
     }
   });
 });
