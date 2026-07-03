@@ -25,6 +25,18 @@ client and turn live mode on.
 [docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative plan for future phases.
 SQLite is the single source of truth for data.
 
+## Interface
+
+The Tasks view — a local-first task list with priority chips, tags, and the
+grooming pipeline — shown in both themes. Dark is the default; a toggle in the
+sidebar switches to light.
+
+| Light | Dark |
+|-------|------|
+| ![Companion Planning — Tasks view, light theme](docs/ui/planning-light.png) | ![Companion Planning — Tasks view, dark theme](docs/ui/planning-dark.png) |
+
+On the [Companion Intelligence design system](https://github.com/companionintelligence/CI-Common/tree/main/style) — teal primary, Montserrat, light + dark.
+
 ## Architecture
 
 ```mermaid
