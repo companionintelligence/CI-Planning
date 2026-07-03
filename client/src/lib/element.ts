@@ -25,7 +25,7 @@ export const ELEMENT_KINDS: { kind: ElementKind; label: string; blurb: string }[
 ];
 
 // ── Shared tag helpers (single source for the wizard + drawer) ──────────────────
-export const patternTagList = (): Tag[] => (tags() ?? []).filter((t) => t.kind === 'pattern');
+export const patternTagList = (): Tag[] => (tags() ?? []).filter((t) => t.kind === 'direction');
 
 /** Intention tags associated with a primary pattern, via their `directions`. */
 export const intentionTagsFor = (primaryName: string): Tag[] =>
@@ -111,7 +111,7 @@ async function ensureIntentionTags(primary: string, names: string[]): Promise<vo
   const all = tags() ?? [];
   const known = new Set(all.map((t) => t.name.toLowerCase()));
   // Never auto-create an intention that collides with a pattern OR a category name.
-  const reserved = new Set(all.filter((t) => t.kind === 'pattern' || t.kind === 'category').map((t) => t.name.toLowerCase()));
+  const reserved = new Set(all.filter((t) => t.kind === 'direction' || t.kind === 'category').map((t) => t.name.toLowerCase()));
   for (const n of names) {
     const key = n.toLowerCase();
     if (!known.has(key) && !reserved.has(key)) {

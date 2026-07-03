@@ -249,7 +249,7 @@ export const api = {
 
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
-    create: (name: string, opts?: { kind?: 'pattern' | 'intention' | 'category'; directions?: string[]; categories?: string[] }) =>
+    create: (name: string, opts?: { kind?: 'direction' | 'intention' | 'category'; directions?: string[]; categories?: string[] }) =>
       request<{ tag: Tag }>('POST', '/tags', { name, ...opts }),
     // PATCH: directions/categories REPLACE membership (drag-move = single target);
     // direction_toggle flips one category↔direction scope; name renames; muted toggles.
@@ -258,7 +258,7 @@ export const api = {
       body: {
         directions?: string[];
         categories?: string[];
-        direction_toggle?: { patternTagId: string; enabled: boolean };
+        direction_toggle?: { directionTagId: string; enabled: boolean };
         name?: string;
         muted?: boolean;
       },
@@ -600,7 +600,7 @@ export interface Tag {
   // home/work/community); 'intention' = grouped under patterns; 'category' = a SECOND
   // grouping over intentions ("Time Block Category"). `used` blocks delete. `directions` =
   // member pattern names (empty intention = Unsorted).
-  kind: 'pattern' | 'intention' | 'category';
+  kind: 'direction' | 'intention' | 'category';
   muted: boolean;
   is_base: boolean;
   used: boolean;
