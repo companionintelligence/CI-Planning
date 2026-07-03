@@ -161,7 +161,7 @@ erDiagram
 | `pattern_types` | Routine taxonomy — **load-bearing, do not rename** | 0019 |
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
 | `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
-| `tag_prefs` | Per-owner × per-tag config by `kind` (pattern/category): shared color_token/default_minutes + pattern-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs` | 0039, 0069, 0097 |
+| `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs` | 0039, 0069, 0097 |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7) | 0001, 0091 |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
 | `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
