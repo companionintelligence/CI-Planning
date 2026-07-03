@@ -1,5 +1,24 @@
 # Attaching Companion Planning to Claude Cowork
 
+> **⚠️ ARCHIVED / STALE — describes a deleted architecture. Do not follow.**
+> This guide documents the **pre-rebuild** app: a markdown-file-backed MCP tool
+> *server* exposing ~36 planning tools (`list_todos`, `find_slot`, `stats`, …)
+> over stdio (`server/dist/mcp-stdio.js`) and HTTP/Tailscale (`/mcp`). That entire
+> backend was replaced on 2026-05-30 by the Koa + SolidJS + Drizzle rebuild
+> (commit `1510cd8`). **None of it exists today:** there is no `build` script, no
+> `server/dist/mcp-stdio.js`, no `/mcp` HTTP route, and none of the 36 tool names
+> appear in `server/src`. The smoke script this doc cited (`ops/scripts/mcp-smoke.mjs`)
+> was removed alongside this archival because it could only spawn that dead entry.
+>
+> **What actually exists:** Companion Planning is an MCP *client*, not a server —
+> it spawns a Google Calendar/Gmail connector over stdio and drives 7 tools
+> (`calendar_*` × 4, `gmail_*` × 3). See `server/src/mcp/client.ts` +
+> `server/src/mcp/google-server.ts`, and the Phase X audit (`docs/x-audit.md`) for
+> the full reconciliation. If a Cowork-facing planning-tool server is ever wanted
+> again, it is **new work** against the current schema, not a resurrection of this.
+>
+> Kept only as historical record of the original Cowork-attach intent.
+
 Companion Planning speaks MCP over two transports. Claude Cowork (and Claude
 Desktop / Claude Code) can attach to either. Verified with
 `node ops/scripts/mcp-smoke.mjs` — **36 tools**, real-data round-trip.
