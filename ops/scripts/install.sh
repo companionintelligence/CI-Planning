@@ -65,4 +65,3 @@ fi
 echo ""
 echo "✓ Companion Planning installed."
 echo "  App: http://127.0.0.1:$(node -e "const c=require('$REPO_ROOT/config.json');console.log(c.port||3847)")"
-echo "  MCP: add 'node $REPO_ROOT/server/dist/mcp-stdio.js' to your Claude Code config"
