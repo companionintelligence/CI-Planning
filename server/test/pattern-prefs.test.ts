@@ -22,7 +22,7 @@ function seedDirections(): Record<string, string> {
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (
       sqlite
-        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'pattern', 1, ?) RETURNING id`)
+        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'direction', 1, ?) RETURNING id`)
         .get(name, OWNER) as { id: string }
     ).id;
   }
@@ -39,7 +39,7 @@ function seedIntention(name: string): string {
 }
 
 const prefRowCount = (tagId: string) =>
-  (sqlite.prepare(`SELECT COUNT(*) c FROM tag_prefs WHERE tag_id = ? AND kind = 'pattern'`).get(tagId) as { c: number }).c;
+  (sqlite.prepare(`SELECT COUNT(*) c FROM tag_prefs WHERE tag_id = ? AND kind = 'direction'`).get(tagId) as { c: number }).c;
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -225,7 +225,7 @@ describe('ON DELETE CASCADE', () => {
     sqlite
       .prepare(
         `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token)
-         VALUES (?, ?, ?, 'pattern', 1, '[]', 'circle', 'primary')`,
+         VALUES (?, ?, ?, 'direction', 1, '[]', 'circle', 'primary')`,
       )
       .run(newId(), OWNER, dirs.work);
     expect(prefRowCount(dirs.work)).toBe(1);

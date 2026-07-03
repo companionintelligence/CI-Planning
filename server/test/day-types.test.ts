@@ -22,14 +22,14 @@ function seedDirections(): Record<string, string> {
   const ids: Record<string, string> = {};
   for (const name of ['home', 'work', 'community']) {
     ids[name] = (
-      sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'pattern', 1, ?) RETURNING id`).get(name, OWNER) as { id: string }
+      sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'direction', 1, ?) RETURNING id`).get(name, OWNER) as { id: string }
     ).id;
   }
   return ids;
 }
 function seedPatternBlock(dirTagId: string, dayType: string, start: string, end: string): void {
   sqlite
-    .prepare(`INSERT INTO pattern_blocks (id, owner_id, pattern_tag_id, day_type, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)`)
+    .prepare(`INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(newId(), OWNER, dirTagId, dayType, start, end);
 }
 function insertTask(title: string, est: number, dirTagId?: string): string {

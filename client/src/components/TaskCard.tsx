@@ -208,7 +208,7 @@ export function TaskCard(props: Props) {
   const dirColor = (): string | null => {
     const defs = tags() ?? [];
     const names = props.task.tags ?? [];
-    const hasDir = defs.some((t) => t.kind === 'pattern' && names.includes(t.name));
+    const hasDir = defs.some((t) => t.kind === 'direction' && names.includes(t.name));
     return hasDir ? directionColorForTask(props.task, defs, patternPrefs()?.prefs ?? {}) : null;
   };
 

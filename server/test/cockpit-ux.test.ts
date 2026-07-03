@@ -150,14 +150,14 @@ describe('fill_order toggle', () => {
 describe('per-direction fill gate', () => {
   it('fill off for one direction stops its tasks from being placed; others unaffected', async () => {
     // Create two direction-tagged tasks; turn off auto_fill for 'work' direction
-    const workTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'work', 'pattern', ?) RETURNING id`).get(OWNER) as { id: string }).id;
-    const homeTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'home', 'pattern', ?) RETURNING id`).get(OWNER) as { id: string }).id;
+    const workTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'work', 'direction', ?) RETURNING id`).get(OWNER) as { id: string }).id;
+    const homeTag = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'home', 'direction', ?) RETURNING id`).get(OWNER) as { id: string }).id;
     // Pattern prefs: work fill = off, home fill = on
-    sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'pattern', 0)`).run(OWNER, workTag);
-    sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'pattern', 1)`).run(OWNER, homeTag);
+    sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'direction', 0)`).run(OWNER, workTag);
+    sqlite.prepare(`INSERT OR REPLACE INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill) VALUES (uuid7(), ?, ?, 'direction', 1)`).run(OWNER, homeTag);
     // Pattern blocks (windows) for both directions
     const makeRange = (tagId: string) =>
-      sqlite.prepare(`INSERT INTO pattern_blocks (id, owner_id, pattern_tag_id, day_type, start_time, end_time) VALUES (uuid7(), ?, ?, 'workday', '13:00', '17:00')`).run(OWNER, tagId);
+      sqlite.prepare(`INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time) VALUES (uuid7(), ?, ?, 'workday', '13:00', '17:00')`).run(OWNER, tagId);
     makeRange(workTag); makeRange(homeTag);
 
     const workTask = insertTask('Work task', 60, { tag: 'work' });

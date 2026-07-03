@@ -255,29 +255,30 @@ export const tags = sqliteTable('tags', {
   name: text('name').notNull(),
   // Tag taxonomy (0036/0043; 'category' added 0069) — a SECOND axis, orthogonal to
   // entity_tags.level (Phase-5 per-entity dilution). `kind` is the taxonomy LEVEL: a
-  // 'pattern' is a top-level GROUPING (brand-set Home/Work/Community + user-added); an
-  // 'intention' is grouped under one or more patterns via tag_patterns (renamed from
-  // tag_directions in 0043); a 'category' (0069) is a SECOND, orthogonal grouping over
-  // intentions via tag_categories — surfaced to the user as "Time Block Category".
-  kind: text('kind').notNull().default('intention'),       // 'pattern' | 'intention' | 'category'
+  // 'direction' is a top-level GROUPING (brand-set Work/Life/Home + user-added); an
+  // 'intention' is grouped under one or more directions via tag_directions; a 'category'
+  // (0069) is a SECOND, orthogonal grouping over intentions via tag_categories —
+  // surfaced to the user as "Time Block Category". ('direction' was briefly renamed to
+  // 'pattern' in 0038/0043; reverted in 0105 — "pattern" now means only the day-arrangement.)
+  kind: text('kind').notNull().default('intention'),       // 'direction' | 'intention' | 'category'
   muted: integer('muted', { mode: 'boolean' }).notNull().default(false),
   isBase: integer('is_base', { mode: 'boolean' }).notNull().default(false), // undeletable base direction
 }, (t) => ({ ownerName: unique().on(t.ownerId, t.name) }));
 
-// 0036/0043: intention→pattern-tag membership (many-to-many). An intention tag with
-// no row here is "Unsorted". Both sides FK tags(id) cascade. Renamed from
-// tag_directions/direction_tag_id → tag_patterns/pattern_tag_id (0043).
-export const tagPatterns = sqliteTable(
-  'tag_patterns',
+// 0036: intention→direction membership (many-to-many). An intention tag with no row
+// here is "Unsorted". Both sides FK tags(id) cascade. (0043 renamed this to
+// tag_patterns/pattern_tag_id; 0105 reverted it back to tag_directions/direction_tag_id.)
+export const tagDirections = sqliteTable(
+  'tag_directions',
   {
     intentionTagId: text('intention_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
-    patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    directionTagId: text('direction_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
   },
-  (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.patternTagId] }) })
+  (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.directionTagId] }) })
 );
 
 // 0069: intention→category-tag membership (many-to-many). A verbatim mirror of
-// tag_patterns on the second grouping axis: an intention with no row here is
+// tag_directions on the second grouping axis: an intention with no row here is
 // "Unsorted" in the Time Block Category view. Both sides FK tags(id) cascade.
 export const tagCategories = sqliteTable(
   'tag_categories',
@@ -288,25 +289,25 @@ export const tagCategories = sqliteTable(
   (t) => ({ pk: primaryKey({ columns: [t.intentionTagId, t.categoryTagId] }) })
 );
 
-// 0069: per-category direction SCOPE, opt-out polarity. A row = this pattern
-// (direction) tag is turned OFF for this category; an empty set = all directions on.
-// Opt-out polarity makes "default all-on for every existing & new category — and any
-// future direction" fall out for free (no backfill). Precedent: tags.muted.
+// 0069: per-category direction SCOPE, opt-out polarity. A row = this direction tag is
+// turned OFF for this category; an empty set = all directions on. Opt-out polarity makes
+// "default all-on for every existing & new category — and any future direction" fall out
+// for free (no backfill). Precedent: tags.muted. (Column pattern_tag_id → direction_tag_id in 0105.)
 export const categoryDirectionOptouts = sqliteTable(
   'category_direction_optouts',
   {
     categoryTagId: text('category_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
-    patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    directionTagId: text('direction_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
   },
-  (t) => ({ pk: primaryKey({ columns: [t.categoryTagId, t.patternTagId] }) })
+  (t) => ({ pk: primaryKey({ columns: [t.categoryTagId, t.directionTagId] }) })
 );
 
-// 0037: direction-scoped scheduling windows (Pattern-block, noun 8). Multiple rows
-//       per (owner, direction_tag_id, day_type) = multiple time ranges.
+// 0037: direction-scoped scheduling windows (Pattern-block, noun 8 — the day-arrangement;
+//       KEEPS the "pattern" table name). Multiple rows per (owner, direction_tag_id, day_type).
 export const patternBlocks = sqliteTable('pattern_blocks', {
   id:            text('id').primaryKey().$defaultFn(newId),
   ownerId:       text('owner_id').references(() => owners.id).notNull(),
-  patternTagId: text('pattern_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+  directionTagId: text('direction_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
   dayType:       text('day_type').notNull(), // a day_types.key (builtin 'workday'/'weekend' or custom)
   startTime:     text('start_time').notNull(), // 'HH:MM' wall-clock in owner's timezone
   endTime:       text('end_time').notNull(),
@@ -340,9 +341,9 @@ export const dayAssignments = sqliteTable('day_assignments', {
 
 // 0097: per-owner, per-tag preferences — merges the former pattern_prefs (0039) and
 // category_prefs (0069) into one table keyed by (owner, tag), distinguished by `kind`
-// ('pattern' | 'category'). Shared columns: color_token (CI-Hub token, never hex —
+// ('direction' | 'category'). Shared columns: color_token (CI-Hub token, never hex —
 // on the category axis it's the SOURCE of the forward-only stamp onto
-// time_blocks.color_token) + default_minutes. Pattern-only columns
+// time_blocks.color_token) + default_minutes. Direction-only columns
 // (auto_fill scheduling gate, reminder_offsets, icon_shape display) are NULLABLE —
 // category rows carry NULL for them. `kind` mirrors tags.kind (denormalized so each
 // service filters without a join). The two GET/PUT contracts are unchanged.
@@ -350,10 +351,10 @@ export const tagPrefs = sqliteTable('tag_prefs', {
   id: text('id').primaryKey().$defaultFn(newId),
   ownerId: text('owner_id').references(() => owners.id).notNull(),
   tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
-  kind: text('kind').notNull(),                                  // 'pattern' | 'category'
-  autoFill: integer('auto_fill', { mode: 'boolean' }),           // pattern-only (nullable)
-  reminderOffsets: text('reminder_offsets', { mode: 'json' }).$type<number[]>(), // pattern-only
-  iconShape: text('icon_shape'),                                 // pattern-only: circle | square | triangle
+  kind: text('kind').notNull(),                                  // 'direction' | 'category'
+  autoFill: integer('auto_fill', { mode: 'boolean' }),           // direction-only (nullable)
+  reminderOffsets: text('reminder_offsets', { mode: 'json' }).$type<number[]>(), // direction-only
+  iconShape: text('icon_shape'),                                 // direction-only: circle | square | triangle
   colorToken: text('color_token').notNull().default('primary'),  // CI-Hub token key (never hex)
   defaultMinutes: integer('default_minutes').notNull().default(60),
 }, (t) => ({ uq: unique().on(t.ownerId, t.tagId) }));

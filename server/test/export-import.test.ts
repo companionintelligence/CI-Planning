@@ -12,7 +12,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('6'); // '6' (T2): tags gained a required owner_id column
+    expect(body.version).toBe('7'); // '7' (Phase Z W2): direction-axis revert (tag_patterns→tag_directions)
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {
@@ -51,6 +51,47 @@ describe('POST /api/import', () => {
     const tasksAfter = (exp2.tasks as { id: string }[]).map((t) => t.id).sort();
     const tasksBeforeIds = tasksBefore.map((t) => t.id).sort();
     expect(tasksAfter).toEqual(tasksBeforeIds);
+  });
+
+  it('imports a v6-shaped payload by remapping pattern-axis fields', async () => {
+    await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'v6-direction', kind: 'direction' } });
+    await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'v6-intention', directions: ['v6-direction'] } });
+    const { id: ownerId } = sqlite.prepare('SELECT id FROM owners LIMIT 1').get() as { id: string };
+    const directionTag = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = 'v6-direction'`).get(ownerId) as { id: string };
+    sqlite.prepare(
+      `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
+       VALUES (uuid7(), ?, ?, 'direction', 'primary', 30)`,
+    ).run(ownerId, directionTag.id);
+
+    const exp = await (await fetch(`${srv.url}/api/export`)).json() as Record<string, unknown>;
+    const v6 = JSON.parse(JSON.stringify(exp)) as Record<string, unknown>;
+    v6.version = '6';
+    const v7Directions = Array.isArray(v6.tag_directions) ? (v6.tag_directions as Record<string, unknown>[]) : [];
+    v6.tag_patterns = v7Directions.map((row) => {
+      const { direction_tag_id, ...rest } = row;
+      return { ...rest, pattern_tag_id: direction_tag_id };
+    });
+    delete v6.tag_directions;
+    for (const key of ['tags', 'tag_prefs']) {
+      const rows = v6[key];
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows as Record<string, unknown>[]) {
+        if (row.kind === 'direction') row.kind = 'pattern';
+      }
+    }
+
+    resetDb();
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: v6 });
+    expect(status).toBe(200);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM tags WHERE kind = 'pattern'`).get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM tag_prefs WHERE kind = 'pattern'`).get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare(
+      `SELECT COUNT(*) AS n
+         FROM tag_directions td
+         JOIN tags it ON it.id = td.intention_tag_id
+         JOIN tags dt ON dt.id = td.direction_tag_id
+        WHERE it.name = 'v6-intention' AND dt.name = 'v6-direction'`,
+    ).get() as { n: number }).n).toBe(1);
   });
 
   it('writes an audit row', async () => {

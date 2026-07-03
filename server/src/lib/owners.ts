@@ -12,7 +12,7 @@ import { newId, SYSTEM_OWNER_ID } from './ids.js';
  *
  *   - `scheduling_prefs`   — cloned from the sentinel's baseline row (schema-drift-
  *                            proof via PRAGMA table_info, same as test createOwner).
- *   - base `tags`          — home/work/community (kind='pattern') + family/social/me
+ *   - base `tags`          — home/work/community (kind='direction') + family/social/me
  *                            (kind='category'), is_base=1 (mirrors 0036 + 0069).
  *                            Without pattern tags, Auto silently places nothing.
  *   - `tag_prefs`          — kind='category' rows w/ the 0069 color tokens; pattern
@@ -95,11 +95,11 @@ export function provisionOwner(fields: ProvisionOwnerFields): string {
         .run(...params);
     }
 
-    // Base tags (G-BASETAG): 3 pattern + 3 category, is_base=1.
+    // Base tags (G-BASETAG): 3 direction + 3 category, is_base=1.
     const insTag = sqlite.prepare(
       `INSERT INTO tags (id, owner_id, name, kind, is_base) VALUES (?, ?, ?, ?, 1)`,
     );
-    for (const name of BASE_PATTERN_TAGS) insTag.run(newId(), id, name, 'pattern');
+    for (const name of BASE_PATTERN_TAGS) insTag.run(newId(), id, name, 'direction');
     const insCatPref = sqlite.prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
        VALUES (?, ?, ?, 'category', ?, 60)`,
