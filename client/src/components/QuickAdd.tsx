@@ -3,8 +3,10 @@ import { Plus, Sparkles } from 'lucide-solid';
 import { api } from '../lib/api.js';
 import { refetchTasks, showToast } from '../stores/index.js';
 
-/** One-line natural-language task entry. Enter parses + creates via /tasks/quick. */
-export function QuickAdd() {
+/** One-line natural-language task entry. Enter parses + creates via /tasks/quick.
+ * `onAdded` fires after a successful add so the host view can refresh its own
+ * resources (the tasks store is already refetched here). */
+export function QuickAdd(props: { onAdded?: () => void } = {}) {
   const [text, setText] = createSignal('');
   const [busy, setBusy] = createSignal(false);
   const [aiLast, setAiLast] = createSignal(false);
@@ -18,6 +20,7 @@ export function QuickAdd() {
       setAiLast(res.llm);
       setText('');
       refetchTasks();
+      props.onAdded?.();
       showToast('Task added', 'success');
     } catch (e) {
       showToast((e as Error).message, 'error');
@@ -27,7 +30,7 @@ export function QuickAdd() {
   }
 
   return (
-    <div class="relative mb-4">
+    <div class="relative">
       <Plus size={15} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
       <input
         class="input-lg pl-9"
