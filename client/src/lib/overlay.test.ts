@@ -71,7 +71,7 @@ describe('overlay — tag AND priority (combinable)', () => {
 
 describe('task-block vs container partitioning', () => {
   it('a block_kind="task" WITH a task_id is a task block', () => {
-    expect(isTaskBlock(blk({ block_kind: 'task', task_id: 10 }))).toBe(true);
+    expect(isTaskBlock(blk({ block_kind: 'task', task_id: '10' }))).toBe(true);
   });
 
   it('a block_kind="task" WITHOUT a task_id is not a task block (defensive)', () => {
