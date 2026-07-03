@@ -4,7 +4,8 @@ import type { Block, Task, Pattern, PatternType, ReplanSuggestion } from '../lib
 import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
-import { blockPasses } from '../lib/overlay.js';
+import { blockPassesAxes, emptyAxisDeselected, TAG_AXES } from '../lib/overlay.js';
+import type { AxisDeselected, TagAxis, TagKindLookup } from '../lib/overlay.js';
 import { replanToastMessage } from '../lib/replan.js';
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
@@ -71,13 +72,37 @@ on('block:created', () => refetchConcepts());
 on('block:updated', () => refetchConcepts());
 on('block:deleted', () => refetchConcepts());
 
-// ── Overlays (tag AND priority, combinable) ────────────────────────────────────
+// ── Overlays (three tag axes AND priority, combinable) ──────────────────────────
 // Tag/priority live on the linked *task*, not the block. The filter is client-side
-// over the already-fetched range — no new endpoint. Both filters AND-combine; an
-// empty filter means "all". A block with no task_id (break/buffer) passes only when
-// no filter is set.
-export const [overlayTags, setOverlayTags] = createSignal<string[]>([]); // tag names; empty = all
+// over the already-fetched range — no new endpoint. The tag filter is split into three
+// independent axes by tag KIND — Direction / Intention / Category — each holding the set
+// of DESELECTED (hidden) tag names; empty set = every chip on = no filtering on that
+// axis. OR within an axis, AND across the three axes AND priority. A block with no tag
+// on an axis always passes that axis (untagged-on-axis is never hidden); a block with no
+// task_id (break/buffer) carries no tags/priority, so it passes every tag axis but is
+// hidden the moment a priority filter is set. See lib/overlay.ts for the pure predicate.
+export const [overlayAxes, setOverlayAxes] = createSignal<AxisDeselected>(emptyAxisDeselected());
 export const [overlayPrio, setOverlayPrio] = createSignal<number[]>([]); // priorities 1–5; empty = all
+
+/** Toggle one chip on an axis (deselect if selected, re-select if deselected). */
+export function toggleAxisTag(axis: TagAxis, name: string) {
+  setOverlayAxes((prev) => {
+    const next: AxisDeselected = { ...prev, [axis]: new Set(prev[axis]) };
+    if (next[axis].has(name)) next[axis].delete(name);
+    else next[axis].add(name);
+    return next;
+  });
+}
+
+/** Reset all three axes back to all-on (nothing hidden). */
+export function resetOverlayAxes() {
+  setOverlayAxes(emptyAxisDeselected());
+}
+
+/** Count of deselected chips across all axes — drives the "active filters" badge. */
+export function overlayAxesCount(deselected: AxisDeselected): number {
+  return TAG_AXES.reduce((n, axis) => n + deselected[axis].size, 0);
+}
 
 /** Build a task lookup by id from the current tasks resource. */
 const taskById = createMemo<Map<string, Task>>(() => {
@@ -86,7 +111,12 @@ const taskById = createMemo<Map<string, Task>>(() => {
   return m;
 });
 
-export { blockPasses };
+/** tag-name → axis (kind) lookup, so the predicate can bucket a task's tag names. */
+export const tagKindLookup = createMemo<TagKindLookup>(() => {
+  const m = new Map<string, TagAxis>();
+  for (const t of tags() ?? []) m.set(t.name, t.kind);
+  return m;
+});
 
 /**
  * The blocks the grid should actually render: authoritative rows with any
@@ -96,10 +126,11 @@ export { blockPasses };
 export const visibleBlocks = createMemo<Block[]>(() => {
   const list = blocks() ?? [];
   const lookup = taskById();
-  const tagF = overlayTags();
+  const kindOf = tagKindLookup();
+  const axes = overlayAxes();
   const prioF = overlayPrio();
   return list
-    .filter((b) => blockPasses(b, b.task_id ? lookup.get(b.task_id) : undefined, tagF, prioF))
+    .filter((b) => blockPassesAxes(b, b.task_id ? lookup.get(b.task_id) : undefined, kindOf, axes, prioF))
     .map(effectiveBlock);
 });
 
