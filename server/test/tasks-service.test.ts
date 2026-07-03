@@ -5,7 +5,10 @@ import {
   createTask,
   createRecurringTask,
   updateTask,
+  deleteTask,
+  promoteToHabit,
   recallTask,
+  skipRecurringInstance,
   stampTaskCompletionReflection,
 } from '../src/services/tasks.js';
 import { resetDb, createOwner, SECOND_OWNER_ID } from './helpers.js';
@@ -29,6 +32,28 @@ beforeEach(() => {
 function unwrap<T extends { ok: boolean }>(res: T): Extract<T, { ok: true }> {
   expect(res.ok).toBe(true);
   return res as Extract<T, { ok: true }>;
+}
+
+/** Insert a bare task row directly (bypassing the service) under an explicit owner. */
+function insertTask(ownerId: string, title: string): string {
+  return (sqlite
+    .prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), ?, ?, 'open') RETURNING id`)
+    .get(title, ownerId) as { id: string }).id;
+}
+
+/** Insert a recurring template + one materialized instance under an explicit owner. */
+function insertRecurringInstance(ownerId: string, date = '2026-07-03'): { templateId: string; instanceId: string } {
+  const templateId = (sqlite
+    .prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, recurrence_rule) VALUES (uuid7(), 'tpl', ?, 'recurring', 'FREQ=DAILY') RETURNING id`,
+    )
+    .get(ownerId) as { id: string }).id;
+  const instanceId = (sqlite
+    .prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, recurrence_parent_id, occurrence_date) VALUES (uuid7(), 'inst', ?, 'open', ?, ?) RETURNING id`,
+    )
+    .get(ownerId, templateId, date) as { id: string }).id;
+  return { templateId, instanceId };
 }
 
 describe('createTask', () => {
@@ -156,5 +181,84 @@ describe('stampTaskCompletionReflection', () => {
       .prepare(`SELECT done_at FROM reflections WHERE owner_id = ? AND kind = 'today_goal' AND period_key = '2026-07-03'`)
       .get(OWNER) as { done_at: string | null }).done_at;
     expect(second).toBe(first);
+  });
+});
+
+/**
+ * W3.1a — cross-owner IDOR regression. Before this fix `updateTask` / `deleteTask` /
+ * `promoteToHabit` mutated by id ALONE, and `skipRecurringInstance` delegated to an
+ * engine that keys by id alone — so any authenticated owner could PATCH / cancel /
+ * promote / skip another owner's task by guessing (or leaking) its id. The route
+ * suites all run as the single SYSTEM_OWNER and never exercised a second owner, so
+ * these service-level tests are the lock: a foreign id must 404 with NO mutation.
+ * (See docs/W-step3-extraction-audit.md §"Owner-scoping finding".)
+ */
+describe('owner-scoping (W3.1a) — a cross-owner id is rejected with no mutation', () => {
+  it('updateTask: 404s and leaves the foreign task untouched', async () => {
+    createOwner();
+    const foreignId = insertTask(SECOND_OWNER_ID, 'Foreign update');
+    expect(await updateTask(OWNER, foreignId, { title: 'Hijacked', priority: 1 })).toEqual({
+      ok: false,
+      error: 'not_found',
+    });
+    const row = sqlite.prepare(`SELECT title, priority FROM tasks WHERE id = ?`).get(foreignId) as {
+      title: string;
+      priority: number;
+    };
+    expect(row).toEqual({ title: 'Foreign update', priority: 3 }); // unchanged (default priority)
+  });
+
+  it('updateTask (tags-only PATCH): 404s before touching the foreign task’s tags', async () => {
+    createOwner();
+    const foreignId = insertTask(SECOND_OWNER_ID, 'Foreign tags');
+    // A tags-only PATCH has no column changes → hits the SELECT branch, which is also scoped.
+    expect(await updateTask(OWNER, foreignId, { tags: ['hijack-tag'] })).toEqual({ ok: false, error: 'not_found' });
+    const tagCount = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?`)
+      .get(foreignId) as { n: number };
+    expect(tagCount.n).toBe(0);
+  });
+
+  it('deleteTask: 404s and leaves the foreign task open (not cancelled)', async () => {
+    createOwner();
+    const foreignId = insertTask(SECOND_OWNER_ID, 'Foreign delete');
+    expect(await deleteTask(OWNER, foreignId)).toEqual({ ok: false, error: 'not_found' });
+    const row = sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(foreignId) as { status: string };
+    expect(row.status).toBe('open');
+  });
+
+  it('promoteToHabit: 404s and leaves the foreign task standard (no habit pattern)', async () => {
+    createOwner();
+    const foreignId = insertTask(SECOND_OWNER_ID, 'Foreign promote');
+    expect(await promoteToHabit(OWNER, foreignId)).toEqual({ ok: false, error: 'not_found' });
+    const row = sqlite.prepare(`SELECT subtype FROM tasks WHERE id = ?`).get(foreignId) as { subtype: string | null };
+    expect(row.subtype).toBe('standard');
+    const pat = sqlite.prepare(`SELECT COUNT(*) AS n FROM pattern_tasks WHERE task_id = ?`).get(foreignId) as { n: number };
+    expect(pat.n).toBe(0);
+  });
+
+  it('skipRecurringInstance: 404s, leaves the foreign instance open and its template EXDATE-free', async () => {
+    createOwner();
+    const { templateId, instanceId } = insertRecurringInstance(SECOND_OWNER_ID);
+    expect(await skipRecurringInstance(OWNER, instanceId)).toEqual({ ok: false, error: 'not_found' });
+    const inst = sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(instanceId) as { status: string };
+    expect(inst.status).toBe('open');
+    const tpl = sqlite.prepare(`SELECT recurrence_exdates FROM tasks WHERE id = ?`).get(templateId) as {
+      recurrence_exdates: string | null;
+    };
+    expect(tpl.recurrence_exdates).toBeNull();
+  });
+
+  it('skipRecurringInstance: the legit-owner path still skips + records the EXDATE', async () => {
+    // Proves the new ownership pre-check doesn't regress the happy path.
+    const { templateId, instanceId } = insertRecurringInstance(OWNER);
+    const res = unwrap(await skipRecurringInstance(OWNER, instanceId));
+    expect(res.skipped).toBe('2026-07-03');
+    const inst = sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(instanceId) as { status: string };
+    expect(inst.status).toBe('skipped');
+    const tpl = sqlite.prepare(`SELECT recurrence_exdates FROM tasks WHERE id = ?`).get(templateId) as {
+      recurrence_exdates: string | null;
+    };
+    expect(JSON.parse(tpl.recurrence_exdates ?? '[]')).toContain('2026-07-03');
   });
 });
