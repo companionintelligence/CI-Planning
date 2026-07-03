@@ -335,8 +335,12 @@ export function Calendar() {
           notedDays={notedDays}
           starsByDay={starsByDay}
           onOpenNote={openNote}
+          // Wave-3 item 10: clicking an empty slot adds a TASK auto-scheduled at that
+          // time. Defaulting to `kind: 'task'` (not the type chooser) + threading the
+          // clicked day/time into the task's own schedule fields (see ElementWizard's
+          // prefill seeding) means Save creates a scheduled placement at that instant.
           onCreateAt={(day, hhmm) =>
-            setElementModal({ open: true, mode: 'add', kind: null, prefill: { day, start: hhmm } })
+            setElementModal({ open: true, mode: 'add', kind: 'task', prefill: { day, start: hhmm } })
           }
         />
       </div>
