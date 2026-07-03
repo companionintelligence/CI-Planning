@@ -511,11 +511,11 @@ export function pageParentCategories(intentionId: string, owner: string, afterNa
 export function countParentCategories(intentionId: string, owner: string): number {
   return n(countParentCategoriesStmt.get(intentionId, owner));
 }
-export function pageDirectionChildren(patternId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
-  return pageDirectionChildrenStmt.all(patternId, owner, afterName, afterName, afterId, limit) as TagRow[];
+export function pageDirectionChildren(directionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
+  return pageDirectionChildrenStmt.all(directionId, owner, afterName, afterName, afterId, limit) as TagRow[];
 }
-export function countDirectionChildren(patternId: string, owner: string): number {
-  return n(countDirectionChildrenStmt.get(patternId, owner));
+export function countDirectionChildren(directionId: string, owner: string): number {
+  return n(countDirectionChildrenStmt.get(directionId, owner));
 }
 export function pageCategoryChildren(categoryId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
   return pageCategoryChildrenStmt.all(categoryId, owner, afterName, afterName, afterId, limit) as TagRow[];
