@@ -234,8 +234,8 @@ export function backupRouter() {
       return;
     }
     // v6 → v7 back-compat (Phase Z / W2): the direction axis reverted. Rename the old payload
-    // key tag_patterns → tag_directions and the column pattern_tag_id → direction_tag_id on the
-    // three affected tables, so the raw column-name INSERTs below target the current schema.
+    // key tag_patterns → tag_directions, rewrite any row field pattern_tag_id → direction_tag_id on the
+    // affected tables, and translate kind='pattern' → 'direction' on tags + tag_prefs rows.
     if (String(body['version']) === '6') {
       if (Array.isArray(body['tag_patterns']) && body['tag_directions'] === undefined) {
         body['tag_directions'] = body['tag_patterns'];
@@ -248,6 +248,14 @@ export function backupRouter() {
               row['direction_tag_id'] = row['pattern_tag_id'];
               delete row['pattern_tag_id'];
             }
+          }
+        }
+      }
+      for (const key of ['tags', 'tag_prefs']) {
+        const rows = body[key];
+        if (Array.isArray(rows)) {
+          for (const row of rows as Record<string, unknown>[]) {
+            if (row && row['kind'] === 'pattern') row['kind'] = 'direction';
           }
         }
       }
