@@ -2,8 +2,8 @@ packages:
   - 'server'
   - 'client'
 # Force a single graphql version across the workspace (Phase W). Apollo Server 5 +
-# @as-integrations/koa + graphql-query-complexity all support 16.x; without this pin a
-# stray graphql@17 resolution produced two @apollo/server copies (duplicate type identity).
+# @as-integrations/koa target 16.x (matching CI-Server); without this pin a stray
+# graphql@17 resolution produced two @apollo/server copies (duplicate type identity).
 overrides:
   graphql: 16.14.2
 allowBuilds:

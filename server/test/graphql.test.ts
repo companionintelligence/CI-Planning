@@ -60,6 +60,34 @@ describe('W — GraphQL bootstrap (/api/graphql)', () => {
     }
   });
 
+  it('costs ONLY the executed operation, not every operation in the document', async () => {
+    // Two operations; `{ viewer { ownerId serverTime } }` (A) costs 3. With the limit at 3
+    // and operationName=A, the request must pass — summing both operations (the old bug)
+    // would over-count and reject it.
+    const saved = config.graphql.maxComplexity;
+    config.graphql.maxComplexity = 3;
+    try {
+      const res = await fetch(`${srv.url}/api/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: 'query A { viewer { ownerId serverTime } } query B { viewer { ownerId } }',
+          operationName: 'A',
+        }),
+      });
+      const body = (await res.json()) as { data?: any; errors?: any[] };
+      expect(body.errors).toBeUndefined();
+      expect(body.data.viewer.ownerId).toBe(SYSTEM_OWNER);
+    } finally {
+      config.graphql.maxComplexity = saved;
+    }
+  });
+
+  it('is POST-only — a GET is rejected (405), closing the method→scope gap', async () => {
+    const res = await fetch(`${srv.url}/api/graphql?query=${encodeURIComponent('{ viewer { ownerId } }')}`);
+    expect(res.status).toBe(405); // route registered for POST only
+  });
+
   it('is auth-gated: no credential ⇒ 401, never reaching GraphQL', async () => {
     // Flip to sso mode (no session cookie presented) so requireAuth rejects before Apollo.
     const saved = { ...config.auth };
