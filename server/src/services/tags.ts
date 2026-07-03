@@ -202,7 +202,7 @@ export function syncLeveledEntityTags(
   }
 }
 
-// ── Tag taxonomy (0036/0043): pattern-tag ▸ intention ───────────────────────
+// ── Tag taxonomy (0036/0043): direction ▸ intention ───────────────────────
 
 const usedStmt = sqlite.prepare(`SELECT 1 FROM entity_tags WHERE tag_id = ? LIMIT 1`);
 /** Has this tag ever been applied to an entity? Used tags can't be deleted. */
@@ -210,19 +210,19 @@ export function tagIsUsed(tagId: string): boolean {
   return !!usedStmt.get(tagId);
 }
 
-const delDirs = sqlite.prepare(`DELETE FROM tag_patterns WHERE intention_tag_id = ?`);
+const delDirs = sqlite.prepare(`DELETE FROM tag_directions WHERE intention_tag_id = ?`);
 const insDir = sqlite.prepare(
-  `INSERT OR IGNORE INTO tag_patterns (intention_tag_id, pattern_tag_id) VALUES (?, ?)`,
+  `INSERT OR IGNORE INTO tag_directions (intention_tag_id, direction_tag_id) VALUES (?, ?)`,
 );
-/** Replace an intention tag's pattern-tag membership (drag-move = a single target). */
+/** Replace an intention tag's direction membership (drag-move = a single target). */
 export function setTagDirections(intentionTagId: string, directionTagIds: string[]): void {
   delDirs.run(intentionTagId);
   for (const d of directionTagIds) insDir.run(intentionTagId, d);
 }
 
 const dirsOfStmt = sqlite.prepare(
-  `SELECT d.name AS name FROM tag_patterns tp
-     JOIN tags d ON d.id = tp.pattern_tag_id
+  `SELECT d.name AS name FROM tag_directions tp
+     JOIN tags d ON d.id = tp.direction_tag_id
     WHERE tp.intention_tag_id = ? ORDER BY d.name`,
 );
 /** The direction names an intention tag belongs to (empty = Unsorted). */
@@ -231,7 +231,7 @@ export function directionsOf(intentionTagId: string): string[] {
 }
 
 // ── Tag taxonomy (0069): intention ▸ category (a SECOND grouping axis) ───────
-// Mirror of the tag_patterns membership trio above, on tag_categories.
+// Mirror of the tag_directions membership trio above, on tag_categories.
 
 const delCats = sqlite.prepare(`DELETE FROM tag_categories WHERE intention_tag_id = ?`);
 const insCat = sqlite.prepare(
@@ -256,17 +256,17 @@ export function categoriesOf(intentionTagId: string): string[] {
 // ── Category ▸ direction SCOPE (0069), opt-out polarity ──────────────────────
 // A row = this pattern (direction) tag is OFF for this category; empty = all on.
 
-const delOptOut = sqlite.prepare(`DELETE FROM category_direction_optouts WHERE category_tag_id = ? AND pattern_tag_id = ?`);
-const insOptOut = sqlite.prepare(`INSERT OR IGNORE INTO category_direction_optouts (category_tag_id, pattern_tag_id) VALUES (?, ?)`);
+const delOptOut = sqlite.prepare(`DELETE FROM category_direction_optouts WHERE category_tag_id = ? AND direction_tag_id = ?`);
+const insOptOut = sqlite.prepare(`INSERT OR IGNORE INTO category_direction_optouts (category_tag_id, direction_tag_id) VALUES (?, ?)`);
 /** Toggle a direction on/off for a category (delete the opt-out row to enable, insert to disable). */
-export function setDirectionEnabled(categoryTagId: string, patternTagId: string, enabled: boolean): void {
-  if (enabled) delOptOut.run(categoryTagId, patternTagId);
-  else insOptOut.run(categoryTagId, patternTagId);
+export function setDirectionEnabled(categoryTagId: string, directionTagId: string, enabled: boolean): void {
+  if (enabled) delOptOut.run(categoryTagId, directionTagId);
+  else insOptOut.run(categoryTagId, directionTagId);
 }
 
 const optOutsOfStmt = sqlite.prepare(
   `SELECT p.name AS name FROM category_direction_optouts cdo
-     JOIN tags p ON p.id = cdo.pattern_tag_id
+     JOIN tags p ON p.id = cdo.direction_tag_id
     WHERE cdo.category_tag_id = ? ORDER BY p.name`,
 );
 /** The direction names turned OFF for a category (empty = all directions enabled). */
@@ -289,10 +289,10 @@ export function categoryIsReferenced(categoryTagId: string): boolean {
 // ── Tag CRUD orchestration (extracted from routes/tags.ts so REST + GraphQL share ONE
 //    implementation — no duplicated business logic or owner-scoping; Phase W Decision 3) ──
 
-/** Resolve direction (pattern-tag) NAMES to the OWNER's pattern-tag ids (skips unknown / non-pattern / other owners'). */
+/** Resolve direction (direction) NAMES to the OWNER's direction ids (skips unknown / non-pattern / other owners'). */
 function directionIds(names: string[], owner: string): string[] {
   const out: string[] = [];
-  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'pattern'`);
+  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`);
   for (const n of names) {
     const row = find.get(owner, normalizeTagName(n)) as { id: string } | undefined;
     if (row) out.push(row.id);
@@ -339,7 +339,7 @@ export function createTag(owner: string, input: CreateTagInput): CreateTagResult
   if (!input.name?.trim()) return { ok: false, error: 'name_required' };
   const name = normalizeTagName(input.name);
   if (!name) return { ok: false, error: 'name_required' };
-  const kind = input.kind === 'pattern' ? 'pattern' : input.kind === 'category' ? 'category' : 'intention';
+  const kind = input.kind === 'direction' ? 'direction' : input.kind === 'category' ? 'category' : 'intention';
 
   let tag = sqlite.prepare(`SELECT * FROM tags WHERE owner_id = ? AND name = ?`).get(owner, name) as FullTagRow | undefined;
   if (!tag) {
@@ -365,7 +365,7 @@ export type UpdateTagInput = {
   muted?: boolean;
   directions?: string[];
   categories?: string[];
-  direction_toggle?: { patternTagId?: string; enabled?: boolean };
+  direction_toggle?: { directionTagId?: string; enabled?: boolean };
 };
 export type UpdateTagResult =
   | { ok: true; tag: { id: string; name: string; kind: string; isBase: number; muted: number } }
@@ -388,12 +388,12 @@ export function updateTag(owner: string, id: string, patch: UpdateTagInput): Upd
   if (
     patch.direction_toggle &&
     tag.kind === 'category' &&
-    typeof patch.direction_toggle.patternTagId === 'string' &&
+    typeof patch.direction_toggle.directionTagId === 'string' &&
     typeof patch.direction_toggle.enabled === 'boolean' &&
     // The toggled pattern tag is a RAW id — verify it's THIS owner's before linking.
-    sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ?`).get(patch.direction_toggle.patternTagId, owner)
+    sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ?`).get(patch.direction_toggle.directionTagId, owner)
   ) {
-    setDirectionEnabled(id, patch.direction_toggle.patternTagId, patch.direction_toggle.enabled);
+    setDirectionEnabled(id, patch.direction_toggle.directionTagId, patch.direction_toggle.enabled);
   }
   if (typeof patch.name === 'string' && patch.name.trim()) {
     const newName = normalizeTagName(patch.name);
@@ -429,7 +429,7 @@ export function deleteTag(owner: string, id: string): DeleteTagResult {
   } else if (tagIsUsed(id)) {
     return { ok: false, error: 'in_use' };
   }
-  sqlite.prepare(`DELETE FROM tags WHERE id = ? AND owner_id = ?`).run(id, owner); // tag_patterns/categories/optouts cascade via FK
+  sqlite.prepare(`DELETE FROM tags WHERE id = ? AND owner_id = ?`).run(id, owner); // tag_directions/categories/optouts cascade via FK
   writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `tag:${id}` });
   return { ok: true };
 }
@@ -451,14 +451,14 @@ export interface TagRow {
 const KEYSET_COLS = `t.id, t.name, t.kind, t.muted, t.is_base AS isBase`;
 const KEYSET_TAIL = `AND (t.name > ? OR (t.name = ? AND t.id > ?)) ORDER BY t.name, t.id LIMIT ?`;
 
-// intention → its parent pattern-tags (the direction axis)
-const pageParentPatternsStmt = sqlite.prepare(
-  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_patterns tp ON t.id = tp.pattern_tag_id
-    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'pattern' ${KEYSET_TAIL}`,
+// intention → its parent directions (the direction axis)
+const pageParentDirectionsStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_directions tp ON t.id = tp.direction_tag_id
+    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'direction' ${KEYSET_TAIL}`,
 );
-const countParentPatternsStmt = sqlite.prepare(
-  `SELECT COUNT(*) AS n FROM tags t JOIN tag_patterns tp ON t.id = tp.pattern_tag_id
-    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'pattern'`,
+const countParentDirectionsStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS n FROM tags t JOIN tag_directions tp ON t.id = tp.direction_tag_id
+    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'direction'`,
 );
 // intention → its parent category-tags
 const pageParentCategoriesStmt = sqlite.prepare(
@@ -469,14 +469,14 @@ const countParentCategoriesStmt = sqlite.prepare(
   `SELECT COUNT(*) AS n FROM tags t JOIN tag_categories tc ON t.id = tc.category_tag_id
     WHERE tc.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'category'`,
 );
-// pattern-tag → its child intentions
-const pagePatternChildrenStmt = sqlite.prepare(
-  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_patterns tp ON t.id = tp.intention_tag_id
-    WHERE tp.pattern_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`,
+// direction → its child intentions
+const pageDirectionChildrenStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_directions tp ON t.id = tp.intention_tag_id
+    WHERE tp.direction_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`,
 );
-const countPatternChildrenStmt = sqlite.prepare(
-  `SELECT COUNT(*) AS n FROM tags t JOIN tag_patterns tp ON t.id = tp.intention_tag_id
-    WHERE tp.pattern_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`,
+const countDirectionChildrenStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS n FROM tags t JOIN tag_directions tp ON t.id = tp.intention_tag_id
+    WHERE tp.direction_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`,
 );
 // category-tag → its child intentions
 const pageCategoryChildrenStmt = sqlite.prepare(
@@ -499,11 +499,11 @@ const countOwnerTagsByKindStmt = sqlite.prepare(`SELECT COUNT(*) AS n FROM tags 
 
 const n = (row: unknown) => (row as { n: number }).n;
 
-export function pageParentPatterns(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
-  return pageParentPatternsStmt.all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
+export function pageParentDirections(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
+  return pageParentDirectionsStmt.all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
 }
-export function countParentPatterns(intentionId: string, owner: string): number {
-  return n(countParentPatternsStmt.get(intentionId, owner));
+export function countParentDirections(intentionId: string, owner: string): number {
+  return n(countParentDirectionsStmt.get(intentionId, owner));
 }
 export function pageParentCategories(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
   return pageParentCategoriesStmt.all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
@@ -511,11 +511,11 @@ export function pageParentCategories(intentionId: string, owner: string, afterNa
 export function countParentCategories(intentionId: string, owner: string): number {
   return n(countParentCategoriesStmt.get(intentionId, owner));
 }
-export function pagePatternChildren(patternId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
-  return pagePatternChildrenStmt.all(patternId, owner, afterName, afterName, afterId, limit) as TagRow[];
+export function pageDirectionChildren(patternId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
+  return pageDirectionChildrenStmt.all(patternId, owner, afterName, afterName, afterId, limit) as TagRow[];
 }
-export function countPatternChildren(patternId: string, owner: string): number {
-  return n(countPatternChildrenStmt.get(patternId, owner));
+export function countDirectionChildren(patternId: string, owner: string): number {
+  return n(countDirectionChildrenStmt.get(patternId, owner));
 }
 export function pageCategoryChildren(categoryId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
   return pageCategoryChildrenStmt.all(categoryId, owner, afterName, afterName, afterId, limit) as TagRow[];

@@ -30,16 +30,16 @@ function tagId(name: string): string {
   return (sqlite.prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get(owner, name) as { id: string }).id;
 }
 
-/** Resolve a direction tag id, ensuring it exists as a `pattern` tag (the kind the
- *  Auto engine matches pattern windows against). Self-heals if a reset wiped the seed. */
+/** Resolve a direction tag id, ensuring it exists as a `direction` tag (the kind the
+ *  Auto engine matches pattern-block windows against). Self-heals if a reset wiped the seed. */
 function directionTagId(name: string): string {
   const owner = currentOwnerId();
   const existing = sqlite
-    .prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'pattern'`)
+    .prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`)
     .get(owner, name) as { id: string } | undefined;
   if (existing) return existing.id;
   return (
-    sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'pattern') RETURNING id`).get(owner, name) as { id: string }
+    sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'direction') RETURNING id`).get(owner, name) as { id: string }
   ).id;
 }
 

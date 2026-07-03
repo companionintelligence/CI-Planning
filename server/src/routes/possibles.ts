@@ -25,7 +25,7 @@ const insertTaskTag = sqlite.prepare(
 );
 function carryPossibleTags(possibleId: string, taskId: string): void {
   for (const r of selectPossibleTags.all(possibleId) as { id: string; kind: string }[]) {
-    insertTaskTag.run(taskId, r.id, r.kind === 'pattern' ? 1 : 2);
+    insertTaskTag.run(taskId, r.id, r.kind === 'direction' ? 1 : 2);
   }
 }
 
