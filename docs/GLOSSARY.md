@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-07-01 (updated: ratify `kind='pattern'`; tag-axis rename 0043; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). Phase T makes multi-tenant real (`owner_id` scoping across time_blocks/tags/sync_events, 0098–0100) and ratifies **owner ≡ user** (decision #1); Phase U adds auth-identity columns to `owners` (U0 / 0101). **None of Phase O/P/T/U adds a noun** — owner is an internal model concept, budget stays 9). The single source of truth for user-facing
+> **Status:** canonical, 2026-07-01 (updated: `kind='direction'` for the grouping axis — 0038/0043 briefly renamed it `'pattern'`, reverted in 0105 / Phase Z W2; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). Phase T makes multi-tenant real (`owner_id` scoping across time_blocks/tags/sync_events, 0098–0100) and ratifies **owner ≡ user** (decision #1); Phase U adds auth-identity columns to `owners` (U0 / 0101). **None of Phase O/P/T/U adds a noun** — owner is an internal model concept, budget stays 9). The single source of truth for user-facing
 > nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -39,7 +39,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
 | 5 | **Inbox** | Capture / triage queue. (internal: `possible_tasks`; promoting one creates a Task) |
 | 6 | **Flight-plan** | The day’s staging tray — what Auto runs over. |
 | 7 | **Planner** | The single-day, date-navigable cockpit board where Time Blocks live. The multi-day day/week/month view over the same Time Blocks is the **Calendar** (`/calendar`). |
-| 8 | **Pattern-block** | A named availability window tying a pattern-tag to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
+| 8 | **Pattern-block** | A named availability window tying a direction to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |
 
 ## States, subtypes & kinds (demoted — not nouns)
 
@@ -73,8 +73,8 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   deep-link star on task cards (`EightPointStar`, 8-pointed, accent color) — the day-stars
   are 5-pointed and gold, and only ever appear as the header tally or the calendar heatmap,
   never on a task card.
-- **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each pattern-tag has
-  0–N time ranges per day type. Pattern-tag-less tasks fall back to the general `workday_start`/
+- **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each direction has
+  0–N time ranges per day type. direction-less tasks fall back to the general `workday_start`/
   `workday_end` window from scheduling\_prefs.
 
 - **Task states:** `open` · `TBD` (title + ≥1 tag, nothing else) · `scheduled` ·
@@ -94,21 +94,21 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   dilution-immune) · second-level (diluted: weight = `1 / #tags`). This is a weight on
   a tag *as applied to an entity*.
 - **Tag taxonomy (per-tag, `tags.kind` — a separate axis from the levels above):**
-  **pattern-tag** (top-level category — brand-set **Home / Work / Community**,
-  `is_base` & undeletable, plus user-added; canonical DB value: `tags.kind = 'pattern'`) ·
-  **intention** (every other tag, grouped under one or more pattern-tags via the
-  `tag_patterns` junction table; ungrouped = *Unsorted*). A tag may be **muted**
-  (a per-tag state, not a noun). Pattern-tags/intentions are Tag sub-levels,
+  **direction** (top-level category — brand-set **Home / Work / Community**,
+  `is_base` & undeletable, plus user-added; canonical DB value: `tags.kind = 'direction'`) ·
+  **intention** (every other tag, grouped under one or more directions via the
+  `tag_directions` junction table; ungrouped = *Unsorted*). A tag may be **muted**
+  (a per-tag state, not a noun). directions/intentions are Tag sub-levels,
   **not** new nouns.
 
-  > **Naming note:** the `tag_patterns` junction table and `tags.kind = 'pattern'`
-  > refer to this tag-taxonomy axis. The separate `patterns` table is the Routine collection
-  > system (Habit / Routine / Ritual templates). The §3b Routine rename (`patterns` → `routines`)
-  > that would have de-collided these is **deferred** — the as-built `patterns` naming is
-  > ratified for now (README marks `pattern_types` load-bearing). Until/unless §3b is revived,
-  > use the table name and the `kind` value as the disambiguator: `patterns`/`pattern_types`/
-  > `pattern_tasks` = the Routine collection system; `tags.kind='pattern'` + `pattern_blocks`/
-  > `tag_prefs`/`tag_patterns` = the tag-category axis.
+  > **Naming note (Phase Z / W2):** three unrelated concepts once all read "pattern"; they are
+  > now disambiguated. (1) **direction** = this tag grouping axis (`tags.kind='direction'`,
+  > `tag_directions`, `direction_tag_id`; migrations 0038/0043 briefly mis-named it "pattern",
+  > reverted by 0105). (2) **Pattern** = the day-arrangement (noun #8; `pattern_blocks` KEEPS the
+  > "pattern" name). (3) **Routine** = the reusable task collection (internal `patterns`/
+  > `pattern_types`/`pattern_tasks`; the §3b `patterns`→`routines` rename remains deferred to W1).
+  > Disambiguator: `tags.kind`/`tag_directions` = the direction axis · `pattern_blocks` = the day
+  > Pattern · `patterns*` = Routines.
 
 ## Translation (old term → canonical)
 

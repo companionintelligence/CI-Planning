@@ -252,7 +252,7 @@ describe('pattern-prefs route', () => {
     // Need a pattern-kind tag to PUT against.
     const tagId = (
       sqlite
-        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), 'test-routine', 'pattern', 0, ?) RETURNING id`)
+        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), 'test-routine', 'direction', 0, ?) RETURNING id`)
         .get(OWNER) as { id: string }
     ).id;
     const before = auditCount('update', `pattern-prefs:${tagId}`);
@@ -270,7 +270,7 @@ describe('pattern-blocks route', () => {
   it('writes audit row on PUT /api/pattern-blocks/:tagId/workday (update)', async () => {
     const tagId = (
       sqlite
-        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), 'test-pattern-block', 'pattern', 0, ?) RETURNING id`)
+        .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), 'test-pattern-block', 'direction', 0, ?) RETURNING id`)
         .get(OWNER) as { id: string }
     ).id;
     const before = auditCount('update', `pattern-block:${tagId}:workday`);

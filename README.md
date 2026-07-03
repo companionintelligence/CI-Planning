@@ -131,15 +131,15 @@ Migrations (current head: `0097_tag_prefs`) produce the following tables:
 | `block_templates` | Reusable Time-Block templates with saved task lists |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` |
 | `possible_tasks` | Inbox queue — AI-proposed items pending promote / dismiss |
-| `tags` | Cross-cutting labels; `kind`: `pattern` (Home / Work / Community) or `intention` |
-| `tag_patterns` | Many-to-many: intention tags grouped under pattern tags (renamed from `tag_directions` in 0043) |
+| `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community) or `intention` |
+| `tag_directions` | Many-to-many: intention tags grouped under direction tags (0043 briefly renamed this to `tag_patterns`; reverted in 0105) |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3) |
 | `possible_task_tags` | Tags proposed alongside an inbox item |
 | `patterns` | Routines — typed, reusable task collections with optional recurrence |
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
-| `pattern_blocks` | Pattern-tag-scoped scheduling windows (`workday` / `weekend` time ranges) |
-| `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`pattern` \| `category`): shared `color_token`/`default_minutes`, plus pattern-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097) |
+| `pattern_blocks` | Direction-scoped scheduling windows (`workday` / `weekend` time ranges) |
+| `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
@@ -344,7 +344,7 @@ consistent snapshot.
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
 - SQLite schema (migrations 0001–0097): tasks, subtasks, time blocks, tags,
-  entity_tags, tag_patterns, patterns, pattern_blocks, tag_prefs, flight_plan,
+  entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
   block_templates, scheduled_jobs, reminders, push_subscriptions,
   replan_suggestions, audit_log, sync_events, reflections, objectives,

@@ -7,7 +7,7 @@ import { createTag as svcCreateTag, setTagDirections, setEntityTagIds } from '..
 /**
  * Phase W step 2 — TagType (Decision 6). Proves the pilot end-to-end over HTTP: the
  * `tag`/`tags` queries with Relay cursor pagination, the hierarchy connections
- * (parentPatterns ↔ childIntentions), the CRUD mutations reusing the SAME services the
+ * (parentDirections ↔ childIntentions), the CRUD mutations reusing the SAME services the
  * REST routes use (cross-checked via REST GET), owner-scoping, and CI-Server
  * diff-comparability of the shared TagType core.
  */
@@ -24,7 +24,7 @@ async function gql(query: string, headers: Record<string, string> = {}) {
 }
 
 /** Seed a tag for the system owner via the shared service; returns its id. */
-function seed(name: string, kind: 'pattern' | 'intention' | 'category' = 'intention'): string {
+function seed(name: string, kind: 'direction' | 'intention' | 'category' = 'intention'): string {
   const res = svcCreateTag(SYSTEM_OWNER, { name, kind });
   if (!res.ok) throw new Error('seed failed');
   return res.tag.id;
@@ -51,16 +51,16 @@ describe('W2 — TagType queries', () => {
   });
 
   it('tags(kind:) filters the axis', async () => {
-    seed('work', 'pattern'); seed('coding', 'intention'); seed('family', 'category');
-    const r = await gql('{ tags(kind: PATTERN) { totalCount edges { node { label kind } } } }');
+    seed('work', 'direction'); seed('coding', 'intention'); seed('family', 'category');
+    const r = await gql('{ tags(kind: DIRECTION) { totalCount edges { node { label kind } } } }');
     expect(r.body.data.tags.totalCount).toBe(1);
-    expect(r.body.data.tags.edges[0].node).toEqual({ label: 'work', kind: 'PATTERN' });
+    expect(r.body.data.tags.edges[0].node).toEqual({ label: 'work', kind: 'DIRECTION' });
   });
 
   it('tag(id): label←name, description null, muted/isBase booleans', async () => {
-    const id = seed('work', 'pattern');
+    const id = seed('work', 'direction');
     const r = await gql(`{ tag(id: "${id}") { id label kind description muted isBase } }`);
-    expect(r.body.data.tag).toEqual({ id, label: 'work', kind: 'PATTERN', description: null, muted: false, isBase: false });
+    expect(r.body.data.tag).toEqual({ id, label: 'work', kind: 'DIRECTION', description: null, muted: false, isBase: false });
   });
 
   it('tag(id): unknown id returns null', async () => {
@@ -69,8 +69,8 @@ describe('W2 — TagType queries', () => {
     expect(r.body.data.tag).toBeNull();
   });
 
-  it('hierarchy: pattern.childIntentions ↔ intention.parentPatterns', async () => {
-    const work = seed('work', 'pattern');
+  it('hierarchy: pattern.childIntentions ↔ intention.parentDirections', async () => {
+    const work = seed('work', 'direction');
     const coding = seed('coding', 'intention');
     const email = seed('email', 'intention');
     setTagDirections(coding, [work]);
@@ -81,9 +81,9 @@ describe('W2 — TagType queries', () => {
     expect(children.body.data.tag.childIntentions.edges.map((e: any) => e.node.label)).toEqual(['coding', 'email']);
     expect(children.body.data.tag.childIntentions.edges[0].node.kind).toBe('INTENTION');
 
-    const parents = await gql(`{ tag(id: "${coding}") { parentPatterns { totalCount edges { node { label } } } } }`);
-    expect(parents.body.data.tag.parentPatterns.totalCount).toBe(1);
-    expect(parents.body.data.tag.parentPatterns.edges[0].node.label).toBe('work');
+    const parents = await gql(`{ tag(id: "${coding}") { parentDirections { totalCount edges { node { label } } } } }`);
+    expect(parents.body.data.tag.parentDirections.totalCount).toBe(1);
+    expect(parents.body.data.tag.parentDirections.edges[0].node.label).toBe('work');
   });
 
   it('hierarchy edges are empty for the wrong kind (no error)', async () => {
@@ -121,7 +121,7 @@ describe('W2 — TagType mutations reuse the REST services', () => {
 
   it('deleteTag refuses a base tag and an in-use tag (shared guards)', async () => {
     // Base tag.
-    const baseId = sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind, is_base) VALUES (uuid7(), ?, 'home', 'pattern', 1) RETURNING id`).get(SYSTEM_OWNER) as { id: string };
+    const baseId = sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind, is_base) VALUES (uuid7(), ?, 'home', 'direction', 1) RETURNING id`).get(SYSTEM_OWNER) as { id: string };
     const baseDel = await gql(`mutation { deleteTag(input: { id: "${baseId.id}" }) { success } }`);
     expect(baseDel.body.errors?.[0]?.message).toMatch(/base tags cannot be deleted/i);
 
@@ -156,6 +156,6 @@ describe('W2 — CI-Server diff-comparability', () => {
     // CI-Server's TagType core:
     for (const core of ['id', 'label', 'description']) expect(fields).toContain(core);
     // Our additive superset:
-    for (const extra of ['kind', 'muted', 'isBase', 'parentPatterns', 'childIntentions']) expect(fields).toContain(extra);
+    for (const extra of ['kind', 'muted', 'isBase', 'parentDirections', 'childIntentions']) expect(fields).toContain(extra);
   });
 });
