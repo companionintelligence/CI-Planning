@@ -31,11 +31,12 @@ interface SettingsForm {
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
   recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
+  time_sense_enabled: boolean; // Phase Z master flag
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
-  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern';
+  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'time_sense_enabled';
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
@@ -50,6 +51,7 @@ const DEFAULTS: SettingsForm = {
   memory_sync_enabled: false, memory_sync_completed: true,
   memory_sync_habits: true, memory_sync_reflections: true,
   recall_keeps_pattern: false,
+  time_sense_enabled: false,
 };
 
 export function Settings() {
@@ -156,6 +158,7 @@ export function Settings() {
       quality_model:              p.quality_model ?? '',
       embed_model:                p.embed_model ?? '',
       recall_keeps_pattern:       p.recall_keeps_pattern ?? false,
+      time_sense_enabled:         p.time_sense_enabled ?? false,
       memory_sync_enabled:        p.memory_sync_enabled ?? false,
       memory_sync_completed:      p.memory_sync_completed ?? true,
       memory_sync_habits:         p.memory_sync_habits ?? true,
@@ -907,6 +910,11 @@ export function Settings() {
             </div>
             <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
               hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
+
+            {/* Phase Z master flag — gates the Focus Ritual, tag-scoped estimate
+                calibration, and the evening EOD Alignment while the phase ships dark. */}
+            <Toggle field="time_sense_enabled" label="Time-Sense"
+              hint="Focus Ritual block timers, tag-scoped estimate calibration, and the evening alignment. Experimental; off by default." />
 
             {/* AI day ordering toggle — saved immediately, not via the Save button */}
             {(() => {

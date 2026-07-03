@@ -186,7 +186,8 @@ async function execute(kind: string): Promise<JobOutcome> {
       const label = r.bias_ratio != null
         ? `bias_ratio=${r.bias_ratio.toFixed(2)} (n=${r.sample_count})`
         : 'no timed tasks yet';
-      return { itemsCreated: 0, itemsUpdated: r.sample_count, log: `Estimate calibration: ${label}` };
+      const scoped = r.scopes != null ? `, ${r.scopes} scope(s)` : '';
+      return { itemsCreated: 0, itemsUpdated: r.sample_count, log: `Estimate calibration: ${label}${scoped}` };
     }
     case 'freeze_stars': {
       // Freezing is an INSERT (first-freeze-wins): a create, or a no-op if the

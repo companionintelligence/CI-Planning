@@ -54,6 +54,7 @@ export function resetDb(): void {
     DELETE FROM objective_tasks;
     DELETE FROM objectives;
     DELETE FROM estimate_calibration;
+    DELETE FROM calibration_combo_pins;
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
@@ -88,7 +89,8 @@ export function resetDb(): void {
       day_theme = NULL,
       planning_mode = 'basic',
       trust_mode = 'balanced',
-      auto_defense_enabled = 0;
+      auto_defense_enabled = 0,
+      time_sense_enabled = 0;
   `);
 }
 

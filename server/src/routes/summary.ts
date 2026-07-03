@@ -1,9 +1,10 @@
 import Router from '@koa/router';
-import { summarizeDay } from '../agents/summarize.js';
+import { summarizeDay, morningCarryover } from '../agents/summarize.js';
 import { localISODate, isValidISODate } from '../lib/dates.js';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
+import { timeSenseEnabled } from '../lib/flags.js';
 
 /** One row in the Today's Brief "Top tasks" list (Phase O · O0). */
 export interface TopTask {
@@ -76,7 +77,11 @@ export function summaryRouter() {
   router.get('/api/summary', async (ctx) => {
     const { date, refresh } = ctx.query as Record<string, string>;
     const day = date ?? localISODate();
-    ctx.body = await summarizeDay(day, { refresh: refresh === '1' || refresh === 'true' });
+    const summary = await summarizeDay(day, { refresh: refresh === '1' || refresh === 'true' });
+    // Z2: fold last night's EOD Alignment into the morning Brief (flag-gated,
+    // computed outside the cache so it's always fresh). Absent → field omitted.
+    const evening = timeSenseEnabled(currentOwnerId()) ? morningCarryover(day) : undefined;
+    ctx.body = evening ? { ...summary, evening } : summary;
   });
 
   // GET /api/summary/top-tasks?date=YYYY-MM-DD — the Today's Brief top-tasks list
