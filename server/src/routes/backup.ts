@@ -54,6 +54,11 @@ const OWNER_TABLES = [
   'plan_hints',
   'replan_suggestions',
   'estimate_calibration',
+  // Phase Z · Z0: user-confirmed tag-combo pins (0107). Purely additive — a new
+  // table plus DEFAULT-backed scope columns on estimate_calibration; the restore
+  // treats an absent payload key as empty, so an older dump lacking this table
+  // still restores. (The '7' bump was for W2's direction rename, not this.)
+  'calibration_combo_pins',
 ] as const;
 
 // Owner-scoped tables INTENTIONALLY excluded from export/import. Audited against every
@@ -197,6 +202,7 @@ export function backupRouter() {
       plan_hints: ownerData['plan_hints'],
       replan_suggestions: ownerData['replan_suggestions'],
       estimate_calibration: ownerData['estimate_calibration'],
+      calibration_combo_pins: ownerData['calibration_combo_pins'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -296,6 +302,7 @@ export function backupRouter() {
       sqlite.prepare('DELETE FROM plan_hints WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM replan_suggestions WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM estimate_calibration WHERE owner_id = ?').run(ownerId);
+      sqlite.prepare('DELETE FROM calibration_combo_pins WHERE owner_id = ?').run(ownerId);
       // entity_tags has no direct owner_id — delete by entity membership.
       sqlite.prepare(`DELETE FROM entity_tags WHERE entity_id IN (
         SELECT id FROM tasks WHERE owner_id = ?
@@ -361,6 +368,7 @@ export function backupRouter() {
       counts['plan_hints']          = insertRows('plan_hints', g('plan_hints'));
       counts['replan_suggestions']  = insertRows('replan_suggestions', g('replan_suggestions'));
       counts['estimate_calibration']= insertRows('estimate_calibration', g('estimate_calibration'));
+      counts['calibration_combo_pins'] = insertRows('calibration_combo_pins', g('calibration_combo_pins'));
     })();
 
     writeAudit({ ownerId, actor: 'owner', action: 'import', entity: 'import' });

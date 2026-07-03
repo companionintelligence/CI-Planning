@@ -4,6 +4,8 @@ import { generate } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
+import { addDays } from '../lib/dates.js';
+import { detectComboSuggestions, scopeLabel, CONFIDENCE_FLOOR, type ComboSuggestion, type ScopeKind } from '../services/calibration.js';
 
 interface TaskRow {
   id: string;
@@ -246,4 +248,225 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     .run(currentOwnerId(), date, prose, JSON.stringify(stats), JSON.stringify(focus), llm ? 1 : 0, hash);
 
   return { date, prose, stats, focus, capacity, llm, cached: false };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase Z · Z1 (Time-Sense) — EOD Alignment: the evening mirror of summarizeDay.
+// The deterministic payload is recomputed on every read (regenerable — 0095
+// dropped the plan_outcomes rollup for exactly this reason); the narrative is
+// generated once when the user opens the evening modal and persisted by the
+// route into reflections(kind='evening') — modal-only authorship, owner
+// decision 2026-07-01. No daily_recap column is touched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface EstimateDelta {
+  task_id: string;
+  title: string;
+  estimated_minutes: number;
+  actual_minutes: number;
+  delta_minutes: number;
+}
+
+export interface EveningPayload {
+  date: string;
+  /** Non-meeting task blocks scheduled on the day (the old aggregate_plan_outcomes math, on demand). */
+  planned: number;
+  /** Of those, how many tasks completed that day. */
+  completed: number;
+  /** Write-once outcome stamps review.ts left on daily_plan rows. */
+  outcomes: { deferred: number; missed: number };
+  estimate_deltas: EstimateDelta[];
+  carry_forward: { task_id: string; title: string; status: string }[];
+  /** Current calibration picture: scopes at/above the confidence floor, biggest samples first. */
+  calibration: { scope_kind: string; scope_ref: string; label: string; bias_ratio: number | null; sample_count: number }[];
+  /** Unpinned tag combos worth tracking separately (§2.3 hybrid) — suggestions only. */
+  combo_suggestions: ComboSuggestion[];
+}
+
+export function gatherEvening(date: string): EveningPayload {
+  const owner = currentOwnerId();
+  const tzRow = sqlite
+    .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
+    .get(owner) as { timezone: string | null } | undefined;
+  const tz = tzRow?.timezone || serverTimezone();
+  const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
+
+  const planned = (sqlite
+    .prepare(
+      `SELECT COUNT(*) AS n FROM time_blocks b
+        WHERE b.owner_id = ? AND b.task_id IS NOT NULL AND b.block_kind != 'meeting'
+          AND b.start_at >= ? AND b.start_at < ?`,
+    )
+    .get(owner, dayStart, dayEnd) as { n: number }).n;
+
+  const completed = (sqlite
+    .prepare(
+      `SELECT COUNT(DISTINCT b.task_id) AS n FROM time_blocks b
+         JOIN tasks t ON t.id = b.task_id
+        WHERE b.owner_id = ? AND b.block_kind != 'meeting'
+          AND b.start_at >= ? AND b.start_at < ?
+          AND t.status = 'done' AND t.completed_at >= ? AND t.completed_at < ?`,
+    )
+    .get(owner, dayStart, dayEnd, dayStart, dayEnd) as { n: number }).n;
+
+  const outcomeRows = sqlite
+    .prepare(
+      `SELECT outcome, COUNT(*) AS n FROM daily_plan
+        WHERE owner_id = ? AND date = ? AND outcome IS NOT NULL GROUP BY outcome`,
+    )
+    .all(owner, date) as { outcome: string; n: number }[];
+  const outcomes = { deferred: 0, missed: 0 };
+  for (const r of outcomeRows) {
+    if (r.outcome === 'deferred') outcomes.deferred = r.n;
+    else if (r.outcome === 'missed') outcomes.missed = r.n;
+  }
+
+  const estimate_deltas = (sqlite
+    .prepare(
+      `SELECT id AS task_id, title, estimated_minutes, actual_minutes,
+              (actual_minutes - estimated_minutes) AS delta_minutes
+         FROM tasks
+        WHERE owner_id = ? AND status = 'done'
+          AND completed_at >= ? AND completed_at < ?
+          AND estimated_minutes > 0 AND actual_minutes > 0
+        ORDER BY ABS(actual_minutes - estimated_minutes) DESC LIMIT 10`,
+    )
+    .all(owner, dayStart, dayEnd)) as EstimateDelta[];
+
+  const carry_forward = sqlite
+    .prepare(
+      `SELECT DISTINCT t.id AS task_id, t.title, t.status FROM time_blocks b
+         JOIN tasks t ON t.id = b.task_id
+        WHERE b.owner_id = ? AND b.block_kind != 'meeting'
+          AND b.start_at >= ? AND b.start_at < ?
+          AND t.status IN ('open', 'scheduled', 'in_progress')
+        ORDER BY t.title LIMIT 10`,
+    )
+    .all(owner, dayStart, dayEnd) as { task_id: string; title: string; status: string }[];
+
+  // Label the scope refs so the modal never shows raw ids (shared with the Z6 chip).
+  const calibration = (sqlite
+    .prepare(
+      `SELECT scope_kind, scope_ref, bias_ratio, sample_count FROM estimate_calibration
+        WHERE owner_id = ? AND sample_count >= ?
+        ORDER BY sample_count DESC, scope_kind, scope_ref LIMIT 5`,
+    )
+    .all(owner, CONFIDENCE_FLOOR) as { scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }[])
+    .map((r) => ({ ...r, label: scopeLabel(owner, r.scope_kind as ScopeKind, r.scope_ref) }));
+
+  return {
+    date,
+    planned,
+    completed,
+    outcomes,
+    estimate_deltas,
+    carry_forward,
+    calibration,
+    combo_suggestions: detectComboSuggestions(owner),
+  };
+}
+
+export function fallbackEveningProse(p: EveningPayload): string {
+  const lines: string[] = [];
+  lines.push(`${p.date} in review:`);
+  if (p.planned) lines.push(`• ${p.completed} of ${p.planned} planned block(s) completed.`);
+  else lines.push(`• No task blocks were planned.`);
+  if (p.outcomes.deferred || p.outcomes.missed) {
+    lines.push(`• ${p.outcomes.deferred} deferred, ${p.outcomes.missed} missed.`);
+  }
+  if (p.estimate_deltas.length) {
+    const d = p.estimate_deltas[0];
+    const dir = d.delta_minutes >= 0 ? 'over' : 'under';
+    lines.push(`• Biggest estimate miss: "${d.title}" ran ${Math.abs(d.delta_minutes)}m ${dir}.`);
+  }
+  if (p.carry_forward.length) lines.push(`• ${p.carry_forward.length} task(s) carry forward to tomorrow.`);
+  return lines.join('\n');
+}
+
+function buildEveningPrompt(p: EveningPayload): string {
+  const deltas =
+    p.estimate_deltas
+      .map((d) => `- "${d.title}": estimated ${d.estimated_minutes}m, took ${d.actual_minutes}m`)
+      .join('\n') || '(none)';
+  const carries = p.carry_forward.map((c) => `- ${c.title}`).join('\n') || '(none)';
+  const cal =
+    p.calibration
+      .map((c) => `- ${c.label}: bias ${c.bias_ratio?.toFixed(2)} over ${c.sample_count} samples`)
+      .join('\n') || '(none)';
+
+  return `Write a short, calm evening reflection (3-5 sentences, no bullet lists, no preamble, no praise-words) on this day.
+State what got done vs planned, name the biggest estimate miss if there is one, and end with one plain sentence about what carries into tomorrow.
+
+Date: ${p.date}
+Planned task blocks: ${p.planned}; completed: ${p.completed}; deferred: ${p.outcomes.deferred}; missed: ${p.outcomes.missed}
+
+Estimate deltas today:
+${deltas}
+
+Carrying forward:
+${carries}
+
+Current estimate bias by scope:
+${cal}`;
+}
+
+export interface EveningSummary {
+  date: string;
+  prose: string;
+  llm: boolean;
+  payload: EveningPayload;
+}
+
+export interface MorningCarryover {
+  /** Yesterday's date (the EOD Alignment folded into this morning's Brief). */
+  date: string;
+  /** Yesterday's evening narrative if the user opened the modal; null → degrade to carry_forward only. */
+  prose: string | null;
+  /** Yesterday's incomplete tasks (§2.7 "fill incomplete-first") — always available. */
+  carry_forward: { task_id: string; title: string; status: string }[];
+}
+
+/**
+ * Phase Z · Z2 — the morning Daily Brief's fold-in of last night's EOD Alignment.
+ * Computed OUTSIDE summarizeDay's cache (which is keyed on today's inputs only),
+ * so it's always fresh and never couples the cached prose to yesterday's state.
+ * Degrades gracefully: no evening row (modal never opened) → prose null, but the
+ * deterministic carry_forward still surfaces (§2.6/§2.7 — the Brief never blocks
+ * on an Alignment having been written).
+ */
+export function morningCarryover(date: string): MorningCarryover {
+  const yesterday = addDays(date, -1);
+  const row = sqlite
+    .prepare(
+      `SELECT body FROM reflections WHERE owner_id = ? AND kind = 'evening' AND period_key = ? AND position = 0`,
+    )
+    .get(currentOwnerId(), yesterday) as { body: string } | undefined;
+  return {
+    date: yesterday,
+    prose: row?.body ?? null,
+    carry_forward: gatherEvening(yesterday).carry_forward,
+  };
+}
+
+/**
+ * Compose the EOD Alignment narrative. Mirrors summarizeDay's degradation
+ * contract: Ollama down / empty output → deterministic fallback, never a throw.
+ * Persistence is the CALLER's job (the reflections route writes the row on
+ * modal open) — this function is pure compute.
+ */
+export async function summarizeEvening(date: string): Promise<EveningSummary> {
+  const payload = gatherEvening(date);
+  let prose: string;
+  let llm: boolean;
+  try {
+    const out = await generate(buildEveningPrompt(payload), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
+    prose = out.trim();
+    if (!prose) throw new Error('empty evening summary');
+    llm = true;
+  } catch (err) {
+    logger.warn('summarizeEvening fell back to deterministic prose', { date, err: (err as Error).message });
+    prose = fallbackEveningProse(payload);
+    llm = false;
+  }
+  return { date, prose, llm, payload };
 }
