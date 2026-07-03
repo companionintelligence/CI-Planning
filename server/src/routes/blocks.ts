@@ -432,6 +432,52 @@ export function blocksRouter() {
     ctx.body = applied;
   });
 
+  // POST /api/blocks/:id/reschedule — Phase Z · Z3 "Schedule again" (§1.1b).
+  // The block ended but the task isn't done: mark this attempt skipped and re-stage
+  // the SAME task onto the flight-plan (source_kind='reschedule'), staged-not-placed
+  // — Auto lands it later, inheriting the task's own defaults (no clone). Flag-gated.
+  router.post('/api/blocks/:id/reschedule', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const id = ctx.params.id;
+
+    const block = sqlite
+      .prepare(`SELECT id, task_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get(id, owner) as { id: string; task_id: string | null } | undefined;
+    if (!block) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
+    if (!block.task_id) { ctx.status = 422; ctx.body = { error: 'block has no task to reschedule' }; return; }
+
+    const t = sqlite
+      .prepare(`SELECT recurrence_parent_id FROM tasks WHERE id = ? AND owner_id = ?`)
+      .get(block.task_id, owner) as { recurrence_parent_id: string | null } | undefined;
+    if (!t) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
+    // Same guard as the stage endpoint: series instances re-land via their RRULE.
+    if (t.recurrence_parent_id) { ctx.status = 422; ctx.body = { error: 'series instances re-land via their rule, not reschedule' }; return; }
+
+    const nextPos = (sqlite
+      .prepare(`SELECT COALESCE(MAX(position), 0) + 1 AS n FROM flight_plan WHERE owner_id = ?`)
+      .get(owner) as { n: number }).n;
+
+    let staged = false;
+    sqlite.transaction(() => {
+      // Attempt 1 becomes history — skipped, not deleted. The partial time_entry is
+      // left as-is: the task stays open, and calibration only reads DONE tasks, so
+      // the partial never enters estimate_calibration (§1.1b / N L169) — no flag needed.
+      sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
+      staged = sqlite
+        .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
+        .run(owner, block.task_id, nextPos).changes > 0;
+    })();
+
+    // Flip the task back to open (it was 'scheduled' while it held the block) so Auto
+    // re-places it; broadcast so the board drops the skipped block and shows the stage.
+    if (revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
+    broadcast(owner, 'block:updated', { id, rescheduled: block.task_id });
+    broadcast(owner, 'flight_plan:updated', { added: staged ? 1 : 0 });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `block:${id}` });
+    ctx.body = { ok: true, task_id: block.task_id, staged };
+  });
+
   // POST /api/blocks/:id/promote — turn a Concept into a scheduled Plan.
   // The client supplies the chosen start (and all_day for day-long Plans); end
   // defaults to start + the concept's duration_minutes.

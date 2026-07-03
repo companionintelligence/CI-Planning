@@ -169,3 +169,60 @@ describe('POST /api/blocks/:id/extend (flag-gated confirm flow)', () => {
     expect(endOf(b)).toBe(at('11:00'));
   });
 });
+
+describe('POST /api/blocks/:id/reschedule ("Schedule again", §1.1b)', () => {
+  function makeScheduledTask(): string {
+    return (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'Unfinished', ?, 'scheduled') RETURNING id`)
+      .get(SYSTEM_OWNER) as { id: string }).id;
+  }
+  function flightRow(taskId: string) {
+    return sqlite
+      .prepare(`SELECT source_kind, selected FROM flight_plan WHERE owner_id = ? AND task_id = ?`)
+      .get(SYSTEM_OWNER, taskId) as { source_kind: string; selected: number } | undefined;
+  }
+  function statusOf(id: string): string {
+    return (sqlite.prepare(`SELECT status FROM time_blocks WHERE id = ?`).get(id) as { status: string }).status;
+  }
+  function taskStatus(id: string): string {
+    return (sqlite.prepare(`SELECT status FROM tasks WHERE id = ?`).get(id) as { status: string }).status;
+  }
+
+  it('404s when Time-Sense is off', async () => {
+    const t = makeScheduledTask();
+    const b = makeBlock({ start: '10:00', end: '11:00', task: t });
+    expect((await api(srv.url, `/api/blocks/${b}/reschedule`, { method: 'POST' })).status).toBe(404);
+  });
+
+  it('skips the block, re-stages the same task (source_kind=reschedule), reopens it', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET time_sense_enabled = 1 WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const t = makeScheduledTask();
+    const b = makeBlock({ start: '10:00', end: '11:00', task: t });
+
+    const res = await api(srv.url, `/api/blocks/${b}/reschedule`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(res.body.staged).toBe(true);
+    expect(statusOf(b)).toBe('skipped');       // attempt 1 is history
+    expect(taskStatus(t)).toBe('open');         // reopened for Auto to re-place
+    const fp = flightRow(t);
+    expect(fp?.source_kind).toBe('reschedule'); // the §5 metric key
+    expect(fp?.selected).toBe(1);               // staged, not placed
+  });
+
+  it('422s a block with no task', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET time_sense_enabled = 1 WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const b = makeBlock({ start: '10:00', end: '11:00', kind: 'timeblock' });
+    expect((await api(srv.url, `/api/blocks/${b}/reschedule`, { method: 'POST' })).status).toBe(422);
+  });
+
+  it('422s a recurring-instance task (re-lands via its rule, not reschedule)', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET time_sense_enabled = 1 WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const parent = makeScheduledTask();
+    const inst = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, recurrence_parent_id) VALUES (uuid7(), 'Daily', ?, 'scheduled', ?) RETURNING id`)
+      .get(SYSTEM_OWNER, parent) as { id: string }).id;
+    const b = makeBlock({ start: '10:00', end: '11:00', task: inst });
+    expect((await api(srv.url, `/api/blocks/${b}/reschedule`, { method: 'POST' })).status).toBe(422);
+    expect(statusOf(b)).toBe('planned'); // rejected before any write
+  });
+});
