@@ -17,10 +17,10 @@ export type AuthMode = 'test' | 'standalone' | 'sso';
 
 export interface AuthConfig {
   mode: AuthMode;
-  jwksUrl?: string;        // required when mode === 'sso' (U1)
-  issuer?: string;         // documented contract value (U1)
-  audience: string;        // expected JWT `aud`
-  contractVersion: string; // pinned versioned-contract assertion (U1)
+  jwksUrl?: string;        // DEPRECATED/unused — SSO JWKS comes from CIPORTAL_ISSUER discovery, not this var
+  issuer?: string;         // DEPRECATED/unused — expected `iss` comes from the discovered CI-Portal doc, not this var
+  audience: string;        // LEGACY/unused — live aud check uses the OIDC client_id, not this value
+  contractVersion: string; // RESERVED — populated but NOT asserted; no JWT contract-version check is wired
   autoProvision: boolean;  // first unknown SSO `sub` → provision owner row vs 403
   kekB64?: string;         // 32-byte base64 KEK for the connection-token store (PR4)
   rateLimit: { windowMs: number; max: number; issueMax: number };
@@ -104,7 +104,7 @@ export interface CiPortalConfig {
 export interface SyncConfig {
   /** When false, the sync layer never pushes local changes back to providers. */
   writeback: boolean;
-  /** Master kill switch for the sync agent. */
+  /** Master kill switch: when true, syncAll/syncConnector no-op and outbound queueing/deletes are skipped. */
   disabled: boolean;
 }
 

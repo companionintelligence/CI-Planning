@@ -28,7 +28,7 @@ Companion Planning is a **local-first, AI-assisted personal planning system**. I
 | MCP | `@modelcontextprotocol/sdk` | Gmail + Google Calendar over OAuth |
 | Cron | `croner` + `scheduled_jobs` table | Persistent job registry |
 | PWA | `vite-plugin-pwa` | Offline shell + service worker; Web Push (VAPID) |
-| Auth | JWKS verify-only + hashed API-key | Never mints tokens; verify-only resource server |
+| Auth | Session-cookie login (OIDC/PKCE RP + local argon2id) + hashed API-key | Mints a signed, httpOnly cp_session on sso login; hashed x-api-key for standalone; no per-request Bearer |
 | Crypto | AES-256-GCM (`CP_KEK_B64`) | OAuth tokens sealed in `connection_tokens` |
 
 ---
@@ -278,7 +278,9 @@ SSE drives live updates across all views — task / block / job / reminder event
 |---|---|---|
 | `test` | Dev / CI (forbidden in production) | System owner injected; no token required |
 | `standalone` | Docker / self-hosted | Hashed `x-api-key` in `api_keys` table (SHA-256, `crypto.timingSafeEqual`) |
-| `sso` | CI Hub appliance | JWKS-verified Bearer JWT (`AUTH_JWKS_URL`); verify-only, never mints |
+| `sso` | CI Hub appliance | Login mints a signed, httpOnly `cp_session` cookie (Koa `app.keys` from `SESSION_SECRET`); every request is authenticated by that cookie, never a Bearer token. Two login sub-modes: CI-Portal OIDC (OAuth 2.1 + PKCE RP; id_token JWKS-verified once at the callback, endpoints discovered via `CIPORTAL_ISSUER`) or, with `DISABLE_OIDC=true`, local username/password (argon2id). |
+
+Sessions are stateless signed cookies stamped with `owners.session_epoch`; bumping that epoch (logout-all / Phase V password reset) instantly invalidates every outstanding cookie for that owner. The older generic `AUTH_JWKS_URL` / `AUTH_ISSUER` / `AUTH_AUDIENCE` / `AUTH_CONTRACT_VERSION` vars predate the CI-Portal OIDC flow and are no longer read by any code path.
 
 **Token crypto:** OAuth access/refresh tokens are sealed with AES-256-GCM in `connection_tokens`. The 32-byte key-encryption key is supplied as `CP_KEK_B64` — never committed; never in a log. Each row stores a `key_version` so keys can be rotated without re-authenticating.
 
