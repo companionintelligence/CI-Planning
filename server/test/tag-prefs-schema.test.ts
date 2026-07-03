@@ -43,15 +43,15 @@ describe('0097 tag_prefs merge', () => {
       CREATE TABLE tags (id TEXT PRIMARY KEY, kind TEXT);
       INSERT INTO tags (id, kind) VALUES ('pt1', 'pattern'), ('ct1', 'category');
       CREATE TABLE pattern_prefs (
-        id TEXT PRIMARY KEY, owner_id TEXT, direction_tag_id TEXT, auto_fill INTEGER,
+        id TEXT PRIMARY KEY, owner_id TEXT, pattern_tag_id TEXT, auto_fill INTEGER,
         reminder_offsets TEXT, icon_shape TEXT, color_token TEXT, default_minutes INTEGER,
-        UNIQUE (owner_id, direction_tag_id)
+        UNIQUE (owner_id, pattern_tag_id)
       );
       CREATE TABLE category_prefs (
         id TEXT PRIMARY KEY, owner_id TEXT, category_tag_id TEXT, color_token TEXT, default_minutes INTEGER,
         UNIQUE (owner_id, category_tag_id)
       );
-      INSERT INTO pattern_prefs (id, owner_id, direction_tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
+      INSERT INTO pattern_prefs (id, owner_id, pattern_tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
         VALUES ('pp1', 'o1', 'pt1', 0, '[5,10]', 'square', 'chart-2', 45);
       INSERT INTO category_prefs (id, owner_id, category_tag_id, color_token, default_minutes)
         VALUES ('cp1', 'o1', 'ct1', 'chart-1', 90);
