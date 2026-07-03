@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phase U — login screens</title>
+<style>
+  body { margin:0; background:#060a12; color:#e6edf6; font-family: ui-sans-serif, system-ui, sans-serif; padding:32px; }
+  h1 { font-size:18px; font-weight:500; }
+  .note { color:#93a4bd; font-size:13px; max-width:60ch; line-height:1.6; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:24px; margin-top:24px; }
+  .label { font-size:12px; color:#93a4bd; margin-bottom:8px; font-family: ui-monospace, monospace; }
+  .screen { background:#0a1018; border:0.5px solid #24304a; border-radius:16px; padding:40px 28px; display:flex; flex-direction:column; align-items:center; }
+  .mark { width:48px; height:48px; border-radius:16px; background:linear-gradient(135deg,#58ebbf,#409b9b); display:flex; align-items:center; justify-content:center; color:#041620; font-weight:700; }
+  .brand-sm { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:#409b9b; margin-top:12px; }
+  .brand-lg { font-size:20px; color:#e6edf6; margin-bottom:22px; }
+  .card { width:100%; max-width:320px; background:#121a2b; border:0.5px solid #24304a; border-radius:12px; padding:22px; box-sizing:border-box; }
+  .h { text-align:center; margin-bottom:16px; }
+  .h b { font-size:15px; font-weight:500; display:block; }
+  .h span { font-size:12px; color:#93a4bd; }
+  .btn { text-align:center; width:100%; box-sizing:border-box; background:linear-gradient(135deg,#58ebbf,#409b9b); color:#041620; font-weight:600; font-size:14px; padding:11px 0; border-radius:12px; }
+  .fld { display:flex; flex-direction:column; gap:4px; margin-bottom:12px; }
+  .fld span { font-size:11px; color:#93a4bd; }
+  .box { height:34px; border:0.5px solid #2c3a54; border-radius:12px; }
+  .box.pw { display:flex; align-items:center; padding:0 12px; color:#3a4a66; letter-spacing:2px; }
+  .foot { font-size:11px; color:#93a4bd; margin-top:16px; }
+</style>
+</head>
+<body>
+  <h1>Phase U — login screens</h1>
+  <p class="note">Faithful reproduction of Companion Planning's two Phase U login screens, built from the
+  actual <code>client/src/views/Login.tsx</code> markup and the app's design tokens. The server picks which
+  one to show via <code>GET /api/auth/config</code>. (Rendered reproduction — the live app renders these
+  identically; verified via DOM snapshot and computed-style inspection.)</p>
+  <div class="grid">
+    <div>
+      <div class="label">AUTH_MODE=sso · CI-Portal SSO</div>
+      <div class="screen">
+        <div class="mark">CP</div>
+        <div class="brand-sm">Companion</div>
+        <div class="brand-lg">Planning</div>
+        <div class="card">
+          <div class="h"><b>Sign in</b><span>Use your CI-Portal account to continue.</span></div>
+          <div class="btn">Continue with CI-Portal</div>
+        </div>
+        <div class="foot">Companion Planning</div>
+      </div>
+    </div>
+    <div>
+      <div class="label">AUTH_MODE=sso · DISABLE_OIDC=true · local</div>
+      <div class="screen">
+        <div class="mark">CP</div>
+        <div class="brand-sm">Companion</div>
+        <div class="brand-lg">Planning</div>
+        <div class="card">
+          <div class="h"><b>Sign in</b><span>Enter your username and password.</span></div>
+          <div class="fld"><span>Username</span><div class="box"></div></div>
+          <div class="fld"><span>Password</span><div class="box pw">••••••••</div></div>
+          <div class="btn">Sign in</div>
+        </div>
+        <div class="foot">Companion Planning</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

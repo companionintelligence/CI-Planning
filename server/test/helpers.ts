@@ -57,8 +57,13 @@ export function resetDb(): void {
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
-  // system owner before). Clear their prefs first — not every owner_id FK cascades.
+  // system owner before). Clear owner-scoped tables first — several `owner_id` FKs are NO-ACTION:
+  // scheduling_prefs, tag_prefs (owner_id), patterns and pattern_types. patterns before pattern_types
+  // (patterns.type_id), pattern_tasks cascades off patterns.
   sqlite.prepare(`DELETE FROM scheduling_prefs WHERE owner_id != ?`).run(SYSTEM_OWNER);
+  sqlite.prepare(`DELETE FROM tag_prefs WHERE owner_id != ?`).run(SYSTEM_OWNER);
+  sqlite.prepare(`DELETE FROM patterns WHERE owner_id != ?`).run(SYSTEM_OWNER);
+  sqlite.prepare(`DELETE FROM pattern_types WHERE owner_id != ?`).run(SYSTEM_OWNER);
   sqlite.prepare(`DELETE FROM owners WHERE id != ?`).run(SYSTEM_OWNER);
   // Pin the scheduling prefs that drive Auto placement / recurrence / recall back to
   // a deterministic baseline. resetDb keeps the prefs ROW, and files run in a

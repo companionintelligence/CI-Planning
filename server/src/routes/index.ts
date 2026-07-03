@@ -20,6 +20,7 @@ import { categoryPrefsRouter } from './category-prefs.js';
 import { notificationsRouter } from './notifications.js';
 import { backupRouter } from './backup.js';
 import { healthRouter } from './health.js';
+import { authRouter } from './auth.js';
 import { oauthRouter } from './oauth.js';
 import { planRouter } from './plan.js';
 import { syncRouter } from './sync.js';
@@ -32,6 +33,7 @@ import { plannerRouter } from './planner.js';
 export function mountRoutes(app: Koa) {
   for (const router of [
     healthRouter(),
+    authRouter(),
     sseRouter(),
     tasksRouter(),
     blocksRouter(),

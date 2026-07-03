@@ -2,6 +2,7 @@ import type Koa from 'koa';
 import { config } from '../config.js';
 import { runWithOwner, SYSTEM_OWNER } from '../context.js';
 import { verifyApiKey } from './apiKey.js';
+import { verifySession } from './session.js';
 import { hasScope } from './scopes.js';
 import type { VerifiedClaims } from './types.js';
 
@@ -13,16 +14,33 @@ import type { VerifiedClaims } from './types.js';
  *
  *   - `test` mode  → fixed SYSTEM_OWNER, no credential (dev + the test suite). This
  *                    path is hard-rejected at boot under NODE_ENV=production.
- *   - otherwise    → a hashed `x-api-key` (standalone). SSO Bearer JWTs land in PR2.
+ *   - `sso` mode   → the signed httpOnly session cookie (verifySession), for BOTH
+ *                    sub-modes: CI-Portal SSO (U1) and DISABLE_OIDC local login (U2).
+ *                    The JWKS/RS256 id_token check runs ONCE during the CI-Portal
+ *                    login callback (to mint the session) — never per request; there
+ *                    is no Bearer path.
+ *   - `standalone` → a hashed `x-api-key`.
  *
  * Read methods need `planning:read`, mutations `planning:write` (403 on mismatch).
  */
 
 // Reachable without authentication: liveness + the auth-bootstrap config a client
-// needs *before* it has a credential, plus the Google OAuth callback — Google's
-// redirect arrives with no app credential and the owner is resolved SOLELY from the
-// matched oauth_states row (I2). Everything else under /api is gated.
-const PUBLIC_PREFIXES = ['/api/health', '/api/auth/config', '/api/oauth/google/callback'];
+// needs *before* it has a credential, the local-login endpoints (U2 — you can't
+// present a session before you've logged in; logout just clears the cookie), the
+// CI-Portal login redirect pair (U1 — /start begins the login so it runs pre-
+// session; the portal's redirect to /callback arrives with no app credential and
+// the flow is resolved SOLELY from the matched auth_states row + verified
+// id_token), plus the Google OAuth callback (same shape, oauth_states, I2).
+// Everything else under /api is gated.
+const PUBLIC_PREFIXES = [
+  '/api/health',
+  '/api/auth/config',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/auth/ciportal/start',
+  '/api/auth/ciportal/callback',
+  '/api/oauth/google/callback',
+];
 
 function isPublic(path: string): boolean {
   return PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
@@ -59,13 +77,27 @@ export function requireAuth(): Koa.Middleware {
 
     let claims: VerifiedClaims;
     try {
-      const apiKey = presentedApiKey(ctx);
-      if (!apiKey) {
-        ctx.status = 401;
-        ctx.body = { error: 'unauthenticated' };
-        return;
+      if (config.auth.mode === 'sso') {
+        // Both sso sub-modes end their login by minting the signed, httpOnly session
+        // cookie — CI-Portal SSO (U1) via the OAuth callback, local username/password
+        // (U2, DISABLE_OIDC) via /api/auth/login — so the request-time check is the
+        // same for both: trust only the verified session.
+        const session = verifySession(ctx);
+        if (!session) {
+          ctx.status = 401;
+          ctx.body = { error: 'unauthenticated' };
+          return;
+        }
+        claims = session;
+      } else {
+        const apiKey = presentedApiKey(ctx);
+        if (!apiKey) {
+          ctx.status = 401;
+          ctx.body = { error: 'unauthenticated' };
+          return;
+        }
+        claims = verifyApiKey(apiKey); // standalone: hashed x-api-key
       }
-      claims = verifyApiKey(apiKey); // SSO Bearer path is added in PR2
     } catch (e) {
       ctx.status = (e as { status?: number }).status ?? 401;
       ctx.body = { error: 'unauthenticated' };

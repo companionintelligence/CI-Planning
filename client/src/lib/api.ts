@@ -412,7 +412,37 @@ export const api = {
     unlinkTask: (id: string, task_id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/tasks/${task_id}`),
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
   },
+
+  // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────
+  // Session lives in an httpOnly cookie set by the server; same-origin fetch sends
+  // it automatically, so these need no token handling. `config` is public (the
+  // pre-login mode probe); `me` 401s when unauthenticated.
+  auth: {
+    config: () => request<AuthConfigResponse>('GET', '/auth/config'),
+    me: () => request<AuthMe>('GET', '/auth/me'),
+    login: (username: string, password: string) =>
+      request<{ ok: boolean }>('POST', '/auth/login', { username, password }),
+    logout: () => request<{ ok: boolean }>('POST', '/auth/logout'),
+  },
 };
+
+export type AuthMode = 'test' | 'standalone' | 'sso';
+export interface AuthConfigResponse {
+  mode: AuthMode;
+  disableOidc: boolean;
+}
+export interface AuthMe {
+  ownerId: string;
+  name: string;
+  email: string | null;
+  username: string | null;
+}
+/** True when this deployment gates the SPA behind a login screen (U3). */
+export function authGateActive(cfg: AuthConfigResponse): boolean {
+  return cfg.mode === 'sso';
+}
+/** Where the "Sign in with CI-Portal" button sends the browser (a top-level nav, not fetch). */
+export const CIPORTAL_START = `${BASE}/auth/ciportal/start`;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface Block {
