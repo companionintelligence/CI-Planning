@@ -100,6 +100,12 @@ export interface CiPortalConfig {
   jwksUri?: string;
 }
 
+/** GraphQL surface (Phase W). Additive to REST; mounted at /api/graphql. */
+export interface GraphqlConfig {
+  /** Max query complexity (graphql-query-complexity), mirroring CI-Server's ComplexityPlugin. */
+  maxComplexity: number;
+}
+
 /** Sync engine toggles (Wave 0). */
 export interface SyncConfig {
   /** When false, the sync layer never pushes local changes back to providers. */
@@ -134,6 +140,7 @@ export interface Config {
   auth: AuthConfig;
   ciportal: CiPortalConfig;
   mail: MailConfig;
+  graphql: GraphqlConfig;
   google: GoogleConfig;
   sync: SyncConfig;
   kek: KekConfig;
@@ -213,6 +220,9 @@ export const config: Config = {
     pass: process.env.SMTP_PASS,
     from: process.env.MAIL_FROM ?? 'Companion Planning <no-reply@companion.local>',
     appBaseUrl: process.env.APP_BASE_URL ?? publicBaseUrl,
+  },
+  graphql: {
+    maxComplexity: Number(process.env.GRAPHQL_MAX_COMPLEXITY ?? 1000),
   },
   google: {
     clientId: process.env.CP_GOOGLE_CLIENT_ID,

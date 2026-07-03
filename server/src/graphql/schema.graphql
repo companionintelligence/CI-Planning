@@ -1,0 +1,55 @@
+# Phase W — GraphQL base schema (bootstrap).
+#
+# CI-Server-compatible conventions, kept diff-comparable to CI-Server's
+# __generated__/schema.graphql: the Node/Connection/Edge/PageInfo interfaces, the
+# DateTime/JSON scalars, and the polymorphic Taggable/EntityTagType tagging shape.
+# Entity types (TagType, TaskType, TimeBlockType, …) are added per docs/W-graphql-schema.md;
+# this bootstrap lands only the foundation plus a `viewer` probe.
+
+scalar DateTime
+scalar JSON
+
+interface Node {
+  id: ID!
+}
+
+interface Connection {
+  edges: [Edge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+interface Edge {
+  cursor: String!
+  node: Node!
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+}
+
+# Polymorphic tagging, adopted 1:1 from CI-Server. Entity types will `implement Taggable`.
+interface Taggable {
+  tags: [EntityTagType!]!
+}
+
+type EntityTagType implements Node {
+  id: ID!
+  label: String!
+  taggedAt: DateTime!
+}
+
+# The authenticated caller — the bootstrap probe. Proves the auth context
+# (currentOwnerId) flows into resolvers and the custom scalars serialize.
+type Viewer {
+  ownerId: ID!
+  serverTime: DateTime!
+}
+
+type Query {
+  """The current authenticated owner, resolved from the session/credential."""
+  viewer: Viewer!
+}
