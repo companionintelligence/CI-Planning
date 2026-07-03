@@ -22,7 +22,7 @@ export interface SchedulePatternEditorProps {
 }
 
 export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
-  const patternTagList = () => (tags() ?? []).filter((t) => t.kind === 'pattern');
+  const patternTagList = () => (tags() ?? []).filter((t) => t.kind === 'direction');
 
   // Re-fetched whenever the targeted day type changes.
   const [data] = createResource(() => props.dayType, (dt) => api.patternBlocks.forDay(dt).then((r) => r.windows));

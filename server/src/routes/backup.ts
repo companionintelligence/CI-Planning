@@ -17,7 +17,11 @@ import { writeAudit } from '../lib/audit.js';
 // (UNIQUE(owner_id, name) replaces the global UNIQUE(name)); the tag axis + its junctions are
 // now owner-scoped on export/restore, so the tags/junction wipe no longer cross-tenant-
 // cascades another owner's entity_tags — completing the entity_tags restore-isolation T1 began.
-const EXPORT_VERSION = '6';
+// · '7' Phase Z / W2: the tag grouping axis reverted from kind='pattern' to kind='direction'
+// (tag_patterns→tag_directions, and pattern_tag_id→direction_tag_id on tag_directions /
+// pattern_blocks / category_direction_optouts). A pre-Z '6' dump is still restorable — the
+// import remaps the old key + column (see the v6→v7 block below).
+const EXPORT_VERSION = '7';
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
@@ -50,10 +54,10 @@ const OWNER_TABLES = [
   'plan_hints',
   'replan_suggestions',
   'estimate_calibration',
-  // Phase Z · Z0: user-confirmed tag-combo pins (0106). Additive with column
-  // DEFAULTs on estimate_calibration's new scope columns and a restore that
-  // treats absent payload keys as empty, so v6 exports from before Z still
-  // restore cleanly — no EXPORT_VERSION bump needed.
+  // Phase Z · Z0: user-confirmed tag-combo pins (0107). Purely additive — a new
+  // table plus DEFAULT-backed scope columns on estimate_calibration; the restore
+  // treats an absent payload key as empty, so an older dump lacking this table
+  // still restores. (The '7' bump was for W2's direction rename, not this.)
   'calibration_combo_pins',
 ] as const;
 
@@ -166,7 +170,7 @@ export function backupRouter() {
       // T2: tags are owner-scoped (an OWNER_TABLES entry); the 3 junctions carry no owner_id,
       // so they scope through their parent tags (tag_id IN this owner's tags).
       tags: ownerData['tags'],
-      tag_patterns: sqlite.prepare(`SELECT * FROM tag_patterns WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
+      tag_directions: sqlite.prepare(`SELECT * FROM tag_directions WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
       tag_categories: sqlite.prepare(`SELECT * FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
       category_direction_optouts: sqlite.prepare(`SELECT * FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
       pattern_types: ownerData['pattern_types'],
@@ -222,15 +226,45 @@ export function backupRouter() {
       ctx.body = { error: 'Missing export version' };
       return;
     }
-    if (body['version'] !== EXPORT_VERSION) {
+    // Accept the current version and the immediately-prior v6 (pre-Phase-Z, when the grouping
+    // axis was kind='pattern'). A v6 dump is remapped to the reverted schema below.
+    const SUPPORTED_VERSIONS = ['6', EXPORT_VERSION];
+    if (!SUPPORTED_VERSIONS.includes(String(body['version']))) {
       ctx.status = 400;
-      ctx.body = { error: `Unsupported export version '${body['version']}'; expected '${EXPORT_VERSION}'` };
+      ctx.body = { error: `Unsupported export version '${body['version']}'; expected one of ${SUPPORTED_VERSIONS.join(', ')}` };
       return;
     }
     if (body['owner_id'] !== ownerId) {
       ctx.status = 403;
       ctx.body = { error: 'Export owner_id does not match current owner' };
       return;
+    }
+    // v6 → v7 back-compat (Phase Z / W2): the direction axis reverted. Rename the old payload
+    // key tag_patterns → tag_directions, rewrite any row field pattern_tag_id → direction_tag_id on the
+    // affected tables, and translate kind='pattern' → 'direction' on tags + tag_prefs rows.
+    if (String(body['version']) === '6') {
+      if (Array.isArray(body['tag_patterns']) && body['tag_directions'] === undefined) {
+        body['tag_directions'] = body['tag_patterns'];
+      }
+      for (const key of ['tag_directions', 'pattern_blocks', 'category_direction_optouts']) {
+        const rows = body[key];
+        if (Array.isArray(rows)) {
+          for (const row of rows as Record<string, unknown>[]) {
+            if (row && Object.prototype.hasOwnProperty.call(row, 'pattern_tag_id')) {
+              row['direction_tag_id'] = row['pattern_tag_id'];
+              delete row['pattern_tag_id'];
+            }
+          }
+        }
+      }
+      for (const key of ['tags', 'tag_prefs']) {
+        const rows = body[key];
+        if (Array.isArray(rows)) {
+          for (const row of rows as Record<string, unknown>[]) {
+            if (row && row['kind'] === 'pattern') row['kind'] = 'direction';
+          }
+        }
+      }
     }
     for (const key of ['scheduling_prefs', 'tags', 'tasks', 'patterns'] as const) {
       if (!Array.isArray(body[key])) {
@@ -292,7 +326,7 @@ export function backupRouter() {
       // `DELETE FROM tags` cascade-wiped OTHER owners' entity_tags via entity_tags.tag_id.
       sqlite.prepare(`DELETE FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
       sqlite.prepare(`DELETE FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare(`DELETE FROM tag_patterns WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
+      sqlite.prepare(`DELETE FROM tag_directions WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
       sqlite.prepare('DELETE FROM tags WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM daily_recap WHERE owner_id = ?').run(ownerId);
       sqlite.prepare('DELETE FROM scheduling_prefs WHERE owner_id = ?').run(ownerId);
@@ -302,7 +336,7 @@ export function backupRouter() {
       counts['scheduling_prefs'] = insertRows('scheduling_prefs', g('scheduling_prefs'));
       counts['daily_recap']      = insertRows('daily_recap', g('daily_recap'));
       counts['tags']             = insertRows('tags', g('tags'));
-      counts['tag_patterns']     = insertRows('tag_patterns', g('tag_patterns'));
+      counts['tag_directions']   = insertRows('tag_directions', g('tag_directions'));
       counts['tag_categories']   = insertRows('tag_categories', g('tag_categories'));
       counts['category_direction_optouts'] = insertRows('category_direction_optouts', g('category_direction_optouts'));
       counts['pattern_types']    = insertRows('pattern_types', g('pattern_types'));
