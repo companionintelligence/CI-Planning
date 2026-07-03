@@ -191,12 +191,16 @@ export function authRouter() {
       throw httpError(429, 'too many reset requests — try again shortly');
     }
 
-    // Resolve by username OR email, excluding the sentinel (N-SENTINEL).
-    const owner = sqlite
-      .prepare(
-        `SELECT id, email, backup_email FROM owners WHERE (username = ? OR email = ?) AND id <> ? LIMIT 1`,
-      )
-      .get(id, id, SYSTEM_OWNER_ID) as { id: string; email: string | null; backup_email: string | null } | undefined;
+    // Resolve by username OR email, excluding the sentinel (N-SENTINEL). Prefer an email match
+    // when the identifier looks like an email to avoid ambiguity with email-shaped usernames.
+    const looksLikeEmail = id.includes('@');
+    const owner = (looksLikeEmail
+      ? sqlite
+          .prepare(`SELECT id, email, backup_email FROM owners WHERE email = ? AND id <> ? LIMIT 1`)
+          .get(id, SYSTEM_OWNER_ID)
+      : sqlite
+          .prepare(`SELECT id, email, backup_email FROM owners WHERE username = ? AND id <> ? LIMIT 1`)
+          .get(id, SYSTEM_OWNER_ID)) as { id: string; email: string | null; backup_email: string | null } | undefined;
 
     // The neutral response is returned in every branch below.
     const NEUTRAL = { ok: true, message: 'If an account matches, a reset link is on its way.' };
