@@ -10,7 +10,7 @@ service, in four slices:
 | **U0** | `owners` gains auth-identity columns (`external_subject`, `username`, `password_hash`) + `owner ≡ user` becomes canon | #225 |
 | **U1** | **CI-Portal SSO** — OAuth 2.1 + PKCE Relying-Party login against `hub.companionintelligence.com` | #228 |
 | **U2** | **Local username/password** login (`DISABLE_OIDC`) + session cookie | #226 |
-| **U3** | **SolidJS `/login` screen** + auth-gated route guard | #227 |
+| **U3** | **SolidJS `/login` screen** + auth-gated route guard | #228 |
 
 > **Owner ≡ User.** There is no separate `users` table. The internal `owners` table *is* the
 > user/account table (Phase T decision #1, 1:1 tenant = user). Auth columns live directly on it.
