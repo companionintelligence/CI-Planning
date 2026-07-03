@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { blockPasses, isAllDay, isTimed } from './overlay.js';
+import {
+  blockPassesAxes,
+  axisPasses,
+  emptyAxisDeselected,
+  noAxisFilter,
+  isAllDay,
+  isTimed,
+} from './overlay.js';
+import type { AxisDeselected, TagAxis, TagKindLookup } from './overlay.js';
 import type { Block, Task } from './api.js';
 
 function blk(o: Partial<Block> = {}): Block {
@@ -31,41 +39,102 @@ function task(o: Partial<Task> = {}): Task {
   };
 }
 
-describe('overlay — tag AND priority (combinable)', () => {
-  const eng = task({ id: 10, tags: ['eng', 'docs'], priority: 2 });
+// A fixed taxonomy for the tests: three directions, two intentions, two categories.
+const kindOf: TagKindLookup = new Map<string, TagAxis>([
+  ['home', 'direction'],
+  ['work', 'direction'],
+  ['community', 'direction'],
+  ['deep', 'intention'],
+  ['admin', 'intention'],
+  ['family', 'category'],
+  ['me', 'category'],
+]);
 
-  it('no filter set → everything passes (including no-task blocks)', () => {
-    expect(blockPasses(blk({ task_id: 10 }), eng, [], [])).toBe(true);
-    expect(blockPasses(blk({ task_id: undefined }), undefined, [], [])).toBe(true);
+/** Build an AxisDeselected from a plain per-axis list of hidden names. */
+function deselect(o: Partial<Record<TagAxis, string[]>> = {}): AxisDeselected {
+  const d = emptyAxisDeselected();
+  for (const axis of ['direction', 'intention', 'category'] as TagAxis[]) {
+    for (const n of o[axis] ?? []) d[axis].add(n);
+  }
+  return d;
+}
+
+describe('axisPasses — OR within a group, untagged-on-axis always passes', () => {
+  it('all-on (empty deselect) passes everything, tagged or not', () => {
+    expect(axisPasses(['home'], 'direction', kindOf, new Set())).toBe(true);
+    expect(axisPasses([], 'direction', kindOf, new Set())).toBe(true);
   });
 
-  it('tag-only filter passes matching, rejects non-matching', () => {
-    expect(blockPasses(blk({ task_id: 10 }), eng, ['eng'], [])).toBe(true);
-    expect(blockPasses(blk({ task_id: 10 }), eng, ['home'], [])).toBe(false);
+  it('deselecting a direction hides only blocks whose only direction is that one', () => {
+    const hidden = new Set(['home']);
+    expect(axisPasses(['home'], 'direction', kindOf, hidden)).toBe(false);
+    expect(axisPasses(['work'], 'direction', kindOf, hidden)).toBe(true);
   });
 
-  it('priority-only filter passes matching, rejects non-matching', () => {
-    expect(blockPasses(blk({ task_id: 10 }), eng, [], [2])).toBe(true);
-    expect(blockPasses(blk({ task_id: 10 }), eng, [], [1])).toBe(false);
+  it('OR within group: a block tagged home+work still shows while work is selected', () => {
+    const hidden = new Set(['home']);
+    expect(axisPasses(['home', 'work'], 'direction', kindOf, hidden)).toBe(true);
+    // both of its directions hidden ⇒ gone
+    expect(axisPasses(['home', 'work'], 'direction', kindOf, new Set(['home', 'work']))).toBe(false);
   });
 
-  it('combined tag+priority requires BOTH to hold', () => {
-    expect(blockPasses(blk({ task_id: 10 }), eng, ['eng'], [2])).toBe(true);  // both match
-    expect(blockPasses(blk({ task_id: 10 }), eng, ['eng'], [5])).toBe(false); // prio fails
-    expect(blockPasses(blk({ task_id: 10 }), eng, ['home'], [2])).toBe(false); // tag fails
+  it('untagged-on-axis ALWAYS passes, even with chips deselected', () => {
+    // block has an intention but no direction ⇒ passes the direction axis regardless
+    expect(axisPasses(['deep'], 'direction', kindOf, new Set(['home', 'work', 'community']))).toBe(true);
+    // block with no tags at all passes every axis
+    expect(axisPasses([], 'direction', kindOf, new Set(['home']))).toBe(true);
+  });
+});
+
+describe('blockPassesAxes — AND across the three axes + priority', () => {
+  const allOn = emptyAxisDeselected();
+  const hw = task({ id: 10, tags: ['home', 'deep', 'family'], priority: 2 });
+
+  it('all-on passes everything (tagged block and break/buffer alike)', () => {
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, allOn, [])).toBe(true);
+    expect(blockPassesAxes(blk({ task_id: undefined }), undefined, kindOf, allOn, [])).toBe(true);
   });
 
-  it('a block with no task_id only appears when no filter is set', () => {
-    expect(blockPasses(blk({ task_id: undefined }), undefined, [], [])).toBe(true);
-    expect(blockPasses(blk({ task_id: undefined }), undefined, ['eng'], [])).toBe(false);
-    expect(blockPasses(blk({ task_id: undefined }), undefined, [], [2])).toBe(false);
+  it('deselecting one direction hides only blocks matching that direction', () => {
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, deselect({ direction: ['home'] }), [])).toBe(false);
+    const work = task({ id: 11, tags: ['work', 'deep'], priority: 2 });
+    expect(blockPassesAxes(blk({ task_id: 11 }), work, kindOf, deselect({ direction: ['home'] }), [])).toBe(true);
   });
 
-  it('clearing the filter restores all blocks', () => {
-    const filtered = blockPasses(blk({ task_id: 10 }), eng, ['home'], []);
-    expect(filtered).toBe(false);
-    const cleared = blockPasses(blk({ task_id: 10 }), eng, [], []);
-    expect(cleared).toBe(true);
+  it('AND across groups: pass Direction but fail Intention ⇒ hidden', () => {
+    // still-selected direction (work), but its only intention (deep) is hidden
+    const work = task({ id: 11, tags: ['work', 'deep'], priority: 2 });
+    expect(blockPassesAxes(blk({ task_id: 11 }), work, kindOf, deselect({ intention: ['deep'] }), [])).toBe(false);
+  });
+
+  it('untagged-on-axis still passes when OTHER axes are filtered', () => {
+    // task has a direction but no intention/category; hiding intentions must not hide it
+    const dirOnly = task({ id: 12, tags: ['work'], priority: 2 });
+    expect(blockPassesAxes(blk({ task_id: 12 }), dirOnly, kindOf, deselect({ intention: ['deep', 'admin'] }), [])).toBe(true);
+  });
+
+  it('priority still ANDs with the tag axes', () => {
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, allOn, [2])).toBe(true);  // prio matches
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, allOn, [5])).toBe(false); // prio fails
+    // tag ok but priority fails
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, deselect(), [5])).toBe(false);
+  });
+
+  it('a break/buffer (no task) passes all tag axes but is hidden by any priority filter', () => {
+    expect(blockPassesAxes(blk({ task_id: undefined }), undefined, kindOf, deselect({ direction: ['home'] }), [])).toBe(true);
+    expect(blockPassesAxes(blk({ task_id: undefined }), undefined, kindOf, allOn, [2])).toBe(false);
+  });
+
+  it('clearing the filter (reset to all-on) restores a hidden block', () => {
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, deselect({ direction: ['home'] }), [])).toBe(false);
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, emptyAxisDeselected(), [])).toBe(true);
+  });
+});
+
+describe('noAxisFilter helper', () => {
+  it('true only when nothing is deselected on any axis', () => {
+    expect(noAxisFilter(emptyAxisDeselected())).toBe(true);
+    expect(noAxisFilter(deselect({ category: ['me'] }))).toBe(false);
   });
 });
 
