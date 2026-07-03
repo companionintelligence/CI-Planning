@@ -130,13 +130,19 @@ function BlockChip(props: { placed: Placed; day: string }) {
   const heightPx = () => Math.max(yOf(props.placed.height), MIN_CHIP_PX);
 
   // Task chips open the task editor; the block links to its task via task_id.
-  function openTaskEditor(e: MouseEvent) {
+  function openTaskEditor(e: MouseEvent | KeyboardEvent) {
     if (!isTask()) return;
     const tid = b().task_id;
     if (!tid) return;
     e.preventDefault();
     e.stopPropagation();
     setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: tid } });
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      openTaskEditor(e);
+    }
   }
 
   return (
@@ -163,11 +169,15 @@ function BlockChip(props: { placed: Placed; day: string }) {
       // the affordance the owner asked for; the whole chip carries `title` so a hover
       // anywhere over that narrow container reveals its name reliably.
       title={`${b().title} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}`}
+      // Task chips are keyboard-accessible buttons; containers are decorative only.
+      role={isTask() ? 'button' : undefined}
+      tabIndex={isTask() ? 0 : undefined}
       // Swallow pointerdown on ANY chip so a click on a block never falls through to
       // the empty-space `clickToCreate` handler (which arms on the day column's
-      // pointerdown). Tasks additionally open their editor on click.
+      // pointerdown). Tasks additionally open their editor on click or Enter/Space.
       onPointerDown={(e) => e.stopPropagation()}
       onClick={openTaskEditor}
+      onKeyDown={handleKeyDown}
     >
       {/* Task chips keep their label — a calendar of unlabeled tasks is unusable.
           Containers render no body text; the thick colored left edge is the label. */}
