@@ -127,7 +127,7 @@ describe('U2 — login / session / logout', () => {
     expect(res.status).toBe(200);
     // Nothing to clear ⇒ no cp_session deletion cookie, so a cross-site POST can't force logout.
     const setCookies = res.headers.getSetCookie?.() ?? [];
-    expect(setCookies.some((c) => c.startsWith('cp_session='))).toBe(false);
+    expect(setCookies.some((c) => c.startsWith('cp_session=') || c.startsWith('cp_session.sig='))).toBe(false);
   });
 
   it('rejects a wrong password and an unknown username with an identical generic 401', async () => {
