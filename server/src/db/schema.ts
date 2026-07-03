@@ -231,6 +231,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   enableRoutines: integer('enable_routines', { mode: 'boolean' }).default(false),
   // cockpit-v2 Phase 6: recall=clone of a Past task copies Routine membership only when ON (default OFF).
   recallKeepsPattern: integer('recall_keeps_pattern', { mode: 'boolean' }).default(false),
+  // Phase Z Time-Sense master flag (0105). Default OFF — gates the Focus Ritual,
+  // Calibration Loop scoping, and EOD Alignment while the phase lands dark.
+  timeSenseEnabled: integer('time_sense_enabled', { mode: 'boolean' }).default(false),
   // Per-owner Ollama model overrides (null = use the env default). 0012.
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings
