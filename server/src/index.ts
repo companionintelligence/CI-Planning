@@ -19,7 +19,7 @@ await ensureLocalAuthBootstrap();
 const recovered = recoverStaleFreezeLocks();
 if (recovered > 0) logger.info(`Recovered ${recovered} stale auto-block lock(s) from an interrupted reflow`);
 
-const app = buildApp();
+const app = await buildApp();
 
 const server = app.listen(config.port, () => {
   logger.info(`Companion Planning running on http://localhost:${config.port}`);

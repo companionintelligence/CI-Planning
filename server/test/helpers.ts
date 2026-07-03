@@ -12,7 +12,7 @@ export interface TestServer {
 
 /** Start the Koa app on an ephemeral port. */
 export async function startTestServer(): Promise<TestServer> {
-  const app = buildApp();
+  const app = await buildApp();
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s));
   });
