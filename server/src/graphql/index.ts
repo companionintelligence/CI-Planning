@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type Koa from 'koa';
@@ -13,8 +13,14 @@ import { complexityPlugin } from './complexity.js';
 // Schema-first: the SDL is the source of truth (kept diff-comparable to CI-Server's
 // generated schema.graphql). Loaded relative to this module — the server runs via tsx
 // on src/ (dev + prod), so the .graphql sits beside its compiled-away importer.
+// Concatenate every *.graphql in this dir (sorted, so schema.graphql's base types load
+// before tag.graphql's `extend type Query`). One typeDefs document, schema-first.
 const _dir = dirname(fileURLToPath(import.meta.url));
-const typeDefs = readFileSync(join(_dir, 'schema.graphql'), 'utf8');
+const typeDefs = readdirSync(_dir)
+  .filter((f) => f.endsWith('.graphql'))
+  .sort()
+  .map((f) => readFileSync(join(_dir, f), 'utf8'))
+  .join('\n');
 
 export interface GraphqlContext {
   ownerId: string;
