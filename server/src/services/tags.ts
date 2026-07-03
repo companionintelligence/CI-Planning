@@ -289,7 +289,7 @@ export function categoryIsReferenced(categoryTagId: string): boolean {
 // ── Tag CRUD orchestration (extracted from routes/tags.ts so REST + GraphQL share ONE
 //    implementation — no duplicated business logic or owner-scoping; Phase W Decision 3) ──
 
-/** Resolve direction (direction) NAMES to the OWNER's direction ids (skips unknown / non-pattern / other owners'). */
+/** Resolve direction (direction) NAMES to the OWNER's direction ids (skips unknown / non-direction / other owners'). */
 function directionIds(names: string[], owner: string): string[] {
   const out: string[] = [];
   const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`);
