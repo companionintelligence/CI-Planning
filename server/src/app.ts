@@ -7,9 +7,11 @@ import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { requireAuth } from './lib/auth/requireAuth.js';
 import { mountRoutes } from './routes/index.js';
+import { mountGraphql } from './graphql/index.js';
 
-/** Build the Koa app (routes + middleware) without listening or starting cron. */
-export function buildApp(): Koa {
+/** Build the Koa app (routes + middleware) without listening or starting cron.
+ * Async because the GraphQL (Apollo) server must `start()` before it can be mounted. */
+export async function buildApp(): Promise<Koa> {
   const app = new Koa();
 
   // Behind a trusted TLS-terminating proxy (CI-Hub tunnel): honor X-Forwarded-Proto
@@ -42,6 +44,10 @@ export function buildApp(): Koa {
   app.use(requireAuth());
 
   mountRoutes(app);
+
+  // Phase W: GraphQL at /api/graphql, mounted AFTER requireAuth so it's auth-gated and
+  // resolvers read the owner bound in AsyncLocalStorage. Additive to REST.
+  await mountGraphql(app);
 
   // Serve built client in production; dev uses the Vite proxy.
   if (existsSync(config.staticDir)) {

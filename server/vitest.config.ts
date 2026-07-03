@@ -7,6 +7,15 @@ import { join } from 'node:path';
 const testDbPath = join(tmpdir(), `companion-planning-test-${process.pid}.db`);
 
 export default defineConfig({
+  // graphql-js throws "Duplicate graphql modules" if two instances load at once (its
+  // instanceof guard). Under vitest's transform pipeline @apollo/server,
+  // graphql-query-complexity and our own imports can otherwise resolve separate copies;
+  // dedupe forces the single installed graphql@16 (pinned via pnpm overrides). Prod runs
+  // under tsx where CJS require-caches graphql to one instance, so this is test-only.
+  // Keep a single graphql instance across all importers (Apollo + our resolvers/scalars):
+  // graphql-js throws "Duplicate graphql modules" if two load at once. Belt-and-suspenders
+  // now that the complexity limiter uses graphql directly (no dual-package dep).
+  resolve: { dedupe: ['graphql'] },
   test: {
     environment: 'node',
     // Tests share one DB file and reset tables themselves; keep files sequential to avoid write races.
