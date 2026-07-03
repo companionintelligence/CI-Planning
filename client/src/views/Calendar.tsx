@@ -200,13 +200,20 @@ export function Calendar() {
     category: 'Category',
   };
 
-  /** Tags of one axis, ordered per the Tags-page convention (brand first, then A–Z). */
-  function axisTags(axis: TagAxis) {
-    const of = (tags() ?? []).filter((t) => t.kind === axis);
-    if (axis === 'direction') return sortDirections(of);
-    if (axis === 'category') return sortCategories(of);
-    return [...of].sort((a, b) => a.name.localeCompare(b.name));
-  }
+  /** Tags per axis, ordered per the Tags-page convention (brand first, then A–Z).
+   *  Memoized so the filter/sort runs only when the tag list changes — not on every
+   *  chip toggle or unrelated re-render (the chip rows read this twice per axis). */
+  const axisTagsByAxis = createMemo(() => {
+    const all = tags() ?? [];
+    const build = (axis: TagAxis) => {
+      const of = all.filter((t) => t.kind === axis);
+      if (axis === 'direction') return sortDirections(of);
+      if (axis === 'category') return sortCategories(of);
+      return [...of].sort((a, b) => a.name.localeCompare(b.name));
+    };
+    return { direction: build('direction'), intention: build('intention'), category: build('category') };
+  });
+  const axisTags = (axis: TagAxis) => axisTagsByAxis()[axis];
 
   /** A chip is ON unless its name is in that axis's deselected set. */
   function chipOn(axis: TagAxis, name: string) {
@@ -301,6 +308,8 @@ export function Calendar() {
                   <For each={axisTags(axis)}>
                     {(t) => (
                       <button
+                        type="button"
+                        aria-pressed={chipOn(axis, t.name)}
                         onClick={() => toggleAxisTag(axis, t.name)}
                         class="px-2 py-0.5 rounded-full text-xs border transition-colors"
                         classList={{
@@ -324,6 +333,8 @@ export function Calendar() {
             <For each={[1, 2, 3, 4, 5]}>
               {(p) => (
                 <button
+                  type="button"
+                  aria-pressed={overlayPrio().includes(p)}
                   onClick={() => togglePrio(p)}
                   class="w-7 h-7 rounded-md text-xs font-mono border transition-colors"
                   classList={{
