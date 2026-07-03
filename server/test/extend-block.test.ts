@@ -259,6 +259,23 @@ describe('extend — Plan container / child-block correctness', () => {
     expect(startOf(ch)).toBe(at('11:00')); // child not sheared out
   });
 
+  it('treats an actively-timed following block as fixed (running time_entry, not block status)', () => {
+    const t = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'T', ?, 'scheduled') RETURNING id`)
+      .get(SYSTEM_OWNER) as { id: string }).id;
+    const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
+    const b1 = makeBlock({ start: '11:00', end: '11:30', task: t, title: 'B1' }); // planned status, but…
+    // …a running timer on it (ended_at NULL) — the real "in progress" signal.
+    sqlite
+      .prepare(`INSERT INTO time_entries (id, owner_id, task_id, block_id, started_at, source) VALUES (uuid7(), ?, ?, ?, ?, 'timer')`)
+      .run(SYSTEM_OWNER, t, b1, at('11:00'));
+    const r = extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.fits).toBe(false);          // must not silently push a block being timed
+    expect(r.blockedBy?.block_id).toBe(b1);
+    expect(endOf(a)).toBe(at('11:00'));   // unchanged
+    expect(startOf(b1)).toBe(at('11:00')); // unchanged
+  });
+
   it('a someday Plan (block_type=someday) is not a timeline obstacle', () => {
     const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
     // Someday container overlapping the window but not a scheduled timeline block.
