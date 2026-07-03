@@ -151,7 +151,7 @@ export function authRouter() {
     // app.keys is unset — and app.keys is only set in sso mode. Without this guard,
     // an unauthenticated logout in standalone/test mode 500s.
     if (config.auth.mode !== 'sso') throw httpError(404, 'sessions are not enabled');
-    // Only clear when the caller actually presented our session cookie. SameSite=Lax
+    // Only clear when the caller actually presented a *valid signed* session cookie. SameSite=Lax
     // keeps the cookie off cross-site POSTs, so a forged cross-site logout sees no cookie
     // here and is a no-op — defeating logout-CSRF (a forced Set-Cookie deletion).
     if (ctx.cookies.get(SESSION_COOKIE, { signed: true })) clearSession(ctx);
