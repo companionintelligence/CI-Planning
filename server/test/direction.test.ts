@@ -13,7 +13,7 @@ const patternTagsFor = (possibleId: string): string[] =>
   (sqlite
     .prepare(
       `SELECT tg.name AS name FROM possible_task_tags pt JOIN tags tg ON tg.id = pt.tag_id
-        WHERE pt.possible_task_id = ? AND tg.kind = 'pattern'`,
+        WHERE pt.possible_task_id = ? AND tg.kind = 'direction'`,
     )
     .all(possibleId) as { name: string }[]).map((r) => r.name);
 

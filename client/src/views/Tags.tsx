@@ -20,7 +20,7 @@ export function Tags() {
 
   const groupedDir = () => groupByDirection(tags() ?? []);
   const groupedCat = () => groupByCategory(tags() ?? []);
-  const patternTags = () => sortDirections((tags() ?? []).filter((t) => t.kind === 'pattern'));
+  const patternTags = () => sortDirections((tags() ?? []).filter((t) => t.kind === 'direction'));
 
   async function run(p: Promise<unknown>, ok: string) {
     try { await p; refetchTags(); showToast(ok, 'success'); }
@@ -37,7 +37,7 @@ export function Tags() {
   const del = (tag: Tag) => run(api.tags.remove(tag.id), 'Tag deleted');
   // Flip a direction's scope for a category (opt-out polarity; enabled=true clears the opt-out).
   const toggleDir = (cat: Tag, dir: Tag, enabled: boolean) =>
-    run(api.tags.update(cat.id, { direction_toggle: { patternTagId: dir.id, enabled } }),
+    run(api.tags.update(cat.id, { direction_toggle: { directionTagId: dir.id, enabled } }),
       `${displayTag(dir.name)} ${enabled ? 'on' : 'off'} for ${displayTag(cat.name)}`);
 
   return (
@@ -51,7 +51,7 @@ export function Tags() {
 
       {/* Tabs (AllTasks idiom) */}
       <div class="flex gap-2 mb-5">
-        <For each={[['patterns', 'Patterns'], ['categories', 'Time Block Categories']] as const}>
+        <For each={[['patterns', 'Directions'], ['categories', 'Time Block Categories']] as const}>
           {([v, label]) => (
             <button
               onClick={() => setView(v)}

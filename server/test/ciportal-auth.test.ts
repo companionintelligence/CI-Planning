@@ -363,7 +363,7 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
       .all(owner.id) as { name: string; kind: string; is_base: number }[];
     expect(tags.map((t) => `${t.kind}:${t.name}`)).toEqual([
       'category:family', 'category:me', 'category:social',
-      'pattern:community', 'pattern:home', 'pattern:work',
+      'direction:community', 'direction:home', 'direction:work',
     ]);
     expect(tags.every((t) => t.is_base === 1)).toBe(true);
     expect((sqlite.prepare(`SELECT COUNT(*) n FROM tag_prefs WHERE owner_id = ? AND kind='category'`).get(owner.id) as { n: number }).n).toBe(3);

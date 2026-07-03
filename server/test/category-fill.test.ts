@@ -18,7 +18,7 @@ const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 function makeCategory(name: string): string {
   return (sqlite.prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), ?, 'category', 0, ?) RETURNING id`).get(name, OWNER) as { id: string }).id;
 }
-function tagId(name: string, kind: 'intention' | 'pattern'): string {
+function tagId(name: string, kind: 'intention' | 'direction'): string {
   const found = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(name) as { id: string } | undefined;
   return found ? found.id : (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, ?, ?) RETURNING id`).get(name, kind, OWNER) as { id: string }).id;
 }
@@ -26,13 +26,13 @@ function fileUnderCategory(intention: string, categoryId: string) {
   sqlite.prepare(`INSERT OR IGNORE INTO tag_categories (intention_tag_id, category_tag_id) VALUES (?, ?)`).run(tagId(intention, 'intention'), categoryId);
 }
 function optOut(categoryId: string, direction: string) {
-  sqlite.prepare(`INSERT OR IGNORE INTO category_direction_optouts (category_tag_id, pattern_tag_id) VALUES (?, ?)`).run(categoryId, tagId(direction, 'pattern'));
+  sqlite.prepare(`INSERT OR IGNORE INTO category_direction_optouts (category_tag_id, direction_tag_id) VALUES (?, ?)`).run(categoryId, tagId(direction, 'direction'));
 }
 /** A task with optional level-1 direction + level-2 secondary intention tags. */
 function insertTask(title: string, opts: { direction?: string; secondary?: string[]; secondaryL1?: string[] } = {}): string {
   const id = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', 30, 3) RETURNING id`).get(title, OWNER) as { id: string }).id;
   const link = sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`);
-  if (opts.direction) link.run(id, tagId(opts.direction, 'pattern'), 1);
+  if (opts.direction) link.run(id, tagId(opts.direction, 'direction'), 1);
   for (const s of opts.secondary ?? []) link.run(id, tagId(s, 'intention'), 2);
   for (const s of opts.secondaryL1 ?? []) link.run(id, tagId(s, 'intention'), 1); // level 1 — should NOT match a category
   return id;

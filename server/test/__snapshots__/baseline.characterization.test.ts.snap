@@ -705,7 +705,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "category_tag_id",
-      "pattern_tag_id",
+      "direction_tag_id",
     ],
     "table": "category_direction_optouts",
   },
@@ -936,7 +936,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "id",
       "owner_id",
-      "pattern_tag_id",
+      "direction_tag_id",
       "day_type",
       "start_time",
       "end_time",
@@ -1171,9 +1171,9 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   {
     "columns": [
       "intention_tag_id",
-      "pattern_tag_id",
+      "direction_tag_id",
     ],
-    "table": "tag_patterns",
+    "table": "tag_directions",
   },
   {
     "columns": [

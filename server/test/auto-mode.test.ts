@@ -32,7 +32,7 @@ function makePlan(tag: string, start: string, end: string): string {
 function makeTask(title: string, tag: string, est = 30): string {
   const id = (sqlite.prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), ?, ?, 'open', ?, 3) RETURNING id`).get(title, OWNER, est) as { id: string }).id;
   let tg = sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(tag) as { id: string } | undefined;
-  if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, 'pattern', ?) RETURNING id`).get(tag, OWNER) as { id: string };
+  if (!tg) tg = sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, 'direction', ?) RETURNING id`).get(tag, OWNER) as { id: string };
   sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(id, tg.id);
   return id;
 }

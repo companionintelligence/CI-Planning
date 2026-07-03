@@ -119,7 +119,7 @@ export function Settings() {
 
   // ── Pattern-tag default estimate (pattern_prefs.default_minutes) ──────────────
   // The fallback minutes a pattern tag contributes when a task has no intention tag.
-  const patternTagsList = () => (tags() ?? []).filter((t) => t.kind === 'pattern');
+  const patternTagsList = () => (tags() ?? []).filter((t) => t.kind === 'direction');
   const [patternMinutes, setPatternMinutes] = createSignal<Record<string, number>>({});
   let pmInitialized = false;
   createEffect(() => {
@@ -128,7 +128,7 @@ export function Settings() {
     if (!pp || !ts || pmInitialized) return;
     pmInitialized = true;
     const init: Record<string, number> = {};
-    for (const t of ts.filter((x) => x.kind === 'pattern')) init[t.id] = pp[t.id]?.default_minutes ?? 60;
+    for (const t of ts.filter((x) => x.kind === 'direction')) init[t.id] = pp[t.id]?.default_minutes ?? 60;
     setPatternMinutes(init);
   });
 
@@ -179,7 +179,7 @@ export function Settings() {
     const ts = tags();
     if (!pp || !ts || remInitialized) return;
     remInitialized = true;
-    const first = ts.find((t) => t.kind === 'pattern');
+    const first = ts.find((t) => t.kind === 'direction');
     const offsets = first ? (pp[first.id]?.reminder_offsets ?? []) : [];
     setRemStartOn(offsets.includes(0));
     const adv = offsets.find((o) => o > 0);

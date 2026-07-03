@@ -26,7 +26,7 @@ export function PatternBlockSettings(props: {
   minutes?: () => Record<string, number>;
   onMinutesChange?: (id: string, val: number) => void;
 }) {
-  const patternTags = () => (tags() ?? []).filter((t) => t.kind === 'pattern');
+  const patternTags = () => (tags() ?? []).filter((t) => t.kind === 'direction');
   const cardGetters = new Map<Tag['id'], () => { shape: string; color: string }>();
 
   async function saveAll() {

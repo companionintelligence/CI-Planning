@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { directionColorForTask } from './pattern-meta.js';
 
 const TAGS = [
-  { id: 'h1', name: 'Home', kind: 'pattern' },
-  { id: 'w1', name: 'Work', kind: 'pattern' },
-  { id: 'c1', name: 'Community', kind: 'pattern' },
+  { id: 'h1', name: 'Home', kind: 'direction' },
+  { id: 'w1', name: 'Work', kind: 'direction' },
+  { id: 'c1', name: 'Community', kind: 'direction' },
   { id: 'i1', name: 'errands', kind: 'intention' },
 ];
 
