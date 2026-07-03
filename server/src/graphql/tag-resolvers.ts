@@ -5,9 +5,9 @@ import {
   createTag as createTagService,
   updateTag as updateTagService,
   deleteTag as deleteTagService,
-  pageParentPatterns, countParentPatterns,
+  pageParentDirections, countParentDirections,
   pageParentCategories, countParentCategories,
-  pagePatternChildren, countPatternChildren,
+  pageDirectionChildren, countDirectionChildren,
   pageCategoryChildren, countCategoryChildren,
   pageOwnerTags, countOwnerTags,
   type TagRow,
@@ -86,13 +86,13 @@ export const tagResolvers = {
     muted: (r: TagRow) => !!r.muted,
     isBase: (r: TagRow) => !!r.isBase,
     // Which edges populate depends on kind; a wrong-kind lookup naturally returns empty
-    // (e.g. a pattern tag has no rows on the intention side of tag_patterns).
-    parentPatterns: (r: TagRow, args: ConnArgs) => {
+    // (e.g. a direction tag has no rows on the intention side of tag_directions).
+    parentDirections: (r: TagRow, args: ConnArgs) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const { afterName, afterId } = decodeAfter(args.after);
-      const rows = pageParentPatterns(r.id, owner, afterName, afterId, limit + 1);
-      return buildTagConnection(rows, limit, countParentPatterns(r.id, owner));
+      const rows = pageParentDirections(r.id, owner, afterName, afterId, limit + 1);
+      return buildTagConnection(rows, limit, countParentDirections(r.id, owner));
     },
     parentCategories: (r: TagRow, args: ConnArgs) => {
       const owner = currentOwnerId();
@@ -107,9 +107,9 @@ export const tagResolvers = {
       const { afterName, afterId } = decodeAfter(args.after);
       let rows: TagRow[] = [];
       let total = 0;
-      if (r.kind === 'pattern') {
-        rows = pagePatternChildren(r.id, owner, afterName, afterId, limit + 1);
-        total = countPatternChildren(r.id, owner);
+      if (r.kind === 'direction') {
+        rows = pageDirectionChildren(r.id, owner, afterName, afterId, limit + 1);
+        total = countDirectionChildren(r.id, owner);
       } else if (r.kind === 'category') {
         rows = pageCategoryChildren(r.id, owner, afterName, afterId, limit + 1);
         total = countCategoryChildren(r.id, owner);

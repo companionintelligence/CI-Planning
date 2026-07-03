@@ -41,17 +41,17 @@ function rowToPref(r: PrefCols): PatternPref {
 }
 
 /**
- * Returns all pattern-axis tag_prefs for an owner, keyed by tag id.
+ * Returns all direction-axis tag_prefs for an owner, keyed by tag id.
  * Missing rows are NOT included — callers fold in defaults via DEFAULT_PREF.
- * (Since 0097 the pattern + category prefs share one `tag_prefs` table,
- * partitioned by `kind`; this reads only the 'pattern' rows.)
+ * (Since 0097 the direction + category prefs share one `tag_prefs` table,
+ * partitioned by `kind`; this reads only the 'direction' rows.)
  */
 export function getPatternPrefs(ownerId: string): Record<string, PatternPref> {
   const rows = sqlite
     .prepare(
       `SELECT id, owner_id, tag_id, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
          FROM tag_prefs
-        WHERE owner_id = ? AND kind = 'pattern'`
+        WHERE owner_id = ? AND kind = 'direction'`
     )
     .all(ownerId) as RawRow[];
 
@@ -61,7 +61,7 @@ export function getPatternPrefs(ownerId: string): Record<string, PatternPref> {
 }
 
 /**
- * Upsert a single pattern-axis tag_prefs row (kind='pattern'). Merges `patch` on
+ * Upsert a single direction-axis tag_prefs row (kind='direction'). Merges `patch` on
  * top of any existing values (fetch-then-merge), then persists. Returns the final row.
  */
 export function setPatternPref(
@@ -72,7 +72,7 @@ export function setPatternPref(
   const existing = sqlite
     .prepare(
       `SELECT auto_fill, reminder_offsets, icon_shape, color_token, default_minutes
-         FROM tag_prefs WHERE owner_id = ? AND tag_id = ? AND kind = 'pattern'`
+         FROM tag_prefs WHERE owner_id = ? AND tag_id = ? AND kind = 'direction'`
     )
     .get(ownerId, patternTagId) as PrefCols | undefined;
 
@@ -91,9 +91,9 @@ export function setPatternPref(
   sqlite
     .prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, auto_fill, reminder_offsets, icon_shape, color_token, default_minutes)
-       VALUES (?, ?, ?, 'pattern', ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, 'direction', ?, ?, ?, ?, ?)
        ON CONFLICT(owner_id, tag_id)
-       DO UPDATE SET kind = 'pattern',
+       DO UPDATE SET kind = 'direction',
                      auto_fill = excluded.auto_fill,
                      reminder_offsets = excluded.reminder_offsets,
                      icon_shape = excluded.icon_shape,
