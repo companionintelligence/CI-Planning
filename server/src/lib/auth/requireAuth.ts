@@ -37,6 +37,11 @@ const PUBLIC_PREFIXES = [
   '/api/auth/config',
   '/api/auth/login',
   '/api/auth/logout',
+  // V — password reset for local sign-in: both run pre-session (a locked-out user has no
+  // credential). The token itself is the authorization for /reset; /reset-request is
+  // enumeration-neutral + rate-limited.
+  '/api/auth/reset-request',
+  '/api/auth/reset',
   '/api/auth/ciportal/start',
   '/api/auth/ciportal/callback',
   '/api/oauth/google/callback',

@@ -56,6 +56,30 @@ export function Settings() {
   const [activeTab, setActiveTab] = createSignal<'preferences' | 'connections'>('preferences');
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
+  // V8 — account (local sign-in only): the backup reset-email. Fetch auth config + the
+  // current owner; the row shows only when local username/password login is active
+  // (there's a password to reset). `owners.email` is the primary reset destination and
+  // is read-only here; `backup_email` is the editable fallback.
+  const [authCfg] = createResource(() => api.auth.config());
+  const [me, { refetch: refetchMe }] = createResource(() => api.auth.me().catch(() => null));
+  const localAuth = () => authCfg()?.mode === 'sso' && authCfg()?.disableOidc === true;
+  const [backupEmail, setBackupEmail] = createSignal('');
+  const [backupSaving, setBackupSaving] = createSignal(false);
+  createEffect(() => { if (me()) setBackupEmail(me()!.backupEmail ?? ''); });
+  async function saveBackupEmail() {
+    setBackupSaving(true);
+    try {
+      const v = backupEmail().trim();
+      await api.owner.setBackupEmail(v || null);
+      await refetchMe();
+      showToast('Backup email saved', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setBackupSaving(false);
+    }
+  }
+
   // Phase P · P2 — Clear Date Range tool state.
   const [clearStart, setClearStart] = createSignal('');
   const [clearEnd, setClearEnd] = createSignal('');
@@ -446,6 +470,47 @@ export function Settings() {
 
         {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'preferences'}>
+
+          {/* V8 — Account (local sign-in only): backup password-reset email. */}
+          <Show when={localAuth()}>
+            <section class="card">
+              <div class="section-label mb-1">Account</div>
+              <p class="text-xs text-muted-foreground mb-3">
+                Your password-reset link is emailed to your account address. Add a backup address as a fallback in case
+                the primary is unavailable.
+              </p>
+              <Show when={me()?.username}>
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <span class="text-sm text-foreground">Username</span>
+                  <span class="text-sm text-muted-foreground font-mono">{me()!.username}</span>
+                </div>
+              </Show>
+              <div class="flex items-center justify-between gap-3 mb-3">
+                <span class="text-sm text-foreground">Account email</span>
+                <span class="text-sm text-muted-foreground">{me()?.email ?? 'none set'}</span>
+              </div>
+              <label class="flex flex-col gap-1">
+                <span class="text-[11px] text-muted-foreground">Backup email</span>
+                <div class="flex items-center gap-2">
+                  <input
+                    type="email"
+                    class="input py-1 text-sm flex-1"
+                    placeholder="backup@example.com"
+                    value={backupEmail()}
+                    onInput={(e) => setBackupEmail(e.currentTarget.value)}
+                  />
+                  <button
+                    type="button"
+                    class="btn-primary text-sm px-3 py-1.5"
+                    onClick={saveBackupEmail}
+                    disabled={backupSaving() || backupEmail().trim() === (me()?.backupEmail ?? '')}
+                  >
+                    {backupSaving() ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </label>
+            </section>
+          </Show>
 
           {/* Schedule Patterns — per-direction availability windows */}
           <section class="card">

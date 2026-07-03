@@ -1,3 +1,9 @@
+> **V is now BUILT** (Path B — local reset). Canonical as-built guide: [`V-auth.md`](V-auth.md).
+> Locked decisions: D0 = build local reset; D3 = SMTP via nodemailer (console fallback);
+> D4 = emailed link; D5 = invalidate **all** sessions (auth-epoch, no opt-out checkbox).
+> Migrations `0103`/`0104` (head now 0104). The rest of this doc is the intake reconciliation
+> that guided the build.
+
 # U → V handoff (password reset)
 
 **Phase U is complete and on `main`** (rescue PR #230 merged; migration head **0102**). This doc hands

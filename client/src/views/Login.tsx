@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from '@solidjs/router';
 import { Cpu, LogIn, Loader2 } from 'lucide-solid';
 import { api, CIPORTAL_START } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
+import { ForgotPassword } from '../components/ForgotPassword.js';
 
 /**
  * U3 — the login screen. Rendered OUTSIDE the app shell (no nav/top bar), reached
@@ -31,6 +32,7 @@ export function Login() {
   const [username, setUsername] = createSignal('');
   const [password, setPassword] = createSignal('');
   const [submitting, setSubmitting] = createSignal(false);
+  const [showForgot, setShowForgot] = createSignal(false);
 
   // A provider error bounced back from the CI-Portal callback (?sso_error=…).
   const ssoError = () => (typeof params.sso_error === 'string' ? params.sso_error : null);
@@ -126,11 +128,18 @@ export function Login() {
                     onInput={(e) => setPassword(e.currentTarget.value)}
                   />
                 </label>
-                {/* Forgot-password: U ships the link; V ships the reset modal. */}
                 <button type="submit" class="btn-primary w-full justify-center mt-1" disabled={submitting()}>
                   <Show when={submitting()} fallback={<>Sign in</>}>
                     <Loader2 class="animate-spin" size={16} /> Signing in…
                   </Show>
+                </button>
+                {/* V6 — reset flow entry point. */}
+                <button
+                  type="button"
+                  class="text-[11px] text-muted-foreground hover:text-foreground transition-colors mt-1 self-center"
+                  onClick={() => setShowForgot(true)}
+                >
+                  Forgot password?
                 </button>
               </form>
             </Show>
@@ -139,6 +148,10 @@ export function Login() {
 
         <p class="text-center text-[11px] text-muted-foreground mt-4">Companion Planning</p>
       </div>
+
+      <Show when={showForgot()}>
+        <ForgotPassword onClose={() => setShowForgot(false)} />
+      </Show>
     </div>
   );
 }
