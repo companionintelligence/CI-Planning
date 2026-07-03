@@ -1,4 +1,7 @@
 import { sqlite } from '../db/index.js';
+import { newId } from '../lib/ids.js';
+import { writeAudit } from '../lib/audit.js';
+import { setCategoryPref } from './category-prefs.js';
 
 /**
  * CON-3 tag-repo — the app-enforced integrity layer for the normalized
@@ -281,4 +284,250 @@ const catRefByMember = sqlite.prepare(`SELECT 1 FROM tag_categories WHERE catego
 /** True if a category tag is assigned to any time block or has any member intention. */
 export function categoryIsReferenced(categoryTagId: string): boolean {
   return !!catRefByBlock.get(categoryTagId) || !!catRefByMember.get(categoryTagId);
+}
+
+// ── Tag CRUD orchestration (extracted from routes/tags.ts so REST + GraphQL share ONE
+//    implementation — no duplicated business logic or owner-scoping; Phase W Decision 3) ──
+
+/** Resolve direction (pattern-tag) NAMES to the OWNER's pattern-tag ids (skips unknown / non-pattern / other owners'). */
+function directionIds(names: string[], owner: string): string[] {
+  const out: string[] = [];
+  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'pattern'`);
+  for (const n of names) {
+    const row = find.get(owner, normalizeTagName(n)) as { id: string } | undefined;
+    if (row) out.push(row.id);
+  }
+  return out;
+}
+
+/** Resolve category NAMES to the OWNER's category-tag ids (skips unknown / non-category / other owners'). */
+function categoryIds(names: string[], owner: string): string[] {
+  const out: string[] = [];
+  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'category'`);
+  for (const n of names) {
+    const row = find.get(owner, normalizeTagName(n)) as { id: string } | undefined;
+    if (row) out.push(row.id);
+  }
+  return out;
+}
+
+/** Full `tags` row (raw: muted/is_base are 0/1). The shape both REST + GraphQL read. */
+export interface FullTagRow {
+  id: string;
+  owner_id: string;
+  name: string;
+  kind: string;
+  muted: number;
+  is_base: number;
+}
+
+const ownedTagStmt = sqlite.prepare(`SELECT * FROM tags WHERE id = ? AND owner_id = ?`);
+/** Fetch one of the owner's tags (never another owner's), or undefined. */
+export function getOwnedTag(owner: string, id: string): FullTagRow | undefined {
+  return ownedTagStmt.get(id, owner) as FullTagRow | undefined;
+}
+
+export type CreateTagInput = { name?: string; kind?: string; directions?: string[]; categories?: string[] };
+export type CreateTagResult = { ok: true; tag: FullTagRow } | { ok: false; error: 'name_required' };
+
+/**
+ * Create (or return the existing same-named) tag for an owner, wiring direction/category
+ * membership. Identical to the old POST /api/tags body — extracted verbatim so the REST
+ * route and the GraphQL createTag mutation cannot drift.
+ */
+export function createTag(owner: string, input: CreateTagInput): CreateTagResult {
+  if (!input.name?.trim()) return { ok: false, error: 'name_required' };
+  const name = normalizeTagName(input.name);
+  if (!name) return { ok: false, error: 'name_required' };
+  const kind = input.kind === 'pattern' ? 'pattern' : input.kind === 'category' ? 'category' : 'intention';
+
+  let tag = sqlite.prepare(`SELECT * FROM tags WHERE owner_id = ? AND name = ?`).get(owner, name) as FullTagRow | undefined;
+  if (!tag) {
+    tag = sqlite
+      .prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (?, ?, ?, ?) RETURNING *`)
+      .get(newId(), owner, name, kind) as FullTagRow;
+  }
+  // A new category gets a default category_prefs row so a block created against it always
+  // has a colour-stamp source (forward-only never falls through).
+  if (tag.kind === 'category') setCategoryPref(owner, tag.id, {});
+  if (tag.kind === 'intention' && Array.isArray(input.directions) && input.directions.length) {
+    setTagDirections(tag.id, directionIds(input.directions, owner));
+  }
+  if (tag.kind === 'intention' && Array.isArray(input.categories) && input.categories.length) {
+    setCategoryMemberships(tag.id, categoryIds(input.categories, owner));
+  }
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `tag:${tag.id}` });
+  return { ok: true, tag };
+}
+
+export type UpdateTagInput = {
+  name?: string;
+  muted?: boolean;
+  directions?: string[];
+  categories?: string[];
+  direction_toggle?: { patternTagId?: string; enabled?: boolean };
+};
+export type UpdateTagResult =
+  | { ok: true; tag: { id: string; name: string; kind: string; isBase: number; muted: number } }
+  | { ok: false; error: 'not_found' | 'name_conflict' };
+
+/** Update a tag (rename / mute / membership / category-direction toggle). Extracted from
+ *  PATCH /api/tags/:id so REST + GraphQL share it. Owner-scoped throughout. */
+export function updateTag(owner: string, id: string, patch: UpdateTagInput): UpdateTagResult {
+  const tag = sqlite.prepare(`SELECT id, kind FROM tags WHERE id = ? AND owner_id = ?`).get(id, owner) as
+    | { id: string; kind: string }
+    | undefined;
+  if (!tag) return { ok: false, error: 'not_found' };
+
+  if (Array.isArray(patch.directions) && tag.kind === 'intention') {
+    setTagDirections(id, directionIds(patch.directions, owner));
+  }
+  if (Array.isArray(patch.categories) && tag.kind === 'intention') {
+    setCategoryMemberships(id, categoryIds(patch.categories, owner));
+  }
+  if (
+    patch.direction_toggle &&
+    tag.kind === 'category' &&
+    typeof patch.direction_toggle.patternTagId === 'string' &&
+    typeof patch.direction_toggle.enabled === 'boolean' &&
+    // The toggled pattern tag is a RAW id — verify it's THIS owner's before linking.
+    sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ?`).get(patch.direction_toggle.patternTagId, owner)
+  ) {
+    setDirectionEnabled(id, patch.direction_toggle.patternTagId, patch.direction_toggle.enabled);
+  }
+  if (typeof patch.name === 'string' && patch.name.trim()) {
+    const newName = normalizeTagName(patch.name);
+    if (newName) {
+      const clash = sqlite.prepare(`SELECT 1 FROM tags WHERE owner_id = ? AND name = ? AND id != ?`).get(owner, newName, id);
+      if (clash) return { ok: false, error: 'name_conflict' };
+      sqlite.prepare(`UPDATE tags SET name = ? WHERE id = ? AND owner_id = ?`).run(newName, id, owner);
+    }
+  }
+  if (typeof patch.muted === 'boolean') {
+    sqlite.prepare(`UPDATE tags SET muted = ? WHERE id = ? AND owner_id = ?`).run(patch.muted ? 1 : 0, id, owner);
+  }
+  const out = sqlite
+    .prepare(`SELECT id, name, kind, is_base AS isBase, muted FROM tags WHERE id = ? AND owner_id = ?`)
+    .get(id, owner) as { id: string; name: string; kind: string; isBase: number; muted: number };
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `tag:${id}` });
+  return { ok: true, tag: out };
+}
+
+// 'category_in_use' vs 'in_use' are kept distinct so the REST route can surface its two
+// original messages verbatim (category refs live outside entity_tags).
+export type DeleteTagResult = { ok: true } | { ok: false; error: 'not_found' | 'base' | 'in_use' | 'category_in_use' };
+
+/** Delete a tag (guarding base + in-use). Extracted from DELETE /api/tags/:id. Owner-scoped. */
+export function deleteTag(owner: string, id: string): DeleteTagResult {
+  const tag = sqlite.prepare(`SELECT id, kind, is_base AS isBase FROM tags WHERE id = ? AND owner_id = ?`).get(id, owner) as
+    | { id: string; kind: string; isBase: number }
+    | undefined;
+  if (!tag) return { ok: false, error: 'not_found' };
+  if (tag.isBase) return { ok: false, error: 'base' };
+  if (tag.kind === 'category') {
+    if (categoryIsReferenced(id)) return { ok: false, error: 'category_in_use' };
+  } else if (tagIsUsed(id)) {
+    return { ok: false, error: 'in_use' };
+  }
+  sqlite.prepare(`DELETE FROM tags WHERE id = ? AND owner_id = ?`).run(id, owner); // tag_patterns/categories/optouts cascade via FK
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `tag:${id}` });
+  return { ok: true };
+}
+
+// ── Relay keyset pagination over the tag taxonomy (Phase W — GraphQL TagType) ──────────
+// Each query is owner-scoped, kind-filtered, and ordered by the stable composite key
+// (name, id). The caller passes the last-seen (name, id) as the "after" cursor; a first
+// page passes ('', '') — every tag name is non-empty (createTag rejects empty), so
+// `name > ''` admits all rows. Callers request limit+1 rows to detect a next page.
+
+export interface TagRow {
+  id: string;
+  name: string;
+  kind: string;
+  muted: number;
+  isBase: number;
+}
+
+const KEYSET_COLS = `t.id, t.name, t.kind, t.muted, t.is_base AS isBase`;
+const KEYSET_TAIL = `AND (t.name > ? OR (t.name = ? AND t.id > ?)) ORDER BY t.name, t.id LIMIT ?`;
+
+// intention → its parent pattern-tags (the direction axis)
+const pageParentPatternsStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_patterns tp ON t.id = tp.pattern_tag_id
+    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'pattern' ${KEYSET_TAIL}`,
+);
+const countParentPatternsStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS n FROM tags t JOIN tag_patterns tp ON t.id = tp.pattern_tag_id
+    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'pattern'`,
+);
+// intention → its parent category-tags
+const pageParentCategoriesStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_categories tc ON t.id = tc.category_tag_id
+    WHERE tc.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'category' ${KEYSET_TAIL}`,
+);
+const countParentCategoriesStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS n FROM tags t JOIN tag_categories tc ON t.id = tc.category_tag_id
+    WHERE tc.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'category'`,
+);
+// pattern-tag → its child intentions
+const pagePatternChildrenStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_patterns tp ON t.id = tp.intention_tag_id
+    WHERE tp.pattern_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`,
+);
+const countPatternChildrenStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS n FROM tags t JOIN tag_patterns tp ON t.id = tp.intention_tag_id
+    WHERE tp.pattern_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`,
+);
+// category-tag → its child intentions
+const pageCategoryChildrenStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_categories tc ON t.id = tc.intention_tag_id
+    WHERE tc.category_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`,
+);
+const countCategoryChildrenStmt = sqlite.prepare(
+  `SELECT COUNT(*) AS n FROM tags t JOIN tag_categories tc ON t.id = tc.intention_tag_id
+    WHERE tc.category_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`,
+);
+// owner's tags (optionally kind-filtered) — the top-level `tags` connection
+const pageOwnerTagsStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t WHERE t.owner_id = ? ${KEYSET_TAIL}`,
+);
+const pageOwnerTagsByKindStmt = sqlite.prepare(
+  `SELECT ${KEYSET_COLS} FROM tags t WHERE t.owner_id = ? AND t.kind = ? ${KEYSET_TAIL}`,
+);
+const countOwnerTagsStmt = sqlite.prepare(`SELECT COUNT(*) AS n FROM tags WHERE owner_id = ?`);
+const countOwnerTagsByKindStmt = sqlite.prepare(`SELECT COUNT(*) AS n FROM tags WHERE owner_id = ? AND kind = ?`);
+
+const n = (row: unknown) => (row as { n: number }).n;
+
+export function pageParentPatterns(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
+  return pageParentPatternsStmt.all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
+}
+export function countParentPatterns(intentionId: string, owner: string): number {
+  return n(countParentPatternsStmt.get(intentionId, owner));
+}
+export function pageParentCategories(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
+  return pageParentCategoriesStmt.all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
+}
+export function countParentCategories(intentionId: string, owner: string): number {
+  return n(countParentCategoriesStmt.get(intentionId, owner));
+}
+export function pagePatternChildren(patternId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
+  return pagePatternChildrenStmt.all(patternId, owner, afterName, afterName, afterId, limit) as TagRow[];
+}
+export function countPatternChildren(patternId: string, owner: string): number {
+  return n(countPatternChildrenStmt.get(patternId, owner));
+}
+export function pageCategoryChildren(categoryId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
+  return pageCategoryChildrenStmt.all(categoryId, owner, afterName, afterName, afterId, limit) as TagRow[];
+}
+export function countCategoryChildren(categoryId: string, owner: string): number {
+  return n(countCategoryChildrenStmt.get(categoryId, owner));
+}
+export function pageOwnerTags(owner: string, kind: string | undefined, afterName: string, afterId: string, limit: number): TagRow[] {
+  return kind
+    ? (pageOwnerTagsByKindStmt.all(owner, kind, afterName, afterName, afterId, limit) as TagRow[])
+    : (pageOwnerTagsStmt.all(owner, afterName, afterName, afterId, limit) as TagRow[]);
+}
+export function countOwnerTags(owner: string, kind: string | undefined): number {
+  return kind ? n(countOwnerTagsByKindStmt.get(owner, kind)) : n(countOwnerTagsStmt.get(owner));
 }
