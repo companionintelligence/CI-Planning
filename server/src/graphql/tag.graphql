@@ -1,0 +1,83 @@
+# Phase W — TagType (Decision 6). CI-Server-compatible core (Node · id · label ·
+# description) plus CI-Planner's additive tag-taxonomy: `kind`, `muted`, `isBase`, and the
+# hierarchy exposed as Relay connections on the same type rather than new top-level types.
+#
+# Vocabulary note: `kind` mirrors the LIVE DB value `tags.kind` — currently PATTERN for the
+# top-level grouping axis. Phase Z reverts that axis value PATTERN→DIRECTION across the whole
+# stack (DB + this enum + edge names) atomically; until then this stays PATTERN so the wire
+# contract matches the DB (no half-rename). `TagType.entities` (tag→tagged Task/TimeBlock) is
+# deferred to the core-entities slice, which introduces those Taggable types.
+
+enum TagKind {
+  PATTERN
+  INTENTION
+  CATEGORY
+}
+
+type TagType implements Node {
+  id: ID!
+  label: String!            # resolver maps the DB column `name` → label
+  description: String       # no column yet — always null until one is added
+  kind: TagKind!
+  muted: Boolean!
+  isBase: Boolean!
+  # Hierarchy as relationship connections. Which are populated depends on `kind`:
+  # an INTENTION has parentPatterns + parentCategories; a PATTERN or CATEGORY has
+  # childIntentions. Unpopulated edges return an EMPTY connection, never an error.
+  parentPatterns(first: Int, after: String): TagConnection!
+  parentCategories(first: Int, after: String): TagConnection!
+  childIntentions(first: Int, after: String): TagConnection!
+}
+
+type TagConnection implements Connection {
+  edges: [TagEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TagEdge implements Edge {
+  cursor: String!
+  node: TagType!
+}
+
+input CreateTagInput {
+  label: String!
+  kind: TagKind
+}
+
+input UpdateTagInput {
+  id: ID!
+  label: String
+  muted: Boolean
+}
+
+# Shared delete shape (mirrors CI-Server's DeleteByIdInput/DeleteByIdPayload convention).
+input DeleteByIdInput {
+  id: String!
+}
+
+type CreateTagPayload {
+  tag: TagType
+  success: Boolean!
+}
+
+type UpdateTagPayload {
+  tag: TagType
+  success: Boolean!
+}
+
+type DeleteByIdPayload {
+  deletedId: ID
+  success: Boolean!
+}
+
+extend type Query {
+  tag(id: ID!): TagType
+  tags(first: Int, after: String, kind: TagKind): TagConnection!
+}
+
+type Mutation {
+  createTag(input: CreateTagInput!): CreateTagPayload!
+  updateTag(input: UpdateTagInput!): UpdateTagPayload!
+  deleteTag(input: DeleteByIdInput!): DeleteByIdPayload!
+}

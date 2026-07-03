@@ -1,35 +1,10 @@
 import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
-import { newId } from '../lib/ids.js';
 import {
-  normalizeTagName, tagIsUsed, setTagDirections, directionsOf,
-  setCategoryMemberships, categoriesOf, directionOptoutsOf, setDirectionEnabled, categoryIsReferenced,
+  directionsOf, categoriesOf, directionOptoutsOf,
+  createTag, updateTag, deleteTag,
 } from '../services/tags.js';
-import { setCategoryPref } from '../services/category-prefs.js';
 import { currentOwnerId } from '../lib/context.js';
-import { writeAudit } from '../lib/audit.js';
-
-/** Resolve direction NAMES to the OWNER's direction-tag ids (ignores unknown / non-directions / other owners'). */
-function directionIds(names: string[], owner: string): string[] {
-  const out: string[] = [];
-  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'pattern'`);
-  for (const n of names) {
-    const row = find.get(owner, normalizeTagName(n)) as { id: string } | undefined;
-    if (row) out.push(row.id);
-  }
-  return out;
-}
-
-/** Resolve category NAMES to the OWNER's category-tag ids (ignores unknown / non-categories / other owners'). */
-function categoryIds(names: string[], owner: string): string[] {
-  const out: string[] = [];
-  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'category'`);
-  for (const n of names) {
-    const row = find.get(owner, normalizeTagName(n)) as { id: string } | undefined;
-    if (row) out.push(row.id);
-  }
-  return out;
-}
 
 export function tagsRouter() {
   const router = new Router();
@@ -64,33 +39,12 @@ export function tagsRouter() {
     ctx.body = { tags };
   });
 
-  // POST /api/tags — { name, kind?='intention', directions?: string[] }.
+  // POST /api/tags — { name, kind?='intention', directions?, categories? }. Business logic
+  // lives in services/tags.createTag (shared with the GraphQL createTag mutation).
   router.post('/api/tags', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as { name?: string; kind?: string; directions?: string[]; categories?: string[] };
-    if (!body.name?.trim()) { ctx.status = 400; ctx.body = { error: 'name is required' }; return; }
-    const name = normalizeTagName(body.name);
-    if (!name) { ctx.status = 400; ctx.body = { error: 'name is required' }; return; }
-    const kind = body.kind === 'pattern' ? 'pattern' : body.kind === 'category' ? 'category' : 'intention';
-    const owner = currentOwnerId();
-
-    let tag = sqlite.prepare('SELECT * FROM tags WHERE owner_id = ? AND name = ?').get(owner, name) as
-      | { id: string; name: string; kind: string }
-      | undefined;
-    if (!tag) {
-      tag = sqlite
-        .prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (?, ?, ?, ?) RETURNING *`)
-        .get(newId(), owner, name, kind) as { id: string; name: string; kind: string };
-    }
-    // A new category gets a default category_prefs row up-front so a block created
-    // against it always has a color stamp source (forward-only never falls through).
-    if (tag.kind === 'category') setCategoryPref(owner, tag.id, {});
-    if (tag.kind === 'intention' && Array.isArray(body.directions) && body.directions.length) {
-      setTagDirections(tag.id, directionIds(body.directions, owner));
-    }
-    if (tag.kind === 'intention' && Array.isArray(body.categories) && body.categories.length) {
-      setCategoryMemberships(tag.id, categoryIds(body.categories, owner));
-    }
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `tag:${tag.id}` });
+    const res = createTag(currentOwnerId(), (ctx.request.body ?? {}) as Parameters<typeof createTag>[1]);
+    if (!res.ok) { ctx.status = 400; ctx.body = { error: 'name is required' }; return; }
+    const tag = res.tag;
     ctx.status = 201;
     ctx.body = { tag: {
       ...tag,
@@ -100,78 +54,36 @@ export function tagsRouter() {
     } };
   });
 
-  // PATCH /api/tags/:id — { directions?: string[] (REPLACE membership = drag-move), muted? }.
+  // PATCH /api/tags/:id — { name?, muted?, directions?, categories?, direction_toggle? }.
+  // Shared with the GraphQL updateTag mutation (services/tags.updateTag).
   router.patch('/api/tags/:id', async (ctx) => {
-    const id = ctx.params.id;
-    const owner = currentOwnerId();
-    const tag = sqlite.prepare('SELECT id, kind FROM tags WHERE id = ? AND owner_id = ?').get(id, owner) as
-      | { id: string; kind: string }
-      | undefined;
-    if (!tag) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const body = (ctx.request.body ?? {}) as {
-      directions?: string[];
-      categories?: string[];
-      direction_toggle?: { patternTagId?: string; enabled?: boolean };
-      muted?: boolean;
-      name?: string;
-    };
-
-    if (Array.isArray(body.directions) && tag.kind === 'intention') {
-      setTagDirections(id, directionIds(body.directions, owner));
+    const res = updateTag(currentOwnerId(), ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updateTag>[2]);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      ctx.status = 409; ctx.body = { error: 'a tag with that name already exists' }; return;
     }
-    if (Array.isArray(body.categories) && tag.kind === 'intention') {
-      setCategoryMemberships(id, categoryIds(body.categories, owner));
-    }
-    if (body.direction_toggle && tag.kind === 'category'
-        && typeof body.direction_toggle.patternTagId === 'string'
-        && typeof body.direction_toggle.enabled === 'boolean'
-        // The toggled pattern tag is a RAW body id — verify it's THIS owner's before linking.
-        && sqlite.prepare('SELECT 1 FROM tags WHERE id = ? AND owner_id = ?').get(body.direction_toggle.patternTagId, owner)) {
-      setDirectionEnabled(id, body.direction_toggle.patternTagId, body.direction_toggle.enabled);
-    }
-    if (typeof body.name === 'string' && body.name.trim()) {
-      const newName = normalizeTagName(body.name);
-      if (newName) {
-        const clash = sqlite.prepare('SELECT 1 FROM tags WHERE owner_id = ? AND name = ? AND id != ?').get(owner, newName, id);
-        if (clash) { ctx.status = 409; ctx.body = { error: 'a tag with that name already exists' }; return; }
-        sqlite.prepare('UPDATE tags SET name = ? WHERE id = ? AND owner_id = ?').run(newName, id, owner);
-      }
-    }
-    if (typeof body.muted === 'boolean') {
-      sqlite.prepare('UPDATE tags SET muted = ? WHERE id = ? AND owner_id = ?').run(body.muted ? 1 : 0, id, owner);
-    }
-    const out = sqlite
-      .prepare('SELECT id, name, kind, is_base AS isBase, muted FROM tags WHERE id = ? AND owner_id = ?')
-      .get(id, owner) as { id: string; name: string; kind: string; isBase: number; muted: number };
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `tag:${id}` });
+    const out = res.tag;
     ctx.body = {
       tag: {
         ...out, is_base: !!out.isBase, muted: !!out.muted,
-        directions: out.kind === 'intention' ? directionsOf(id) : [],
-        categories: out.kind === 'intention' ? categoriesOf(id) : [],
-        direction_optouts: out.kind === 'category' ? directionOptoutsOf(id) : [],
+        directions: out.kind === 'intention' ? directionsOf(out.id) : [],
+        categories: out.kind === 'intention' ? categoriesOf(out.id) : [],
+        direction_optouts: out.kind === 'category' ? directionOptoutsOf(out.id) : [],
       },
     };
   });
 
   // DELETE /api/tags/:id — a used tag or a base direction cannot be deleted.
+  // Shared with the GraphQL deleteTag mutation (services/tags.deleteTag).
   router.delete('/api/tags/:id', async (ctx) => {
-    const id = ctx.params.id;
-    const owner = currentOwnerId();
-    const tag = sqlite.prepare('SELECT id, kind, is_base AS isBase FROM tags WHERE id = ? AND owner_id = ?').get(id, owner) as
-      | { id: string; kind: string; isBase: number }
-      | undefined;
-    if (!tag) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    if (tag.isBase) { ctx.status = 409; ctx.body = { error: 'base tags cannot be deleted' }; return; }
-    // A category's refs live in time_blocks.category_id + tag_categories (not entity_tags),
-    // so tagIsUsed() doesn't see them — guard categories separately.
-    if (tag.kind === 'category') {
-      if (categoryIsReferenced(id)) { ctx.status = 409; ctx.body = { error: 'category has members or is used by a time block' }; return; }
-    } else if (tagIsUsed(id)) {
-      ctx.status = 409; ctx.body = { error: 'tags in use cannot be deleted' }; return;
+    const res = deleteTag(currentOwnerId(), ctx.params.id);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      if (res.error === 'base') { ctx.status = 409; ctx.body = { error: 'base tags cannot be deleted' }; return; }
+      ctx.status = 409;
+      ctx.body = { error: res.error === 'category_in_use' ? 'category has members or is used by a time block' : 'tags in use cannot be deleted' };
+      return;
     }
-    sqlite.prepare('DELETE FROM tags WHERE id = ? AND owner_id = ?').run(id, owner); // tag_patterns / tag_categories / optouts cascade via FK
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `tag:${id}` });
     ctx.body = { ok: true };
   });
 
