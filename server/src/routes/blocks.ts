@@ -19,6 +19,7 @@ import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus } from '../services/block-task-sync.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { extendBlock } from '../engine/extend-block.js';
+import { syncBlockFocusReminders, clearBlockFocusReminders } from '../engine/reminders.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -439,6 +440,26 @@ export function blocksRouter() {
     ctx.body = applied;
   });
 
+  // POST /api/blocks/:id/focus-reminders — Phase Z · Z4. Arm the block's Focus
+  // Ritual background cues (T1/T3/T4) for tab-closed Web Push delivery; the Focus
+  // screen calls this when the ritual opens. Flag-gated (404 off). Idempotent.
+  // DELETE clears them (ritual dismissed / block finished in-tab).
+  router.post('/api/blocks/:id/focus-reminders', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const exists = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
+    if (!exists) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
+    const armed = syncBlockFocusReminders(owner, ctx.params.id);
+    ctx.body = { ok: true, armed };
+  });
+
+  router.delete('/api/blocks/:id/focus-reminders', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    clearBlockFocusReminders(ctx.params.id);
+    ctx.body = { ok: true };
+  });
+
   // POST /api/blocks/:id/reschedule — Phase Z · Z3 "Schedule again" (§1.1b).
   // The block ended but the task isn't done: mark this attempt skipped and re-stage
   // the SAME task onto the flight-plan (source_kind='reschedule'), staged-not-placed
@@ -479,6 +500,8 @@ export function blocksRouter() {
       staged = sqlite
         .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
         .run(owner, block.task_id, nextPos).changes > 0;
+      // Z4: a skipped attempt's focus cues must not fire for the abandoned block.
+      clearBlockFocusReminders(id);
     })();
 
     // Flip the task back to open (it was 'scheduled' while it held the block) so Auto
