@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickNextUp, nextUpScrollTopPx, scrollTopForBlock, SLOT_MIN } from './planner.js';
+import { pickNextUp, nextUpWindowOffsetPx, windowOffsetForBlock, SLOT_MIN } from './planner.js';
 import { PX_PER_MIN, instantFor, minutesIntoDay } from './grid.js';
 
 const day = '2026-06-15';
@@ -35,20 +35,20 @@ describe('pickNextUp', () => {
   });
 });
 
-describe('nextUpScrollTopPx — pin to the second slot', () => {
+describe('nextUpWindowOffsetPx — pin to the second slot', () => {
   it('keeps SLOT_MIN of context above the next-up item', () => {
-    // 10:00 start → scroll so 09:00 is at the top (one slot of context above).
-    expect(nextUpScrollTopPx(10 * 60)).toBeCloseTo((10 * 60 - SLOT_MIN) * PX_PER_MIN, 9);
+    // 10:00 start → window opens so 09:00 is at the top (one slot of context above).
+    expect(nextUpWindowOffsetPx(10 * 60)).toBeCloseTo((10 * 60 - SLOT_MIN) * PX_PER_MIN, 9);
   });
 
   it('clamps at the top of the day (never negative)', () => {
-    expect(nextUpScrollTopPx(30)).toBe(0);   // 00:30 — less than a slot from midnight
-    expect(nextUpScrollTopPx(0)).toBe(0);
+    expect(nextUpWindowOffsetPx(30)).toBe(0);   // 00:30 — less than a slot from midnight
+    expect(nextUpWindowOffsetPx(0)).toBe(0);
   });
 
-  it('scrollTopForBlock is computed in the column local day and undefined-safe', () => {
+  it('windowOffsetForBlock is computed in the column local day and undefined-safe', () => {
     const b = blk(13 * 60, 14 * 60);
-    expect(scrollTopForBlock(b, day)).toBeCloseTo((minutesIntoDay(b.start_at, day) - SLOT_MIN) * PX_PER_MIN, 9);
-    expect(scrollTopForBlock(undefined, day)).toBe(0);
+    expect(windowOffsetForBlock(b, day)).toBeCloseTo((minutesIntoDay(b.start_at, day) - SLOT_MIN) * PX_PER_MIN, 9);
+    expect(windowOffsetForBlock(undefined, day)).toBe(0);
   });
 });

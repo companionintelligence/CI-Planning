@@ -26,11 +26,21 @@ const CARD_H = 196;
  * expands it into this card, overlaid on the grid at the entity's slot, showing its
  * details and the full set of actions. Renders nothing when no entity is expanded.
  *
- * Rendered inside the grid column so it scrolls with the timeline and aligns to the
+ * Rendered inside the grid column so it moves with the timeline and aligns to the
  * entity it describes; a transparent backdrop closes it without falling through to
  * click-to-create.
+ *
+ * `windowTopPx`/`windowHeightPx` describe the Planner's visible zoom window (px from
+ * the day's midnight): the window no longer scrolls, so the card clamps itself into
+ * that region — otherwise a card near the window's bottom edge would be clipped with
+ * no way to bring it into view. Omitted (e.g. in isolation) they default to the day.
  */
-export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (block: Block) => void }) {
+export function PlannerEntityCard(props: {
+  day: string;
+  onRequestDeletePlan: (block: Block) => void;
+  windowTopPx?: number;
+  windowHeightPx?: number;
+}) {
   // Resolve the expanded entity: a focused task, or a focused block.
   const taskSel = (): Task | undefined => {
     const id = activeTask();
@@ -102,12 +112,18 @@ export function PlannerEntityCard(props: { day: string; onRequestDeletePlan: (bl
   };
   const locked = () => { const b = block(); return b ? isImmovable(b) : false; };
 
-  // ── Position: anchor to the entity's slot, clamped to stay on the grid ──────────
+  // ── Position: anchor to the entity's slot, clamped into the VISIBLE window ──────
+  // The Planner's zoom window doesn't scroll, so [lo, hi] keeps the whole card inside
+  // the shown hour range (still bounded by the day for safety / default callers).
   const topPx = () => {
+    const winTop = Math.max(0, props.windowTopPx ?? 0);
+    const winBot = Math.min(DAY_HEIGHT_PX, winTop + (props.windowHeightPx ?? DAY_HEIGHT_PX));
+    const lo = winTop;
+    const hi = Math.max(lo, winBot - CARD_H);
     const b = block();
-    if (!b) return 8;
+    if (!b) return lo + 8;
     const y = yOf(minutesIntoDay(b.start_at, props.day));
-    return Math.max(0, Math.min(y, DAY_HEIGHT_PX - CARD_H));
+    return Math.max(lo, Math.min(y, hi));
   };
 
   // ── Actions ────────────────────────────────────────────────────────────────────

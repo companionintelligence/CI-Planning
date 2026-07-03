@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, createResource, onCleanup, onMount, createEffect } from 'solid-js';
+import { For, Show, createMemo, createSignal, createResource, onCleanup, createEffect } from 'solid-js';
 import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, DAY_HEIGHT_PX, MINUTES_PER_DAY, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
@@ -12,7 +12,7 @@ import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, 
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
-import { pickNextUp, scrollTopForBlock, SLOT_MIN, VISIBLE_HOURS } from '../lib/planner.js';
+import { pickNextUp, windowOffsetForBlock, SLOT_MIN, VISIBLE_HOURS } from '../lib/planner.js';
 import { computeBands } from '../lib/day-windows.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
@@ -35,9 +35,9 @@ function blockTagLabel(block: { tag?: string | null; category_id?: string | null
 }
 
 /**
- * The PLANNER (Phase G, G6): the hour-by-hour view of TODAY. 8h visible by default,
- * expandable to the full 24h; the **next-up** item is pinned to the second slot and
- * the view auto-scrolls there. Items show **name · tag · start–end**; Time-Blocks
+ * The PLANNER (Phase G, G6): the hour-by-hour view of TODAY. A fixed, NON-scrolling
+ * zoom window (4/8/16h) opens onto the day anchored so the **next-up** item is
+ * pinned to the second slot. Items show **name · tag · start–end**; Time-Blocks
  * render as labelled outlines; pattern instances carry their type texture; chips
  * drag-to-reorder (one tz-safe PATCH); overlaps are **allowed but flagged**.
  *
@@ -528,10 +528,12 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
 
 export function Planner() {
   const day = () => selectedDay();
-  // Now-line, next-up pin, and auto-scroll are today-relative — gated off other days.
+  // Now-line and the next-up window anchor are today-relative — gated off other days.
   const isToday = () => day() === localISODate();
-  // Visible window height: 4 / 8 / 16 hours (cockpit-v2 Phase 2). The grid is always
-  // the full day tall and scrolls, so any block stays reachable at any window size.
+  // Zoom window height: 4 / 8 / 16 hours (cockpit-v2 Phase 2). The grid is always the
+  // full day tall, but the Planner does NOT scroll internally (owner decision): the
+  // window is a fixed clipped viewport onto the day — `windowOffsetPx` below picks
+  // WHICH hours it shows, and the page itself scrolls for everything else.
   const [windowHours, setWindowHours] = createSignal(VISIBLE_HOURS);
   const visiblePx = () => windowHours() * 60 * PX_PER_MIN;
   const [updateMode, setUpdateMode] = createSignal(false);
@@ -558,7 +560,7 @@ export function Planner() {
     async ([d]) => { const { key } = await api.dayTypes.resolve(d); return (await api.patternBlocks.forDay(key)).windows; },
   );
   const bands = createMemo(() => computeBands(dayWindows() ?? {}, tags() ?? [], patternPrefs()?.prefs ?? {}));
-  // T-PLAN-2: the day's earliest grid block — the scroll anchor (1h of lead-in above it).
+  // T-PLAN-2: the day's earliest grid block — the window anchor (1h of lead-in above it).
   const firstChip = createMemo(() => {
     const cs = chips();
     return cs.length ? [...cs].sort((a, b) => a.start_at.localeCompare(b.start_at))[0] : undefined;
@@ -642,7 +644,9 @@ export function Planner() {
 
   // ── CON-5: write-capable Planner (click-to-create + drag-to-schedule) ──────────
   // The grid column element — the origin for drop/click Y → time math. Its top is the
-  // column's midnight, so `clientY - rect.top` is pixels-into-day at any scroll offset.
+  // column's midnight, so `clientY - rect.top` is pixels-into-day at any window
+  // offset: getBoundingClientRect() already reflects the grid's upward shift inside
+  // the clipped window (exactly as it reflected scrollTop when the window scrolled).
   let gridEl: HTMLDivElement | undefined;
   const gridY = (clientY: number) => (gridEl ? clientY - gridEl.getBoundingClientRect().top : 0);
 
@@ -702,10 +706,14 @@ export function Planner() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  let scroller: HTMLDivElement | undefined;
-  // Open each day scrolled to exactly 1h before its FIRST pattern direction (the
-  // earliest availability window) — one hour of lead-in, no more, no less. Falls back
-  // to the first block, then the day top, when the day has no direction windows.
+  // ── The zoom window's offset: WHICH hours the non-scrolling window shows ────────
+  // px from the day's midnight to the top of the window. Each day opens at exactly
+  // 1h before its FIRST pattern direction (the earliest availability window) — one
+  // hour of lead-in, no more, no less. Falls back to the first block, then the day
+  // top, when the day has no direction windows. This is the exact anchor the old
+  // scroll pin used; it now shifts the full-day grid up inside the clipped window
+  // instead of setting a scrollTop (the Planner no longer scrolls internally).
+  const [windowOffsetPx, setWindowOffsetPx] = createSignal(0);
   const firstDirectionTop = createMemo(() => {
     const bs = bands();
     return bs.length ? Math.min(...bs.map((b) => b.top)) : null;
@@ -713,23 +721,24 @@ export function Planner() {
   const anchorChip = () => (isToday() ? nextUp() ?? firstChip() : firstChip());
   const SLOT_PX = SLOT_MIN * PX_PER_MIN; // 1h of lead-in above the anchor
   const repin = () => {
-    if (!scroller) return;
     const dirTop = firstDirectionTop();
-    scroller.scrollTop = dirTop != null ? Math.max(0, dirTop - SLOT_PX) : scrollTopForBlock(anchorChip(), day());
+    const raw = dirTop != null ? Math.max(0, dirTop - SLOT_PX) : windowOffsetForBlock(anchorChip(), day());
+    // Never extend past the end of the day (the browser used to clamp scrollTop).
+    setWindowOffsetPx(Math.min(raw, Math.max(0, DAY_HEIGHT_PX - visiblePx())));
   };
-  onMount(repin);
   // Pin ONCE per (day, zoom) — never on a blocks refetch. A committed action (delete,
-  // complete, drag, auto-reflow) refetches blocks, which previously re-ran this effect
-  // and yanked the scroll back to the top of the day; gating on the day+zoom key stops
-  // that. Reading firstChip()/firstDirectionTop() re-runs it once the day's blocks AND
-  // direction windows have landed; the loading gates hold it until both are ready.
+  // complete, drag, auto-reflow) refetches blocks, which would otherwise re-anchor
+  // the window mid-edit and yank the visible hours around; gating on the day+zoom
+  // key stops that. Reading firstChip()/firstDirectionTop() re-runs it once the
+  // day's blocks AND direction windows have landed; the loading gates hold it until
+  // both are ready.
   let pinnedKey = '';
   createEffect(() => {
     const key = `${day()}:${windowHours()}`;
     firstChip(); firstDirectionTop();
     if (key === pinnedKey || blocks.loading || dayWindows.loading) return;
     pinnedKey = key;
-    queueMicrotask(repin);
+    repin();
   });
 
   // Someday Time Blocks (was Concepts) render on their goal day in the header lane;
@@ -787,7 +796,7 @@ export function Planner() {
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <span class="text-[10px] text-muted-foreground">{windowHours()}h · scroll for more</span>
+          <span class="text-[10px] text-muted-foreground">{windowHours()}h window</span>
         </div>
         <div class="flex items-center gap-3">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
@@ -843,13 +852,11 @@ export function Planner() {
         </div>
       </Show>
 
-      {/* Windowed scroller: 8h tall by default, full 24h when expanded. */}
-      <div
-        ref={scroller}
-        class="overflow-y-auto overflow-x-hidden relative"
-        style={{ height: `${visiblePx()}px` }}
-      >
-        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr' }}>
+      {/* Zoom window: a fixed 4/8/16h viewport onto the full-day grid. It does NOT
+          scroll internally — the negative margin shifts the grid so the anchored
+          hours show, everything else is clipped, and the PAGE scrolls instead. */}
+      <div class="overflow-hidden relative" style={{ height: `${visiblePx()}px` }}>
+        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr', 'margin-top': `-${windowOffsetPx()}px` }}>
           <TimeGutter />
           {/* Direction column — rotated, per-direction-colored window names. */}
           <div class="border-l border-border/60"><DirectionColumn bands={bands} /></div>
@@ -880,10 +887,13 @@ export function Planner() {
               {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <Show when={isToday()}><NowLine day={day()} now={nowISO()} /></Show>
-            {/* Expanded entity card — overlays the grid at the selected entity's slot. */}
-            <PlannerEntityCard day={day()} onRequestDeletePlan={requestDeletePlan} />
+            {/* Expanded entity card — overlays the grid at the selected entity's slot,
+                clamped into the visible (non-scrolling) window so it's never clipped. */}
+            <PlannerEntityCard day={day()} onRequestDeletePlan={requestDeletePlan} windowTopPx={windowOffsetPx()} windowHeightPx={visiblePx()} />
             <Show when={chips().length === 0 && containers().length === 0}>
-              <div class="absolute left-0 right-0 top-24 text-center text-sm text-muted-foreground px-4 pointer-events-none">
+              {/* Anchored inside the VISIBLE window (the grid is shifted up by the
+                  window offset, so a fixed top-24 could land in the clipped region). */}
+              <div class="absolute left-0 right-0 text-center text-sm text-muted-foreground px-4 pointer-events-none" style={{ top: `${windowOffsetPx() + 96}px` }}>
                 Nothing planned yet — <span class="text-primary font-medium">click an empty slot</span> to add a block,
                 drag a flight-plan task onto a time, or stage items and hit
                 <span class="text-primary font-medium"> Schedule</span>.
