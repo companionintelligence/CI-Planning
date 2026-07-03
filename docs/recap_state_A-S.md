@@ -184,7 +184,7 @@
 
 ## 7 · GraphQL / MCP notes (feed **W** / **X**)
 - **W:** ~29 REST routers; resolvers must **call the same `services/*.ts` the REST routes call** — S proved the danger of raw-SQL readers bypassing services. Design types against the **post-S shapes** (`daily_recap`, `tag_prefs`) and **post-T owner scoping**; note the `/api/pattern-prefs` **and** `/api/category-prefs` contracts both persist over the single `tag_prefs` table.
-- **X:** ~36 MCP tools; alignment blocked on CI-Server's vocabulary spec (external input).
+- **X:** the "~36 MCP tools" premise was **wrong** — that surface belonged to the pre-rebuild app (deleted `1510cd8`; see `archive/CLAUDE_COWORK.md`). The real surface is **7 tools** in an MCP *client* for Google Calendar/Gmail (`calendar_*` ×4, `gmail_*` ×3 — `server/src/mcp/`), already one consistent `domain_verb_object` shape. CI-Server alignment is **stylistic, not an integration requirement**: CI-Server's `McpToolProvider` namespaces (`serverName:tool`) and passes external tool names through verbatim. No rename is forced.
 
 ---
 
@@ -222,7 +222,7 @@ The single most important carry-forward. **The consolidation/hygiene tables are 
 - **`plan-import.md`** — design doc; its dedup/merge tickets (e.g. `PI-4` `possible:updated` SSE + merge/flag UI) are net-new / unbuilt.
 - **`ftue-plan.md`** — no clear status line; review before treating FTUE as complete.
 
-**Also kept live** (canon / active references): **`Q-schema-hygiene.md`** and **`S-schema-consolidation.md`** — [HANDOFF-multitenant.md](HANDOFF-multitenant.md) points the multi-tenant phase directly at Q's "Multi-tenant bridge" section and S's implemented record; plus `ROADMAP.md`, `GLOSSARY.md`, `HANDOFF-multitenant.md`, this recap, and `CLAUDE_COWORK.md` / `color-styling-rules.md` / `google-cloud-setup.md`. (`ROADMAP.md` + `Q` inbound links were repointed to `archive/`.)
+**Also kept live** (canon / active references): **`Q-schema-hygiene.md`** and **`S-schema-consolidation.md`** — [HANDOFF-multitenant.md](HANDOFF-multitenant.md) points the multi-tenant phase directly at Q's "Multi-tenant bridge" section and S's implemented record; plus `ROADMAP.md`, `GLOSSARY.md`, `HANDOFF-multitenant.md`, this recap, and `color-styling-rules.md` / `google-cloud-setup.md`. (`ROADMAP.md` + `Q` inbound links were repointed to `archive/`.) — **`CLAUDE_COWORK.md` has since been archived** (Phase X): it documented the deleted pre-rebuild 36-tool MCP server; see `archive/CLAUDE_COWORK.md`.
 
 ---
 
@@ -234,7 +234,7 @@ The single most important carry-forward. **The consolidation/hygiene tables are 
 | **U** OIDC + local auth | I's unbuilt PR2 (JWKS/SSO), `external_subject`, `AUTH_*` env | [§5](#5--auth-readiness-ledger-feeds-u) |
 | **V** password reset | depends on U; **no email infra exists** in the repo (net-new) | §5 |
 | **W** GraphQL | service-layer discipline; post-S/post-T shapes; both prefs contracts persist over `tag_prefs` | [§7](#7--graphql--mcp-notes-feed-w--x) |
-| **X** MCP vocabulary | ~36 tools; external CI-Server spec owed | §7 |
+| **X** MCP vocabulary | audit-corrected: **7** real Google-client tools, not 36 (the 36-tool `CLAUDE_COWORK.md` was pre-rebuild, now archived); CI-Server alignment stylistic, not required | §7 |
 | **Y** env config | ~26 undocumented `config.ts` vars + the out-of-config readers | [§6](#6--env--config-ledger-feeds-y) |
 
 > **Reconciliation the T–Y set still needs:** `T`, `U`, `V`, `W`, `X`, `Y`, `RELEASE-READINESS.md`, `RELEASE-READINESS-REVIEW.md` and the `companion_db_*` files are **untracked drafts** (they live only in the local `main` working tree, never committed — not on `origin/main`). They were written against the stale `0091` snapshot ("Q hasn't landed") — Q **and all of S** have since merged (head `0097`). Before they become real: (1) update their "live head" / "Q hasn't landed" premises; (2) correct `RELEASE-READINESS-REVIEW`'s claim that `schema.ts` was fully reconciled + a `check-schema-drift.ts` guard added — neither landed (the committed guard is the narrow `schema-parity.test.ts`); (3) fix their links to any A–S doc that moved to `archive/` (they reference `I-identity-auth.md` ×11, `S` ×4, `Q` ×3, etc.).
