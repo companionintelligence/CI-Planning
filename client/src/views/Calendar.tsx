@@ -339,9 +339,12 @@ export function Calendar() {
           // time. Defaulting to `kind: 'task'` (not the type chooser) + threading the
           // clicked day/time into the task's own schedule fields (see ElementWizard's
           // prefill seeding) means Save creates a scheduled placement at that instant.
-          onCreateAt={(day, hhmm) =>
-            setElementModal({ open: true, mode: 'add', kind: 'task', prefill: { day, start: hhmm } })
-          }
+          // In month view the grid supplies a placeholder '09:00'; skip `start` there so
+          // the modal doesn't pin an arbitrary time on month-cell clicks.
+          onCreateAt={(day, hhmm) => {
+            const prefill = view() === 'month' ? { day } : { day, start: hhmm };
+            setElementModal({ open: true, mode: 'add', kind: 'task', prefill });
+          }}
         />
       </div>
     </div>
