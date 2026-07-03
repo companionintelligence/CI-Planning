@@ -1,7 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import { rebuildTable } from '../migrate.js';
 
-export const id = '0106_calibration_scope';
+export const id = '0107_calibration_scope';
 // PK change (owner_id → composite) requires a table rebuild — toggles foreign_keys
 // OFF for the swap, so it runs outside the runner's auto-transaction. CON-1.
 export const manual = true;

@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
 
-export const id = '0105_time_sense_flag';
+export const id = '0106_time_sense_flag';
 
 /**
  * Phase Z (Time-Sense) — `time_sense_enabled` master feature flag on
