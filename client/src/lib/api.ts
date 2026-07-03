@@ -423,6 +423,17 @@ export const api = {
     login: (username: string, password: string) =>
       request<{ ok: boolean }>('POST', '/auth/login', { username, password }),
     logout: () => request<{ ok: boolean }>('POST', '/auth/logout'),
+    // V — password reset (local sign-in). reset-request always resolves to a neutral 200.
+    resetRequest: (identifier: string) =>
+      request<{ ok: boolean; message: string }>('POST', '/auth/reset-request', { identifier }),
+    reset: (token: string, newPassword: string) =>
+      request<{ ok: boolean }>('POST', '/auth/reset', { token, newPassword }),
+  },
+
+  // V — the authenticated owner's own account settings (backup reset-email).
+  owner: {
+    setBackupEmail: (backupEmail: string | null) =>
+      request<{ ok: boolean; backup_email: string | null }>('PATCH', '/owner/backup-email', { backup_email: backupEmail }),
   },
 };
 
@@ -436,6 +447,7 @@ export interface AuthMe {
   name: string;
   email: string | null;
   username: string | null;
+  backupEmail: string | null; // V — fallback password-reset destination
 }
 /** True when this deployment gates the SPA behind a login screen (U3). */
 export function authGateActive(cfg: AuthConfigResponse): boolean {

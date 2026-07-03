@@ -3,6 +3,7 @@ import { Show, createEffect, createResource, createSignal, onCleanup, onMount } 
 import { Plus, Cpu, Loader2 } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
 import { Login }    from './views/Login.js';
+import { ResetPassword } from './views/ResetPassword.js';
 import { authGateActive } from './lib/api.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
@@ -215,6 +216,8 @@ export function App() {
       <Show when={authGateActive(cfg()!)} fallback={<UngatedRouter />}>
         <Router>
           <Route path="/login" component={Login} />
+          {/* V7 — unauthenticated reset page reached from the emailed link. Bare, like /login. */}
+          <Route path="/reset-password" component={ResetPassword} />
           <Route path="/" component={SessionGate}>
             <Route path="/"         component={Today} />
             <Route path="/calendar" component={Calendar} />

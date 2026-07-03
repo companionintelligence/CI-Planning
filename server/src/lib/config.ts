@@ -29,6 +29,24 @@ export interface AuthConfig {
   defaultUsername?: string; // seeds the first local owner on boot if none exist
   defaultPassword?: string; // required to seed that owner; boot fails closed without a login path
   sessionSecret?: string;   // Koa app.keys secret signing the local-login session cookie
+  resetTokenTtlMs: number;  // V: password-reset token lifetime (default 60 min)
+}
+
+/**
+ * Outbound email (V — password reset). SMTP via nodemailer when configured; when
+ * `host` is unset the mail adapter falls back to a console/JSON transport that LOGS the
+ * message instead of sending it, keeping dev + the test suite fully offline (mirrors
+ * the GOOGLE_MODE=fixture / AUTH_MODE=test convenience). `appBaseUrl` is the base the
+ * reset link is built against (defaults to PUBLIC_BASE_URL).
+ */
+export interface MailConfig {
+  host?: string;
+  port: number;
+  secure: boolean;      // true ⇒ implicit TLS (465); false ⇒ STARTTLS/plain (587/25)
+  user?: string;
+  pass?: string;
+  from: string;         // From: header
+  appBaseUrl: string;   // base URL for reset links (${appBaseUrl}/reset-password?token=…)
 }
 
 /**
@@ -115,6 +133,7 @@ export interface Config {
   snapshotRetain: number;
   auth: AuthConfig;
   ciportal: CiPortalConfig;
+  mail: MailConfig;
   google: GoogleConfig;
   sync: SyncConfig;
   kek: KekConfig;
@@ -170,6 +189,7 @@ export const config: Config = {
     defaultUsername: process.env.AUTH_DEFAULT_USERNAME,
     defaultPassword: process.env.AUTH_DEFAULT_PASSWORD,
     sessionSecret: process.env.SESSION_SECRET,
+    resetTokenTtlMs: Number(process.env.AUTH_RESET_TOKEN_TTL_MS ?? 3_600_000), // 60 min
   },
   ciportal: {
     // Real CI-Portal discovery issuer (confirmed against CI-Import-Tools). Overridable
@@ -184,6 +204,15 @@ export const config: Config = {
     authorizeUri: process.env.CIPORTAL_AUTHORIZE_URI,
     tokenUri: process.env.CIPORTAL_TOKEN_URI,
     jwksUri: process.env.CIPORTAL_JWKS_URI,
+  },
+  mail: {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT ?? 587),
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.MAIL_FROM ?? 'Companion Planning <no-reply@companion.local>',
+    appBaseUrl: process.env.APP_BASE_URL ?? publicBaseUrl,
   },
   google: {
     clientId: process.env.CP_GOOGLE_CLIENT_ID,
@@ -273,6 +302,22 @@ if (
         'override discovery, or leave all unset to discover from CIPORTAL_ISSUER — not a partial subset.',
     );
   }
+}
+
+// Warn (don't fail): a production local-login deployment with no SMTP can't actually
+// deliver password-reset links — the mail adapter falls back to logging them, which is
+// useless to a remote user. Reset is optional infrastructure, so this is a warning, not a
+// boot guard. console.warn (not the logger) to avoid an import cycle this early.
+if (
+  config.auth.mode === 'sso' &&
+  config.auth.disableOidc &&
+  process.env.NODE_ENV === 'production' &&
+  !config.mail.host
+) {
+  console.warn(
+    '[config] Local login is enabled but SMTP is not configured (SMTP_HOST unset) — ' +
+      'password-reset emails will be logged, not sent. Set SMTP_* + MAIL_FROM to enable delivery.',
+  );
 }
 
 // Fail closed (Wave 0): GOOGLE_MODE=live without OAuth credentials would silently fall
