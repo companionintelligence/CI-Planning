@@ -32,14 +32,17 @@ function reaches(from: string, to: string): boolean {
  */
 function ownedDependsOnIds(ownerId: string, ids: string[]): string[] {
   if (ids.length === 0) return ids;
-  const placeholders = ids.map(() => '?').join(', ');
-  const owned = new Set(
-    (
-      sqlite
-        .prepare(`SELECT id FROM tasks WHERE id IN (${placeholders}) AND owner_id = ?`)
-        .all(...ids, ownerId) as { id: string }[]
-    ).map((r) => r.id),
-  );
+  // Keep well under SQLITE_MAX_VARIABLE_NUMBER (often 999) since ids is client-controlled.
+  const CHUNK = 500;
+  const owned = new Set<string>();
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = sqlite
+      .prepare(`SELECT id FROM tasks WHERE id IN (${placeholders}) AND owner_id = ?`)
+      .all(...chunk, ownerId) as { id: string }[];
+    for (const r of rows) owned.add(r.id);
+  }
   return ids.filter((id) => owned.has(id));
 }
 
