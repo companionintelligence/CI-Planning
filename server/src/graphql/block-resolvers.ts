@@ -31,12 +31,9 @@ import { clampFirst, decodeIdCursor, buildIdConnection } from './pagination.js';
  */
 type ConnArgs = { first?: number | null; after?: string | null };
 
-/** The DateTime scalar parses an input value to a `Date` (parseLiteral/parseValue); the
- *  services store time columns as ISO-8601 TEXT, so normalize back to a UTC ISO string.
- *  Accepts an already-string value too (defensive). */
-function toIso(v: unknown): string {
-  return v instanceof Date ? v.toISOString() : String(v);
-}
+// DateTime inputs (startAt/endAt/…) arrive as normalized ISO-8601 strings — the DateTime
+// scalar's parseValue/parseLiteral normalizes them (see graphql/scalars.ts), so resolvers
+// hand them straight to the services (which store ISO-string TEXT columns).
 
 /** Map a camelCase GraphQL CreateTimeBlockInput to the service's snake_case CreateBlockInput. */
 function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
@@ -50,8 +47,8 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
     goal_start_date: input.goalStartDate == null ? undefined : (input.goalStartDate as string),
     duration_minutes: input.durationMinutes == null ? undefined : (input.durationMinutes as number),
     note: input.note == null ? undefined : (input.note as string),
-    start_at: toIso(input.startAt),
-    end_at: toIso(input.endAt),
+    start_at: input.startAt as string,
+    end_at: input.endAt as string,
     is_locked: input.isLocked == null ? undefined : (input.isLocked as boolean),
     all_day: input.allDay == null ? undefined : (input.allDay as boolean),
     recurrence_rule: input.recurrenceRule == null ? undefined : (input.recurrenceRule as string),
@@ -72,11 +69,11 @@ function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
   }
   if ('startAt' in input) {
     if (input.startAt === null) throw new GraphQLError('startAt cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
-    out.start_at = toIso(input.startAt);
+    out.start_at = input.startAt as string;
   }
   if ('endAt' in input) {
     if (input.endAt === null) throw new GraphQLError('endAt cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
-    out.end_at = toIso(input.endAt);
+    out.end_at = input.endAt as string;
   }
   if ('isLocked' in input && input.isLocked != null) out.is_locked = input.isLocked as boolean;
   if ('status' in input && input.status != null) out.status = input.status as string;
@@ -156,11 +153,11 @@ export const blockResolvers = {
       return { timeBlocks: nodes, parentId: res.parentId, success: true };
     },
 
-    promoteBlockToScheduled: async (_p: unknown, args: { input: { id: string; startAt: unknown; endAt?: unknown; allDay?: boolean | null } }) => {
+    promoteBlockToScheduled: async (_p: unknown, args: { input: { id: string; startAt: string; endAt?: string | null; allDay?: boolean | null } }) => {
       const owner = currentOwnerId();
       const res = await promoteBlockToScheduledService(owner, args.input.id, {
-        start_at: toIso(args.input.startAt),
-        end_at: args.input.endAt == null ? undefined : toIso(args.input.endAt),
+        start_at: args.input.startAt,
+        end_at: args.input.endAt ?? undefined,
         all_day: args.input.allDay ?? undefined,
       });
       if (!res.ok) {

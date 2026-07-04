@@ -68,22 +68,29 @@ beforeEach(() => {
 
 describe('W3.3c — TimeBlockType queries', () => {
   it('timeBlocks connection: fields mapped, id-ordered, cursor-paginated', async () => {
-    // uuid7 ids are time-ordered, so creation order == id order.
-    const a = await seed({ title: 'Alpha', start_at: at(T0, '09:00'), end_at: at(T0, '10:00') });
-    const b = await seed({ title: 'Beta', start_at: at(T0, '10:00'), end_at: at(T0, '11:00') });
-    await seed({ title: 'Gamma', start_at: at(T0, '11:00'), end_at: at(T0, '12:00') });
+    // The connection orders by id ascending. uuid7 is time-ordered ACROSS milliseconds
+    // but random within a ms (no monotonic counter — see lib/ids.ts), so three blocks
+    // seeded in the same ms need not be in creation order. Assert against the id-SORTED
+    // expectation, not creation order, or this flakes under full-suite load.
+    const ids = [
+      await seed({ title: 'Alpha', start_at: at(T0, '09:00'), end_at: at(T0, '10:00') }),
+      await seed({ title: 'Beta', start_at: at(T0, '10:00'), end_at: at(T0, '11:00') }),
+      await seed({ title: 'Gamma', start_at: at(T0, '11:00'), end_at: at(T0, '12:00') }),
+    ];
+    const titleById = new Map([[ids[0], 'Alpha'], [ids[1], 'Beta'], [ids[2], 'Gamma']]);
+    const sorted = [...ids].sort();
 
     const range = `from: "${at(T0, '00:00')}", to: "${at(T0, '23:59')}"`;
     const page1 = await gql(`{ timeBlocks(first: 2, ${range}) { totalCount edges { cursor node { id title blockKind status allDay isLocked isAuto } } pageInfo { hasNextPage endCursor } } }`);
     expect(page1.body.errors).toBeUndefined();
     const c = page1.body.data.timeBlocks;
     expect(c.totalCount).toBe(3);
-    expect(c.edges.map((e: any) => e.node.id)).toEqual([a, b]);
-    expect(c.edges[0].node).toMatchObject({ title: 'Alpha', blockKind: 'task', status: 'planned', allDay: false, isLocked: false, isAuto: false });
+    expect(c.edges.map((e: any) => e.node.id)).toEqual(sorted.slice(0, 2));
+    expect(c.edges[0].node).toMatchObject({ title: titleById.get(sorted[0]), blockKind: 'task', status: 'planned', allDay: false, isLocked: false, isAuto: false });
     expect(c.pageInfo.hasNextPage).toBe(true);
 
-    const page2 = await gql(`{ timeBlocks(first: 2, after: "${c.pageInfo.endCursor}", ${range}) { edges { node { title } } pageInfo { hasNextPage } } }`);
-    expect(page2.body.data.timeBlocks.edges.map((e: any) => e.node.title)).toEqual(['Gamma']);
+    const page2 = await gql(`{ timeBlocks(first: 2, after: "${c.pageInfo.endCursor}", ${range}) { edges { node { id } } pageInfo { hasNextPage } } }`);
+    expect(page2.body.data.timeBlocks.edges.map((e: any) => e.node.id)).toEqual(sorted.slice(2));
     expect(page2.body.data.timeBlocks.pageInfo.hasNextPage).toBe(false);
   });
 
