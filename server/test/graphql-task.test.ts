@@ -43,21 +43,24 @@ beforeEach(() => { resetDb(); });
 
 describe('W3.3b — TaskType queries', () => {
   it('tasks connection: fields mapped, id-ordered, cursor-paginated', async () => {
-    // uuid7 ids are time-ordered, so creation order == id order.
-    const a = await seed('Alpha');
-    const b = await seed('Beta');
-    await seed('Gamma');
+    // The connection orders by id ascending. uuid7 is time-ordered ACROSS milliseconds
+    // but its within-ms bytes are random (no monotonic counter — see lib/ids.ts), so
+    // three tasks seeded in the same ms need not be in creation order. Assert against the
+    // id-SORTED expectation, not creation order, or this flakes under load.
+    const ids = [await seed('Alpha'), await seed('Beta'), await seed('Gamma')];
+    const titleById = new Map([[ids[0], 'Alpha'], [ids[1], 'Beta'], [ids[2], 'Gamma']]);
+    const sorted = [...ids].sort();
 
     const page1 = await gql('{ tasks(first: 2) { totalCount edges { cursor node { id title status priority subtype } } pageInfo { hasNextPage endCursor } } }');
     expect(page1.body.errors).toBeUndefined();
     const c = page1.body.data.tasks;
     expect(c.totalCount).toBe(3);
-    expect(c.edges.map((e: any) => e.node.id)).toEqual([a, b]);
-    expect(c.edges[0].node).toMatchObject({ title: 'Alpha', status: 'open', priority: 3, subtype: 'STANDARD' });
+    expect(c.edges.map((e: any) => e.node.id)).toEqual(sorted.slice(0, 2));
+    expect(c.edges[0].node).toMatchObject({ title: titleById.get(sorted[0]), status: 'open', priority: 3, subtype: 'STANDARD' });
     expect(c.pageInfo.hasNextPage).toBe(true);
 
-    const page2 = await gql(`{ tasks(first: 2, after: "${c.pageInfo.endCursor}") { edges { node { title } } pageInfo { hasNextPage } } }`);
-    expect(page2.body.data.tasks.edges.map((e: any) => e.node.title)).toEqual(['Gamma']);
+    const page2 = await gql(`{ tasks(first: 2, after: "${c.pageInfo.endCursor}") { edges { node { id title } } pageInfo { hasNextPage } } }`);
+    expect(page2.body.data.tasks.edges.map((e: any) => e.node.id)).toEqual(sorted.slice(2));
     expect(page2.body.data.tasks.pageInfo.hasNextPage).toBe(false);
   });
 
@@ -143,6 +146,23 @@ describe('W3.3b — TaskType mutations reuse the REST services + fire SSE', () =
   it('updateTask on an unknown id errors NOT_FOUND', async () => {
     const m = await gql('mutation { updateTask(input: { id: "ghost", title: "x" }) { success } }');
     expect(m.body.errors?.[0]?.message).toMatch(/not found/i);
+  });
+
+  // Regression: a DateTime input (dueAt/completedAt) must reach the ISO-string TEXT column
+  // as a string. The DateTime scalar parseValue used to return a Date, which threw
+  // "SQLite3 can only bind numbers, strings, bigints, buffers, and null" — a latent 500 on
+  // every date-valued create/update. Fixed at the scalar (normalizes inputs to ISO strings).
+  it('createTask + updateTask accept a DateTime input (dueAt/completedAt) — no bind error', async () => {
+    const c = await gql('mutation { createTask(input: { title: "Dated", dueAt: "2026-07-04T10:00:00.000Z" }) { success task { id dueAt } } }');
+    expect(c.body.errors).toBeUndefined();
+    expect(c.body.data.createTask.success).toBe(true);
+    const id = c.body.data.createTask.task.id;
+    expect(new Date(c.body.data.createTask.task.dueAt).toISOString()).toBe('2026-07-04T10:00:00.000Z');
+
+    const u = await gql(`mutation { updateTask(input: { id: "${id}", dueAt: "2026-07-05T09:30:00.000Z", completedAt: "2026-07-05T12:00:00.000Z" }) { success task { dueAt completedAt } } }`);
+    expect(u.body.errors).toBeUndefined();
+    expect(new Date(u.body.data.updateTask.task.dueAt).toISOString()).toBe('2026-07-05T09:30:00.000Z');
+    expect(new Date(u.body.data.updateTask.task.completedAt).toISOString()).toBe('2026-07-05T12:00:00.000Z');
   });
 
   it('deleteTask soft-cancels + broadcasts', async () => {
