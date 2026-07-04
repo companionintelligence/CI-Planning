@@ -202,4 +202,28 @@ describe('day-axis — visibleExtent', () => {
       endMin: BOTTOM_COLLAPSE_START,
     });
   });
+
+  it('clamps out-of-range extents (blocks spanning midnight) into the day', () => {
+    // endMin > 1440 (crosses midnight): the past-midnight tail is clamped to 24:00,
+    // so a bottom-collapsed block still trims to its expanded portion, never past it.
+    expect(visibleExtent(1380, 1500, BOTTOM_ONLY)).toEqual({ startMin: 1380, endMin: MINUTES_PER_DAY });
+    // A block wholly in the collapsed bottom (with an over-midnight tail) is hidden.
+    expect(visibleExtent(1300, 1500, BOTH_COLLAPSED)).toBeNull();
+  });
+});
+
+describe('day-axis — yOf clamps out-of-range minutes', () => {
+  it('never returns a Y outside [0, axisHeight] for out-of-range minutes', () => {
+    for (const [, state] of ALL_STATES) {
+      const h = axisHeightPx(state, PX);
+      for (const m of [-120, -1, MINUTES_PER_DAY + 1, MINUTES_PER_DAY + 240]) {
+        const y = yOf(m, state, PX);
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(y).toBeLessThanOrEqual(h);
+      }
+      // Clamped ends coincide with the 0/1440 boundaries.
+      expect(yOf(-50, state, PX)).toBe(yOf(0, state, PX));
+      expect(yOf(MINUTES_PER_DAY + 50, state, PX)).toBe(yOf(MINUTES_PER_DAY, state, PX));
+    }
+  });
 });

@@ -116,15 +116,19 @@ function segmentOf(min: number, segs: Segment[]): Segment {
  * expanded region begins.
  */
 export function yOf(min: number, state: AxisState, pxPerMin: number): number {
+  // Clamp to the day range: callers can pass out-of-range minutes for blocks that
+  // span midnight (minutesIntoDay), and using the raw value below would push Y
+  // negative or past the axis, breaking monotonicity.
+  const m = Math.min(Math.max(min, 0), MINUTES_PER_DAY);
   const segs = segments(state, pxPerMin);
-  const seg = segmentOf(min, segs);
+  const seg = segmentOf(m, segs);
   const span = seg.endMin - seg.startMin;
   if (seg.collapsed) {
     // Proportional placement inside the fixed bar (monotonic; 0 at start, bar height at end).
-    const frac = span > 0 ? (min - seg.startMin) / span : 0;
+    const frac = span > 0 ? (m - seg.startMin) / span : 0;
     return seg.topPx + frac * seg.heightPx;
   }
-  return seg.topPx + (min - seg.startMin) * pxPerMin;
+  return seg.topPx + (m - seg.startMin) * pxPerMin;
 }
 
 /**
@@ -136,7 +140,10 @@ export function yOf(min: number, state: AxisState, pxPerMin: number): number {
  */
 export function minAt(y: number, state: AxisState, pxPerMin: number): number {
   const segs = segments(state, pxPerMin);
-  const total = axisHeightPx(state, pxPerMin);
+  // Total axis height straight from the segments we already have (they're contiguous),
+  // avoiding a second segments() build via axisHeightPx on every pointer move.
+  const last = segs[segs.length - 1];
+  const total = last.topPx + last.heightPx;
   const py = Math.min(Math.max(y, 0), total);
 
   for (const seg of segs) {
@@ -174,8 +181,10 @@ export function visibleExtent(
   if (!state.topExpanded) collapsedRanges.push([TOP_COLLAPSE_START, TOP_COLLAPSE_END]);
   if (!state.bottomExpanded) collapsedRanges.push([BOTTOM_COLLAPSE_START, BOTTOM_COLLAPSE_END]);
 
-  let s = startMin;
-  let e = endMin;
+  // Clamp into the day range so a block that runs past midnight (endMin > 1440)
+  // is still trimmed/hidden correctly and never feeds out-of-range minutes to yOf.
+  let s = Math.min(Math.max(startMin, 0), MINUTES_PER_DAY);
+  let e = Math.min(Math.max(endMin, 0), MINUTES_PER_DAY);
 
   for (const [cs, ce] of collapsedRanges) {
     // Entirely inside a collapsed range → hidden.
