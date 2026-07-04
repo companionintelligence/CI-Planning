@@ -168,6 +168,29 @@ describe('W3.3c — TimeBlockType field resolvers', () => {
   });
 });
 
+describe('W4a — TimeBlockType Taggable forward edge', () => {
+  it('tags: returns the applied tags (all levels) with a non-null taggedAt', async () => {
+    const id = await seed({ title: 'Tagged', tag: 'work', secondary_tags: ['deep'] });
+    const r = await gql(`{ timeBlock(id: "${id}") { tags { id label taggedAt } } }`);
+    expect(r.body.errors).toBeUndefined();
+    const tags = r.body.data.timeBlock.tags as { id: string; label: string; taggedAt: string }[];
+    // Level 1 (work) + level 2 (deep) both surface — the honest "tags on this entity".
+    expect(tags.map((t) => t.label).sort()).toEqual(['deep', 'work']);
+    for (const t of tags) {
+      expect(t.id).toBeTruthy();
+      expect(t.taggedAt).toBeTruthy();
+      expect(new Date(t.taggedAt).toISOString()).toBe(t.taggedAt);
+    }
+  });
+
+  it('tags: an untagged block returns [] (never null)', async () => {
+    const id = await seed({ title: 'Bare' });
+    const r = await gql(`{ timeBlock(id: "${id}") { tags { id } } }`);
+    expect(r.body.errors).toBeUndefined();
+    expect(r.body.data.timeBlock.tags).toEqual([]);
+  });
+});
+
 describe('W3.3c — TimeBlockType mutations reuse the REST services + fire SSE', () => {
   it('createTimeBlock persists (visible via query) + broadcasts block:created', async () => {
     const m = await gql(`mutation { createTimeBlock(input: { title: "Made in GraphQL", startAt: "${at(T0, '13:00')}", endAt: "${at(T0, '14:00')}", tag: "gq" }) { success timeBlock { id title } } }`);

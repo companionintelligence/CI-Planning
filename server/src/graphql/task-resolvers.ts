@@ -3,6 +3,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from '../routes/sse.js';
 import { requestReplan } from '../engine/auto-defense.js';
 import { taskToApi } from '../lib/serialize.js';
+import { entityTagsFull } from '../services/tags.js';
 import {
   createTask as createTaskService,
   updateTask as updateTaskService,
@@ -160,5 +161,10 @@ export const taskResolvers = {
       );
     },
     dependsOn: (t: TaskRow) => dependsOnService(currentOwnerId(), t.id),
+    // W4a Taggable forward edge. Owner-safe: this resolver only runs on an
+    // already-owner-scoped task (task/tasks/parent/subtasks all go through getTask/
+    // listTasks), so its entity_tags are the owner's. id/label/taggedAt map to
+    // EntityTagType's fields via default resolvers — no EntityTagType resolver needed.
+    tags: (t: TaskRow) => entityTagsFull('task', t.id).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
   },
 };

@@ -118,6 +118,30 @@ describe('W3.3b — TaskType field resolvers', () => {
   });
 });
 
+describe('W4a — TaskType Taggable forward edge', () => {
+  it('tags: returns the applied tags (all levels) with a non-null taggedAt', async () => {
+    const id = await seed('Tagged', SYSTEM_OWNER, { tags: ['work'], secondary_tags: ['deep'] });
+    const r = await gql(`{ task(id: "${id}") { tags { id label taggedAt } } }`);
+    expect(r.body.errors).toBeUndefined();
+    const tags = r.body.data.task.tags as { id: string; label: string; taggedAt: string }[];
+    // Level 1 (work) + level 2 (deep) both surface — the honest "tags on this entity".
+    expect(tags.map((t) => t.label).sort()).toEqual(['deep', 'work']);
+    for (const t of tags) {
+      expect(t.id).toBeTruthy();
+      // taggedAt is non-null (DateTime!) and a real UTC instant.
+      expect(t.taggedAt).toBeTruthy();
+      expect(new Date(t.taggedAt).toISOString()).toBe(t.taggedAt);
+    }
+  });
+
+  it('tags: an untagged task returns [] (never null)', async () => {
+    const id = await seed('Bare');
+    const r = await gql(`{ task(id: "${id}") { tags { id } } }`);
+    expect(r.body.errors).toBeUndefined();
+    expect(r.body.data.task.tags).toEqual([]);
+  });
+});
+
 describe('W3.3b — TaskType mutations reuse the REST services + fire SSE', () => {
   it('createTask persists (visible via query) + broadcasts task:created', async () => {
     const m = await gql('mutation { createTask(input: { title: "Made in GraphQL", priority: 1, tags: ["gq"] }) { success task { id title priority } } }');

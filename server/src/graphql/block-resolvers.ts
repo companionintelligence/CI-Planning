@@ -3,7 +3,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from '../routes/sse.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { getTask } from '../services/tasks.js';
-import { getOwnedTag } from '../services/tags.js';
+import { getOwnedTag, entityTagsFull } from '../services/tags.js';
 import {
   createBlock as createBlockService,
   updateBlock as updateBlockService,
@@ -219,5 +219,10 @@ export const blockResolvers = {
       const row = getOwnedTag(currentOwnerId(), b.categoryId);
       return row ? toNode(row) : null;
     },
+    // W4a Taggable forward edge. Owner-safe: this resolver only runs on an
+    // already-owner-scoped block (timeBlock/timeBlocks/parentBlock all go through
+    // getBlock/listBlockPage), so its entity_tags are the owner's. id/label/taggedAt map
+    // to EntityTagType's fields via default resolvers — no EntityTagType resolver needed.
+    tags: (b: BlockRow) => entityTagsFull('time_block', b.id).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
   },
 };
