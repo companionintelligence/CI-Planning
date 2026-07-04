@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-01 · migration head `0097`
+**Status:** Living document · last updated 2026-07-01 · migration head `0105`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,7 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → S; migration head 0097):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
+**Shipped phases (A → S; migration head 0105):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
 
 ---
 
@@ -49,7 +49,7 @@ graph TB
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>15 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0097 on boot"]
+            Migrate["Migration runner<br/>0001–0105 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -99,7 +99,7 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0097_tag_prefs
+│       │   ├── migrations/   0001_baseline → 0105_revert_direction_axis
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
