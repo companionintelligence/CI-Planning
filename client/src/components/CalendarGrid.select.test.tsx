@@ -82,6 +82,23 @@ describe('CalendarGrid — date selection (month cell number)', () => {
     expect(onCreateAt).not.toHaveBeenCalled();
   });
 
+  it('without onSelectDate, the date number bubbles to the cell so add-task still fires', () => {
+    const onCreateAt = vi.fn();
+    const { getByText } = render(() => (
+      <CalendarGrid
+        view="month"
+        days={['2026-07-01', '2026-07-02']}
+        blocksByDay={noBlocks}
+        onCreateAt={onCreateAt}
+        selectedDate={() => null}
+      />
+    ));
+    // No onSelectDate wired → the number button must not stopPropagation; the click
+    // bubbles to the cell's add-task handler (no regression vs the old span markup).
+    fireEvent.click(getByText('2'));
+    expect(onCreateAt).toHaveBeenCalledWith('2026-07-02', '09:00');
+  });
+
   it('clicking empty cell space still fires add-task (selection did not steal it)', () => {
     const onSelectDate = vi.fn();
     const onCreateAt = vi.fn();

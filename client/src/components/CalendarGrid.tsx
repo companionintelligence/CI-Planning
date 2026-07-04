@@ -453,7 +453,13 @@ export function CalendarGrid(props: Props) {
                       'inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-surface-950 font-semibold': isToday(),
                       'hover:bg-surface-700/60': !!props.onSelectDate && !isToday(),
                     }}
-                    onClick={(e) => { e.stopPropagation(); props.onSelectDate?.(day); }}
+                    onClick={(e) => {
+                      // Only intercept the click when selection is wired; otherwise let it
+                      // bubble to the cell so onCreateAt (add-task) still fires as before.
+                      if (!props.onSelectDate) return;
+                      e.stopPropagation();
+                      props.onSelectDate(day);
+                    }}
                   >
                     {dayLabel(day, { day: 'numeric' })}
                   </button>
