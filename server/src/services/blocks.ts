@@ -162,27 +162,27 @@ export async function getBlock(ownerId: string, id: string): Promise<BlockRow | 
 export type BlockConnectionQuery = { from?: string; to?: string; state?: string };
 
 /**
- * One keyset page of the owner's blocks for the GraphQL connection, ordered by id
- * (UUIDv7 is time-ordered, so id order is a stable creation order). Runs the SHARED
- * materialize → template-drop core (so recurring instances appear + templates don't,
- * exactly as REST), then applies the id-keyset in memory: the materialization is
- * range-bounded and small, and instances are inserted with fresh uuid7 ids at read time
- * so an in-memory sort/slice keeps the cursor semantics simple and correct. Fetch
- * `limit + 1` so the resolver can report hasNextPage. `after` is the last id of the
- * prior page. */
-export async function listBlockRows(
+ * One keyset page of the owner's blocks for the GraphQL connection AND its totalCount,
+ * from a SINGLE materialize pass. Ordered by id ascending — deterministic and stable for
+ * pagination (no dupes/skips across pages), though NOT necessarily insertion order:
+ * uuid7 is time-ordered across milliseconds but has random within-ms bytes (no monotonic
+ * counter — see lib/ids.ts), so same-ms rows sort by those random bytes.
+ *
+ * Runs the shared materialize → template-drop core ONCE (it has side effects —
+ * `ensurePatternsForRange`/`ensureRecurringBlocksForRange` write materialized instances —
+ * so page + count must NOT each re-run it), then derives both the page and the total in
+ * memory: `totalCount` is the full filtered set size; the page is the `after`-keyset slice
+ * of `limit` rows. Pass `limit + 1` so the resolver can report `hasNextPage`. The
+ * materialization is range-bounded and small; instances persist with stable ids once
+ * materialized (marker-idempotent), so the in-memory sort/slice keeps cursors correct. */
+export async function listBlockPage(
   ownerId: string,
   query: BlockConnectionQuery & { after?: string; limit: number },
-): Promise<BlockRow[]> {
-  const rows = await blockRowsForQuery(ownerId, { from: query.from, to: query.to, state: query.state });
-  const ordered = rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+): Promise<{ rows: BlockRow[]; totalCount: number }> {
+  const all = await blockRowsForQuery(ownerId, { from: query.from, to: query.to, state: query.state });
+  const ordered = all.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const afterFiltered = query.after ? ordered.filter((r) => r.id > query.after!) : ordered;
-  return afterFiltered.slice(0, query.limit);
-}
-
-/** Total count for the `timeBlocks` connection (same materialize + filter, no keyset). */
-export async function countBlockRows(ownerId: string, query: BlockConnectionQuery): Promise<number> {
-  return (await blockRowsForQuery(ownerId, query)).length;
+  return { rows: afterFiltered.slice(0, query.limit), totalCount: ordered.length };
 }
 
 /** The POST /api/blocks body shape (snake_case API convention). */

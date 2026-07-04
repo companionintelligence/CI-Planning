@@ -203,6 +203,17 @@ describe('W3.3c — TimeBlockType mutations reuse the REST services + fire SSE',
     expect(m.body.errors?.[0]?.message).toMatch(/not found/i);
   });
 
+  it('updateTimeBlock rejects explicit null on a non-nullable field (isLocked) but accepts false', async () => {
+    const id = await seed({ title: 'Toggle', start_at: at(T0, '09:00'), end_at: at(T0, '10:00'), is_locked: true });
+    // Explicit null on a non-nullable column errors (not a silent no-op).
+    const bad = await gql(`mutation { updateTimeBlock(input: { id: "${id}", isLocked: null }) { success } }`);
+    expect(bad.body.errors?.[0]?.message).toMatch(/isLocked cannot be null/i);
+    expect((sqlite.prepare(`SELECT is_locked FROM time_blocks WHERE id = ?`).get(id) as { is_locked: number }).is_locked).toBe(1); // unchanged
+    // `false` is a legitimate value and still works.
+    const ok = await gql(`mutation { updateTimeBlock(input: { id: "${id}", isLocked: false }) { success timeBlock { isLocked } } }`);
+    expect(ok.body.data.updateTimeBlock).toEqual({ success: true, timeBlock: { isLocked: false } });
+  });
+
   it('updateTimeBlock rejects a title/time edit on an inbound-mirrored block (read-only)', async () => {
     const id = await seed({ title: 'Standup' });
     sqlite.prepare(`INSERT INTO external_events (owner_id, block_id, direction, provider, account, external_id) VALUES (?, ?, 'inbound', 'google', 'me@example.com', 'evt-1')`).run(OWNER, id);

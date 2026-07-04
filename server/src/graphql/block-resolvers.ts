@@ -10,7 +10,7 @@ import {
   deleteBlock as deleteBlockService,
   moveBlockGroup as moveBlockGroupService,
   promoteBlockToScheduled as promoteBlockToScheduledService,
-  getBlock, listBlockRows, countBlockRows,
+  getBlock, listBlockPage,
   type BlockRow, type CreateBlockInput as SvcCreateInput, type UpdateBlockInput as SvcUpdateInput,
 } from '../services/blocks.js';
 import { toNode } from './tag-resolvers.js';
@@ -75,15 +75,30 @@ function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
     if (input.endAt === null) throw new GraphQLError('endAt cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
     out.end_at = input.endAt as string;
   }
-  if ('isLocked' in input && input.isLocked != null) out.is_locked = input.isLocked as boolean;
-  if ('status' in input && input.status != null) out.status = input.status as string;
-  if ('blockKind' in input && input.blockKind != null) out.block_kind = input.blockKind as string;
+  // Non-nullable columns: an explicit null is rejected (not silently skipped), matching
+  // TaskType's discipline for title/status/priority. `false` is a legitimate boolean value
+  // and passes; only `null` errors.
+  if ('isLocked' in input) {
+    if (input.isLocked === null) throw new GraphQLError('isLocked cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.is_locked = input.isLocked as boolean;
+  }
+  if ('status' in input) {
+    if (input.status === null) throw new GraphQLError('status cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.status = input.status as string;
+  }
+  if ('blockKind' in input) {
+    if (input.blockKind === null) throw new GraphQLError('blockKind cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.block_kind = input.blockKind as string;
+  }
   if ('tag' in input) out.tag = input.tag as string | null;
   if ('blockType' in input) out.block_type = input.blockType as string | null;
   if ('goalStartDate' in input) out.goal_start_date = input.goalStartDate as string | null;
   if ('durationMinutes' in input) out.duration_minutes = input.durationMinutes as number | null;
   if ('note' in input) out.note = input.note as string | null;
-  if ('allDay' in input && input.allDay != null) out.all_day = input.allDay as boolean;
+  if ('allDay' in input) {
+    if (input.allDay === null) throw new GraphQLError('allDay cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.all_day = input.allDay as boolean;
+  }
   if ('parentBlockId' in input) out.parent_block_id = input.parentBlockId as string | null;
   if ('secondaryTags' in input && input.secondaryTags != null) out.secondary_tags = input.secondaryTags as string[];
   if ('recurrenceRule' in input) out.recurrence_rule = input.recurrenceRule as string | null;
@@ -105,8 +120,10 @@ export const blockResolvers = {
       const limit = clampFirst(args.first);
       const after = decodeIdCursor(args.after);
       const q = { from: args.from ?? undefined, to: args.to ?? undefined, state: args.state ?? undefined };
-      const rows = await listBlockRows(owner, { ...q, after: after || undefined, limit: limit + 1 });
-      return buildIdConnection(rows, limit, await countBlockRows(owner, q));
+      // Single materialize pass: page + totalCount from one service call (materialization
+      // has side effects — must not run twice per query).
+      const { rows, totalCount } = await listBlockPage(owner, { ...q, after: after || undefined, limit: limit + 1 });
+      return buildIdConnection(rows, limit, totalCount);
     },
   },
 
