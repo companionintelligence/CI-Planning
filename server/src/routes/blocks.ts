@@ -9,7 +9,6 @@ import { blocksToICal, type ICalBlock } from '../lib/ical.js';
 // whats-next render below.
 import { serverTimezone, utcToZonedWallTime } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
-import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, revertTaskPlacementStatus } from '../services/block-task-sync.js';
 import {
@@ -133,12 +132,8 @@ export function blocksRouter() {
       ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return;
     }
 
-    // Phase L: stamp version/field_ts for sync versioning (mirrors tasks PATCH).
-    // Stays route-side for W3.2 — the service returns which columns it wrote.
-    if (result.updatedKeys.length > 0) {
-      stampRow(sqlite, 'block', id, result.updatedKeys);
-    }
-
+    // Phase L versioning (stampRow) now happens INSIDE updateBlock (W3.3) so a GraphQL
+    // mutation versions on the same path; the route no longer stamps.
     broadcast(owner, 'block:updated', result.api);
     if (result.syncedTaskId) broadcast(owner, 'task:updated', { id: result.syncedTaskId });
 

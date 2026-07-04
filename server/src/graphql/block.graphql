@@ -1,0 +1,146 @@
+# Phase W · W3.3c — TimeBlockType. CRUD ALONGSIDE the REST /api/blocks routes; every
+# field and mutation reads/writes through services/blocks.ts (Decision 3), never
+# re-deriving owner-scoping against the DB (re-derivation is how this phase's IDOR bugs
+# appeared).
+#
+# `implements Node` only — NOT Taggable: EntityTagType.taggedAt is DateTime! but
+# entity_tags has no timestamp column until W4's migration, so the `tags` field is
+# deferred to W4 (same call TaskType made). No `objective` on blocks.
+#
+# `status` and `blockKind` are plain String, NOT enums: time_blocks.status /.block_kind
+# are free-form TEXT columns with no CHECK (status: planned/completed/skipped/overrun;
+# block_kind: task/meeting/habit/focus/break/buffer/timeblock). A DB value outside a
+# GraphQL enum throws at serialization, so String is the correct, leak-proof choice
+# (same call TaskType made for `status`).
+
+type TimeBlockType implements Node {
+  id: ID!
+  title: String!
+  blockKind: String!
+  startAt: DateTime!
+  endAt: DateTime!
+  allDay: Boolean!
+  isLocked: Boolean!
+  isAuto: Boolean!
+  status: String!
+  createdAt: DateTime!
+  note: String
+  blockType: String
+  durationMinutes: Int
+  colorToken: String
+  # Relations (owner-scoped field resolvers; null when the FK is unset).
+  task: TaskType                    # task_id
+  parentBlock: TimeBlockType        # parent_block_id
+  category: TagType                 # category_id (a tags.kind='category' row)
+}
+
+type TimeBlockConnection implements Connection {
+  edges: [TimeBlockEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TimeBlockEdge implements Edge {
+  cursor: String!
+  node: TimeBlockType!
+}
+
+input CreateTimeBlockInput {
+  title: String!
+  taskId: ID
+  blockKind: String
+  tag: String
+  secondaryTags: [String!]
+  blockType: String
+  goalStartDate: String
+  durationMinutes: Int
+  note: String
+  startAt: DateTime!
+  endAt: DateTime!
+  isLocked: Boolean
+  allDay: Boolean
+  recurrenceRule: String
+  recurrenceDtstart: String
+  categoryId: ID
+  colorToken: String
+}
+
+input UpdateTimeBlockInput {
+  id: ID!
+  title: String
+  startAt: DateTime
+  endAt: DateTime
+  isLocked: Boolean
+  status: String
+  blockKind: String
+  tag: String
+  blockType: String
+  goalStartDate: String
+  durationMinutes: Int
+  note: String
+  allDay: Boolean
+  parentBlockId: ID
+  secondaryTags: [String!]
+  recurrenceRule: String
+  recurrenceDtstart: String
+  categoryId: ID
+}
+
+# Shift a Plan + all its members by one minute delta, atomically (PR-C). `id` may be the
+# Plan (blockKind='timeblock') OR any member; the group is resolved the same way.
+input MoveBlockGroupInput {
+  id: ID!
+  deltaMinutes: Int!
+}
+
+# Turn a Concept into a scheduled Plan. end defaults to start + the concept's duration.
+input PromoteBlockInput {
+  id: ID!
+  startAt: DateTime!
+  endAt: DateTime
+  allDay: Boolean
+}
+
+# Deleting a Plan detaches its members by default (they survive as loose task blocks);
+# deleteChildren removes them too (the "remove tasks" confirm-dialog choice).
+input DeleteTimeBlockInput {
+  id: ID!
+  deleteChildren: Boolean
+}
+
+type CreateTimeBlockPayload {
+  timeBlock: TimeBlockType
+  success: Boolean!
+}
+
+type UpdateTimeBlockPayload {
+  timeBlock: TimeBlockType
+  success: Boolean!
+}
+
+type MoveBlockGroupPayload {
+  timeBlocks: [TimeBlockType!]!
+  parentId: ID!
+  success: Boolean!
+}
+
+type PromoteBlockPayload {
+  timeBlock: TimeBlockType
+  success: Boolean!
+}
+
+extend type Query {
+  timeBlock(id: ID!): TimeBlockType
+  # `from`/`to`/`state` filter (mirror REST GET /api/blocks — recurring instances
+  # materialize, templates drop); `first`/`after` paginate forward on id.
+  timeBlocks(first: Int, after: String, from: String, to: String, state: String): TimeBlockConnection!
+}
+
+extend type Mutation {
+  createTimeBlock(input: CreateTimeBlockInput!): CreateTimeBlockPayload!
+  updateTimeBlock(input: UpdateTimeBlockInput!): UpdateTimeBlockPayload!
+  moveBlockGroup(input: MoveBlockGroupInput!): MoveBlockGroupPayload!
+  promoteBlockToScheduled(input: PromoteBlockInput!): PromoteBlockPayload!
+  # Reuses the shared DeleteByIdPayload; uses its own DeleteTimeBlockInput for deleteChildren.
+  deleteTimeBlock(input: DeleteTimeBlockInput!): DeleteByIdPayload!
+}

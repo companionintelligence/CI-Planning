@@ -23,8 +23,9 @@ import { clampFirst, decodeAfter, buildTagConnection } from './pagination.js';
 type ConnArgs = { first?: number | null; after?: string | null };
 
 /** Normalize any tag row (keyset `TagRow` with isBase, or a full row with is_base) into
- *  the shape the TagType field resolvers read. */
-function toNode(r: { id: string; name: string; kind: string; muted: number; isBase?: number; is_base?: number }): TagRow {
+ *  the shape the TagType field resolvers read. Exported so the TimeBlockType `category`
+ *  resolver (block-resolvers.ts) returns the SAME source shape TagType's resolvers expect. */
+export function toNode(r: { id: string; name: string; kind: string; muted: number; isBase?: number; is_base?: number }): TagRow {
   return { id: r.id, name: r.name, kind: r.kind, muted: r.muted, isBase: r.isBase ?? r.is_base ?? 0 };
 }
 
