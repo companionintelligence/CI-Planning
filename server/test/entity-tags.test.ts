@@ -141,22 +141,42 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
 });
 
 describe('W4a — entity_tags.created_at (Taggable taggedAt)', () => {
-  it('a fresh entity_tags insert stamps created_at (non-null ISO instant)', () => {
+  it('a fresh entity_tags insert gets a non-null created_at from the DB default', () => {
     const taskId = (sqlite
       .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'Timed', 'open') RETURNING id`)
       .get(OWNER) as { id: string }).id;
-    syncEntityTags('task', taskId, ['work'], OWNER); // the sole write path (insertAssoc)
+    syncEntityTags('task', taskId, ['work'], OWNER); // via services/tags.ts insertAssoc
 
     const rows = sqlite
       .prepare(`SELECT created_at FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?`)
       .all(taskId) as { created_at: string | null }[];
     expect(rows).toHaveLength(1);
     expect(rows[0].created_at).toBeTruthy();
-    // A real ISO-8601 UTC instant (round-trips through Date).
-    expect(new Date(rows[0].created_at as string).toISOString()).toBe(rows[0].created_at);
+    // Parseable to a valid instant (stored as SQLite CURRENT_TIMESTAMP text, matching the
+    // other created_at columns — tasks/time_blocks; the DateTime scalar serializes it).
+    expect(Number.isNaN(new Date(rows[0].created_at as string).getTime())).toBe(false);
   });
 
-  it('no live entity_tags row has a null created_at (backfill + insert-stamp invariant)', () => {
+  // The structural invariant W4a's migration guarantees: entity_tags has SIX writers
+  // (services/tags.ts + auto-tag, blocks-recur, possibles, recall clone, groom) and most
+  // omit created_at. A raw 4-column insert stands in for those five — the DB-level
+  // NOT NULL DEFAULT CURRENT_TIMESTAMP must fill it, or Taggable.taggedAt (DateTime!) 500s.
+  it('an insert that OMITS created_at (the five non-insertAssoc writers) still gets one', () => {
+    const taskId = (sqlite
+      .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'Bare', 'open') RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    const tagId = (sqlite
+      .prepare(`INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, 'bare') RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    // The exact 4-column form the other writers use (e.g. services/auto-tag.ts).
+    sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(taskId, tagId);
+    const row = sqlite
+      .prepare(`SELECT created_at FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?`)
+      .get(taskId) as { created_at: string | null };
+    expect(row.created_at).toBeTruthy(); // DB default, not app-stamped
+  });
+
+  it('no live entity_tags row has a null created_at (structural DB-default invariant)', () => {
     const taskId = (sqlite
       .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'A', 'open') RETURNING id`)
       .get(OWNER) as { id: string }).id;

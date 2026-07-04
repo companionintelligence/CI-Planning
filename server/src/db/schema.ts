@@ -443,11 +443,12 @@ export const entityTags = sqliteTable(
     entityId: text('entity_id').notNull(),                        // PK of the entity (no FK — spans tables)
     tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
     level: integer('level').notNull().default(1),                 // 1 = top-level; >1 = secondary (Phase 5)
-    // W4a (0110): when this tag was applied. Nullable at the DB level (added via ADD COLUMN,
-    // which can't take a non-constant default), but every row carries a value — the sole
-    // write path (services/tags.ts insertAssoc) stamps it, and 0110 backfilled existing rows
-    // — so GraphQL's `EntityTagType.taggedAt: DateTime!` never serializes a null.
-    createdAt: text('created_at'),
+    // W4a (0110): when this tag was applied. `NOT NULL DEFAULT CURRENT_TIMESTAMP` at the DB
+    // level — 0110 rebuilt the table to add it, since SQLite can't ADD COLUMN a non-constant
+    // default. So ALL six insert paths (services/tags.ts, auto-tag, blocks-recur, possibles,
+    // recall clone, groom) get a value automatically — GraphQL's `EntityTagType.taggedAt:
+    // DateTime!` can never serialize a null. Do NOT add per-call-site stamping.
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (t) => ({ pk: primaryKey({ columns: [t.entityKind, t.entityId, t.tagId] }) })
 );

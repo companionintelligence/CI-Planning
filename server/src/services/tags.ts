@@ -40,13 +40,13 @@ export function splitTagString(raw: string | null | undefined): string[] {
 
 const findTag = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`);
 const makeTag = sqlite.prepare(`INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id`);
-// W4a: stamp created_at on every insert (the SOLE write path into entity_tags), so
-// GraphQL's EntityTagType.taggedAt (DateTime!) is always non-null on new rows. Existing
-// rows were backfilled in migration 0110. A real ISO-8601 UTC instant, matching the
-// column's TEXT storage everywhere else in the app.
+// W4a: entity_tags.created_at carries a DB-level `NOT NULL DEFAULT CURRENT_TIMESTAMP`
+// (migration 0110), so this — and every OTHER insert path (auto-tag, blocks-recur,
+// possibles, recall clone, groom) — gets a value automatically without stamping it here.
+// That structural default is what guarantees GraphQL's EntityTagType.taggedAt (DateTime!)
+// is never null; deliberately NO per-call-site stamp (a partial one is the trap 0110 fixes).
 const insertAssoc = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level, created_at)
-     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES (?, ?, ?, ?)`,
 );
 const deleteEntity = sqlite.prepare(`DELETE FROM entity_tags WHERE entity_kind = ? AND entity_id = ?`);
 const selectNames = sqlite.prepare(
