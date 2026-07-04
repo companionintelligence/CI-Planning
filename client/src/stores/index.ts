@@ -10,6 +10,7 @@ import { DEFAULT_AXIS_STATE } from '../lib/day-axis.js';
 import type { AxisState } from '../lib/day-axis.js';
 import {
   buildCalendarViewPrefs,
+  buildPlannerViewPrefs,
   deserializeAxisState,
   deserializeDeselected,
   deserializePrio,
@@ -102,6 +103,16 @@ export function toggleCalendarTop() {
 }
 export function toggleCalendarBottom() {
   setCalendarAxisState((s) => ({ ...s, bottomExpanded: !s.bottomExpanded }));
+}
+
+// ── Planner night-hour collapse (persisted 0111, view_prefs.planner) ────────────
+// Same store-based hydrate/persist path as the calendar; independent toggle state.
+export const [plannerAxisState, setPlannerAxisState] = createSignal<AxisState>({ ...DEFAULT_AXIS_STATE });
+export function togglePlannerTop() {
+  setPlannerAxisState((s) => ({ ...s, topExpanded: !s.topExpanded }));
+}
+export function togglePlannerBottom() {
+  setPlannerAxisState((s) => ({ ...s, bottomExpanded: !s.bottomExpanded }));
 }
 
 /** Toggle one chip on an axis (deselect if selected, re-select if deselected). */
@@ -289,19 +300,21 @@ createEffect(() => {
   setOverlayAxes(deserializeDeselected(cal));
   setOverlayPrio(deserializePrio(cal));
   setCalendarAxisState(deserializeAxisState(cal));
+  setPlannerAxisState(deserializeAxisState(p.view_prefs?.planner));
   _viewPrefsHydrated = true;
 });
 
 let _viewPrefsTimer: ReturnType<typeof setTimeout> | undefined;
-function persistCalendarViewPrefs() {
+function persistViewPrefs() {
   const calendar = buildCalendarViewPrefs(overlayAxes(), overlayPrio(), calendarAxisState());
+  const planner = buildPlannerViewPrefs(plannerAxisState());
   clearTimeout(_viewPrefsTimer);
   _viewPrefsTimer = setTimeout(() => {
-    // Merge under `calendar` so a future `planner` sibling (deferred follow-up) is
-    // preserved. Fire-and-forget: a failed save just means it doesn't sync — the
-    // in-memory state (the source of truth for this session) is already applied.
+    // Merge both sections over whatever's stored so neither clobbers the other (and
+    // any future sibling is preserved). Fire-and-forget: a failed save just means it
+    // doesn't sync — the in-memory state (this session's source of truth) is applied.
     const existing = prefs()?.view_prefs ?? {};
-    void api.prefs.update({ view_prefs: { ...existing, calendar } }).catch(() => {});
+    void api.prefs.update({ view_prefs: { ...existing, calendar, planner } }).catch(() => {});
   }, 400);
 }
 
@@ -309,15 +322,16 @@ function persistCalendarViewPrefs() {
 // so restoring saved state doesn't immediately echo it back (and the initial
 // all-on defaults don't overwrite a saved override before it loads).
 createEffect(() => {
-  // Track all three so the effect re-runs on any of them.
+  // Track all four so the effect re-runs on any of them.
   overlayAxes();
   overlayPrio();
   calendarAxisState();
+  plannerAxisState();
   if (!_viewPrefsHydrated) return;
   // The hydration setters above re-trigger this effect once; that first post-hydration
   // run is just echoing the values we loaded, so arm-and-skip it (no PATCH on load).
   if (!_viewPrefsPersistArmed) { _viewPrefsPersistArmed = true; return; }
-  persistCalendarViewPrefs();
+  persistViewPrefs();
 });
 
 // ── Pattern-blocks ────────────────────────────────────────────────────────────

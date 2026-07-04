@@ -4,7 +4,6 @@ import { api, type Block } from '../lib/api.js';
 import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
   type AxisState,
-  DEFAULT_AXIS_STATE,
   segments,
   axisHeightPx,
   yOf as axisYOf,
@@ -19,7 +18,7 @@ import { spanAtY } from '../lib/place.js';
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
@@ -625,11 +624,11 @@ export function Planner() {
 
   // Segmented day axis: the whole day renders at natural height with the two night
   // regions collapsed to expandable bars by default (both collapsed — matches the
-  // calendar). Two per-session (not persisted) signals drive the axis; this REPLACED
-  // the old 4/8/16h clipped zoom window so no hour is ever unreachable.
-  const [topExpanded, setTopExpanded] = createSignal(DEFAULT_AXIS_STATE.topExpanded);
-  const [bottomExpanded, setBottomExpanded] = createSignal(DEFAULT_AXIS_STATE.bottomExpanded);
-  const axisState = (): AxisState => ({ topExpanded: topExpanded(), bottomExpanded: bottomExpanded() });
+  // calendar); this REPLACED the old 4/8/16h clipped zoom window so no hour is ever
+  // unreachable. Collapse state is store-backed (not a local signal) so it hydrates
+  // from + persists to view_prefs.planner (cross-device, migration 0111) — mirroring
+  // the calendar's collapse persistence.
+  const axisState = plannerAxisState;
 
   // A minute ticker so "next up" (and the now line) advance over the day.
   const [nowISO, setNowISO] = createSignal(new Date().toISOString());
@@ -963,8 +962,8 @@ export function Planner() {
             </For>
             <Show when={isToday()}><NowLine day={day()} now={nowISO()} state={axisState} /></Show>
             {/* Expander bars over the two night regions (grid column only). */}
-            <ExpanderBar region="top" label="12am – 7am" state={axisState} onToggle={() => setTopExpanded((v) => !v)} />
-            <ExpanderBar region="bottom" label="9pm – 12am" state={axisState} onToggle={() => setBottomExpanded((v) => !v)} />
+            <ExpanderBar region="top" label="12am – 7am" state={axisState} onToggle={togglePlannerTop} />
+            <ExpanderBar region="bottom" label="9pm – 12am" state={axisState} onToggle={togglePlannerBottom} />
             {/* Expanded entity card — overlays the grid at the selected entity's slot. */}
             <PlannerEntityCard day={day()} state={axisState} onRequestDeletePlan={requestDeletePlan} />
             <Show when={chips().length === 0 && containers().length === 0}>

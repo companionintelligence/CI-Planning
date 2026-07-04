@@ -632,17 +632,21 @@ export interface Tag {
 }
 
 /**
- * Cross-device calendar UI view-state (server migration 0111, stored as one JSON
- * blob). Every key is optional — a missing/malformed blob degrades to built-in
- * defaults (filter = all shown, night hours = both collapsed) so hydration can
- * never crash. `deselected` holds hidden tag names per axis (sorted arrays on the
- * wire ↔ Sets in the store). The `planner` sibling is reserved for the deferred
- * Planner collapse follow-up (wires in after #260 using the same shape).
+ * Cross-device UI view-state (server migration 0111, stored as one JSON blob),
+ * one sibling per surface. Every key is optional — a missing/malformed blob degrades
+ * to built-in defaults (filter = all shown, night hours = both collapsed) so hydration
+ * can never crash. `calendar.deselected` holds hidden tag names per axis (sorted arrays
+ * on the wire ↔ Sets in the store); `planner` holds the Planner's own night-hour
+ * collapse flags. Both are persisted the same way.
  */
 export interface ViewPrefs {
   calendar?: {
     deselected?: { direction?: string[]; intention?: string[]; category?: string[] };
     prio?: number[];
+    topExpanded?: boolean;
+    bottomExpanded?: boolean;
+  };
+  planner?: {
     topExpanded?: boolean;
     bottomExpanded?: boolean;
   };
