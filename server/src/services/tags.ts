@@ -40,6 +40,11 @@ export function splitTagString(raw: string | null | undefined): string[] {
 
 const findTag = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`);
 const makeTag = sqlite.prepare(`INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id`);
+// W4a: entity_tags.created_at carries a DB-level `NOT NULL DEFAULT CURRENT_TIMESTAMP`
+// (migration 0110), so this — and every OTHER insert path (auto-tag, blocks-recur,
+// possibles, recall clone, groom) — gets a value automatically without stamping it here.
+// That structural default is what guarantees GraphQL's EntityTagType.taggedAt (DateTime!)
+// is never null; deliberately NO per-call-site stamp (a partial one is the trap 0110 fixes).
 const insertAssoc = sqlite.prepare(
   `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES (?, ?, ?, ?)`,
 );
@@ -179,6 +184,29 @@ const selectLevels = sqlite.prepare(
 /** An entity's tags with their levels (cockpit-v2 Phase 5: top=1, secondary>1). */
 export function entityTagLevels(kind: EntityKind, entityId: string): { name: string; level: number }[] {
   return selectLevels.all(kind, entityId) as { name: string; level: number }[];
+}
+
+// ── GraphQL Taggable forward edge (Phase W · W4a) ─────────────────────────────
+// The full EntityTagType shape (id + name + application time) for ONE entity. Returns
+// ALL levels — the honest "every tag applied to this entity"; the level distinction is
+// planner-internal and EntityTagType doesn't expose it. Deterministically ordered
+// (level, name) so the connection is stable. Owner-safe: the caller only resolves this
+// on an already-owner-scoped Task/TimeBlock (fetched via getTask/getBlock), so the joined
+// tags are that owner's. `created_at` is non-null by construction — migration 0110 gave the
+// column a DB-level `NOT NULL DEFAULT CURRENT_TIMESTAMP`, so every insert path fills it; no
+// COALESCE and no app-side stamp are needed here.
+const selectEntityTagsFull = sqlite.prepare(
+  `SELECT tags.id AS tagId, tags.name AS name, entity_tags.created_at AS createdAt
+     FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
+    WHERE entity_tags.entity_kind = ? AND entity_tags.entity_id = ?
+    ORDER BY entity_tags.level, tags.name`,
+);
+/** Full tag rows for a single entity (GraphQL Taggable). tagId + name + createdAt. */
+export function entityTagsFull(
+  kind: EntityKind,
+  entityId: string,
+): { tagId: string; name: string; createdAt: string }[] {
+  return selectEntityTagsFull.all(kind, entityId) as { tagId: string; name: string; createdAt: string }[];
 }
 
 /**
