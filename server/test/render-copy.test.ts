@@ -152,6 +152,14 @@ describe('renderCopy', () => {
     expect(second.text).toContain('12:00');
   });
 
+  it('narrative surfaces emit the caller-supplied deterministic paragraph when the model is down', async () => {
+    mockGenerate.mockRejectedValue(new Error('down'));
+    const prose = 'Plan for the day:\n• 2 due today.\n• 1 block scheduled.';
+    const r = await renderCopy('daily_brief', { facts: 'raw facts for the model', fallback: prose }, { ownerId: OWNER });
+    expect(r.source).toBe('fallback');
+    expect(r.text).toBe(prose); // the rich deterministic prose, verbatim — not a skeleton opener
+  });
+
   it('prunes the anti-repetition window back to the surface K', async () => {
     mockGenerate.mockRejectedValue(new Error('down'));
     const k = SURFACES.weekly_review.historyK; // 4

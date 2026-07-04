@@ -599,3 +599,46 @@ describe('Z5 per-cue prefs matrix (0108)', () => {
     expect(prefsRow().arm).toBeNull();
   });
 });
+
+// ── Z7: Voice loop retrofit — brief + EOD route through renderCopy (flag-gated) ────
+
+describe('Z7 Voice loop retrofit (flag-gated)', () => {
+  function copyCount(surface: string): number {
+    return (sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM copy_history WHERE owner_id = ? AND surface = ?`)
+      .get(SYSTEM_OWNER, surface) as { n: number }).n;
+  }
+
+  it('flag OFF: the morning brief uses the legacy path and writes no copy_history (byte-identical Phase N)', async () => {
+    setFlag(false);
+    const res = await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.prose).toBe('string');
+    expect(res.body.prose.length).toBeGreaterThan(0);
+    expect(copyCount('daily_brief')).toBe(0);
+  });
+
+  it('flag ON: the brief routes through renderCopy — one signature per genuine generation, cache hits do not re-render', async () => {
+    setFlag(true);
+    const first = await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(first.status).toBe(200);
+    expect(first.body.prose.length).toBeGreaterThan(0); // Ollama mocked down → deterministic fallback prose
+    expect(copyCount('daily_brief')).toBe(1);
+
+    // Same inputs → cache hit → stored prose returned, renderCopy NOT re-invoked.
+    await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(copyCount('daily_brief')).toBe(1);
+
+    // refresh forces a real re-generation → exactly one more signature.
+    await api(srv.url, `/api/summary?date=${DAY}&refresh=1`);
+    expect(copyCount('daily_brief')).toBe(2);
+  });
+
+  it('flag ON: opening the EOD alignment routes through renderCopy and records an eod_alignment signature', async () => {
+    setFlag(true);
+    const res = await api(srv.url, '/api/reflections/evening/open', { method: 'POST', json: { period_key: DAY } });
+    expect(res.status).toBe(200);
+    expect(res.body.body).toContain(`${DAY} in review`); // fallback paragraph carried through verbatim
+    expect(copyCount('eod_alignment')).toBeGreaterThanOrEqual(1);
+  });
+});

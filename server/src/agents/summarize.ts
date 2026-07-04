@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { sqlite } from '../db/index.js';
 import { generate } from '../mcp/ollama.js';
+import { renderCopy } from './render-copy.js';
+import { timeSenseEnabled } from '../lib/flags.js';
 import { logger } from '../lib/logger.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -224,15 +226,27 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
 
   let prose: string;
   let llm: boolean;
-  try {
-    const out = await generate(buildPrompt(date, g), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
-    prose = out.trim();
-    if (!prose) throw new Error('empty summary');
-    llm = true;
-  } catch (err) {
-    logger.warn('summarizeDay fell back to deterministic prose', { date, err: (err as Error).message });
-    prose = fallbackProse(date, g);
-    llm = false;
+  if (timeSenseEnabled(currentOwnerId())) {
+    // Phase Z · Z7 — route the brief through the Voice loop so it's voice-gated and
+    // never repeats a recent day's phrasing. Only on a cache MISS (here): a cache hit
+    // returns the stored prose above without re-rendering, so copy_history records
+    // exactly one signature per genuine (re)generation. renderCopy is Ollama-down-safe
+    // and falls back to fallbackProse (passed as `fallback`), so this never throws.
+    const copy = await renderCopy('daily_brief', { facts: buildPrompt(date, g), fallback: fallbackProse(date, g) });
+    prose = copy.text;
+    llm = copy.source === 'model';
+  } else {
+    // Flag OFF → byte-identical Phase N/O: the brief is core, not a Time-Sense surface.
+    try {
+      const out = await generate(buildPrompt(date, g), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
+      prose = out.trim();
+      if (!prose) throw new Error('empty summary');
+      llm = true;
+    } catch (err) {
+      logger.warn('summarizeDay fell back to deterministic prose', { date, err: (err as Error).message });
+      prose = fallbackProse(date, g);
+      llm = false;
+    }
   }
 
   sqlite
@@ -456,17 +470,14 @@ export function morningCarryover(date: string): MorningCarryover {
  */
 export async function summarizeEvening(date: string): Promise<EveningSummary> {
   const payload = gatherEvening(date);
-  let prose: string;
-  let llm: boolean;
-  try {
-    const out = await generate(buildEveningPrompt(payload), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
-    prose = out.trim();
-    if (!prose) throw new Error('empty evening summary');
-    llm = true;
-  } catch (err) {
-    logger.warn('summarizeEvening fell back to deterministic prose', { date, err: (err as Error).message });
-    prose = fallbackEveningProse(payload);
-    llm = false;
-  }
-  return { date, prose, llm, payload };
+  // Phase Z · Z7 — the EOD narrative goes through the Voice loop too (one voice, no
+  // repeats). summarizeEvening is Time-Sense-only code, reached solely via the
+  // flag-gated POST /evening/open (an authoring action, so recording a copy_history
+  // signature here doesn't touch the pure-read GET path). Ollama-down-safe: the
+  // deterministic fallbackEveningProse is passed as `fallback`.
+  const copy = await renderCopy('eod_alignment', {
+    facts: buildEveningPrompt(payload),
+    fallback: fallbackEveningProse(payload),
+  });
+  return { date, prose: copy.text, llm: copy.source === 'model', payload };
 }
