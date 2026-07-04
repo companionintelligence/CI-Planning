@@ -45,16 +45,16 @@ async function taskConnection(
 function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
   return {
     title: input.title as string,
-    notes: input.notes as string | undefined,
-    priority: input.priority as number | undefined,
-    subtype: input.subtype ? String(input.subtype).toLowerCase() as SvcCreateInput['subtype'] : undefined,
-    estimated_minutes: input.estimatedMinutes as number | undefined,
-    due_at: input.dueAt as string | undefined,
-    scheduled_for: input.scheduledFor as string | undefined,
-    parent_id: input.parentId as string | undefined,
-    tags: input.tags as string[] | undefined,
-    secondary_tags: input.secondaryTags as string[] | undefined,
-    depends_on: input.dependsOn as string[] | undefined,
+    notes: input.notes == null ? undefined : (input.notes as string),
+    priority: input.priority == null ? undefined : (input.priority as number),
+    subtype: input.subtype ? (String(input.subtype).toLowerCase() as SvcCreateInput['subtype']) : undefined,
+    estimated_minutes: input.estimatedMinutes == null ? undefined : (input.estimatedMinutes as number),
+    due_at: input.dueAt == null ? undefined : (input.dueAt as string),
+    scheduled_for: input.scheduledFor == null ? undefined : (input.scheduledFor as string),
+    parent_id: input.parentId == null ? undefined : (input.parentId as string),
+    tags: input.tags == null ? undefined : (input.tags as string[]),
+    secondary_tags: input.secondaryTags == null ? undefined : (input.secondaryTags as string[]),
+    depends_on: input.dependsOn == null ? undefined : (input.dependsOn as string[]),
   };
 }
 
