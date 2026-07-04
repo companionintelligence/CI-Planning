@@ -27,15 +27,69 @@ SQLite is the single source of truth for data.
 
 ## Interface
 
-The Tasks view — a local-first task list with priority chips, tags, and the
-grooming pipeline — shown in both themes. Dark is the default; a toggle in the
-sidebar switches to light.
+A screen-by-screen tour of the SolidJS PWA, on the
+[Companion Intelligence design system](https://github.com/companionintelligence/CI-Common/tree/main/style)
+— teal primary, Montserrat, light + dark. Dark is the default; the sidebar toggle
+switches to light. Every pair below is a real headless render of the built client
+served by the Koa server against a seeded SQLite database (`pnpm seed`), captured
+at 1440×900 in both themes — not a mockup.
+
+### Today
+
+The day overview: a QuickAdd bar, the day header with live counts (overdue · due
+today · scheduled · open), day-type + day-stars, the FOCUS card, the planner
+instruct bar, and the PLANNER grid for placing blocks.
 
 | Light | Dark |
 |-------|------|
-| ![Companion Planning — Tasks view, light theme](docs/ui/planning-light.png) | ![Companion Planning — Tasks view, dark theme](docs/ui/planning-dark.png) |
+| ![Companion Planning — Today view, light theme](docs/ui/planning-today-light.png) | ![Companion Planning — Today view, dark theme](docs/ui/planning-today-dark.png) |
 
-On the [Companion Intelligence design system](https://github.com/companionintelligence/CI-Common/tree/main/style) — teal primary, Montserrat, light + dark.
+### Calendar
+
+Day / week / month grid with the current week in view, plus Export, Review, and
+Schedule Day controls and the overlays filter.
+
+| Light | Dark |
+|-------|------|
+| ![Companion Planning — Calendar view, light theme](docs/ui/planning-calendar-light.png) | ![Companion Planning — Calendar view, dark theme](docs/ui/planning-calendar-dark.png) |
+
+### Inbox
+
+The review queue of AI-proposed tasks — promote (`P`) or dismiss (`D`). Shown here
+at inbox-zero: the deterministic seed auto-promotes every extracted suggestion, so
+there are no pending items. Populated cards appear once the Gmail/Calendar
+ingestion jobs surface new suggestions.
+
+| Light | Dark |
+|-------|------|
+| ![Companion Planning — Inbox view, light theme](docs/ui/planning-inbox-light.png) | ![Companion Planning — Inbox view, dark theme](docs/ui/planning-inbox-dark.png) |
+
+### Tasks
+
+The full backlog — priority chips (P1–P3 · Later), tags, direction filter, and the
+Tasks / Habits / Routines / Time Blocks tabs. Rendered against ~74 seeded tasks.
+
+| Light | Dark |
+|-------|------|
+| ![Companion Planning — Tasks view, light theme](docs/ui/planning-tasks-light.png) | ![Companion Planning — Tasks view, dark theme](docs/ui/planning-tasks-dark.png) |
+
+### Objectives
+
+Hierarchical life goals — Goal → Project → Objective — with task linkage and
+progress roll-up. Shown at its empty state (the seed creates no objectives); the
+**New Objective** / **Create your first objective** affordances open the editor.
+
+| Light | Dark |
+|-------|------|
+| ![Companion Planning — Objectives view, light theme](docs/ui/planning-objectives-light.png) | ![Companion Planning — Objectives view, dark theme](docs/ui/planning-objectives-dark.png) |
+
+> **Regenerating these:** build the client (`pnpm --filter client build`), seed a
+> throwaway DB (`NODE_ENV=test DB_PATH=/tmp/shots.db pnpm --filter server seed -- --no-llm --target=70`),
+> start the server against it (`DB_PATH=/tmp/shots.db PORT=8842 pnpm --filter server start`),
+> then screenshot each route (`/`, `/calendar`, `/inbox`, `/tasks`, `/objectives`)
+> in both themes into `docs/ui/planning-<screen>-<theme>.png`. The **Routines**,
+> **Tags**, **Jobs**, and **Settings** screens live in the annotated
+> [Screenshots](#screenshots) tour below.
 
 ## Architecture
 
