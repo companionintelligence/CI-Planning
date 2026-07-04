@@ -55,6 +55,7 @@ export function resetDb(): void {
     DELETE FROM objectives;
     DELETE FROM estimate_calibration;
     DELETE FROM calibration_combo_pins;
+    DELETE FROM copy_history;
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
