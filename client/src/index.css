@@ -393,3 +393,15 @@
     to   { transform: translateY(0);    opacity: 1; }
   }
 }
+
+/* Phase Z · Z3b — Focus Ritual ambient breathing (the final 3 minutes: fade
+   in→out→in, the one deliberately attention-recruiting cue, §1.1). Top-level so it
+   applies at every width; disabled under reduced motion (discrete cues remain). */
+@keyframes focusBreath {
+  0%, 100% { opacity: 0.15; }
+  50%      { opacity: 0.6; }
+}
+.focus-breath { animation: focusBreath 60s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .focus-breath { animation: none; opacity: 0.35; }
+}
