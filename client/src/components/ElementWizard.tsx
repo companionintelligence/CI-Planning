@@ -109,6 +109,7 @@ export function ElementWizard() {
   const [estimateSuggestion, { mutate: mutateSuggestion }] = createResource(
     () =>
       open() && m().mode === 'edit' && !!prefs()?.time_sense_enabled &&
+      prefs()?.calibration_loop_enabled !== false && // Z5: the calibration nudge has its own channel gate
       (m().editTarget?.kind === 'task' || m().editTarget?.kind === 'habit') && m().editTarget?.id
         ? m().editTarget!.id
         : null,

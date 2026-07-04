@@ -99,7 +99,8 @@ export function Today() {
   const focusClock = setInterval(() => setNowTick(Date.now()), 30_000);
   onCleanup(() => clearInterval(focusClock));
   const currentFocusBlock = createMemo(() => {
-    if (!prefs()?.time_sense_enabled) return null;
+    // Z5: the Focus screen has its own channel gate on top of the master flag.
+    if (!prefs()?.time_sense_enabled || prefs()?.focus_ritual_enabled === false) return null;
     const t = nowTick();
     return (blocks() ?? []).find(
       (b) =>
