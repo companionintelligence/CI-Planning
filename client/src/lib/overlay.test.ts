@@ -6,6 +6,7 @@ import {
   noAxisFilter,
   isAllDay,
   isTimed,
+  isTaskBlock,
 } from './overlay.js';
 import type { AxisDeselected, TagAxis, TagKindLookup } from './overlay.js';
 import type { Block, Task } from './api.js';
@@ -135,6 +136,22 @@ describe('noAxisFilter helper', () => {
   it('true only when nothing is deselected on any axis', () => {
     expect(noAxisFilter(emptyAxisDeselected())).toBe(true);
     expect(noAxisFilter(deselect({ category: ['me'] }))).toBe(false);
+  });
+});
+
+describe('task-block vs container partitioning', () => {
+  it('a block_kind="task" WITH a task_id is a task block', () => {
+    expect(isTaskBlock(blk({ block_kind: 'task', task_id: '10' }))).toBe(true);
+  });
+
+  it('a block_kind="task" WITHOUT a task_id is not a task block (defensive)', () => {
+    expect(isTaskBlock(blk({ block_kind: 'task', task_id: undefined }))).toBe(false);
+  });
+
+  it('container kinds are never task blocks, even if a task_id is present', () => {
+    for (const kind of ['timeblock', 'meeting', 'focus', 'habit', 'break', 'buffer']) {
+      expect(isTaskBlock(blk({ block_kind: kind, task_id: '10' }))).toBe(false);
+    }
   });
 });
 

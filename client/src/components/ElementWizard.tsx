@@ -171,8 +171,12 @@ export function ElementWizard() {
       setStart(pf.start || nextHalfHour());
       setDurMin(pf.durationMin ?? 60);
       setSomeday(false); setGoalDay(localISODate());
-      setScheduledFor(localISODate()); setEstimate(30); setDueAt(''); setPriority(3);
-      setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule(''); setTaskTime('');
+      // A calendar empty-slot click prefills day+time; for a TASK those map to its own
+      // schedule fields (scheduled_for / task_time) so Save places it at that instant.
+      // Add-mode only — Edit seeds from the target below.
+      setScheduledFor(pf.day || localISODate()); setTaskTime(pf.start || '');
+      setEstimate(30); setDueAt(''); setPriority(3);
+      setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
       setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]); setCategoryId(''); setMakeHabit(false);
       setAttachDraft(''); setAttachItems([]); setRemovedMemberIds([]);
