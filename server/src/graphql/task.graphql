@@ -87,10 +87,7 @@ type UpdateTaskPayload {
   success: Boolean!
 }
 
-extend type Query {
-  task(id: ID!): TaskType
-  tasks(first: Int, after: String, last: Int, before: String, status: String): TaskConnection!
-}
+  tasks(first: Int, after: String, status: String): TaskConnection!
 
 extend type Mutation {
   createTask(input: CreateTaskInput!): CreateTaskPayload!
