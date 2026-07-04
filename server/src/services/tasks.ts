@@ -13,6 +13,7 @@ import { entityTagLevels, syncLeveledEntityTags } from './tags.js';
 import { utcDayBounds } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 
 /**
  * Task CRUD orchestration (Phase W step 3.1) — extracted from routes/tasks.ts so
@@ -364,6 +365,11 @@ export async function updateTask(
       setDependencies(targetId, input.depends_on, ownerId);
     } catch (err) {
       if (err instanceof DependencyCycleError) {
+        // Phase L: the column UPDATE already applied before the dependency change was
+        // rejected, so stamp version/field_ts here (moved in from routes/tasks.ts at
+        // W3.3b) exactly as the route did on this 409 path — same target, same fields,
+        // same guard — so REST stays byte-equivalent and a GraphQL update stamps too.
+        if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
         return { ok: false, error: 'dependency_cycle', detail: err.message, targetId, updatedFields };
       }
       throw err;
@@ -408,6 +414,14 @@ export async function updateTask(
   }
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `task:${targetId}` });
+  // Phase L: stamp version/field_ts so concurrent sync ops from other devices compare
+  // correctly against this online edit using field-level LWW. Moved in from
+  // routes/tasks.ts at W3.3b (was route-side for W3.1) so REST and the coming GraphQL
+  // updateTask mutation both version their column writes — same target, same fields,
+  // same guard (`updatedFields.length > 0`) the route used, so REST stays byte-equivalent
+  // (the route stamped after the service returned; audit already fired inside the service).
+  if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
+
   return { ok: true, task, targetId, updatedFields, syncedBlockId, generated };
 }
 
