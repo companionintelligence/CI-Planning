@@ -10,9 +10,16 @@ import {
   pageDirectionChildren, countDirectionChildren,
   pageCategoryChildren, countCategoryChildren,
   pageOwnerTags, countOwnerTags,
+  pageEntitiesForTag, countEntitiesForTag,
   type TagRow,
 } from '../services/tags.js';
-import { clampFirst, decodeAfter, buildTagConnection } from './pagination.js';
+import { getTask } from '../services/tasks.js';
+import { getBlock } from '../services/blocks.js';
+import { clampFirst, decodeAfter, encodeCursor, buildTagConnection } from './pagination.js';
+
+/** GraphQL EntityKindFilter enum → DB entity_kind; absent ⇒ '' (both kinds). */
+const dbEntityKind = (k?: string | null): string =>
+  k === 'TASK' ? 'task' : k === 'TIME_BLOCK' ? 'time_block' : '';
 
 /**
  * TagType resolvers (Phase W, Decision 6). Every resolver reuses `services/tags.ts`
@@ -117,5 +124,54 @@ export const tagResolvers = {
       }
       return buildTagConnection(rows, limit, total);
     },
+    // W4b reverse edge. Owner-scoped twice over: the service's UNION joins the owned
+    // tasks/time_blocks tables (a cross-owner or deleted entity_id is dropped there), and
+    // each node is re-materialized through getTask/getBlock (owner-scoped) — so a stale
+    // row can't leak another owner's entity. N+1 within a bounded page (≤100) is
+    // acceptable and mirrors the per-entity forward `tags` edge. `__entityKind` on the
+    // node drives the union's __resolveType; GraphQL ignores the extra property.
+    entities: async (r: TagRow, args: ConnArgs & { kind?: string | null }) => {
+      const owner = currentOwnerId();
+      const limit = clampFirst(args.first);
+      const { afterName: afterKind, afterId } = decodeAfter(args.after);
+      const kind = dbEntityKind(args.kind);
+      const refsPlusOne = pageEntitiesForTag(r.id, owner, kind, afterKind, afterId, limit + 1);
+      const hasNextPage = refsPlusOne.length > limit;
+      const refs = hasNextPage ? refsPlusOne.slice(0, limit) : refsPlusOne;
+      const nodes = await Promise.all(
+        refs.map((ref) => (ref.entityKind === 'task' ? getTask(owner, ref.entityId) : getBlock(owner, ref.entityId))),
+      );
+      const edges = refs
+        .map((ref, i) => {
+          const node = nodes[i];
+          return node
+            ? { cursor: encodeCursor(ref.entityKind, ref.entityId), node: { ...node, __entityKind: ref.entityKind } }
+            : null;
+        })
+        .filter((e): e is NonNullable<typeof e> => e !== null);
+      return {
+        edges,
+        pageInfo: {
+          hasNextPage,
+          hasPreviousPage: false, // forward-only, matching the tag connections
+          startCursor: edges.length ? edges[0].cursor : null,
+          // endCursor tracks the last SCANNED keyset position (last ref), not the last
+          // surviving edge: if a node was dropped (concurrent delete between the UNION and
+          // re-materialize), the client's `after` must still advance past it, or it re-
+          // fetches the same dropped row forever.
+          endCursor: refs.length ? encodeCursor(refs[refs.length - 1].entityKind, refs[refs.length - 1].entityId) : null,
+        },
+        totalCount: countEntitiesForTag(r.id, owner, kind),
+      };
+    },
+  },
+
+  // Union type-discrimination for the W4b reverse edge. The `entities` resolver stamps
+  // each node with `__entityKind` (the DB entity_kind), read here to pick the concrete type.
+  TaggedEntity: {
+    // Map only the known kinds; anything unexpected returns null so GraphQL raises a clear
+    // "unresolved union type" error rather than silently mis-typing a node as TaskType.
+    __resolveType: (obj: { __entityKind?: string }) =>
+      obj.__entityKind === 'task' ? 'TaskType' : obj.__entityKind === 'time_block' ? 'TimeBlockType' : null,
   },
 };
