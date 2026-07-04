@@ -279,6 +279,7 @@ export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
 // coalesces bursts of chip toggles). A malformed/missing blob degrades to the
 // built-in defaults (the deserializers are forgiving), so hydration can't crash.
 let _viewPrefsHydrated = false;
+let _viewPrefsPersistArmed = false;
 
 createEffect(() => {
   const p = prefs();
@@ -313,6 +314,9 @@ createEffect(() => {
   overlayPrio();
   calendarAxisState();
   if (!_viewPrefsHydrated) return;
+  // The hydration setters above re-trigger this effect once; that first post-hydration
+  // run is just echoing the values we loaded, so arm-and-skip it (no PATCH on load).
+  if (!_viewPrefsPersistArmed) { _viewPrefsPersistArmed = true; return; }
   persistCalendarViewPrefs();
 });
 
