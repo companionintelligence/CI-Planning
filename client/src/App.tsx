@@ -118,7 +118,7 @@ function Shell(props: { children?: any }) {
               classList={{ 'bg-primary text-primary-foreground': mode() === 'schedule', 'text-muted-foreground hover:text-foreground': mode() !== 'schedule' }}
             >Schedule</button>
           </div>
-          <span class="text-xs font-mono" style={{ color: '#244859' }}>
+          <span class="text-xs font-mono text-foreground">
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
         </div>
