@@ -1,19 +1,30 @@
-import { For, Show, createMemo, createSignal, createResource, onCleanup, createEffect } from 'solid-js';
-import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks } from 'lucide-solid';
+import { For, Show, createMemo, createSignal, createResource, onCleanup } from 'solid-js';
+import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
-import { PX_PER_MIN, DAY_HEIGHT_PX, MINUTES_PER_DAY, minutesIntoDay, yOf, minsOf } from '../lib/grid.js';
+import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
+import {
+  type AxisState,
+  DEFAULT_AXIS_STATE,
+  segments,
+  axisHeightPx,
+  yOf as axisYOf,
+  minAt as axisMinAt,
+  visibleExtent,
+  TOP_COLLAPSE_END,
+  BOTTOM_COLLAPSE_START,
+} from '../lib/day-axis.js';
 import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta } from '../lib/drag.js';
 import { resolveGroup, containerAt, clampGroupDelta } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
-import { useDropZone, dragPayload } from '../lib/draggable.js';
+import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
-import { pickNextUp, windowOffsetForBlock, SLOT_MIN, VISIBLE_HOURS } from '../lib/planner.js';
-import { computeBands } from '../lib/day-windows.js';
+import { pickNextUp, segmentExtentPx, dragDeltaMin } from '../lib/planner.js';
+import { computeBands, type Band } from '../lib/day-windows.js';
 import { localISODate } from '../lib/dates.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
 import { DirectionColumn } from './DirectionColumn.js';
@@ -35,10 +46,13 @@ function blockTagLabel(block: { tag?: string | null; category_id?: string | null
 }
 
 /**
- * The PLANNER (Phase G, G6): the hour-by-hour view of TODAY. A fixed, NON-scrolling
- * zoom window (4/8/16h) opens onto the day anchored so the **next-up** item is
- * pinned to the second slot. Items show **name · tag · start–end**; Time-Blocks
- * render as labelled outlines; pattern instances carry their type texture; chips
+ * The PLANNER (Phase G, G6): the hour-by-hour view of TODAY. The WHOLE day renders
+ * at natural height on the **segmented day axis** (`day-axis.ts`) — the quiet night
+ * hours (00:00–07:00 and 21:00–24:00) collapse to thin, expandable bars by default,
+ * so every hour is reachable with no inner scroll and no zoom control. (This
+ * replaced the old fixed 4/8/16h clipped zoom window, which left the hours outside
+ * the window unreachable.) Items show **name · tag · start–end**; Time-Blocks render
+ * as labelled outlines; pattern instances carry their type texture; chips
  * drag-to-reorder (one tz-safe PATCH); overlaps are **allowed but flagged**.
  *
  * Plan-as-container (PR-C): a Plan + the task blocks scheduled into it move together.
@@ -48,13 +62,17 @@ function blockTagLabel(block: { tag?: string | null; category_id?: string | null
  *
  * Write-capable (CON-5): clicking an empty slot creates a Time Block at that time,
  * and a flight-plan task dragged onto the grid is scheduled there (drop-Y → time via
- * `place.ts`/`grid.ts`, then `api.blocks.create` + `flightPlan.remove`); a drop inside
- * a Plan's window attaches via `parent_block_id`. Authoring is no longer wizard-only.
+ * the segmented `minAt` inverse, then snap), then `api.blocks.create` + `flightPlan.remove`;
+ * a drop inside a Plan's window attaches via `parent_block_id`. Authoring is no longer
+ * wizard-only.
  *
- * Built on the shared grid math (`grid.ts`), the overlap layout (`layoutBlocks`),
- * the drag gesture (`drag.ts`), the pure group math (`group-move.ts`), and the shared
- * pointer-DnD (`draggable.ts`) — so there is no tz drift between a chip's pixel
- * position and its stored instant.
+ * Built on the pure segmented axis (`day-axis.ts`), the tz-safe minute math
+ * (`grid.ts`), the overlap layout (`layoutBlocks`), the drag gesture (`drag.ts`),
+ * the pure group math (`group-move.ts`), and the shared pointer-DnD (`draggable.ts`).
+ * The one seam the collapsible axis adds is that pixel↔minute is piecewise: block/
+ * card/band placement routes through `segmentExtentPx`, and drag pixel deltas convert
+ * to minutes via `dragDeltaMin` (position-based) so a drag across a collapsed bar
+ * still maps sanely.
  */
 
 type Placed = ReturnType<typeof layoutBlocks>[number];
@@ -114,23 +132,6 @@ function neighboursFor(b: Block, day: string, all: Block[]): Neighbour[] {
   return candidates.map(toMin).filter(inDay);
 }
 
-/**
- * The clamped pixel delta for a live drag preview — so the block (or whole group)
- * visibly stops at a neighbour's edge while dragging, not just on release. Mirrors the
- * commit's clamp scoping: a group move clamps by the group hull; a loose move / any
- * resize clamps per-edge against `neighboursFor`. Alt-drag (detach) clamps as a loose
- * block, matching the commit path.
- */
-function clampLiveDyFor(b: Block, day: string, all: Block[], mode: GestureMode, dyPx: number, ev: PointerEvent): number {
-  const dMin = dyPx / PX_PER_MIN;
-  const altDetach = mode === 'move' && b.parent_block_id != null && ev.altKey;
-  if (mode === 'move' && !altDetach && (b.block_kind === 'timeblock' || b.parent_block_id != null)) {
-    return clampGroupDelta(resolveGroup(all, b.id), all, day, dMin) * PX_PER_MIN;
-  }
-  const n = altDetach ? neighboursFor({ ...b, parent_block_id: null }, day, all) : neighboursFor(b, day, all);
-  return clampLiveDelta(b, day, mode, dMin, n) * PX_PER_MIN;
-}
-
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
@@ -143,6 +144,13 @@ const CLICK_PX = 8;
 /**
  * Drag/resize state + a pointer handler. `onClick` fires for a near-zero move.
  *
+ * The block's live top/height are tracked as a **minute delta** (`dMin`), not a
+ * pixel delta: the segmented axis is not to scale across a collapsed bar, so the
+ * gesture derives its minute delta from pointer *positions* via `dragDeltaMin`
+ * (`state`/`gridY` supplied by the caller). Downstream drag math (snap, collision
+ * clamp, group move) is already minute-space, so it is unchanged — only the px→min
+ * hop at the pointer seam differs from the old linear grid.
+ *
  * A 'move' gesture can be owned by the caller for group-aware behavior: `onMoveLive`
  * fires on every pointermove (live group ghost), `onMoveEnd` on pointerup (clear the
  * ghost), and `onMoveCommit` replaces the default single-block PATCH. Resize always
@@ -151,76 +159,92 @@ const CLICK_PX = 8;
 function useBlockDrag(opts: {
   block: () => Block; day: string; locked: () => boolean;
   baseTop: () => number; baseHeight: () => number;
+  state: () => AxisState;
+  /** grid-relative Y (px) for a clientY — the origin for segmented delta math. */
+  gridY: (clientY: number) => number;
   onClick: (x: number, y: number) => void;
-  onMoveLive?: (dy: number, ev: PointerEvent) => void;
+  onMoveLive?: (dMin: number, ev: PointerEvent) => void;
   onMoveEnd?: () => void;
-  onMoveCommit?: (dy: number, ev: PointerEvent) => void;
+  onMoveCommit?: (dMin: number, ev: PointerEvent) => void;
   neighbours?: () => Neighbour[];
-  clampLiveDy?: (mode: GestureMode, dyPx: number, ev: PointerEvent) => number;
+  clampLiveDMin?: (mode: GestureMode, dMin: number, ev: PointerEvent) => number;
 }) {
-  const [drag, setDrag] = createSignal<{ mode: GestureMode; dy: number } | null>(null);
+  // The live gesture carries a MINUTE delta (already position-derived + clamped).
+  const [drag, setDrag] = createSignal<{ mode: GestureMode; dMin: number } | null>(null);
   const liveTop = () => {
     const g = drag();
     if (!g) return opts.baseTop();
-    const dMin = g.dy / PX_PER_MIN;
-    return g.mode === 'resize-bottom' ? opts.baseTop() : opts.baseTop() + dMin;
+    return g.mode === 'resize-bottom' ? opts.baseTop() : opts.baseTop() + g.dMin;
   };
   const liveHeight = () => {
     const g = drag();
     if (!g) return opts.baseHeight();
-    const dMin = g.dy / PX_PER_MIN;
     if (g.mode === 'move') return opts.baseHeight();
-    if (g.mode === 'resize-top') return opts.baseHeight() - dMin;
-    return opts.baseHeight() + dMin;
+    if (g.mode === 'resize-top') return opts.baseHeight() - g.dMin;
+    return opts.baseHeight() + g.dMin;
   };
   function startGesture(mode: GestureMode, e: PointerEvent) {
     // Do NOT bail early for locked blocks — click detection must still work so the
     // entity card can open. Locking only suppresses drag state and commits.
     e.preventDefault();
     e.stopPropagation();
-    const startY = e.clientY;
+    const startClientY = e.clientY;
+    const startGridY = opts.gridY(startClientY); // origin for the segmented inverse
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture?.(e.pointerId);
+    // Convert a raw pixel delta to a segmented minute delta from the gesture origin.
+    const toDMin = (rawPx: number) => dragDeltaMin(startGridY, rawPx, opts.state(), PX_PER_MIN);
     const onMove = (ev: PointerEvent) => {
       if (opts.locked()) return; // no drag visual for locked blocks
-      const raw = ev.clientY - startY;
+      const rawDMin = toDMin(ev.clientY - startClientY);
       // Live preview is collision-clamped so the chip/group visibly stops at the wall
       // while dragging; the pointer-up commit still snaps+clamps via resolveGesture.
-      const dy = opts.clampLiveDy ? opts.clampLiveDy(mode, raw, ev) : raw;
-      setDrag({ mode, dy });
-      if (mode === 'move') opts.onMoveLive?.(dy, ev);
+      const dMin = opts.clampLiveDMin ? opts.clampLiveDMin(mode, rawDMin, ev) : rawDMin;
+      setDrag({ mode, dMin });
+      if (mode === 'move') opts.onMoveLive?.(dMin, ev);
     };
     const onUp = (ev: PointerEvent) => {
       target.releasePointerCapture?.(ev.pointerId);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      const dy = ev.clientY - startY; // RAW delta: click detection + commit (which clamps itself)
+      const rawPx = ev.clientY - startClientY; // RAW pixel delta: click detection
+      const dMin = toDMin(rawPx);              // segmented minute delta: commit (clamps itself)
       if (!opts.locked()) { setDrag(null); if (mode === 'move') opts.onMoveEnd?.(); }
-      if (mode === 'move' && Math.abs(dy) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
+      if (mode === 'move' && Math.abs(rawPx) < CLICK_PX) { opts.onClick(ev.clientX, ev.clientY); return; }
       if (opts.locked()) return; // no drag commit for locked blocks
-      if (mode === 'move' && opts.onMoveCommit) { opts.onMoveCommit(dy, ev); return; }
+      if (mode === 'move' && opts.onMoveCommit) { opts.onMoveCommit(dMin, ev); return; }
       // Resize (and any non-grouped move): clamp against neighbours so an edge can't
-      // be dragged into an adjacent block.
-      const resolved = resolveGesture(opts.block(), opts.day, mode, dy, opts.neighbours?.() ?? []);
+      // be dragged into an adjacent block. `resolveGesture` reads a px delta and snaps
+      // via minsOf; feeding `dMin * PX_PER_MIN` makes minsOf recover exactly `dMin`.
+      const resolved = resolveGesture(opts.block(), opts.day, mode, dMin * PX_PER_MIN, opts.neighbours?.() ?? []);
       void commitDrag(opts.block(), resolved, { onError: (m) => showToast(m, 'error') });
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-    if (!opts.locked()) setDrag({ mode, dy: 0 }); // only show drag state for unlocked blocks
+    if (!opts.locked()) setDrag({ mode, dMin: 0 }); // only show drag state for unlocked blocks
   }
   return { drag, liveTop, liveHeight, startGesture };
 }
 
 // ── Time gutter (hour labels) ─────────────────────────────────────────────────
-function TimeGutter() {
-  const hours = Array.from({ length: 24 }, (_, h) => h);
+// Only hours in an EXPANDED region (plus the boundary hours 07:00 / 21:00, which sit
+// on an expanded edge) draw a label; a collapsed region shows only its expander bar.
+function visibleHours(state: AxisState): number[] {
+  return Array.from({ length: 24 }, (_, h) => h).filter((h) => {
+    const m = h * 60;
+    if (m === TOP_COLLAPSE_END || m === BOTTOM_COLLAPSE_START) return true;
+    return visibleExtent(m, m + 1, state) !== null;
+  });
+}
+
+function TimeGutter(props: { state: () => AxisState }) {
   return (
-    <div class="relative" style={{ height: `${DAY_HEIGHT_PX}px` }}>
-      <For each={hours}>
+    <div class="relative" style={{ height: `${axisHeightPx(props.state(), PX_PER_MIN)}px` }}>
+      <For each={visibleHours(props.state())}>
         {(h) => (
           <div
             class="absolute right-1.5 -translate-y-1/2 text-[10px] text-muted-foreground font-mono tabular-nums"
-            style={{ top: `${yOf(h * 60)}px` }}
+            style={{ top: `${axisYOf(h * 60, props.state(), PX_PER_MIN)}px` }}
           >
             <Show when={h > 0}>
               {new Date(2000, 0, 1, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })}
@@ -232,62 +256,104 @@ function TimeGutter() {
   );
 }
 
-function HourLines() {
-  const hours = Array.from({ length: 24 }, (_, h) => h);
+function HourLines(props: { state: () => AxisState }) {
   return (
-    <For each={hours}>
+    <For each={visibleHours(props.state())}>
       {(h) => (
-        <div class="absolute left-0 right-0 border-t border-border/40" style={{ top: `${yOf(h * 60)}px` }} />
+        <div class="absolute left-0 right-0 border-t border-border/40" style={{ top: `${axisYOf(h * 60, props.state(), PX_PER_MIN)}px` }} />
       )}
     </For>
   );
 }
 
-// ── Now line: ticks every minute ──────────────────────────────────────────────
-function NowLine(props: { day: string; now: string }) {
+// ── Now line: ticks every minute; hidden when "now" is inside a collapsed region ──
+function NowLine(props: { day: string; now: string; state: () => AxisState }) {
   const mins = () => minutesIntoDay(props.now, props.day);
+  // Only visible when "now" lands on an expanded portion of the axis.
+  const visible = () => {
+    const m = mins();
+    if (m < 0 || m > MINUTES_PER_DAY) return false;
+    return visibleExtent(m, m + 1, props.state()) !== null;
+  };
   return (
-    <div class="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: `${yOf(mins())}px` }}>
-      <div class="h-px bg-ring shadow-[0_0_6px_rgba(88,235,191,.5)]" />
-      <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-ring" />
-    </div>
+    <Show when={visible()}>
+      <div class="absolute left-0 right-0 z-20 pointer-events-none" style={{ top: `${axisYOf(mins(), props.state(), PX_PER_MIN)}px` }}>
+        <div class="h-px bg-ring shadow-[0_0_6px_rgba(88,235,191,.5)]" />
+        <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-ring" />
+      </div>
+    </Show>
   );
 }
 
-/** Handlers the Plan-as-container gestures need from the Planner (group ghost + commits). */
+// ── Expander bar for a collapsed/expanded night region ────────────────────────
+// A thin clickable bar per collapsible region. Collapsed → "▸ label" (fills its thin
+// segment); expanded → "▾" (a slim strip at the region's top edge so it never eats
+// the revealed hours). Positioned via the segment's own top/height. Spans the grid
+// column only (left of it are the gutter + direction lane).
+function ExpanderBar(props: { region: 'top' | 'bottom'; label: string; state: () => AxisState; onToggle: () => void }) {
+  const seg = () => {
+    const segs = segments(props.state(), PX_PER_MIN);
+    return props.region === 'top' ? segs[0] : segs[2];
+  };
+  const expanded = () => (props.region === 'top' ? props.state().topExpanded : props.state().bottomExpanded);
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded()}
+      title={expanded() ? `Collapse ${props.label}` : `Expand ${props.label}`}
+      class="absolute left-0 right-0 z-30 flex items-center gap-1 px-1.5 text-[10px] text-muted-foreground bg-card/95 hover:bg-muted/60 border-y border-border/60 transition-colors overflow-hidden"
+      style={{ top: `${seg().topPx}px`, height: expanded() ? '16px' : `${seg().heightPx}px` }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); props.onToggle(); }}
+    >
+      <Show when={expanded()} fallback={<ChevronRight size={11} class="flex-shrink-0" />}>
+        <ChevronDown size={11} class="flex-shrink-0" />
+      </Show>
+      <span class="truncate">{props.label}</span>
+    </button>
+  );
+}
+
+/** Handlers the Plan-as-container gestures need from the Planner (group ghost + commits).
+ * Deltas are MINUTE deltas (segmented-axis native), not pixels. */
 interface GroupCtx {
-  extraMin: (id: string) => number;                         // optimistic group-ghost offset (minutes)
-  onMoveLive: (anchor: Block, dy: number, ev: PointerEvent) => void;
+  extraMin: (id: string) => number;                              // optimistic group-ghost offset (minutes)
+  onMoveLive: (anchor: Block, dMin: number, ev: PointerEvent) => void;
   onMoveEnd: () => void;
-  onMoveCommit: (anchor: Block, dy: number, ev: PointerEvent) => void;
+  onMoveCommit: (anchor: Block, dMin: number, ev: PointerEvent) => void;
 }
 
 // ── Plan container outline (a timed Time-Block: ★ solid 3pt) — interactive ─────
-function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; onDelete: (b: Block) => void }) {
+function ContainerOutline(props: { block: Block; day: string; state: () => AxisState; gridY: (y: number) => number; group: GroupCtx; onDelete: (b: Block) => void }) {
   const b = () => props.block;
   const baseTop = () => minutesIntoDay(b().start_at, props.day);
   const baseHeight = () => Math.max(minutesIntoDay(b().end_at, props.day) - baseTop(), 0);
   const locked = () => isImmovable(b());
   const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
     // Click (a near-zero drag) on the label expands the Time-Block into the entity card.
-    block: b, day: props.day, locked, baseTop, baseHeight, onClick: () => setActiveBlock(b().id),
-    onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
+    block: b, day: props.day, locked, baseTop, baseHeight, state: props.state, gridY: props.gridY,
+    onClick: () => setActiveBlock(b().id),
+    onMoveLive: (dMin, ev) => props.group.onMoveLive(b(), dMin, ev),
     onMoveEnd: () => props.group.onMoveEnd(),
-    onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
+    onMoveCommit: (dMin, ev) => props.group.onMoveCommit(b(), dMin, ev),
     neighbours: () => neighboursFor(b(), props.day, blocks() ?? []),
-    clampLiveDy: (mode, dyPx, ev) => clampLiveDyFor(b(), props.day, blocks() ?? [], mode, dyPx, ev),
+    clampLiveDMin: (mode, dMin, ev) => clampLiveDMinFor(b(), props.day, blocks() ?? [], mode, dMin, ev),
   });
-  const top = () => liveTop() + props.group.extraMin(b().id);
+  const topMin = () => liveTop() + props.group.extraMin(b().id);
+  // Project the live [top, top+height) extent onto the segmented axis. Null → the
+  // block sits wholly inside a collapsed region (hidden until expanded).
+  const ext = () => segmentExtentPx(topMin(), topMin() + liveHeight(), props.state(), PX_PER_MIN);
 
   // 0069: the Time-Block category colour — stamped category colour wins, else the tag
   // hash (the same helper the chips use), so the column matches the rest of the planner.
   const fill = () => blockColorVar(b(), categoryPrefs()?.prefs);
-  const heightPx = () => Math.max(yOf(liveHeight()), 24);
   return (
+    <Show when={ext()}>
+      {(e) => (
     <div
       class="absolute left-0.5 right-0.5 rounded-lg border-2 select-none touch-none pointer-events-none"
       classList={{ 'z-0': !drag(), 'z-[25] shadow-lg': !!drag() }}
-      style={{ top: `${yOf(top())}px`, height: `${heightPx()}px`, 'border-color': fill() }}
+      style={{ top: `${e().topPx}px`, height: `${Math.max(e().heightPx, 24)}px`, 'border-color': fill() }}
       title={`${b().title} · Time Block — drag the label to move the whole group`}
     >
       {/* Solid category label cell (left) — name + secondary tags, white text. It IS
@@ -297,7 +363,7 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
         class="group/label absolute top-0 bottom-0 left-0 rounded-l-md overflow-hidden px-2 py-1 flex flex-col gap-0.5 pointer-events-auto"
         classList={{ 'cursor-grab': !locked(), 'cursor-default': locked() }}
         style={{ width: `${CAT_WIDTH_PX}px`, 'background-color': fill(), color: `color-mix(in oklch, ${fill()} 30%, black)` }}
-        onPointerDown={(e) => startGesture('move', e)}
+        onPointerDown={(ev) => startGesture('move', ev)}
       >
         <div class="flex items-start gap-1 text-[11px] font-medium leading-tight">
           <Star size={9} class="flex-shrink-0 mt-0.5" />
@@ -306,11 +372,11 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
             type="button"
             title="Remove Time Block"
             class="flex-shrink-0 opacity-0 group-hover/label:opacity-70 hover:!opacity-100 transition-opacity ml-0.5 -mr-0.5 -mt-0.5 rounded"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); props.onDelete(b()); }}
+            onPointerDown={(ev) => ev.stopPropagation()}
+            onClick={(ev) => { ev.stopPropagation(); props.onDelete(b()); }}
           ><X size={10} /></button>
         </div>
-        <Show when={heightPx() >= 34}>
+        <Show when={e().heightPx >= 34}>
           <div class="flex flex-wrap items-center gap-x-1 text-[10px] leading-none opacity-90">
             {/* 0069: the grouping label is the #tag OR the Time Block Category name. */}
             <Show when={blockTagLabel(b())}>{(lbl) => <span class="truncate">{lbl()}</span>}</Show>
@@ -321,10 +387,12 @@ function ContainerOutline(props: { block: Block; day: string; group: GroupCtx; o
       {/* Resize handles live in the task region (right of the label) so they don't
           fight the label's move-drag. */}
       <Show when={!locked()}>
-        <div class="absolute top-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-top', e)} />
-        <div class="absolute bottom-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(e) => startGesture('resize-bottom', e)} />
+        <div class="absolute top-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-top', ev)} />
+        <div class="absolute bottom-0 z-10 cursor-ns-resize pointer-events-auto" style={{ left: `${CAT_WIDTH_PX}px`, right: '0', height: `${HANDLE_PX}px` }} onPointerDown={(ev) => startGesture('resize-bottom', ev)} />
       </Show>
     </div>
+      )}
+    </Show>
   );
 }
 
@@ -349,7 +417,7 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
 }
 
 // ── A draggable planner chip (name · tag · start–end, texture, next-up marker) ──
-function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
+function PlannerChip(props: { placed: Placed; day: string; state: () => AxisState; gridY: (y: number) => number; isNextUp: boolean; nested: boolean; updateMode: boolean; group: GroupCtx }) {
   const b = () => props.placed.block;
   const task = () => taskOf(b().task_id);
   // Linked subtasks of this chip's task (excludes thrown-away). Drives the count badge.
@@ -380,23 +448,26 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
   // Drag/resize via the shared hook; a click (near-zero drag) expands the entity into
   // the card — a task chip focuses its task, a non-task block focuses the block.
   const { drag, liveTop, liveHeight, startGesture } = useBlockDrag({
-    block: b, day: props.day, locked,
+    block: b, day: props.day, locked, state: props.state, gridY: props.gridY,
     baseTop: () => props.placed.top, baseHeight: () => props.placed.height,
     onClick: () => { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setActiveBlock(b().id); },
-    onMoveLive: (dy, ev) => props.group.onMoveLive(b(), dy, ev),
+    onMoveLive: (dMin, ev) => props.group.onMoveLive(b(), dMin, ev),
     onMoveEnd: () => props.group.onMoveEnd(),
-    onMoveCommit: (dy, ev) => props.group.onMoveCommit(b(), dy, ev),
+    onMoveCommit: (dMin, ev) => props.group.onMoveCommit(b(), dMin, ev),
     neighbours: () => neighboursFor(b(), props.day, blocks() ?? []),
-    clampLiveDy: (mode, dyPx, ev) => clampLiveDyFor(b(), props.day, blocks() ?? [], mode, dyPx, ev),
+    clampLiveDMin: (mode, dMin, ev) => clampLiveDMinFor(b(), props.day, blocks() ?? [], mode, dMin, ev),
   });
-  const top = () => liveTop() + props.group.extraMin(b().id);
-  const heightPx = () => Math.max(yOf(liveHeight()), 18);
+  const topMin = () => liveTop() + props.group.extraMin(b().id);
+  // Project onto the segmented axis; null → wholly inside a collapsed region (hidden).
+  const ext = () => segmentExtentPx(topMin(), topMin() + liveHeight(), props.state(), PX_PER_MIN);
   // Nested chips sit in their Time-Block's task region (right of the category cell);
   // loose chips tile across the full width.
   const frame = () => chipFrame(props.placed.col, props.placed.cols, props.nested);
 
   const selectedBlock = () => isSelected({ kind: 'block', id: b().id });
   return (
+    <Show when={ext()}>
+      {(e) => (
     <div
       class="absolute z-10 rounded-md overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
       classList={{
@@ -412,8 +483,8 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
         'ring-2 ring-chart-1 ring-offset-1 ring-offset-card': selectedBlock(),
       }}
       style={{
-        top: `${yOf(top())}px`,
-        height: `${heightPx()}px`,
+        top: `${e().topPx}px`,
+        height: `${Math.max(e().heightPx, 18)}px`,
         left: frame().left,
         width: frame().width,
         ...(completed() ? doneHatchStyle(tag()) : {}),
@@ -421,17 +492,17 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
       onAnimationEnd={() => setGlow(false)}
-      onPointerDown={(e) => {
+      onPointerDown={(ev) => {
         if (props.updateMode) return; // Update mode: a tap toggles done (onClick) — no drag.
         // Cmd/Ctrl-click toggles multi-select (Phase F) — don't start a drag.
-        if ((e.metaKey || e.ctrlKey) && b().task_id != null) {
-          e.preventDefault(); e.stopPropagation();
+        if ((ev.metaKey || ev.ctrlKey) && b().task_id != null) {
+          ev.preventDefault(); ev.stopPropagation();
           toggleSelection({ kind: 'block', id: b().id });
           return;
         }
-        startGesture('move', e);
+        startGesture('move', ev);
       }}
-      onClick={(e) => {
+      onClick={() => {
         if (props.updateMode) { void setDone(!completed()); return; }
         // Locked chips don't drag, so the click lands here: expand the entity card.
         if (locked()) { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setActiveBlock(b().id); }
@@ -450,8 +521,8 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
           classList={{ 'bg-card border-muted-foreground': !completed(), 'border-transparent': completed() }}
           style={completed() ? { background: color() } : {}}
           title={completed() ? 'Mark not done' : 'Mark done'}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); void setDone(!completed()); }}
+          onPointerDown={(ev) => ev.stopPropagation()}
+          onClick={(ev) => { ev.stopPropagation(); void setDone(!completed()); }}
         >
           <Show when={completed()}><Check size={11} class="text-background" /></Show>
         </button>
@@ -459,7 +530,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
 
       <Show when={!locked() && !props.updateMode}>
         <div class="absolute top-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }}
-          onPointerDown={(e) => startGesture('resize-top', e)} />
+          onPointerDown={(ev) => startGesture('resize-top', ev)} />
       </Show>
 
       <div class="relative px-1.5 py-0.5" classList={{ 'pl-6': props.updateMode }}>
@@ -477,7 +548,7 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
             <AlertTriangle size={10} class="text-destructive flex-shrink-0 ml-auto" />
           </Show>
         </div>
-        <Show when={heightPx() >= 30}>
+        <Show when={e().heightPx >= 30}>
           <div class="flex items-center gap-1.5 text-muted-foreground truncate">
             <Show when={tag()}>{(t) => <span class="text-primary truncate">#{t()}</span>}</Show>
             <span class="tabular-nums">{fmtTime(b().start_at)}–{fmtTime(b().end_at)}</span>
@@ -487,10 +558,12 @@ function PlannerChip(props: { placed: Placed; day: string; isNextUp: boolean; ne
 
       <Show when={!locked() && !props.updateMode}>
         <div class="absolute bottom-0 left-0 right-0 z-10 cursor-ns-resize" style={{ height: `${HANDLE_PX}px` }}
-          onPointerDown={(e) => startGesture('resize-bottom', e)} />
+          onPointerDown={(ev) => startGesture('resize-bottom', ev)} />
       </Show>
 
     </div>
+      )}
+    </Show>
   );
 }
 
@@ -526,18 +599,37 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
   );
 }
 
+/**
+ * The clamped MINUTE delta for a live drag preview — so the block (or whole group)
+ * visibly stops at a neighbour's edge while dragging, not just on release. Mirrors the
+ * commit's clamp scoping: a group move clamps by the group hull; a loose move / any
+ * resize clamps per-edge against `neighboursFor`. Alt-drag (detach) clamps as a loose
+ * block, matching the commit path. Input + output are already minute deltas (the
+ * segmented px→min conversion happened at the pointer seam).
+ */
+function clampLiveDMinFor(b: Block, day: string, all: Block[], mode: GestureMode, dMin: number, ev: PointerEvent): number {
+  const altDetach = mode === 'move' && b.parent_block_id != null && ev.altKey;
+  if (mode === 'move' && !altDetach && (b.block_kind === 'timeblock' || b.parent_block_id != null)) {
+    return clampGroupDelta(resolveGroup(all, b.id), all, day, dMin);
+  }
+  const n = altDetach ? neighboursFor({ ...b, parent_block_id: null }, day, all) : neighboursFor(b, day, all);
+  return clampLiveDelta(b, day, mode, dMin, n);
+}
+
 export function Planner() {
   const day = () => selectedDay();
-  // Now-line and the next-up window anchor are today-relative — gated off other days.
+  // Now-line and next-up are today-relative — gated off other days.
   const isToday = () => day() === localISODate();
-  // Zoom window height: 4 / 8 / 16 hours (cockpit-v2 Phase 2). The grid is always the
-  // full day tall, but the Planner does NOT scroll internally (owner decision): the
-  // window is a fixed clipped viewport onto the day — `windowOffsetPx` below picks
-  // WHICH hours it shows, and the page itself scrolls for everything else.
-  const [windowHours, setWindowHours] = createSignal(VISIBLE_HOURS);
-  const visiblePx = () => windowHours() * 60 * PX_PER_MIN;
   const [updateMode, setUpdateMode] = createSignal(false);
   const [deletePlan, setDeletePlan] = createSignal<{ plan: Block; childCount: number } | null>(null);
+
+  // Segmented day axis: the whole day renders at natural height with the two night
+  // regions collapsed to expandable bars by default (both collapsed — matches the
+  // calendar). Two per-session (not persisted) signals drive the axis; this REPLACED
+  // the old 4/8/16h clipped zoom window so no hour is ever unreachable.
+  const [topExpanded, setTopExpanded] = createSignal(DEFAULT_AXIS_STATE.topExpanded);
+  const [bottomExpanded, setBottomExpanded] = createSignal(DEFAULT_AXIS_STATE.bottomExpanded);
+  const axisState = (): AxisState => ({ topExpanded: topExpanded(), bottomExpanded: bottomExpanded() });
 
   // A minute ticker so "next up" (and the now line) advance over the day.
   const [nowISO, setNowISO] = createSignal(new Date().toISOString());
@@ -559,12 +651,10 @@ export function Planner() {
     () => [day(), patternBlocks()] as const,
     async ([d]) => { const { key } = await api.dayTypes.resolve(d); return (await api.patternBlocks.forDay(key)).windows; },
   );
+  // computeBands bakes in the LINEAR px scale (grid.ts yOf); the Planner reprojects
+  // each band onto the segmented axis (below), so we only need its minute extents +
+  // presentation fields here — top/height are recomputed per band.
   const bands = createMemo(() => computeBands(dayWindows() ?? {}, tags() ?? [], patternPrefs()?.prefs ?? {}));
-  // T-PLAN-2: the day's earliest grid block — the window anchor (1h of lead-in above it).
-  const firstChip = createMemo(() => {
-    const cs = chips();
-    return cs.length ? [...cs].sort((a, b) => a.start_at.localeCompare(b.start_at))[0] : undefined;
-  });
 
   // Header lane (off the minute axis): all-day Plans/events ★ + today's Concepts ⬟.
   const allDayPlans = () => dayBlocks().filter(isAllDay);
@@ -585,29 +675,33 @@ export function Planner() {
   // ── Grouped movement (PR-C): a live group ghost + the gesture commits ──────────
   // `ghost` offsets every member EXCEPT the one under the pointer (it follows the
   // cursor via its own liveTop) during a drag; on commit it holds the whole group at
-  // the snapped delta until the refetch lands, so nothing snaps back.
-  const [ghost, setGhost] = createSignal<{ ids: Set<string>; dy: number } | null>(null);
-  const extraMin = (id: string) => { const g = ghost(); return g && g.ids.has(id) ? g.dy / PX_PER_MIN : 0; };
+  // the snapped delta until the refetch lands, so nothing snaps back. Deltas are
+  // MINUTES (segmented-axis native).
+  const [ghost, setGhost] = createSignal<{ ids: Set<string>; dMin: number } | null>(null);
+  const extraMin = (id: string) => { const g = ghost(); return g && g.ids.has(id) ? g.dMin : 0; };
   const isGroupAnchor = (b: Block) => b.block_kind === 'timeblock' || b.parent_block_id != null;
 
-  function onMoveLive(anchor: Block, dy: number, ev: PointerEvent) {
+  function onMoveLive(anchor: Block, dMin: number, ev: PointerEvent) {
     // Alt-detaching a member → only the member moves (no group ghost).
     if (anchor.parent_block_id != null && ev.altKey) { setGhost(null); return; }
     if (!isGroupAnchor(anchor)) return;
     const members = resolveGroup(blocks() ?? [], anchor.id);
     if (members.length <= 1) return;
-    setGhost({ ids: new Set(members.filter((m) => m.id !== anchor.id).map((m) => m.id)), dy });
+    setGhost({ ids: new Set(members.filter((m) => m.id !== anchor.id).map((m) => m.id)), dMin });
   }
 
-  async function onMoveCommit(anchor: Block, dy: number, ev: PointerEvent) {
-    const deltaMin = minsOf(dy);
+  async function onMoveCommit(anchor: Block, dMin: number, ev: PointerEvent) {
+    // resolveGesture reads a px delta and snaps via minsOf; dMin * PX_PER_MIN makes it
+    // recover exactly `dMin` (already segmented-correct from the pointer seam).
+    const dyPx = dMin * PX_PER_MIN;
+    const deltaMin = Math.round(dMin / SNAP_MIN) * SNAP_MIN; // snapped group delta
 
     // Member + Alt → detach this one and move it alone. It becomes loose, so clamp it
     // against the loose obstacle set (as if it had no parent).
     if (anchor.parent_block_id != null && ev.altKey) {
       setGhost(null);
       const looseN = neighboursFor({ ...anchor, parent_block_id: null }, day(), blocks() ?? []);
-      const resolved = resolveGesture(anchor, day(), 'move', dy, looseN);
+      const resolved = resolveGesture(anchor, day(), 'move', dyPx, looseN);
       if (!resolved) return;
       try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Time Block', 'default'); }
       catch (err) { showToast((err as Error).message, 'error'); }
@@ -620,7 +714,7 @@ export function Planner() {
       const members = resolveGroup(blocks() ?? [], anchor.id);
       const clamped = clampGroupDelta(members, blocks() ?? [], day(), deltaMin);
       if (clamped === 0) { setGhost(null); return; } // identity / fully blocked — no write
-      setGhost({ ids: new Set(members.map((m) => m.id)), dy: clamped * PX_PER_MIN }); // hold at clamped delta
+      setGhost({ ids: new Set(members.map((m) => m.id)), dMin: clamped }); // hold at clamped delta
       try { await api.blocks.moveGroup(anchor.id, clamped); refetchBlocks(); }
       catch (err) { showToast((err as Error).message, 'error'); }
       finally { setGhost(null); }
@@ -630,7 +724,7 @@ export function Planner() {
     // Loose chip → plain move (clamped against other loose blocks); if dropped inside a
     // Plan's window, attach it (containers are attach targets, not clamp walls).
     setGhost(null);
-    const resolved = resolveGesture(anchor, day(), 'move', dy, neighboursFor(anchor, day(), blocks() ?? []));
+    const resolved = resolveGesture(anchor, day(), 'move', dyPx, neighboursFor(anchor, day(), blocks() ?? []));
     if (!resolved) return;
     const container = containerAt(blocks() ?? [], Date.parse(resolved.start_at), anchor.id);
     try {
@@ -644,17 +738,27 @@ export function Planner() {
 
   // ── CON-5: write-capable Planner (click-to-create + drag-to-schedule) ──────────
   // The grid column element — the origin for drop/click Y → time math. Its top is the
-  // column's midnight, so `clientY - rect.top` is pixels-into-day at any window
-  // offset: getBoundingClientRect() already reflects the grid's upward shift inside
-  // the clipped window (exactly as it reflected scrollTop when the window scrolled).
+  // grid's Y-zero (the top of the axis, i.e. 00:00 or the top collapse bar); `clientY -
+  // rect.top` is a grid-relative pixel that maps to a minute via the segmented `minAt`.
   let gridEl: HTMLDivElement | undefined;
   const gridY = (clientY: number) => (gridEl ? clientY - gridEl.getBoundingClientRect().top : 0);
+
+  // Grid Y (px) → snapped minute-of-day on the segmented axis, then → a span. Mirrors
+  // the calendar's guard: round the (possibly fractional) minAt result before the
+  // SNAP_MIN snap, and never yield 24:00 (cap at the last slot, 23:45).
+  function minuteAtGridY(clientY: number): number {
+    const mins = Math.round(axisMinAt(gridY(clientY), axisState(), PX_PER_MIN));
+    return Math.min(Math.floor(mins / SNAP_MIN) * SNAP_MIN, MINUTES_PER_DAY - SNAP_MIN);
+  }
 
   // Create a Time Block at grid Y, optionally bound to a flight-plan task; attach it
   // if it lands inside a Plan's window (mirrors the loose-chip drop path). One POST
   // (+ one attach PATCH only when dropped into a container).
   async function createBlockAt(clientY: number, task?: { task_id: string; title: string; estimated_minutes: number | null }) {
-    const span = spanAtY(day(), gridY(clientY), task?.estimated_minutes ?? DEFAULT_BLOCK_MIN);
+    // spanAtY takes a LINEAR grid-y; hand it the snapped minute re-linearised so the
+    // segmented click lands at the intended time.
+    const startMin = minuteAtGridY(clientY);
+    const span = spanAtY(day(), startMin * PX_PER_MIN, task?.estimated_minutes ?? DEFAULT_BLOCK_MIN);
     const tag = task ? taskOf(task.task_id)?.tags?.[0] : undefined;
     try {
       const { block } = await api.blocks.create({
@@ -706,39 +810,24 @@ export function Planner() {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  // ── The zoom window's offset: WHICH hours the non-scrolling window shows ────────
-  // px from the day's midnight to the top of the window. Each day opens at exactly
-  // 1h before its FIRST pattern direction (the earliest availability window) — one
-  // hour of lead-in, no more, no less. Falls back to the first block, then the day
-  // top, when the day has no direction windows. This is the exact anchor the old
-  // scroll pin used; it now shifts the full-day grid up inside the clipped window
-  // instead of setting a scrollTop (the Planner no longer scrolls internally).
-  const [windowOffsetPx, setWindowOffsetPx] = createSignal(0);
-  const firstDirectionTop = createMemo(() => {
-    const bs = bands();
-    return bs.length ? Math.min(...bs.map((b) => b.top)) : null;
-  });
-  const anchorChip = () => (isToday() ? nextUp() ?? firstChip() : firstChip());
-  const SLOT_PX = SLOT_MIN * PX_PER_MIN; // 1h of lead-in above the anchor
-  const repin = () => {
-    const dirTop = firstDirectionTop();
-    const raw = dirTop != null ? Math.max(0, dirTop - SLOT_PX) : windowOffsetForBlock(anchorChip(), day());
-    // Never extend past the end of the day (the browser used to clamp scrollTop).
-    setWindowOffsetPx(Math.min(raw, Math.max(0, DAY_HEIGHT_PX - visiblePx())));
-  };
-  // Pin ONCE per (day, zoom) — never on a blocks refetch. A committed action (delete,
-  // complete, drag, auto-reflow) refetches blocks, which would otherwise re-anchor
-  // the window mid-edit and yank the visible hours around; gating on the day+zoom
-  // key stops that. Reading firstChip()/firstDirectionTop() re-runs it once the
-  // day's blocks AND direction windows have landed; the loading gates hold it until
-  // both are ready.
-  let pinnedKey = '';
-  createEffect(() => {
-    const key = `${day()}:${windowHours()}`;
-    firstChip(); firstDirectionTop();
-    if (key === pinnedKey || blocks.loading || dayWindows.loading) return;
-    pinnedKey = key;
-    repin();
+  // Bands reprojected onto the segmented axis (top/height in px, trimmed to visible;
+  // dropped when wholly inside a collapsed region). Presentation fields pass through.
+  const axisBands = createMemo((): Band[] => {
+    const st = axisState();
+    const out: Band[] = [];
+    for (const b of bands()) {
+      // b.top / b.height are LINEAR px (grid.ts scale) → back to minutes.
+      const startMin = b.top / PX_PER_MIN;
+      const endMin = (b.top + b.height) / PX_PER_MIN;
+      const ext = segmentExtentPx(startMin, endMin, st, PX_PER_MIN);
+      if (!ext) continue;
+      // labelTop: reproject its linear px through the axis too, clamped into the band.
+      const labelMin = b.labelTop / PX_PER_MIN;
+      const labelExt = visibleExtent(labelMin, labelMin + 1, st);
+      const labelTop = labelExt ? axisYOf(labelExt.startMin, st, PX_PER_MIN) : ext.topPx;
+      out.push({ ...b, top: ext.topPx, height: ext.heightPx, labelTop });
+    }
+    return out;
   });
 
   // Someday Time Blocks (was Concepts) render on their goal day in the header lane;
@@ -792,11 +881,11 @@ export function Planner() {
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-      {/* Header — region label + the 8h⇄24h expand control */}
+      {/* Header — region label + actions (no zoom control: the whole day is shown). */}
       <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <span class="text-[10px] text-muted-foreground">{windowHours()}h window</span>
+          <span class="text-[10px] text-muted-foreground">full day</span>
         </div>
         <div class="flex items-center gap-3">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,
@@ -827,19 +916,6 @@ export function Planner() {
           >
             <CheckCircle2 size={12} /> {updateMode() ? 'Done' : 'Update'}
           </button>
-          <div class="inline-flex items-center rounded-md border border-border overflow-hidden text-xs" title="Visible hours">
-            <For each={[4, 8, 16]}>
-              {(h) => (
-                <button
-                  onClick={() => setWindowHours(h)}
-                  class="px-2 py-0.5 transition-colors"
-                  classList={{ 'text-foreground underline': windowHours() === h, 'text-muted-foreground hover:text-foreground': windowHours() !== h }}
-                >
-                  {h}h
-                </button>
-              )}
-            </For>
-          </div>
         </div>
       </div>
 
@@ -852,48 +928,47 @@ export function Planner() {
         </div>
       </Show>
 
-      {/* Zoom window: a fixed 4/8/16h viewport onto the full-day grid. It does NOT
-          scroll internally — the negative margin shifts the grid so the anchored
-          hours show, everything else is clipped, and the PAGE scrolls instead. */}
-      <div class="overflow-hidden relative" style={{ height: `${visiblePx()}px` }}>
-        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr', 'margin-top': `-${windowOffsetPx()}px` }}>
-          <TimeGutter />
-          {/* Direction column — rotated, per-direction-colored window names. */}
-          <div class="border-l border-border/60"><DirectionColumn bands={bands} /></div>
+      {/* The full-day segmented grid: natural height (day minus collapsed regions),
+          no inner scroll. The page scrolls for everything else. */}
+      <div class="relative">
+        <div class="grid" style={{ 'grid-template-columns': '3.5rem 1.75rem 1fr' }}>
+          <TimeGutter state={axisState} />
+          {/* Direction column — rotated, per-direction-colored window names (segmented). */}
+          <div class="border-l border-border/60"><DirectionColumn bands={axisBands} state={axisState} /></div>
           <div
             ref={gridEl}
             class="relative border-l border-border/60 transition-colors"
             classList={{ 'bg-primary/[0.04]': gridDrop.isOver() }}
-            style={{ height: `${DAY_HEIGHT_PX}px` }}
+            style={{ height: `${axisHeightPx(axisState(), PX_PER_MIN)}px` }}
             title="Drop a flight-plan task to schedule it"
             onPointerUp={gridDrop.handlers.onPointerUp}
           >
-            <PatternBlockOverlay bands={bands} />
-            <HourLines />
+            <PatternBlockOverlay bands={axisBands} />
+            <HourLines state={axisState} />
             {/* Each Time-Block draws its container box (solid category label + box) and
                 its own task chips, laid out inside the box's task region. */}
             <For each={containers()}>
               {(c) => (
                 <>
-                  <ContainerOutline block={c} day={day()} group={groupCtx} onDelete={requestDeletePlan} />
+                  <ContainerOutline block={c} day={day()} state={axisState} gridY={gridY} group={groupCtx} onDelete={requestDeletePlan} />
                   <For each={placedChildren(c.id)}>
-                    {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
+                    {(p) => <PlannerChip placed={p} day={day()} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={true} updateMode={updateMode()} group={groupCtx} />}
                   </For>
                 </>
               )}
             </For>
             {/* Loose chips tile across the full width (in the gaps between Time-Blocks). */}
             <For each={placedLoose()}>
-              {(p) => <PlannerChip placed={p} day={day()} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
+              {(p) => <PlannerChip placed={p} day={day()} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
             </For>
-            <Show when={isToday()}><NowLine day={day()} now={nowISO()} /></Show>
-            {/* Expanded entity card — overlays the grid at the selected entity's slot,
-                clamped into the visible (non-scrolling) window so it's never clipped. */}
-            <PlannerEntityCard day={day()} onRequestDeletePlan={requestDeletePlan} windowTopPx={windowOffsetPx()} windowHeightPx={visiblePx()} />
+            <Show when={isToday()}><NowLine day={day()} now={nowISO()} state={axisState} /></Show>
+            {/* Expander bars over the two night regions (grid column only). */}
+            <ExpanderBar region="top" label="12am – 7am" state={axisState} onToggle={() => setTopExpanded((v) => !v)} />
+            <ExpanderBar region="bottom" label="9pm – 12am" state={axisState} onToggle={() => setBottomExpanded((v) => !v)} />
+            {/* Expanded entity card — overlays the grid at the selected entity's slot. */}
+            <PlannerEntityCard day={day()} state={axisState} onRequestDeletePlan={requestDeletePlan} />
             <Show when={chips().length === 0 && containers().length === 0}>
-              {/* Anchored inside the VISIBLE window (the grid is shifted up by the
-                  window offset, so a fixed top-24 could land in the clipped region). */}
-              <div class="absolute left-0 right-0 text-center text-sm text-muted-foreground px-4 pointer-events-none" style={{ top: `${windowOffsetPx() + 96}px` }}>
+              <div class="absolute left-0 right-0 text-center text-sm text-muted-foreground px-4 pointer-events-none" style={{ top: `${axisYOf(9 * 60, axisState(), PX_PER_MIN)}px` }}>
                 Nothing planned yet — <span class="text-primary font-medium">click an empty slot</span> to add a block,
                 drag a flight-plan task onto a time, or stage items and hit
                 <span class="text-primary font-medium"> Schedule</span>.

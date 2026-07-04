@@ -1,5 +1,6 @@
 import { For } from 'solid-js';
-import { DAY_HEIGHT_PX } from '../lib/grid.js';
+import { PX_PER_MIN } from '../lib/grid.js';
+import { type AxisState, axisHeightPx } from '../lib/day-axis.js';
 import { displayDirection, type Band } from '../lib/day-windows.js';
 
 /**
@@ -12,11 +13,13 @@ import { displayDirection, type Band } from '../lib/day-windows.js';
  *
  * Purely indicative + pointer-transparent: the windows are owned by day-type settings,
  * not edited here. Bands are computed once in the Planner and shared with the
- * background hatch (`PatternBlockOverlay`) so the two never drift.
+ * background hatch (`PatternBlockOverlay`) so the two never drift; the Planner
+ * reprojects each band's `top`/`height`/`labelTop` onto the segmented day axis before
+ * passing them in, so this lane only needs the axis's total height for its container.
  */
-export function DirectionColumn(props: { bands: () => Band[] }) {
+export function DirectionColumn(props: { bands: () => Band[]; state: () => AxisState }) {
   return (
-    <div class="relative pointer-events-none select-none" style={{ height: `${DAY_HEIGHT_PX}px` }}>
+    <div class="relative pointer-events-none select-none" style={{ height: `${axisHeightPx(props.state(), PX_PER_MIN)}px` }}>
       {/* Band region markers — the coloured left edge over each window's full extent. */}
       <For each={props.bands()}>
         {(b) => (
