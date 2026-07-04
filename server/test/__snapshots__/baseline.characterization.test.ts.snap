@@ -735,6 +735,16 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "id",
+      "owner_id",
+      "surface",
+      "signature",
+      "created_at",
+    ],
+    "table": "copy_history",
+  },
+  {
+    "columns": [
       "owner_id",
       "date",
       "task_id",
