@@ -117,10 +117,10 @@ Daily Brief, EOD narrative), so the voice is consistent and **never repeats**.
    the `Build, screenshot-test, publish` CI job). Keep every memo **component-scoped**, or
    declare the resource before the memo. (See `main`'s `fix(stores)` commit + memory
    `reference_solid_module_memo_ordering`.)
-2. **Flag round-trip must be API-tested, not raw-SQL.** Every flag test flips
+2. **Flag round-trip must be API-tested, not raw-SQL.** Most tests flip
    `time_sense_enabled` via `UPDATE scheduling_prefs …`, which bypasses the real
-   Settings path (`PATCH /api/prefs` → `fromApi` → Drizzle `.set` → serialize). A test
-   exists now (`time-sense.test.ts` "round-trips"); keep that discipline for any new pref.
+   Settings path (`PATCH /api/prefs` → `fromApi` → Drizzle `.set` → serialize). Keep at
+   least one API round-trip test per new pref (see `server/test/time-sense.test.ts` "round-trips").
 3. **Preview harness port hop:** `pnpm dev` moves Vite to 5174 when 5173 is occupied by a
    stale server; the preview proxy points at the configured port → `chrome-error`.
    Navigate the browser directly to the actual Vite port. Also beware a **stale
