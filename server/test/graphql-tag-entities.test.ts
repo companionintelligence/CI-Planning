@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { createTag as svcCreateTag, resolveTagId, setEntityTagIds, syncLeveledEntityTags } from '../src/services/tags.js';
+import { createTag as svcCreateTag, setEntityTagIds, syncLeveledEntityTags } from '../src/services/tags.js';
 import { createTask as svcCreateTask } from '../src/services/tasks.js';
 import { createBlock as svcCreateBlock } from '../src/services/blocks.js';
 

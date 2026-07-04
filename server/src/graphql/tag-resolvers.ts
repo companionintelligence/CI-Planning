@@ -155,7 +155,11 @@ export const tagResolvers = {
           hasNextPage,
           hasPreviousPage: false, // forward-only, matching the tag connections
           startCursor: edges.length ? edges[0].cursor : null,
-          endCursor: edges.length ? edges[edges.length - 1].cursor : null,
+          // endCursor tracks the last SCANNED keyset position (last ref), not the last
+          // surviving edge: if a node was dropped (concurrent delete between the UNION and
+          // re-materialize), the client's `after` must still advance past it, or it re-
+          // fetches the same dropped row forever.
+          endCursor: refs.length ? encodeCursor(refs[refs.length - 1].entityKind, refs[refs.length - 1].entityId) : null,
         },
         totalCount: countEntitiesForTag(r.id, owner, kind),
       };
@@ -165,7 +169,9 @@ export const tagResolvers = {
   // Union type-discrimination for the W4b reverse edge. The `entities` resolver stamps
   // each node with `__entityKind` (the DB entity_kind), read here to pick the concrete type.
   TaggedEntity: {
+    // Map only the known kinds; anything unexpected returns null so GraphQL raises a clear
+    // "unresolved union type" error rather than silently mis-typing a node as TaskType.
     __resolveType: (obj: { __entityKind?: string }) =>
-      obj.__entityKind === 'time_block' ? 'TimeBlockType' : 'TaskType',
+      obj.__entityKind === 'task' ? 'TaskType' : obj.__entityKind === 'time_block' ? 'TimeBlockType' : null,
   },
 };
