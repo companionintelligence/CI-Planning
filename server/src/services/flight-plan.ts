@@ -51,13 +51,16 @@ interface FpRawRow {
 }
 
 /** The owner's flight-plan, ordered by (position, task_id) — joined to tasks so only
- *  entries with a live task are returned (task_id FK is ON DELETE CASCADE anyway). */
+ *  entries with a live task are returned (task_id FK is ON DELETE CASCADE anyway). The
+ *  JOIN also pins `t.owner_id = fp.owner_id` (defense-in-depth): even if a flight_plan row
+ *  ever pointed at another owner's task (polluted data / an unsafe write path), its fields
+ *  can never leak through this read. */
 export function listFlightPlan(owner: string): FlightPlanRow[] {
   const rows = sqlite
     .prepare(
       `SELECT fp.task_id, fp.selected, fp.position, fp.source_kind, fp.source_ref, fp.added_at,
               t.title, t.priority, t.estimated_minutes, t.status, t.recurrence_rule
-         FROM flight_plan fp JOIN tasks t ON t.id = fp.task_id
+         FROM flight_plan fp JOIN tasks t ON t.id = fp.task_id AND t.owner_id = fp.owner_id
         WHERE fp.owner_id = ? ORDER BY fp.position, fp.task_id`,
     )
     .all(owner) as FpRawRow[];
@@ -87,7 +90,15 @@ export function stage(owner: string, input: StageInput): StageResult {
   if (input.patternId != null) {
     const owns = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(input.patternId, owner);
     if (!owns) return { ok: false, error: 'pattern_not_found' };
-    const members = sqlite.prepare(`SELECT task_id FROM pattern_tasks WHERE pattern_id = ? ORDER BY position`).all(input.patternId) as { task_id: string }[];
+    // Filter members to the owner's own tasks (pattern_tasks carries no owner_id, so a
+    // polluted membership row can't stage — and later expose — a cross-owner task). The
+    // (position, task_id) order is deterministic even if two members share a position.
+    const members = sqlite
+      .prepare(
+        `SELECT pt.task_id FROM pattern_tasks pt JOIN tasks t ON t.id = pt.task_id
+          WHERE pt.pattern_id = ? AND t.owner_id = ? ORDER BY pt.position, pt.task_id`,
+      )
+      .all(input.patternId, owner) as { task_id: string }[];
     let pos = nextPos(owner);
     for (const m of members) if (ins.run(owner, m.task_id, 'pattern', input.patternId, pos++).changes > 0) added++;
   } else if (input.taskId != null) {

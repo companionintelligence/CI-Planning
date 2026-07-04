@@ -80,10 +80,16 @@ export const flightPlanResolvers = {
   FlightPlanEntryType: {
     id: (e: FlightPlanRow) => e.task_id,
     sourceKind: (e: FlightPlanRow) => e.source_kind,
-    // `task` is non-null: the flight_plan → tasks join in listFlightPlan only returns
-    // entries whose task exists, and the FK is ON DELETE CASCADE, so getTask (owner-scoped)
-    // resolves it. A null here would only arise from a concurrent delete mid-query.
-    task: async (e: FlightPlanRow) => (await getTask(currentOwnerId(), e.task_id)) ?? null,
+    // `task` is non-null (TaskType!). The flight_plan → tasks join in listFlightPlan only
+    // returns entries whose (owner-scoped) task exists and the FK is ON DELETE CASCADE, so
+    // getTask resolves it. Throw explicitly if it somehow can't (a concurrent delete
+    // mid-query) rather than returning null into a non-null field — which would null the
+    // whole [FlightPlanEntryType!]! list with an opaque error.
+    task: async (e: FlightPlanRow) => {
+      const t = await getTask(currentOwnerId(), e.task_id);
+      if (!t) throw new GraphQLError('staged task not found', { extensions: { code: 'NOT_FOUND' } });
+      return t;
+    },
     // selected (bool) and position map by name via the default resolver.
   },
 };

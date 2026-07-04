@@ -163,4 +163,28 @@ describe('W5 — owner scoping', () => {
     // Owner A still sees their entry, untouched.
     expect((await gql('{ flightPlan { id } }')).body.data.flightPlan.map((e: any) => e.id)).toEqual([mine]);
   });
+
+  it('a polluted flight_plan row pointing at another owner\'s task never leaks through the read', async () => {
+    createOwner(OTHER);
+    const theirs = insertTask('Theirs', OTHER);
+    // Force owner A's plan to reference owner B's task (the defense-in-depth case: the
+    // listFlightPlan JOIN pins t.owner_id = fp.owner_id, so this row is filtered out).
+    sqlite.prepare(`INSERT INTO flight_plan (owner_id, task_id, source_kind, selected, position) VALUES (?, ?, 'manual', 1, 0)`).run(OWNER, theirs);
+    const r = await gql('{ flightPlan { id task { title } } }');
+    expect(r.body.errors).toBeUndefined();
+    expect(r.body.data.flightPlan).toEqual([]); // owner B's task is not exposed to A
+  });
+
+  it('staging a pattern skips cross-owner member tasks', async () => {
+    createOwner(OTHER);
+    const mine = insertTask('Mine', OWNER);
+    const theirs = insertTask('Theirs', OTHER);
+    // A pattern owned by A whose membership was polluted with owner B's task.
+    const p = makePattern('Mixed', [mine], OWNER);
+    sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, 1)`).run(p, theirs);
+
+    const m = await gql(`mutation { stageFlightPlanPattern(input: { patternId: "${p}" }) { added flightPlan { id } } }`);
+    expect(m.body.data.stageFlightPlanPattern.added).toBe(1);                 // only the owner's member
+    expect(m.body.data.stageFlightPlanPattern.flightPlan.map((e: any) => e.id)).toEqual([mine]);
+  });
 });
