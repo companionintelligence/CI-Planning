@@ -85,12 +85,17 @@ export function filterByName<T>(items: T[], query: string, name: (t: T) => strin
   return items.filter((t) => name(t).toLowerCase().includes(q));
 }
 
-/** 'HH:MM' (local) for the next quarter-hour boundary strictly after `now`. */
+/**
+ * 'HH:MM' (local) for the next quarter-hour boundary strictly after `now`, capped
+ * at the last slot of the day (23:45). The cap matters because callers place a
+ * saved block on a CHOSEN day at this time — letting it roll to '00:00' would
+ * resolve to the *start* of that day (in the past for today), not the imminent
+ * midnight. Computed in minutes-of-day so it never carries into the next date.
+ */
 export function nextQuarterHourHHMM(now: Date = new Date()): string {
-  const d = new Date(now);
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + 15 - (d.getMinutes() % 15));
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const next = Math.min(Math.floor(mins / 15) * 15 + 15, 23 * 60 + 45);
+  return `${String(Math.floor(next / 60)).padStart(2, '0')}:${String(next % 60).padStart(2, '0')}`;
 }
 
 export function localDayTimeToISO(day: string, hhmm: string): string {
