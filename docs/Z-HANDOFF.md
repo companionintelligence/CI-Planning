@@ -105,7 +105,7 @@ Daily Brief, EOD narrative), so the voice is consistent and **never repeats**.
 - `client/src/index.css` — `focus-breath` keyframe + `prefers-reduced-motion` guard.
 - `client/public/sw.js` — passes `vibrate` to `showNotification`.
 
-**Tests:** `server/test/time-sense.test.ts`, `focus-reminders.test.ts`, `extend-block.test.ts`;
+**Tests:** `server/test/time-sense.test.ts`, `server/test/focus-reminders.test.ts`, `server/test/extend-block.test.ts`;
 `client/src/lib/focus.test.ts`.
 
 ---
