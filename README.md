@@ -29,10 +29,14 @@ SQLite is the single source of truth for data.
 
 A screen-by-screen tour of the SolidJS PWA, on the
 [Companion Intelligence design system](https://github.com/companionintelligence/CI-Common/tree/main/style)
-— teal primary, Montserrat, light + dark. Dark is the default; the sidebar toggle
-switches to light. Every pair below is a real headless render of the built client
-served by the Koa server against a seeded SQLite database (`pnpm seed`), captured
-at 1440×900 in both themes — not a mockup.
+— teal primary (`#0f717a` light / `#abd4d8` dark), Montserrat, light + dark. Dark is
+the default; the sidebar toggle switches to light. Every pair below is a real headless
+render of the built client served by the Koa server against a seeded SQLite database
+(`pnpm seed`), captured at 1440×900 in both themes — not a mockup.
+
+The one sidebar toggle flips the whole app between the two canonical CI themes:
+
+![Companion Planning — light ↔ dark theme toggle on the Today view](docs/ui/planning-theme-toggle.gif)
 
 ### Today
 
