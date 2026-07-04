@@ -631,6 +631,23 @@ export interface Tag {
   direction_optouts?: string[]; // category only: pattern (direction) names turned OFF (empty = all directions on) (0069)
 }
 
+/**
+ * Cross-device calendar UI view-state (server migration 0111, stored as one JSON
+ * blob). Every key is optional — a missing/malformed blob degrades to built-in
+ * defaults (filter = all shown, night hours = both collapsed) so hydration can
+ * never crash. `deselected` holds hidden tag names per axis (sorted arrays on the
+ * wire ↔ Sets in the store). The `planner` sibling is reserved for the deferred
+ * Planner collapse follow-up (wires in after #260 using the same shape).
+ */
+export interface ViewPrefs {
+  calendar?: {
+    deselected?: { direction?: string[]; intention?: string[]; category?: string[] };
+    prio?: number[];
+    topExpanded?: boolean;
+    bottomExpanded?: boolean;
+  };
+}
+
 export interface Prefs {
   id: string; owner_id: string; workday_start: string; workday_end: string;
   auto_fill_workday?: boolean; // gates the workday fallback fill (0028)
@@ -663,6 +680,8 @@ export interface Prefs {
   memory_sync_enabled?: boolean; memory_sync_completed?: boolean;
   memory_sync_habits?: boolean; memory_sync_reflections?: boolean;
   memory_account?: string | null; memory_last_synced_at?: string | null;
+  // Cross-device calendar view-state (0111); null/absent = use built-in defaults.
+  view_prefs?: ViewPrefs | null;
 }
 
 // Phase P · P2 — result of POST /api/planner/clear (also the dry-run preview shape).

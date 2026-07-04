@@ -1,0 +1,66 @@
+/**
+ * Pure (de)serialization between the in-memory calendar overlay/collapse state and
+ * the persisted `view_prefs.calendar` JSON blob (server migration 0111). Kept out of
+ * stores/index.ts so it's unit-testable without the SSE/resource machinery, and so
+ * both hydrate (read) and persist (write) share one shape definition.
+ *
+ * Wire shape uses SORTED arrays (stable, diff-friendly, JSON-serializable); the store
+ * uses Sets. Everything is forgiving: a missing/malformed blob yields the defaults
+ * (all-on filter), so hydration can never crash on bad data.
+ */
+import type { ViewPrefs } from './api.js';
+import { emptyAxisDeselected, TAG_AXES } from './overlay.js';
+import type { AxisDeselected } from './overlay.js';
+import { DEFAULT_AXIS_STATE } from './day-axis.js';
+import type { AxisState } from './day-axis.js';
+
+/** Per-axis deselected Sets → sorted arrays (only non-empty axes emitted). */
+export function serializeDeselected(axes: AxisDeselected): { direction?: string[]; intention?: string[]; category?: string[] } {
+  const out: { direction?: string[]; intention?: string[]; category?: string[] } = {};
+  for (const axis of TAG_AXES) {
+    const names = [...axes[axis]].sort();
+    if (names.length) out[axis] = names;
+  }
+  return out;
+}
+
+/** Persisted deselected arrays → per-axis Sets. Missing/bad axis → empty (all-on). */
+export function deserializeDeselected(saved: ViewPrefs['calendar'] | undefined): AxisDeselected {
+  const base = emptyAxisDeselected();
+  const src = saved?.deselected;
+  if (!src) return base;
+  for (const axis of TAG_AXES) {
+    const names = src[axis];
+    if (Array.isArray(names)) base[axis] = new Set(names.filter((n): n is string => typeof n === 'string'));
+  }
+  return base;
+}
+
+/** Persisted priority list → number[]; drops non-numbers. Missing → [] (all). */
+export function deserializePrio(saved: ViewPrefs['calendar'] | undefined): number[] {
+  const prio = saved?.prio;
+  if (!Array.isArray(prio)) return [];
+  return prio.filter((n): n is number => typeof n === 'number');
+}
+
+/** Persisted collapse flags → AxisState; missing/non-boolean falls back to defaults. */
+export function deserializeAxisState(saved: ViewPrefs['calendar'] | undefined): AxisState {
+  return {
+    topExpanded: typeof saved?.topExpanded === 'boolean' ? saved.topExpanded : DEFAULT_AXIS_STATE.topExpanded,
+    bottomExpanded: typeof saved?.bottomExpanded === 'boolean' ? saved.bottomExpanded : DEFAULT_AXIS_STATE.bottomExpanded,
+  };
+}
+
+/** Build the full `view_prefs.calendar` blob from current live state. */
+export function buildCalendarViewPrefs(
+  axes: AxisDeselected,
+  prio: number[],
+  axisState: AxisState,
+): NonNullable<ViewPrefs['calendar']> {
+  return {
+    deselected: serializeDeselected(axes),
+    prio: [...prio].sort((a, b) => a - b),
+    topExpanded: axisState.topExpanded,
+    bottomExpanded: axisState.bottomExpanded,
+  };
+}

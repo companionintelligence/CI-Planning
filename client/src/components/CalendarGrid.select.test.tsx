@@ -14,9 +14,16 @@ import { render, fireEvent } from '@solidjs/testing-library';
  * inside a block-chip handler we never exercise here), so we stub the store to keep
  * the render network-free and store-free.
  */
-vi.mock('../stores/index.js', () => ({
-  setElementModal: vi.fn(),
-}));
+vi.mock('../stores/index.js', async () => {
+  const { createSignal } = await import('solid-js');
+  const [state] = createSignal({ topExpanded: false, bottomExpanded: false });
+  return {
+    setElementModal: vi.fn(),
+    calendarAxisState: state, // collapse state now lives in the store (0111); default collapsed
+    toggleCalendarTop: vi.fn(),
+    toggleCalendarBottom: vi.fn(),
+  };
+});
 
 const { CalendarGrid } = await import('./CalendarGrid.js');
 
