@@ -142,6 +142,19 @@ describe('owner-scoping (W3.2) — a cross-owner id is rejected with no mutation
     expect(row).toEqual({ title: 'Foreign update', is_locked: 0 });
   });
 
+  it('updateBlock (I10 guard): a cross-owner inbound block returns not_found, not inbound_readonly (no existence/state oracle)', async () => {
+    createOwner();
+    // A second owner's block that IS an inbound calendar mirror. Ownership is checked
+    // before the I10 guard AND the guard's external_events lookup is owner-scoped, so a
+    // title edit from OWNER must 404 (not_found) — never leak the foreign block's
+    // inbound state via a 422 inbound_readonly.
+    const foreignId = insertBlock(SECOND_OWNER_ID, { title: 'Foreign standup' });
+    sqlite.prepare(`INSERT INTO external_events (owner_id, block_id, direction, provider, account, external_id) VALUES (?, ?, 'inbound', 'google', 'them@example.com', 'evt-foreign')`).run(SECOND_OWNER_ID, foreignId);
+    expect(await updateBlock(OWNER, foreignId, { title: 'Hijacked' })).toEqual({ ok: false, error: 'not_found' });
+    const row = sqlite.prepare(`SELECT title FROM time_blocks WHERE id = ?`).get(foreignId) as { title: string };
+    expect(row.title).toBe('Foreign standup');
+  });
+
   it('updateBlock (tags-only PATCH): not_found before touching the foreign block’s tags', async () => {
     createOwner();
     const foreignId = insertBlock(SECOND_OWNER_ID, { title: 'Foreign tags' });

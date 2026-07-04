@@ -270,21 +270,28 @@ export type UpdateBlockResult =
  * maps to its existing 422, byte-identical to before.
  */
 export async function updateBlock(ownerId: string, id: string, input: UpdateBlockInput): Promise<UpdateBlockResult> {
+  // Ownership FIRST: a cross-owner (or absent) id must resolve to `not_found` before any
+  // guard below can run — otherwise the I10 guard leaks a foreign block's existence/state
+  // (a title/time edit on someone else's inbound-mirrored block would 422 `inbound_readonly`
+  // instead of 404, an existence oracle across owners). This SELECT also fetches
+  // tag/category_id for the 0069 partition check.
+  const existing = sqlite.prepare(`SELECT tag, category_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
+    .get(id, ownerId) as { tag: string | null; category_id: string | null } | undefined;
+  if (!existing) return { ok: false, error: 'not_found' };
+
   // I10: inbound calendar mirrors are authoritative — the owner may not directly
   // edit their title or time. The next sync cycle will overwrite any local change
-  // anyway; rejecting here prevents silent drift and a confusing UX.
+  // anyway; rejecting here prevents silent drift and a confusing UX. Scoped by
+  // owner_id too (defense-in-depth; the ownership check above already gates this).
   if (input.title !== undefined || input.start_at !== undefined || input.end_at !== undefined) {
     const isInboundBlock = sqlite
-      .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND direction = 'inbound'`)
-      .get(id);
+      .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND owner_id = ? AND direction = 'inbound'`)
+      .get(id, ownerId);
     if (isInboundBlock) return { ok: false, error: 'inbound_readonly' };
   }
 
   // 0069: enforce the tag XOR category_id partition on the MERGED row + validate the
   // category kind. (color re-stamp is handled below, only when category_id changes.)
-  const existing = sqlite.prepare(`SELECT tag, category_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-    .get(id, ownerId) as { tag: string | null; category_id: string | null } | undefined;
-  if (!existing) return { ok: false, error: 'not_found' };
   const effTag = input.tag !== undefined ? input.tag : existing.tag;
   const effCat = input.category_id !== undefined ? input.category_id : existing.category_id;
   if (effTag != null && effTag !== '' && effCat != null && effCat !== '') {
