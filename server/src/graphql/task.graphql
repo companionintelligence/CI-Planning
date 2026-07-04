@@ -1,0 +1,103 @@
+# Phase W · W3.3b — TaskType. CRUD ALONGSIDE the REST /api/tasks routes; every field
+# and mutation reads/writes through services/tasks.ts (Decision 3), never re-deriving
+# owner-scoping against the DB (re-derivation is how this phase's IDOR bugs appeared).
+#
+# `implements Node` only — NOT Taggable: EntityTagType.taggedAt is DateTime! but
+# entity_tags has no timestamp column until W4's migration, so the `tags` field is
+# deferred to W4. `objective` is deferred to W8 (ObjectiveType doesn't exist yet).
+#
+# `status` is a plain String, NOT an enum: tasks.status is a free-form TEXT column with
+# no CHECK, and code writes at least open/scheduled/in_progress/done/cancelled/deferred/
+# recurring/skipped/missed (schema.ts:55 + block-task-sync/recurrence/review writers). A
+# DB value outside a GraphQL enum throws at serialization, so String is the correct,
+# leak-proof choice here (the schema doc's 5-value enum is known-incomplete).
+#
+# `scheduledFor` is a LOCAL YYYY-MM-DD date string kept as String (not DateTime) so
+# clients don't misinterpret it as an instant and shift it across timezones.
+
+enum TaskSubtype { STANDARD HABIT QUICK }
+
+type TaskType implements Node {
+  id: ID!
+  title: String!
+  notes: String
+  status: String!
+  priority: Int!
+  subtype: TaskSubtype!
+  estimatedMinutes: Int
+  dueAt: DateTime
+  scheduledFor: String              # local YYYY-MM-DD, not an instant — String, not DateTime
+  createdAt: DateTime!
+  completedAt: DateTime
+  parent: TaskType                  # parent_id
+  subtasks(first: Int, after: String): TaskConnection!   # forward-only (last/before unimplemented → omitted)
+  dependsOn: [TaskType!]!           # task_dependencies.depends_on_id
+}
+
+type TaskConnection implements Connection {
+  edges: [TaskEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TaskEdge implements Edge {
+  cursor: String!
+  node: TaskType!
+}
+
+input CreateTaskInput {
+  title: String!
+  notes: String
+  priority: Int
+  subtype: TaskSubtype
+  estimatedMinutes: Int
+  dueAt: DateTime
+  scheduledFor: String
+  parentId: ID
+  tags: [String!]
+  secondaryTags: [String!]
+  dependsOn: [ID!]
+  # NOTE: no `recurrenceRule` — recurring creation (the REST POST's createRecurringTask
+  # branch) is out of scope for W3.3b; omitted so a rule can't be passed-and-ignored.
+  # A recurring-create mutation is deferred to a later ticket.
+}
+
+input UpdateTaskInput {
+  id: ID!
+  title: String
+  notes: String
+  status: String
+  priority: Int
+  subtype: TaskSubtype
+  estimatedMinutes: Int
+  dueAt: DateTime
+  scheduledFor: String
+  completedAt: DateTime
+  completed: Boolean
+  parentId: ID
+  tags: [String!]
+  secondaryTags: [String!]
+  dependsOn: [ID!]
+}
+
+type CreateTaskPayload {
+  task: TaskType
+  success: Boolean!
+}
+
+type UpdateTaskPayload {
+  task: TaskType
+  success: Boolean!
+}
+
+extend type Query {
+  task(id: ID!): TaskType
+  tasks(first: Int, after: String, status: String): TaskConnection!
+}
+
+extend type Mutation {
+  createTask(input: CreateTaskInput!): CreateTaskPayload!
+  updateTask(input: UpdateTaskInput!): UpdateTaskPayload!
+  # Reuses the shared DeleteByIdInput/DeleteByIdPayload declared in tag.graphql.
+  deleteTask(input: DeleteByIdInput!): DeleteByIdPayload!
+}

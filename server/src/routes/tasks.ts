@@ -23,7 +23,6 @@ import {
   type CreateTaskInput, type UpdateTaskInput,
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
-import { stampRow } from '../sync/apply.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
 // coming GraphQL resolvers). These handlers are thin HTTP shells: parse → call the
@@ -296,18 +295,14 @@ export function tasksRouter() {
     if (!res.ok) {
       if (res.error === 'invalid_rule') { ctx.status = 422; ctx.body = { error: res.message }; return; }
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-      // dependency_cycle: the column UPDATE already applied before the dependency
-      // change was rejected, so it still gets its Phase-L stamp (as it always did).
-      if (res.updatedFields.length > 0) stampRow(sqlite, 'task', res.targetId, res.updatedFields);
+      // dependency_cycle: the column UPDATE already applied before the dependency change
+      // was rejected; the service now stamps it internally (Phase-L versioning, moved in
+      // at W3.3b so GraphQL updates version too).
       ctx.status = 409; ctx.body = { error: 'dependency cycle', detail: res.detail }; return;
     }
 
-    // Phase L: stamp version/field_ts so concurrent sync ops from other devices
-    // compare correctly against this online edit using field-level LWW.
-    // (Route-side for W3.1; moves into the service at W3.3.)
-    if (res.updatedFields.length > 0) {
-      stampRow(sqlite, 'task', res.targetId, res.updatedFields);
-    }
+    // Phase L: version/field_ts stamping now lives INSIDE updateTask (W3.3b), so REST +
+    // GraphQL both version their column writes; the route no longer stamps.
 
     // REQ2 (reverse sync): the service moved the placed block in lockstep.
     if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
