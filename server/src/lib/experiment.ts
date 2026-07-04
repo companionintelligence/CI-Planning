@@ -38,12 +38,20 @@ export function assignExperimentArmIfNeeded(ownerId: string): ExperimentArm | nu
 
   const arm = ARMS[randomInt(ARMS.length)];
   const { haptic, color } = ARM_CHANNELS[arm];
+  // Conditional on still-NULL so a concurrent enable (multi-process, or a caller that
+  // captured a stale null before this ran) can't overwrite an already-assigned arm —
+  // the fixed between-subjects invariant. First writer wins; a loser's UPDATE hits 0
+  // rows and leaves the winning arm + its seeded channels intact. Read back the actual
+  // stored arm rather than the one we tried to set.
   sqlite
     .prepare(
       `UPDATE scheduling_prefs
           SET z_experiment_arm = ?, haptic_cues_enabled = ?, ambient_color_enabled = ?
-        WHERE owner_id = ?`,
+        WHERE owner_id = ? AND z_experiment_arm IS NULL`,
     )
     .run(arm, haptic ? 1 : 0, color ? 1 : 0, ownerId);
-  return arm;
+  const final = sqlite
+    .prepare(`SELECT z_experiment_arm AS arm FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(ownerId) as { arm: string | null } | undefined;
+  return (final?.arm as ExperimentArm | null) ?? null;
 }

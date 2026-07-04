@@ -81,7 +81,13 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
   // Z7 — the "what's next" line is rendered server-side through the Voice loop (one
   // voice, no repeats). Fetched once the block ends; re-fetched if "Keep working"
   // pushes the end out and it ends again. Falls back to the local next-event line.
-  const [whatsNext] = createResource(ended, () => api.blocks.whatsNext(props.block.id).catch(() => null));
+  // Source returns the block id only once ended (null otherwise) — a `null` source is
+  // the unambiguous "don't fetch" sentinel across Solid versions (a bare boolean isn't),
+  // matching the rest of the codebase, so the fetch fires exactly at block-end.
+  const [whatsNext] = createResource(
+    () => (ended() ? props.block.id : null),
+    (id) => api.blocks.whatsNext(id).catch(() => null),
+  );
   const [pendingMoves, setPendingMoves] = createSignal<ExtendMove[] | null>(null);
   const [blockedBy, setBlockedBy] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
