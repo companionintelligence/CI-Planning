@@ -641,4 +641,61 @@ describe('Z7 Voice loop retrofit (flag-gated)', () => {
     expect(res.body.body).toContain(`${DAY} in review`); // fallback paragraph carried through verbatim
     expect(copyCount('eod_alignment')).toBeGreaterThanOrEqual(1);
   });
+
+  it('flag ON: the calibration chip line is rendered through the Voice loop (carries the suggested minutes, records a signature)', async () => {
+    setFlag(true);
+    const taxes = makeTag('taxes');
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] }); // ratio 1.5
+    calibrateEstimates();
+    const live = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes) VALUES (uuid7(), 'Live', ?, 'open', 60) RETURNING id`)
+      .get(SYSTEM_OWNER) as { id: string }).id;
+    sqlite.prepare(`INSERT INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(live, taxes);
+
+    const res = await api(srv.url, `/api/calibration/suggest/${live}`);
+    expect(res.status).toBe(200);
+    expect(res.body.suggestion.suggested_minutes).toBe(90);
+    expect(typeof res.body.suggestion.message).toBe('string');
+    expect(res.body.suggestion.message).toContain('90'); // required datum: the suggested minutes
+    expect(copyCount('calibration_chip')).toBe(1);
+  });
+
+  it('flag ON: whats-next renders the T4 line server-side; flag OFF and unknown block 404', async () => {
+    setFlag(true);
+    const cur = (sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Now', 'task', ?, ?, ?) RETURNING id`)
+      .get(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`, SYSTEM_OWNER) as { id: string }).id;
+    sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Lunch', 'task', ?, ?, ?)`)
+      .run(`${DAY}T12:30:00.000Z`, `${DAY}T13:00:00.000Z`, SYSTEM_OWNER);
+
+    const res = await api(srv.url, `/api/blocks/${cur}/whats-next`);
+    expect(res.status).toBe(200);
+    expect(res.body.next.title).toBe('Lunch');
+    expect(typeof res.body.text).toBe('string');
+    expect(res.body.text).toContain('12:30'); // required datum: the next start time
+    expect(copyCount('t4_whats_next')).toBe(1);
+
+    // Unknown block → 404; flag OFF → 404 (endpoint looks absent).
+    expect((await api(srv.url, `/api/blocks/does-not-exist/whats-next`)).status).toBe(404);
+    setFlag(false);
+    expect((await api(srv.url, `/api/blocks/${cur}/whats-next`)).status).toBe(404);
+  });
+
+  it('flag ON: whats-next renders the next time in the OWNER timezone, not raw UTC (regression)', async () => {
+    setFlag(true);
+    // Blocks are stored UTC; a non-UTC owner must see their local wall-clock, matching
+    // the calendar — not the sliced UTC HH:MM (the bug the retrofit review caught).
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/New_York' WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const cur = (sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Now', 'task', ?, ?, ?) RETURNING id`)
+      .get(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`, SYSTEM_OWNER) as { id: string }).id;
+    sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Lunch', 'task', ?, ?, ?)`)
+      .run(`${DAY}T12:30:00.000Z`, `${DAY}T13:00:00.000Z`, SYSTEM_OWNER);
+
+    const res = await api(srv.url, `/api/blocks/${cur}/whats-next`);
+    expect(res.body.text).toContain('08:30'); // 12:30 UTC = 08:30 EDT on 2026-06-15
+    expect(res.body.text).not.toContain('12:30');
+  });
 });

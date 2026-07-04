@@ -1,4 +1,4 @@
-import { createSignal, createMemo, createEffect, onCleanup, onMount, Show, For } from 'solid-js';
+import { createSignal, createMemo, createEffect, createResource, onCleanup, onMount, Show, For } from 'solid-js';
 import { X, FileText, ListChecks, Tag, Check, RotateCcw, ArrowRight } from 'lucide-solid';
 import { api, type Block, type ExtendMove } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
@@ -78,6 +78,10 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
 
   // ── T4 "what's next" ────────────────────────────────────────────────────────
   const ended = () => state().phase === 'ended';
+  // Z7 — the "what's next" line is rendered server-side through the Voice loop (one
+  // voice, no repeats). Fetched once the block ends; re-fetched if "Keep working"
+  // pushes the end out and it ends again. Falls back to the local next-event line.
+  const [whatsNext] = createResource(ended, () => api.blocks.whatsNext(props.block.id).catch(() => null));
   const [pendingMoves, setPendingMoves] = createSignal<ExtendMove[] | null>(null);
   const [blockedBy, setBlockedBy] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
@@ -195,9 +199,12 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
       <Show when={ended()}>
         <div class="relative z-[2] mx-auto mb-10 w-full max-w-md rounded-xl border border-border bg-card p-4 shadow-lg">
           <div class="text-sm font-semibold text-foreground mb-1">Time's up — what's next?</div>
-          <Show when={props.next}>
+          <Show when={whatsNext()?.text ?? props.next}>
             <div class="text-xs text-muted-foreground mb-3">
-              Next: <span class="text-foreground">{props.next!.title}</span> at {props.next!.start_at.slice(11, 16)}.
+              {/* Server text is rendered in the owner's zone; the local fallback formats
+                  in the browser zone (never slice the UTC ISO — it'd show the wrong time). */}
+              {whatsNext()?.text ??
+                `Next: ${props.next!.title} at ${new Date(props.next!.start_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`}
             </div>
           </Show>
 
