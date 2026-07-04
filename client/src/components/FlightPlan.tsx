@@ -11,7 +11,7 @@ import {
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { useDraggable } from '../lib/draggable.js';
 import {
-  groupFlightPlan, buildRows, pageSlice, filterByName, nextQuarterHourHHMM, localDayTimeToISO,
+  groupFlightPlan, buildRows, pageSlice, filterByName, defaultPlaceTimeHHMM, localDayTimeToISO,
   type PagedSlice, type FpRowModel,
 } from '../lib/flight-plan-view.js';
 
@@ -275,7 +275,7 @@ export function FlightPlan() {
   const TemplateRow = (props: { t: BlockTemplate }) => {
     const [placing, setPlacing] = createSignal(false);
     const [time, setTime] = createSignal('09:00');
-    const beginPlace = () => { setTime(nextQuarterHourHHMM()); setPlacing(true); };
+    const beginPlace = () => { setTime(defaultPlaceTimeHHMM(selectedDay())); setPlacing(true); };
     async function place() {
       try {
         await api.blockTemplates.instantiate(props.t.id, localDayTimeToISO(selectedDay(), time()));

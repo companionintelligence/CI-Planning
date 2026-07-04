@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupFlightPlan, buildRows, pageSlice, filterByName,
-  nextQuarterHourHHMM, localDayTimeToISO, PAGE_SIZE,
+  nextQuarterHourHHMM, defaultPlaceTimeHHMM, localDayTimeToISO, PAGE_SIZE,
   type Groupable,
 } from './flight-plan-view.js';
 
@@ -106,10 +106,29 @@ describe('nextQuarterHourHHMM', () => {
     expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 10, 0))).toBe('10:15');
   });
 
-  it('caps at 23:45 near midnight instead of rolling to 00:00 of the placed-on day', () => {
-    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 45))).toBe('23:45');
-    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 50))).toBe('23:45');
-    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 31))).toBe('23:45');
+  it('wraps to 00:00 at end of day (strictly after now)', () => {
+    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 45))).toBe('00:00');
+    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 50))).toBe('00:00');
+  });
+});
+
+describe('defaultPlaceTimeHHMM — day-aware place default', () => {
+  const now = new Date(2026, 6, 3, 23, 50); // 23:50 local; next quarter wraps to 00:00
+  const today = '2026-07-03';
+
+  it('normal time is just the next quarter-hour on any day', () => {
+    const t = new Date(2026, 6, 3, 10, 7);
+    expect(defaultPlaceTimeHHMM(today, t)).toBe('10:15');
+    expect(defaultPlaceTimeHHMM('2026-07-10', t)).toBe('10:15');
+  });
+
+  it('near midnight, caps at 23:45 for today (00:00 would be the past start of today)', () => {
+    expect(defaultPlaceTimeHHMM(today, now)).toBe('23:45');
+    expect(defaultPlaceTimeHHMM('2026-07-01', now)).toBe('23:45'); // past day too
+  });
+
+  it('near midnight, keeps 00:00 for a FUTURE day (valid start-of-day)', () => {
+    expect(defaultPlaceTimeHHMM('2026-07-04', now)).toBe('00:00');
   });
 });
 
