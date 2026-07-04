@@ -7,6 +7,7 @@
  * group is its header row plus one row per member item — so expanding a group
  * can push later rows onto the next page.
  */
+import { localISODate } from './dates.js';
 
 export const PAGE_SIZE = 10;
 
@@ -85,12 +86,24 @@ export function filterByName<T>(items: T[], query: string, name: (t: T) => strin
   return items.filter((t) => name(t).toLowerCase().includes(q));
 }
 
-/** 'HH:MM' (local) for the next quarter-hour boundary strictly after `now`. */
+/** 'HH:MM' (local) for the next quarter-hour strictly after `now`; wraps to '00:00' at end of day. */
 export function nextQuarterHourHHMM(now: Date = new Date()): string {
-  const d = new Date(now);
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + 15 - (d.getMinutes() % 15));
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const next = (Math.floor(mins / 15) * 15 + 15) % (24 * 60);
+  return `${String(Math.floor(next / 60)).padStart(2, '0')}:${String(next % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Default 'HH:MM' for placing a saved block on `day` (an ISO date). Normally the
+ * next quarter-hour after `now`, but when that wraps to '00:00' (now ≥ 23:45) and
+ * `day` is today-or-earlier, cap at '23:45' — otherwise the time resolves to the
+ * *start* of `day`, which is in the past. On a FUTURE day the wrapped '00:00' is a
+ * valid start-of-day default and is kept (that day's next quarter-hour).
+ */
+export function defaultPlaceTimeHHMM(day: string, now: Date = new Date()): string {
+  const hhmm = nextQuarterHourHHMM(now);
+  if (hhmm === '00:00' && day <= localISODate(now)) return '23:45';
+  return hhmm;
 }
 
 export function localDayTimeToISO(day: string, hhmm: string): string {

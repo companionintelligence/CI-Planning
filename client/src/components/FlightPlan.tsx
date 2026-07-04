@@ -6,12 +6,12 @@ import {
 import { api, type FlightPlanItem, type Task, type BlockTemplate } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, prefs, refetchPrefs, showToast, selectedDay,
-  blockTemplates, refetchBlockTemplates, flightPlanTaskIds,
+  blockTemplates, refetchBlockTemplates, flightPlanTaskIds, patterns,
 } from '../stores/index.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { useDraggable } from '../lib/draggable.js';
 import {
-  groupFlightPlan, buildRows, pageSlice, filterByName, nextQuarterHourHHMM, localDayTimeToISO,
+  groupFlightPlan, buildRows, pageSlice, filterByName, defaultPlaceTimeHHMM, localDayTimeToISO,
   type PagedSlice, type FpRowModel,
 } from '../lib/flight-plan-view.js';
 
@@ -59,9 +59,12 @@ export function FlightPlan() {
     catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // Routine (pattern) id → name, so a flight-plan group header shows the routine's
+  // real name instead of the literal 'Pattern' fallback. Groups key on source_ref
+  // (the pattern id); see groupFlightPlan.
   const patternName = createMemo(() => {
     const m = new Map<string, string>();
-    // patterns store is not imported here — patternName falls back to 'Pattern' for groups
+    for (const p of patterns() ?? []) m.set(p.id, p.name);
     return m;
   });
 
@@ -272,7 +275,7 @@ export function FlightPlan() {
   const TemplateRow = (props: { t: BlockTemplate }) => {
     const [placing, setPlacing] = createSignal(false);
     const [time, setTime] = createSignal('09:00');
-    const beginPlace = () => { setTime(nextQuarterHourHHMM()); setPlacing(true); };
+    const beginPlace = () => { setTime(defaultPlaceTimeHHMM(selectedDay())); setPlacing(true); };
     async function place() {
       try {
         await api.blockTemplates.instantiate(props.t.id, localDayTimeToISO(selectedDay(), time()));
