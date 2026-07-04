@@ -1,0 +1,218 @@
+# W — GraphQL CRUD layer — planning doc
+
+**Status (updated 2026-07-03): IN IMPLEMENTATION — steps 1+2 of 3 merged; step 3 underway.** The former gates cleared: Phase T (owner-scoping) and Phase U (auth) are both on `main`. Built so far: **step 1 bootstrap** (PR #235 — Apollo Server 5 + `@as-integrations/koa` at `/api/graphql`, base SDL, `viewer`, `DateTime`/`JSON` scalars, complexity limiter), **step 2 TagType pilot** (PR #238 — full Decision-6 hybrid, CRUD extracted into `services/tags.ts` shared with REST), and within **step 3**: `services/tasks.ts` extraction (PR #243, W3.1) + its owner-scoping hardening (PR #244, W3.1a — closed a cross-owner IDOR on task mutators that predated W) + a companion task **read**-path fix (PR #245 — closed a separate cross-tenant read leak on `GET /api/tasks`/`:id/subtasks`/`:id/streak`, surfaced during the W3.1a audit; REST-only, no GraphQL involved, but load-bearing for `TaskType`'s query resolvers). The design/representation artifact this doc called for is **`docs/W-graphql-schema.md`** (living reference; carries the locked decisions and the three-way type map). **Vocabulary note:** Phase Z / W2 (PR #239) reverted the tag grouping axis `pattern`→`direction` — `tags.kind='direction'`, `tag_directions` table, GraphQL `TagKind = DIRECTION | INTENTION | CATEGORY`, edge `parentDirections`. Older "pattern-tag" wording below reads accordingly.
+
+**Update (2026-07-04): step-3 core entities merged.** Since the line above: `services/blocks.ts` extraction (#254), **TaskType** (#255), **TimeBlockType** (#259), and **W4a** — Task/TimeBlock now `implements Taggable` (forward `tags` edge) + `entity_tags.created_at` (migration **0110**, table rebuilt to `NOT NULL DEFAULT CURRENT_TIMESTAMP`) (#262) — have all merged. **Migration head is now 0110.** GraphQL types live: `TagType`, `TaskType`, `TimeBlockType`, `EntityTagType`. **Next up: W4b** (`TagType.entities` reverse edge). Remaining sequence in Addendum 2.
+
+**Scope decision (owner, 2026-07-03): Phase W closes on the full CRUD surface** — every type in §2's three-way map, including admin-gated jobs and the mutation-only engine ops, not just the core entities. **The complete remaining PR sequence (W3.2 → W-close, ~12-14 PRs) is specified in Addendum 2 at the bottom** — that supersedes the shorter "order of work" list in Addendum 1 for anything not yet built.
+
+## Goal
+
+Give the app a GraphQL CRUD surface, in addition to (not instead of) the existing REST API — **31 router files** under `server/src/routes/` (excluding `index.ts`), mounted in `server/src/routes/index.ts` (re-verified 2026-07-03; Phase U/V added `auth.ts` + `owner.ts` since the earlier count of 29) — client code, MCP tools, and any external integrations that already depend on REST keep working unchanged.
+
+## Current state
+
+100% REST today, Koa + `@koa/router`, one router file per resource area. No GraphQL dependency exists in `server/package.json`. Auth is a single Koa middleware (`requireAuth`) that resolves `ownerId` into `AsyncLocalStorage` (`lib/context.ts`), read by `currentOwnerId()` anywhere downstream — this pattern needs to extend cleanly into a GraphQL context, not be rebuilt separately.
+
+## Real resource map (from the actual router list, not guessed)
+
+| REST router | Likely GraphQL type(s) | Notes |
+|---|---|---|
+| `tasksRouter` | `Task` | Core entity — CRUD + subtasks (`parentId`) + recurrence fields |
+| `blocksRouter` | `TimeBlock` | Core entity — the calendar |
+| `blockTemplatesRouter` | `BlockTemplate` | |
+| `possiblesRouter` | `PossibleTask` | Staging/inbox — promote→Task is a mutation with a side effect, not a plain field update |
+| `tagsRouter` | `TagType` | **DECIDED — see Decision 6.** Hybrid alignment with CI-Server's `TagType`: `intention` is the CI-Server-compatible leaf; `kind` becomes an additive enum; the pattern/category hierarchy is exposed as relationship connections, not new top-level types. |
+| `patternsRouter`, `patternBlocksRouter`, `patternPrefsRouter` | `Pattern`, `PatternBlock`, `PatternPref` | **Sequencing (Phase Z / W1):** the `patterns`→`routines` rename (Z-W1, planned) renames the underlying tables + `/api/patterns`. If W1 lands before these types are authored, name them `RoutineType` / `RoutineKindType` from the start; if these ship first, W1 must rename the GraphQL types with it. |
+| `categoryPrefsRouter` | `TagPrefType` | **Sequencing resolved:** S2 shipped (migration 0097 — one `tag_prefs` table, `kind IN ('direction','category')` since 0105). Design against the merged shape. |
+| `dayTypesRouter` | `DayType` | |
+| `flightPlanRouter` | `FlightPlanEntry` | |
+| `prefsRouter` | `SchedulingPrefs` | One object per owner — a 39-column type; consider whether GraphQL should expose it as one flat type (mirrors the DB) or broken into logical groups at the API layer even if the DB stays one table (a GraphQL-side grouping costs nothing structurally and reads better than a 39-field flat object) |
+| `scheduleRouter`, `planRouter`, `plannerRouter` | Mutations/queries, not obviously simple CRUD (`find_slot`, autoplan triggers) — see note below | |
+| `summaryRouter`, `reflectionsRouter`, `reviewRouter`, `objectivesRouter`, `starsRouter` | `DailyRecap`/`Reflection`/`Objective`/`DayStars` | **Sequencing resolved:** S1-B shipped (0096) — `daily_recap` is the merged table; design against it. |
+| `jobsRouter` | `ScheduledJob`, `JobRun` | Likely admin/internal-only in GraphQL — gate behind a scope |
+| `notificationsRouter` | `PushSubscription`, `Reminder` | |
+| `backupRouter` | Probably **excluded** from GraphQL — file-export/import semantics don't map cleanly to CRUD | |
+| `oauthRouter`, `syncRouter` | Probably **excluded** — OAuth redirect flows aren't GraphQL operations | |
+| `sseRouter` | GraphQL **subscriptions** are the natural analog if real-time push is wanted over GraphQL too — bigger scope decision, see below | |
+| `memoryRouter`, `llmRouter` | Likely stays REST-only (AI/agent-facing, not a natural CRUD fit) | |
+| `healthRouter` | Stays REST (liveness checks predate any API layer) | |
+
+## Key open decisions
+
+**1. Library.** Two realistic choices on top of Koa: `@graphql-yoga/node` (lightweight, framework-agnostic, easy Koa mounting) or `apollo-server-koa` (more ecosystem/tooling, heavier). Given this app's general preference for minimal dependencies (see how sparse `server/package.json` already is), the original lean was toward Yoga. **Reconsidered 2026-07-02 (soft lean → Apollo):** GraphQL compatibility is a property of the **SDL / wire contract**, not the server library — a Yoga server and an Apollo server can serve a byte-identical schema, so this is *not* a hard compatibility requirement. But CI-Server runs Apollo (`@nestjs/apollo` + `@apollo/server`), and leaning Apollo (`apollo-server-koa` or Apollo standalone + Koa mount) lets us lift CI-Server's `graphql-query-complexity` `ComplexityPlugin` almost verbatim and share a mental model with the senior devs. The counter is the "minimal deps" rationale for Yoga (and Yoga + envelop can do complexity limiting too). **Genuine tradeoff — lean Apollo for convention-parity, but not mandatory.**
+→ **RESOLVED (2026-07-03, built): Apollo** — as-built **Apollo Server 5 + `@as-integrations/koa`** on the Koa 3 mount. One as-built deviation: complexity limiting is a **custom plugin on `graphql` directly**, NOT `graphql-query-complexity` — that library is dual-package (CJS+ESM) and resolves a second `graphql` copy, tripping graphql-js's "Duplicate graphql modules" guard under tsx/vitest. `graphql` is pinned to 16.x via `pnpm-workspace.yaml` `overrides`.
+
+**2. Schema-first vs. code-first.** Schema-first (`.graphql` SDL files + resolver maps) is more explicit and easier to review in a PR; code-first (e.g., Pothos, building types in TypeScript) gets you type-safety derived from `schema.ts` more automatically. Given this codebase already treats `schema.ts` as a hand-maintained source of truth (not auto-generated), **keep schema-first.** CI-Server is code-first, but its code-first is bound to NestJS decorators + TypeORM entities and is **not portable** to CI-PLANNER's Koa + hand-maintained `schema.ts` — so matching their *authoring style* isn't the goal. Schema-first here is fine **and** can produce SDL that matches their generated schema. **The binding constraint (this is the actual compatibility lever, added 2026-07-02):** the hand-authored SDL must conform to CI-Server's conventions — `Node` interface, Relay cursor `Connection`/`PageInfo`/`edges { cursor, node }`, `XType` type naming, `DateTime`/`JSON` scalars, and `create/update/deleteX` with `Input`/`Payload` wrapper types — and must stay **diff-comparable to CI-Server's `__generated__/schema.graphql`** for shared types (starting with `Tag`; see Decision 6). Query-complexity limiting (CI-Server's `ComplexityPlugin` analog) is part of this baseline. This constraint is required regardless of how Decisions 1 and 2 resolve; reversing the library/authoring leans is optional, adding this constraint is not.
+→ **RESOLVED (2026-07-03, built): schema-first** — hand-authored SDL in `server/src/graphql/*.graphql` (the loader globs them), CI-Server-convention-conformant; `docs/W-graphql-schema.md` §1/§3 is the authored source.
+
+**3. Does CRUD mean full mutability, or does GraphQL respect the same business-rule gates REST does?** Several "CRUD" operations in this app aren't plain field updates — e.g., completing a task also needs to reconcile `time_entries`/`actual_minutes`; promoting a `possible_task` creates a real `Task` row and updates staging state; deleting a task cascades through `time_blocks`/`reminders`/`flight_plan`. **The GraphQL layer should call the same service-layer functions the REST routes call (`services/*.ts`), not re-implement business logic against the DB directly** — this is the single most important design constraint to state up front, since it's the difference between "GraphQL is a second front door to the same house" (correct) and "GraphQL is a second house with its own rules" (a correctness and security risk — e.g., re-deriving owner-scoping checks twice is exactly how one of them ends up wrong).
+
+**4. Real-time.** Does GraphQL need subscriptions (mirroring what SSE does today), or is GraphQL query/mutation-only, with SSE staying the one real-time channel for both REST and GraphQL clients? **Recommendation: skip subscriptions initially** — SSE already works, is simpler, and duplicating real-time transport is unnecessary scope. Revisit only if a GraphQL-native client specifically needs it.
+→ **RESOLVED (owner, 2026-07-03): skipped** — SSE stays the one real-time channel.
+
+**5. Auth context.** `requireAuth`'s output (`ownerId`, `scopes`) needs to flow into the GraphQL context function the same way it flows into Koa's `ctx` today — this is mechanical once U's auth modes are finalized (the GraphQL context function just reads `currentOwnerId()`, same as any REST handler does), not a new auth system.
+
+**6. Tag model alignment with CI-Server — DECIDED (hybrid).**
+
+*Context (CI-Server GraphQL, verified 2026-07-02 against `CI-Server/backend/apps/api/src/domains/graphql/__generated__/schema.graphql`).* CI-Server models tags as a flat, freeform `TagType implements Node { id, label, description, entities }`. Tagging is **polymorphic**: any entity that `implements Taggable` exposes `tags: [EntityTagType!]!`, and the join carries `taggedAt: DateTime!`. Conversely `TagType.entities(first, after, last, before): TaggableEntityConnection!` walks the reverse edge as a **Relay cursor connection**. There is **no `kind`/level/hierarchy** — a tag is just a label applied to many entity types, scoped per user (`UNIQUE (label, user_id)`).
+
+*The divergence.* CI-PLANNER's `tags.kind` is **not** "a type of label" — it is a **taxonomy level in a grouping hierarchy** (see `schema.ts`): `pattern` is a top-level grouping, `intention` is grouped under patterns via `tag_patterns`, and `category` is a second orthogonal grouping over intentions via `tag_categories`. Only `intention` is actually applied to tasks/blocks; `pattern` and `category` are groupings *of* intentions. So CI-PLANNER's **`intention` is the concept that maps onto CI-Server's `Tag`** (a label applied to entities); `pattern`/`category` are a grouping layer CI-Server does not have.
+
+*Decision — hybrid.* Map the leaf (`intention`) onto a CI-Server-compatible `TagType`, keep `kind` as an **additive** enum, and express the hierarchy as **relationship connections on the same type** rather than new top-level types. Concretely:
+
+- **Type:** `TagType implements Node` (match CI-Server's `XType` naming, not bare `Tag`).
+- **Core fields, 1:1 with CI-Server:** `id: ID!`, `label: String!` (resolver maps the DB column `name` → `label`; the column can stay `name`), `description: String` (CI-PLANNER tags have no `description` column today — expose as nullable, always `null` until/unless a column is added).
+- **Attachment pattern, adopted from CI-Server:** the taggable entities (`Task`, `TimeBlock`) `implement Taggable` and expose their applied intentions the same way; `TagType.entities(first, after, last, before): TaggableEntityConnection!` walks the reverse edge as a Relay connection. This reuses CI-Server's exact shape rather than inventing a planner-specific one.
+- **Additive discriminator:** `kind: TagKind!` where `TagKind = PATTERN | INTENTION | CATEGORY`. Additive = non-breaking for a CI-Server client that never selects it; strict superset of CI-Server's `TagType`.
+- **Hierarchy as relationship connections (not new types):** on `TagType`, expose `parentPatterns(...): TagConnection!` and `childIntentions(...): TagConnection!` (backed by `tag_patterns`), plus `parentCategories` / `childIntentions` via `tag_categories`. Which edges are populated is governed by `kind` (a `PATTERN` has `childIntentions`; an `INTENTION` has `parentPatterns` + `parentCategories`; a `CATEGORY` has `childIntentions`). This mirrors how CI-Server already expresses relationships (`TagType.entities`) — through connections, keeping a single top-level tag type.
+- **Planner-only fields to expose as additive:** `muted: Boolean!` and `isBase: Boolean!` (both exist on the `tags` table; CI-Server has neither — additive, non-breaking).
+- **Owner scoping** lines up: CI-Server's `(label, user_id)` uniqueness ≈ CI-PLANNER's owner-scoped tags read via `currentOwnerId()`.
+
+*Note:* this decision assumes the CI-Server conventions above (`Node` interface, `XType` naming, Relay cursor connections, `DateTime`/`JSON` scalars, `create/update/deleteX` + `Input`/`Payload` mutation shape, uniform `JwtOrApiKeyAuthGuard`) become the baseline for the whole GraphQL surface — which reopens Decisions **1** (CI-Server chose **Apollo**, not Yoga) and **2** (CI-Server is **code-first** with a committed `__generated__/schema.graphql`). Those two are still to be confirmed here; Decision 6 is consistent with resolving them toward CI-Server's stack.
+
+## Development brief — Decision 6 `TagType` (Phase W sub-ticket)
+
+**Phase & gating.** Phase W, Decision 6. Design is complete now; *implementation* is gated on T (final owner-scoping shape) and U (auth context), per this doc's status line.
+
+**Grounding finding (verified 2026-07-02 against the live `server/src`).** CI-PLANNER already has the pieces this needs, so Decision 6 is largely a read-model/mapping exercise, **not** a data-model change:
+- `entity_tags` is a **polymorphic tag join** — `{ entityKind ('task'|'time_block'|'routine'), entityId, tagId, level }` — i.e. CI-PLANNER's equivalent of CI-Server's `EntityTagType`/`Taggable`.
+- `services/tags.ts` is already a rich service layer (`resolveTagId`, `syncEntityTags`, `entityTagNames`, `entityTagLevels`, `directionsOf`, `categoriesOf`, …) that resolvers can call directly (satisfies Decision 3).
+
+**Impact — what changes**
+- **SDL / type layer (new):** `TagType implements Node` (`id`, `label`, `description`, `muted`, `isBase`, `kind: TagKind!`); the `TagKind` enum (`PATTERN | INTENTION | CATEGORY`); the `Taggable` interface + `EntityTag` type; Relay connection types (`TagConnection`, `TaggableEntityConnection`, `PageInfo`). `Task` and `TimeBlock` declare `implements Taggable`.
+- **Resolvers (new, thin):** field resolvers mapping onto existing services — `label`←`name`, `kind`/`muted`/`isBase` pass-through, `parentPatterns`←`directionsOf()`, `parentCategories`←`categoriesOf()`. CRUD mutations (`createTag`/`updateTag`/`deleteTag`, `Input`/`Payload` shape) call the existing `POST/PATCH/DELETE /api/tags` service functions — no reimplementation.
+- **Service layer (small additions):** two reverse lookups don't exist yet and must be added to `services/tags.ts`, both **cursor-paginated** for Relay: (1) `TagType.entities` — tag→entities over `entity_tags`; (2) `childIntentions` — pattern→intentions and category→intentions (reverse of `tag_patterns`/`tag_categories`; today only the intention→group direction exists).
+
+**Impact — what does NOT change**
+- REST routes (GraphQL is additive), the DB schema (**no migration required for the core** — `label` is a resolver-level rename of the `name` column; the join tables already exist), and the client.
+- The only *optional* migration is a real `description` column — **defer**; expose `description` as always-`null` until there's a driver.
+
+**Watch-outs**
+- `kind`-conditional edges: `PATTERN`→`childIntentions`; `INTENTION`→`parentPatterns`+`parentCategories`; `CATEGORY`→`childIntentions`. Unpopulated edges return empty connections, not errors.
+- ~~Naming legacy: services still call patterns "directions"…~~ **INVERTED by Phase Z / W2 (PR #239):** migration 0105 reverted the 0038/0043 mis-rename, so **`direction` is canonical again** (`tags.kind='direction'`, `tag_directions`, `direction_tag_id`) and the services' "direction" vocabulary was right all along. GraphQL shipped **`parentDirections`** and **`TagKind.DIRECTION`** (flipped atomically with the DB in #239). "pattern" now names only the day-arrangement (`pattern_blocks`).
+- CI-Server's `EntityTagType` carries `taggedAt`; CI-PLANNER's `entity_tags` carries `level` and no timestamp. Decide whether to expose `level` (additive) and whether `taggedAt` is omitted/nullable — minor shape note, not a blocker.
+
+**Effort: S** within W — data model and most services already exist; the only genuinely new code is the two paginated reverse-lookup queries plus SDL/resolver wiring. Notably cheaper than the core entities (`tasks`/`blocks`), which have no service layer at all.
+
+## Dependencies & parallelization
+
+- ~~Design can start in parallel with T and U~~ — **all former gates have landed:** T (owner-scoping, 0098–0100), U (auth, 0101–0102), S1/S2 (0095–0097), X, Y. The `currentOwnerId()` contract is stable and already proven through the GraphQL context in steps 1–2.
+- **Live sequencing concern (the only one left): Phase Z / W1** — the `patterns`→`routines` rename. Coordinate whichever of {W step 3's pattern-family types, Z-W1} lands second (see the `patternsRouter` row note).
+- Steps within step 3 parallelize per resolver group (one PR each), but each group's **service extraction must precede its resolvers** — never in the same review batch as behavior changes.
+
+## Effort estimate
+**L** — not because any single resolver is hard, but because there are ~15-20 resource types once you exclude the non-CRUD routers, and the "call the same service functions as REST" discipline (decision #3) requires an audit of every route handler to find where business logic currently lives inline in the router vs. in a separate service file — some refactoring to extract shared logic may be needed *before* GraphQL can reuse it cleanly, which is itself worth scoping as a sub-ticket once decision #3 is confirmed.
+
+## Definition of done
+- [x] Library + schema-first-vs-code-first decisions made (Decisions 1 & 2 — **Apollo + schema-first**, locked 2026-07-03).
+- [x] SDL conforms to CI-Server conventions (`Node`, Relay `Connection`/`PageInfo`, `XType` naming, `DateTime`/`JSON` scalars, `Input`/`Payload` mutations) and is diff-comparable to CI-Server's `__generated__/schema.graphql` for shared types. *(Baseline established in #235/#238; each new type must keep it.)*
+- [x] Query-complexity limiting in place (custom plugin on `graphql` directly — see Decision 1 resolution for why not `graphql-query-complexity`).
+- [x] Full type list finalized against T's post-multi-tenant schema — the three-way map in `W-graphql-schema.md` §2. *(Per-type SDL for step-3 entities still gets authored per group.)*
+- [ ] Every resolver calls existing service-layer functions — no duplicated business logic or owner-scoping checks. *(Holds for TagType and for the tasks service — `services/tasks.ts` is extracted and owner-scoped on reads+writes (#243/#244/#245). Blocks and every other group remain open until W3.2+ land.)*
+- [x] Auth context wired through all three of U's auth modes (one Apollo context reading `currentOwnerId()` under `requireAuth`; verified in `graphql.test.ts`).
+- [x] A representation doc published — **`docs/W-graphql-schema.md`** (type ↔ REST route ↔ table ↔ service status).
+- [x] `TagType` implemented per Decision 6 (PR #238): CI-Server-compatible core, additive `kind: TagKind`, hierarchy as `parentDirections`/`childIntentions`/`parentCategories` connections. *(Vocabulary updated to DIRECTION by PR #239; `TagType.entities` deferred to W4 — needs the Taggable entity types.)*
+- [ ] `services/tasks.ts` extracted + owner-scoped (#243/#244/#245 — **done**); `TaskType` GraphQL resolvers wired (W3.3 — open).
+- [ ] `services/blocks.ts` extracted (W3.2 — open); `TimeBlockType` GraphQL resolvers wired (W3.3 — open).
+- [ ] Remaining 10 resolver groups (flight-plan, routines/pattern family, day-types/tag-prefs, life-planning, inbox, notifications, scheduling-prefs, admin jobs, mutation-only engine ops) + `TagType.entities` — see **Addendum 2** for the full sequence and per-group DoD.
+
+---
+
+## Addendum (2026-07-03) — Step 3 brief: service extraction + core entities
+
+**Why this is the expensive step (restating Decision 3's consequence):** `routes/tasks.ts` and `routes/blocks.ts` hold their business logic **inline** — there is no `services/tasks.ts` / `services/blocks.ts`. Resolvers may not reimplement that logic, so extraction comes first. This is the sub-ticket the Effort section anticipated.
+
+**Order of work (one PR per bullet, each based on `main` — never stacked):**
+1. **Extract `services/tasks.ts`** — behavior-preserving: move create/update/complete/delete + status/recurrence/tag/completion side-effects (`time_entries` reconcile, `ensureHabitPattern` bridge, flight-plan/reminder cascades) out of the router; REST routes become thin callers. Full suite must stay green with **zero contract change** (the T-phase lesson: `tsc` skips `test/` — exported-signature changes surface only at CI runtime; run the real suite).
+2. **Extract `services/blocks.ts`** — same treatment for `routes/blocks.ts` (placement markers, recurrence materialization touchpoints, category stamping). `services/block-task-sync.ts` already covers part; fold or compose, don't duplicate.
+3. **`TaskType` + `TimeBlockType`** — SDL per `W-graphql-schema.md` §4 + thin resolvers over the new services. Watch-outs already logged there: `scheduledFor` stays `String` (local date, not an instant); decide `EntityTagType.taggedAt` (no timestamp on `entity_tags` today — expose `level` additively, `taggedAt` nullable or small migration).
+4. **`TagType.entities`** — the deferred reverse edge (tag→Task/TimeBlock), now that Taggable types exist.
+5. **Remaining groups**, one PR each, service-extraction-first where none exists (see §2 map): flight-plan, prefs (grouped sub-objects per the 39-column note), possibles (promote = side-effect mutation via `services/task-promotion.ts`), block-templates, day-types, pattern family (**coordinate with Z-W1 naming** — `RoutineType` if W1 lands first), reflections/objectives/stars/recap, notifications, jobs (admin-scoped).
+
+**Verification bar per PR:** server+client typecheck clean, full suites green, REST behavior byte-equivalent for extracted paths (the #238 precedent: adversarially reviewed as byte-equivalent), complexity-boundable connections (cursor args on every connection field).
+
+**Status of this list (superseded by Addendum 2 below):** item 1 (`services/tasks.ts`) is **done** — #243 (W3.1) extracted it, #244 (W3.1a) closed a cross-owner IDOR the extraction preserved verbatim from the original router (PATCH/DELETE/promote-habit/skip-recurring-instance looked up rows by id alone), and #245 closed a sibling read-side leak on `GET /api/tasks` discovered during that audit. Items 2-5 are re-specified as an explicit PR sequence in Addendum 2, which is now the authoritative remaining-work list for the phase.
+
+---
+
+## Addendum 2 (2026-07-03) — Full CRUD completion plan (owner-locked scope)
+
+Owner confirmed (2026-07-03): Phase W does not close at "core entities usable" — it closes when every type in §2's three-way map has a GraphQL surface, including the admin-gated and mutation-only rows. This addendum is the per-PR sequence that implements that scope. It supersedes Addendum 1's "order of work" list for anything not already built.
+
+**Sequencing principle (unchanged from Addendum 1):** extract the service before wiring the resolver (Decision 3) — never in the same PR as a behavior change. One resolver group per PR, each based on fresh `main` (never stacked). REST stays byte-equivalent through every extraction. Full suite green before a PR opens.
+
+### Remaining PR sequence
+
+**W3.2 — `services/blocks.ts` extraction** *(no GraphQL yet)*
+Extract block CRUD from `routes/blocks.ts` (create / update / move / move-group / promote / delete / clear-day) into `services/blocks.ts`, folding with the existing `services/block-task-sync.ts` rather than duplicating it. Add `toBlockApi` to `lib/serialize.ts`. Move the **I10 inbound-calendar read-only guard into `updateBlock`** itself (service, not route) so a future GraphQL mutation can't bypass a data-integrity rule the REST route currently enforces at the edge. Owner-scoping is already correct in every route handler today (verified during W3.1a — no W3.2a hardening pass needed) — the extraction's job is to preserve it, not add it. DoD: the ~30 block route tests stay the behavior lock (don't rewrite them), tsc clean, full suite green.
+
+**W3.3 — `TaskType` + `TimeBlockType` resolvers** *(the core GraphQL entities)* — **SPLIT into two PRs (W3.3b TaskType, then W3.3c TimeBlockType) + a folded stampRow move; refined 2026-07-03 during W3.2 follow-up.**
+
+Both types ship as **`implements Node` only** — **`Taggable` (the forward `tags` edge) is deferred to W4**, because `EntityTagType.taggedAt` is non-null `DateTime!` but `entity_tags` has no timestamp column until W4's migration adds one. Grouping the forward `tags` edge with W4's `TagType.entities` + the `created_at` migration keeps all tagging in one ticket and W3.3 migration-free. Also **defer `TaskType.objective`** (references `ObjectiveType`, which doesn't exist until W8).
+
+- **W3.3b — `TaskType`** (`task.graphql`/`task-resolvers.ts`): `TaskConnection`/`TaskEdge`; `task(id)` + `tasks(first,after,last,before,status?)`; `create/update/deleteTask` mutations; field resolvers `parent`/`subtasks`(connection)/`dependsOn`. `TaskStatus`/`TaskSubtype` enums — **derive the full status set empirically** (`tasks.status` includes `scheduled`, set by `block-task-sync`; the `W-graphql-schema.md` §4 list `{OPEN DONE RECURRING CANCELLED SKIPPED}` is INCOMPLETE — a missing value crashes enum serialization) or fall back to `String!`. **New owner-scoped read fns** (`getTask`/`listTasks`/`listSubtasks`/`dependsOn`) go into `services/tasks.ts` — none exist today (Decision 3). **Commit 1 = the `stampRow` move** (see below).
+- **W3.3c — `TimeBlockType`** (`block.graphql`/`block-resolvers.ts`, after W3.3b — its `task` field references `TaskType`): `timeBlock(id)` + `timeBlocks(from,to,state?)`; `create/update/delete/move-group/promote` mutations; field resolvers `task`/`parentBlock`/`category`(→`TagType`, which exists). Add owner-scoped `getBlock` to `services/blocks.ts` (`listBlocks` already exists).
+
+Two things this group must get right that TagType didn't need to:
+- **Move `stampRow` (Phase-L `field_ts` versioning) into the services** (folded as commit 1 of W3.3b). A GraphQL mutation that skips stamping silently breaks multi-device sync. ⚠ Subtlety: `routes/tasks.ts:301` stamps on the **dependency-cycle error path** (the column UPDATE already applied before the deps change was rejected) — `updateTask` must stamp internally there too, not only on success. Verify byte-equivalent by the untouched REST suite. (`updateBlock` stamps only on success — simpler.)
+- **Reproduce the REST side-effect envelope.** REST handlers fire SSE `broadcast()`, `requestReplan()` (tasks), and `enqueueOutbound`/`pushOutboundDeletes` (blocks) after a mutation; services return a rich-enough result for the resolver to fire the same effects (services stay transport-agnostic — a route/resolver-layer duty mirrored in both).
+DoD: e2e query/mutation/cursor/owner-isolation tests per type, SSE fires on every mutation, `scheduledFor` stays `String` not `DateTime`.
+
+**W4 — Taggable (forward `tags`) + `TagType.entities` + `entity_tags.created_at`** *(expanded — was just the reverse edge)*
+(1) Migration adding `entity_tags.created_at` — ✅ **W4a shipped this as migration 0110** (#262): the table was **rebuilt** with `created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP` (a per-writer stamp couldn't guarantee non-null — entity_tags has six insert paths — and SQLite forbids a non-constant default on `ADD COLUMN`). (2) `TaskType`/`TimeBlockType` now `implements Taggable` — add the forward `tags: [EntityTagType!]!` resolver, `EntityTagType.taggedAt` backed by the new column (this supersedes the earlier "expose the tag's own timestamp, no migration" lean — owner chose the real column). (3) `TagType.entities` reverse edge (tag→`Task`/`TimeBlock` over `entity_tags`), unblocked once the concrete `Node` types exist from W3.3b/c.
+
+**W5 — `FlightPlanEntryType`**
+Extract flight-plan logic if still inline in `routes/flight-plan.ts`; SDL per §4's stub (`task`, `selected`, `position`, `sourceKind`).
+
+**W6 — Routine/pattern family: `PatternType`(+`PatternKindType`), `PatternBlockType`, `PatternPrefType`**
+Services already exist (`patterns.ts`, `pattern-blocks.ts`, `pattern-prefs.ts`) — this is mostly SDL + thin resolvers. **Z-W1 coordination (live, unresolved as of this writing):** if the `patterns`→`routines` rename lands first, name these `RoutineType`/`RoutineKindType` from the start; if this group ships first, Z-W1 renames the GraphQL types along with the tables when it lands. **Default if neither has landed when this PR is picked up: ship as `PatternType`/`PatternKindType`** (matches the still-live table names) and let Z-W1 carry the rename — don't block W6 on Z-W1's timing. `pattern_blocks` (the day-arrangement) stays conceptually distinct from the tag axis regardless of how the rename lands.
+
+**W7 — `DayTypeType` + `TagPrefType`**
+Services exist (`day-types.ts`, `category-prefs.ts` — the latter now backing the merged `tag_prefs` table per S2/0097).
+
+**W8 — Life-planning: `ObjectiveType`, `ReflectionType`, `DayStarsType`, `DailyRecapType`**
+`services/weekly-review.ts` covers part of this; extract the rest (objectives CRUD, reflections CRUD, stars/recap reads) before wiring resolvers.
+
+**W9 — Inbox: `PossibleTaskType`, `BlockTemplateType`**
+Includes `promotePossibleTask` — a mutation with a side effect (creates a real `Task` row via `services/task-promotion.ts`), not a plain field update. Model it as an explicit mutation, not a `status` field write.
+
+**W10 — Notifications: `ReminderType`, `PushSubscriptionType`**
+No existing service file — extract one from `routes/notifications.ts` first.
+
+**W11 — `SchedulingPrefsType`**
+Extract a prefs service from `routes/prefs.ts`; expose the ~39-column row as logical sub-objects at the API layer (`workday{start,end}`, `limits{maxFocusBlockMinutes,minBreakMinutes,…}`, `planning{horizonDays,recurrenceHorizonDays}`, `models{fast,quality,embed}`, `memory{…}`) per §4's grouping note — the DB stays one table; only the GraphQL shape groups it.
+
+**W12 — Admin: `ScheduledJobType`, `JobRunType`**
+Gate behind an explicit admin scope rather than the default owner scope. **Decision needed before this PR:** either add a new scope to `requireAuth`'s scope model, or restrict these resolvers to a specific auth mode. Not yet locked — flag for confirmation when this PR is picked up; default absent a decision is to add a minimal `admin` scope alongside the existing `planning:read`/`planning:write` pair.
+
+**W13 — Mutation-only engine ops**
+`autoplan` / `find-slot` / `instruct`, reusing the existing engine functions directly (no new CRUD types — these are operations, not resources).
+
+**W-sandbox — GraphQL sandbox web UI** *(developer explorer; independent — parallelizable)*
+An in-browser GraphQL IDE served against the existing `POST /api/graphql` endpoint, so developers/power-users can browse the schema (introspection is already on) and run queries/mutations as the logged-in owner. **Independent of every CRUD-type ticket** — it only needs the endpoint (live since step 1), so it can be built anytime; it's most *useful* once the schema is fleshed out, and it is NOT on the critical path (slot it whenever; doesn't gate W-close).
+
+- **IDE — LOCKED (owner, 2026-07-04): self-hosted GraphiQL, assets vendored (no CDN).** Use the official **GraphiQL** from https://github.com/graphql/graphiql (the `graphiql` npm package + `@graphiql/react`; MIT). Bundle its JS/CSS **locally** (dependency + built/served from the app, e.g. its `dist` assets served by the server or bundled through the client's Vite build) — **no external fetch**. This is required by the app's local-first guarantee ("no cloud, no telemetry — everything on your hardware"): Apollo's hosted Sandbox loads from `embed.apollo.dev` (external, breaks offline/fixture) and is therefore **rejected**, not a fallback. Pin the `graphiql` version and verify the served page makes zero off-origin requests.
+- **Route + gating.** New `GET /api/graphql/sandbox` returning the IDE HTML shell (pointed at the same-origin `POST /api/graphql` — no CORS). The `POST /api/graphql` endpoint stays **POST-only + `requireAuth`-gated, unchanged**; the browser sends the session cookie automatically, so a logged-in owner's queries authenticate with zero extra wiring. Gate the sandbox **on by default in non-production, opt-in in production** via a `GRAPHQL_SANDBOX` env flag — mirrors the fail-closed prod posture (e.g. `AUTH_MODE=test` forbidden in prod). Recommend the sandbox HTML route itself also sit behind `requireAuth` so it isn't a new unauthenticated surface.
+- **No new scope model** — reuses the existing session auth; no schema/migration; additive.
+- **Decisions:** (1) IDE = **LOCKED** to self-hosted GraphiQL (graphql/graphiql), vendored — see above. (2) Production gating — still to confirm; default off unless `GRAPHQL_SANDBOX=1`. (3) Sandbox-route auth — still to confirm; recommend `requireAuth`.
+- **DoD:** `GET /api/graphql/sandbox` serves the IDE in dev; a query AND a mutation run end-to-end against a logged-in session from the IDE; **zero external network calls** in fixture/offline mode (grep the served HTML for off-origin URLs); route 404s in production without the flag; a test covers serve-in-dev + 404-in-prod-without-flag.
+
+**W-close — phase sign-off**
+DoD sweep across every group above; add the perf indexes deferred from #238 (`tag_directions`/`tag_categories(parent,child)`, `tags(owner_id,kind,name,id)`); sync `W-graphql-schema.md` + `ROADMAP.md` + `ARCHITECTURE.md` to as-built; one final adversarial review pass across the whole GraphQL surface (owner-scoping + pagination + REST-parity lenses, the same three that found 0 issues on TagType in #238).
+
+### Decisions (locked 2026-07-03)
+
+1. **Admin scope (W12) — LOCKED.** Add a minimal `admin` scope to `requireAuth`'s scope model, alongside the existing `planning:read`/`planning:write` pair. Implement as specified when W12 is picked up.
+2. **`EntityTagType.taggedAt` (W4) — LOCKED + ✅ SHIPPED (W4a, #262).** A real `entity_tags.created_at` column was added by **migration 0110** (the migration head kept moving while this landed — Time-Sense Phase Z took 0106–0109, so W4a claimed 0110, not the `0108` this note originally guessed). The table was **rebuilt** to give the column a DB-level `NOT NULL DEFAULT CURRENT_TIMESTAMP` (structural, covers all six insert paths). Naming-consolidation Z's **W1** (`patterns`→`routines`) remains unbuilt and will take the next free slot after 0110 when it lands — renumber at merge if a parallel branch collides (cosmetic, PRAGMA-guarded).
+3. **`TagType.description` (already shipped null-only in TagType core).** Stays `null` until a real column exists — no action needed unless a driver appears.
+4. **Z-W1 timing vs. W6.** *Disambiguation: "Z-W1" is workstream 1 of the **naming-consolidation** Phase Z (`docs/Z-naming-consolidation.md`) — the `patterns`→`routines` rename — not the unrelated **Time-Sense** Phase Z (`docs/Z-focus-ritual.md`, PR #246). Both are confusingly named "Z"; Time-Sense has no "W1".* Status: naming-consolidation Z's W2 (tag-axis revert) shipped as PR #239; **W1 itself is still unbuilt**, gated behind that phase's own W3 (Habit-model audit). Default: W6 ships as `Pattern*`/`PatternKindType` if Z-W1 hasn't landed yet when W6 is picked up; Z-W1 renames the GraphQL layer with the tables if it lands after. Neither phase blocks the other.
+
+### Cross-cutting DoD (applies to every PR W3.2 → W13)
+
+- Owner-scoping verified on **both reads and writes** for the group's tables — this is the recurring IDOR class this phase keeps surfacing (W3.1a, #245); add a cross-owner regression test per type, not just per mutator.
+- Every connection field carries `first/after/last/before`; keyset pagination via the existing `graphql/pagination.ts` helper (cursor = base64url `name id` or equivalent stable key, fetch limit+1 for `hasNextPage`).
+- Mutations stamp `field_ts` (Phase-L versioning) and fire SSE `broadcast()` + `requestReplan()` where the REST equivalent does.
+- Extraction halves of a PR keep REST byte-equivalent — the route test suite is the lock; don't rewrite it to make a refactor pass.
+- `tsc` clean in both packages; full server suite + client suite green before opening.
+- SDL for any type CI-Server also has stays diff-comparable to its `__generated__/schema.graphql`; single `graphql@16` instance maintained (never re-add `graphql-query-complexity` — see Decision 1's resolution).

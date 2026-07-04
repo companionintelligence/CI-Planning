@@ -627,7 +627,7 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
-| POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); auth via the session cookie (Phase W, in progress) |
+| POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, in progress) |
 
 ## Tests
 
