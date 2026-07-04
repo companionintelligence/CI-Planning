@@ -2,7 +2,7 @@ import { createSignal, createMemo, createEffect, onCleanup, onMount, Show, For }
 import { X, FileText, ListChecks, Tag, Check, RotateCcw, ArrowRight } from 'lucide-solid';
 import { api, type Block, type ExtendMove } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
-import { tasks, taskOf, refetchTasks, refetchBlocks, showToast } from '../stores/index.js';
+import { tasks, taskOf, refetchTasks, refetchBlocks, showToast, prefs } from '../stores/index.js';
 import { focusState, focusCues, formatRemaining, overrunNote, type Cue } from '../lib/focus.js';
 
 /**
@@ -37,7 +37,12 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
 
   const reducedMotion =
     typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+  // Z5 per-channel prefs layer on top of the platform capability / reduced-motion
+  // checks. Haptics fire only when the device supports them AND the owner's arm/pref
+  // enables them; the ambient color layer renders only when enabled (§4, §5.1).
+  const canVibrate = () =>
+    typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function' && prefs()?.haptic_cues_enabled !== false;
+  const colorEnabled = () => prefs()?.ambient_color_enabled !== false;
 
   const state = createMemo(() => focusState(now(), startMs, endMs()));
 
@@ -51,7 +56,7 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
       const key = `${c.kind}@${c.at}`;
       if (c.at <= t && !firedCues.has(key)) {
         firedCues.add(key);
-        if (canVibrate) { try { navigator.vibrate(CUE_VIBRATE[c.kind]); } catch { /* capability lie — ignore */ } }
+        if (canVibrate()) { try { navigator.vibrate(CUE_VIBRATE[c.kind]); } catch { /* capability lie — ignore */ } }
       }
     }
   });
@@ -121,12 +126,14 @@ export function FocusRitual(props: { block: Block; next?: Block | null; onClose:
 
   return (
     <div class="fixed inset-0 z-[1100] flex flex-col bg-background" role="dialog" aria-label="Focus">
-      {/* Ambient category-color layer */}
-      <div
-        class="pointer-events-none absolute inset-0 transition-opacity duration-1000"
-        classList={{ 'focus-breath': state().phase === 'warning' && !reducedMotion }}
-        style={{ background: tint(), opacity: ambientOpacity() as number | undefined }}
-      />
+      {/* Ambient category-color layer (Z5: only when the owner's arm/pref enables it) */}
+      <Show when={colorEnabled()}>
+        <div
+          class="pointer-events-none absolute inset-0 transition-opacity duration-1000"
+          classList={{ 'focus-breath': state().phase === 'warning' && !reducedMotion }}
+          style={{ background: tint(), opacity: ambientOpacity() as number | undefined }}
+        />
+      </Show>
 
       {/* Close (exit ritual, keep the block) */}
       <button class="absolute top-4 right-4 z-10 btn-icon opacity-60 hover:opacity-100" onClick={() => exit()} title="Leave focus">

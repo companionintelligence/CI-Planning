@@ -90,7 +90,12 @@ export function resetDb(): void {
       planning_mode = 'basic',
       trust_mode = 'balanced',
       auto_defense_enabled = 0,
-      time_sense_enabled = 0;
+      time_sense_enabled = 0,
+      focus_ritual_enabled = 1,
+      haptic_cues_enabled = 1,
+      ambient_color_enabled = 1,
+      calibration_loop_enabled = 1,
+      z_experiment_arm = NULL;
   `);
 }
 
