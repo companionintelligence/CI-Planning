@@ -17,6 +17,8 @@ import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus } from '../services/block-task-sync.js';
+import { timeSenseEnabled } from '../lib/flags.js';
+import { extendBlock } from '../engine/extend-block.js';
 
 /**
  * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
@@ -392,6 +394,100 @@ export function blocksRouter() {
 
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${parentId}` });
     ctx.body = { blocks: toApiList(rows) };
+  });
+
+  // POST /api/blocks/:id/extend { minutes, confirm? } — Phase Z · Z3 "Keep working".
+  // Flag-gated (404 when Time-Sense off). Extends the block's end by `minutes`,
+  // via a minimal forward cascade (§1.1a). Two-phase: a silent fit commits at
+  // once; a fit that must move other entities returns them for confirmation and
+  // only applies when `confirm` is true; a fixed obstacle returns blockedBy and
+  // never writes.
+  router.post('/api/blocks/:id/extend', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const body = (ctx.request.body ?? {}) as { minutes?: number; confirm?: boolean };
+    const minutes = Math.round(Number(body.minutes ?? 10));
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      ctx.status = 422; ctx.body = { error: 'minutes must be a positive number' }; return;
+    }
+
+    let plan;
+    try {
+      plan = extendBlock(ctx.params.id, minutes, { commit: false }, owner);
+    } catch (err) {
+      ctx.status = 404; ctx.body = { error: (err as Error).message }; return;
+    }
+
+    // Blocked by a fixed entity → surface it, no write.
+    if (!plan.fits) { ctx.body = plan; return; }
+    // Needs a move the user hasn't confirmed yet → return the move set, no write.
+    if (plan.movedSet.length > 0 && !body.confirm) { ctx.body = { ...plan, committed: false }; return; }
+
+    // Silent fit, or a confirmed move → apply.
+    const applied = extendBlock(ctx.params.id, minutes, { commit: true }, owner);
+    broadcast(owner, 'block:updated', { id: ctx.params.id, extended: minutes, moved: applied.movedSet.length });
+    // Mirror the new times back onto every affected task — the extended block AND
+    // each cascade-moved block — so task_time/scheduled_for and armed reminders
+    // don't drift from the block that actually moved (as move-group does).
+    const affectedTasks = new Set<string>();
+    for (const bid of [ctx.params.id, ...applied.movedSet.map((m) => m.block_id)]) {
+      const t = syncTaskFromBlock(bid, owner);
+      if (t) affectedTasks.add(t);
+    }
+    for (const t of affectedTasks) broadcast(owner, 'task:updated', { id: t });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block:${ctx.params.id}` });
+    ctx.body = applied;
+  });
+
+  // POST /api/blocks/:id/reschedule — Phase Z · Z3 "Schedule again" (§1.1b).
+  // The block ended but the task isn't done: mark this attempt skipped and re-stage
+  // the SAME task onto the flight-plan (source_kind='reschedule'), staged-not-placed
+  // — Auto lands it later, inheriting the task's own defaults (no clone). Flag-gated.
+  router.post('/api/blocks/:id/reschedule', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const id = ctx.params.id;
+
+    const block = sqlite
+      .prepare(`SELECT id, task_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get(id, owner) as { id: string; task_id: string | null } | undefined;
+    if (!block) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
+    if (!block.task_id) { ctx.status = 422; ctx.body = { error: 'block has no task to reschedule' }; return; }
+
+    const t = sqlite
+      .prepare(`SELECT recurrence_parent_id, status FROM tasks WHERE id = ? AND owner_id = ?`)
+      .get(block.task_id, owner) as { recurrence_parent_id: string | null; status: string } | undefined;
+    if (!t) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
+    // "Schedule again" is for unfinished work only — a done/cancelled task must not
+    // be re-staged (Auto would place a fresh block for already-closed work).
+    if (t.status === 'done' || t.status === 'cancelled') {
+      ctx.status = 422; ctx.body = { error: 'task is already closed — nothing to reschedule' }; return;
+    }
+    // Same guard as the stage endpoint: series instances re-land via their RRULE.
+    if (t.recurrence_parent_id) { ctx.status = 422; ctx.body = { error: 'series instances re-land via their rule, not reschedule' }; return; }
+
+    const nextPos = (sqlite
+      .prepare(`SELECT COALESCE(MAX(position), 0) + 1 AS n FROM flight_plan WHERE owner_id = ?`)
+      .get(owner) as { n: number }).n;
+
+    let staged = false;
+    sqlite.transaction(() => {
+      // Attempt 1 becomes history — skipped, not deleted. The partial time_entry is
+      // left as-is: the task stays open, and calibration only reads DONE tasks, so
+      // the partial never enters estimate_calibration (§1.1b / N L169) — no flag needed.
+      sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
+      staged = sqlite
+        .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
+        .run(owner, block.task_id, nextPos).changes > 0;
+    })();
+
+    // Flip the task back to open (it was 'scheduled' while it held the block) so Auto
+    // re-places it; broadcast so the board drops the skipped block and shows the stage.
+    if (revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
+    broadcast(owner, 'block:updated', { id, rescheduled: block.task_id });
+    broadcast(owner, 'flight_plan:updated', { added: staged ? 1 : 0 });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `block:${id}` });
+    ctx.body = { ok: true, task_id: block.task_id, staged };
   });
 
   // POST /api/blocks/:id/promote — turn a Concept into a scheduled Plan.

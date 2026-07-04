@@ -5,13 +5,18 @@ import {
   visibleBlocks,
   setCalendarRange,
   tags,
-  overlayTags,
-  setOverlayTags,
+  overlayAxes,
+  toggleAxisTag,
+  resetOverlayAxes,
+  overlayAxesCount,
   overlayPrio,
   setOverlayPrio,
   setElementModal,
   setSelectedDay,
 } from '../stores/index.js';
+import { sortDirections, sortCategories, displayTag } from '../lib/tag-tax.js';
+import { TAG_AXES } from '../lib/overlay.js';
+import type { TagAxis } from '../lib/overlay.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
@@ -182,22 +187,46 @@ export function Calendar() {
     () => api.review.calibration(),
   );
 
-  // ── Overlay filter (tag AND priority, combinable) ────────────────────────────
+  // ── Overlay filter (three tag axes AND priority, combinable) ──────────────────
+  // Each axis groups the tags of one kind (direction / intention / category); every
+  // chip starts ON (nothing hidden). Deselecting a chip hides matching entities: OR
+  // within an axis, AND across axes + priority. See stores/index.ts + lib/overlay.ts.
   const [showFilters, setShowFilters] = createSignal(false);
-  const activeFilters = createMemo(() => overlayTags().length + overlayPrio().length);
+  const activeFilters = createMemo(() => overlayAxesCount(overlayAxes()) + overlayPrio().length);
 
-  function toggleTag(name: string) {
-    setOverlayTags((prev) =>
-      prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name],
-    );
+  const AXIS_LABEL: Record<TagAxis, string> = {
+    direction: 'Direction',
+    intention: 'Intention',
+    category: 'Category',
+  };
+
+  /** Tags per axis, ordered per the Tags-page convention (brand first, then A–Z).
+   *  Memoized so the filter/sort runs only when the tag list changes — not on every
+   *  chip toggle or unrelated re-render (the chip rows read this twice per axis). */
+  const axisTagsByAxis = createMemo(() => {
+    const all = tags() ?? [];
+    const build = (axis: TagAxis) => {
+      const of = all.filter((t) => t.kind === axis);
+      if (axis === 'direction') return sortDirections(of);
+      if (axis === 'category') return sortCategories(of);
+      return [...of].sort((a, b) => a.name.localeCompare(b.name));
+    };
+    return { direction: build('direction'), intention: build('intention'), category: build('category') };
+  });
+  const axisTags = (axis: TagAxis) => axisTagsByAxis()[axis];
+
+  /** A chip is ON unless its name is in that axis's deselected set. */
+  function chipOn(axis: TagAxis, name: string) {
+    return !overlayAxes()[axis].has(name);
   }
+
   function togglePrio(p: number) {
     setOverlayPrio((prev) =>
       prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p],
     );
   }
   function clearOverlay() {
-    setOverlayTags([]);
+    resetOverlayAxes();
     setOverlayPrio([]);
   }
 
@@ -267,34 +296,45 @@ export function Calendar() {
         </button>
       </div>
 
-      {/* Overlay filter panel: tag chips + 1–5 priority row, AND-combined. */}
+      {/* Overlay filter panel: three tag-axis chip rows + 1–5 priority row, AND-combined.
+          Chips start ON; deselecting hides matching entities (OR within a row, AND across). */}
       <Show when={showFilters()}>
         <div class="mb-4 p-3 rounded-lg border border-surface-700/60 bg-surface-800 flex flex-col gap-3">
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="text-[10px] uppercase tracking-wide text-slate-500 w-14">Tags</span>
-            <For each={tags() ?? []}>
-              {(t) => (
-                <button
-                  onClick={() => toggleTag(t.name)}
-                  class="px-2 py-0.5 rounded-full text-xs border transition-colors"
-                  classList={{
-                    'bg-accent text-white border-accent': overlayTags().includes(t.name),
-                    'border-surface-700 text-slate-400 hover:text-slate-200': !overlayTags().includes(t.name),
-                  }}
-                >
-                  {t.name}
-                </button>
-              )}
-            </For>
-            <Show when={!(tags() ?? []).length}>
-              <span class="text-xs text-slate-600">No tags yet</span>
-            </Show>
-          </div>
+          <For each={TAG_AXES}>
+            {(axis) => (
+              <Show when={axisTags(axis).length}>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-[10px] uppercase tracking-wide text-slate-500 w-14">{AXIS_LABEL[axis]}</span>
+                  <For each={axisTags(axis)}>
+                    {(t) => (
+                      <button
+                        type="button"
+                        aria-pressed={chipOn(axis, t.name)}
+                        onClick={() => toggleAxisTag(axis, t.name)}
+                        class="px-2 py-0.5 rounded-full text-xs border transition-colors"
+                        classList={{
+                          'bg-accent text-white border-accent': chipOn(axis, t.name),
+                          'border-surface-700 text-slate-400 hover:text-slate-200': !chipOn(axis, t.name),
+                        }}
+                      >
+                        {displayTag(t.name)}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            )}
+          </For>
+          <Show when={!(tags() ?? []).length}>
+            <span class="text-xs text-slate-600">No tags yet</span>
+          </Show>
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-[10px] uppercase tracking-wide text-slate-500 w-14">Priority</span>
             <For each={[1, 2, 3, 4, 5]}>
               {(p) => (
                 <button
+                  type="button"
+                  aria-pressed={overlayPrio().includes(p)}
                   onClick={() => togglePrio(p)}
                   class="w-7 h-7 rounded-md text-xs font-mono border transition-colors"
                   classList={{

@@ -314,6 +314,13 @@ export const api = {
     topTasks: (date: string) => request<{ tasks: TopTask[] }>('GET', `/summary/top-tasks?date=${date}`),
   },
 
+  calibration: {
+    // Phase Z · Z6 — suggest-only estimate nudge (404s when Time-Sense is off →
+    // callers treat any failure as "no suggestion").
+    suggest: (taskId: string) =>
+      request<{ suggestion: EstimateSuggestion | null }>('GET', `/calibration/suggest/${taskId}`),
+  },
+
   review: {
     week: (anchor?: string) => {
       const q = anchor ? `?anchor=${anchor}` : '';
@@ -625,6 +632,7 @@ export interface Prefs {
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
   enable_routines?: boolean; // feature flag; default false — Routines hidden from Add dialog
   recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
+  time_sense_enabled?: boolean; // Phase Z master flag (0105); default false — Time-Sense surfaces hidden
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
   recurrence_horizon_days?: number; // Phase P: how far ahead recurrence materializes (7/15/30/60/90/180)
@@ -680,6 +688,26 @@ export interface DaySummary {
   stats: { overdue: number; dueToday: number; open: number; blocks: number };
   focus: FocusItem[];
   capacity: Capacity;
+  // Phase Z · Z2 — last night's EOD Alignment folded in (present only when
+  // Time-Sense is on). prose null = the evening modal wasn't opened (degrade).
+  evening?: {
+    date: string;
+    prose: string | null;
+    carry_forward: { task_id: string; title: string; status: string }[];
+  };
+}
+
+// Phase Z · Z6 — suggest-only estimate nudge for one task (null = nothing to say).
+export interface EstimateSuggestion {
+  task_id: string;
+  current_minutes: number;
+  suggested_minutes: number;
+  delta_minutes: number;
+  bias_ratio: number;
+  scope_kind: string;
+  scope_ref: string;
+  scope_label: string;
+  confidence: 'tentative' | 'confident';
 }
 
 export interface WeekReview {

@@ -30,6 +30,7 @@ import { objectivesRouter } from './objectives.js';
 import { reviewRouter } from './review.js';
 import { starsRouter } from './stars.js';
 import { plannerRouter } from './planner.js';
+import { calibrationRouter } from './calibration.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -64,6 +65,7 @@ export function mountRoutes(app: Koa) {
     reviewRouter(),
     starsRouter(),
     plannerRouter(),
+    calibrationRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }
