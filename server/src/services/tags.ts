@@ -192,8 +192,9 @@ export function entityTagLevels(kind: EntityKind, entityId: string): { name: str
 // planner-internal and EntityTagType doesn't expose it. Deterministically ordered
 // (level, name) so the connection is stable. Owner-safe: the caller only resolves this
 // on an already-owner-scoped Task/TimeBlock (fetched via getTask/getBlock), so the joined
-// tags are that owner's. `created_at` is COALESCEd to '' only defensively — 0110 backfilled
-// every existing row and insertAssoc stamps every new one, so it is non-null in practice.
+// tags are that owner's. `created_at` is non-null by construction — migration 0110 gave the
+// column a DB-level `NOT NULL DEFAULT CURRENT_TIMESTAMP`, so every insert path fills it; no
+// COALESCE and no app-side stamp are needed here.
 const selectEntityTagsFull = sqlite.prepare(
   `SELECT tags.id AS tagId, tags.name AS name, entity_tags.created_at AS createdAt
      FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
