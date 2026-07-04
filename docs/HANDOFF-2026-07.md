@@ -41,7 +41,7 @@ Phases **A through Y are all merged to main** — scheduler correctness, the own
 - **W-sandbox** — in-browser GraphiQL IDE (LOCKED to self-hosted `github.com/graphql/graphiql`, vendored, NO CDN; `GET /api/graphql/sandbox`, flag-gated `GRAPHQL_SANDBOX`, prod-off) — **independent / parallelizable, can go anytime**
 - **W-close** — DoD sweep + perf indexes + docs sync + adversarial review — **gates on the type tickets above**
 
-**Authoritative references:** `docs/W-graphql-crud.md` (Addendum 2) is the live ticket board; `docs/W-graphql-schema.md` is the SDL / type map.
+**Authoritative references** (siblings of this file, under `docs/`): [`W-graphql-crud.md`](W-graphql-crud.md) (Addendum 2) is the live ticket board; [`W-graphql-schema.md`](W-graphql-schema.md) is the SDL / type map.
 
 ---
 
