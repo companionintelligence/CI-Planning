@@ -104,6 +104,23 @@ describe('migrations 0106/0107', () => {
       .get() as { cron: string };
     expect(row.cron).toBe('30 1 * * *');
   });
+
+  it('the Settings toggle round-trips: PATCH /api/prefs persists time_sense_enabled + GET returns it', async () => {
+    // The whole feature is dead if the master flag can't be set through the actual
+    // API path the Settings toggle uses (fromApi → Drizzle .set → serialize). Every
+    // other test flips the flag via raw SQL, so this is the one that guards the
+    // client-facing round-trip.
+    const before = await api(srv.url, '/api/prefs');
+    expect('time_sense_enabled' in before.body.prefs).toBe(true); // column is serialized
+    expect(before.body.prefs.time_sense_enabled).toBe(false);
+
+    const patch = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { time_sense_enabled: true } });
+    expect(patch.status).toBe(200);
+    expect(patch.body.prefs.time_sense_enabled).toBe(true);
+
+    const after = await api(srv.url, '/api/prefs');
+    expect(after.body.prefs.time_sense_enabled).toBe(true);
+  });
 });
 
 // ── Flag off: dark by default ────────────────────────────────────────────────────

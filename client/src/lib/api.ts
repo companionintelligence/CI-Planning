@@ -141,6 +141,18 @@ export const api = {
     // user-placed, locked, calendar meetings, and habit/pattern placements.
     clearDay: (date: string) =>
       request<{ ok: boolean; cleared: number }>('POST', `/days/${date}/clear`, {}),
+    // Phase Z · Z3 — "Keep working": plan (confirm omitted) or apply (confirm:true)
+    // a block extension. Flag-gated server-side (rejects when Time-Sense is off).
+    extend: (id: string, body?: { minutes?: number; confirm?: boolean }) =>
+      request<ExtendResult>('POST', `/blocks/${id}/extend`, body ?? {}),
+    // Phase Z · Z3 — "Schedule again": skip this attempt, re-stage the same task.
+    reschedule: (id: string) =>
+      request<{ ok: boolean; task_id: string; staged: boolean }>('POST', `/blocks/${id}/reschedule`, {}),
+    // Phase Z · Z4 — arm/clear the block's background focus cues (tab-closed push).
+    armFocusReminders: (id: string) =>
+      request<{ ok: boolean; armed: number }>('POST', `/blocks/${id}/focus-reminders`, {}),
+    clearFocusReminders: (id: string) =>
+      request<{ ok: boolean }>('DELETE', `/blocks/${id}/focus-reminders`),
   },
 
   // ── Patterns (Phase G, G1) — typed, reusable task collections ────────────────
@@ -695,6 +707,22 @@ export interface DaySummary {
     prose: string | null;
     carry_forward: { task_id: string; title: string; status: string }[];
   };
+}
+
+// Phase Z · Z3 — "Keep working" block extension result (§1.1a).
+export interface ExtendMove {
+  block_id: string;
+  task_id: string | null;
+  title: string;
+  before: { start_at: string; end_at: string };
+  after: { start_at: string; end_at: string };
+}
+export interface ExtendResult {
+  fits: boolean;
+  committed: boolean;
+  newEndAt: string;
+  movedSet: ExtendMove[];
+  blockedBy: { block_id: string; title: string; start_at: string } | null;
 }
 
 // Phase Z · Z6 — suggest-only estimate nudge for one task (null = nothing to say).

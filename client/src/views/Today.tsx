@@ -1,6 +1,7 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
-import { Plus, AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen } from 'lucide-solid';
-import { blocks, tasks, taskOf, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, scheduledByTaskId, isRoutineTask } from '../stores/index.js';
+import { Plus, AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Target } from 'lucide-solid';
+import { blocks, tasks, taskOf, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, scheduledByTaskId, isRoutineTask, prefs } from '../stores/index.js';
+import { FocusRitual } from '../components/FocusRitual.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
@@ -90,6 +91,34 @@ export function Today() {
     setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: t.id } });
   }
 
+  // ── Phase Z · Z3b — Focus Ritual entry ─────────────────────────────────────
+  // A coarse clock (30s) so the "Focus now" affordance appears/clears near block
+  // boundaries without waiting for the next blocks refetch. Only ticks matter here;
+  // the value is unused. Gated entirely by the Time-Sense master flag.
+  const [nowTick, setNowTick] = createSignal(Date.now());
+  const focusClock = setInterval(() => setNowTick(Date.now()), 30_000);
+  onCleanup(() => clearInterval(focusClock));
+  const currentFocusBlock = createMemo(() => {
+    if (!prefs()?.time_sense_enabled) return null;
+    const t = nowTick();
+    return (blocks() ?? []).find(
+      (b) =>
+        (b.block_kind === 'task' || b.block_kind === 'focus' || b.block_kind === 'habit') &&
+        b.status === 'planned' &&
+        Date.parse(b.start_at) <= t && Date.parse(b.end_at) > t,
+    ) ?? null;
+  });
+  // The next timeline block after the focused one, for the T4 "what's next" line.
+  const nextAfterFocus = createMemo(() => {
+    const cur = currentFocusBlock();
+    if (!cur) return null;
+    const after = (blocks() ?? [])
+      .filter((b) => b.id !== cur.id && b.block_kind !== 'timeblock' && Date.parse(b.start_at) >= Date.parse(cur.end_at))
+      .sort((a, b) => Date.parse(a.start_at) - Date.parse(b.start_at));
+    return after[0] ?? null;
+  });
+  const [focusOpen, setFocusOpen] = createSignal(false);
+
   // ── Capacity bar (relocated from the removed Morning Briefing, Phase O · O3) ──
   const capacity = () => summary()?.capacity;
   const capacityPct = () => {
@@ -178,6 +207,11 @@ export function Today() {
             >
               <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
             </button>
+            <Show when={currentFocusBlock()}>
+              <button onClick={() => setFocusOpen(true)} class="btn-ghost text-xs px-3 py-1.5 border border-primary/50 text-primary" title="Enter the Focus Ritual for the block in progress">
+                <Target size={13} /> Focus
+              </button>
+            </Show>
             <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5">
               <Plus size={13} /> Add
             </button>
@@ -325,6 +359,11 @@ export function Today() {
           <span class="text-muted-foreground">Shift+= → Routine · Esc to clear</span>
           <button onClick={() => clearSelection()} class="btn-icon"><X size={14} /></button>
         </div>
+      </Show>
+
+      {/* Phase Z · Z3b — Focus Ritual full-screen overlay for the in-progress block. */}
+      <Show when={focusOpen() && currentFocusBlock()}>
+        <FocusRitual block={currentFocusBlock()!} next={nextAfterFocus()} onClose={() => setFocusOpen(false)} />
       </Show>
 
       {/* Create-Routine-from-selection modal (Phase F). */}

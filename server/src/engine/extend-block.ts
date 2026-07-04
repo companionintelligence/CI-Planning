@@ -49,23 +49,30 @@ interface Row {
   block_type: string | null;
   is_locked: number;
   status: string;
+  is_running: number;
 }
 
 /**
  * Fixed = never silently displaced: meetings (incl. external-event mirrors, which
- * are locked meeting blocks), user-locked blocks, in-progress blocks, and
+ * are locked meeting blocks), user-locked blocks, actively-timed blocks, and
  * user-drawn Plan containers (`block_kind='timeblock'`). Only loose task blocks
  * are movable. Plan containers are treated as fixed rather than pushed because a
  * container carries child blocks that must move *with* it (move-group semantics);
  * shoving a container independently would shear its children out of it. So an
  * extension that runs into a Plan escalates to blockedBy instead — the obstacle
  * query below only surfaces top-level blocks, so children never appear here.
+ *
+ * "Actively-timed" is derived from a running `time_entries` row (ended_at IS NULL),
+ * NOT `time_blocks.status='in_progress'` — the latter is never written (in_progress
+ * is a task-only status), so the clock, not the block row, is the source of truth
+ * for what's running (per M's convention).
  */
 function isFixed(r: Row): boolean {
   return (
     r.block_kind === 'meeting' ||
     r.block_kind === 'timeblock' ||
     r.is_locked === 1 ||
+    r.is_running === 1 ||
     r.status === 'in_progress'
   );
 }
@@ -87,7 +94,7 @@ export function extendBlock(
 
   const block = sqlite
     .prepare(
-      `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status
+      `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status, 0 AS is_running
          FROM time_blocks WHERE id = ? AND owner_id = ?`,
     )
     .get(blockId, owner) as Row | undefined;
@@ -107,7 +114,8 @@ export function extendBlock(
   // timeline obstacles.
   const subsequent = sqlite
     .prepare(
-      `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status
+      `SELECT id, task_id, title, start_at, end_at, block_kind, block_type, is_locked, status,
+              (EXISTS (SELECT 1 FROM time_entries te WHERE te.block_id = time_blocks.id AND te.ended_at IS NULL)) AS is_running
          FROM time_blocks
         WHERE owner_id = ? AND id != ? AND parent_block_id IS NULL AND start_at >= ?
           AND status NOT IN ('completed','skipped','cancelled')

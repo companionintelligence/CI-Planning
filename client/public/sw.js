@@ -22,6 +22,10 @@ self.addEventListener('push', (e) => {
       self.registration.showNotification(d.title || 'Reminder', {
         body: d.body || '',
         tag: d.tag, // collapses re-delivery of the same reminder into one notification
+        // Phase Z · Z4: Focus Ritual cues carry a haptic pattern. Honored where the
+        // platform supports it (Android/Chrome); a silent no-op on iOS — a degrade,
+        // never a block. Absent for ordinary reminders.
+        ...(Array.isArray(d.vibrate) ? { vibrate: d.vibrate } : {}),
         data: { url: d.url || '/' },
       }),
       // Phase L (gap 9): tell open tabs to flush their op-log. Without this,
