@@ -1,13 +1,22 @@
 import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
-import { Lock, NotebookPen, Star } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Lock, NotebookPen, Star } from 'lucide-solid';
 import type { Block, DayStar } from '../lib/api.js';
 import { isPerfectDay, pipCount, STAR_GOLD } from '../lib/stars.js';
 import {
   PX_PER_MIN,
-  DAY_HEIGHT_PX,
   minutesIntoDay,
-  yOf,
 } from '../lib/grid.js';
+import {
+  type AxisState,
+  DEFAULT_AXIS_STATE,
+  TOP_COLLAPSE_END,
+  BOTTOM_COLLAPSE_START,
+  segments,
+  axisHeightPx,
+  yOf as axisYOf,
+  minAt as axisMinAt,
+  visibleExtent,
+} from '../lib/day-axis.js';
 import { setElementModal } from '../stores/index.js';
 import { isAllDay, isTimed, isTaskBlock } from '../lib/overlay.js';
 import { localISODate, addDays } from '../lib/dates.js';
@@ -97,21 +106,31 @@ function dayLabel(dayStr: string, opts: Intl.DateTimeFormatOptions) {
 }
 
 // ── Now line: ticks every minute, only in today's column ──────────────────────
-function NowLine(props: { day: string }) {
+// Routed through the piecewise axis. If "now" falls inside a collapsed region we
+// hide the line — its true position is not on the visible axis until you expand.
+function NowLine(props: { day: string; state: () => AxisState }) {
   const [mins, setMins] = createSignal(minutesIntoDay(new Date().toISOString(), props.day));
   const t = setInterval(
     () => setMins(minutesIntoDay(new Date().toISOString(), props.day)),
     60_000,
   );
   onCleanup(() => clearInterval(t));
+  // Only show when "now" lands in an expanded portion of the axis.
+  const visible = () => {
+    const m = mins();
+    if (m < 0 || m > 24 * 60) return false;
+    return visibleExtent(m, m + 1, props.state()) !== null;
+  };
   return (
-    <div
-      class="absolute left-0 right-0 z-20 pointer-events-none"
-      style={{ top: `${yOf(mins())}px` }}
-    >
-      <div class="h-px bg-accent-hi shadow-[0_0_6px_rgba(88,235,191,.6)]" />
-      <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-accent-hi" />
-    </div>
+    <Show when={visible()}>
+      <div
+        class="absolute left-0 right-0 z-20 pointer-events-none"
+        style={{ top: `${axisYOf(mins(), props.state(), PX_PER_MIN)}px` }}
+      >
+        <div class="h-px bg-accent-hi shadow-[0_0_6px_rgba(88,235,191,.6)]" />
+        <div class="absolute -left-1 -top-[3px] w-[7px] h-[7px] rounded-full bg-accent-hi" />
+      </div>
+    </Show>
   );
 }
 
@@ -121,13 +140,23 @@ function NowLine(props: { day: string }) {
 //   • TASK chip  → keeps its title; a click opens the task editor.
 //   • CONTAINER  → label hidden; a thick 15px colored left edge stands in for it,
 //                  revealing the name on hover (native `title`).
-function BlockChip(props: { placed: Placed; day: string }) {
+function BlockChip(props: { placed: Placed; day: string; state: () => AxisState }) {
   const b = () => props.placed.block;
   const color = () => kindColor[b().block_kind] ?? '#152637';
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
   const isTask = () => isTaskBlock(b());
-  const heightPx = () => Math.max(yOf(props.placed.height), MIN_CHIP_PX);
+
+  // Clamp the block's [start, end) extent to the currently-visible portion of the
+  // piecewise axis. `null` ⇒ the block sits entirely inside a collapsed region →
+  // hidden until that region expands. A block straddling a boundary is trimmed to
+  // its expanded part so it never bleeds into a thin bar.
+  const extent = () => visibleExtent(props.placed.top, props.placed.top + props.placed.height, props.state());
+  const topPx = () => axisYOf(extent()!.startMin, props.state(), PX_PER_MIN);
+  const heightPx = () => {
+    const e = extent()!;
+    return Math.max(axisYOf(e.endMin, props.state(), PX_PER_MIN) - axisYOf(e.startMin, props.state(), PX_PER_MIN), MIN_CHIP_PX);
+  };
 
   // Task chips open the task editor; the block links to its task via task_id.
   function openTaskEditor(e: MouseEvent | KeyboardEvent) {
@@ -146,6 +175,7 @@ function BlockChip(props: { placed: Placed; day: string }) {
   }
 
   return (
+   <Show when={extent()}>
     <div
       class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none"
       classList={{
@@ -155,7 +185,7 @@ function BlockChip(props: { placed: Placed; day: string }) {
         'cursor-default': !isTask(),
       }}
       style={{
-        top: `${yOf(props.placed.top)}px`,
+        top: `${topPx()}px`,
         height: `${heightPx()}px`,
         left: `${(props.placed.col / props.placed.cols) * 100}%`,
         width: `calc(${100 / props.placed.cols}% - 2px)`,
@@ -193,6 +223,7 @@ function BlockChip(props: { placed: Placed; day: string }) {
         </div>
       </Show>
     </div>
+   </Show>
   );
 }
 
@@ -215,16 +246,26 @@ function AllDayChip(props: { block: Block }) {
   );
 }
 
+// An hour label/line is drawn only when its minute lies in an EXPANDED region
+// (a collapsed region shows nothing but its expander bar). Boundary hours 07:00
+// and 21:00 always sit on an expanded edge, so they render.
+function visibleHours(state: AxisState): number[] {
+  return Array.from({ length: 24 }, (_, h) => h).filter((h) => {
+    const m = h * 60;
+    if (m === TOP_COLLAPSE_END || m === BOTTOM_COLLAPSE_START) return true;
+    return visibleExtent(m, m + 1, state) !== null;
+  });
+}
+
 // ── Time gutter (hour labels) ─────────────────────────────────────────────────
-function TimeGutter() {
-  const hours = Array.from({ length: 24 }, (_, h) => h);
+function TimeGutter(props: { state: () => AxisState }) {
   return (
-    <div class="relative" style={{ height: `${DAY_HEIGHT_PX}px` }}>
-      <For each={hours}>
+    <div class="relative" style={{ height: `${axisHeightPx(props.state(), PX_PER_MIN)}px` }}>
+      <For each={visibleHours(props.state())}>
         {(h) => (
           <div
             class="absolute right-1.5 -translate-y-1/2 text-[10px] text-slate-500 font-mono tabular-nums"
-            style={{ top: `${yOf(h * 60)}px` }}
+            style={{ top: `${axisYOf(h * 60, props.state(), PX_PER_MIN)}px` }}
           >
             <Show when={h > 0}>
               {new Date(2000, 0, 1, h).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })}
@@ -237,17 +278,55 @@ function TimeGutter() {
 }
 
 // ── Hour gridlines for a day column ───────────────────────────────────────────
-function HourLines() {
-  const hours = Array.from({ length: 24 }, (_, h) => h);
+function HourLines(props: { state: () => AxisState }) {
   return (
-    <For each={hours}>
+    <For each={visibleHours(props.state())}>
       {(h) => (
         <div
           class="absolute left-0 right-0 border-t border-surface-700/50"
-          style={{ top: `${yOf(h * 60)}px` }}
+          style={{ top: `${axisYOf(h * 60, props.state(), PX_PER_MIN)}px` }}
         />
       )}
     </For>
+  );
+}
+
+// ── Expander bar for a collapsed/expanded region ──────────────────────────────
+// One thin clickable bar per collapsible region, spanning the full width of the
+// time grid (gutter + all day columns). Collapsed → "▸ label"; expanded → "▾".
+// Positioned absolutely at the region's segment top so it overlays the (empty)
+// collapsed band or sits flush at the region's expanded edge.
+function ExpanderBar(props: {
+  region: 'top' | 'bottom';
+  label: string;
+  state: () => AxisState;
+  onToggle: () => void;
+}) {
+  const seg = () => {
+    const segs = segments(props.state(), PX_PER_MIN);
+    return props.region === 'top' ? segs[0] : segs[2];
+  };
+  const expanded = () => (props.region === 'top' ? props.state().topExpanded : props.state().bottomExpanded);
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded()}
+      title={expanded() ? `Collapse ${props.label}` : `Expand ${props.label}`}
+      class="absolute left-0 right-0 z-10 flex items-center gap-1 px-1.5 text-[10px] text-slate-400 bg-surface-800/95 hover:bg-surface-700/70 border-y border-surface-700/60 transition-colors overflow-hidden"
+      style={{
+        top: `${seg().topPx}px`,
+        // A collapsed bar fills its whole (thin) segment; an expanded region's bar
+        // is a slim strip at the top so it never eats the newly-revealed hours.
+        height: expanded() ? '16px' : `${seg().heightPx}px`,
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); props.onToggle(); }}
+    >
+      <Show when={expanded()} fallback={<ChevronRight size={11} class="flex-shrink-0" />}>
+        <ChevronDown size={11} class="flex-shrink-0" />
+      </Show>
+      <span class="truncate">{props.label}</span>
+    </button>
   );
 }
 
@@ -275,8 +354,18 @@ interface Props {
 export function CalendarGrid(props: Props) {
   const today = () => localISODate();
 
+  // Wave-3 item 6 — collapse the quiet night hours. Two per-session (not persisted)
+  // signals drive the piecewise day axis; default = BOTH collapsed. Calendar view
+  // only — the Planner keeps the plain linear axis. One shared state across all
+  // week columns so every column collapses in lockstep.
+  const [topExpanded, setTopExpanded] = createSignal(DEFAULT_AXIS_STATE.topExpanded);
+  const [bottomExpanded, setBottomExpanded] = createSignal(DEFAULT_AXIS_STATE.bottomExpanded);
+  const axisState = (): AxisState => ({ topExpanded: topExpanded(), bottomExpanded: bottomExpanded() });
+
   // Click-to-create on empty grid space. BlockChip gestures stopPropagation, so only
-  // empty space reaches here. A near-zero pointer move = a click; map Y → snapped time.
+  // empty space reaches here. A near-zero pointer move = a click; map Y → time via the
+  // piecewise axis (a click on a collapsed bar clamps to that region's expanded edge),
+  // then snap to 15 min.
   function clickToCreate(e: PointerEvent, day: string) {
     if (!props.onCreateAt) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -284,7 +373,7 @@ export function CalendarGrid(props: Props) {
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointerup', onUp);
       if (Math.abs(ev.clientX - startX) >= CLICK_PX || Math.abs(ev.clientY - startY) >= CLICK_PX) return;
-      const mins = Math.max(0, Math.round((ev.clientY - rect.top) / PX_PER_MIN));
+      const mins = axisMinAt(ev.clientY - rect.top, axisState(), PX_PER_MIN);
       const snapped = Math.floor(mins / 15) * 15;
       props.onCreateAt!(day, `${pad(Math.floor(snapped / 60))}:${pad(snapped % 60)}`);
     };
@@ -364,12 +453,13 @@ export function CalendarGrid(props: Props) {
         </div>
       </Show>
 
-      {/* Time grid */}
+      {/* Time grid. The whole grid is `position: relative` so the two full-width
+          expander bars can overlay across the gutter + every day column. */}
       <div
-        class="grid"
+        class="grid relative"
         style={{ 'grid-template-columns': `3.5rem repeat(${props.days.length}, 1fr)` }}
       >
-        <TimeGutter />
+        <TimeGutter state={axisState} />
         <For each={props.days}>
           {(day) => {
             const placed = createMemo(() => layoutBlocks(props.blocksByDay()[day] ?? [], day));
@@ -377,21 +467,34 @@ export function CalendarGrid(props: Props) {
               <div
                 class="relative border-l border-surface-700/60"
                 classList={{ 'cursor-pointer': !!props.onCreateAt }}
-                style={{ height: `${DAY_HEIGHT_PX}px` }}
+                style={{ height: `${axisHeightPx(axisState(), PX_PER_MIN)}px` }}
                 title={props.onCreateAt ? 'Click an empty slot to add' : undefined}
                 onPointerDown={(e) => clickToCreate(e, day)}
               >
-                <HourLines />
+                <HourLines state={axisState} />
                 <For each={placed()}>
-                  {(p) => <BlockChip placed={p} day={day} />}
+                  {(p) => <BlockChip placed={p} day={day} state={axisState} />}
                 </For>
                 <Show when={day === today()}>
-                  <NowLine day={day} />
+                  <NowLine day={day} state={axisState} />
                 </Show>
               </div>
             );
           }}
         </For>
+        {/* Full-width expander bars, positioned over both night regions. */}
+        <ExpanderBar
+          region="top"
+          label="12am – 7am"
+          state={axisState}
+          onToggle={() => setTopExpanded((v) => !v)}
+        />
+        <ExpanderBar
+          region="bottom"
+          label="9pm – 12am"
+          state={axisState}
+          onToggle={() => setBottomExpanded((v) => !v)}
+        />
       </div>
     </div>
   );
