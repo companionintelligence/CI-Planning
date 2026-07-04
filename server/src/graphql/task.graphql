@@ -28,10 +28,7 @@ type TaskType implements Node {
   dueAt: DateTime
   scheduledFor: String              # local YYYY-MM-DD, not an instant — String, not DateTime
   createdAt: DateTime!
-  completedAt: DateTime
-  parent: TaskType                  # parent_id
-  subtasks(first: Int, after: String, last: Int, before: String): TaskConnection!
-  dependsOn: [TaskType!]!           # task_dependencies.depends_on_id
+  subtasks(first: Int, after: String): TaskConnection!
 }
 
 type TaskConnection implements Connection {
