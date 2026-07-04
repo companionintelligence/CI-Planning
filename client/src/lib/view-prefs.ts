@@ -43,12 +43,20 @@ export function deserializePrio(saved: ViewPrefs['calendar'] | undefined): numbe
   return prio.filter((n): n is number => typeof n === 'number');
 }
 
-/** Persisted collapse flags → AxisState; missing/non-boolean falls back to defaults. */
-export function deserializeAxisState(saved: ViewPrefs['calendar'] | undefined): AxisState {
+/**
+ * Persisted collapse flags → AxisState; missing/non-boolean falls back to defaults.
+ * Accepts either the `calendar` or `planner` blob — both carry the same two flags.
+ */
+export function deserializeAxisState(saved: { topExpanded?: boolean; bottomExpanded?: boolean } | undefined): AxisState {
   return {
     topExpanded: typeof saved?.topExpanded === 'boolean' ? saved.topExpanded : DEFAULT_AXIS_STATE.topExpanded,
     bottomExpanded: typeof saved?.bottomExpanded === 'boolean' ? saved.bottomExpanded : DEFAULT_AXIS_STATE.bottomExpanded,
   };
+}
+
+/** Build the `view_prefs.planner` blob (night-hour collapse flags only). */
+export function buildPlannerViewPrefs(axisState: AxisState): NonNullable<ViewPrefs['planner']> {
+  return { topExpanded: axisState.topExpanded, bottomExpanded: axisState.bottomExpanded };
 }
 
 /** Build the full `view_prefs.calendar` blob from current live state. */
