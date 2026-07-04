@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, createResource, onCleanup } from 'solid-js';
 import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown } from 'lucide-solid';
 import { api, type Block } from '../lib/api.js';
-import { PX_PER_MIN, MINUTES_PER_DAY, minutesIntoDay } from '../lib/grid.js';
+import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
   type AxisState,
   DEFAULT_AXIS_STATE,
@@ -694,7 +694,7 @@ export function Planner() {
     // resolveGesture reads a px delta and snaps via minsOf; dMin * PX_PER_MIN makes it
     // recover exactly `dMin` (already segmented-correct from the pointer seam).
     const dyPx = dMin * PX_PER_MIN;
-    const deltaMin = Math.round(dMin / 15) * 15; // snapped group delta (matches SNAP_MIN)
+    const deltaMin = Math.round(dMin / SNAP_MIN) * SNAP_MIN; // snapped group delta
 
     // Member + Alt → detach this one and move it alone. It becomes loose, so clamp it
     // against the loose obstacle set (as if it had no parent).
@@ -745,10 +745,10 @@ export function Planner() {
 
   // Grid Y (px) → snapped minute-of-day on the segmented axis, then → a span. Mirrors
   // the calendar's guard: round the (possibly fractional) minAt result before the
-  // 15-min snap, and never yield 24:00 (cap at the last slot 23:45 = 1425).
+  // SNAP_MIN snap, and never yield 24:00 (cap at the last slot, 23:45).
   function minuteAtGridY(clientY: number): number {
     const mins = Math.round(axisMinAt(gridY(clientY), axisState(), PX_PER_MIN));
-    return Math.min(Math.floor(mins / 15) * 15, MINUTES_PER_DAY - 15);
+    return Math.min(Math.floor(mins / SNAP_MIN) * SNAP_MIN, MINUTES_PER_DAY - SNAP_MIN);
   }
 
   // Create a Time Block at grid Y, optionally bound to a flight-plan task; attach it
