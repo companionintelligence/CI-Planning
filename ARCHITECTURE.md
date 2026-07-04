@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-01 · migration head `0105`
+**Status:** Living document · last updated 2026-07-04 · migration head `0110`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,9 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → S; migration head 0105):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
+**Shipped phases (A → Y; migration head 0110):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`) · **Phase T — multi-tenant owner-scoping** (every table + route + service scoped to `owner_id`; owner-less rows retired) · **Phase U — CI-Portal OIDC + local auth** (session-cookie login: OAuth 2.1 + PKCE relying-party, or `DISABLE_OIDC` local username/password) · **Phase V — password reset** (single-use tokens; `session_epoch` invalidation) · **Phase X — MCP intent vocabulary** · **Phase Y — env-config** (every env var documented; `server/.env.example`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
+
+**Phase Z Time-Sense** (a Focus Ritual + estimate-calibration loop — EOD alignment, daily-brief fold-in, "Keep working"/"Schedule again", focus-cue reminders + vibrate, per-cue prefs, suggest-only estimate chip, voice loop) has **landed behind the `time_sense_enabled` master flag** (flag-off = behavior-neutral; migs 0106–0109). The **calendar / UI feedback waves** have also landed (QuickAdd mounted in Today, Planner de-scroll, Flight-Plan tabs + saved-blocks + search, three-axis calendar tag filter, container-outlines + click-to-add, select-date → day-type picker, collapsed night hours). **Phase W — a GraphQL CRUD layer alongside REST** — is **in progress** (see §6a and [docs/W-graphql-crud.md](docs/W-graphql-crud.md)).
 
 ---
 
@@ -24,6 +26,7 @@ Companion Planning is a **local-first, AI-assisted personal planning system**. I
 | DB | **SQLite** via `better-sqlite3` | WAL mode, embedded, zero-ops |
 | Migrations | Plain TypeScript functions | Sequential, idempotent; `_migrations` table |
 | ORM | **Drizzle ORM** + raw `better-sqlite3` | Typed schema; raw SQL for hot paths |
+| GraphQL | **Apollo Server 5** + `@as-integrations/koa` | Schema-first SDL at `POST /api/graphql`, alongside REST; custom complexity limiter; `graphql@16` (Phase W, in progress) |
 | LLM runtime | **Ollama** (local) | Graceful degradation when offline |
 | MCP | `@modelcontextprotocol/sdk` | Gmail + Google Calendar over OAuth |
 | Cron | `croner` + `scheduled_jobs` table | Persistent job registry |
@@ -46,10 +49,11 @@ graph TB
     subgraph Host["Local Host"]
         subgraph Koa["Koa.js — port 3848"]
             API["REST API<br/>20+ route modules"]
+            GQL["GraphQL<br/>/api/graphql (Apollo, alongside REST)"]
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>15 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0105 on boot"]
+            Migrate["Migration runner<br/>0001–0110 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -71,10 +75,12 @@ graph TB
     Laptop -->|HTTPS / Tailscale| FE
     Browser -->|HTTPS / Tailscale| FE
     FE <-->|REST fetch| API
+    FE <-->|GraphQL| GQL
     FE <-->|SSE stream| SSE
     SW <-->|Web Push| API
     API --> Engine
     API --> DB
+    GQL --> DB
     Cron --> DB
     Cron -->|Ollama HTTP| Small
     Cron -->|Ollama HTTP| Medium
@@ -99,12 +105,13 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0105_revert_direction_axis
+│       │   ├── migrations/   0001_baseline → 0110_entity_tags_created_at
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
+│       ├── graphql/          Apollo schema-first SDL + resolvers (Phase W, alongside routes/)
 │       ├── jobs/             Croner job definitions
-│       ├── services/         weekly-review · tags · notifications
+│       ├── services/         weekly-review · tags · notifications · tasks · blocks (tasks.ts + blocks.ts extracted so REST + GraphQL share one owner-scoped impl)
 │       ├── connectors/       Google OAuth 2.1 + Calendar/Gmail MCP bridge
 │       ├── agents/           ingest · groom · sync reconciler
 │       └── lib/              config · crypto · dates · tz · logger · ids
@@ -144,25 +151,25 @@ erDiagram
 
 | Table | Purpose | Added |
 |---|---|---|
-| `owners` | User identity (single-owner in v0.3) | 0001 |
+| `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103) | 0001, 0101, 0103 |
 | `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence | 0001 |
 | `task_dependencies` | Blocked-by edges between tasks | 0005 |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | 0007 |
-| `time_blocks` | Named time spans — task · meeting · focus · break · buffer | 0015 |
+| `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099) | 0015, 0099 |
 | `block_templates` | Reusable Time-Block templates with saved task lists | 0022 |
 | `flight_plan` | Two-step Auto staging tray — task list ordered before scheduling; `owner_id` `TEXT NOT NULL` (0093) | 0016, 0093 |
 | `daily_plan` | AI-authored task order for a day (`outcome` stamp for plan tracking) | 0062, 0084 |
 | `replan_suggestions` | Pending "re-plan with AI?" nudges on big-disruption reflows | 0067 |
 | `possible_tasks` | Inbox — AI-proposed items pending promote / dismiss | 0001 |
-| `tags` | Cross-cutting labels; `kind`: `direction` or `intention` or `category` | 0001 |
+| `tags` | Cross-cutting labels; `kind`: `direction` or `intention` or `category`; `owner_id` (0100) | 0001, 0100 |
 | `tag_directions` | Many-to-many: intention tags grouped under direction tags | 0043/0105 |
-| `entity_tags` | Polymorphic tag store for tasks, blocks, routines (CON-3) | 0033 |
+| `entity_tags` | Polymorphic tag store for tasks, blocks, routines (CON-3); `created_at` NOT NULL DEFAULT CURRENT_TIMESTAMP (0110, table rebuilt) | 0033, 0110 |
 | `patterns` | Routines — typed, reusable task collections (Habit ◯ / Routine ▢) | 0013 |
 | `pattern_types` | Routine taxonomy — **load-bearing, do not rename** | 0019 |
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
 | `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
 | `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs` | 0039, 0069, 0097 |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7) | 0001, 0091 |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108) | 0001, 0091, 0106, 0108 |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
 | `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
 | `reminders` | Scheduled reminders — fired exactly once by the 1-min dispatcher | 0044 |
@@ -174,11 +181,14 @@ erDiagram
 | `outbound_queue` | Local blocks pending push to provider (when `CP_SYNC_WRITEBACK=true`) | 0057 |
 | `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at callback | 0058 |
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` | 0060 |
-| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay | 0077 |
+| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay; owner FK (0098) | 0077, 0098 |
+| `auth_states` | Pre-login OIDC PKCE state (issued at `/login`, consumed at the callback) | 0102 |
+| `password_reset_tokens` | Single-use local-owner password-reset tokens (Phase V) | 0104 |
+| `copy_history` | Time-Sense voice-loop anti-repetition log (NOT in owner export) | 0109 |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | 0080, 0088 |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync | 0081, 0085, 0086, 0087 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
-| `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio) | 0083 |
+| `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107) | 0083, 0107 |
 | `daily_recap` | One row per `(owner, date)`: the day-briefing cache (`prose`/`stats`/`focus`/`inputs_hash`) + the frozen five-star score (`star_*`/`total`/`frozen_at`); today lives, past days permanent once frozen. Merged `daily_summaries` + `day_stars` | 0089, 0094, 0096 |
 
 ---
@@ -195,6 +205,20 @@ Two clocks drive the day:
 **Anti-thrash rules:** never move an in-progress block, never move user-locked or recently-moved blocks (`last_moved_at`), cap displacement per run, debounce bursts into one pass. On a big disruption the fast clock surfaces a single "Re-plan with AI?" nudge — never auto-calls the LLM.
 
 **Review job** (`review_day`, nightly 01:00): scans for planned task-blocks whose end time passed un-started. Low-priority tasks (`priority ≥ 3`) are auto-deferred with a +1/3/7-day backoff; high-priority tasks (`priority ≤ 2`) are surfaced as `status='missed'`. Before the stale block is hard-deleted, `daily_plan.outcome` is stamped `'deferred'` or `'missed'` so plan-outcome history isn't lost (the N4 lossy-slip fix).
+
+---
+
+## 6a. GraphQL layer (Phase W — in progress)
+
+Companion Planning exposes an **Apollo Server 5** GraphQL surface at `POST /api/graphql`, mounted via `@as-integrations/koa` **alongside** the REST API — REST remains authoritative and untouched. The schema is **schema-first** (hand-authored SDL) and follows CI-Server-compatible conventions: `Node` / Relay-style `Connection`/`Edge`/`PageInfo` pagination, and `DateTime` / `JSON` custom scalars. Introspection is on; a **custom complexity-limiter plugin** (not `graphql-query-complexity`) guards query cost, and `graphql` is pinned to 16.x. The whole surface sits under `requireAuth`, and the resolver context reads `currentOwnerId()` from the same `AsyncLocalStorage` the REST routes use. **Decision 3:** every resolver calls the existing `services/*.ts` functions — it never re-derives owner-scoping. A shared service layer (`services/tasks.ts` + `services/blocks.ts`, extracted alongside the pre-existing `services/tags.ts`) gives REST and GraphQL one owner-scoped implementation.
+
+Types live so far:
+- **TagType** (direction / intention / category hierarchy connections)
+- **TaskType**
+- **TimeBlockType**
+- **EntityTagType** (forward `Taggable.tags` on Task + TimeBlock)
+
+Remaining CRUD types (FlightPlanEntry, routine/pattern family, DayType/TagPref, life-planning, inbox, notifications, scheduling prefs, admin, mutation-only engine ops) and a self-hosted, flag-gated GraphiQL sandbox are queued — see [docs/W-graphql-crud.md](docs/W-graphql-crud.md).
 
 ---
 
