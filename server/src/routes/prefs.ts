@@ -87,7 +87,15 @@ export function prefsRouter() {
       if (body.view_prefs === null) {
         body.view_prefs = null;
       } else if (isPlainObject(body.view_prefs)) {
-        body.view_prefs = JSON.stringify(body.view_prefs);
+        // JSON.stringify can throw on non-serializable input (circular refs, BigInt);
+        // treat that as a 422 rather than letting it 500 the handler.
+        try {
+          body.view_prefs = JSON.stringify(body.view_prefs);
+        } catch {
+          ctx.status = 422;
+          ctx.body = { error: 'view_prefs is not serializable' };
+          return;
+        }
       } else {
         ctx.status = 422;
         ctx.body = { error: 'view_prefs must be a plain object' };
