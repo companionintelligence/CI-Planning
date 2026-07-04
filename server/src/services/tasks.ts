@@ -305,7 +305,7 @@ export async function updateTask(
   // Capture the pre-edit parent so a re-parent can GC the OLD parent's auto-objective
   // if this was its last subtask.
   const prevParentId = input.parent_id !== undefined
-    ? (sqlite.prepare(`SELECT parent_id FROM tasks WHERE id = ?`).get(targetId) as { parent_id: string | null } | undefined)?.parent_id ?? null
+    ? (sqlite.prepare(`SELECT parent_id FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { parent_id: string | null } | undefined)?.parent_id ?? null
     : null;
 
   const update: Partial<typeof tasks.$inferInsert> = {};
