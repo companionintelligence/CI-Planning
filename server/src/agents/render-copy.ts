@@ -118,13 +118,14 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
     tier: 'small', maxLen: 120, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => [str(p.suggested)],
     facts: (p) =>
-      `similar work tends to run ${p.direction === 'under' ? 'shorter' : 'longer'} than estimated; suggested=${str(p.suggested)} minutes` +
-      `${p.current != null ? `, current estimate=${str(p.current)}` : ''}`,
+      `${p.scope ? `"${str(p.scope)}" ` : ''}work tends to run ${p.direction === 'under' ? 'shorter' : 'longer'} than estimated; ` +
+      `suggested=${str(p.suggested)} minutes${p.current != null ? `, current estimate=${str(p.current)}` : ''}`,
     fallbacks: [
-      (p) => `Similar tasks ran longer — try ${str(p.suggested)}m.`,
-      (p) => `Your history points nearer ${str(p.suggested)}m for this.`,
-      (p) => `Past runs suggest ${str(p.suggested)}m is closer.`,
-      (p) => `Might be a ${str(p.suggested)}m job, going by similar work.`,
+      // Direction-aware: a scope can bias short OR long, so never hardcode "longer".
+      (p) => `Similar work ran ${p.direction === 'under' ? 'shorter' : 'longer'} — try ${str(p.suggested)}m.`,
+      (p) => `Your history points ${p.direction === 'under' ? 'below' : 'above'} this — nearer ${str(p.suggested)}m.`,
+      (p) => `Past runs put this closer to ${str(p.suggested)}m.`,
+      (p) => `Going by similar work, more like ${str(p.suggested)}m.`,
     ],
   },
 

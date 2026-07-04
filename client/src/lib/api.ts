@@ -153,6 +153,9 @@ export const api = {
       request<{ ok: boolean; armed: number }>('POST', `/blocks/${id}/focus-reminders`, {}),
     clearFocusReminders: (id: string) =>
       request<{ ok: boolean }>('DELETE', `/blocks/${id}/focus-reminders`),
+    // Phase Z · Z7 — the T4 "what's next" line, rendered server-side through the Voice loop.
+    whatsNext: (id: string) =>
+      request<{ text: string; next: { title: string; start_at: string } | null }>('GET', `/blocks/${id}/whats-next`),
   },
 
   // ── Patterns (Phase G, G1) — typed, reusable task collections ────────────────
@@ -742,6 +745,7 @@ export interface EstimateSuggestion {
   scope_ref: string;
   scope_label: string;
   confidence: 'tentative' | 'confident';
+  message?: string; // Z7 — the chip line rendered through the Voice loop (server-side)
 }
 
 export interface WeekReview {

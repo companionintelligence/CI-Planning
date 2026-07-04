@@ -619,9 +619,10 @@ export function ElementWizard() {
                     {(s) => (
                       <div class="flex items-center gap-2 text-[11px] rounded-md border border-border bg-background/60 px-2 py-1.5">
                         <span class="flex-1 text-muted-foreground">
-                          <span class="text-foreground">{s().scope_label}</span> tends to run{' '}
-                          {Math.abs(s().delta_minutes)}m {s().delta_minutes > 0 ? 'longer' : 'shorter'} than you estimate — set{' '}
-                          {s().suggested_minutes}m?
+                          {/* Z7 — the line is rendered server-side through the Voice loop
+                              (one voice, no repeats). Falls back to the structured sentence
+                              only if the message is somehow absent. */}
+                          {s().message ?? `${s().scope_label} tends to run ${Math.abs(s().delta_minutes)}m ${s().delta_minutes > 0 ? 'longer' : 'shorter'} than you estimate — set ${s().suggested_minutes}m?`}
                           <Show when={s().confidence === 'tentative'}><span class="opacity-60"> (early signal)</span></Show>
                         </span>
                         <button type="button" class="text-primary hover:underline flex-shrink-0"
