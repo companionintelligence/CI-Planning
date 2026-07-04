@@ -28,4 +28,6 @@ export const resolvers = {
   TagType: tagResolvers.TagType,
   TaskType: taskResolvers.TaskType,
   TimeBlockType: blockResolvers.TimeBlockType,
+  // W4b union: __resolveType for TagType.entities' Task ∪ TimeBlock members.
+  TaggedEntity: tagResolvers.TaggedEntity,
 };
