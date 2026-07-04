@@ -3,9 +3,10 @@
 # re-deriving owner-scoping against the DB (re-derivation is how this phase's IDOR bugs
 # appeared).
 #
-# `implements Node` only — NOT Taggable: EntityTagType.taggedAt is DateTime! but
-# entity_tags has no timestamp column until W4's migration, so the `tags` field is
-# deferred to W4 (same call TaskType made). No `objective` on blocks.
+# `implements Node & Taggable` (W4a): the `tags` forward edge reads the tags applied to
+# this block (entity_tags, all levels — distinct from the denormalized top-level
+# `time_blocks.tag` mirror). EntityTagType.taggedAt is now backed by entity_tags.created_at
+# (migration 0110). The reverse edge (TagType.entities) is W4b. No `objective` on blocks.
 #
 # `status` and `blockKind` are plain String, NOT enums: time_blocks.status /.block_kind
 # are free-form TEXT columns with no CHECK (status: planned/completed/skipped/overrun;
@@ -13,7 +14,7 @@
 # GraphQL enum throws at serialization, so String is the correct, leak-proof choice
 # (same call TaskType made for `status`).
 
-type TimeBlockType implements Node {
+type TimeBlockType implements Node & Taggable {
   id: ID!
   title: String!
   blockKind: String!
@@ -32,6 +33,7 @@ type TimeBlockType implements Node {
   task: TaskType                    # task_id
   parentBlock: TimeBlockType        # parent_block_id
   category: TagType                 # category_id (a tags.kind='category' row)
+  tags: [EntityTagType!]!           # W4a: tags applied to this block (entity_tags, all levels)
 }
 
 type TimeBlockConnection implements Connection {

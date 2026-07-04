@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
-import { syncEntityTags, normalizeTagName } from '../src/services/tags.js';
+import { syncEntityTags, normalizeTagName, entityTagsFull } from '../src/services/tags.js';
 
 /**
  * CON-3 — the normalized `entity_tags` store, now the SOLE task-tag store
@@ -137,6 +137,47 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
     await api(srv.url, `/api/patterns/${patId}/fast-tasks/${ftId}`, { method: 'DELETE' });
     expect(tagRows('task', ftId)).toEqual([]);
     expect(orphanCount()).toBe(0);
+  });
+});
+
+describe('W4a — entity_tags.created_at (Taggable taggedAt)', () => {
+  it('a fresh entity_tags insert stamps created_at (non-null ISO instant)', () => {
+    const taskId = (sqlite
+      .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'Timed', 'open') RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    syncEntityTags('task', taskId, ['work'], OWNER); // the sole write path (insertAssoc)
+
+    const rows = sqlite
+      .prepare(`SELECT created_at FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?`)
+      .all(taskId) as { created_at: string | null }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].created_at).toBeTruthy();
+    // A real ISO-8601 UTC instant (round-trips through Date).
+    expect(new Date(rows[0].created_at as string).toISOString()).toBe(rows[0].created_at);
+  });
+
+  it('no live entity_tags row has a null created_at (backfill + insert-stamp invariant)', () => {
+    const taskId = (sqlite
+      .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'A', 'open') RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    syncEntityTags('task', taskId, ['x', 'y'], OWNER);
+    const nulls = (sqlite.prepare(`SELECT COUNT(*) AS c FROM entity_tags WHERE created_at IS NULL`).get() as { c: number }).c;
+    expect(nulls).toBe(0);
+  });
+
+  it('entityTagsFull returns id + name + non-null createdAt for every applied tag', () => {
+    const taskId = (sqlite
+      .prepare(`INSERT INTO tasks (id, owner_id, title, status) VALUES (uuid7(), ?, 'Full', 'open') RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    syncEntityTags('task', taskId, ['alpha', 'beta'], OWNER);
+    const full = entityTagsFull('task', taskId);
+    expect(full.map((t) => t.name).sort()).toEqual(['alpha', 'beta']);
+    for (const t of full) {
+      expect(t.tagId).toBeTruthy();
+      expect(t.createdAt).toBeTruthy();
+    }
+    // An entity with no tags → [].
+    expect(entityTagsFull('task', 'nope')).toEqual([]);
   });
 });
 
