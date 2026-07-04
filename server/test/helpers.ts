@@ -96,7 +96,8 @@ export function resetDb(): void {
       haptic_cues_enabled = 1,
       ambient_color_enabled = 1,
       calibration_loop_enabled = 1,
-      z_experiment_arm = NULL;
+      z_experiment_arm = NULL,
+      view_prefs = NULL;
   `);
 }
 

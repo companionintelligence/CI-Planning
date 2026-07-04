@@ -17,13 +17,40 @@ import { broadcast } from './sse.js';
 // else rather than silently storing an out-of-range value the UI can't represent.
 const ALLOWED_RECURRENCE_HORIZON = new Set([7, 15, 30, 60, 90, 180]);
 
+/** A plain (non-null, non-array) object — what `view_prefs` must be. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * `view_prefs` is stored as a raw JSON string in a TEXT column, but the API
+ * contract exposes it as a nested object. Parse the stored string on the way out;
+ * a NULL/malformed blob degrades to null so a bad row never breaks the response
+ * (the client then falls back to its built-in defaults).
+ */
+function serializePrefs(prefs: Record<string, unknown>): Record<string, unknown> {
+  const api = toApi(prefs);
+  const raw = api.view_prefs;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      api.view_prefs = isPlainObject(parsed) ? parsed : null;
+    } catch {
+      api.view_prefs = null;
+    }
+  } else {
+    api.view_prefs = raw ?? null; // NULL column → null
+  }
+  return api;
+}
+
 export function prefsRouter() {
   const router = new Router();
 
   // GET /api/prefs
   router.get('/api/prefs', async (ctx) => {
     const [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, currentOwnerId()));
-    ctx.body = { prefs: prefs ? toApi(prefs) : null };
+    ctx.body = { prefs: prefs ? serializePrefs(prefs) : null };
   });
 
   // PATCH /api/prefs  — accepts snake_case body, returns snake_case
@@ -52,6 +79,29 @@ export function prefsRouter() {
     // The experiment arm (Z5, §5.2) is server-assigned only — never let a client
     // self-select its A/B condition, even by accident. Strip it before serializing.
     delete body.z_experiment_arm;
+
+    // view_prefs (0111) is a JSON blob stored as TEXT. Accept a plain object (reject
+    // arrays/scalars — a non-object would corrupt the stored view state) and JSON-
+    // stringify it so Drizzle writes a string into the TEXT column. null clears it.
+    if (body.view_prefs !== undefined) {
+      if (body.view_prefs === null) {
+        body.view_prefs = null;
+      } else if (isPlainObject(body.view_prefs)) {
+        // JSON.stringify can throw on non-serializable input (circular refs, BigInt);
+        // treat that as a 422 rather than letting it 500 the handler.
+        try {
+          body.view_prefs = JSON.stringify(body.view_prefs);
+        } catch {
+          ctx.status = 422;
+          ctx.body = { error: 'view_prefs is not serializable' };
+          return;
+        }
+      } else {
+        ctx.status = 422;
+        ctx.body = { error: 'view_prefs must be a plain object' };
+        return;
+      }
+    }
 
     // Convert incoming snake_case keys to camelCase for Drizzle
     const update = fromApi<Partial<typeof schedulingPrefs.$inferInsert>>(body);
@@ -97,7 +147,7 @@ export function prefsRouter() {
       if (pruned) broadcast(owner, 'block:deleted', { pruned, reason: 'recurrence_horizon' });
     }
 
-    ctx.body = { prefs: prefs ? toApi(prefs) : null, ...(pruned ? { pruned } : {}) };
+    ctx.body = { prefs: prefs ? serializePrefs(prefs) : null, ...(pruned ? { pruned } : {}) };
   });
 
   return router;

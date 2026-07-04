@@ -245,6 +245,16 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   calibrationLoopEnabled: integer('calibration_loop_enabled', { mode: 'boolean' }).default(true),
   zExperimentArm: text('z_experiment_arm'), // 'A' | 'B' | 'C' | 'D' | null
 
+  // Cross-device calendar UI view-state (0111). One extensible JSON blob; NULL = no
+  // saved view state → the client uses its built-in defaults (filter all-shown,
+  // night hours both-collapsed). Stored/read as a raw string here — the /api/prefs
+  // route JSON-parses on GET and JSON-stringifies (after plain-object validation) on
+  // PATCH, so callers see a nested object, not a string. Shape:
+  //   { calendar?: { deselected?: { direction/intention/category?: string[] },
+  //                  prio?: number[], topExpanded?: boolean, bottomExpanded?: boolean } }
+  // Future surfaces (deferred Planner collapse) add a sibling key, not a migration.
+  viewPrefs: text('view_prefs'),
+
   // Per-owner Ollama model overrides (null = use the env default). 0012.
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings
