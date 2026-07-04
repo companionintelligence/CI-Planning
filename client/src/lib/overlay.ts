@@ -23,6 +23,18 @@ export const isAllDay = (b: Pick<Block, 'all_day'>): boolean => b.all_day === tr
 /** Timed blocks (minute axis): everything not flagged all-day. */
 export const isTimed = (b: Pick<Block, 'all_day'>): boolean => !isAllDay(b);
 
+/**
+ * A block that represents a scheduled Task (as opposed to a time-block container
+ * such as meeting/focus/habit/break/buffer/timeblock). A task block is the one
+ * kind that links to a `task_id` AND carries `block_kind === 'task'` — matching
+ * the same rule stores/index.ts uses to build `scheduledByTaskId`. This predicate
+ * drives the calendar's render + interaction split: task chips keep their titles
+ * and open the task editor on click; containers hide their label behind a thick
+ * hover-reveal left edge.
+ */
+export const isTaskBlock = (b: Pick<Block, 'block_kind' | 'task_id'>): boolean =>
+  b.block_kind === 'task' && !!b.task_id;
+
 /** The three tag axes the calendar overlay filters on (tags.kind, post Z/W2 revert). */
 export type TagAxis = 'direction' | 'intention' | 'category';
 export const TAG_AXES: TagAxis[] = ['direction', 'intention', 'category'];

@@ -8,15 +8,8 @@ import {
   minutesIntoDay,
   yOf,
 } from '../lib/grid.js';
-import {
-  HANDLE_PX,
-  type GestureMode,
-  isImmovable,
-  resolveGesture,
-  commitDrag,
-} from '../lib/drag.js';
-import { showToast } from '../stores/index.js';
-import { isAllDay, isTimed } from '../lib/overlay.js';
+import { setElementModal } from '../stores/index.js';
+import { isAllDay, isTimed, isTaskBlock } from '../lib/overlay.js';
 import { localISODate, addDays } from '../lib/dates.js';
 
 // ── Palette (mirrors BlockCard's CI teal kinds) ───────────────────────────────
@@ -122,106 +115,82 @@ function NowLine(props: { day: string }) {
   );
 }
 
-// ── Block chip (time-axis positioned, draggable + resizable) ──────────────────
+// ── Block chip (time-axis positioned) ─────────────────────────────────────────
+// Wave-3 interaction model (owner): the calendar is a *read/inspect* surface, not a
+// drag surface. Drag + resize are Planner-only now. Two render modes here:
+//   • TASK chip  → keeps its title; a click opens the task editor.
+//   • CONTAINER  → label hidden; a thick 15px colored left edge stands in for it,
+//                  revealing the name on hover (native `title`).
 function BlockChip(props: { placed: Placed; day: string }) {
   const b = () => props.placed.block;
   const color = () => kindColor[b().block_kind] ?? '#152637';
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
-  const locked = () => isImmovable(b());
+  const isTask = () => isTaskBlock(b());
+  const heightPx = () => Math.max(yOf(props.placed.height), MIN_CHIP_PX);
 
-  // Live gesture state: a pixel delta + the edge(s) being dragged. Only the local
-  // chip moves during the gesture; the single PATCH fires on pointer-up.
-  const [drag, setDrag] = createSignal<{ mode: GestureMode; dy: number } | null>(null);
-
-  // Base extent (minutes) with the in-flight gesture applied — visual only.
-  const liveTop = () => {
-    const g = drag();
-    if (!g) return props.placed.top;
-    const dMin = g.dy / PX_PER_MIN;
-    if (g.mode === 'move' || g.mode === 'resize-top') return props.placed.top + dMin;
-    return props.placed.top;
-  };
-  const liveHeight = () => {
-    const g = drag();
-    if (!g) return props.placed.height;
-    const dMin = g.dy / PX_PER_MIN;
-    if (g.mode === 'move') return props.placed.height;
-    if (g.mode === 'resize-top') return props.placed.height - dMin;
-    return props.placed.height + dMin; // resize-bottom
-  };
-  const heightPx = () => Math.max(yOf(liveHeight()), MIN_CHIP_PX);
-
-  function startGesture(mode: GestureMode, e: PointerEvent) {
-    if (locked()) return; // locked / meeting: no gesture, no PATCH
+  // Task chips open the task editor; the block links to its task via task_id.
+  function openTaskEditor(e: MouseEvent | KeyboardEvent) {
+    if (!isTask()) return;
+    const tid = b().task_id;
+    if (!tid) return;
     e.preventDefault();
     e.stopPropagation();
-    const startY = e.clientY;
-    const target = e.currentTarget as HTMLElement;
-    target.setPointerCapture?.(e.pointerId);
+    setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: tid } });
+  }
 
-    const onMove = (ev: PointerEvent) => setDrag({ mode, dy: ev.clientY - startY });
-    const onUp = (ev: PointerEvent) => {
-      target.releasePointerCapture?.(ev.pointerId);
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      const dy = ev.clientY - startY;
-      setDrag(null);
-      // Resolve through the pure gesture math and emit exactly one PATCH.
-      const resolved = resolveGesture(b(), props.day, mode, dy);
-      void commitDrag(b(), resolved, { onError: (m) => showToast(m, 'error') });
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    setDrag({ mode, dy: 0 });
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      openTaskEditor(e);
+    }
   }
 
   return (
     <div
-      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none touch-none"
+      class="absolute rounded-md overflow-hidden text-[11px] leading-tight border transition-colors select-none"
       classList={{
         'opacity-40': done(),
         'ring-1 ring-amber-400/70': conflict(),
-        'cursor-grab': !locked(),
-        'cursor-default': locked(),
-        'z-10 cursor-grabbing shadow-lg': !!drag(),
+        'cursor-pointer': isTask(),
+        'cursor-default': !isTask(),
       }}
       style={{
-        top: `${yOf(liveTop())}px`,
+        top: `${yOf(props.placed.top)}px`,
         height: `${heightPx()}px`,
         left: `${(props.placed.col / props.placed.cols) * 100}%`,
         width: `calc(${100 / props.placed.cols}% - 2px)`,
         'background-color': `${color()}26`,       // ~15% alpha fill
         'border-color': color(),
-        'border-left-width': '3px',
+        // Containers wear a thick left edge in place of a visible label; tasks keep
+        // the slim accent so their (still-shown) title reads cleanly.
+        'border-left-width': isTask() ? '3px' : '15px',
       }}
+      // The name always lives in the tooltip. For a container the thick left edge is
+      // the affordance the owner asked for; the whole chip carries `title` so a hover
+      // anywhere over that narrow container reveals its name reliably.
       title={`${b().title} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}`}
-      onPointerDown={[ (e: PointerEvent) => startGesture('move', e) ][0]}
+      // Task chips are keyboard-accessible buttons; containers are decorative only.
+      role={isTask() ? 'button' : undefined}
+      tabIndex={isTask() ? 0 : undefined}
+      // Swallow pointerdown on ANY chip so a click on a block never falls through to
+      // the empty-space `clickToCreate` handler (which arms on the day column's
+      // pointerdown). Tasks additionally open their editor on click or Enter/Space.
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={openTaskEditor}
+      onKeyDown={handleKeyDown}
     >
-      {/* Top resize handle */}
-      <Show when={!locked()}>
-        <div
-          class="absolute top-0 left-0 right-0 cursor-ns-resize z-10"
-          style={{ height: `${HANDLE_PX}px` }}
-          onPointerDown={(e) => startGesture('resize-top', e)}
-        />
-      </Show>
-      <div class="px-1.5 py-0.5">
-        <div class="flex items-center gap-1 font-medium text-slate-100 truncate">
-          <Show when={b().is_locked}><Lock size={9} class="text-slate-400 flex-shrink-0" /></Show>
-          <span class="truncate">{b().title}</span>
+      {/* Task chips keep their label — a calendar of unlabeled tasks is unusable.
+          Containers render no body text; the thick colored left edge is the label. */}
+      <Show when={isTask()}>
+        <div class="px-1.5 py-0.5">
+          <div class="flex items-center gap-1 font-medium text-slate-100 truncate">
+            <Show when={b().is_locked}><Lock size={9} class="text-slate-400 flex-shrink-0" /></Show>
+            <span class="truncate">{b().title}</span>
+          </div>
+          <Show when={heightPx() >= 30}>
+            <div class="text-slate-400 truncate">{fmtTime(b().start_at)}</div>
+          </Show>
         </div>
-        <Show when={heightPx() >= 30}>
-          <div class="text-slate-400 truncate">{fmtTime(b().start_at)}</div>
-        </Show>
-      </div>
-      {/* Bottom resize handle */}
-      <Show when={!locked()}>
-        <div
-          class="absolute bottom-0 left-0 right-0 cursor-ns-resize z-10"
-          style={{ height: `${HANDLE_PX}px` }}
-          onPointerDown={(e) => startGesture('resize-bottom', e)}
-        />
       </Show>
     </div>
   );
