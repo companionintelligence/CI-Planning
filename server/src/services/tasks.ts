@@ -1,6 +1,6 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gt, asc } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { tasks } from '../db/schema.js';
+import { tasks, taskDependencies } from '../db/schema.js';
 import { setDependencies, DependencyCycleError } from '../engine/deps.js';
 import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone, type GenerateResult } from '../engine/recurrence-generate.js';
@@ -534,4 +534,79 @@ export async function skipRecurringInstance(ownerId: string, id: string): Promis
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   writeAudit({ ownerId, actor: 'owner', action: 'skip', entity: `task:${id}` });
   return { ok: true, task, skipped: res.date };
+}
+
+/**
+ * Owner-scoped READ surface (Phase W · W3.3b) for the GraphQL TaskType resolvers.
+ * None of these existed before — REST attached tags/deps ad hoc in the route. Per
+ * Decision 3 the resolvers read through the service, never inline against the DB,
+ * and every read filters by `owner_id` so a cross-owner id is invisible (getTask →
+ * undefined → resolver null; it never appears in a listing or a subtree).
+ *
+ * The connections keyset-paginate on `id` (UUIDv7 is time-ordered, so id order is a
+ * stable, meaningful "creation" order) and fetch `limit + 1` rows so the resolver can
+ * report hasNextPage, mirroring the tag connection helpers in pagination.ts.
+ */
+
+/** A single owned task (camelCase drizzle row for the field resolvers). undefined =
+ *  not found OR not this owner's — the caller can't tell the two apart (no existence
+ *  leak). Uses drizzle so the row shape is camelCase, matching listTasks/listSubtasks. */
+export async function getTask(ownerId: string, id: string): Promise<TaskRow | undefined> {
+  const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, ownerId)));
+  return task;
+}
+
+/** One keyset page of the owner's tasks, optionally status-filtered, ordered by id.
+ *  Fetch `limit + 1` to detect a next page. `after` is the last id of the prior page. */
+export async function listTasks(
+  ownerId: string,
+  opts: { status?: string; after?: string; limit: number },
+): Promise<TaskRow[]> {
+  const conds = [eq(tasks.ownerId, ownerId)];
+  if (opts.status) conds.push(eq(tasks.status, opts.status));
+  if (opts.after) conds.push(gt(tasks.id, opts.after));
+  return db.select().from(tasks).where(and(...conds)).orderBy(asc(tasks.id)).limit(opts.limit);
+}
+
+/** Total count for the `tasks` connection (same owner/status filter, no keyset). */
+export function countTasks(ownerId: string, status?: string): number {
+  const row = status
+    ? sqlite.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND status = ?').get(ownerId, status)
+    : sqlite.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ?').get(ownerId);
+  return (row as { n: number }).n;
+}
+
+/** One keyset page of a task's subtasks (owner-scoped: subtasks share the parent's
+ *  owner, and the parent-id filter is ANDed with owner_id so a foreign parent yields
+ *  nothing). Ordered by id. */
+export async function listSubtasks(
+  ownerId: string,
+  parentId: string,
+  opts: { after?: string; limit: number },
+): Promise<TaskRow[]> {
+  const conds = [eq(tasks.parentId, parentId), eq(tasks.ownerId, ownerId)];
+  if (opts.after) conds.push(gt(tasks.id, opts.after));
+  return db.select().from(tasks).where(and(...conds)).orderBy(asc(tasks.id)).limit(opts.limit);
+}
+
+/** Subtask count for the `subtasks` connection totalCount. */
+export function countSubtasks(ownerId: string, parentId: string): number {
+  const row = sqlite
+    .prepare('SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ? AND owner_id = ?')
+    .get(parentId, ownerId);
+  return (row as { n: number }).n;
+}
+
+/** A task's blocker rows (task_dependencies.depends_on_id → task), owner-scoped: the
+ *  join to tasks is filtered by owner_id so a blocker owned by someone else (there
+ *  shouldn't be one — setDependencies scopes writes — but defence in depth) never leaks.
+ *  Ordered by id for determinism. */
+export async function dependsOn(ownerId: string, id: string): Promise<TaskRow[]> {
+  return db
+    .select({ t: tasks })
+    .from(taskDependencies)
+    .innerJoin(tasks, eq(taskDependencies.dependsOnId, tasks.id))
+    .where(and(eq(taskDependencies.taskId, id), eq(tasks.ownerId, ownerId)))
+    .orderBy(asc(tasks.id))
+    .then((rows) => rows.map((r) => r.t));
 }
