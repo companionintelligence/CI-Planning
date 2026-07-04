@@ -1,76 +1,27 @@
 import Router from '@koa/router';
-import { eq, and, gte, lte, inArray } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
-import { timeBlocks } from '../db/schema.js';
+import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
-import { toApi, toApiList } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
-import { ensurePatternsForRange } from '../engine/patterns-place.js';
-import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
-import { placeTasksInBlock } from '../engine/blocks-place.js';
-import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from '../services/tags.js';
-import { getCategoryPrefs } from '../services/category-prefs.js';
 import { localISODate } from '../lib/dates.js';
 import { blocksToICal, type ICalBlock } from '../lib/ical.js';
-import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
-import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus } from '../services/block-task-sync.js';
+import { syncTaskFromBlock, revertTaskPlacementStatus } from '../services/block-task-sync.js';
+import {
+  fetchBlocksForRange,
+  listBlocks,
+  createBlock,
+  updateBlock,
+  moveBlockGroup,
+  promoteBlockToScheduled,
+  deleteBlock,
+  clearDayAutoBlocks,
+  addTasksToBlock,
+} from '../services/blocks.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { extendBlock } from '../engine/extend-block.js';
 import { syncBlockFocusReminders, clearBlockFocusReminders } from '../engine/reminders.js';
-
-/**
- * cockpit-v2 Phase 5: sync a block's leveled tags. `time_blocks.tag` stays the
- * top-level mirror; secondary tags live only in entity_tags at level 2. A field
- * left `undefined` (a partial PATCH) preserves that level's existing tags.
- */
-function applyBlockTagLevels(
-  blockId: string,
-  opts: { tag?: string | null; secondary?: string[] },
-): void {
-  const existing = entityTagLevels('time_block', blockId);
-  const top = opts.tag !== undefined ? splitTagString(opts.tag) : existing.filter((t) => t.level === 1).map((t) => t.name);
-  const secondary = opts.secondary !== undefined ? opts.secondary : existing.filter((t) => t.level > 1).map((t) => t.name);
-  syncLeveledEntityTags('time_block', blockId, [
-    { level: 1, names: top },
-    { level: 2, names: secondary },
-  ], currentOwnerId());
-}
-
-/** A block's secondary (level>1) tag names, for the read surface. */
-function secondaryTagsOf(blockId: string): string[] {
-  return entityTagLevels('time_block', blockId).filter((t) => t.level > 1).map((t) => t.name);
-}
-
-/** §A3: the "why now" rationale for a placed block, joined from daily_plan via block_id (null when none). */
-function rationaleOf(blockId: string): string | null {
-  const row = sqlite.prepare(`SELECT rationale FROM daily_plan WHERE block_id = ? LIMIT 1`).get(blockId) as
-    | { rationale: string | null }
-    | undefined;
-  return row?.rationale ?? null;
-}
-
-/**
- * Shared block fetch for a date range — the single source of truth for both the JSON
- * read (`GET /api/blocks`) and the `.ics` export, so the two never drift. Lazily
- * materializes recurring patterns + Time-Block instances, selects the range, drops
- * recurrence *templates* (rule set, no parent — never rendered), and enriches with
- * secondary tags + the "why now" rationale.
- */
-async function fetchBlocksForRange(from: string, to: string): Promise<Record<string, unknown>[]> {
-  ensurePatternsForRange(currentOwnerId(), from, to);
-  ensureRecurringBlocksForRange(currentOwnerId(), from, to);
-  const fetched = await db.select().from(timeBlocks)
-    .where(and(eq(timeBlocks.ownerId, currentOwnerId()), gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));
-  const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
-  return toApiList(rows).map((b) => ({
-    ...b,
-    secondary_tags: secondaryTagsOf(b.id as string),
-    rationale: rationaleOf(b.id as string),
-  }));
-}
 
 export function blocksRouter() {
   const router = new Router();
@@ -81,33 +32,7 @@ export function blocksRouter() {
   // (`state` is the Time-Block state: 'scheduled' | 'someday'; CON-2.)
   router.get('/api/blocks', async (ctx) => {
     const { from, to, state } = ctx.query as Record<string, string>;
-
-    // The common day-view read (a real time range, not the concept list) shares the
-    // export's fetch helper: lazy materialization + range select + enrich.
-    if (from && to && !state) {
-      ctx.body = { blocks: await fetchBlocksForRange(from, to) };
-      return;
-    }
-
-    // `state=someday` (no range) and partial-range reads keep the conditional select.
-    const conditions = [eq(timeBlocks.ownerId, currentOwnerId())];
-    if (from) conditions.push(gte(timeBlocks.startAt, from));
-    if (to)   conditions.push(lte(timeBlocks.endAt, to));
-    if (state) conditions.push(eq(timeBlocks.blockType, state));
-
-    const fetched = await db.select().from(timeBlocks).where(and(...conditions));
-    // CON-4: recurrence *templates* (rule set, no parent) are never rendered — only
-    // their materialized instances are. Drop them from the read surface.
-    const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
-
-    // Phase 5: attach each block's secondary (level>1) tags from entity_tags.
-    // §A3: attach the per-task rationale joined from daily_plan via block_id.
-    const blocks = toApiList(rows).map((b) => ({
-      ...b,
-      secondary_tags: secondaryTagsOf(b.id as string),
-      rationale: rationaleOf(b.id as string),
-    }));
-    ctx.body = { blocks };
+    ctx.body = { blocks: await listBlocks(currentOwnerId(), { from, to, state }) };
   });
 
   // GET /api/blocks/export.ics?from=ISO&to=ISO — download the range's dated blocks as
@@ -116,7 +41,7 @@ export function blocksRouter() {
   router.get('/api/blocks/export.ics', async (ctx) => {
     const from = (ctx.query.from as string) || `${localISODate()}T00:00:00.000Z`;
     const to   = (ctx.query.to as string)   || `${localISODate()}T23:59:59.999Z`;
-    const blocks = await fetchBlocksForRange(from, to);
+    const blocks = await fetchBlocksForRange(currentOwnerId(), from, to);
     const ics = blocksToICal(blocks as unknown as ICalBlock[]);
     ctx.set('Content-Type', 'text/calendar; charset=utf-8');
     ctx.set('Content-Disposition', `attachment; filename="companion-${from.slice(0, 10)}-${to.slice(0, 10)}.ics"`);
@@ -152,69 +77,19 @@ export function blocksRouter() {
       return;
     }
 
-    // 0069: a time block is owned by EITHER a tag (direction) OR a category — never
-    // both (the scheduler partitions on this). color_token is the forward-only stamp
-    // copied from category_prefs at create-time.
-    const hasTag = body.tag != null && body.tag !== '';
-    const hasCat = body.category_id != null && body.category_id !== '';
-    if (hasTag && hasCat) { ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return; }
-    if (hasCat) {
-      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(body.category_id, currentOwnerId());
-      if (!ok) { ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return; }
-    }
-    const colorToken = hasCat
-      ? (body.color_token ?? getCategoryPrefs(currentOwnerId())[body.category_id!]?.color_token ?? 'primary')
-      : undefined;
-
-    const [block] = await db
-      .insert(timeBlocks)
-      .values({
-        taskId: body.task_id,
-        ownerId: currentOwnerId(),
-        title: body.title,
-        blockKind: body.block_kind ?? 'task',
-        tag: body.tag,
-        categoryId: body.category_id,
-        colorToken,
-        blockType: body.block_type,
-        goalStartDate: body.goal_start_date,
-        durationMinutes: body.duration_minutes,
-        note: body.note,
-        startAt: body.start_at,
-        endAt: body.end_at,
-        isLocked: body.is_locked ?? false,
-        allDay: body.all_day ?? false,
-        isAuto: false,
-        sourceKind: 'manual',
-        // CON-4: a recurrence_rule makes this a template (anchor defaults to start_at).
-        // It is never rendered directly; GET materializes its instances.
-        recurrenceRule: body.recurrence_rule,
-        recurrenceDtstart: body.recurrence_rule ? (body.recurrence_dtstart ?? body.start_at) : undefined,
-      })
-      .returning();
-
-    // CON-3 + Phase 5: mirror the top-level tag string and any secondary tags
-    // into the normalized store.
-    if (body.tag !== undefined || body.secondary_tags !== undefined) {
-      applyBlockTagLevels(block.id, { tag: body.tag, secondary: body.secondary_tags });
+    const result = await createBlock(currentOwnerId(), body);
+    if (!result.ok) {
+      if (result.error === 'missing_fields') { ctx.status = 400; ctx.body = { error: 'title, start_at, and end_at are required' }; return; }
+      if (result.error === 'tag_and_category') { ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return; }
+      ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return;
     }
 
-    const out = { ...toApi(block), secondary_tags: secondaryTagsOf(block.id) };
-    broadcast(currentOwnerId(), 'block:created', out);
+    broadcast(currentOwnerId(), 'block:created', result.api);
+    if (result.syncedTaskId) broadcast(currentOwnerId(), 'task:updated', { id: result.syncedTaskId });
 
-    // REQ2: a placed task IS scheduled — on create (not just PATCH), mirror the
-    // placement onto the task's scheduling-intent fields and flip open → scheduled.
-    if (block.blockKind === 'task' && block.taskId) {
-      syncTaskFromBlock(block.id, currentOwnerId());
-      const flipped = applyTaskPlacementStatus(block.taskId, currentOwnerId());
-      broadcast(currentOwnerId(), 'task:updated', { id: block.taskId });
-      void flipped;
-    }
-
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `block:${block.id}` });
-    enqueueOutbound(block.id);
+    enqueueOutbound(result.block.id);
     ctx.status = 201;
-    ctx.body = { block: out };
+    ctx.body = { block: result.api };
   });
 
   // PATCH /api/blocks/:id
@@ -240,115 +115,30 @@ export function blocksRouter() {
       category_id: string | null;
     }>;
 
-    // I10: inbound calendar mirrors are authoritative — the owner may not directly
-    // edit their title or time. The next sync cycle will overwrite any local change
-    // anyway; rejecting here prevents silent drift and a confusing UX.
-    if (body.title !== undefined || body.start_at !== undefined || body.end_at !== undefined) {
-      const isInboundBlock = sqlite
-        .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND direction = 'inbound'`)
-        .get(id);
-      if (isInboundBlock) {
+    const owner = currentOwnerId();
+    const result = await updateBlock(owner, id, body);
+    if (!result.ok) {
+      if (result.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      if (result.error === 'inbound_readonly') {
         ctx.status = 422;
         ctx.body = { error: 'Calendar meeting blocks are read-only — edit the event in Google Calendar' };
         return;
       }
+      if (result.error === 'tag_and_category') { ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return; }
+      ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return;
     }
-
-    // 0069: enforce the tag XOR category_id partition on the MERGED row + validate the
-    // category kind. (color re-stamp is handled below, only when category_id changes.)
-    const existing = sqlite.prepare(`SELECT tag, category_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-      .get(id, currentOwnerId()) as { tag: string | null; category_id: string | null } | undefined;
-    if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const effTag = body.tag !== undefined ? body.tag : existing.tag;
-    const effCat = body.category_id !== undefined ? body.category_id : existing.category_id;
-    if (effTag != null && effTag !== '' && effCat != null && effCat !== '') {
-      ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return;
-    }
-    if (body.category_id != null && body.category_id !== '') {
-      const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(body.category_id, currentOwnerId());
-      if (!ok) { ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return; }
-    }
-
-    const update: Partial<typeof timeBlocks.$inferInsert> = {};
-    if (body.title           !== undefined) update.title           = body.title;
-    if (body.start_at        !== undefined) update.startAt         = body.start_at;
-    if (body.end_at          !== undefined) update.endAt           = body.end_at;
-    // A manual timing change promotes an auto block to manual so clearPriorAuto
-    // won't reclaim it on the next Auto Schedule run.
-    if (body.start_at !== undefined || body.end_at !== undefined) update.isAuto = false;
-    if (body.is_locked       !== undefined) update.isLocked        = body.is_locked;
-    if (body.status          !== undefined) update.status          = body.status;
-    if (body.block_kind      !== undefined) update.blockKind       = body.block_kind;
-    if (body.tag             !== undefined) update.tag             = body.tag;
-    if (body.block_type      !== undefined) update.blockType       = body.block_type;
-    if (body.goal_start_date !== undefined) update.goalStartDate   = body.goal_start_date;
-    if (body.duration_minutes!== undefined) update.durationMinutes = body.duration_minutes;
-    if (body.all_day         !== undefined) update.allDay          = body.all_day;
-    // Attach to / detach from a Plan (PR-C): a number attaches, null detaches.
-    if (body.parent_block_id !== undefined) update.parentBlockId   = body.parent_block_id;
-    // 0069: re-stamp the frozen color ONLY when the category actually changes (a
-    // deliberate re-assignment); detaching (null) clears it, a no-op patch keeps it.
-    if (body.category_id !== undefined) {
-      update.categoryId = body.category_id;
-      if (body.category_id !== existing.category_id) {
-        update.colorToken = body.category_id != null && body.category_id !== ''
-          ? (getCategoryPrefs(currentOwnerId())[body.category_id]?.color_token ?? 'primary')
-          : null;
-      }
-    }
-    // CON-4 series edit: changing the rule on a template re-anchors + re-materializes.
-    if (body.recurrence_rule !== undefined) {
-      update.recurrenceRule = body.recurrence_rule;
-      update.recurrenceDtstart = body.recurrence_rule
-        ? (body.recurrence_dtstart ?? undefined)
-        : null; // clearing the rule turns the template back into a one-off
-    } else if (body.recurrence_dtstart !== undefined) {
-      update.recurrenceDtstart = body.recurrence_dtstart;
-    }
-
-    // A tags-only PATCH (e.g. secondary_tags) has no column changes; drizzle
-    // rejects an empty .set(), so fetch the row instead of updating it.
-    const [block] = Object.keys(update).length
-      ? await db.update(timeBlocks).set(update).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId()))).returning()
-      : await db.select().from(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId())));
-    if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     // Phase L: stamp version/field_ts for sync versioning (mirrors tasks PATCH).
-    if (Object.keys(update).length > 0) {
-      stampRow(sqlite, 'block', id, Object.keys(update));
+    // Stays route-side for W3.2 — the service returns which columns it wrote.
+    if (result.updatedKeys.length > 0) {
+      stampRow(sqlite, 'block', id, result.updatedKeys);
     }
 
-    // CON-3 + Phase 5: keep the normalized store in sync. A partial PATCH that
-    // omits `tag` or `secondary_tags` preserves that level (null/'' clears top).
-    if (body.tag !== undefined || body.secondary_tags !== undefined) {
-      applyBlockTagLevels(id, { tag: body.tag, secondary: body.secondary_tags });
-    }
+    broadcast(owner, 'block:updated', result.api);
+    if (result.syncedTaskId) broadcast(owner, 'task:updated', { id: result.syncedTaskId });
 
-    // CON-4 series edit: a rule (or anchor) change drops future-or-today instances
-    // of this template + their tag rows; GET re-materializes under the new rule.
-    if (body.recurrence_rule !== undefined || body.recurrence_dtstart !== undefined) {
-      const today = localISODate();
-      for (const inst of sqlite
-        .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND occurrence_date >= ? AND owner_id = ? RETURNING id`)
-        .all(id, today, currentOwnerId()) as { id: string }[]) {
-        removeEntityTags('time_block', inst.id);
-      }
-    }
-
-    const out = { ...toApi(block), secondary_tags: secondaryTagsOf(id) };
-    broadcast(currentOwnerId(), 'block:updated', out);
-
-    // REQ2: a placed task IS scheduled — keep the linked task's scheduling-intent
-    // fields (and its done-state) in lockstep with the block. A time change mirrors
-    // start → scheduled_for/task_time; a status change mirrors done ⇄ open.
-    let syncedTask: string | null = null;
-    if (body.start_at !== undefined || body.end_at !== undefined) syncedTask = syncTaskFromBlock(id, currentOwnerId());
-    if (body.status !== undefined) syncedTask = mirrorBlockStatusToTask(id, currentOwnerId()) ?? syncedTask;
-    if (syncedTask) broadcast(currentOwnerId(), 'task:updated', { id: syncedTask });
-
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${id}` });
     enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
-    ctx.body = { block: out };
+    ctx.body = { block: result.api };
   });
 
   // POST /api/blocks/:id/move-group { delta_minutes } — shift a Plan + all its
@@ -362,39 +152,14 @@ export function blocksRouter() {
     const id = ctx.params.id;
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { delta_minutes?: number };
-    const delta = Math.round(Number(body.delta_minutes ?? 0));
 
-    const anchor = sqlite
-      .prepare(`SELECT id, block_kind, parent_block_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-      .get(id, owner) as { id: string; block_kind: string; parent_block_id: string | null } | undefined;
-    if (!anchor) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const result = await moveBlockGroup(owner, id, body.delta_minutes ?? 0);
+    if (!result.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
-    // The group's parent: the container itself, the member's parent, or (a loose
-    // block) itself alone.
-    const parentId = anchor.block_kind === 'timeblock' ? anchor.id : anchor.parent_block_id ?? anchor.id;
-    const members = sqlite
-      .prepare(`SELECT id, start_at, end_at FROM time_blocks WHERE (id = ? OR parent_block_id = ?) AND owner_id = ?`)
-      .all(parentId, parentId, owner) as { id: string; start_at: string; end_at: string }[];
+    broadcast(owner, 'block:updated', { moved_group: result.parentId, count: result.blocks.length });
+    for (const t of result.movedTaskIds) broadcast(owner, 'task:updated', { id: t });
 
-    const deltaMs = delta * 60_000;
-    const shift = (iso: string) => new Date(Date.parse(iso) + deltaMs).toISOString();
-    const upd = sqlite.prepare(`UPDATE time_blocks SET start_at = ?, end_at = ? WHERE id = ? AND owner_id = ?`);
-    sqlite.transaction(() => {
-      for (const m of members) upd.run(shift(m.start_at), shift(m.end_at), m.id, owner);
-    })();
-
-    const ids = members.map((m) => m.id);
-    const rows = ids.length ? await db.select().from(timeBlocks).where(and(inArray(timeBlocks.id, ids), eq(timeBlocks.ownerId, owner))) : [];
-    broadcast(currentOwnerId(), 'block:updated', { moved_group: parentId, count: ids.length });
-
-    // REQ2: mirror each moved task member's new placement onto its task (non-task
-    // members — focus/break/meeting/the container — are skipped by the helper).
-    const movedTasks = new Set<string>();
-    for (const m of members) { const t = syncTaskFromBlock(m.id, currentOwnerId()); if (t) movedTasks.add(t); }
-    for (const t of movedTasks) broadcast(currentOwnerId(), 'task:updated', { id: t });
-
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `block:${parentId}` });
-    ctx.body = { blocks: toApiList(rows) };
+    ctx.body = { blocks: result.blocks };
   });
 
   // POST /api/blocks/:id/extend { minutes, confirm? } — Phase Z · Z3 "Keep working".
@@ -518,24 +283,18 @@ export function blocksRouter() {
   // defaults to start + the concept's duration_minutes.
   router.post('/api/blocks/:id/promote', async (ctx) => {
     const id = ctx.params.id;
+    const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { start_at?: string; end_at?: string; all_day?: boolean };
-    if (!body.start_at) { ctx.status = 422; ctx.body = { error: 'start_at is required to promote' }; return; }
-    const [existing] = await db.select().from(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId())));
-    if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const dur = existing.durationMinutes ?? 60;
-    const endAt = body.end_at ?? new Date(Date.parse(body.start_at) + dur * 60_000).toISOString();
-    const [block] = await db
-      .update(timeBlocks)
-      .set({ blockType: 'scheduled', allDay: body.all_day ?? false, startAt: body.start_at, endAt, goalStartDate: null })
-      .where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, currentOwnerId())))
-      .returning();
-    const out = toApi(block);
-    broadcast(currentOwnerId(), 'block:updated', out);
-    // REQ2: a promoted concept linked to a task gets concrete times — mirror them.
-    const promotedTask = syncTaskFromBlock(id, currentOwnerId());
-    if (promotedTask) broadcast(currentOwnerId(), 'task:updated', { id: promotedTask });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'promote', entity: `block:${id}` });
-    ctx.body = { block: out };
+
+    const result = await promoteBlockToScheduled(owner, id, body);
+    if (!result.ok) {
+      if (result.error === 'start_at_required') { ctx.status = 422; ctx.body = { error: 'start_at is required to promote' }; return; }
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+
+    broadcast(owner, 'block:updated', result.api);
+    if (result.syncedTaskId) broadcast(owner, 'task:updated', { id: result.syncedTaskId });
+    ctx.body = { block: result.api };
   });
 
   // DELETE /api/blocks/:id[?children=delete]
@@ -551,66 +310,17 @@ export function blocksRouter() {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
 
-    // Push remote deletes before the block (and its external_events rows) are CASCADE-removed.
+    // Push remote deletes before the block (and its external_events rows) are
+    // CASCADE-removed — stays route-side (same reasoning as broadcast/enqueueOutbound).
     await pushOutboundDeletes(id);
-    // REQ2: collect the task ids of every task-block about to be removed (the block
-    // itself + cascade-deleted children + recurring instances) BEFORE deletion, so we
-    // can return their tasks to the open backlog afterward. This handler isn't
-    // transactional, so gather up front.
-    const affectedTaskIds = new Set<string>();
-    const collectTaskId = (blockId: string) => {
-      const row = sqlite
-        .prepare(`SELECT task_id, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`)
-        .get(blockId, owner) as { task_id: string | null; block_kind: string } | undefined;
-      if (row?.task_id && row.block_kind === 'task') affectedTaskIds.add(row.task_id);
-    };
-    collectTaskId(id);
-    if ((ctx.query.children as string) === 'delete') {
-      // CON-3 cascade: members are HARD-deleted here — drop their tag rows first.
-      const members = sqlite
-        .prepare(`SELECT id FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`)
-        .all(id, owner) as { id: string }[];
-      for (const m of members) { collectTaskId(m.id); removeEntityTags('time_block', m.id); }
-      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(id, owner);
-    }
-    // CON-4: deleting a recurring template also removes its materialized instances
-    // (+ their tag rows) — otherwise orphan instances would linger with a dead parent.
-    for (const inst of sqlite
-      .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND owner_id = ? RETURNING id, task_id, block_kind`)
-      .all(id, owner) as { id: string; task_id: string | null; block_kind: string }[]) {
-      if (inst.task_id && inst.block_kind === 'task') affectedTaskIds.add(inst.task_id);
-      removeEntityTags('time_block', inst.id);
-    }
-    const [block] = await db.delete(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, owner))).returning();
-    if (!block) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    // CON-3 cascade: the block itself is HARD-deleted — drop its tag rows.
-    removeEntityTags('time_block', id);
-    // 0074: deleting a lazily-placed recurring-pattern CONTAINER opts that
-    // (pattern, local-day) out, so the next GET /api/blocks read won't regenerate
-    // it. Without this the marker-based idempotency re-places it immediately and
-    // the block can never be removed. Scoped to containers (block_kind='timeblock')
-    // — a single child task block deletion is a partial edit, not a day opt-out.
-    if (block.sourceKind === 'pattern' && block.blockKind === 'timeblock' && block.sourceRef && block.startAt) {
-      const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(currentOwnerId()) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
-      sqlite
-        .prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`)
-        .run(currentOwnerId(), String(block.sourceRef), localDateInTZ(block.startAt, tz));
-    }
-    // CON-4 sibling of the opt-out above: deleting a recurring Time-Block INSTANCE
-    // records its day in the template's EXDATE, so ensureRecurringBlocksForRange
-    // won't re-materialize it on the next read. Without this, recurring blocks with
-    // no tasks inside (e.g. a "Deep-focus" block) were impossible to delete.
-    if (block.recurrenceParentId && block.occurrenceDate) {
-      excludeBlockOccurrence(owner, block.recurrenceParentId, block.occurrenceDate);
-    }
-    broadcast(currentOwnerId(), 'block:deleted', { id });
+
+    const result = await deleteBlock(owner, id, { deleteChildren: (ctx.query.children as string) === 'delete' });
+    if (!result.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    broadcast(owner, 'block:deleted', { id });
     // REQ2: a task with no remaining active placement returns to the open backlog.
-    for (const taskId of affectedTaskIds) {
-      if (revertTaskPlacementStatus(taskId, currentOwnerId())) {
-        broadcast(currentOwnerId(), 'task:updated', { id: taskId });
-      }
-    }
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block:${id}` });
+    for (const taskId of result.revertedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
+
     ctx.body = { ok: true };
   });
 
@@ -625,31 +335,13 @@ export function blocksRouter() {
   router.post('/api/days/:date/clear', async (ctx) => {
     const owner = currentOwnerId();
     const date = ctx.params.date;
-    const tzRow = sqlite
-      .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
-      .get(owner) as { timezone?: string } | undefined;
-    const tz = tzRow?.timezone || serverTimezone();
-    const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-    const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
-    const removed = sqlite
-      .prepare(
-        `DELETE FROM time_blocks
-          WHERE owner_id = ?
-            AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
-            AND status NOT IN ('completed','skipped')
-            AND start_at < ? AND end_at > ?
-          RETURNING id, task_id`,
-      )
-      .all(owner, dayEndISO, dayStartISO) as { id: string; task_id: string | null }[];
-    for (const r of removed) removeEntityTags('time_block', r.id);
-    // REQ2: a task whose last active placement was just cleared returns to the open
-    // backlog — otherwise it's stranded at status='scheduled' with no block.
-    for (const taskId of new Set(removed.map((r) => r.task_id).filter((t): t is string => !!t))) {
-      if (revertTaskPlacementStatus(taskId, owner)) broadcast(owner, 'task:updated', { id: taskId });
-    }
-    if (removed.length) broadcast(owner, 'block:deleted', { cleared: removed.length, date });
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'clear-day', entity: `day:${date}` });
-    ctx.body = { ok: true, cleared: removed.length };
+
+    const result = clearDayAutoBlocks(owner, date);
+
+    for (const taskId of result.revertedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
+    if (result.removedCount) broadcast(owner, 'block:deleted', { cleared: result.removedCount, date });
+
+    ctx.body = { ok: true, cleared: result.removedCount };
   });
 
   // POST /api/blocks/:id/add-tasks — attach existing tasks to a Time-Block container,
@@ -659,10 +351,7 @@ export function blocksRouter() {
     const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { task_ids?: unknown };
     const taskIds = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is string => typeof x === 'string') : [];
-    const result = placeTasksInBlock(currentOwnerId(), id, taskIds);
-    if (result.blocksCreated > 0) {
-      writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'add-tasks', entity: `block:${id}` });
-    }
+    const result = addTasksToBlock(currentOwnerId(), id, taskIds);
     ctx.body = { ok: true, ...result };
   });
 
