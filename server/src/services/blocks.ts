@@ -5,6 +5,7 @@ import { toApi, toApiList, toBlockApi } from '../lib/serialize.js';
 import { localISODate } from '../lib/dates.js';
 import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
 import { placeTasksInBlock, type PlaceTasksResult } from '../engine/blocks-place.js';
@@ -16,11 +17,12 @@ import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, r
  * Time-Block CRUD orchestration (Phase W step 3.2) — extracted from routes/blocks.ts so
  * REST + GraphQL (the coming TimeBlockType resolver, W3.3) share ONE implementation.
  * Mirrors the services/tasks.ts extraction (W3.1): discriminated results, `writeAudit`
- * inside the service, and side effects the caller still needs to fire — SSE broadcasts,
- * `enqueueOutbound`/`pushOutboundDeletes`, and Phase-L `stampRow` — left to the route
- * (each `ok` result carries the row / affected task ids / changed columns the route
- * needs to emit the exact same events + stamps as before). Docs: docs/W-graphql-crud.md
- * (Addendum 2) / docs/W-step3-extraction-audit.md.
+ * inside the service, and side effects the caller still needs to fire — SSE broadcasts
+ * and `enqueueOutbound`/`pushOutboundDeletes` — left to the route (each `ok` result
+ * carries the row / affected task ids / changed columns the route needs to emit the
+ * exact same events as before). Phase-L `stampRow` moved INSIDE updateBlock at W3.3
+ * (mirroring updateTask) so the GraphQL mutation versions on the same path.
+ * Docs: docs/W-graphql-crud.md (Addendum 2) / docs/W-step3-extraction-audit.md.
  *
  * Every mutator here is OWNER-SCOPED exactly as the routes were (verified clean before
  * extraction — no latent IDOR to fix, unlike W3.1a/W3.1b for tasks): each read/write
@@ -246,8 +248,9 @@ export type UpdateBlockResult =
       ok: true;
       block: BlockRow;
       api: Record<string, unknown>;
-      /** camelCase column names written — the caller's Phase-L stampRow input
-       *  (stamping stays route-side for W3.2; it moves in here at W3.3). */
+      /** camelCase column names written. Phase-L versioning is stamped INSIDE this
+       *  service (W3.3, mirroring updateTask) — the caller no longer stamps. Still
+       *  returned so REST/GraphQL callers can see which columns changed. */
       updatedKeys: string[];
       /** Task id synced by the REQ2 forward mirror (time/status change), for the
        *  caller's task:updated broadcast. */
@@ -372,6 +375,13 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   let syncedTaskId: string | null = null;
   if (input.start_at !== undefined || input.end_at !== undefined) syncedTaskId = syncTaskFromBlock(id, ownerId);
   if (input.status !== undefined) syncedTaskId = mirrorBlockStatusToTask(id, ownerId) ?? syncedTaskId;
+
+  // Phase L: stamp version/field_ts for sync versioning (W3.3 — moved IN from the
+  // route so a GraphQL updateBlock mutation, which calls the service directly, versions
+  // on the same path a REST PATCH does; skipping it would break multi-device sync).
+  // Only the success path writes, so there is exactly one stamp site (updateTask's
+  // error-path stamp has no analogue here — the guards above all return before any write).
+  if (updatedKeys.length > 0) stampRow(sqlite, 'block', id, updatedKeys);
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `block:${id}` });
   return { ok: true, block, api: out, updatedKeys, syncedTaskId };
