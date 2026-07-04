@@ -1,0 +1,68 @@
+# Phase W · W5 — FlightPlanEntryType. CRUD ALONGSIDE the REST /api/flight-plan routes;
+# every field and mutation reads/writes through services/flight-plan.ts (Decision 3),
+# never re-deriving owner-scoping.
+#
+# The flight-plan is the owner's staging area (Phase G, G4): tasks (and whole patterns'
+# member tasks) staged for the two-step Auto. Its table PK is (owner_id, task_id) — there
+# is NO surrogate id column, so `id` resolves to the staged task's id: within an owner
+# that IS the entry's identity, and it's the REST PATCH/DELETE key (/api/flight-plan/:taskId).
+# (Same call EntityTagType.id made — a join-row's Node id borrows its natural key.)
+#
+# `sourceKind` is a plain String, NOT an enum: flight_plan.source_kind is free-form TEXT
+# ('manual' | 'pattern' today) with no CHECK — String is the leak-proof choice, matching
+# TaskType.status.
+
+type FlightPlanEntryType implements Node {
+  id: ID!                # the staged task's id (see header — no surrogate column)
+  task: TaskType!        # the staged task, owner-scoped via services/tasks.ts
+  selected: Boolean!     # deselect-to-exclude from the next Auto run
+  position: Int!         # manual ordering within the plan
+  sourceKind: String!    # 'manual' (staged directly) | 'pattern' (staged via a pattern)
+}
+
+# The staging area is a bounded, hand-curated, order-significant working set — you always
+# fetch the WHOLE plan to run Auto — so it's a plain ordered list (by position, task_id),
+# NOT a Relay connection. Mirrors REST GET /api/flight-plan's single-shot payload.
+extend type Query {
+  flightPlan: [FlightPlanEntryType!]!
+}
+
+input StageFlightPlanTaskInput { taskId: ID! }
+input StageFlightPlanPatternInput { patternId: ID! }
+input UpdateFlightPlanEntryInput {
+  taskId: ID!
+  selected: Boolean
+  position: Int
+}
+input UnstageFlightPlanEntryInput { taskId: ID! }
+
+# Every staging mutation returns the refreshed plan (mirrors the REST handlers, which all
+# respond with `{ flight_plan }`). `added` is the count of newly-staged rows.
+type StageFlightPlanPayload {
+  flightPlan: [FlightPlanEntryType!]!
+  added: Int!
+  success: Boolean!
+}
+
+type FlightPlanPayload {
+  flightPlan: [FlightPlanEntryType!]!
+  success: Boolean!
+}
+
+type ResetFlightPlanPayload {
+  cleared: Int!
+  success: Boolean!
+}
+
+extend type Mutation {
+  # Stage one task. Rejects a recurrence INSTANCE (stage the series template instead).
+  stageFlightPlanTask(input: StageFlightPlanTaskInput!): StageFlightPlanPayload!
+  # Stage a pattern's member tasks, each tagged with its source pattern.
+  stageFlightPlanPattern(input: StageFlightPlanPatternInput!): StageFlightPlanPayload!
+  # Toggle `selected` and/or set `position` on a staged entry.
+  updateFlightPlanEntry(input: UpdateFlightPlanEntryInput!): FlightPlanPayload!
+  # Remove one entry (idempotent — unstaging an absent task is a no-op, like REST DELETE).
+  unstageFlightPlanEntry(input: UnstageFlightPlanEntryInput!): FlightPlanPayload!
+  # Clear the whole plan (the Reset button).
+  resetFlightPlan: ResetFlightPlanPayload!
+}

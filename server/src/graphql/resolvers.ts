@@ -3,6 +3,7 @@ import { DateTimeScalar, JSONScalar } from './scalars.js';
 import { tagResolvers } from './tag-resolvers.js';
 import { taskResolvers } from './task-resolvers.js';
 import { blockResolvers } from './block-resolvers.js';
+import { flightPlanResolvers } from './flight-plan-resolvers.js';
 
 /**
  * Root resolver map. Entity resolvers live in per-type modules (e.g. tag-resolvers.ts)
@@ -19,15 +20,18 @@ export const resolvers = {
     ...tagResolvers.Query,
     ...taskResolvers.Query,
     ...blockResolvers.Query,
+    ...flightPlanResolvers.Query,
   },
   Mutation: {
     ...tagResolvers.Mutation,
     ...taskResolvers.Mutation,
     ...blockResolvers.Mutation,
+    ...flightPlanResolvers.Mutation,
   },
   TagType: tagResolvers.TagType,
   TaskType: taskResolvers.TaskType,
   TimeBlockType: blockResolvers.TimeBlockType,
+  FlightPlanEntryType: flightPlanResolvers.FlightPlanEntryType,
   // W4b union: __resolveType for TagType.entities' Task ∪ TimeBlock members.
   TaggedEntity: tagResolvers.TaggedEntity,
 };
