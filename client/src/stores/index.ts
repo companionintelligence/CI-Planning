@@ -1,4 +1,4 @@
-import { createSignal, createMemo, createResource } from 'solid-js';
+import { createSignal, createMemo, createResource, createEffect } from 'solid-js';
 import { api } from '../lib/api.js';
 import type { Block, Task, Pattern, PatternType, ReplanSuggestion } from '../lib/api.js';
 import { on } from '../lib/sse.js';
@@ -6,6 +6,14 @@ import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
 import { blockPassesAxes, emptyAxisDeselected, TAG_AXES } from '../lib/overlay.js';
 import type { AxisDeselected, TagAxis, TagKindLookup } from '../lib/overlay.js';
+import { DEFAULT_AXIS_STATE } from '../lib/day-axis.js';
+import type { AxisState } from '../lib/day-axis.js';
+import {
+  buildCalendarViewPrefs,
+  deserializeAxisState,
+  deserializeDeselected,
+  deserializePrio,
+} from '../lib/view-prefs.js';
 import { replanToastMessage } from '../lib/replan.js';
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
@@ -83,6 +91,18 @@ on('block:deleted', () => refetchConcepts());
 // hidden the moment a priority filter is set. See lib/overlay.ts for the pure predicate.
 export const [overlayAxes, setOverlayAxes] = createSignal<AxisDeselected>(emptyAxisDeselected());
 export const [overlayPrio, setOverlayPrio] = createSignal<number[]>([]); // priorities 1–5; empty = all
+
+// ── Calendar night-hour collapse (Wave-3 item 6; persisted 0111) ────────────────
+// Lifted out of CalendarGrid so it shares the same cross-device persistence path as
+// the overlay filter. Default = BOTH collapsed (DEFAULT_AXIS_STATE). CalendarGrid
+// reads/toggles these; the view_prefs effect below hydrates + persists them.
+export const [calendarAxisState, setCalendarAxisState] = createSignal<AxisState>({ ...DEFAULT_AXIS_STATE });
+export function toggleCalendarTop() {
+  setCalendarAxisState((s) => ({ ...s, topExpanded: !s.topExpanded }));
+}
+export function toggleCalendarBottom() {
+  setCalendarAxisState((s) => ({ ...s, bottomExpanded: !s.bottomExpanded }));
+}
 
 /** Toggle one chip on an axis (deselect if selected, re-select if deselected). */
 export function toggleAxisTag(axis: TagAxis, name: string) {
@@ -251,6 +271,50 @@ export function isRoutineTask(taskId?: string): boolean {
 export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
   api.prefs.get().then((r) => r.prefs)
 );
+
+// ── Calendar view-state persistence (0111) ─────────────────────────────────────
+// HYDRATE the overlay filter + night-hour collapse from the server once prefs
+// resolve (arrays → Sets), then PERSIST every subsequent change back via PATCH
+// /api/prefs (optimistic + fire-and-forget — never blocks the UI, a debounce
+// coalesces bursts of chip toggles). A malformed/missing blob degrades to the
+// built-in defaults (the deserializers are forgiving), so hydration can't crash.
+let _viewPrefsHydrated = false;
+
+createEffect(() => {
+  const p = prefs();
+  if (_viewPrefsHydrated) return; // hydrate exactly once, the first time prefs land
+  if (!p) return; // resource still loading
+  const cal = p.view_prefs?.calendar;
+  setOverlayAxes(deserializeDeselected(cal));
+  setOverlayPrio(deserializePrio(cal));
+  setCalendarAxisState(deserializeAxisState(cal));
+  _viewPrefsHydrated = true;
+});
+
+let _viewPrefsTimer: ReturnType<typeof setTimeout> | undefined;
+function persistCalendarViewPrefs() {
+  const calendar = buildCalendarViewPrefs(overlayAxes(), overlayPrio(), calendarAxisState());
+  clearTimeout(_viewPrefsTimer);
+  _viewPrefsTimer = setTimeout(() => {
+    // Merge under `calendar` so a future `planner` sibling (deferred follow-up) is
+    // preserved. Fire-and-forget: a failed save just means it doesn't sync — the
+    // in-memory state (the source of truth for this session) is already applied.
+    const existing = prefs()?.view_prefs ?? {};
+    void api.prefs.update({ view_prefs: { ...existing, calendar } }).catch(() => {});
+  }, 400);
+}
+
+// Persist on any change to the filter or collapse state — but only after hydration,
+// so restoring saved state doesn't immediately echo it back (and the initial
+// all-on defaults don't overwrite a saved override before it loads).
+createEffect(() => {
+  // Track all three so the effect re-runs on any of them.
+  overlayAxes();
+  overlayPrio();
+  calendarAxisState();
+  if (!_viewPrefsHydrated) return;
+  persistCalendarViewPrefs();
+});
 
 // ── Pattern-blocks ────────────────────────────────────────────────────────────
 export const [patternBlocks, { refetch: refetchPatternBlocks }] = createResource(() =>

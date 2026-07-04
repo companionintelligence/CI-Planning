@@ -8,7 +8,6 @@ import {
 } from '../lib/grid.js';
 import {
   type AxisState,
-  DEFAULT_AXIS_STATE,
   TOP_COLLAPSE_END,
   BOTTOM_COLLAPSE_START,
   segments,
@@ -17,7 +16,7 @@ import {
   minAt as axisMinAt,
   visibleExtent,
 } from '../lib/day-axis.js';
-import { setElementModal } from '../stores/index.js';
+import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom } from '../stores/index.js';
 import { isAllDay, isTimed, isTaskBlock } from '../lib/overlay.js';
 import { localISODate, addDays } from '../lib/dates.js';
 
@@ -354,13 +353,11 @@ interface Props {
 export function CalendarGrid(props: Props) {
   const today = () => localISODate();
 
-  // Wave-3 item 6 — collapse the quiet night hours. Two per-session (not persisted)
-  // signals drive the piecewise day axis; default = BOTH collapsed. Calendar view
-  // only — the Planner keeps the plain linear axis. One shared state across all
-  // week columns so every column collapses in lockstep.
-  const [topExpanded, setTopExpanded] = createSignal(DEFAULT_AXIS_STATE.topExpanded);
-  const [bottomExpanded, setBottomExpanded] = createSignal(DEFAULT_AXIS_STATE.bottomExpanded);
-  const axisState = (): AxisState => ({ topExpanded: topExpanded(), bottomExpanded: bottomExpanded() });
+  // Wave-3 item 6 — collapse the quiet night hours. The piecewise day axis is driven
+  // by a shared store signal (0111) so the collapse state PERSISTS cross-device and
+  // stays in lockstep across all week columns; default = BOTH collapsed. Calendar
+  // view only — the Planner keeps the plain linear axis.
+  const axisState = calendarAxisState;
 
   // Click-to-create on empty grid space. BlockChip gestures stopPropagation, so only
   // empty space reaches here. A near-zero pointer move = a click; map Y → time via the
@@ -490,13 +487,13 @@ export function CalendarGrid(props: Props) {
           region="top"
           label="12am – 7am"
           state={axisState}
-          onToggle={() => setTopExpanded((v) => !v)}
+          onToggle={() => toggleCalendarTop()}
         />
         <ExpanderBar
           region="bottom"
           label="9pm – 12am"
           state={axisState}
-          onToggle={() => setBottomExpanded((v) => !v)}
+          onToggle={() => toggleCalendarBottom()}
         />
       </div>
     </div>
