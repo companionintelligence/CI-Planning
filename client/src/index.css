@@ -299,6 +299,18 @@
   .badge-red     { @apply bg-red-900/40 text-red-400; }
   .badge-blue    { @apply bg-ci-6/30 text-ci-2; }
 
+  /* Light-mode re-tint: the base badge text/backgrounds above are tuned for the
+     dark palette and wash out on light cards (green 1.40:1, accent 1.49:1,
+     blue 1.88:1 — all fail WCAG AA). Override text (and yellow/red fills) for
+     light mode only; dark mode is untouched. Scoped to :not(.dark) so it also
+     applies before the theme class is set. Teal-family keeps its tinted fill and
+     switches to deep-teal text; yellow/red get light-appropriate fills. */
+  :root:not(.dark) .badge-accent { color: var(--teal-900); }
+  :root:not(.dark) .badge-green  { color: var(--teal-900); }
+  :root:not(.dark) .badge-blue   { color: var(--teal-900); }
+  :root:not(.dark) .badge-yellow { background: #fef3c7; color: #92400e; }
+  :root:not(.dark) .badge-red    { background: #fee2e2; color: #b91c1c; }
+
   /* ── Priority dots (constant across modes) ────────────────────── */
   .priority-dot { @apply w-2 h-2 rounded-full flex-shrink-0; }
   .p1 { background: #ef4444; }
@@ -384,7 +396,10 @@
   }
   .nav-item:hover { color: var(--foreground); background: var(--sidebar-accent); }
   .nav-item-active {
-    color: #abd4d8;
+    /* Themed CI teal (--primary: light #0f717a / dark #abd4d8) so the active
+       label stays legible in BOTH modes. A hardcoded pale teal was near-invisible
+       on the light-mode sidebar-accent (1.46:1). */
+    color: var(--primary);
     background: var(--sidebar-accent);
   }
 
