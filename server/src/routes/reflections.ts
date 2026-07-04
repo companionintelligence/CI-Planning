@@ -1,10 +1,13 @@
 import Router from '@koa/router';
+import type Koa from 'koa';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import { broadcast } from './sse.js';
 import { isoWeekKey } from '../lib/tz.js';
 import { localISODate, isValidISODate } from '../lib/dates.js';
+import { timeSenseEnabled } from '../lib/flags.js';
+import { gatherEvening, summarizeEvening } from '../agents/summarize.js';
 
 // The two goal kinds the generic /done + DELETE /:kind/:position routes accept.
 // day_note is deliberately NOT here: it toggles no done_at and is only ever
@@ -240,6 +243,115 @@ export function reflectionsRouter() {
       writeAudit({ ownerId: owner, actor: 'owner', action: 'upsert', entity: `reflection:weekly:${period_key}:${position}` });
     }
 
+    ctx.body = { ok: true };
+  });
+
+  // ── Phase Z · Z1 (Time-Sense) — EOD Alignment (kind='evening') ──────────────
+  // All three routes 404 while the owner's time_sense_enabled flag is off: the
+  // feature ships dark, and a disabled feature's endpoints should look absent.
+  // Authorship is MODAL-ONLY (owner decision 2026-07-01): the reflections row is
+  // written by POST .../evening/open — the client calls it when the user opens
+  // the evening modal — never by a nightly job. The deterministic payload is
+  // recomputed live on every read; only the narrative (+ user edits) persists.
+  const timeSenseGate = (ctx: Koa.Context): boolean => {
+    if (timeSenseEnabled(currentOwnerId())) return true;
+    ctx.status = 404;
+    ctx.body = { error: 'Not found' };
+    return false;
+  };
+
+  // GET /api/reflections/evening?period=YYYY-MM-DD — pure read: the live payload
+  // plus the authored row when one exists. Never writes.
+  router.get('/api/reflections/evening', (ctx) => {
+    if (!timeSenseGate(ctx)) return;
+    const owner = currentOwnerId();
+    const period = (ctx.query.period as string | undefined) ?? localISODate();
+    if (!isValidISODate(period)) {
+      ctx.status = 422;
+      ctx.body = { error: 'period must be YYYY-MM-DD' };
+      return;
+    }
+    const row = sqlite
+      .prepare(
+        `SELECT body, created_at, updated_at FROM reflections
+          WHERE owner_id=? AND kind='evening' AND period_key=? AND position=0`,
+      )
+      .get(owner, period) as { body: string; created_at: string; updated_at: string } | undefined;
+    ctx.body = { period_key: period, row: row ?? null, payload: gatherEvening(period) };
+  });
+
+  // POST /api/reflections/evening/open { period_key, refresh? } — opening the
+  // modal IS the authorship act: generates the narrative (LLM with deterministic
+  // fallback) and persists the row. Idempotent — an existing row is returned
+  // as-is unless refresh:true, so a user's edits survive re-opens.
+  router.post('/api/reflections/evening/open', async (ctx) => {
+    if (!timeSenseGate(ctx)) return;
+    const owner = currentOwnerId();
+    const { period_key, refresh } = (ctx.request.body ?? {}) as { period_key?: string; refresh?: boolean };
+    const period = period_key ?? localISODate();
+    if (!isValidISODate(period)) {
+      ctx.status = 422;
+      ctx.body = { error: 'period_key must be YYYY-MM-DD' };
+      return;
+    }
+
+    const existing = sqlite
+      .prepare(
+        `SELECT body FROM reflections WHERE owner_id=? AND kind='evening' AND period_key=? AND position=0`,
+      )
+      .get(owner, period) as { body: string } | undefined;
+    if (existing && !refresh) {
+      ctx.body = { period_key: period, body: existing.body, llm: null, created: false, payload: gatherEvening(period) };
+      return;
+    }
+
+    const summary = await summarizeEvening(period);
+    const now = new Date().toISOString();
+    sqlite
+      .prepare(
+        `INSERT INTO reflections (owner_id, kind, period_key, position, body, created_at, updated_at)
+         VALUES (?, 'evening', ?, 0, ?, ?, ?)
+         ON CONFLICT(owner_id, kind, period_key, position) DO UPDATE SET
+           body=excluded.body, updated_at=excluded.updated_at`,
+      )
+      .run(owner, period, summary.prose, now, now);
+    broadcast(owner, 'reflection:updated', { kind: 'evening', period_key: period, position: 0 });
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'upsert', entity: `reflection:evening:${period}` });
+    ctx.body = { period_key: period, body: summary.prose, llm: summary.llm, created: !existing, payload: summary.payload };
+  });
+
+  // PUT /api/reflections/evening { period_key, body } — the user's own edits and
+  // notes over the narrative. Empty body = delete (same rule as goals/day note).
+  router.put('/api/reflections/evening', (ctx) => {
+    if (!timeSenseGate(ctx)) return;
+    const owner = currentOwnerId();
+    const { period_key, body } = (ctx.request.body ?? {}) as { period_key?: string; body?: string };
+    if (!isValidISODate(period_key)) {
+      ctx.status = 422;
+      ctx.body = { error: 'period_key is required (YYYY-MM-DD)' };
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const trimmed = (body ?? '').trim();
+    if (!trimmed) {
+      sqlite
+        .prepare(`DELETE FROM reflections WHERE owner_id=? AND kind='evening' AND period_key=? AND position=0`)
+        .run(owner, period_key);
+      broadcast(owner, 'reflection:deleted', { kind: 'evening', period_key, position: 0 });
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `reflection:evening:${period_key}` });
+    } else {
+      sqlite
+        .prepare(
+          `INSERT INTO reflections (owner_id, kind, period_key, position, body, created_at, updated_at)
+           VALUES (?, 'evening', ?, 0, ?, ?, ?)
+           ON CONFLICT(owner_id, kind, period_key, position) DO UPDATE SET
+             body=excluded.body, updated_at=excluded.updated_at`,
+        )
+        .run(owner, period_key, trimmed, now, now);
+      broadcast(owner, 'reflection:updated', { kind: 'evening', period_key, position: 0 });
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'upsert', entity: `reflection:evening:${period_key}` });
+    }
     ctx.body = { ok: true };
   });
 
