@@ -104,7 +104,12 @@ describe('nextQuarterHourHHMM', () => {
 
   it('moves strictly forward when already on a boundary', () => {
     expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 10, 0))).toBe('10:15');
-    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 45))).toBe('00:00'); // rolls past midnight
+  });
+
+  it('caps at 23:45 near midnight instead of rolling to 00:00 of the placed-on day', () => {
+    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 45))).toBe('23:45');
+    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 50))).toBe('23:45');
+    expect(nextQuarterHourHHMM(new Date(2026, 6, 3, 23, 31))).toBe('23:45');
   });
 });
 
