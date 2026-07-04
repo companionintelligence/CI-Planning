@@ -234,6 +234,17 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Phase Z Time-Sense master flag (0106). Default OFF — gates the Focus Ritual,
   // Calibration Loop scoping, and EOD Alignment while the phase lands dark.
   timeSenseEnabled: integer('time_sense_enabled', { mode: 'boolean' }).default(false),
+  // Phase Z · Z5 per-cue prefs matrix (0108). All default ON — read only while
+  // timeSenseEnabled is on, so they're behaviour-neutral for pre-Z owners. Haptic +
+  // ambient color are overridden per experiment arm on first enable (§5.2); all four
+  // stay user-configurable afterward (§4: every cue disableable). z_experiment_arm is
+  // the fixed A/B/C/D bucket, server-assigned only (NULL until first Time-Sense enable).
+  focusRitualEnabled: integer('focus_ritual_enabled', { mode: 'boolean' }).default(true),
+  hapticCuesEnabled: integer('haptic_cues_enabled', { mode: 'boolean' }).default(true),
+  ambientColorEnabled: integer('ambient_color_enabled', { mode: 'boolean' }).default(true),
+  calibrationLoopEnabled: integer('calibration_loop_enabled', { mode: 'boolean' }).default(true),
+  zExperimentArm: text('z_experiment_arm'), // 'A' | 'B' | 'C' | 'D' | null
+
   // Per-owner Ollama model overrides (null = use the env default). 0012.
   fastModel: text('fast_model'),       // extraction / triage
   qualityModel: text('quality_model'), // briefings

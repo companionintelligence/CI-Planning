@@ -5,6 +5,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
 import { comboRef, detectComboSuggestions, suggestEstimate } from '../services/calibration.js';
+import { renderCopy } from '../agents/render-copy.js';
 import { calibrateEstimates } from '../jobs/calibrate-estimates.js';
 
 /**
@@ -50,10 +51,22 @@ export function calibrationRouter() {
   });
 
   // GET /api/calibration/suggest/:taskId — Z6 suggest-only estimate nudge for one
-  // task, or { suggestion: null } when there's nothing worth surfacing. Read-only.
-  router.get('/suggest/:taskId', (ctx) => {
+  // task, or { suggestion: null } when there's nothing worth surfacing. The numbers
+  // come from the pure suggestEstimate(); Z7 renders the chip's LINE through the Voice
+  // loop here (at the async boundary — suggestEstimate stays a pure, sync read), so the
+  // nudge shares the one voice and its phrasing doesn't repeat.
+  router.get('/suggest/:taskId', async (ctx) => {
     if (!gate(ctx)) return;
-    ctx.body = { suggestion: suggestEstimate(currentOwnerId(), ctx.params.taskId) };
+    const owner = currentOwnerId();
+    const suggestion = suggestEstimate(owner, ctx.params.taskId);
+    if (!suggestion) { ctx.body = { suggestion: null }; return; }
+    const copy = await renderCopy('calibration_chip', {
+      suggested: suggestion.suggested_minutes,
+      current: suggestion.current_minutes,
+      direction: suggestion.delta_minutes > 0 ? 'over' : 'under',
+      scope: suggestion.scope_label,
+    });
+    ctx.body = { suggestion: { ...suggestion, message: copy.text } };
   });
 
   // POST /api/calibration/pins { tag_ids: string[] } — confirm a combo suggestion.

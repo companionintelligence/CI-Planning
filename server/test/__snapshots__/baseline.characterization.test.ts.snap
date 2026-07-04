@@ -735,6 +735,16 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "id",
+      "owner_id",
+      "surface",
+      "signature",
+      "created_at",
+    ],
+    "table": "copy_history",
+  },
+  {
+    "columns": [
       "owner_id",
       "date",
       "task_id",
@@ -1144,6 +1154,11 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "enable_routines",
       "recurrence_horizon_days",
       "time_sense_enabled",
+      "focus_ritual_enabled",
+      "haptic_cues_enabled",
+      "ambient_color_enabled",
+      "calibration_loop_enabled",
+      "z_experiment_arm",
     ],
     "table": "scheduling_prefs",
   },

@@ -10,6 +10,7 @@ import { addDays } from '../lib/dates.js';
 import { localDateInTZ, serverTimezone } from '../lib/tz.js';
 import { clearPlannerRange } from '../engine/clear-range.js';
 import { snapshot, backupDir } from '../lib/backup.js';
+import { assignExperimentArmIfNeeded } from '../lib/experiment.js';
 import { broadcast } from './sse.js';
 
 // The Settings "Recurrence duration" select offers exactly these; reject anything
@@ -48,14 +49,26 @@ export function prefsRouter() {
       : undefined;
     const oldHorizon = horizonPatched ? beforeRow?.recurrence_horizon_days ?? 7 : null;
 
+    // The experiment arm (Z5, §5.2) is server-assigned only — never let a client
+    // self-select its A/B condition, even by accident. Strip it before serializing.
+    delete body.z_experiment_arm;
+
     // Convert incoming snake_case keys to camelCase for Drizzle
     const update = fromApi<Partial<typeof schedulingPrefs.$inferInsert>>(body);
-    const [prefs] = await db
+    let [prefs] = await db
       .update(schedulingPrefs)
       .set(update)
       .where(eq(schedulingPrefs.ownerId, owner))
       .returning();
     writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: 'prefs:owner' });
+
+    // Phase Z · Z5 — first time an owner turns Time-Sense on, assign a fixed
+    // experiment arm and seed the haptic/color channels to match it. Re-read so the
+    // response reflects the arm-derived channels (the update above didn't touch them).
+    if (prefs?.timeSenseEnabled && !prefs.zExperimentArm) {
+      assignExperimentArmIfNeeded(owner);
+      [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, owner));
+    }
 
     // Auto-prune on shorten (Phase P · P1). Lowering the recurrence horizon deletes
     // engine-generated instances beyond the new window — but NOT locked/manual blocks,
