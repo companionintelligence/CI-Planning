@@ -5,6 +5,7 @@ import {
   deserializePrio,
   deserializeAxisState,
   buildCalendarViewPrefs,
+  buildPlannerViewPrefs,
 } from './view-prefs.js';
 import { emptyAxisDeselected } from './overlay.js';
 import type { AxisDeselected } from './overlay.js';
@@ -89,6 +90,20 @@ describe('view-prefs (de)serialization', () => {
         topExpanded: false,
         bottomExpanded: true,
       });
+    });
+  });
+
+  describe('buildPlannerViewPrefs — Planner collapse flags', () => {
+    it('emits just the two collapse flags', () => {
+      expect(buildPlannerViewPrefs({ topExpanded: true, bottomExpanded: false })).toEqual({
+        topExpanded: true,
+        bottomExpanded: false,
+      });
+    });
+
+    it('round-trips through deserializeAxisState (shared with calendar)', () => {
+      const state = { topExpanded: true, bottomExpanded: false };
+      expect(deserializeAxisState(buildPlannerViewPrefs(state))).toEqual(state);
     });
   });
 });
