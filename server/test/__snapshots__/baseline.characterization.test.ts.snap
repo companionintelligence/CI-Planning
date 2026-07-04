@@ -1160,6 +1160,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "ambient_color_enabled",
       "calibration_loop_enabled",
       "z_experiment_arm",
+      "view_prefs",
     ],
     "table": "scheduling_prefs",
   },

@@ -10,11 +10,28 @@ import { render, fireEvent } from '@solidjs/testing-library';
  * axis) grows no expanders. The pure minute↔pixel math is exhaustively covered in
  * lib/day-axis.test.ts — this file only checks the SolidJS integration.
  */
-vi.mock('../stores/index.js', () => ({
-  setElementModal: vi.fn(),
-}));
+// The collapse state now lives in the store (persisted cross-device, 0111). Back the
+// mock with a real signal so clicking the expanders still toggles it and the grid
+// reacts — same behaviour the component's old local signals gave, just lifted.
+vi.mock('../stores/index.js', async () => {
+  const { createSignal } = await import('solid-js');
+  const DEFAULT = { topExpanded: false, bottomExpanded: false };
+  const [state, setState] = createSignal({ ...DEFAULT });
+  return {
+    setElementModal: vi.fn(),
+    calendarAxisState: state,
+    __resetCalendarAxisState: () => setState({ ...DEFAULT }),
+    toggleCalendarTop: () => setState((s: typeof DEFAULT) => ({ ...s, topExpanded: !s.topExpanded })),
+    toggleCalendarBottom: () => setState((s: typeof DEFAULT) => ({ ...s, bottomExpanded: !s.bottomExpanded })),
+  };
+});
 
+const stores = await import('../stores/index.js');
 const { CalendarGrid } = await import('./CalendarGrid.js');
+
+// Each test starts from the default (both collapsed) — the store signal is module
+// state shared across tests, so reset it the way resetDb() pins server prefs.
+beforeEach(() => (stores as unknown as { __resetCalendarAxisState: () => void }).__resetCalendarAxisState());
 
 const noBlocks = () => ({});
 
