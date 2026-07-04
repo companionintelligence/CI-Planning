@@ -28,7 +28,10 @@ type TaskType implements Node {
   dueAt: DateTime
   scheduledFor: String              # local YYYY-MM-DD, not an instant — String, not DateTime
   createdAt: DateTime!
-  subtasks(first: Int, after: String): TaskConnection!
+  completedAt: DateTime
+  parent: TaskType                  # parent_id
+  subtasks(first: Int, after: String): TaskConnection!   # forward-only (last/before unimplemented → omitted)
+  dependsOn: [TaskType!]!           # task_dependencies.depends_on_id
 }
 
 type TaskConnection implements Connection {
@@ -87,7 +90,10 @@ type UpdateTaskPayload {
   success: Boolean!
 }
 
+extend type Query {
+  task(id: ID!): TaskType
   tasks(first: Int, after: String, status: String): TaskConnection!
+}
 
 extend type Mutation {
   createTask(input: CreateTaskInput!): CreateTaskPayload!
