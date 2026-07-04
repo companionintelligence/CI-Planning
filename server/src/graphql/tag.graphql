@@ -28,6 +28,34 @@ type TagType implements Node {
   parentDirections(first: Int, after: String): TagConnection!
   parentCategories(first: Int, after: String): TagConnection!
   childIntentions(first: Int, after: String): TagConnection!
+  # W4b — the reverse tagging edge: the Tasks/TimeBlocks this tag is applied to (over
+  # entity_tags), the mirror of Taggable's forward `tags`. `kind` filters to one entity
+  # type; routine-tagged rows are excluded (RoutineType doesn't exist until W6). Owner-
+  # scoped in the service (each branch joins the owned tasks/time_blocks table).
+  entities(first: Int, after: String, kind: EntityKindFilter): TaggedEntityConnection!
+}
+
+# W4b — a tag's tagged entities span two concrete Node types (both TaskType and
+# TimeBlockType `implement Node`). Routines are omitted until W6 adds RoutineType.
+union TaggedEntity = TaskType | TimeBlockType
+
+enum EntityKindFilter { TASK TIME_BLOCK }
+
+# This connection/edge deliberately DO NOT declare `implements Connection`/`Edge`: a
+# graphql-js interface field is covariant only for object/interface subtypes, never a
+# union, so an `Edge.node: Node!` cannot be narrowed to `TaggedEntity!` (schema-build
+# error). The precise union return type is worth more here than nominal interface
+# conformance — the field shape is still Relay-standard (cursor + node · edges/pageInfo/
+# totalCount), so clients paginate it identically.
+type TaggedEntityConnection {
+  edges: [TaggedEntityEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TaggedEntityEdge {
+  cursor: String!
+  node: TaggedEntity!
 }
 
 type TagConnection implements Connection {
