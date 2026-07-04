@@ -9,7 +9,8 @@ import { api, type Block, type Task } from '../lib/api.js';
 import { directionColorForTask, BASE_TAG_DEFAULTS } from '../lib/pattern-meta.js';
 import { blockColorVar } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
-import { yOf, minutesIntoDay, DAY_HEIGHT_PX } from '../lib/grid.js';
+import { PX_PER_MIN, minutesIntoDay } from '../lib/grid.js';
+import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent } from '../lib/day-axis.js';
 import { isImmovable } from '../lib/drag.js';
 import { ShapeIcon } from './ShapeIcon.js';
 
@@ -30,17 +31,18 @@ const CARD_H = 196;
  * entity it describes; a transparent backdrop closes it without falling through to
  * click-to-create.
  *
- * `windowTopPx`/`windowHeightPx` describe the Planner's visible zoom window (px from
- * the day's midnight): the window no longer scrolls, so the card clamps itself into
- * that region — otherwise a card near the window's bottom edge would be clipped with
- * no way to bring it into view. Omitted (e.g. in isolation) they default to the day.
+ * `state` is the Planner's segmented day-axis expand state: the card anchors to its
+ * entity's slot via the piecewise `yOf` and clamps into the full axis height so it is
+ * never clipped. If the entity's start falls in a currently-collapsed region, the card
+ * pins to that region's expanded edge (via `visibleExtent`). Omitted (e.g. in
+ * isolation) the state defaults to both-collapsed.
  */
 export function PlannerEntityCard(props: {
   day: string;
   onRequestDeletePlan: (block: Block) => void;
-  windowTopPx?: number;
-  windowHeightPx?: number;
+  state?: () => AxisState;
 }) {
+  const axisState = (): AxisState => props.state?.() ?? { topExpanded: false, bottomExpanded: false };
   // Resolve the expanded entity: a focused task, or a focused block.
   const taskSel = (): Task | undefined => {
     const id = activeTask();
@@ -112,17 +114,20 @@ export function PlannerEntityCard(props: {
   };
   const locked = () => { const b = block(); return b ? isImmovable(b) : false; };
 
-  // ── Position: anchor to the entity's slot, clamped into the VISIBLE window ──────
-  // The Planner's zoom window doesn't scroll, so [lo, hi] keeps the whole card inside
-  // the shown hour range (still bounded by the day for safety / default callers).
+  // ── Position: anchor to the entity's slot on the segmented axis, clamped so the
+  // whole card stays inside the full axis height (never clipped). A start inside a
+  // collapsed region pins to that region's expanded edge via visibleExtent.
   const topPx = () => {
-    const winTop = Math.max(0, props.windowTopPx ?? 0);
-    const winBot = Math.min(DAY_HEIGHT_PX, winTop + (props.windowHeightPx ?? DAY_HEIGHT_PX));
-    const lo = winTop;
-    const hi = Math.max(lo, winBot - CARD_H);
+    const st = axisState();
+    const total = axisHeightPx(st, PX_PER_MIN);
+    const lo = 0;
+    const hi = Math.max(lo, total - CARD_H);
     const b = block();
     if (!b) return lo + 8;
-    const y = yOf(minutesIntoDay(b.start_at, props.day));
+    const startMin = minutesIntoDay(b.start_at, props.day);
+    const ext = visibleExtent(startMin, startMin + 1, st);
+    // Wholly-collapsed start → anchor to the nearest expanded minute (region edge).
+    const y = ext ? axisYOf(ext.startMin, st, PX_PER_MIN) : axisYOf(startMin, st, PX_PER_MIN);
     return Math.max(lo, Math.min(y, hi));
   };
 
