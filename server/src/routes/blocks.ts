@@ -4,6 +4,10 @@ import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
 import { blocksToICal, type ICalBlock } from '../lib/ical.js';
+// W3.2 moved block CRUD (and its zonedWallTimeToUTC/localDateInTZ use) into
+// services/blocks.ts; the only tz helpers still needed route-side are for the Z7
+// whats-next render below.
+import { serverTimezone, utcToZonedWallTime } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
@@ -22,6 +26,7 @@ import {
 import { timeSenseEnabled } from '../lib/flags.js';
 import { extendBlock } from '../engine/extend-block.js';
 import { syncBlockFocusReminders, clearBlockFocusReminders } from '../engine/reminders.js';
+import { renderCopy } from '../agents/render-copy.js';
 
 export function blocksRouter() {
   const router = new Router();
@@ -223,6 +228,39 @@ export function blocksRouter() {
     if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     clearBlockFocusReminders(ctx.params.id);
     ctx.body = { ok: true };
+  });
+
+  // GET /api/blocks/:id/whats-next — Phase Z · Z7. The T4 "what's next" line, rendered
+  // through the Voice loop. The next event is derived SERVER-side (grounding integrity)
+  // by mirroring the client's nextAfterFocus: the earliest non-container block starting
+  // at/after this block's end. The Focus screen fetches it when the block ends; a fresh,
+  // non-repeating line per block-end. Flag-gated (404 off).
+  router.get('/api/blocks/:id/whats-next', async (ctx) => {
+    const owner = currentOwnerId();
+    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    const block = sqlite
+      .prepare(`SELECT id, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get(ctx.params.id, owner) as { id: string; end_at: string } | undefined;
+    if (!block) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
+    const next = sqlite
+      .prepare(
+        `SELECT title, start_at FROM time_blocks
+          WHERE owner_id = ? AND id != ? AND block_kind != 'timeblock' AND start_at >= ?
+          ORDER BY start_at LIMIT 1`,
+      )
+      .get(owner, block.id, block.end_at) as { title: string; start_at: string } | undefined;
+    // Blocks are stored as UTC instants; render the wall-clock in the owner's zone.
+    // NEVER slice the ISO string for HH:MM (grid.ts invariant) — that leaks UTC to a
+    // non-UTC user, mismatching the calendar's local display.
+    const tz =
+      (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
+        | { timezone: string | null }
+        | undefined)?.timezone || serverTimezone();
+    const copy = await renderCopy(
+      't4_whats_next',
+      next ? { next: next.title, next_time: utcToZonedWallTime(next.start_at, tz) } : {},
+    );
+    ctx.body = { text: copy.text, next: next ?? null };
   });
 
   // POST /api/blocks/:id/reschedule — Phase Z · Z3 "Schedule again" (§1.1b).

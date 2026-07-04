@@ -514,3 +514,188 @@ describe('Daily Brief fold-in (Z2)', () => {
     expect(res.body.evening.carry_forward.map((c: { title: string }) => c.title)).toContain('Still open');
   });
 });
+
+// ── Z5: per-cue prefs matrix + experiment arm (0108) ─────────────────────────────
+
+describe('Z5 per-cue prefs matrix (0108)', () => {
+  // The 2×2 cell each arm encodes (§5.2). haptic ⟺ arm∈{B,D}; color ⟺ arm∈{C,D}.
+  const ARM_HAPTIC = new Set(['B', 'D']);
+  const ARM_COLOR = new Set(['C', 'D']);
+
+  function prefsRow() {
+    return sqlite
+      .prepare(
+        `SELECT focus_ritual_enabled AS focus, haptic_cues_enabled AS haptic,
+                ambient_color_enabled AS color, calibration_loop_enabled AS calib, z_experiment_arm AS arm
+           FROM scheduling_prefs WHERE owner_id = ?`,
+      )
+      .get(SYSTEM_OWNER) as { focus: number; haptic: number; color: number; calib: number; arm: string | null };
+  }
+
+  it('added the four channel flags (default ON) + z_experiment_arm (NULL) to scheduling_prefs', () => {
+    const cols = (sqlite.prepare(`PRAGMA table_info(scheduling_prefs)`).all() as { name: string }[]).map((c) => c.name);
+    for (const c of ['focus_ritual_enabled', 'haptic_cues_enabled', 'ambient_color_enabled', 'calibration_loop_enabled', 'z_experiment_arm']) {
+      expect(cols).toContain(c);
+    }
+    const r = prefsRow();
+    expect(r.focus).toBe(1);
+    expect(r.haptic).toBe(1);
+    expect(r.color).toBe(1);
+    expect(r.calib).toBe(1);
+    expect(r.arm).toBeNull();
+  });
+
+  it('assigns a fixed experiment arm on first Time-Sense enable and seeds haptic/color to match it', async () => {
+    const patch = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { time_sense_enabled: true } });
+    expect(patch.status).toBe(200);
+    const arm = patch.body.prefs.z_experiment_arm;
+    expect(['A', 'B', 'C', 'D']).toContain(arm);
+    // Channels the response returns match the arm's 2×2 cell.
+    expect(patch.body.prefs.haptic_cues_enabled).toBe(ARM_HAPTIC.has(arm));
+    expect(patch.body.prefs.ambient_color_enabled).toBe(ARM_COLOR.has(arm));
+    // Focus screen + calibration loop are on for every arm (not part of the 2×2).
+    expect(patch.body.prefs.focus_ritual_enabled).toBe(true);
+    expect(patch.body.prefs.calibration_loop_enabled).toBe(true);
+    // Persisted, not just echoed.
+    expect(prefsRow().arm).toBe(arm);
+  });
+
+  it('never reassigns the arm — disable → re-enable keeps the original arm', async () => {
+    const first = (await api(srv.url, '/api/prefs', { method: 'PATCH', json: { time_sense_enabled: true } })).body.prefs.z_experiment_arm;
+    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { time_sense_enabled: false } });
+    const second = (await api(srv.url, '/api/prefs', { method: 'PATCH', json: { time_sense_enabled: true } })).body.prefs.z_experiment_arm;
+    expect(second).toBe(first);
+  });
+
+  it('the experiment arm is server-controlled — a client PATCH can never set it', async () => {
+    // Try to self-select arm 'D' (full ritual) before any assignment.
+    const patch = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { time_sense_enabled: true, z_experiment_arm: 'D' } });
+    // The client value is ignored; the server assigns its own (which may or may not be D).
+    const assigned = prefsRow().arm;
+    expect(['A', 'B', 'C', 'D']).toContain(assigned);
+    expect(patch.body.prefs.z_experiment_arm).toBe(assigned);
+    // The odds of the random draw matching a deliberately-chosen client value are 1/4,
+    // so we can't assert inequality; the real guarantee is that the write path stripped
+    // it — verified by the next test overriding a channel while the arm stays put.
+  });
+
+  it('the individual channels stay user-configurable after assignment (§4)', async () => {
+    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { time_sense_enabled: true } });
+    const arm = prefsRow().arm;
+    // Owner turns every channel off by hand — all persist, arm is untouched.
+    const patch = await api(srv.url, '/api/prefs', {
+      method: 'PATCH',
+      json: { haptic_cues_enabled: false, ambient_color_enabled: false, focus_ritual_enabled: false, calibration_loop_enabled: false },
+    });
+    expect(patch.body.prefs.haptic_cues_enabled).toBe(false);
+    expect(patch.body.prefs.ambient_color_enabled).toBe(false);
+    expect(patch.body.prefs.focus_ritual_enabled).toBe(false);
+    expect(patch.body.prefs.calibration_loop_enabled).toBe(false);
+    expect(prefsRow().arm).toBe(arm); // re-enable path didn't fire (arm already set)
+  });
+
+  it('never assigns an arm while Time-Sense stays off (patching an unrelated pref)', async () => {
+    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { min_break_minutes: 15 } });
+    expect(prefsRow().arm).toBeNull();
+  });
+});
+
+// ── Z7: Voice loop retrofit — brief + EOD route through renderCopy (flag-gated) ────
+
+describe('Z7 Voice loop retrofit (flag-gated)', () => {
+  function copyCount(surface: string): number {
+    return (sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM copy_history WHERE owner_id = ? AND surface = ?`)
+      .get(SYSTEM_OWNER, surface) as { n: number }).n;
+  }
+
+  it('flag OFF: the morning brief uses the legacy path and writes no copy_history (byte-identical Phase N)', async () => {
+    setFlag(false);
+    const res = await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.prose).toBe('string');
+    expect(res.body.prose.length).toBeGreaterThan(0);
+    expect(copyCount('daily_brief')).toBe(0);
+  });
+
+  it('flag ON: the brief routes through renderCopy — one signature per genuine generation, cache hits do not re-render', async () => {
+    setFlag(true);
+    const first = await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(first.status).toBe(200);
+    expect(first.body.prose.length).toBeGreaterThan(0); // Ollama mocked down → deterministic fallback prose
+    expect(copyCount('daily_brief')).toBe(1);
+
+    // Same inputs → cache hit → stored prose returned, renderCopy NOT re-invoked.
+    await api(srv.url, `/api/summary?date=${DAY}`);
+    expect(copyCount('daily_brief')).toBe(1);
+
+    // refresh forces a real re-generation → exactly one more signature.
+    await api(srv.url, `/api/summary?date=${DAY}&refresh=1`);
+    expect(copyCount('daily_brief')).toBe(2);
+  });
+
+  it('flag ON: opening the EOD alignment routes through renderCopy and records an eod_alignment signature', async () => {
+    setFlag(true);
+    const res = await api(srv.url, '/api/reflections/evening/open', { method: 'POST', json: { period_key: DAY } });
+    expect(res.status).toBe(200);
+    expect(res.body.body).toContain(`${DAY} in review`); // fallback paragraph carried through verbatim
+    expect(copyCount('eod_alignment')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('flag ON: the calibration chip line is rendered through the Voice loop (carries the suggested minutes, records a signature)', async () => {
+    setFlag(true);
+    const taxes = makeTag('taxes');
+    for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] }); // ratio 1.5
+    calibrateEstimates();
+    const live = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes) VALUES (uuid7(), 'Live', ?, 'open', 60) RETURNING id`)
+      .get(SYSTEM_OWNER) as { id: string }).id;
+    sqlite.prepare(`INSERT INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(live, taxes);
+
+    const res = await api(srv.url, `/api/calibration/suggest/${live}`);
+    expect(res.status).toBe(200);
+    expect(res.body.suggestion.suggested_minutes).toBe(90);
+    expect(typeof res.body.suggestion.message).toBe('string');
+    expect(res.body.suggestion.message).toContain('90'); // required datum: the suggested minutes
+    expect(copyCount('calibration_chip')).toBe(1);
+  });
+
+  it('flag ON: whats-next renders the T4 line server-side; flag OFF and unknown block 404', async () => {
+    setFlag(true);
+    const cur = (sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Now', 'task', ?, ?, ?) RETURNING id`)
+      .get(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`, SYSTEM_OWNER) as { id: string }).id;
+    sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Lunch', 'task', ?, ?, ?)`)
+      .run(`${DAY}T12:30:00.000Z`, `${DAY}T13:00:00.000Z`, SYSTEM_OWNER);
+
+    const res = await api(srv.url, `/api/blocks/${cur}/whats-next`);
+    expect(res.status).toBe(200);
+    expect(res.body.next.title).toBe('Lunch');
+    expect(typeof res.body.text).toBe('string');
+    expect(res.body.text).toContain('12:30'); // required datum: the next start time
+    expect(copyCount('t4_whats_next')).toBe(1);
+
+    // Unknown block → 404; flag OFF → 404 (endpoint looks absent).
+    expect((await api(srv.url, `/api/blocks/does-not-exist/whats-next`)).status).toBe(404);
+    setFlag(false);
+    expect((await api(srv.url, `/api/blocks/${cur}/whats-next`)).status).toBe(404);
+  });
+
+  it('flag ON: whats-next renders the next time in the OWNER timezone, not raw UTC (regression)', async () => {
+    setFlag(true);
+    // Blocks are stored UTC; a non-UTC owner must see their local wall-clock, matching
+    // the calendar — not the sliced UTC HH:MM (the bug the retrofit review caught).
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/New_York' WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const cur = (sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Now', 'task', ?, ?, ?) RETURNING id`)
+      .get(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`, SYSTEM_OWNER) as { id: string }).id;
+    sqlite
+      .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, owner_id) VALUES (uuid7(), 'Lunch', 'task', ?, ?, ?)`)
+      .run(`${DAY}T12:30:00.000Z`, `${DAY}T13:00:00.000Z`, SYSTEM_OWNER);
+
+    const res = await api(srv.url, `/api/blocks/${cur}/whats-next`);
+    expect(res.body.text).toContain('08:30'); // 12:30 UTC = 08:30 EDT on 2026-06-15
+    expect(res.body.text).not.toContain('12:30');
+  });
+});

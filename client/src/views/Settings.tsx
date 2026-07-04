@@ -32,11 +32,14 @@ interface SettingsForm {
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
   recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
   time_sense_enabled: boolean; // Phase Z master flag
+  focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
+  ambient_color_enabled: boolean; calibration_loop_enabled: boolean;
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
-  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'time_sense_enabled';
+  | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'time_sense_enabled'
+  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled';
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
@@ -52,6 +55,8 @@ const DEFAULTS: SettingsForm = {
   memory_sync_habits: true, memory_sync_reflections: true,
   recall_keeps_pattern: false,
   time_sense_enabled: false,
+  focus_ritual_enabled: true, haptic_cues_enabled: true,
+  ambient_color_enabled: true, calibration_loop_enabled: true,
 };
 
 export function Settings() {
@@ -159,6 +164,10 @@ export function Settings() {
       embed_model:                p.embed_model ?? '',
       recall_keeps_pattern:       p.recall_keeps_pattern ?? false,
       time_sense_enabled:         p.time_sense_enabled ?? false,
+      focus_ritual_enabled:       p.focus_ritual_enabled ?? true,
+      haptic_cues_enabled:        p.haptic_cues_enabled ?? true,
+      ambient_color_enabled:      p.ambient_color_enabled ?? true,
+      calibration_loop_enabled:   p.calibration_loop_enabled ?? true,
       memory_sync_enabled:        p.memory_sync_enabled ?? false,
       memory_sync_completed:      p.memory_sync_completed ?? true,
       memory_sync_habits:         p.memory_sync_habits ?? true,
@@ -915,6 +924,28 @@ export function Settings() {
                 calibration, and the evening EOD Alignment while the phase ships dark. */}
             <Toggle field="time_sense_enabled" label="Time-Sense"
               hint="Focus Ritual block timers, tag-scoped estimate calibration, and the evening alignment. Experimental; off by default." />
+
+            {/* Phase Z · Z5 — per-cue channel matrix. Only meaningful when Time-Sense
+                is on; the individual channels are configurable per §4 (every cue
+                disableable). Haptic + ambient color are seeded from the study arm on
+                first enable; the arm itself is fixed and read-only (§5.2). */}
+            <Show when={form().time_sense_enabled}>
+              <div class="mt-3 ml-2 pl-3 border-l border-border flex flex-col gap-2.5">
+                <Toggle field="focus_ritual_enabled" label="Focus screen"
+                  hint="The full-screen block timer with progressive disclosure and the 'what's next' modal." />
+                <Toggle field="haptic_cues_enabled" label="Haptic cues"
+                  hint="Vibration pulses at the start, midpoint, 3-min warning, and end (where the device supports it)." />
+                <Toggle field="ambient_color_enabled" label="Ambient color"
+                  hint="Category-color depletion across the block, breathing in the final 3 minutes." />
+                <Toggle field="calibration_loop_enabled" label="Calibration nudge"
+                  hint="The suggest-only estimate chip based on your tag-scoped history." />
+                <Show when={prefs()?.z_experiment_arm}>
+                  <div class="text-[11px] text-muted-foreground">
+                    Study arm <span class="font-mono text-foreground">{prefs()!.z_experiment_arm}</span> — assigned once, fixed for the study.
+                  </div>
+                </Show>
+              </div>
+            </Show>
 
             {/* AI day ordering toggle — saved immediately, not via the Save button */}
             {(() => {

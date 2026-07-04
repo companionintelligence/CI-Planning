@@ -153,6 +153,9 @@ export const api = {
       request<{ ok: boolean; armed: number }>('POST', `/blocks/${id}/focus-reminders`, {}),
     clearFocusReminders: (id: string) =>
       request<{ ok: boolean }>('DELETE', `/blocks/${id}/focus-reminders`),
+    // Phase Z · Z7 — the T4 "what's next" line, rendered server-side through the Voice loop.
+    whatsNext: (id: string) =>
+      request<{ text: string; next: { title: string; start_at: string } | null }>('GET', `/blocks/${id}/whats-next`),
   },
 
   // ── Patterns (Phase G, G1) — typed, reusable task collections ────────────────
@@ -644,7 +647,13 @@ export interface Prefs {
   enable_rituals?: boolean; // feature flag (0024); default false — Rituals hidden
   enable_routines?: boolean; // feature flag; default false — Routines hidden from Add dialog
   recall_keeps_pattern?: boolean; // cockpit-v2 Phase 6: recall=clone copies Routine membership (default OFF)
-  time_sense_enabled?: boolean; // Phase Z master flag (0105); default false — Time-Sense surfaces hidden
+  time_sense_enabled?: boolean; // Phase Z master flag (0106); default false — Time-Sense surfaces hidden
+  // Phase Z · Z5 per-cue prefs matrix (0108). Read only while time_sense_enabled is on.
+  focus_ritual_enabled?: boolean; // master gate for the Focus screen
+  haptic_cues_enabled?: boolean; // T1–T4 haptics (arm-derived on first enable)
+  ambient_color_enabled?: boolean; // depletion + breathing animation (arm-derived)
+  calibration_loop_enabled?: boolean; // estimate prompt + scoped nudge (§2)
+  z_experiment_arm?: 'A' | 'B' | 'C' | 'D' | null; // fixed A/B bucket, server-assigned; read-only
   day_theme?: Record<string, string>; planning_mode: string;
   timezone?: string; planning_horizon_days?: number;
   recurrence_horizon_days?: number; // Phase P: how far ahead recurrence materializes (7/15/30/60/90/180)
@@ -736,6 +745,7 @@ export interface EstimateSuggestion {
   scope_ref: string;
   scope_label: string;
   confidence: 'tentative' | 'confident';
+  message?: string; // Z7 — the chip line rendered through the Voice loop (server-side)
 }
 
 export interface WeekReview {
