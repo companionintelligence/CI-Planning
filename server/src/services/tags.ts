@@ -559,3 +559,65 @@ export function pageOwnerTags(owner: string, kind: string | undefined, afterName
 export function countOwnerTags(owner: string, kind: string | undefined): number {
   return kind ? n(countOwnerTagsByKindStmt.get(owner, kind)) : n(countOwnerTagsStmt.get(owner));
 }
+
+// ── GraphQL reverse tagging edge (Phase W · W4b): TagType.entities ────────────
+// The Tasks and TimeBlocks a tag is applied to, over entity_tags — the mirror of the
+// W4a forward `tags` edge. Two things this read MUST get right:
+//   1. Owner-scoping. entity_tags.entity_id has NO FK and spans task/time_block/routine,
+//      so integrity lives in app code (see the header). We do NOT trust that a tag's
+//      entity_tags rows point only at the owner's entities: each branch INNER-JOINs the
+//      concrete owner-scoped table (tasks/time_blocks) and filters `owner_id`, so a row
+//      pointing at another owner's (or a deleted) entity is dropped, not leaked.
+//   2. `routine`-kind rows are EXCLUDED — RoutineType doesn't exist until W6, so a
+//      routine node would have no GraphQL type. This union is Task ∪ TimeBlock only.
+// UNION (not UNION ALL) collapses the duplicate a multi-level tag produces (same tag
+// applied at level 1 AND 2 to one entity = one entity here). Stable keyset order is
+// (entity_kind, entity_id): 'task' sorts before 'time_block', then uuid7 within a kind.
+// `kind` filters to one branch by comparing the passed value inside each branch ('' = all).
+
+export interface EntityRef {
+  entityKind: string;
+  entityId: string;
+}
+
+// The inner owner-scoped union, reused by the page + count statements. Params per branch:
+// tagId, owner, kind, kind (the kind gate is `? = '' OR ? = '<branch>'`).
+const ENTITIES_UNION = `
+  SELECT et.entity_kind AS entityKind, et.entity_id AS entityId
+    FROM entity_tags et JOIN tasks t ON t.id = et.entity_id
+   WHERE et.tag_id = ? AND et.entity_kind = 'task' AND t.owner_id = ? AND (? = '' OR ? = 'task')
+  UNION
+  SELECT et.entity_kind, et.entity_id
+    FROM entity_tags et JOIN time_blocks b ON b.id = et.entity_id
+   WHERE et.tag_id = ? AND et.entity_kind = 'time_block' AND b.owner_id = ? AND (? = '' OR ? = 'time_block')
+`;
+
+const pageEntitiesStmt = sqlite.prepare(
+  `SELECT entityKind, entityId FROM (${ENTITIES_UNION})
+    WHERE (entityKind > ? OR (entityKind = ? AND entityId > ?))
+    ORDER BY entityKind, entityId LIMIT ?`,
+);
+const countEntitiesStmt = sqlite.prepare(`SELECT COUNT(*) AS n FROM (${ENTITIES_UNION})`);
+
+/** One keyset page of the (owner-scoped) entities a tag is applied to. `kind` is the DB
+ *  entity_kind ('task' | 'time_block') or '' for both. `after*` is the last-seen
+ *  (entity_kind, entity_id); fetch `limit + 1` to detect a next page. */
+export function pageEntitiesForTag(
+  tagId: string,
+  owner: string,
+  kind: string,
+  afterKind: string,
+  afterId: string,
+  limit: number,
+): EntityRef[] {
+  return pageEntitiesStmt.all(
+    tagId, owner, kind, kind, // task branch
+    tagId, owner, kind, kind, // time_block branch
+    afterKind, afterKind, afterId, limit,
+  ) as EntityRef[];
+}
+
+/** Total (owner-scoped, deduped) entities a tag is applied to, kind-filtered as above. */
+export function countEntitiesForTag(tagId: string, owner: string, kind: string): number {
+  return n(countEntitiesStmt.get(tagId, owner, kind, kind, tagId, owner, kind, kind));
+}
