@@ -62,10 +62,20 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
  *  the client actually sent are forwarded (an absent key stays absent = PATCH-preserve). */
 function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
   const out: SvcUpdateInput = {};
-  if ('title' in input) out.title = input.title as string;
+
+  if ('title' in input) {
+    if (input.title === null) throw new GraphQLError('title cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.title = input.title as string;
+  }
   if ('notes' in input) out.notes = input.notes as string | null;
-  if ('status' in input) out.status = input.status as string;
-  if ('priority' in input) out.priority = input.priority as number;
+  if ('status' in input) {
+    if (input.status === null) throw new GraphQLError('status cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.status = input.status as string;
+  }
+  if ('priority' in input) {
+    if (input.priority === null) throw new GraphQLError('priority cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.priority = input.priority as number;
+  }
   if ('subtype' in input && input.subtype != null) out.subtype = String(input.subtype).toLowerCase() as SvcUpdateInput['subtype'];
   if ('estimatedMinutes' in input) out.estimated_minutes = input.estimatedMinutes as number | null;
   if ('dueAt' in input) out.due_at = input.dueAt as string | null;
