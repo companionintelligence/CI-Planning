@@ -50,6 +50,8 @@ interface SurfaceConfig {
   maxLen: number;
   /** Rolling-window size for the anti-repetition memory (§2V.3, per-surface K). */
   historyK: number;
+  /** Shape/length guidance for the model prompt (microcopy line vs. short paragraph). */
+  lengthHint: string;
   /** The datum strings that MUST appear in the line (grounding, §2V.4). */
   required: (p: Payload) => string[];
   /** The deterministic fact block handed to the model. */
@@ -67,9 +69,12 @@ const str = (v: Payload[string]): string => (v == null ? '' : String(v));
 // ── The surface catalog (§2V.6) ──────────────────────────────────────────────────
 // K per §2V.3: high-frequency (daily+) ≈30, medium ≈14, low ≈4.
 
+const LINE_HINT = 'one short line, verb-first';
+const PARA_HINT = '3-5 sentences, no bullet lists, no preamble';
+
 export const SURFACES: Record<Surface, SurfaceConfig> = {
   timing_note: {
-    tier: 'small', maxLen: 140, historyK: 30,
+    tier: 'small', maxLen: 140, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => [str(p.planned_departure)],
     facts: (p) =>
       `planned_departure=${str(p.planned_departure)}${p.next ? `, next="${str(p.next)}"` : ''}` +
@@ -84,7 +89,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   t4_whats_next: {
-    tier: 'small', maxLen: 140, historyK: 30,
+    tier: 'small', maxLen: 140, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => (p.next_time ? [str(p.next_time)] : []),
     facts: (p) =>
       p.next ? `block ended, next="${str(p.next)}" at ${str(p.next_time)}` : 'block ended, nothing scheduled after it',
@@ -97,7 +102,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   departure_prompt: {
-    tier: 'small', maxLen: 160, historyK: 30,
+    tier: 'small', maxLen: 160, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => [str(p.minutes_over)],
     facts: (p) =>
       `keeping this block ${str(p.minutes_over)} more minutes${p.next ? ` runs into "${str(p.next)}" at ${str(p.next_time)}` : ''}`,
@@ -110,7 +115,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   calibration_chip: {
-    tier: 'small', maxLen: 120, historyK: 30,
+    tier: 'small', maxLen: 120, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => [str(p.suggested)],
     facts: (p) =>
       `similar work tends to run ${p.direction === 'under' ? 'shorter' : 'longer'} than estimated; suggested=${str(p.suggested)} minutes` +
@@ -124,7 +129,7 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
   },
 
   nudge: {
-    tier: 'small', maxLen: 160, historyK: 30,
+    tier: 'small', maxLen: 160, historyK: 30, lengthHint: LINE_HINT,
     required: (p) => (p.datum != null ? [str(p.datum)] : []),
     facts: (p) => `${str(p.fact)}${p.datum != null ? ` (datum=${str(p.datum)})` : ''}`,
     fallbacks: [
@@ -135,53 +140,42 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
     ],
   },
 
-  // Medium-tier narratives. K≈14; longer budgets. The full deterministic fallback
-  // for these lives in agents/summarize.ts today (fallbackProse / fallbackEveningProse);
-  // when those callers route through renderCopy they pass their own richer facts.
+  // Medium-tier narratives (§2V.1). These are short paragraphs, not one-liners, so
+  // maxLen is a generous guardrail (not the brevity control — the prompt is). The
+  // caller owns the deterministic fallback: it passes its rich `facts` for the model
+  // AND a ready-to-show `fallback` paragraph (summarize.ts's fallbackProse /
+  // fallbackEveningProse). The offline template emits that paragraph verbatim — a
+  // hand-authored opener pool would be strictly worse than the real deterministic prose.
   daily_brief: {
-    tier: 'medium', maxLen: 400, historyK: 14,
+    tier: 'medium', maxLen: 800, historyK: 14, lengthHint: PARA_HINT,
     required: () => [],
     facts: (p) => str(p.facts),
-    fallbacks: [
-      (p) => `Here's the shape of the day. ${str(p.facts)}`,
-      (p) => `Today at a glance: ${str(p.facts)}`,
-      (p) => `Where things stand — ${str(p.facts)}`,
-      (p) => `The day ahead. ${str(p.facts)}`,
-    ],
+    fallbacks: [(p) => str(p.fallback) || str(p.facts)],
   },
 
   eod_alignment: {
-    tier: 'medium', maxLen: 400, historyK: 14,
+    tier: 'medium', maxLen: 800, historyK: 14, lengthHint: PARA_HINT,
     required: () => [],
     facts: (p) => str(p.facts),
-    fallbacks: [
-      (p) => `How today landed: ${str(p.facts)}`,
-      (p) => `Looking back on the day — ${str(p.facts)}`,
-      (p) => `Where the day ended up. ${str(p.facts)}`,
-      (p) => `Today, in review: ${str(p.facts)}`,
-    ],
+    fallbacks: [(p) => str(p.fallback) || str(p.facts)],
   },
 
   weekly_review: {
-    tier: 'medium', maxLen: 500, historyK: 4,
+    tier: 'medium', maxLen: 900, historyK: 4, lengthHint: PARA_HINT,
     required: () => [],
     facts: (p) => str(p.facts),
-    fallbacks: [
-      (p) => `The week in review. ${str(p.facts)}`,
-      (p) => `Stepping back on the week — ${str(p.facts)}`,
-      (p) => `How the week went: ${str(p.facts)}`,
-      (p) => `Week's shape. ${str(p.facts)}`,
-    ],
+    fallbacks: [(p) => str(p.fallback) || str(p.facts)],
   },
 };
 
-/** The Voice rules card, embedded in every prompt (§2V.4). */
-const VOICE_RULES = `You write one short line of app copy. Voice: warm, plain, brief.
+/** The Voice rules card, embedded in every prompt (§2V.4). Shape/length is per-surface
+ *  (see lengthHint) so the same voice covers a one-line nudge and a short paragraph. */
+const VOICE_RULES = `You write app copy for a calm planning tool. Voice: warm, plain, brief.
 Sentence case, contractions, verb-first. State the fact, then at most one light
 forward nudge. No praise, no confetti, no exclamation marks, no emoji.
 Never use: successfully, simply, just, unlock, leverage, seamless, empower,
 "great job", "keep it up", "you've got this", "let's". Reference the real numbers
-and names given; never invent. Output ONLY the line — no preamble, no quotes.`;
+and names given; never invent. Output ONLY the copy — no preamble, no quotes.`;
 
 const MODEL_ATTEMPTS = 2; // initial draft + one regeneration (§2V.2: "regenerate once"; ceiling is ≤2 retries)
 
@@ -200,7 +194,7 @@ function buildPrompt(cfg: SurfaceConfig, p: Payload, recent: Signature[], failur
     VOICE_RULES,
     ``,
     `Facts: ${cfg.facts(p)}`,
-    `Length: at most ${cfg.maxLen} characters.`,
+    `Length: ${cfg.lengthHint} (hard cap ${cfg.maxLen} characters).`,
     avoid.length ? `Avoid opening like any of these recent lines: ${avoid.map((a) => `"${a}"`).join(', ')}.` : ``,
     `Vary the opener and structure from anything recent.`,
     failure ? `Your previous attempt was rejected (${failure}); fix that and try a different shape.` : ``,
@@ -209,10 +203,19 @@ function buildPrompt(cfg: SurfaceConfig, p: Payload, recent: Signature[], failur
     .join('\n');
 }
 
-/** Strip a model's stray quoting/preamble down to a single clean line. */
-function cleanLine(raw: string): string {
+/**
+ * Clean a model completion. For a one-line surface, take the first non-empty line
+ * (a stray preamble line is dropped; VOICE_RULES already asks for no preamble). For a
+ * paragraph surface, keep the whole thing — collapsing to one line would shear a 3-5
+ * sentence brief. Surrounding quotes/backticks are stripped either way.
+ */
+function cleanLine(raw: string, multiline: boolean): string {
+  const stripQuotes = (s: string) => s.replace(/^["'`]+|["'`]+$/g, '').trim();
+  if (multiline) {
+    return stripQuotes(raw.trim().replace(/\n{3,}/g, '\n\n'));
+  }
   const first = raw.trim().split('\n').map((l) => l.trim()).find(Boolean) ?? '';
-  return first.replace(/^["'`]|["'`]$/g, '').trim();
+  return stripQuotes(first);
 }
 
 function readRecent(ownerId: string, surface: Surface, k: number): Signature[] {
@@ -287,7 +290,7 @@ export async function renderCopy(
       logger.warn('renderCopy: model unavailable, using fallback pool', { surface, err: (err as Error).message });
       break; // Ollama down → straight to the rotation pool
     }
-    const text = cleanLine(raw);
+    const text = cleanLine(raw, cfg.tier === 'medium');
     const g = gateCopy(text, { required, recent, maxLen: cfg.maxLen });
     if (g.ok) {
       record(ownerId, surface, g.signature, cfg.historyK);
@@ -295,6 +298,11 @@ export async function renderCopy(
     }
     failure = g.reason;
   }
+
+  // The model produced text but the gate rejected every attempt (distinct from the
+  // Ollama-down break above, which already logged). Surface the reason so a too-strict
+  // rule / bad temperature that silently forces fallbacks is observable, not invisible.
+  if (failure) logger.warn('renderCopy: gate rejected all model drafts, using fallback pool', { surface, reason: failure });
 
   // Escape hatch: deterministic rotation pool with datum-slotting.
   const fb = pickFallback(cfg, payload, recent);
