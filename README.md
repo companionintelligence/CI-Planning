@@ -53,7 +53,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>15 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0097 on boot]
+        Migrate[Migration runner<br/>0001 → 0105 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -109,7 +109,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0097 ordered list
+                                    // migrations from the 0001–0105 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -343,7 +343,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0097): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0105): tasks, subtasks, time blocks, tags,
   entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
   block_templates, scheduled_jobs, reminders, push_subscriptions,

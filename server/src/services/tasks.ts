@@ -41,6 +41,18 @@ import { writeAudit } from '../lib/audit.js';
 /** A full drizzle `tasks` row (camelCase) — the shape `taskToApi` serializes. */
 export type TaskRow = typeof tasks.$inferSelect;
 
+/**
+ * Resolve a client-supplied `parent_id` within the caller's own namespace (W3.1b).
+ * Returns the id only when it names one of `ownerId`'s tasks; a foreign or unknown
+ * id is dropped to `null` (no dangling cross-tenant parent ref, no existence leak).
+ * `undefined`/`null` in → `null` out (top-level task).
+ */
+function ownedTaskId(ownerId: string, id: string | null | undefined): string | null {
+  if (!id) return null;
+  const row = sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId);
+  return row ? id : null;
+}
+
 export type Subtype = 'standard' | 'habit' | 'quick';
 
 /**
@@ -107,7 +119,8 @@ export type CreateTaskInput = {
   task_time?: string;
   estimated_minutes?: number;
   priority?: number;
-  owner_id?: string;
+  // NOTE: no `owner_id` — the owner is ALWAYS the authenticated caller (W3.1b). A
+  // client body `owner_id` is ignored (was a cross-tenant task-injection IDOR).
   parent_id?: string;
   tags?: string[];
   secondary_tags?: string[];
@@ -136,6 +149,10 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
   // CON-2c: resolve subtype ⇄ is_habit/is_fast_task once.
   const sw = subtypeWrite(input);
 
+  // W3.1b: a parent_id must be one of the caller's own tasks — a foreign parent_id
+  // is dropped (would otherwise be a dangling cross-tenant ref). null = top-level.
+  const parentId = ownedTaskId(ownerId, input.parent_id);
+
   const [task] = await db
     .insert(tasks)
     .values({
@@ -148,8 +165,8 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
       taskTime: input.task_time,
       estimatedMinutes: input.estimated_minutes,
       priority: input.priority ?? 3,
-      parentId: input.parent_id,
-      ownerId: input.owner_id ?? ownerId,
+      parentId: parentId,
+      ownerId, // W3.1b: always the authenticated caller — never a client body owner_id.
       ...(sw ?? {}),
     })
     .returning();
@@ -158,7 +175,8 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
     applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
   if (Array.isArray(input.depends_on)) {
     try {
-      setDependencies(task.id, input.depends_on);
+      // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
+      setDependencies(task.id, input.depends_on, ownerId);
     } catch (err) {
       if (err instanceof DependencyCycleError) return { ok: false, error: 'dependency_cycle', detail: err.message };
       throw err;
@@ -166,7 +184,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
   }
   syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
   // §H: creating a subtask promotes its parent to an objective (task list star).
-  if (input.parent_id) ensureTaskPromoted(input.parent_id, input.owner_id ?? ownerId);
+  if (parentId) ensureTaskPromoted(parentId, ownerId);
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${task.id}` });
   return { ok: true, task };
@@ -190,7 +208,7 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
   if (!parsed.ok) return { ok: false, error: 'invalid_rule', message: parsed.error };
 
   const sw = subtypeWrite(input);
-  const owner = input.owner_id ?? ownerId;
+  const owner = ownerId; // W3.1b: always the authenticated caller — never a client body owner_id.
   const tz = ownerTimezone(owner);
   const [template] = await db
     .insert(tasks)
@@ -303,7 +321,12 @@ export async function updateTask(
   if (input.priority !== undefined)          update.priority = input.priority;
   if (input.status !== undefined)            update.status = input.status;
   if (input.completed_at !== undefined)      update.completedAt = input.completed_at;
-  if (input.parent_id !== undefined)         update.parentId = input.parent_id;
+  // W3.1b: re-parenting must target a caller-owned task; a foreign parent_id is
+  // dropped to null (an explicit null un-parents). `parentIdSet` remembers a
+  // parent_id was in the PATCH; `newParentId` is the validated value written.
+  const parentIdSet = input.parent_id !== undefined;
+  const newParentId = parentIdSet ? ownedTaskId(ownerId, input.parent_id) : null;
+  if (parentIdSet)                           update.parentId = newParentId;
   const sw = subtypeWrite(input);
   if (sw) update.subtype = sw.subtype;
   if (input.recurrence_dtstart !== undefined) update.recurrenceDtstart = input.recurrence_dtstart;
@@ -337,7 +360,8 @@ export async function updateTask(
 
   if (Array.isArray(input.depends_on)) {
     try {
-      setDependencies(targetId, input.depends_on);
+      // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
+      setDependencies(targetId, input.depends_on, ownerId);
     } catch (err) {
       if (err instanceof DependencyCycleError) {
         return { ok: false, error: 'dependency_cycle', detail: err.message, targetId, updatedFields };
@@ -348,8 +372,8 @@ export async function updateTask(
   syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
   // §H: re-parenting a task UNDER another promotes that parent to an objective; moving
   // it AWAY may leave the old parent empty → GC that parent's pristine auto-objective.
-  if (input.parent_id) ensureTaskPromoted(input.parent_id, ownerId);
-  if (input.parent_id !== undefined && prevParentId && prevParentId !== input.parent_id) {
+  if (newParentId) ensureTaskPromoted(newParentId, ownerId);
+  if (parentIdSet && prevParentId && prevParentId !== newParentId) {
     unpromoteIfEmpty(prevParentId, ownerId);
   }
 
