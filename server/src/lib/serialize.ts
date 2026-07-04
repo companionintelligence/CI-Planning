@@ -44,3 +44,17 @@ export function taskToApi<T extends Record<string, unknown>>(row: T): Record<str
   api.is_fast_task = subtype === 'quick';
   return api;
 }
+
+/**
+ * Serialize a time_blocks row to API shape, attaching its secondary (level>1) tags —
+ * always present on the read surface (Phase 5). `rationale` (the §A3 "why now" join
+ * from daily_plan) is deliberately NOT attached here: only `fetchBlocksForRange`
+ * (the GET/export read paths) attaches it, matching the pre-extraction behavior where
+ * create/update responses never carried a rationale field. Callers that need it (the
+ * range read) attach it themselves on top of this, exactly as before (Phase W · W3.2).
+ */
+export function toBlockApi<T extends Record<string, unknown>>(row: T, secondaryTags: string[]): Record<string, unknown> {
+  const api = toApi(row);
+  api.secondary_tags = secondaryTags;
+  return api;
+}
