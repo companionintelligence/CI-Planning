@@ -43,6 +43,14 @@ export function Calendar() {
   const [anchor, setAnchor] = createSignal(localISODate());
   const [runningSchedule, setRunningSchedule] = createSignal(false);
 
+  // Wave-3 item 5: any date in week/month view is selectable; selecting it shows the
+  // day-type picker for THAT date. Day view has one unambiguous date (the anchor) and
+  // keeps its always-on control, so this signal only drives week/month. Per-session,
+  // default none.
+  const [selectedDate, setSelectedDate] = createSignal<string | null>(null);
+  // The date the day-type picker targets: the anchor in day view, else the selection.
+  const dayTypeDate = createMemo(() => (view() === 'day' ? anchor() : selectedDate()));
+
   // The local days the current view spans (drives both the grid and the fetch).
   const visibleDays = createMemo<string[]>(() => {
     switch (view()) {
@@ -355,10 +363,35 @@ export function Calendar() {
         </div>
       </Show>
 
-      {/* Day-type assignment for the focused date — day view only (unambiguous date). */}
+      {/* Day-type assignment. Day view targets its single unambiguous date (the anchor).
+          Week/month views show the same control once a date is selected (click a week
+          day-header or a month cell's date number). */}
       <Show when={view() === 'day'}>
         <div class="mb-3 p-3 rounded-lg border border-surface-700/60 bg-surface-800">
           <DayTypeControl date={anchor()} />
+        </div>
+      </Show>
+      <Show when={view() !== 'day'}>
+        <div class="mb-3 p-3 rounded-lg border border-surface-700/60 bg-surface-800">
+          <Show
+            when={dayTypeDate()}
+            fallback={
+              <p class="text-xs text-slate-500">
+                Select a date {view() === 'week' ? '(click a day header)' : "(click a cell's date)"} to set its day type.
+              </p>
+            }
+          >
+            {(d) => (
+              <>
+                <div class="mb-2 text-[11px] uppercase tracking-wide text-slate-500">
+                  {new Date(d() + 'T12:00:00Z').toLocaleDateString('en-US', {
+                    weekday: 'long', month: 'long', day: 'numeric',
+                  })}
+                </div>
+                <DayTypeControl date={d()} />
+              </>
+            )}
+          </Show>
         </div>
       </Show>
 
@@ -375,6 +408,10 @@ export function Calendar() {
           notedDays={notedDays}
           starsByDay={starsByDay}
           onOpenNote={openNote}
+          // Wave-3 item 5: select any date (week header / month cell number) to set its
+          // day type. The picker renders above, keyed off the selection.
+          selectedDate={selectedDate}
+          onSelectDate={setSelectedDate}
           // Wave-3 item 10: clicking an empty slot adds a TASK auto-scheduled at that
           // time. Defaulting to `kind: 'task'` (not the type chooser) + threading the
           // clicked day/time into the task's own schedule fields (see ElementWizard's

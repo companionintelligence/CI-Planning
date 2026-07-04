@@ -266,6 +266,10 @@ interface Props {
   onOpenNote?: (day: string) => void;
   /** Phase O · O3 — per-date star tally (month view heatmap). date → DayStar. */
   starsByDay?: () => Record<string, DayStar>;
+  /** Wave-3 item 5 — the currently selected date (drives the day-type picker), or null. */
+  selectedDate?: () => string | null;
+  /** Wave-3 item 5 — select a date (week header / month cell number) to set its day type. */
+  onSelectDate?: (day: string) => void;
 }
 
 export function CalendarGrid(props: Props) {
@@ -302,23 +306,36 @@ export function CalendarGrid(props: Props) {
               class="py-2 text-center border-l border-surface-700/60"
               classList={{ 'text-accent-light': day === today() }}
             >
-              <div class="text-[10px] uppercase tracking-wide text-slate-500">
-                {dayLabel(day, { weekday: 'short' })}
-              </div>
-              <div class="flex items-center justify-center gap-1">
+              {/* Wave-3 item 5: the day name+number is a button — click to select this
+                  date and set its day type. It lives in the header lane, not the time
+                  grid, so it never competes with the empty-slot add-task handler. */}
+              <button
+                type="button"
+                aria-pressed={props.selectedDate?.() === day}
+                title={props.onSelectDate ? 'Select this date to set its day type' : undefined}
+                class="mx-auto flex flex-col items-center rounded-md px-2 py-0.5 transition-colors"
+                classList={{
+                  'cursor-pointer hover:bg-surface-700/60': !!props.onSelectDate,
+                  'ring-1 ring-accent bg-accent/10': props.selectedDate?.() === day,
+                }}
+                onClick={() => props.onSelectDate?.(day)}
+              >
+                <div class="text-[10px] uppercase tracking-wide text-slate-500">
+                  {dayLabel(day, { weekday: 'short' })}
+                </div>
                 <div class="text-sm font-semibold" classList={{ 'text-slate-200': day !== today() }}>
                   {dayLabel(day, { day: 'numeric' })}
                 </div>
-                <Show when={props.notedDays?.().has(day)}>
-                  <button
-                    class="text-slate-400 hover:text-accent-light transition-colors"
-                    title="This day has a note"
-                    onClick={() => props.onOpenNote?.(day)}
-                  >
-                    <NotebookPen size={11} />
-                  </button>
-                </Show>
-              </div>
+              </button>
+              <Show when={props.notedDays?.().has(day)}>
+                <button
+                  class="text-slate-400 hover:text-accent-light transition-colors mt-0.5"
+                  title="This day has a note"
+                  onClick={() => props.onOpenNote?.(day)}
+                >
+                  <NotebookPen size={11} />
+                </button>
+              </Show>
             </div>
           )}
         </For>
@@ -414,6 +431,7 @@ export function CalendarGrid(props: Props) {
                   'opacity-45': !inMonth(),
                   'border-t-0': i() < 7,
                   'cursor-pointer': !!props.onCreateAt,
+                  'ring-1 ring-inset ring-accent': props.selectedDate?.() === day,
                 }}
                 // Perfect day (5/5): tint the whole cell gold — the heatmap payoff.
                 style={perfect() ? { 'background-color': `${STAR_GOLD}1a`, 'border-color': `${STAR_GOLD}66` } : undefined}
@@ -421,16 +439,24 @@ export function CalendarGrid(props: Props) {
                 onClick={() => props.onCreateAt?.(day, '09:00')}
               >
                 <div class="flex items-center justify-between mb-1">
-                  <span
-                    class="text-xs font-mono tabular-nums"
+                  {/* Wave-3 item 5: the date number selects this date (to set its day
+                      type). stopPropagation keeps the cell's empty-space add-task click
+                      from also firing. */}
+                  <button
+                    type="button"
+                    aria-pressed={props.selectedDate?.() === day}
+                    title={props.onSelectDate ? 'Select this date to set its day type' : undefined}
+                    class="text-xs font-mono tabular-nums rounded transition-colors"
                     classList={{
                       'text-slate-400': inMonth() && !isToday(),
                       'text-slate-600': !inMonth(),
                       'inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-surface-950 font-semibold': isToday(),
+                      'hover:bg-surface-700/60': !!props.onSelectDate && !isToday(),
                     }}
+                    onClick={(e) => { e.stopPropagation(); props.onSelectDate?.(day); }}
                   >
                     {dayLabel(day, { day: 'numeric' })}
-                  </span>
+                  </button>
                   <div class="flex items-center gap-1">
                     {/* Star heatmap: a perfect day collapses to one glowing star; else up to 5 gold pips. */}
                     <Show
