@@ -2,9 +2,10 @@
 # and mutation reads/writes through services/tasks.ts (Decision 3), never re-deriving
 # owner-scoping against the DB (re-derivation is how this phase's IDOR bugs appeared).
 #
-# `implements Node` only — NOT Taggable: EntityTagType.taggedAt is DateTime! but
-# entity_tags has no timestamp column until W4's migration, so the `tags` field is
-# deferred to W4. `objective` is deferred to W8 (ObjectiveType doesn't exist yet).
+# `implements Node & Taggable` (W4a): the `tags` forward edge reads the tags applied to
+# this task (entity_tags, all levels). EntityTagType.taggedAt is now backed by
+# entity_tags.created_at (migration 0110). The reverse edge (TagType.entities) is W4b.
+# `objective` is deferred to W8 (ObjectiveType doesn't exist yet).
 #
 # `status` is a plain String, NOT an enum: tasks.status is a free-form TEXT column with
 # no CHECK, and code writes at least open/scheduled/in_progress/done/cancelled/deferred/
@@ -17,7 +18,7 @@
 
 enum TaskSubtype { STANDARD HABIT QUICK }
 
-type TaskType implements Node {
+type TaskType implements Node & Taggable {
   id: ID!
   title: String!
   notes: String
@@ -32,6 +33,7 @@ type TaskType implements Node {
   parent: TaskType                  # parent_id
   subtasks(first: Int, after: String): TaskConnection!   # forward-only (last/before unimplemented → omitted)
   dependsOn: [TaskType!]!           # task_dependencies.depends_on_id
+  tags: [EntityTagType!]!           # W4a: tags applied to this task (entity_tags, all levels)
 }
 
 type TaskConnection implements Connection {

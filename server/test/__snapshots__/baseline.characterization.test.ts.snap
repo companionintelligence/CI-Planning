@@ -809,6 +809,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "entity_id",
       "tag_id",
       "level",
+      "created_at",
     ],
     "table": "entity_tags",
   },
