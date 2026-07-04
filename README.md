@@ -104,10 +104,11 @@ graph TB
 
     subgraph Server["Koa Server — port 3848"]
         API[REST API<br/>20+ route modules]
+        GQL[GraphQL /api/graphql<br/>Apollo, alongside REST — Phase W]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>15 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0105 on boot]
+        Migrate[Migration runner<br/>0001 → 0110 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -128,8 +129,10 @@ graph TB
     end
 
     UI -->|"fetch /api/*"| API
+    UI -->|"POST /api/graphql"| GQL
     Store -->|SSE stream| SSE
     API --> Engine
+    GQL --> Drizzle
     API --> Drizzle
     Cron --> Drizzle
     Cron --> Ollama
@@ -163,7 +166,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0105 ordered list
+                                    // migrations from the 0001–0110 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -174,7 +177,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0105_revert_direction_axis`) produce the following tables:
+Migrations (current head: `0110_entity_tags_created_at`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -187,7 +190,7 @@ Migrations (current head: `0105_revert_direction_axis`) produce the following ta
 | `possible_tasks` | Inbox queue — AI-proposed items pending promote / dismiss |
 | `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community) or `intention` |
 | `tag_directions` | Many-to-many: intention tags grouped under direction tags (0043 briefly renamed this to `tag_patterns`; reverted in 0105) |
-| `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3) |
+| `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3); carries `created_at` (`NOT NULL DEFAULT CURRENT_TIMESTAMP`, table rebuilt in 0110) backing GraphQL `EntityTagType.taggedAt` |
 | `possible_task_tags` | Tags proposed alongside an inbox item |
 | `patterns` | Routines — typed, reusable task collections with optional recurrence |
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
@@ -202,6 +205,8 @@ Migrations (current head: `0105_revert_direction_axis`) produce the following ta
 | `push_subscriptions` | Web Push endpoints per owner (VAPID), for backgrounded delivery (Phase H, 0044) |
 | `audit_log` | Append-only mutation log (owner, actor, action, entity) written by every mutating route (Phase R, 0046) |
 | `api_keys` | Hashed `x-api-key` credentials for `AUTH_MODE=standalone` (0049) |
+| `auth_states` | Single-use pre-login CI-Portal OIDC PKCE/state rows, consumed at the callback (Phase U, 0102) |
+| `password_reset_tokens` | Single-use local-login password-reset tokens (Phase V, 0104) |
 | `connection_tokens` | Encrypted OAuth tokens per `(owner, provider, account)` — AES-256-GCM sealed with `CP_KEK_B64`; `status` ∈ `active`/`revoked`/`error` (Phase J 0050; `status` 0058) |
 | `external_events` | Sync identity map linking provider events ↔ local `time_blocks` by `(provider, account, external_id)` + etag/direction (Phase J 0051) |
 | `outbound_queue` | Local blocks pending push to a provider — one row per `(block, provider, account)`, drained by the sync agent when `CP_SYNC_WRITEBACK` is on (Phase J 0057) |
@@ -214,7 +219,8 @@ Migrations (current head: `0105_revert_direction_axis`) produce the following ta
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
-| `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083) |
+| `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083; scope columns 0107) |
+| `copy_history` | Time-Sense voice-loop anti-repetition log — not included in owner export (0109) |
 
 ## See it in action
 
@@ -311,6 +317,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Recurrence horizon** — a Settings control (7/15/30/60/90/180 days) bounding how far ahead recurring Routines/Habits/Time-Blocks materialize; lowering it prunes future auto-placed instances (snapshotted first, reversible by raising it back) without touching the underlying recurrence rule
 - **Clear Date Range** — a Settings tool to preview-then-clear any date range from the Planner (bounded → skips just that window and stays reversible; open-ended → permanently caps the recurrence rule); every apply snapshots the DB first and is fully audited
 - **Multi-device sync** — IndexedDB offline write log, field-level merge (not whole-record LWW) covering Tasks, Time Blocks, and Objectives (+ objective↔task links), monotonic guards so a stale offline op can't un-complete a task or revert a `scheduled` task to `open`, `Last-Event-ID` SSE catch-up replay for reconnecting devices (Phase L)
+- **GraphQL layer (in progress)** — a GraphQL CRUD surface is being added at `POST /api/graphql` (Apollo Server 5) **alongside** the authoritative REST API; it reuses the same owner-scoped service layer, so REST is untouched (Phase W)
 
 ## How it works
 
@@ -397,7 +404,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0105): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0110): tasks, subtasks, time blocks, tags,
   entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
   block_templates, scheduled_jobs, reminders, push_subscriptions,
@@ -561,11 +568,6 @@ Already have other models? Skip the pulls and set `OLLAMA_SMALL` / `OLLAMA_MEDIU
 at `GET /api/llm/status` (`available` + installed `models`). A model that's configured
 but not pulled fails with an actionable `ollama pull …` error.
 
-> **Note (Node 24):** `pnpm dev` uses `tsx watch` which silently crashes under
-> Node 24. If you can't upgrade, run the server without watch mode:
-> `cd server && PORT=3848 pnpm exec tsx src/index.ts`
-> and the Vite client separately: `cd client && pnpm dev`
-
 Production-style run (build client into `server/public`, serve everything on 3848):
 
 ```bash
@@ -625,6 +627,7 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
+| POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, in progress) |
 
 ## Tests
 
