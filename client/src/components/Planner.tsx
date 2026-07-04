@@ -624,10 +624,10 @@ export function Planner() {
 
   // Segmented day axis: the whole day renders at natural height with the two night
   // regions collapsed to expandable bars by default (both collapsed — matches the
-  // calendar). Two per-session (not persisted) signals drive the axis; this REPLACED
-  // the old 4/8/16h clipped zoom window so no hour is ever unreachable.
-  // Collapse state lives in the store so it hydrates from + persists to view_prefs.planner
-  // (cross-device, migration 0111) — mirrors the calendar's collapse persistence.
+  // calendar); this REPLACED the old 4/8/16h clipped zoom window so no hour is ever
+  // unreachable. Collapse state is store-backed (not a local signal) so it hydrates
+  // from + persists to view_prefs.planner (cross-device, migration 0111) — mirroring
+  // the calendar's collapse persistence.
   const axisState = plannerAxisState;
 
   // A minute ticker so "next up" (and the now line) advance over the day.

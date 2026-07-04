@@ -322,7 +322,7 @@ function persistViewPrefs() {
 // so restoring saved state doesn't immediately echo it back (and the initial
 // all-on defaults don't overwrite a saved override before it loads).
 createEffect(() => {
-  // Track all three so the effect re-runs on any of them.
+  // Track all four so the effect re-runs on any of them.
   overlayAxes();
   overlayPrio();
   calendarAxisState();
