@@ -40,8 +40,13 @@ export function splitTagString(raw: string | null | undefined): string[] {
 
 const findTag = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`);
 const makeTag = sqlite.prepare(`INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id`);
+// W4a: stamp created_at on every insert (the SOLE write path into entity_tags), so
+// GraphQL's EntityTagType.taggedAt (DateTime!) is always non-null on new rows. Existing
+// rows were backfilled in migration 0110. A real ISO-8601 UTC instant, matching the
+// column's TEXT storage everywhere else in the app.
 const insertAssoc = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES (?, ?, ?, ?)`,
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level, created_at)
+     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
 );
 const deleteEntity = sqlite.prepare(`DELETE FROM entity_tags WHERE entity_kind = ? AND entity_id = ?`);
 const selectNames = sqlite.prepare(
@@ -179,6 +184,28 @@ const selectLevels = sqlite.prepare(
 /** An entity's tags with their levels (cockpit-v2 Phase 5: top=1, secondary>1). */
 export function entityTagLevels(kind: EntityKind, entityId: string): { name: string; level: number }[] {
   return selectLevels.all(kind, entityId) as { name: string; level: number }[];
+}
+
+// ── GraphQL Taggable forward edge (Phase W · W4a) ─────────────────────────────
+// The full EntityTagType shape (id + name + application time) for ONE entity. Returns
+// ALL levels — the honest "every tag applied to this entity"; the level distinction is
+// planner-internal and EntityTagType doesn't expose it. Deterministically ordered
+// (level, name) so the connection is stable. Owner-safe: the caller only resolves this
+// on an already-owner-scoped Task/TimeBlock (fetched via getTask/getBlock), so the joined
+// tags are that owner's. `created_at` is COALESCEd to '' only defensively — 0110 backfilled
+// every existing row and insertAssoc stamps every new one, so it is non-null in practice.
+const selectEntityTagsFull = sqlite.prepare(
+  `SELECT tags.id AS tagId, tags.name AS name, entity_tags.created_at AS createdAt
+     FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
+    WHERE entity_tags.entity_kind = ? AND entity_tags.entity_id = ?
+    ORDER BY entity_tags.level, tags.name`,
+);
+/** Full tag rows for a single entity (GraphQL Taggable). tagId + name + createdAt. */
+export function entityTagsFull(
+  kind: EntityKind,
+  entityId: string,
+): { tagId: string; name: string; createdAt: string }[] {
+  return selectEntityTagsFull.all(kind, entityId) as { tagId: string; name: string; createdAt: string }[];
 }
 
 /**
