@@ -2,6 +2,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { DateTimeScalar, JSONScalar } from './scalars.js';
 import { tagResolvers } from './tag-resolvers.js';
 import { taskResolvers } from './task-resolvers.js';
+import { blockResolvers } from './block-resolvers.js';
 
 /**
  * Root resolver map. Entity resolvers live in per-type modules (e.g. tag-resolvers.ts)
@@ -17,11 +18,14 @@ export const resolvers = {
     viewer: () => ({ ownerId: currentOwnerId(), serverTime: new Date() }),
     ...tagResolvers.Query,
     ...taskResolvers.Query,
+    ...blockResolvers.Query,
   },
   Mutation: {
     ...tagResolvers.Mutation,
     ...taskResolvers.Mutation,
+    ...blockResolvers.Mutation,
   },
   TagType: tagResolvers.TagType,
   TaskType: taskResolvers.TaskType,
+  TimeBlockType: blockResolvers.TimeBlockType,
 };

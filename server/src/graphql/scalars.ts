@@ -5,16 +5,24 @@ import { GraphQLScalarType, Kind, type ValueNode } from 'graphql';
  *
  * `DateTime` — ISO-8601 UTC string on the wire; resolvers may return a `Date` or a
  * string. `JSON` — an arbitrary JSON value passed through untouched.
+ *
+ * INPUT coercion (parseValue/parseLiteral) returns a normalized ISO-8601 **string**, not
+ * a `Date`. Every downstream service in this app stores time as ISO-string TEXT columns
+ * and builds raw column objects, so a `Date` reaching a text column throws better-sqlite3's
+ * "can only bind numbers, strings, bigints, buffers, and null" (a latent 500 on any
+ * `DateTime` input — e.g. TaskType `dueAt`/`completedAt`, TimeBlockType `startAt`/`endAt`).
+ * Normalizing to a string here is the single, leak-proof fix; resolvers receive a string
+ * they can hand straight to a service. Validation is preserved (a bad ISO still throws).
  */
-// Parse + validate an ISO string into a Date, throwing (not returning Invalid Date) so a
-// bad input surfaces as a GraphQL error instead of being silently coerced.
-function toValidDate(input: string): Date {
+// Validate an ISO string, throwing (not returning Invalid Date) so a bad input surfaces
+// as a GraphQL error, and return it normalized to a canonical UTC ISO-8601 string.
+function toIsoString(input: string): string {
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) throw new TypeError(`DateTime is not a valid ISO-8601 string: ${input}`);
-  return d;
+  return d.toISOString();
 }
 
-export const DateTimeScalar = new GraphQLScalarType<Date | null, string>({
+export const DateTimeScalar = new GraphQLScalarType<Date | string, string>({
   name: 'DateTime',
   description: 'An ISO-8601 UTC date-time string.',
   serialize(value) {
@@ -24,11 +32,11 @@ export const DateTimeScalar = new GraphQLScalarType<Date | null, string>({
   },
   parseValue(value) {
     if (typeof value !== 'string') throw new TypeError('DateTime must be an ISO string');
-    return toValidDate(value);
+    return toIsoString(value);
   },
   parseLiteral(ast) {
     if (ast.kind !== Kind.STRING) throw new TypeError('DateTime must be provided as a string literal');
-    return toValidDate(ast.value);
+    return toIsoString(ast.value);
   },
 });
 

@@ -5,6 +5,7 @@ import { toApi, toApiList, toBlockApi } from '../lib/serialize.js';
 import { localISODate } from '../lib/dates.js';
 import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
 import { placeTasksInBlock, type PlaceTasksResult } from '../engine/blocks-place.js';
@@ -16,11 +17,12 @@ import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, r
  * Time-Block CRUD orchestration (Phase W step 3.2) — extracted from routes/blocks.ts so
  * REST + GraphQL (the coming TimeBlockType resolver, W3.3) share ONE implementation.
  * Mirrors the services/tasks.ts extraction (W3.1): discriminated results, `writeAudit`
- * inside the service, and side effects the caller still needs to fire — SSE broadcasts,
- * `enqueueOutbound`/`pushOutboundDeletes`, and Phase-L `stampRow` — left to the route
- * (each `ok` result carries the row / affected task ids / changed columns the route
- * needs to emit the exact same events + stamps as before). Docs: docs/W-graphql-crud.md
- * (Addendum 2) / docs/W-step3-extraction-audit.md.
+ * inside the service, and side effects the caller still needs to fire — SSE broadcasts
+ * and `enqueueOutbound`/`pushOutboundDeletes` — left to the route (each `ok` result
+ * carries the row / affected task ids / changed columns the route needs to emit the
+ * exact same events as before). Phase-L `stampRow` moved INSIDE updateBlock at W3.3
+ * (mirroring updateTask) so the GraphQL mutation versions on the same path.
+ * Docs: docs/W-graphql-crud.md (Addendum 2) / docs/W-step3-extraction-audit.md.
  *
  * Every mutator here is OWNER-SCOPED exactly as the routes were (verified clean before
  * extraction — no latent IDOR to fix, unlike W3.1a/W3.1b for tasks): each read/write
@@ -69,41 +71,33 @@ export function rationaleOf(blockId: string): string | null {
   return row?.rationale ?? null;
 }
 
-/**
- * Shared block fetch for a date range — the single source of truth for both the JSON
- * read (`GET /api/blocks`) and the `.ics` export, so the two never drift. Lazily
- * materializes recurring patterns + Time-Block instances, selects the range, drops
- * recurrence *templates* (rule set, no parent — never rendered), and enriches with
- * secondary tags + the "why now" rationale.
- */
-export async function fetchBlocksForRange(ownerId: string, from: string, to: string): Promise<Record<string, unknown>[]> {
-  ensurePatternsForRange(ownerId, from, to);
-  ensureRecurringBlocksForRange(ownerId, from, to);
-  const fetched = await db.select().from(timeBlocks)
-    .where(and(eq(timeBlocks.ownerId, ownerId), gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));
-  const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
-  return toApiList(rows).map((b) => ({
-    ...b,
-    secondary_tags: secondaryTagsOf(b.id as string),
-    rationale: rationaleOf(b.id as string),
-  }));
-}
-
 /** The GET /api/blocks query shape. `state='someday'` (no range) returns all someday
  *  Time Blocks regardless of date — the horizon lane reads them this way. */
 export type ListBlocksQuery = { from?: string; to?: string; state?: string };
 
 /**
- * List blocks for the range/state query. A full `from`+`to` range (no `state`) shares
- * `fetchBlocksForRange` with the .ics export; `state=someday` and partial-range reads
- * keep the conditional select (CON-2/CON-4 filtering: recurrence templates are dropped,
- * each row enriched with secondary tags + rationale).
+ * Shared read CORE (W3.3): lazily materialize recurring patterns + Time-Block instances
+ * for the range, select the owner-scoped rows, and drop recurrence *templates* (rule set,
+ * no parent — never rendered directly, CON-4). Returns RAW camelCase drizzle rows.
+ *
+ * This is the single materialization + template-drop path both the snake_case API reads
+ * (`listBlocks`/`fetchBlocksForRange`, which then serialize + enrich) and the camelCase
+ * GraphQL reads (`getBlocksForQuery`, feeding the TimeBlockType field resolvers) build on,
+ * so the two surfaces can never drift on which rows exist.
+ *
+ * A full `from`+`to` range (no `state`) materializes patterns AND recurring instances (the
+ * historical GET-full-range / .ics-export path); `state`/partial-range reads keep the
+ * conditional select without pattern materialization, matching the prior behavior exactly.
  */
-export async function listBlocks(ownerId: string, query: ListBlocksQuery): Promise<Record<string, unknown>[]> {
+async function blockRowsForQuery(ownerId: string, query: ListBlocksQuery): Promise<BlockRow[]> {
   const { from, to, state } = query;
 
   if (from && to && !state) {
-    return fetchBlocksForRange(ownerId, from, to);
+    ensurePatternsForRange(ownerId, from, to);
+    ensureRecurringBlocksForRange(ownerId, from, to);
+    const fetched = await db.select().from(timeBlocks)
+      .where(and(eq(timeBlocks.ownerId, ownerId), gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));
+    return fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
   }
 
   const conditions = [eq(timeBlocks.ownerId, ownerId)];
@@ -114,13 +108,81 @@ export async function listBlocks(ownerId: string, query: ListBlocksQuery): Promi
   const fetched = await db.select().from(timeBlocks).where(and(...conditions));
   // CON-4: recurrence *templates* (rule set, no parent) are never rendered — only
   // their materialized instances are. Drop them from the read surface.
-  const rows = fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
+  return fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
+}
 
+/** Serialize + enrich raw block rows into the snake_case API dicts (secondary tags +
+ *  the "why now" rationale). The shared tail of listBlocks/fetchBlocksForRange. */
+function enrichApi(rows: BlockRow[]): Record<string, unknown>[] {
   return toApiList(rows).map((b) => ({
     ...b,
     secondary_tags: secondaryTagsOf(b.id as string),
     rationale: rationaleOf(b.id as string),
   }));
+}
+
+/**
+ * Shared block fetch for a date range — the single source of truth for both the JSON
+ * read (`GET /api/blocks`) and the `.ics` export, so the two never drift. Lazily
+ * materializes recurring patterns + Time-Block instances, selects the range, drops
+ * recurrence *templates* (rule set, no parent — never rendered), and enriches with
+ * secondary tags + the "why now" rationale.
+ */
+export async function fetchBlocksForRange(ownerId: string, from: string, to: string): Promise<Record<string, unknown>[]> {
+  return enrichApi(await blockRowsForQuery(ownerId, { from, to }));
+}
+
+/**
+ * List blocks for the range/state query. A full `from`+`to` range (no `state`) shares
+ * the pattern/recurrence materialization with the .ics export; `state=someday` and
+ * partial-range reads keep the conditional select (CON-2/CON-4 filtering: recurrence
+ * templates are dropped, each row enriched with secondary tags + rationale).
+ */
+export async function listBlocks(ownerId: string, query: ListBlocksQuery): Promise<Record<string, unknown>[]> {
+  return enrichApi(await blockRowsForQuery(ownerId, query));
+}
+
+/**
+ * Owner-scoped camelCase READ surface (Phase W · W3.3c) for the GraphQL TimeBlockType
+ * resolvers. Unlike listBlocks (which serializes to snake_case API dicts + enriches with
+ * secondary_tags/rationale), these return the RAW camelCase drizzle rows the field
+ * resolvers read (blockKind/startAt/parentBlockId/categoryId/taskId) — exactly as
+ * getTask does for tasks. Every read filters by owner_id, so a cross-owner id is
+ * invisible (getBlock → undefined → resolver null; absent from every listing).
+ */
+
+/** A single owned block (camelCase drizzle row). undefined = not found OR not this
+ *  owner's — indistinguishable to the caller (no existence leak). */
+export async function getBlock(ownerId: string, id: string): Promise<BlockRow | undefined> {
+  const [block] = await db.select().from(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, ownerId)));
+  return block;
+}
+
+/** GraphQL `timeBlocks` connection filters (mirror REST GET /api/blocks). */
+export type BlockConnectionQuery = { from?: string; to?: string; state?: string };
+
+/**
+ * One keyset page of the owner's blocks for the GraphQL connection AND its totalCount,
+ * from a SINGLE materialize pass. Ordered by id ascending — deterministic and stable for
+ * pagination (no dupes/skips across pages), though NOT necessarily insertion order:
+ * uuid7 is time-ordered across milliseconds but has random within-ms bytes (no monotonic
+ * counter — see lib/ids.ts), so same-ms rows sort by those random bytes.
+ *
+ * Runs the shared materialize → template-drop core ONCE (it has side effects —
+ * `ensurePatternsForRange`/`ensureRecurringBlocksForRange` write materialized instances —
+ * so page + count must NOT each re-run it), then derives both the page and the total in
+ * memory: `totalCount` is the full filtered set size; the page is the `after`-keyset slice
+ * of `limit` rows. Pass `limit + 1` so the resolver can report `hasNextPage`. The
+ * materialization is range-bounded and small; instances persist with stable ids once
+ * materialized (marker-idempotent), so the in-memory sort/slice keeps cursors correct. */
+export async function listBlockPage(
+  ownerId: string,
+  query: BlockConnectionQuery & { after?: string; limit: number },
+): Promise<{ rows: BlockRow[]; totalCount: number }> {
+  const all = await blockRowsForQuery(ownerId, { from: query.from, to: query.to, state: query.state });
+  const ordered = all.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const afterFiltered = query.after ? ordered.filter((r) => r.id > query.after!) : ordered;
+  return { rows: afterFiltered.slice(0, query.limit), totalCount: ordered.length };
 }
 
 /** The POST /api/blocks body shape (snake_case API convention). */
@@ -246,8 +308,9 @@ export type UpdateBlockResult =
       ok: true;
       block: BlockRow;
       api: Record<string, unknown>;
-      /** camelCase column names written — the caller's Phase-L stampRow input
-       *  (stamping stays route-side for W3.2; it moves in here at W3.3). */
+      /** camelCase column names written. Phase-L versioning is stamped INSIDE this
+       *  service (W3.3, mirroring updateTask) — the caller no longer stamps. Still
+       *  returned so REST/GraphQL callers can see which columns changed. */
       updatedKeys: string[];
       /** Task id synced by the REQ2 forward mirror (time/status change), for the
        *  caller's task:updated broadcast. */
@@ -372,6 +435,13 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   let syncedTaskId: string | null = null;
   if (input.start_at !== undefined || input.end_at !== undefined) syncedTaskId = syncTaskFromBlock(id, ownerId);
   if (input.status !== undefined) syncedTaskId = mirrorBlockStatusToTask(id, ownerId) ?? syncedTaskId;
+
+  // Phase L: stamp version/field_ts for sync versioning (W3.3 — moved IN from the
+  // route so a GraphQL updateBlock mutation, which calls the service directly, versions
+  // on the same path a REST PATCH does; skipping it would break multi-device sync).
+  // Only the success path writes, so there is exactly one stamp site (updateTask's
+  // error-path stamp has no analogue here — the guards above all return before any write).
+  if (updatedKeys.length > 0) stampRow(sqlite, 'block', id, updatedKeys);
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `block:${id}` });
   return { ok: true, block, api: out, updatedKeys, syncedTaskId };
