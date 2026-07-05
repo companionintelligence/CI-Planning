@@ -1,0 +1,117 @@
+# Phase W · W6 — the routine/pattern family. CRUD ALONGSIDE the REST /api/patterns +
+# /api/pattern-types routes; every field and mutation reads/writes through
+# services/patterns.ts (Decision 3), never re-deriving owner-scoping.
+#
+# Naming (board Decision 4 / §4 footnote): the naming-consolidation Z-W1 rename
+# (`patterns`→`routines`) has NOT landed, so these ship as `PatternType`/`PatternKindType`
+# to match the live tables; Z-W1 renames the GraphQL types with the tables when it lands.
+# `PatternType` is the routine/habit entity (`patterns` table); `PatternKindType` is its
+# category (`pattern_types` table) — the `Kind` suffix avoids colliding with CI-Server's
+# `type XType` naming. Distinct from `pattern_blocks` (the day-arrangement, a later ticket).
+#
+# Scope: PatternType + PatternKindType with core CRUD. The engine-ish ops
+# (fast-tasks, promote-from-plan/-template/-tasks, place-today) stay REST-only for now
+# (a later mutation ticket, like W13's engine ops). PatternBlockType + PatternPrefType
+# are a W6 follow-up.
+#
+# `recurrenceRule`/`recurrenceDtstart` are plain String, NOT DateTime: the rule is an
+# RRULE and dtstart is its opaque anchor the client round-trips verbatim — the DateTime
+# scalar would reformat it. `iconShape`/`colorToken`/`texture` are free-form String.
+
+type PatternKindType implements Node {
+  id: ID!
+  name: String!
+  iconShape: String!
+  colorToken: String
+  texture: String
+  defaultEstMinutes: Int
+  notify: Boolean!
+  isBuiltin: Boolean!
+  reminderConfig: JSON       # opaque per-kind reminder config (Phase H); null until set
+}
+
+type PatternType implements Node {
+  id: ID!
+  name: String!
+  tag: String
+  notes: String
+  recurrenceRule: String
+  recurrenceDtstart: String
+  createdAt: DateTime!
+  kind: PatternKindType      # type_id → the pattern's category (nullable)
+  tasks: [TaskType!]!        # ordered member tasks (pattern_tasks), owner-scoped
+}
+
+input CreatePatternKindInput {
+  name: String!
+  iconShape: String!
+  colorToken: String
+  texture: String
+  defaultEstMinutes: Int
+  notify: Boolean
+  reminderConfig: JSON
+}
+input UpdatePatternKindInput {
+  id: ID!
+  name: String
+  iconShape: String
+  colorToken: String
+  texture: String
+  defaultEstMinutes: Int
+  notify: Boolean
+  reminderConfig: JSON
+}
+
+input CreatePatternInput {
+  name: String!
+  kindId: ID                 # → patterns.type_id (a PatternKindType id)
+  tag: String
+  notes: String
+  taskIds: [ID!]
+  recurrenceRule: String
+  recurrenceDtstart: String
+}
+input UpdatePatternInput {
+  id: ID!
+  name: String
+  kindId: ID
+  tag: String
+  notes: String
+  taskIds: [ID!]
+  recurrenceRule: String
+  recurrenceDtstart: String
+}
+
+input AddPatternTaskInput { patternId: ID! taskId: ID! position: Int }
+input RemovePatternTaskInput { patternId: ID! taskId: ID! }
+
+type PatternKindPayload {
+  patternKind: PatternKindType
+  success: Boolean!
+}
+type PatternPayload {
+  pattern: PatternType
+  success: Boolean!
+}
+
+extend type Query {
+  # A user's pattern KINDS and PATTERNS are small, hand-curated sets, so both are plain
+  # ordered lists (kinds: built-ins first; patterns: newest first) rather than Relay
+  # connections — mirrors the REST single-shot GETs.
+  patternKinds: [PatternKindType!]!
+  patternKind(id: ID!): PatternKindType
+  patterns: [PatternType!]!
+  pattern(id: ID!): PatternType
+}
+
+extend type Mutation {
+  createPatternKind(input: CreatePatternKindInput!): PatternKindPayload!
+  updatePatternKind(input: UpdatePatternKindInput!): PatternKindPayload!
+  # Reuses the shared DeleteByIdInput/DeleteByIdPayload (declared in tag.graphql).
+  deletePatternKind(input: DeleteByIdInput!): DeleteByIdPayload!
+  createPattern(input: CreatePatternInput!): PatternPayload!
+  updatePattern(input: UpdatePatternInput!): PatternPayload!
+  deletePattern(input: DeleteByIdInput!): DeleteByIdPayload!
+  addPatternTask(input: AddPatternTaskInput!): PatternPayload!
+  removePatternTask(input: RemovePatternTaskInput!): PatternPayload!
+}
