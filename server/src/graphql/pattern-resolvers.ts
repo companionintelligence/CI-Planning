@@ -110,7 +110,10 @@ export const patternResolvers = {
       const res = updatePattern(owner, args.input.id, toPatternInput(args.input));
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('pattern not found', { extensions: { code: 'NOT_FOUND' } });
-        const msg = res.error === 'bad_recurrence' ? (res.message ?? 'invalid recurrence') : `bad task membership: ${res.message}`;
+        const msg =
+          res.error === 'unknown_type' ? 'unknown pattern kind'
+            : res.error === 'bad_recurrence' ? (res.message ?? 'invalid recurrence')
+              : `bad task membership: ${res.message}`;
         throw new GraphQLError(msg, { extensions: { code: 'BAD_USER_INPUT' } });
       }
       broadcast(owner, 'pattern:updated', serializePattern(res.row));

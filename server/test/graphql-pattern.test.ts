@@ -144,4 +144,13 @@ describe('W6 — owner scoping', () => {
     // A's pattern survives.
     expect((await gql(`{ pattern(id: "${id}") { name } }`)).body.data.pattern.name).toBe('Mine');
   });
+
+  it('updatePattern rejects re-pointing a pattern at another owner\'s kind', async () => {
+    createOwner(OTHER);
+    const id = (await gql(`mutation { createPattern(input: { name: "Mine", kindId: "${kindId('Routine')}" }) { pattern { id } } }`)).body.data.createPattern.pattern.id;
+    // Owner B's custom kind id — A must not be able to adopt it (cross-owner FK reference).
+    const bKind = (await gql('mutation { createPatternKind(input: { name: "B-kind", iconShape: "square" }) { patternKind { id } } }', { 'x-test-owner': OTHER })).body.data.createPatternKind.patternKind.id;
+    const u = await gql(`mutation { updatePattern(input: { id: "${id}", kindId: "${bKind}" }) { success } }`);
+    expect(u.body.errors?.[0]?.message).toMatch(/unknown pattern kind/i);
+  });
 });
