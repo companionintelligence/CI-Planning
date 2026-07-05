@@ -96,6 +96,7 @@ export function patternsRouter() {
     const res = updatePattern(owner, ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updatePattern>[2]);
     if (!res.ok) {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      if (res.error === 'unknown_type') { ctx.status = 422; ctx.body = { error: 'unknown pattern type' }; return; }
       if (res.error === 'bad_recurrence') { ctx.status = 422; ctx.body = { error: res.message }; return; }
       ctx.status = 400; ctx.body = { error: `bad task membership: ${res.message}` }; return;
     }

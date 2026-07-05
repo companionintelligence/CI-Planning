@@ -96,10 +96,12 @@ export function setMembers(patternId: string, taskIds: string[]) {
   taskIds.forEach((taskId, i) => ins.run(patternId, taskId, i));
 }
 
-/** The name of a pattern type by id (used for the Ritual-recurrence guard). */
-function typeNameOf(typeId: string | null): string | null {
+/** The name of one of the OWNER's pattern types by id (used for the Ritual-recurrence
+ *  guard). Owner-scoped so a stray cross-owner type_id can't drive recurrence validation
+ *  off another owner's kind name. */
+function typeNameOf(owner: string, typeId: string | null): string | null {
   if (typeId == null) return null;
-  const row = sqlite.prepare(`SELECT name FROM pattern_types WHERE id = ?`).get(typeId) as { name: string } | undefined;
+  const row = sqlite.prepare(`SELECT name FROM pattern_types WHERE id = ? AND owner_id = ?`).get(typeId, owner) as { name: string } | undefined;
   return row?.name ?? null;
 }
 
@@ -118,7 +120,7 @@ function buildRecurrenceFields(
 ): { ok: true; rule: string | null; dtstart: string | null } | { ok: false; error: string } {
   if (rule === undefined && dtstart === undefined) return { ok: true, rule: undefined as unknown as null, dtstart: undefined as unknown as null };
   if (rule == null) return { ok: true, rule: null, dtstart: null }; // explicit clear
-  const typeName = typeNameOf(typeId);
+  const typeName = typeNameOf(owner, typeId);
   if (typeName !== 'Habit' && typeName !== 'Routine') {
     return { ok: false, error: 'only Habit and Routine patterns can recur' };
   }
@@ -187,7 +189,11 @@ export function updatePatternType(owner: string, id: string, input: TypeInput): 
   if (!existing) return { ok: false, error: 'not_found' };
   const name = input.name?.trim() ?? existing.name;
   const iconShape = input.icon_shape?.trim() ?? existing.icon_shape;
-  const reminder = input.reminder_config !== undefined ? JSON.stringify(input.reminder_config) : existing.reminder_config;
+  // Explicit null clears to SQL NULL (consistent with createPatternType), not the string
+  // "null" that JSON.stringify(null) would store.
+  const reminder = input.reminder_config !== undefined
+    ? (input.reminder_config != null ? JSON.stringify(input.reminder_config) : null)
+    : existing.reminder_config;
   const colorToken = input.color_token !== undefined ? input.color_token : existing.color_token;
   const texture = input.texture !== undefined ? input.texture : existing.texture;
   const defaultEst = input.default_est_minutes !== undefined ? input.default_est_minutes : existing.default_est_minutes;
@@ -208,7 +214,9 @@ export function deletePatternType(owner: string, id: string): DeleteTypeResult {
   const t = getPatternTypeRow(owner, id);
   if (!t) return { ok: false, error: 'not_found' };
   if (t.is_builtin) return { ok: false, error: 'builtin' };
-  const inUse = sqlite.prepare(`SELECT COUNT(*) AS c FROM patterns WHERE type_id = ?`).get(id) as { c: number };
+  // Owner-scoped count: only THIS owner's patterns can block deletion of THIS owner's kind
+  // (a cross-owner type_id, were one to exist, must not let another tenant hold it hostage).
+  const inUse = sqlite.prepare(`SELECT COUNT(*) AS c FROM patterns WHERE type_id = ? AND owner_id = ?`).get(id, owner) as { c: number };
   if (inUse.c > 0) return { ok: false, error: 'in_use' };
   sqlite.prepare(`DELETE FROM pattern_types WHERE id = ?`).run(id);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `routine:${id}` });
@@ -277,11 +285,19 @@ export function createPattern(owner: string, input: CreatePatternInput): CreateP
 
 export type UpdatePatternResult =
   | { ok: true; row: PatternRow }
-  | { ok: false; error: 'not_found' | 'bad_recurrence' | 'bad_membership'; message?: string };
+  | { ok: false; error: 'not_found' | 'unknown_type' | 'bad_recurrence' | 'bad_membership'; message?: string };
 
 export function updatePattern(owner: string, id: string, input: UpdatePatternInput): UpdatePatternResult {
   const existing = getPatternRow(owner, id);
   if (!existing) return { ok: false, error: 'not_found' };
+  // Validate a newly-assigned type belongs to this owner (createPattern does the same).
+  // patterns.type_id only FKs pattern_types.id with no owner constraint, so without this a
+  // PATCH could point a pattern at another owner's kind (breaking delete guards + driving
+  // recurrence validation off a foreign kind name).
+  if (input.type_id != null) {
+    const type = sqlite.prepare(`SELECT id FROM pattern_types WHERE id = ? AND owner_id = ?`).get(input.type_id, owner) as { id: string } | undefined;
+    if (!type) return { ok: false, error: 'unknown_type' };
+  }
   const nextTypeId = input.type_id !== undefined ? input.type_id : existing.type_id;
   const rec = buildRecurrenceFields(owner, nextTypeId, input.recurrence_rule, input.recurrence_dtstart);
   if (!rec.ok) return { ok: false, error: 'bad_recurrence', message: rec.error };
