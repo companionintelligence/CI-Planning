@@ -2,369 +2,137 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
-import { placePatternOnDay, validatePatternRule } from '../engine/patterns-place.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
-import { localISODate } from '../lib/dates.js';
-import { syncEntityTags, removeEntityTags, splitTagString } from '../services/tags.js';
+import { placePatternOnDay } from '../engine/patterns-place.js';
+import { removeEntityTags } from '../services/tags.js';
 import { writeAudit } from '../lib/audit.js';
+import {
+  serializeType, serializePattern, taskIdsOf, setMembers, type PatternRow,
+  listPatternTypeRows, createPatternType, updatePatternType, deletePatternType,
+  listPatternRows, getPatternRow, createPattern, updatePattern, deletePattern,
+  addPatternTask, removePatternTask,
+  type TypeInput,
+} from '../services/patterns.js';
 
 /**
  * Patterns (Phase G, ticket G1). Typed, reusable task collections — Routine ▢ /
  * Habit ◯ / Ritual △ (+ user-defined types). Tasks-only, many-to-many membership;
  * no own recurrence. Owner-scoped throughout.
+ *
+ * Phase W · W6: the pattern-type + pattern CRUD lives in services/patterns.ts (shared
+ * with GraphQL). These handlers are thin shells that map the service's discriminated
+ * results to the exact REST status codes/messages and fire SSE. The engine-ish endpoints
+ * (fast-tasks, promote-from-*, place-today) stay here and reuse the service's helpers.
  */
-
-interface TypeRow {
-  id: string;
-  owner_id: string;
-  name: string;
-  icon_shape: string;
-  reminder_config: string | null;
-  is_builtin: number;
-  color_token: string | null;
-  texture: string | null;
-  default_est_minutes: number | null;
-  notify: number;
-}
-interface PatternRow {
-  id: string;
-  owner_id: string;
-  type_id: string | null;
-  name: string;
-  tag: string | null;
-  notes: string | null;
-  recurrence_rule: string | null;
-  recurrence_dtstart: string | null;
-  created_at: string;
-}
-
-/** Editable fields of a pattern type (the per-category display/config defaults). */
-interface TypeInput {
-  name?: string;
-  icon_shape?: string;
-  reminder_config?: unknown;
-  color_token?: string | null;
-  texture?: string | null;
-  default_est_minutes?: number | null;
-  notify?: boolean;
-}
-
-function parseJson(raw: string | null): unknown {
-  if (raw == null) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-const serializeType = (t: TypeRow) => ({
-  id: t.id,
-  owner_id: t.owner_id,
-  name: t.name,
-  icon_shape: t.icon_shape,
-  reminder_config: parseJson(t.reminder_config),
-  is_builtin: !!t.is_builtin,
-  color_token: t.color_token,
-  texture: t.texture,
-  default_est_minutes: t.default_est_minutes,
-  notify: !!t.notify,
-});
-
-function taskIdsOf(patternId: string): string[] {
-  return (
-    sqlite
-      .prepare(`SELECT task_id FROM pattern_tasks WHERE pattern_id = ? ORDER BY position, task_id`)
-      .all(patternId) as { task_id: string }[]
-  ).map((r) => r.task_id);
-}
-
-const serializePattern = (p: PatternRow) => ({
-  id: p.id,
-  owner_id: p.owner_id,
-  type_id: p.type_id,
-  name: p.name,
-  tag: p.tag,
-  notes: p.notes,
-  recurrence_rule: p.recurrence_rule,
-  recurrence_dtstart: p.recurrence_dtstart,
-  created_at: p.created_at,
-  task_ids: taskIdsOf(p.id),
-});
-
-/** Replace a pattern's membership set with `taskIds` (in order). FK guards existence. */
-function setMembers(patternId: string, taskIds: string[]) {
-  sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ?`).run(patternId);
-  const ins = sqlite.prepare(`INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`);
-  taskIds.forEach((taskId, i) => ins.run(patternId, taskId, i));
-}
-
-/** The name of a pattern type by id (used for the Ritual-recurrence guard). */
-function typeNameOf(typeId: string | null): string | null {
-  if (typeId == null) return null;
-  const row = sqlite.prepare(`SELECT name FROM pattern_types WHERE id = ?`).get(typeId) as { name: string } | undefined;
-  return row?.name ?? null;
-}
-
-/**
- * Validate + normalize a recurrence body on a pattern. Only Habit + Routine
- * types may carry a rule (Rituals are hidden in V1). If the caller omits
- * `recurrence_dtstart`, defaults to local-noon-as-UTC (mirrors the task-level
- * convention in engine/recurrence.ts — keeps every hit a safe ~12h away from
- * the local midnight boundary so a DST flip never moves a hit's local date).
- */
-function buildRecurrenceFields(
-  owner: string,
-  typeId: string | null,
-  rule: string | null | undefined,
-  dtstart: string | null | undefined,
-): { ok: true; rule: string | null; dtstart: string | null } | { ok: false; error: string } {
-  if (rule === undefined && dtstart === undefined) return { ok: true, rule: undefined as unknown as null, dtstart: undefined as unknown as null };
-  if (rule == null) return { ok: true, rule: null, dtstart: null }; // explicit clear
-  const typeName = typeNameOf(typeId);
-  if (typeName !== 'Habit' && typeName !== 'Routine') {
-    return { ok: false, error: 'only Habit and Routine patterns can recur' };
-  }
-  const v = validatePatternRule(rule);
-  if (!v.ok) return { ok: false, error: v.error };
-  if (dtstart) return { ok: true, rule: v.rule, dtstart };
-  const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
-  return { ok: true, rule: v.rule, dtstart: zonedWallTimeToUTC(localISODate(), '12:00', tz) };
-}
-
 export function patternsRouter() {
   const router = new Router();
 
   // ── Pattern types ──────────────────────────────────────────────────────────
   router.get('/api/pattern-types', async (ctx) => {
-    const owner = currentOwnerId();
-    const rows = sqlite
-      .prepare(`SELECT * FROM pattern_types WHERE owner_id = ? ORDER BY is_builtin DESC, id`)
-      .all(owner) as TypeRow[];
-    // Rituals are hidden behind a per-owner feature flag (0024). The seeded
-    // Ritual type stays in the DB so flipping the flag back on restores it.
-    const enableRituals = !!(sqlite.prepare(`SELECT enable_rituals FROM scheduling_prefs WHERE owner_id = ?`)
-      .get(owner) as { enable_rituals: number } | undefined)?.enable_rituals;
-    const visible = enableRituals ? rows : rows.filter((r) => r.name !== 'Ritual');
-    ctx.body = { pattern_types: visible.map(serializeType) };
+    ctx.body = { pattern_types: listPatternTypeRows(currentOwnerId()).map(serializeType) };
   });
 
   router.post('/api/pattern-types', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as TypeInput;
-    if (!body.name?.trim() || !body.icon_shape?.trim()) {
-      ctx.status = 422;
-      ctx.body = { error: 'name and icon_shape are required' };
-      return;
+    const owner = currentOwnerId();
+    const res = createPatternType(owner, (ctx.request.body ?? {}) as TypeInput);
+    if (!res.ok) {
+      if (res.error === 'missing_fields') { ctx.status = 422; ctx.body = { error: 'name and icon_shape are required' }; return; }
+      ctx.status = 422; ctx.body = { error: `could not create type: ${res.message}` }; return;
     }
-    try {
-      const row = sqlite
-        .prepare(
-          `INSERT INTO pattern_types (id, owner_id, name, icon_shape, reminder_config, is_builtin, color_token, texture, default_est_minutes, notify)
-           VALUES (uuid7(), ?, ?, ?, ?, 0, ?, ?, ?, ?) RETURNING *`
-        )
-        .get(
-          currentOwnerId(),
-          body.name.trim(),
-          body.icon_shape.trim(),
-          body.reminder_config != null ? JSON.stringify(body.reminder_config) : null,
-          body.color_token ?? null,
-          body.texture ?? null,
-          body.default_est_minutes ?? null,
-          body.notify ? 1 : 0
-        ) as TypeRow;
-      const out = serializeType(row);
-      broadcast(currentOwnerId(), 'pattern_type:created', out);
-      writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `routine:${row.id}` });
-      ctx.status = 201;
-      ctx.body = { pattern_type: out };
-    } catch (err) {
-      ctx.status = 422;
-      ctx.body = { error: `could not create type: ${(err as Error).message}` };
-    }
+    const out = serializeType(res.row);
+    broadcast(owner, 'pattern_type:created', out);
+    ctx.status = 201;
+    ctx.body = { pattern_type: out };
   });
 
   router.patch('/api/pattern-types/:id', async (ctx) => {
-    const id = ctx.params.id;
-    const existing = sqlite
-      .prepare(`SELECT * FROM pattern_types WHERE id = ? AND owner_id = ?`)
-      .get(id, currentOwnerId()) as TypeRow | undefined;
-    if (!existing) {
-      ctx.status = 404;
-      ctx.body = { error: 'not found' };
-      return;
-    }
-    const body = (ctx.request.body ?? {}) as TypeInput;
-    const name = body.name?.trim() ?? existing.name;
-    const iconShape = body.icon_shape?.trim() ?? existing.icon_shape;
-    const reminder = body.reminder_config !== undefined ? JSON.stringify(body.reminder_config) : existing.reminder_config;
-    const colorToken = body.color_token !== undefined ? body.color_token : existing.color_token;
-    const texture = body.texture !== undefined ? body.texture : existing.texture;
-    const defaultEst = body.default_est_minutes !== undefined ? body.default_est_minutes : existing.default_est_minutes;
-    const notify = body.notify !== undefined ? (body.notify ? 1 : 0) : existing.notify;
-    const row = sqlite
-      .prepare(
-        `UPDATE pattern_types
-            SET name = ?, icon_shape = ?, reminder_config = ?, color_token = ?, texture = ?, default_est_minutes = ?, notify = ?
-          WHERE id = ? RETURNING *`
-      )
-      .get(name, iconShape, reminder, colorToken, texture, defaultEst, notify, id) as TypeRow;
-    const out = serializeType(row);
-    broadcast(currentOwnerId(), 'pattern_type:updated', out);
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `routine:${id}` });
+    const owner = currentOwnerId();
+    const res = updatePatternType(owner, ctx.params.id, (ctx.request.body ?? {}) as TypeInput);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const out = serializeType(res.row);
+    broadcast(owner, 'pattern_type:updated', out);
     ctx.body = { pattern_type: out };
   });
 
   router.delete('/api/pattern-types/:id', async (ctx) => {
-    const id = ctx.params.id;
-    const t = sqlite.prepare(`SELECT * FROM pattern_types WHERE id = ? AND owner_id = ?`).get(id, currentOwnerId()) as
-      | TypeRow
-      | undefined;
-    if (!t) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    if (t.is_builtin) { ctx.status = 400; ctx.body = { error: 'built-in types cannot be deleted' }; return; }
-    const inUse = sqlite.prepare(`SELECT COUNT(*) AS c FROM patterns WHERE type_id = ?`).get(id) as { c: number };
-    if (inUse.c > 0) { ctx.status = 409; ctx.body = { error: 'type is in use by patterns' }; return; }
-    sqlite.prepare(`DELETE FROM pattern_types WHERE id = ?`).run(id);
-    broadcast(currentOwnerId(), 'pattern_type:deleted', { id });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `routine:${id}` });
+    const owner = currentOwnerId();
+    const res = deletePatternType(owner, ctx.params.id);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      if (res.error === 'builtin') { ctx.status = 400; ctx.body = { error: 'built-in types cannot be deleted' }; return; }
+      ctx.status = 409; ctx.body = { error: 'type is in use by patterns' }; return;
+    }
+    broadcast(owner, 'pattern_type:deleted', { id: ctx.params.id });
     ctx.body = { ok: true };
   });
 
   // ── Patterns ───────────────────────────────────────────────────────────────
   router.get('/api/patterns', async (ctx) => {
-    const rows = sqlite
-      .prepare(`SELECT * FROM patterns WHERE owner_id = ? ORDER BY created_at DESC, id DESC`)
-      .all(currentOwnerId()) as PatternRow[];
-    ctx.body = { patterns: rows.map(serializePattern) };
+    ctx.body = { patterns: listPatternRows(currentOwnerId()).map(serializePattern) };
   });
 
   router.get('/api/patterns/:id', async (ctx) => {
-    const p = sqlite
-      .prepare(`SELECT * FROM patterns WHERE id = ? AND owner_id = ?`)
-      .get(ctx.params.id, currentOwnerId()) as PatternRow | undefined;
+    const p = getPatternRow(currentOwnerId(), ctx.params.id);
     if (!p) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     ctx.body = { pattern: serializePattern(p) };
   });
 
   router.post('/api/patterns', async (ctx) => {
     const owner = currentOwnerId();
-    const body = (ctx.request.body ?? {}) as {
-      type_id?: string; name?: string; tag?: string; notes?: string; task_ids?: string[];
-      recurrence_rule?: string | null; recurrence_dtstart?: string | null;
-    };
-    if (!body.name?.trim()) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
-    // Validate the type belongs to this owner.
-    const type = body.type_id != null
-      ? (sqlite.prepare(`SELECT id FROM pattern_types WHERE id = ? AND owner_id = ?`).get(body.type_id, owner) as { id: string } | undefined)
-      : undefined;
-    if (body.type_id != null && !type) { ctx.status = 422; ctx.body = { error: 'unknown pattern type' }; return; }
-
-    const rec = buildRecurrenceFields(owner, body.type_id ?? null, body.recurrence_rule, body.recurrence_dtstart);
-    if (!rec.ok) { ctx.status = 422; ctx.body = { error: rec.error }; return; }
-
-    const p = sqlite
-      .prepare(`INSERT INTO patterns (id, owner_id, type_id, name, tag, notes, recurrence_rule, recurrence_dtstart) VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
-      .get(owner, body.type_id ?? null, body.name.trim(), body.tag ?? null, body.notes ?? null,
-           rec.rule === undefined ? null : rec.rule,
-           rec.dtstart === undefined ? null : rec.dtstart) as PatternRow;
-    if (Array.isArray(body.task_ids) && body.task_ids.length) {
-      try { setMembers(p.id, body.task_ids); }
-      catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
+    const res = createPattern(owner, (ctx.request.body ?? {}) as Parameters<typeof createPattern>[1]);
+    if (!res.ok) {
+      if (res.error === 'name_required') { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
+      if (res.error === 'unknown_type') { ctx.status = 422; ctx.body = { error: 'unknown pattern type' }; return; }
+      if (res.error === 'bad_recurrence') { ctx.status = 422; ctx.body = { error: res.message }; return; }
+      ctx.status = 400; ctx.body = { error: `bad task membership: ${res.message}` }; return;
     }
-    // CON-3: mirror the routine's (denormalized) tag string into the normalized store.
-    if (body.tag !== undefined) syncEntityTags('routine', p.id, splitTagString(body.tag), owner);
-    const out = serializePattern(p);
+    const out = serializePattern(res.row);
     broadcast(owner, 'pattern:created', out);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
     ctx.status = 201;
     ctx.body = { pattern: out };
   });
 
   router.patch('/api/patterns/:id', async (ctx) => {
     const owner = currentOwnerId();
-    const id = ctx.params.id;
-    const existing = sqlite.prepare(`SELECT * FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner) as
-      | PatternRow
-      | undefined;
-    if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const body = (ctx.request.body ?? {}) as {
-      type_id?: string | null; name?: string; tag?: string | null; notes?: string | null; task_ids?: string[];
-      recurrence_rule?: string | null; recurrence_dtstart?: string | null;
-    };
-    const nextTypeId = body.type_id !== undefined ? body.type_id : existing.type_id;
-    const rec = buildRecurrenceFields(owner, nextTypeId, body.recurrence_rule, body.recurrence_dtstart);
-    if (!rec.ok) { ctx.status = 422; ctx.body = { error: rec.error }; return; }
-
-    const row = sqlite
-      .prepare(`UPDATE patterns SET type_id = ?, name = ?, tag = ?, notes = ?, recurrence_rule = ?, recurrence_dtstart = ? WHERE id = ? RETURNING *`)
-      .get(
-        nextTypeId,
-        body.name?.trim() ?? existing.name,
-        body.tag !== undefined ? body.tag : existing.tag,
-        body.notes !== undefined ? body.notes : existing.notes,
-        rec.rule === undefined ? existing.recurrence_rule : rec.rule,
-        rec.dtstart === undefined ? existing.recurrence_dtstart : rec.dtstart,
-        id
-      ) as PatternRow;
-    if (Array.isArray(body.task_ids)) {
-      try { setMembers(id, body.task_ids); }
-      catch (err) { ctx.status = 400; ctx.body = { error: `bad task membership: ${(err as Error).message}` }; return; }
+    const res = updatePattern(owner, ctx.params.id, (ctx.request.body ?? {}) as Parameters<typeof updatePattern>[2]);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      if (res.error === 'bad_recurrence') { ctx.status = 422; ctx.body = { error: res.message }; return; }
+      ctx.status = 400; ctx.body = { error: `bad task membership: ${res.message}` }; return;
     }
-    // CON-3: keep the normalized store in sync when the tag string changes (null/'' clears).
-    if (body.tag !== undefined) syncEntityTags('routine', id, splitTagString(body.tag), owner);
-    const out = serializePattern(row);
+    const out = serializePattern(res.row);
     broadcast(owner, 'pattern:updated', out);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `routine:${id}` });
     ctx.body = { pattern: out };
   });
 
   router.delete('/api/patterns/:id', async (ctx) => {
-    const id = ctx.params.id;
-    const p = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(id, currentOwnerId()) as
-      | { id: string }
-      | undefined;
-    if (!p) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    // Ritual-local fast tasks are owned by the pattern — delete them with it. Shared
-    // real tasks are untouched (only the membership rows cascade).
-    // CON-3 cascade: these tasks + the routine itself are HARD-deleted — drop their
-    // tag rows first (the fast-task ids must be read before the DELETE).
-    const fastTasks = sqlite
-      .prepare(`SELECT id FROM tasks WHERE subtype = 'quick' AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`)
-      .all(id) as { id: string }[];
-    for (const t of fastTasks) removeEntityTags('task', t.id);
-    sqlite.prepare(`DELETE FROM tasks WHERE subtype = 'quick' AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`).run(id);
-    sqlite.prepare(`DELETE FROM patterns WHERE id = ?`).run(id); // pattern_tasks cascade; tasks untouched
-    removeEntityTags('routine', id);
-    broadcast(currentOwnerId(), 'pattern:deleted', { id });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `routine:${id}` });
+    const owner = currentOwnerId();
+    const res = deletePattern(owner, ctx.params.id);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    broadcast(owner, 'pattern:deleted', { id: ctx.params.id });
     ctx.body = { ok: true };
   });
 
   // ── Membership ─────────────────────────────────────────────────────────────
   router.post('/api/patterns/:id/tasks', async (ctx) => {
+    const owner = currentOwnerId();
     const patternId = ctx.params.id;
-    const owns = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, currentOwnerId());
-    if (!owns) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as { task_id?: number; position?: number };
     if (body.task_id == null) { ctx.status = 422; ctx.body = { error: 'task_id is required' }; return; }
-    try {
-      sqlite
-        .prepare(`INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`)
-        .run(patternId, body.task_id, body.position ?? 0);
-    } catch (err) {
-      ctx.status = 400; ctx.body = { error: `could not add task: ${(err as Error).message}` }; return;
+    const res = addPatternTask(owner, patternId, String(body.task_id), body.position ?? 0);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      ctx.status = 400; ctx.body = { error: `could not add task: ${res.message}` }; return;
     }
-    broadcast(currentOwnerId(), 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `routine:${patternId}` });
+    broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     ctx.body = { pattern_id: patternId, task_ids: taskIdsOf(patternId) };
   });
 
   router.delete('/api/patterns/:id/tasks/:taskId', async (ctx) => {
+    const owner = currentOwnerId();
     const patternId = ctx.params.id;
-    const owns = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, currentOwnerId());
-    if (!owns) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, ctx.params.taskId);
-    broadcast(currentOwnerId(), 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `routine:${patternId}` });
+    const res = removePatternTask(owner, patternId, ctx.params.taskId);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     ctx.body = { pattern_id: patternId, task_ids: taskIdsOf(patternId) };
   });
 
