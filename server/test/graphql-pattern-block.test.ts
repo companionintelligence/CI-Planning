@@ -48,6 +48,17 @@ describe('W6b — PatternBlockType', () => {
     expect(q.body.data.patternBlocks).toHaveLength(2);
     expect(q.body.data.patternBlocks[0].direction.label).toBe('work');
 
+    // A second direction's windows interleave deterministically (sorted by direction id,
+    // then start) — not left to object-key order.
+    const life = makeTag('life', 'direction');
+    await gql(`mutation { setPatternBlockRanges(input: { directionTagId: "${life}", dayType: "workday", ranges: [{ startTime: "07:00", endTime: "08:00" }] }) { success } }`);
+    const q2 = await gql(`{ patternBlocks(dayType: "workday") { startTime direction { id } } }`);
+    const expected = [...q2.body.data.patternBlocks].sort(
+      (a: any, b: any) => a.direction.id.localeCompare(b.direction.id) || a.startTime.localeCompare(b.startTime),
+    );
+    expect(q2.body.data.patternBlocks).toEqual(expected); // already in that order
+    expect(q2.body.data.patternBlocks).toHaveLength(3);
+
     // REST sees the same windows (one store).
     const rest = await api(srv.url, '/api/pattern-blocks');
     expect(rest.body.workday[work].map((r: any) => [r.start_time, r.end_time])).toEqual([['09:00', '12:00'], ['13:00', '17:00']]);

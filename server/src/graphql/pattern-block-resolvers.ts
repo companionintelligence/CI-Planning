@@ -9,10 +9,10 @@ import { toNode } from './tag-resolvers.js';
  * PatternBlockType + PatternPrefType resolvers (Phase W · W6b). Reuse
  * services/pattern-blocks.ts + pattern-prefs.ts (Decision 3) — the SAME owner-scoped
  * functions the REST routes call (including the extracted validation wrappers). Owner
- * comes from `currentOwnerId()`, never the client; the `direction` field re-fetches the
- * tag owner-scoped, so a cross-owner tag id resolves to null (and the mutations' service
- * checks reject a foreign/non-direction tag). The REST routes emit no SSE for these, so
- * neither do the mutations.
+ * comes from `currentOwnerId()`, never the client; the non-null `direction` field
+ * re-fetches the tag owner-scoped and THROWS if it can't be loaded (rather than nulling a
+ * non-null field), and the mutations' service checks reject a foreign/non-direction tag.
+ * The REST routes emit no SSE for these, so neither do the mutations.
  */
 
 /** The flat GraphQL row shape a PatternBlockType resolver reads. */
@@ -24,9 +24,12 @@ export const patternBlockResolvers = {
   Query: {
     patternBlocks: (_p: unknown, args: { dayType: string }): BlockRow[] => {
       const windows = getPatternBlocks(currentOwnerId(), args.dayType);
-      return Object.entries(windows).flatMap(([dirId, ranges]) =>
+      const rows = Object.entries(windows).flatMap(([dirId, ranges]) =>
         ranges.map((r) => ({ id: r.id, direction_tag_id: dirId, day_type: args.dayType, start_time: r.start_time, end_time: r.end_time })),
       );
+      // Deterministic (direction, start) order — Object.entries key order follows the
+      // per-direction SQL row order, not a stable cross-direction sort, so sort explicitly.
+      return rows.sort((a, b) => a.direction_tag_id.localeCompare(b.direction_tag_id) || a.start_time.localeCompare(b.start_time));
     },
     patternPrefs: (): PrefNode[] =>
       Object.entries(getPatternPrefs(currentOwnerId())).map(([tagId, pref]) => ({ ...pref, tag_id: tagId })),
