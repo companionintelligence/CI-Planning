@@ -100,7 +100,7 @@ describe('possibles REST — promote broadcast ordering (regression)', () => {
       .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), 'Buy stamps', ?, 'open', 30, 3) RETURNING id`)
       .get(OWNER) as { id: string }).id;
     const tag = (sqlite
-      .prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'errands', 'pattern', ?) RETURNING id`)
+      .prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'errands', 'direction', ?) RETURNING id`)
       .get(OWNER) as { id: string });
     sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(taskId, tag.id);
 
