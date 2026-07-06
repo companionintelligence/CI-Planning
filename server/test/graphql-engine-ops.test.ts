@@ -202,6 +202,13 @@ describe('W13 — clearPlanner', () => {
     expect(r.body.errors?.[0].extensions?.code).toBe('BAD_USER_INPUT');
   });
 
+  it('explicit dryRun: null → BAD_USER_INPUT (parity with REST rejecting dry_run: null; not silently an apply)', async () => {
+    const r = await gql(`mutation { clearPlanner(input: { start: "2026-06-10", dryRun: null }) { mode } }`);
+    expect(r.body.data?.clearPlanner ?? null).toBeNull();
+    expect(r.body.errors?.[0].extensions?.code).toBe('BAD_USER_INPUT');
+    expect(r.body.errors?.[0].message).toMatch(/dryRun/); // GraphQL field name, not snake_case dry_run
+  });
+
   // A daily recurring block template + a materialized window (T0..T4). Instances only
   // materialize within a horizon relative to *now*, so anchor at today (T0).
   const makeDaily = async () =>
