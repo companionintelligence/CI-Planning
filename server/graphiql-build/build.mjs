@@ -91,6 +91,16 @@ async function main() {
   // URL in this bundle.
   const autoLoadPattern =
     /(?:fetch\(|importScripts\(|new Worker\(|import\(|<script[^>]*\bsrc=|<link[^>]*\bhref=|url\()\s*["'`]\s*https?:\/\/(?!localhost|127\.0\.0\.1)/gi;
+  // Also catch the "importmap → bare specifier" CDN pattern — graphiql@5's own
+  // README-recommended embed (rejected, see the module docstring above): a
+  // <script type="importmap"> mapping a bare specifier to a remote host IS the
+  // violation, whether or not a consuming `import 'somepkg'` is textually visible in
+  // this same bundle. autoLoadPattern can't see this (an importmap tag has no
+  // src=/href= attribute — its URLs sit inside inline JSON body text). Defensive here
+  // (this build only ever emits JS/CSS, never HTML — the HTML shell is generated
+  // separately by src/graphql/sandbox.ts, which server/test/graphql-sandbox.test.ts
+  // checks directly), kept in sync with that test's equivalent check.
+  const importMapPattern = /<script[^>]*\btype=["']importmap["'][^>]*>([\s\S]*?)<\/script>/gi;
   for (const f of ['sandbox.js', 'sandbox.css']) {
     const path = join(outdir, f);
     let text;
@@ -105,6 +115,12 @@ async function main() {
         `${f} contains ${matches.length} auto-loaded off-origin reference(s) — ` +
           `investigate before vendoring (found: ${[...new Set(matches)].slice(0, 5).join(', ')})`,
       );
+    }
+    let im;
+    while ((im = importMapPattern.exec(text))) {
+      if (/https?:\/\/(?!localhost|127\.0\.0\.1)/i.test(im[1])) {
+        throw new Error(`${f} contains an off-origin import map — investigate before vendoring`);
+      }
     }
   }
 

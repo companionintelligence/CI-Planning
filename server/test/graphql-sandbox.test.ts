@@ -2,6 +2,25 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Router from '@koa/router';
 import { startTestServer, type TestServer } from './helpers.js';
 import { sandboxEnabled, mountGraphqlSandbox } from '../src/graphql/sandbox.js';
+import { config } from '../src/lib/config.js';
+
+/** Off-origin "importmap → bare specifier" CDN pattern (graphiql@5's own README-
+ * recommended embed, explicitly rejected in sandbox.ts's design rationale): a
+ * `<script type="importmap">` mapping a bare specifier to a remote host IS the
+ * violation on its own — any later `import 'somepkg'` anywhere resolves through it,
+ * whether or not a consuming bare import is textually visible in this same response.
+ * The `fetch(`/`<script src=`/etc. pattern below can't see this (an importmap tag has
+ * no `src=`/`href=` attribute; its URLs sit inside inline JSON body text) — a future
+ * graphiql/react bump that silently reverts to that pattern must fail HERE. */
+function importMapViolations(text: string): string[] {
+  const hits: string[] = [];
+  const pattern = /<script[^>]*\btype=["']importmap["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(text))) {
+    if (/https?:\/\/(?!localhost|127\.0\.0\.1)/i.test(m[1])) hits.push(m[0].slice(0, 200));
+  }
+  return hits;
+}
 
 /**
  * W-sandbox — the self-hosted GraphiQL IDE at GET /api/graphql/sandbox. See
@@ -69,14 +88,32 @@ describe('W-sandbox — integration (dev/test mode, sandbox on by default)', () 
     expect(html).toContain('/api/graphql/sandbox-assets/sandbox.css');
   });
 
-  it('the auth gate applies to the sandbox route exactly like every other /api/* route', async () => {
-    // This repo's default test AUTH_MODE is 'test' (fixed system-owner injection, no
-    // credential needed) — proven by graphql.test.ts's viewer query. That the sandbox
-    // route returns 200 under that same startTestServer() (no special headers) IS the
-    // proof it rides the ordinary requireAuth path: sandbox.ts adds no auth code of its
-    // own, and app.ts mounts mountGraphql (which registers this route) AFTER
-    // app.use(requireAuth()). A request to a bogus /api/graphql/sandbox-typo path still
-    // 404s, confirming there's no catch-all silently authenticating everything.
+  it('is auth-gated: no credential ⇒ 401, exactly like POST /api/graphql', async () => {
+    // The shared `srv` in this describe block runs under this repo's default `test`
+    // AUTH_MODE (fixed system-owner injection, NO credential check at all — see
+    // requireAuth.ts) — a 200 there proves nothing about auth, and a 404 on a typo'd
+    // path only proves Koa routing works. Mirror graphql.test.ts's real auth-gating
+    // test instead: flip to `sso` mode with no session cookie presented, so
+    // requireAuth actually has something to reject.
+    const saved = { ...config.auth };
+    config.auth.mode = 'sso';
+    config.auth.disableOidc = true;
+    config.auth.sessionSecret = 'test-session-secret';
+    const s = await startTestServer();
+    try {
+      const shellRes = await fetch(`${s.url}/api/graphql/sandbox`);
+      expect(shellRes.status).toBe(401);
+      // The vendored-asset routes ride the SAME router/middleware chain — confirm they
+      // aren't an accidental unauthenticated side door to the bundle.
+      const assetRes = await fetch(`${s.url}/api/graphql/sandbox-assets/sandbox.js`);
+      expect(assetRes.status).toBe(401);
+    } finally {
+      await s.close();
+      Object.assign(config.auth, saved);
+    }
+  });
+
+  it('an unmatched sandbox-adjacent path 404s (no catch-all silently authenticating everything)', async () => {
     const res = await fetch(`${srv.url}/api/graphql/sandbox-typo`);
     expect(res.status).toBe(404);
   });
@@ -122,6 +159,7 @@ describe('W-sandbox — integration (dev/test mode, sandbox on by default)', () 
       if (/^(https?:)?\/\//i.test(url)) externalRefs.push(url);
     }
     expect(externalRefs).toEqual([]);
+    expect(importMapViolations(html), 'served HTML contains an off-origin import map').toEqual([]);
 
     // The JS/CSS bundles themselves must not AUTO-LOAD anything off-origin: a fetch(),
     // dynamic import(), importScripts(), new Worker(...), <script src=/<link href=, or
@@ -138,6 +176,7 @@ describe('W-sandbox — integration (dev/test mode, sandbox on by default)', () 
       const text = await res.text();
       const matches = text.match(autoLoadPattern);
       expect(matches, `${file} contains an auto-loaded off-origin reference: ${matches}`).toBeNull();
+      expect(importMapViolations(text), `${file} contains an off-origin import map`).toEqual([]);
     }
   });
 
@@ -207,6 +246,59 @@ describe('W-sandbox — 404 in production without the flag (integration)', () =>
       expect(res.status).toBe(200);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe('W-sandbox — production gating via the REAL buildApp()/mountGraphql() call site', () => {
+  // The two tests above call mountGraphqlSandbox()/sandboxEnabled() directly — they
+  // prove those functions behave correctly in isolation, but NOT that
+  // graphql/index.ts's real call site (`mountGraphqlSandbox(router, sandboxEnabled());`)
+  // actually wires them together. A bug there — a hardcoded `true`, or reading the
+  // wrong env — would leave every test above green while the real server always
+  // serves the sandbox in production. These go through startTestServer() ->
+  // buildApp() -> mountGraphql() -> the real zero-arg sandboxEnabled() call, under a
+  // genuinely mutated process.env — the actual boot-time path.
+  //
+  // Why mutating process.env.NODE_ENV here is safe: config.ts's fail-closed boot
+  // guards (e.g. "AUTH_MODE=test is forbidden in production") run ONCE at module-
+  // import time, already evaluated before this test file ever runs — flipping
+  // process.env afterward doesn't re-trigger them. sandbox.ts's sandboxEnabled() was
+  // deliberately written to read process.env live (not from that frozen config
+  // snapshot) specifically so this test is possible without a second process.
+  it('NODE_ENV=production, no flag: the real server 404s /api/graphql/sandbox', async () => {
+    const savedNodeEnv = process.env.NODE_ENV;
+    const savedFlag = process.env.GRAPHQL_SANDBOX;
+    process.env.NODE_ENV = 'production';
+    delete process.env.GRAPHQL_SANDBOX;
+    let s: TestServer | undefined;
+    try {
+      s = await startTestServer();
+      const res = await fetch(`${s.url}/api/graphql/sandbox`);
+      expect(res.status).toBe(404);
+    } finally {
+      await s?.close();
+      process.env.NODE_ENV = savedNodeEnv;
+      if (savedFlag === undefined) delete process.env.GRAPHQL_SANDBOX;
+      else process.env.GRAPHQL_SANDBOX = savedFlag;
+    }
+  });
+
+  it('NODE_ENV=production WITH GRAPHQL_SANDBOX=1: the real server serves it', async () => {
+    const savedNodeEnv = process.env.NODE_ENV;
+    const savedFlag = process.env.GRAPHQL_SANDBOX;
+    process.env.NODE_ENV = 'production';
+    process.env.GRAPHQL_SANDBOX = '1';
+    let s: TestServer | undefined;
+    try {
+      s = await startTestServer();
+      const res = await fetch(`${s.url}/api/graphql/sandbox`);
+      expect(res.status).toBe(200);
+    } finally {
+      await s?.close();
+      process.env.NODE_ENV = savedNodeEnv;
+      if (savedFlag === undefined) delete process.env.GRAPHQL_SANDBOX;
+      else process.env.GRAPHQL_SANDBOX = savedFlag;
     }
   });
 });
