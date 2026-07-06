@@ -1,0 +1,180 @@
+# Phase W · W13 — mutation-only engine ops. These are OPERATIONS, not resources: there is
+# NO new CRUD/Node entity type here. Each resolver is a thin caller over the SAME engine
+# functions the REST routes (schedule/plan/flight-plan/planner) drive, through the shared
+# services/engine-ops.ts extraction (Decision 3). Owner comes from currentOwnerId()
+# (requireAuth), never the client; each resolver reproduces the REST route's SSE envelope
+# and error mapping exactly. The one returned flight-plan list reuses W5's FlightPlanEntryType.
+#
+# Type decisions (see engine-ops-resolvers.ts + the W13 PR notes):
+#   - pins/hints are TYPED (PlanPin/PlanHint) — the source shapes are small and stable, and
+#     a typed shape reads better than JSON. Pin instants are real UTC ISO from parseInstruction
+#     (validateInstruction converts HH:MM → UTC ISO), so DateTime is safe here (NOT the W12
+#     CURRENT_TIMESTAMP trap — none of these ops surface a SQLite-default-stamped column).
+#   - ScheduleDiffPayload.diff / AutoResultPayload.result / ClearPlannerPayload.generators are
+#     JSON: ReflowDiff nests BlockMove{before,after}; AutoResult is heterogeneous across ops
+#     (fill → {step,candidatesAdded}, undo → {removed,restaged}); generators is a variable list
+#     of ClearRangeGenerator. Typing these fully would add several types for no query-shape gain
+#     — JSON passes the exact engine object through, same call as elsewhere in this phase.
+#   - Free-form strings (Suggestion.reason, PlanHint.kind) stay String, no enums (leak-proof,
+#     matches TaskType.status / FlightPlanEntryType.sourceKind).
+
+# ── shared small payloads ───────────────────────────────────────────────────────
+
+"A bare success acknowledgement (no resource to return)."
+type OkPayload {
+  success: Boolean!
+}
+
+"The deterministic reflow diff (moved/removed/added/unplaced) as an opaque JSON object."
+type ScheduleDiffPayload {
+  "The full ReflowDiff object (moved/removed/added/unplaced)."
+  diff: JSON!
+  success: Boolean!
+}
+
+# ── A. runSchedule (POST /api/schedule/run) ──────────────────────────────────────
+
+# ── B. instruct / suggestion / reauthor (routes/plan.ts) ─────────────────────────
+
+"One parsed time pin — a fixed appointment applied as a locked obstacle block."
+type PlanPin {
+  title: String!
+  "Pin start (UTC ISO instant, from parseInstruction)."
+  startAt: DateTime!
+  "Pin end (UTC ISO instant, from parseInstruction)."
+  endAt: DateTime!
+}
+
+"One parsed tag hint — a soft ordering constraint on tasks by tag."
+type PlanHint {
+  "'tag_before' | 'tag_after' | 'batch' — free-form String, not an enum."
+  kind: String!
+  tag: String!
+  "'HH:MM' for tag_before/tag_after; null for batch."
+  time: String
+}
+
+"Result of applying a natural-language instruction (pins + hints)."
+type InstructPayload {
+  ok: Boolean!
+  "The local date the instruction was applied to (YYYY-MM-DD)."
+  date: String!
+  pins: [PlanPin!]!
+  hints: [PlanHint!]!
+  "Count of pins written as obstacle blocks (0 if none)."
+  created: Int!
+}
+
+"An outstanding re-plan nudge for the owner (Phase M B4)."
+type PlanSuggestion {
+  "Local date the nudge targets (YYYY-MM-DD)."
+  date: String!
+  "Why the reflow fired — free-form String, not an enum."
+  reason: String!
+  "Short human summary (e.g. '2 priority tasks at risk')."
+  summary: String!
+  "How many high-priority tasks are at risk."
+  atRisk: Int!
+}
+
+input InstructPlanInput {
+  "The natural-language instruction. Empty/whitespace → BAD_USER_INPUT."
+  text: String!
+  "Target local date (YYYY-MM-DD). Defaults to today when omitted."
+  date: String
+}
+
+# ── C. auto/* engine ops (routes/flight-plan.ts) ─────────────────────────────────
+
+"Result of a two-step Auto op + the refreshed flight-plan (reuses W5's FlightPlanEntryType)."
+type AutoResultPayload {
+  "The engine's AutoResult-ish object (heterogeneous across fill/place/priority/undo)."
+  result: JSON!
+  "The owner's flight-plan after the op, ordered by (position, task_id)."
+  flightPlan: [FlightPlanEntryType!]!
+  success: Boolean!
+}
+
+input AutoRunInput {
+  "Target local date (YYYY-MM-DD). Defaults to today when omitted."
+  date: String
+  "Place into a single Plan (always single-day — the find-slot path)."
+  blockId: ID
+  "Explicit N-day horizon override (clamped 1..60). Hands-off mode defaults to planning_horizon_days."
+  horizonDays: Int
+}
+
+# ── D. clearPlanner (POST /api/planner/clear) ────────────────────────────────────
+
+"Report from a planner clear (or dry-run preview)."
+type ClearPlannerPayload {
+  "'open-ended' | 'bounded'."
+  mode: String!
+  blocksDeleted: Int!
+  dailyPlanDeleted: Int!
+  "The per-generator suppression report (until-cap / exdates / optouts) as JSON."
+  generators: JSON!
+  "The snapshot FILENAME (not the host path) taken before a real apply; null on dry-run."
+  backup: String
+  success: Boolean!
+}
+
+input ClearPlannerInput {
+  "Clears planner instances on/after this local date (YYYY-MM-DD). Required."
+  start: String!
+  "Optional inclusive end (YYYY-MM-DD). Omitted → open-ended (caps rules with UNTIL)."
+  end: String
+  "true → compute + report, write nothing (the Settings preview)."
+  dryRun: Boolean
+}
+
+# ── operations ───────────────────────────────────────────────────────────────────
+
+extend type Query {
+  "The owner's outstanding re-plan nudge, or null (mirrors GET /api/plan/suggestion)."
+  planSuggestion: PlanSuggestion
+}
+
+extend type Mutation {
+  "Deterministic reflow of the day's movable auto blocks (mirrors POST /api/schedule/run)."
+  runSchedule(date: String): ScheduleDiffPayload!
+
+  """
+  Parse + apply a natural-language instruction (pins as locked blocks, hints persisted).
+  Empty text → BAD_USER_INPUT; invalid parse → BAD_USER_INPUT; AI down → SERVICE_UNAVAILABLE.
+  """
+  instructPlan(input: InstructPlanInput!): InstructPayload!
+
+  """
+  Accept the re-plan nudge: force an AI re-author, clear the suggestion, then reflow
+  (mirrors POST /api/plan/reauthor).
+  """
+  reauthorPlan(date: String): ScheduleDiffPayload!
+
+  "Dismiss the re-plan nudge (mirrors POST /api/plan/reauthor/dismiss)."
+  dismissReauthor: OkPayload!
+
+  "Propose open-task candidates into the flight-plan (mirrors POST /api/auto/fill)."
+  autoFill: AutoResultPayload!
+
+  """
+  Place the selected staged items (mirrors POST /api/auto/run). blockId = single-Plan
+  find-slot; horizonDays / Hands-off trust mode → multi-day.
+  """
+  autoRun(input: AutoRunInput): AutoResultPayload!
+
+  """
+  Priority top-up: fill non-matching workday capacity with the highest-priority unplaced
+  tasks (mirrors POST /api/auto/priority).
+  """
+  autoPriority(date: String): AutoResultPayload!
+
+  "Undo the last placement run (mirrors POST /api/auto/undo)."
+  autoUndo: AutoResultPayload!
+
+  """
+  Clear planner instances in a date range + stop regeneration (mirrors POST /api/planner/clear).
+  Bad dates / span → BAD_USER_INPUT.
+  """
+  clearPlanner(input: ClearPlannerInput!): ClearPlannerPayload!
+}
