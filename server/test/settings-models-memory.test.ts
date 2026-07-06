@@ -21,8 +21,21 @@ function setPrefs(fields: Record<string, unknown>) {
   sqlite.prepare(`UPDATE scheduling_prefs SET ${set} WHERE owner_id = ?`).run(...keys.map((k) => fields[k]), OWNER);
 }
 
+// AA0 made `available` real (creds resolution incl. the CI_SERVER_URL env fallback), so
+// pin a creds-less environment for the "unavailable" assertions below.
+const SAVED_CI_URL = process.env.CI_SERVER_URL;
+const SAVED_CI_KEY = process.env.CI_SERVER_API_KEY;
+afterAll(() => {
+  if (SAVED_CI_URL === undefined) delete process.env.CI_SERVER_URL;
+  else process.env.CI_SERVER_URL = SAVED_CI_URL;
+  if (SAVED_CI_KEY === undefined) delete process.env.CI_SERVER_API_KEY;
+  else process.env.CI_SERVER_API_KEY = SAVED_CI_KEY;
+});
+
 beforeEach(() => {
   resetDb(); // keeps scheduling_prefs — reset the new columns to defaults explicitly
+  delete process.env.CI_SERVER_URL;
+  delete process.env.CI_SERVER_API_KEY;
   setPrefs({
     fast_model: null, quality_model: null, embed_model: null,
     memory_sync_enabled: 0, memory_account: null, memory_last_synced_at: null,
