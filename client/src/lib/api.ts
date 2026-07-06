@@ -63,6 +63,10 @@ export interface TaskInput {
   depends_on?: string[];
   recurrence_rule?: string | null;
   is_habit?: boolean;
+  /** AB1: on create, place a start-anchored block at (scheduled_for, task_time) so the
+   *  task lands on the Planner immediately. Server-side placeStartAnchoredTask; needs
+   *  scheduled_for. Default off. */
+  auto_place?: boolean;
 }
 
 export interface Streak {

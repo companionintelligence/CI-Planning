@@ -140,6 +140,12 @@ export async function saveElement(
   if (kind === 'task' || kind === 'habit') {
     const sd = !!form.someday;
     const rule = form.recurrenceRule || undefined;  // built by the wizard (preset+weekdays+custom)
+    // A fresh, non-recurring, scheduled task should land on the Planner on Save — the
+    // Planner renders time_blocks, so ask the server to place a start-anchored block at
+    // (scheduled_for, task_time). Without this a calendar-clicked task saves invisibly.
+    // Scoped out: habits and recurring series (their instances come from the recurrence
+    // engine), someday (no time), and edits.
+    const placeOnSave = mode === 'add' && kind === 'task' && !sd && !rule && !!form.scheduledFor;
     const body: TaskInput = {
       title: form.title.trim() || 'Untitled',
       tags: tagList,
@@ -153,6 +159,7 @@ export async function saveElement(
       priority: sd ? undefined : (form.priority ?? 3),
       defer_until: form.deferUntil ? new Date(form.deferUntil + 'T00:00:00').toISOString() : undefined,
       depends_on: form.dependsOn ?? [],
+      auto_place: placeOnSave,
     };
     if (kind === 'habit') body.is_habit = true;
     if (rule) body.recurrence_rule = rule;
@@ -165,6 +172,7 @@ export async function saveElement(
       await api.tasks.update(editId!, body);
     }
     refetchTasks(); refetchTags(); refetchPatterns();
+    if (placeOnSave) refetchBlocks(); // the placed start-anchored block shows on the Planner
     return kind === 'habit' ? 'Habit saved' : 'Task saved';
   }
 
