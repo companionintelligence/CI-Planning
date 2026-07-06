@@ -69,9 +69,6 @@ importers:
       '@as-integrations/koa':
         specifier: ^2.0.0
         version: 2.0.0(@apollo/server@5.5.1(graphql@16.14.2))(koa@3.2.1)
-      '@graphiql/toolkit':
-        specifier: 0.12.1
-        version: 0.12.1(@types/node@25.9.2)(graphql@16.14.2)
       '@koa/cors':
         specifier: ^5.0.0
         version: 5.0.0
@@ -96,9 +93,6 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@12.10.0)(gel@2.2.0)
-      graphiql:
-        specifier: 5.2.4
-        version: 5.2.4(@types/node@25.9.2)(graphql@16.14.2)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
       graphql:
         specifier: 16.14.2
         version: 16.14.2
@@ -114,12 +108,6 @@ importers:
       nodemailer:
         specifier: ^9.0.3
         version: 9.0.3
-      react:
-        specifier: 19.2.5
-        version: 19.2.5
-      react-dom:
-        specifier: 19.2.5
-        version: 19.2.5(react@19.2.5)
       rrule:
         specifier: ^2.8.1
         version: 2.8.1
@@ -130,6 +118,9 @@ importers:
         specifier: ^3.6.7
         version: 3.6.7
     devDependencies:
+      '@graphiql/toolkit':
+        specifier: 0.12.1
+        version: 0.12.1(@types/node@25.9.2)(graphql@16.14.2)
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -160,12 +151,21 @@ importers:
       esbuild:
         specifier: 0.25.12
         version: 0.25.12
+      graphiql:
+        specifier: 5.2.4
+        version: 5.2.4(@types/node@25.9.2)(graphql@16.14.2)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
       monaco-editor:
         specifier: 0.52.2
         version: 0.52.2
       monaco-graphql:
         specifier: 1.8.0
         version: 1.8.0(graphql@16.14.2)(monaco-editor@0.52.2)(prettier@3.9.4)
+      react:
+        specifier: 19.2.5
+        version: 19.2.5
+      react-dom:
+        specifier: 19.2.5
+        version: 19.2.5(react@19.2.5)
       tsx:
         specifier: ^4.22.4
         version: 4.22.4
