@@ -148,6 +148,16 @@ describe('GET /api/objectives', () => {
     expect(emptyNode.has_tasks).toBe(false);
   });
 
+  it('has_tasks flips back to false after the last task is unlinked (tombstoned links do not count)', async () => {
+    const obj = insertObjective({ title: 'Transient' });
+    const t = insertTask('A task');
+    await api(srv.url, `/api/objectives/${obj}/tasks`, { method: 'POST', json: { task_id: t } });
+    await api(srv.url, `/api/objectives/${obj}/tasks/${t}`, { method: 'DELETE' });
+
+    const res = await api(srv.url, '/api/objectives');
+    expect(res.body.objectives.find((o: any) => o.id === obj).has_tasks).toBe(false); // linked=0 row excluded
+  });
+
   it('owner isolation — does not return objectives for another owner', async () => {
     insertObjective({ title: 'Mine' });
     // Attempting to insert for a nonexistent owner_id should fail at FK.

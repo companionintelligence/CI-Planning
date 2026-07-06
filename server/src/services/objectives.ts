@@ -164,8 +164,11 @@ export function buildTree(owner: string) {
     byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, has_tasks: false, children: [] });
   }
 
+  // Only ACTIVE links count (migration 0087: unlink tombstones as linked=0, read paths
+  // filter linked=1) — so a tombstoned link doesn't keep a node marked task-bearing, which
+  // would wrongly block it as a parent. Consistent with the containment guard in updateObjective.
   const withTasks = new Set(
-    (sqlite.prepare(`SELECT DISTINCT objective_id FROM objective_tasks`).all() as { objective_id: string }[]).map((r) => r.objective_id),
+    (sqlite.prepare(`SELECT DISTINCT objective_id FROM objective_tasks WHERE linked = 1`).all() as { objective_id: string }[]).map((r) => r.objective_id),
   );
 
   for (const id of objIds) {

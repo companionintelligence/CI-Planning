@@ -53,7 +53,7 @@ input UpdateObjectiveInput {
   categoryId: ID
   priority: Int
   description: String
-  completedAt: String
+  completedAt: DateTime      # matches ObjectiveType.completedAt (DateTime), like UpdateTaskInput
 }
 
 input LinkObjectiveTaskInput { objectiveId: ID! taskId: ID! }
