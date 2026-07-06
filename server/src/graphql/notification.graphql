@@ -1,0 +1,82 @@
+# Phase W · W10 — ReminderType + PushSubscriptionType. CRUD ALONGSIDE the REST
+# /api/reminders + /api/push routes, through services/notifications.ts (Decision 3) —
+# extracted here for the first time (routes/notifications.ts had no service layer at all).
+#
+# ReminderType.task/.block resolve via the SAME owner-scoped getTask/getBlock the
+# TimeBlockType.task/.parentBlock field resolvers use — exactly one of the two is ever set
+# (a DB CHECK enforces it; the service also 422-equivalents at the app layer).
+#
+# `status`/`source` stay free-form String (not an enum): status is
+# pending|fired|snoozed|cancelled and source is manual|auto, both plain TEXT columns with
+# no CHECK enum in the schema beyond the exactly-one-target constraint.
+#
+# `cancelReminder` is a SOFT-cancel (the row survives with status='cancelled', unlike a
+# real delete) — it returns the updated ReminderType via ReminderPayload, not a bare
+# DeleteByIdPayload, so a client can see the row's final state (mirrors how
+# renameDayType/setTagPref return the full updated node rather than just an id).
+#
+# PushSubscriptionType never exposes p256dh/auth (secrets) — REST doesn't return them
+# either. `unsubscribePush` reuses the shared DeleteByIdInput/DeleteByIdPayload
+# (tag.graphql): `id` carries the subscription's `endpoint` (push_subscriptions has no
+# REST-facing surrogate id in the unsubscribe path — the endpoint IS the natural key REST
+# deletes by), which is the same natural-key-as-Node-id call FlightPlanEntryType made.
+
+type ReminderType implements Node {
+  id: ID!
+  task: TaskType
+  block: TimeBlockType
+  fireAt: DateTime!
+  status: String!         # pending | fired | snoozed | cancelled
+  firedAt: DateTime
+  source: String!          # manual | auto
+}
+
+type PushSubscriptionType implements Node {
+  id: ID!
+  endpoint: String!
+  userAgent: String
+  createdAt: DateTime!
+  # p256dh/auth are secrets — NEVER expose them here, REST doesn't return them either.
+}
+
+input CreateReminderInput {
+  taskId: ID
+  blockId: ID
+  fireAt: DateTime
+  date: String
+  time: String
+}
+
+input SnoozeReminderInput {
+  id: ID!
+  minutes: Int!
+}
+
+input SubscribePushInput {
+  endpoint: String!
+  p256dh: String!
+  auth: String!
+}
+
+type ReminderPayload {
+  reminder: ReminderType
+  success: Boolean!
+}
+
+type PushSubscriptionPayload {
+  success: Boolean!
+}
+
+extend type Query {
+  reminders: [ReminderType!]!            # live (non-cancelled), soonest first — mirrors REST GET
+  pushSubscriptions: [PushSubscriptionType!]!
+  pushVapidKey: String!                   # empty string when unconfigured, matching REST
+}
+
+extend type Mutation {
+  createReminder(input: CreateReminderInput!): ReminderPayload!
+  cancelReminder(input: DeleteByIdInput!): ReminderPayload!   # soft-cancel; returns the now-cancelled reminder
+  snoozeReminder(input: SnoozeReminderInput!): ReminderPayload!
+  subscribePush(input: SubscribePushInput!): PushSubscriptionPayload!
+  unsubscribePush(input: DeleteByIdInput!): PushSubscriptionPayload!   # input.id = the subscription's endpoint
+}
