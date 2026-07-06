@@ -1,0 +1,73 @@
+# Phase W · W6b — the day-arrangement half of the pattern family: PatternBlockType (the
+# direction windows that Auto places into) + PatternPrefType (per-direction scheduling
+# prefs). CRUD ALONGSIDE the REST /api/pattern-blocks + /api/pattern-prefs routes, through
+# services/pattern-blocks.ts + pattern-prefs.ts (Decision 3).
+#
+# NOTE: `pattern_blocks` is the DAY-ARRANGEMENT axis — conceptually distinct from the
+# routine/habit `PatternType` (patterns table, W6a) and NOT renamed by Z-W1. Both a
+# PatternBlock and a PatternPref hang off a DIRECTION tag (tags.kind='direction').
+#
+# `startTime`/`endTime` are 'HH:MM' wall-clock strings in the owner's timezone (not
+# instants) — String, never DateTime. `dayType` is a day_types.key (builtin
+# 'workday'/'weekend' or a custom key) — free-form String, no enum.
+
+type PatternBlockType implements Node {
+  id: ID!
+  direction: TagType!        # direction_tag_id → the direction tag this window belongs to
+  dayType: String!
+  startTime: String!         # 'HH:MM'
+  endTime: String!           # 'HH:MM'
+}
+
+# A per-direction scheduling preference (tag_prefs, kind='direction'). Identified by its
+# direction tag — the pref is keyed by (owner, tag), so `id` is the direction tag's id
+# (the natural-key-as-Node-id call TagType/EntityTagType/PatternPref all share).
+type PatternPrefType implements Node {
+  id: ID!
+  direction: TagType!        # the direction tag this pref applies to
+  autoFill: Boolean!
+  reminderOffsets: [Int!]!
+  iconShape: String!         # circle | square | triangle
+  colorToken: String!        # CI-Hub token key (never hex)
+  defaultMinutes: Int!
+}
+
+input PatternBlockRangeInput { startTime: String! endTime: String! }
+input SetPatternBlockRangesInput {
+  directionTagId: ID!
+  dayType: String!
+  ranges: [PatternBlockRangeInput!]!
+}
+type SetPatternBlockRangesPayload {
+  # The resulting windows for that direction + day type (mirrors the REST PUT payload).
+  patternBlocks: [PatternBlockType!]!
+  success: Boolean!
+}
+
+input SetPatternPrefInput {
+  directionTagId: ID!
+  autoFill: Boolean
+  reminderOffsets: [Int!]
+  iconShape: String
+  colorToken: String
+  defaultMinutes: Int
+}
+type PatternPrefPayload {
+  patternPref: PatternPrefType!
+  success: Boolean!
+}
+
+extend type Query {
+  # All windows for one day type (flat rows, ordered by direction then start). And all the
+  # owner's explicit direction prefs — plain lists (small curated sets; missing prefs fall
+  # back to defaults, so an absent direction simply isn't listed).
+  patternBlocks(dayType: String!): [PatternBlockType!]!
+  patternPrefs: [PatternPrefType!]!
+}
+
+extend type Mutation {
+  # Replace all ranges for a direction + day type atomically (mirrors the REST PUT).
+  setPatternBlockRanges(input: SetPatternBlockRangesInput!): SetPatternBlockRangesPayload!
+  # Upsert a direction's scheduling prefs (merge-on-write).
+  setPatternPref(input: SetPatternPrefInput!): PatternPrefPayload!
+}
