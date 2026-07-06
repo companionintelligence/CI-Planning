@@ -167,6 +167,36 @@ describe('W3.3b — TaskType mutations reuse the REST services + fire SSE', () =
     expect(syncEventCount(SYSTEM_OWNER, 'task:updated')).toBe(1);
   });
 
+  it('updateTask reverse-syncs a placed block → also emits block:updated (REST parity)', async () => {
+    // A task with a linked planned block: editing the estimate resizes that block in
+    // lockstep (services/tasks.ts → syncBlockFromTask, scope=instance). REST fires
+    // block:updated for the synced block (routes/tasks.ts); the GraphQL mutation must too,
+    // or other devices render a stale block. Regression for the W-close audit finding.
+    const id = await seed('Scheduled', SYSTEM_OWNER, { scheduled_for: '2026-07-04', estimated_minutes: 30 });
+    const blockId = (sqlite
+      .prepare(
+        `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, status, all_day, owner_id)
+         VALUES (uuid7(), ?, 'Placed', 'task', '2026-07-04T09:00:00.000Z', '2026-07-04T09:30:00.000Z', 'planned', 0, ?)
+         RETURNING id`,
+      )
+      .get(id, SYSTEM_OWNER) as { id: string }).id;
+
+    const m = await gql(`mutation { updateTask(input: { id: "${id}", estimatedMinutes: 60 }) { success } }`);
+    expect(m.body.errors).toBeUndefined();
+    expect(m.body.data.updateTask.success).toBe(true);
+    // The linked block was resized in lockstep (span 30 → 60 min)...
+    const blk = sqlite.prepare(`SELECT start_at, end_at FROM time_blocks WHERE task_id = ?`).get(id) as { start_at: string; end_at: string };
+    expect(Date.parse(blk.end_at) - Date.parse(blk.start_at)).toBe(60 * 60_000);
+    // ...and exactly one block:updated event fired, targeting THAT block (clients refresh by
+    // entity_id, so a wrong/empty payload would leave the correct block stale — assert the id).
+    const events = sqlite
+      .prepare(`SELECT entity_id, payload FROM sync_events WHERE owner_id = ? AND event = 'block:updated'`)
+      .all(SYSTEM_OWNER) as { entity_id: string; payload: string }[];
+    expect(events).toHaveLength(1);
+    expect(events[0].entity_id).toBe(blockId);
+    expect(JSON.parse(events[0].payload)).toEqual({ id: blockId });
+  });
+
   it('updateTask on an unknown id errors NOT_FOUND', async () => {
     const m = await gql('mutation { updateTask(input: { id: "ghost", title: "x" }) { success } }');
     expect(m.body.errors?.[0]?.message).toMatch(/not found/i);
