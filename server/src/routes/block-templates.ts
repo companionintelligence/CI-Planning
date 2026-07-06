@@ -5,6 +5,17 @@ import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import { applyTaskPlacementStatus, revertTaskPlacementStatus } from '../services/block-task-sync.js';
 import { removeEntityTags } from '../services/tags.js';
+import {
+  parseTasks,
+  serializeTemplate,
+  serializeBlock,
+  materializeTemplateTasks,
+  listBlockTemplates,
+  getBlockTemplate,
+  createBlockTemplate,
+  updateBlockTemplate,
+  deleteBlockTemplate,
+} from '../services/block-templates.js';
 
 /**
  * Reusable Time-Block templates (Phase G, G3 + PR-B). Save a named, tagged Plan
@@ -13,86 +24,26 @@ import { removeEntityTags } from '../services/tags.js';
  * re-instantiate it onto a day. Instantiating recreates the `block_kind='timeblock'`
  * Plan container and, for each saved task, a real task + its `block_kind='task'`
  * block at `start + offset_minutes`. Owner-scoped.
+ *
+ * Phase W (Decision 3): template CRUD lives in services/block-templates.ts so REST +
+ * GraphQL share one owner-scoped implementation; these handlers are thin shells over it.
+ * instantiate + apply-to-block (which materialize real time_blocks/tasks) stay here and
+ * reuse the shared helpers.
  */
-
-interface TemplateTask {
-  title: string;
-  tag?: string | null;
-  estimated_minutes?: number | null;
-  offset_minutes?: number;
-}
-interface TemplateRow {
-  id: string;
-  owner_id: string;
-  name: string;
-  tag: string | null;
-  default_minutes: number;
-  tasks: string | null; // JSON TemplateTask[]
-}
-
-function parseTasks(raw: string | null): TemplateTask[] {
-  if (!raw) return [];
-  try {
-    const v = JSON.parse(raw);
-    return Array.isArray(v) ? v : [];
-  } catch { return []; }
-}
-const serializeTemplate = (t: TemplateRow) => ({
-  id: t.id, owner_id: t.owner_id, name: t.name, tag: t.tag, default_minutes: t.default_minutes, tasks: parseTasks(t.tasks),
-});
-const serializeBlock = (b: Record<string, unknown>) => ({
-  ...b,
-  is_locked: !!b.is_locked,
-  is_auto: !!b.is_auto,
-  all_day: !!b.all_day,
-});
-
-/**
- * Recreate a template's saved tasks near `baseMs`: for each, a real `open` task +
- * its `block_kind='task'` block at `base + offset_minutes`. `parentBlockId` parents
- * the task blocks to a container (apply-to-block) or leaves them loose (instantiate,
- * pass null — byte-identical to the pre-refactor behavior). Returns the new task ids.
- */
-function materializeTemplateTasks(owner: string, baseMs: number, templateTasks: TemplateTask[], parentBlockId: string | null): string[] {
-  const insTask = sqlite.prepare(
-    `INSERT INTO tasks (id, title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (uuid7(), ?, ?, ?, 'open', 3, 'manual') RETURNING id`,
-  );
-  const insBlock = sqlite.prepare(
-    `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, tag, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, ?, 0, 0, 'manual', 'planned', ?)`,
-  );
-  const createdTaskIds: string[] = [];
-  for (const tk of templateTasks) {
-    const est = tk.estimated_minutes ?? 30;
-    const id = (insTask.get(tk.title, tk.estimated_minutes ?? null, owner) as { id: string }).id;
-    const s = new Date(baseMs + (tk.offset_minutes ?? 0) * 60_000).toISOString();
-    const e = new Date(Date.parse(s) + est * 60_000).toISOString();
-    insBlock.run(id, owner, tk.title, tk.tag ?? null, s, e, parentBlockId);
-    createdTaskIds.push(id);
-  }
-  return createdTaskIds;
-}
 
 export function blockTemplatesRouter() {
   const router = new Router();
 
   router.get('/api/block-templates', async (ctx) => {
-    const rows = sqlite
-      .prepare(`SELECT * FROM block_templates WHERE owner_id = ? ORDER BY name`)
-      .all(currentOwnerId()) as TemplateRow[];
-    ctx.body = { block_templates: rows.map(serializeTemplate) };
+    ctx.body = { block_templates: listBlockTemplates(currentOwnerId()).map(serializeTemplate) };
   });
 
   router.post('/api/block-templates', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as { name?: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[] };
-    if (!body.name?.trim()) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
-    const tasksJson = Array.isArray(body.tasks) && body.tasks.length ? JSON.stringify(body.tasks) : null;
-    const row = sqlite
-      .prepare(`INSERT INTO block_templates (id, owner_id, name, tag, default_minutes, tasks) VALUES (uuid7(), ?, ?, ?, ?, ?) RETURNING *`)
-      .get(currentOwnerId(), body.name.trim(), body.tag ?? null, body.default_minutes ?? 60, tasksJson) as TemplateRow;
-    const out = serializeTemplate(row);
+    const body = (ctx.request.body ?? {}) as { name?: string; tag?: string; default_minutes?: number; tasks?: unknown };
+    const res = createBlockTemplate(currentOwnerId(), body as Parameters<typeof createBlockTemplate>[1]);
+    if (!res.ok) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
+    const out = serializeTemplate(res.row);
     broadcast(currentOwnerId(), 'block_template:created', out);
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `block-template:${row.id}` });
     ctx.status = 201;
     ctx.body = { block_template: out };
   });
@@ -101,37 +52,28 @@ export function blockTemplatesRouter() {
   // captured via "save as template"; this just renames/retags/retimes it.
   router.patch('/api/block-templates/:id', async (ctx) => {
     const owner = currentOwnerId();
-    const existing = sqlite.prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner) as TemplateRow | undefined;
-    if (!existing) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as { name?: string; tag?: string | null; default_minutes?: number };
-    const name = body.name !== undefined ? body.name.trim() : existing.name;
-    if (!name) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
-    const row = sqlite
-      .prepare(`UPDATE block_templates SET name = ?, tag = ?, default_minutes = ? WHERE id = ? AND owner_id = ? RETURNING *`)
-      .get(
-        name,
-        body.tag !== undefined ? (body.tag || null) : existing.tag,
-        body.default_minutes !== undefined ? body.default_minutes : existing.default_minutes,
-        ctx.params.id, owner,
-      ) as TemplateRow;
-    const out = serializeTemplate(row);
+    const res = updateBlockTemplate(owner, ctx.params.id, body);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      ctx.status = 422; ctx.body = { error: 'name is required' }; return;
+    }
+    const out = serializeTemplate(res.row);
     broadcast(owner, 'block_template:updated', out);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block-template:${row.id}` });
     ctx.body = { block_template: out };
   });
 
   router.delete('/api/block-templates/:id', async (ctx) => {
-    const r = sqlite.prepare(`DELETE FROM block_templates WHERE id = ? AND owner_id = ?`).run(ctx.params.id, currentOwnerId());
-    if (r.changes === 0) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const res = deleteBlockTemplate(currentOwnerId(), ctx.params.id);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'block_template:deleted', { id: ctx.params.id });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `block-template:${ctx.params.id}` });
     ctx.body = { ok: true };
   });
 
   // Instantiate a template onto the day: the Plan container + its saved tasks.
   router.post('/api/block-templates/:id/instantiate', async (ctx) => {
     const owner = currentOwnerId();
-    const t = sqlite.prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner) as TemplateRow | undefined;
+    const t = getBlockTemplate(owner, ctx.params.id);
     if (!t) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as { start_at?: string; end_at?: string };
     if (!body.start_at) { ctx.status = 422; ctx.body = { error: 'start_at is required' }; return; }
@@ -161,7 +103,7 @@ export function blockTemplatesRouter() {
   // repopulate from the template, parented to the block and flipped to scheduled.
   router.post('/api/block-templates/:id/apply-to-block', async (ctx) => {
     const owner = currentOwnerId();
-    const t = sqlite.prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner) as TemplateRow | undefined;
+    const t = getBlockTemplate(owner, ctx.params.id);
     if (!t) { ctx.status = 404; ctx.body = { error: 'template not found' }; return; }
     const body = (ctx.request.body ?? {}) as { block_id?: string };
     if (!body.block_id) { ctx.status = 422; ctx.body = { error: 'block_id is required' }; return; }
