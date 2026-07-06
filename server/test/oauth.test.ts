@@ -477,19 +477,19 @@ describe('accounts listing + disconnect', () => {
     expect(oqN.n).toBe(0);
 
     // getConnectors() now returns nothing for this owner.
-    const connectors = runWithOwner(SYSTEM_OWNER, () => getConnectors());
+    const connectors = runWithOwner(SYSTEM_OWNER, [], () => getConnectors());
     expect(connectors).toHaveLength(0);
   });
 
   it('getConnectors() skips a status<>active row', async () => {
     seedToken('revoked@example.com', 'revoked');
-    const connectors = runWithOwner(SYSTEM_OWNER, () => getConnectors());
+    const connectors = runWithOwner(SYSTEM_OWNER, [], () => getConnectors());
     expect(connectors).toHaveLength(0);
   });
 
   it('getConnectors() returns a connector for an active row', async () => {
     seedToken('active@example.com', 'active');
-    const connectors = runWithOwner(SYSTEM_OWNER, () => getConnectors());
+    const connectors = runWithOwner(SYSTEM_OWNER, [], () => getConnectors());
     expect(connectors).toHaveLength(1);
     expect(connectors[0].account).toBe('active@example.com');
   });

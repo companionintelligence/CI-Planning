@@ -40,7 +40,7 @@ function fakeClient(events: CalendarEvent[]): GoogleClient {
   };
 }
 
-const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, fn);
+const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, [], fn);
 
 describe('ingestEvents — no meeting-block mirror (WP5)', () => {
   beforeEach(() => {

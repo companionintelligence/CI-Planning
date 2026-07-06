@@ -26,7 +26,7 @@ vi.mock('../src/agents/extract.js', () => ({
 
 import { ingestEmails } from '../src/agents/ingest.js';
 
-const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, fn);
+const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, [], fn);
 
 const ACCOUNT = 'primary';
 

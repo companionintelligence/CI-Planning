@@ -1,0 +1,71 @@
+# Phase W · W12 — ScheduledJobType + JobRunType. The system-job admin surface, ALONGSIDE
+# the REST /api/jobs route, through services/jobs.ts (Decision 3).
+#
+# THE INVERSION vs. every other W type: scheduled_jobs / job_runs are SYSTEM-GLOBAL,
+# owner-less tables (no owner_id). So these types are NOT owner-scoped — they are gated on
+# the admin scope (planning:admin) instead. A full-owner session carries admin; a narrower
+# credential gets a FORBIDDEN error (the same gate the REST /api/jobs route now applies).
+#
+# Timestamps are String, NOT DateTime. job_runs.started_at has a SQLite CURRENT_TIMESTAMP
+# default that stores the space-separated 'YYYY-MM-DD HH:MM:SS' form (no 'T', no 'Z'), which
+# DateTimeScalar parses as LOCAL time — a silent timezone shift (verified: '...05:08:45'
+# round-trips to '...12:08:45Z' under a UTC-7 host). runJob writes proper ISO strings, but
+# any raw-seeded / default-stamped row would be silently corrupted by DateTime. String passes
+# the stored value through untouched — the honest, leak-proof choice (same reasoning as
+# TaskType.status being String, not a lossy enum).
+#
+# kind / status are free-form TEXT → String, not enums.
+
+type ScheduledJobType implements Node {
+  id: ID!
+  name: String!
+  kind: String!
+  cron: String!
+  enabled: Boolean!
+  lastRunAt: String            # scheduled_jobs.last_run_at — ISO when set (runJob writes it), else null
+  nextRunAt: String            # scheduled_jobs.next_run_at — currently always null (not yet populated)
+  config: JSON
+  lastRun: JobRunType          # the most-recent run (mirrors the REST join's last-run fields); null if never run
+  # job_runs accumulate unbounded → a cursor connection, newest first (NOT a plain list).
+  runs(first: Int, after: String): JobRunConnection!
+}
+
+type JobRunType implements Node {
+  id: ID!
+  status: String!              # running | done | error (free-form String)
+  startedAt: String            # see the timestamp note above — String, not DateTime
+  finishedAt: String
+  itemsCreated: Int!
+  itemsUpdated: Int!
+  log: String
+  job: ScheduledJobType!       # the parent job; non-null → the resolver throws if orphaned (never nulls)
+}
+
+type JobRunConnection implements Connection {
+  edges: [JobRunEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type JobRunEdge implements Edge {
+  cursor: String!
+  node: JobRunType!
+}
+
+# runScheduledJob mirrors POST /api/jobs/:id/run: async fire-and-forget trigger.
+type RunJobPayload {
+  job: ScheduledJobType
+  success: Boolean!
+  message: String
+}
+
+extend type Query {
+  scheduledJobs: [ScheduledJobType!]!   # the full (tiny, fixed) job set — plain list. Admin-only.
+  scheduledJob(id: ID!): ScheduledJobType   # one job by id, or null. Admin-only.
+}
+
+extend type Mutation {
+  # Reuses the shared DeleteByIdInput { id } (declared in tag.graphql). Admin-only; async
+  # trigger — success reports the job was triggered, not that it finished.
+  runScheduledJob(input: DeleteByIdInput!): RunJobPayload!
+}

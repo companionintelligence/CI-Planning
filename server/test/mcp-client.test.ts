@@ -107,7 +107,7 @@ function httpError(status: number): Error {
 }
 
 function run<T>(fn: () => Promise<T>): Promise<T> {
-  return runWithOwner(SYSTEM_OWNER, fn);
+  return runWithOwner(SYSTEM_OWNER, [], fn);
 }
 
 describe('McpGoogleSession', () => {

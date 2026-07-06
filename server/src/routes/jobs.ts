@@ -1,39 +1,44 @@
 import Router from '@koa/router';
-import { eq, desc } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
-import { scheduledJobs, jobRuns } from '../db/schema.js';
+import type Koa from 'koa';
 import { runJob } from '../jobs/index.js';
-import { currentOwnerId } from '../lib/context.js';
-import { writeAudit } from '../lib/audit.js';
+import { currentScopes } from '../lib/context.js';
+import { hasAdminScope } from '../lib/auth/scopes.js';
+import { listJobs, triggerJob } from '../services/jobs.js';
+
+/**
+ * System-job admin surface (Phase W · W12). `scheduled_jobs`/`job_runs` are system-global,
+ * owner-less tables, so — unlike every other route — this is NOT owner-scoped. Instead it
+ * is gated on the admin scope (`planning:admin`): a full-owner session carries admin, so a
+ * logged-in operator is unaffected, but a narrower credential (e.g. a read/write-only API
+ * key) now gets 403. This is the ONE deliberate, owner-approved behavior change to a REST
+ * route in the phase (byte-equivalence exception, W12).
+ */
+
+/** 403 unless the current credential carries admin. Returns true when the request may
+ *  proceed; on denial it sets the response (matching requireAuth's 403 body) and returns false. */
+function requireAdmin(ctx: Koa.Context): boolean {
+  if (hasAdminScope(currentScopes())) return true;
+  ctx.status = 403;
+  ctx.body = { error: 'forbidden' };
+  return false;
+}
 
 export function jobsRouter() {
   const router = new Router();
 
-  // GET /api/jobs
+  // GET /api/jobs — admin-only.
   router.get('/api/jobs', async (ctx) => {
-    const jobs = sqlite
-      .prepare(
-        `SELECT j.*, r.started_at as last_started, r.status as last_status, r.items_created, r.items_updated
-         FROM scheduled_jobs j
-         LEFT JOIN job_runs r ON r.id = (
-           SELECT id FROM job_runs WHERE job_id = j.id ORDER BY started_at DESC LIMIT 1
-         )
-         ORDER BY j.name`
-      )
-      .all();
-    ctx.body = { jobs };
+    if (!requireAdmin(ctx)) return;
+    ctx.body = { jobs: listJobs() };
   });
 
-  // POST /api/jobs/:id/run
+  // POST /api/jobs/:id/run — admin-only. Fires async; client listens on SSE for completion.
   router.post('/api/jobs/:id/run', async (ctx) => {
-    const id = ctx.params.id;
-    const [job] = await db.select().from(scheduledJobs).where(eq(scheduledJobs.id, id));
-    if (!job) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-
-    // Fire async; client listens on SSE for completion
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: `job:${job.kind}` });
-    runJob(job.kind).catch(console.error);
-    ctx.body = { ok: true, message: `Job ${job.name} triggered` };
+    if (!requireAdmin(ctx)) return;
+    const res = await triggerJob(ctx.params.id);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    runJob(res.job.kind).catch(console.error);
+    ctx.body = { ok: true, message: `Job ${res.job.name} triggered` };
   });
 
   return router;

@@ -5,6 +5,7 @@ import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { newId } from '../lib/ids.js';
 import { currentOwnerId, runWithOwner } from '../lib/context.js';
+import { SCOPE_READ, SCOPE_WRITE } from '../lib/auth/types.js';
 import { loadKek, open } from '../lib/crypto/index.js';
 import { verifyOidcIdToken, type OidcClaims } from '../lib/auth/verifyOidcIdToken.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
@@ -269,7 +270,8 @@ export function oauthRouter() {
     const expiresAt = new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString();
 
     // Store under the state's owner (NOT the request's — the callback is credential-less).
-    runWithOwner(row.owner_id, () => {
+    // A normal owner context (no admin) — this only writes the owner's own connector token.
+    runWithOwner(row.owner_id, [SCOPE_READ, SCOPE_WRITE], () => {
       BaseOAuth2Client.storeToken('google', email, {
         accessToken: tok.access_token!,
         refreshToken,

@@ -61,7 +61,7 @@ describe('§C1 overrun detection', () => {
       '2026-06-20T10:00:00.000Z',
     );
 
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, [], () => {
       const { entry } = startTimer(task, blockId);
 
       // Backdate started_at so the session elapsed is 63 minutes — 1 minute
@@ -88,7 +88,7 @@ describe('§C1 overrun detection', () => {
       '2026-06-20T10:00:00.000Z',
     );
 
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, [], () => {
       const { entry } = startTimer(task, blockId);
 
       // Session elapsed is 61 minutes — inside the 2-minute tolerance (≤ 62 min).
@@ -108,7 +108,7 @@ describe('§C1 overrun detection', () => {
   it('no block_id → no-op (block table untouched)', () => {
     const task = insertTask();
 
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, [], () => {
       const { entry } = startTimer(task); // no blockId
 
       const startedAt = new Date(Date.now() - 90 * 60_000).toISOString();
@@ -142,7 +142,7 @@ describe('§C1 overrun detection', () => {
       '2026-06-20T10:00:00.000Z',
     );
 
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, [], () => {
       // --- First session: 40 minutes ---
       const { entry: e1 } = startTimer(task, blockId);
       const start1 = new Date(Date.now() - 40 * 60_000).toISOString();
