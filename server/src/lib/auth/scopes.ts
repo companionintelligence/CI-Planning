@@ -1,4 +1,4 @@
-import { SCOPE_READ, SCOPE_WRITE } from './types.js';
+import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN } from './types.js';
 
 /**
  * The scope a request needs, derived from its HTTP method: safe (GET/HEAD) reads
@@ -16,4 +16,12 @@ export function hasScope(scopes: string[], method: string): boolean {
     return scopes.includes(SCOPE_READ) || scopes.includes(SCOPE_WRITE);
   }
   return scopes.includes(SCOPE_WRITE);
+}
+
+/**
+ * Admin gate (W12) — the single predicate REST and GraphQL both use so the two surfaces
+ * decide identically. Admin is NOT implied by write; it must be present explicitly.
+ */
+export function hasAdminScope(scopes: string[]): boolean {
+  return scopes.includes(SCOPE_ADMIN);
 }

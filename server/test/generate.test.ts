@@ -57,7 +57,7 @@ function insertTemplate(o: TemplateOpts = {}): string {
 }
 
 const gen = (opts: { today?: string; horizonDays?: number }) =>
-  runWithOwner(OWNER, () => generateRecurrences(opts));
+  runWithOwner(OWNER, [], () => generateRecurrences(opts));
 
 interface InstanceRow {
   id: string;

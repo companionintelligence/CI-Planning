@@ -106,7 +106,7 @@ describe('Google MCP client (live mode, fail-closed)', () => {
     let threw: Error | null = null;
     let rows: unknown[] | null = null;
     try {
-      rows = await runWithOwner(SYSTEM_OWNER, () => client.listEmails());
+      rows = await runWithOwner(SYSTEM_OWNER, [], () => client.listEmails());
     } catch (err) {
       threw = err as Error;
     }
@@ -152,9 +152,9 @@ describe('Google MCP client (live mode, fail-closed)', () => {
       },
     });
     const client = createLiveGoogleClient({ command: 'noop', connectionFactory: okFactory });
-    const emails = await runWithOwner(SYSTEM_OWNER, () => client.listEmails());
+    const emails = await runWithOwner(SYSTEM_OWNER, [], () => client.listEmails());
     expect(emails[0]).toMatchObject({ id: 'm1', subject: 'Hi' });
-    const events = await runWithOwner(SYSTEM_OWNER, () => client.listEvents());
+    const events = await runWithOwner(SYSTEM_OWNER, [], () => client.listEvents());
     expect(events[0]).toMatchObject({ id: 'e1', title: 'Standup', description: '' });
   });
 });

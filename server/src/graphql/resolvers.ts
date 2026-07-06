@@ -14,6 +14,7 @@ import { starsResolvers } from './stars-resolvers.js';
 import { possibleTaskResolvers } from './possible-task-resolvers.js';
 import { notificationResolvers } from './notification-resolvers.js';
 import { prefsResolvers } from './prefs-resolvers.js';
+import { jobResolvers } from './job-resolvers.js';
 
 /**
  * Root resolver map. Entity resolvers live in per-type modules (e.g. tag-resolvers.ts)
@@ -41,6 +42,7 @@ export const resolvers = {
     ...possibleTaskResolvers.Query,
     ...notificationResolvers.Query,
     ...prefsResolvers.Query,
+    ...jobResolvers.Query,
   },
   Mutation: {
     ...tagResolvers.Mutation,
@@ -56,6 +58,7 @@ export const resolvers = {
     ...possibleTaskResolvers.Mutation,
     ...notificationResolvers.Mutation,
     ...prefsResolvers.Mutation,
+    ...jobResolvers.Mutation,
   },
   TagType: tagResolvers.TagType,
   TaskType: taskResolvers.TaskType,
@@ -76,6 +79,8 @@ export const resolvers = {
   ReminderType: notificationResolvers.ReminderType,
   PushSubscriptionType: notificationResolvers.PushSubscriptionType,
   SchedulingPrefsType: prefsResolvers.SchedulingPrefsType,
+  ScheduledJobType: jobResolvers.ScheduledJobType,
+  JobRunType: jobResolvers.JobRunType,
   // W4b union: __resolveType for TagType.entities' Task ∪ TimeBlock members.
   TaggedEntity: tagResolvers.TaggedEntity,
 };

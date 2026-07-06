@@ -20,7 +20,7 @@ import { syncConnector } from '../src/agents/sync.js';
 import { config } from '../src/lib/config.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 
-const sync = (c: FixtureConnector) => runWithOwner(SYSTEM_OWNER, () => syncConnector(c));
+const sync = (c: FixtureConnector) => runWithOwner(SYSTEM_OWNER, [], () => syncConnector(c));
 
 function futureDate(daysAhead: number, hourOffset = 0): string {
   const d = new Date();

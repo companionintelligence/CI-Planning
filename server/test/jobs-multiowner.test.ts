@@ -38,7 +38,7 @@ describe('T3 cron per-owner fan-out', () => {
 
   it('manual runJob runs once for the calling owner (no fan-out)', async () => {
     createOwner();
-    await runWithOwner(SECOND_OWNER_ID, () => runJob('freeze_stars'));
+    await runWithOwner(SECOND_OWNER_ID, [], () => runJob('freeze_stars'));
     expect(runCount('freeze_stars')).toBe(1);
   });
 });
