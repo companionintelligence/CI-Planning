@@ -70,7 +70,7 @@ export type UpdatePrefsResult =
        *  inside the same call; see `assignExperimentArmIfNeeded` note below). */
       timeSenseNewlyEnabledUnassigned: boolean;
     }
-  | { ok: false; error: 'bad_recurrence_horizon' | 'view_prefs_not_object' | 'view_prefs_not_serializable' };
+  | { ok: false; error: 'bad_recurrence_horizon' | 'view_prefs_not_object' | 'view_prefs_not_serializable' | 'not_found' };
 
 /**
  * Validate + write a PATCH body (snake_case in, matching the REST wire format) to
@@ -92,9 +92,14 @@ export async function updatePrefs(ownerId: string, rawBody: Record<string, unkno
 
   // Snapshot the old horizon + tz BEFORE the update so the caller can detect a
   // shorten and compute "today" in the owner's timezone (matching the engines' clamp).
-  const beforeRow = sqlite
-    .prepare(`SELECT recurrence_horizon_days, timezone FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(ownerId) as { recurrence_horizon_days: number | null; timezone: string | null } | undefined;
+  // Only queried when the horizon is actually being patched — `timezone`/`oldHorizon`
+  // are only ever consumed inside the shorten branch, which is unreachable otherwise
+  // (mirrors the pre-extraction route, which made this same read conditional).
+  const beforeRow = horizonPatched
+    ? (sqlite
+        .prepare(`SELECT recurrence_horizon_days, timezone FROM scheduling_prefs WHERE owner_id = ?`)
+        .get(ownerId) as { recurrence_horizon_days: number | null; timezone: string | null } | undefined)
+    : undefined;
   const oldHorizon = horizonPatched ? beforeRow?.recurrence_horizon_days ?? 7 : null;
   const timezone = beforeRow?.timezone || '';
 
@@ -128,9 +133,14 @@ export async function updatePrefs(ownerId: string, rawBody: Record<string, unkno
     .set(update)
     .where(eq(schedulingPrefs.ownerId, ownerId))
     .returning();
+  // The UPDATE affects zero rows when the owner has no seeded scheduling_prefs row
+  // (shouldn't happen in practice — every owner gets one at creation — but a real
+  // discriminated `not_found` beats returning `ok:true` with an undefined `prefs`,
+  // which would otherwise crash a GraphQL resolver's `toNode(prefs)` on the happy path).
+  if (!prefs) return { ok: false, error: 'not_found' };
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: 'prefs:owner' });
 
-  const timeSenseNewlyEnabledUnassigned = !!(prefs?.timeSenseEnabled && !prefs.zExperimentArm);
+  const timeSenseNewlyEnabledUnassigned = !!(prefs.timeSenseEnabled && !prefs.zExperimentArm);
 
   return {
     ok: true,
