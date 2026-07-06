@@ -1,0 +1,184 @@
+# Phase W · W11 — SchedulingPrefsType. CRUD ALONGSIDE the REST /api/prefs route,
+# through services/prefs.ts (Decision 3).
+#
+# scheduling_prefs is ONE row per owner — not a list — so there's no XConnection
+# here, just a singular `schedulingPrefs: SchedulingPrefsType!` query that always
+# resolves (the row is seeded at owner creation). `id` is the owner id itself: the
+# row has a surrogate PK column, but the natural key IS the owner (one row per
+# owner), so exposing the owner id as `id` is more useful to a client than an
+# opaque row id it can never look up any other way.
+#
+# Grouping (owner-approved default from docs/W-graphql-crud.md's W11 bullet +
+# docs/W-graphql-schema.md §4/§5): the DB stays exactly one flat table — this is a
+# GraphQL-side read/write SHAPE only. Groups landed:
+#   workday  — workday_start/workday_end
+#   limits   — the *_minutes duration/count bounds (focus block, break, time block
+#              bounds, concept default) that aren't tied to a single feature area
+#   planning — planning_horizon_days / recurrence_horizon_days (the two lookahead
+#              windows; deliberately NOT merged even though both are "horizons" —
+#              they gate different engines, see schema.ts's column comments)
+#   models   — the three Ollama per-owner model overrides
+#   memory   — the Companion Memory sync toggles + connection state
+# Everything else (timezone, feature flags, Time-Sense cues, concept/plan toggles,
+# trust/fill-order enums, view_prefs, day_theme, deep_work_windows, concept_tags)
+# stays top-level: each is either a single freestanding flag or already reads fine
+# flat, and forcing a group would cost a type for no clarity gain (see PR body for
+# the "flat felt more honest here" cases).
+#
+# z_experiment_arm is NOT exposed: it's server-assigned only (lib/experiment.ts) —
+# never a valid input field, so there's nothing to strip (unlike the REST route,
+# which strips it from an untyped snake_case body). Skipped as a read-only
+# diagnostic too, per the ticket's "optional, skip unless trivial."
+
+type WorkdayPrefs {
+  start: String!
+  end: String!
+}
+
+type LimitPrefs {
+  maxFocusBlockMinutes: Int!
+  minBreakMinutes: Int!
+  maxTimeBlockMinutes: Int!
+  minTimeBlockMinutes: Int!
+  defaultTimeBlockMinutes: Int!
+  conceptDefaultMinutes: Int!
+}
+
+type PlanningPrefs {
+  horizonDays: Int!
+  recurrenceHorizonDays: Int!
+}
+
+type ModelPrefs {
+  fast: String
+  quality: String
+  embed: String
+}
+
+type MemoryPrefs {
+  syncEnabled: Boolean!
+  syncCompleted: Boolean!
+  syncHabits: Boolean!
+  syncReflections: Boolean!
+  account: String
+  lastSyncedAt: String
+}
+
+type SchedulingPrefsType implements Node {
+  id: ID!                          # the owner id (natural key, no surrogate column exposed)
+  timezone: String
+  timeSenseEnabled: Boolean!
+  viewPrefs: JSON                  # null or a plain object (parsed from the stored JSON-TEXT)
+  workday: WorkdayPrefs!
+  limits: LimitPrefs!
+  planning: PlanningPrefs!
+  models: ModelPrefs!
+  memory: MemoryPrefs!
+
+  # Feature flags + remaining single-purpose columns — flat (see file header).
+  planningMode: String!
+  trustMode: String!
+  fillOrder: String!
+  enableRituals: Boolean!
+  enableRoutines: Boolean!
+  recallKeepsPattern: Boolean!
+  planAlldayAlways: Boolean!
+  planDaylongForPromoted: Boolean!
+  planAutofillGaps: Boolean!
+  autoFillWorkday: Boolean!
+  conceptAutosurface: Boolean!
+  conceptHorizonDays: Int!
+  focusRitualEnabled: Boolean!
+  hapticCuesEnabled: Boolean!
+  ambientColorEnabled: Boolean!
+  calibrationLoopEnabled: Boolean!
+  deepWorkWindows: JSON             # [{ start, end }] or null
+  dayTheme: JSON                    # Record<string,string> or null
+  conceptTags: JSON                 # [{ name, minutes }] or null
+}
+
+input WorkdayPrefsInput {
+  start: String
+  end: String
+}
+
+input LimitPrefsInput {
+  maxFocusBlockMinutes: Int
+  minBreakMinutes: Int
+  maxTimeBlockMinutes: Int
+  minTimeBlockMinutes: Int
+  defaultTimeBlockMinutes: Int
+  conceptDefaultMinutes: Int
+}
+
+input PlanningPrefsInput {
+  horizonDays: Int
+  recurrenceHorizonDays: Int
+}
+
+input ModelPrefsInput {
+  fast: String
+  quality: String
+  embed: String
+}
+
+input MemoryPrefsInput {
+  syncEnabled: Boolean
+  syncCompleted: Boolean
+  syncHabits: Boolean
+  syncReflections: Boolean
+  account: String
+  lastSyncedAt: String
+}
+
+# PATCH semantics: an absent top-level key/group leaves those column(s) unchanged;
+# an explicit key inside a present group updates just that column. viewPrefs: null
+# clears the stored blob; a non-null non-object value is BAD_USER_INPUT (matches
+# the REST route's 422). z_experiment_arm has no input field — see file header.
+input UpdateSchedulingPrefsInput {
+  timezone: String
+  timeSenseEnabled: Boolean
+  viewPrefs: JSON
+  workday: WorkdayPrefsInput
+  limits: LimitPrefsInput
+  planning: PlanningPrefsInput
+  models: ModelPrefsInput
+  memory: MemoryPrefsInput
+
+  planningMode: String
+  trustMode: String
+  fillOrder: String
+  enableRituals: Boolean
+  enableRoutines: Boolean
+  recallKeepsPattern: Boolean
+  planAlldayAlways: Boolean
+  planDaylongForPromoted: Boolean
+  planAutofillGaps: Boolean
+  autoFillWorkday: Boolean
+  conceptAutosurface: Boolean
+  conceptHorizonDays: Int
+  focusRitualEnabled: Boolean
+  hapticCuesEnabled: Boolean
+  ambientColorEnabled: Boolean
+  calibrationLoopEnabled: Boolean
+  deepWorkWindows: JSON
+  dayTheme: JSON
+  conceptTags: JSON
+}
+
+type SchedulingPrefsPayload {
+  prefs: SchedulingPrefsType!
+  success: Boolean!
+  pruned: Int                      # set when a recurrence-horizon shorten pruned instances; omitted otherwise
+}
+
+extend type Query {
+  # Always resolves — one row per owner, seeded at owner creation (mirrors GET /api/prefs,
+  # which only returns null for an owner whose row is somehow missing; that's an
+  # operational anomaly here, surfaced as a thrown error rather than a nullable field).
+  schedulingPrefs: SchedulingPrefsType!
+}
+
+extend type Mutation {
+  updateSchedulingPrefs(input: UpdateSchedulingPrefsInput!): SchedulingPrefsPayload!
+}
