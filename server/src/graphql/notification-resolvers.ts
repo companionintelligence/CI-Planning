@@ -81,8 +81,11 @@ export const notificationResolvers = {
   },
 
   PushSubscriptionType: {
+    // id = the endpoint (natural-key-as-Node-id, per the SDL comment) — NOT the DB `id`
+    // column, so it lines up with unsubscribePush's `DeleteByIdInput.id` expecting an
+    // endpoint. endpoint maps by name via the default resolver.
+    id: (p: PushSubscriptionRow) => p.endpoint,
     userAgent: (p: PushSubscriptionRow) => p.user_agent,
     createdAt: (p: PushSubscriptionRow) => p.created_at,
-    // id/endpoint map by name via the default resolver.
   },
 };
