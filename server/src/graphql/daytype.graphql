@@ -1,0 +1,67 @@
+# Phase W · W7 — DayTypeType + TagPrefType. CRUD ALONGSIDE the REST /api/day-types +
+# /api/category-prefs routes, through services/day-types.ts + category-prefs.ts
+# (Decision 3).
+#
+# DayTypeType = the owner's day-type catalog entry (day_types); `resolveDayType(date)`
+# reports which key applies to a date and from where (per-date assignment > weekly map >
+# weekend heuristic). The weekly map + per-date assignment WRITES are auxiliary dow→key /
+# date→key maps (not Node types) and are deferred to a follow-up.
+#
+# TagPrefType = the CATEGORY axis of the merged tag_prefs table (kind='category', via
+# category-prefs.ts) — the counterpart to W6b's PatternPrefType (the 'direction' axis).
+# `id` is the category tag id (the pref is keyed by (owner, tag) — natural-key-as-Node-id).
+#
+# `key`/`dayType` are free-form lowercase slugs; `resolveDayType.source` is
+# 'assignment' | 'map' | 'default' (String, no enum).
+
+type DayTypeType implements Node {
+  id: ID!
+  key: String!
+  name: String!
+  isBuiltin: Boolean!
+}
+
+type DayTypeResolution {
+  date: String!
+  key: String!
+  source: String!            # 'assignment' | 'map' | 'default'
+}
+
+type TagPrefType implements Node {
+  id: ID!                    # the category tag id
+  category: TagType!         # the category tag this pref applies to
+  colorToken: String!        # CI-Hub token key (never hex)
+  defaultMinutes: Int!
+}
+
+input CreateDayTypeInput { key: String! name: String! }
+input RenameDayTypeInput { id: ID! name: String! }
+input SetTagPrefInput {
+  categoryTagId: ID!
+  colorToken: String
+  defaultMinutes: Int
+}
+
+type DayTypePayload {
+  dayType: DayTypeType
+  success: Boolean!
+}
+type TagPrefPayload {
+  tagPref: TagPrefType!
+  success: Boolean!
+}
+
+extend type Query {
+  dayTypes: [DayTypeType!]!
+  dayType(id: ID!): DayTypeType
+  resolveDayType(date: String!): DayTypeResolution!
+  tagPrefs: [TagPrefType!]!  # the owner's explicit category prefs (missing = defaults, so absent = unlisted)
+}
+
+extend type Mutation {
+  createDayType(input: CreateDayTypeInput!): DayTypePayload!
+  renameDayType(input: RenameDayTypeInput!): DayTypePayload!
+  # Reuses the shared DeleteByIdInput/DeleteByIdPayload (declared in tag.graphql).
+  deleteDayType(input: DeleteByIdInput!): DeleteByIdPayload!
+  setTagPref(input: SetTagPrefInput!): TagPrefPayload!
+}
