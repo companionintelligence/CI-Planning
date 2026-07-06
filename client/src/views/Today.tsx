@@ -1,5 +1,5 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
-import { AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Cpu, Zap } from 'lucide-solid';
+import { AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap } from 'lucide-solid';
 import { blocks, tasks, taskOf, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, scheduledByTaskId, isRoutineTask, prefs } from '../stores/index.js';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
@@ -13,7 +13,7 @@ import { DayTypeControl } from '../components/DayTypeControl.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
-import { FocusMenu, TodaysBrief } from '../components/DayGoals.js';
+import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
@@ -118,8 +118,6 @@ export function Today() {
     return after[0] ?? null;
   });
   const [focusOpen, setFocusOpen] = createSignal(false);
-  // Phase AC — Today's Brief pop-up, now triggered from a header button (was in the FOCUS card).
-  const [briefOpen, setBriefOpen] = createSignal(false);
 
   // ── Capacity bar (relocated from the removed Morning Briefing, Phase O · O3) ──
   const capacity = () => summary()?.capacity;
@@ -200,10 +198,8 @@ export function Today() {
               (Phase AC — collapsed from the removed FOCUS card). The FAB (App.tsx)
               is the create affordance now; the Add button is gone. */}
           <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
-            {/* Today's Brief — the AI briefing pop-up. */}
-            <button onClick={() => setBriefOpen(true)} class="btn-icon text-muted-foreground" title="Today's Brief">
-              <Cpu size={16} />
-            </button>
+            {/* Today's Brief — popover (same idiom as Focus). */}
+            <BriefMenu date={selectedDay()} />
             {/* Focus — bullseye popover: today & this-week focus (add/edit/delete/complete). */}
             <FocusMenu date={selectedDay()} />
             {/* Day note. */}
@@ -364,11 +360,6 @@ export function Today() {
           <span class="text-muted-foreground">Shift+= → Routine · Esc to clear</span>
           <button onClick={() => clearSelection()} class="btn-icon"><X size={14} /></button>
         </div>
-      </Show>
-
-      {/* Today's Brief pop-up — header-triggered (moved out of the removed FOCUS card). */}
-      <Show when={briefOpen()}>
-        <TodaysBrief date={selectedDay()} onClose={() => setBriefOpen(false)} />
       </Show>
 
       {/* Phase Z · Z3b — Focus Ritual full-screen overlay for the in-progress block. */}
