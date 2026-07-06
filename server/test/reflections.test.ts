@@ -614,4 +614,21 @@ describe('O0 — two-way completion', () => {
 
     expect(reflectionRows().find((r) => r.kind === 'today_goal')!.done_at).toBeNull();
   });
+
+  it('derives the completion day in the owner timezone, not a UTC slice', async () => {
+    // The intention's period_key is the owner's LOCAL day (DAY = 2026-06-15). Complete
+    // the task at 05:00 UTC on the NEXT calendar day — which in America/Los_Angeles
+    // (UTC-7 in June) is still 22:00 on DAY. A UTC slice would read '2026-06-16' and
+    // miss the DAY intention; deriving in the owner tz lands on DAY and lights the star.
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/Los_Angeles' WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    const taskId = makeTask('Late-night finish');
+    seedToday('Late-night finish', 'task', taskId); // period_key = DAY (local)
+
+    await api(srv.url, `/api/tasks/${taskId}`, {
+      method: 'PATCH', json: { completed: true, completed_at: '2026-06-16T05:00:00.000Z' },
+    });
+
+    const row = reflectionRows().find((r) => r.kind === 'today_goal')!;
+    expect(row.done_at).not.toBeNull();
+  });
 });
