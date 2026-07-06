@@ -10,7 +10,7 @@ import { syncBlockFromTask } from './block-task-sync.js';
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
 import { ensureHabitPattern } from './patterns.js';
 import { entityTagLevels, syncLeveledEntityTags } from './tags.js';
-import { utcDayBounds } from '../lib/tz.js';
+import { utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
@@ -92,14 +92,15 @@ export function taskSecondaryTags(taskId: string): string[] {
 
 /**
  * Phase O · O0 — two-way completion: when a task a today-intention links to is
- * completed, auto-stamp that reflection's done_at so S1 (the Intention star)
- * lights up without a second click. A task is at most one focus, so matching by
- * (source_kind='task', source_ref) is exact — no need to reconstruct the day
- * from a completion timestamp. COALESCE preserves an already-set done_at.
+ * completed, auto-stamp that day's reflection done_at so S1 (the Intention star)
+ * lights up without a second click. The same task can be the focus on more than
+ * one day, so scope to the reflection whose period_key matches the completion day
+ * — derived in the OWNER'S timezone to match how period_key is written (local
+ * YYYY-MM-DD), not a UTC slice. COALESCE preserves an already-set done_at.
  */
 export function stampTaskCompletionReflection(ownerId: string, taskId: string, completedAt: string): void {
   const now = new Date().toISOString();
-  const periodKey = completedAt.slice(0, 10);
+  const periodKey = localDateInTZ(completedAt, ownerTimezone(ownerId));
   sqlite
     .prepare(
       `UPDATE reflections SET done_at = COALESCE(done_at, ?), updated_at = ?
