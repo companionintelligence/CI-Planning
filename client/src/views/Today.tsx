@@ -5,7 +5,7 @@ import { FocusRitual } from '../components/FocusRitual.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
 import { localISODate, addDays } from '../lib/dates.js';
-import { bucketCounts, tasksInBucket, pageWindow, type BucketKey } from '../lib/task-buckets.js';
+import { bucketCounts, tasksInBucket, pageWindow, dueItems, type BucketKey } from '../lib/task-buckets.js';
 import { QuickAdd } from '../components/QuickAdd.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
@@ -335,6 +335,10 @@ export function Today() {
         </div>
       </div>
 
+      {/* Phase AB · AB4 — always-visible Due card: the selected day's deadlines +
+          an overdue rollup. The primary due surface (the count buttons above stay). */}
+      <DueCard date={selectedDay()} onOpen={openTask} />
+
       {/* Phase N0: FOCUS card (holds the Today's Brief pop-up — prose + capacity + top tasks) */}
       <DayGoals date={selectedDay()} />
 
@@ -399,6 +403,92 @@ export function Today() {
             </div>
           </div>
         </div>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * Phase AB · AB4 — the pinned, ALWAYS-VISIBLE "Due" card for the selected day.
+ * Two groups from the pure `dueItems` selector (same rules as the count buckets,
+ * so the card and the buttons never disagree): the day's due tasks, always
+ * listed; and an overdue rollup (due before this day, still active) that expands
+ * on demand — a destructive-toned pill mirroring the overdue count button. Rows
+ * reuse the bucket-list row styling and open the task editor the same way.
+ */
+function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
+  const items = createMemo(() => dueItems(tasks() ?? [], props.date));
+  const [showOverdue, setShowOverdue] = createSignal(false);
+  const fmtTime = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const fmtDay = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  const Row = (p: { task: Task; when: string; danger?: boolean }) => (
+    <li>
+      <button
+        class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-primary/5 transition-colors"
+        onClick={() => props.onOpen(p.task)}
+        title="Open task"
+      >
+        <span class="flex-1 truncate">{p.task.title}</span>
+        <span
+          class="text-[10px] tabular-nums flex-shrink-0"
+          classList={{ 'text-destructive': !!p.danger, 'text-muted-foreground': !p.danger }}
+        >{p.when}</span>
+        <Show when={p.task.priority}>
+          <span class="text-[10px] text-muted-foreground flex-shrink-0">P{p.task.priority}</span>
+        </Show>
+      </button>
+    </li>
+  );
+
+  return (
+    <div class="rounded-xl border border-border bg-card p-4">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <CalendarClock size={13} class="text-primary" />
+          <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Due</span>
+          <span class="text-[10px] text-muted-foreground">deadlines for this day</span>
+        </div>
+        {/* Overdue rollup toggle — hidden when there's no debt to roll up. */}
+        <Show when={items().overdue.length > 0}>
+          <button
+            type="button"
+            aria-expanded={showOverdue()}
+            onClick={() => setShowOverdue((v) => !v)}
+            class="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs transition-colors hover:border-destructive"
+            title={showOverdue() ? 'Hide overdue tasks' : 'Show overdue tasks'}
+          >
+            <AlertCircle size={12} class="text-destructive" />
+            <span class="tabular-nums font-semibold text-destructive">{items().overdue.length}</span>
+            <span class="text-muted-foreground">overdue</span>
+            <Show when={showOverdue()} fallback={<ChevronDown size={12} class="text-muted-foreground" />}>
+              <ChevronUp size={12} class="text-muted-foreground" />
+            </Show>
+          </button>
+        </Show>
+      </div>
+
+      {/* Overdue list (expanded rollup) — oldest debt first, red due dates. */}
+      <Show when={showOverdue() && items().overdue.length > 0}>
+        <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-destructive/30 bg-background/40">
+          <For each={items().overdue}>
+            {(t) => <Row task={t} when={t.due_at ? fmtDay(t.due_at) : ''} danger />}
+          </For>
+        </ul>
+      </Show>
+
+      {/* The day's due list — always visible (the AB4 point: no click to reveal). */}
+      <Show
+        when={items().dueToday.length > 0}
+        fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing due this day.</p>}
+      >
+        <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-border bg-background/40">
+          <For each={items().dueToday}>
+            {(t) => <Row task={t} when={t.due_at ? fmtTime(t.due_at) : ''} />}
+          </For>
+        </ul>
       </Show>
     </div>
   );

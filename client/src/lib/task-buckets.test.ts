@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tasksInBucket, bucketCounts, pageWindow, type BucketDeps } from './task-buckets.js';
+import { tasksInBucket, bucketCounts, pageWindow, dueItems, type BucketDeps } from './task-buckets.js';
 import { dayRangeUTC } from './dates.js';
 import type { Task } from './api.js';
 
@@ -92,6 +92,51 @@ describe('bucketCounts', () => {
     expect(counts.find((c) => c.key === 'dueToday')!.count).toBe(1);
     // The overdue + due-today tasks are also 'open' status → they count in open too.
     expect(counts.find((c) => c.key === 'open')!.count).toBe(3);
+  });
+});
+
+describe('dueItems (Phase AB · AB4 — the always-visible Due card)', () => {
+  it('splits the selected day\'s due tasks from the overdue rollup, active only', () => {
+    const tasks = [
+      task({ id: 'today', status: 'open', due_at: midDay }),
+      task({ id: 'debt', status: 'scheduled', due_at: beforeDay }),
+      task({ id: 'done', status: 'done', due_at: midDay }),        // done → excluded
+      task({ id: 'future', status: 'open', due_at: afterDay }),    // tomorrow → neither
+      task({ id: 'undated', status: 'open' }),                     // no due_at → neither
+    ];
+    const d = dueItems(tasks, DAY);
+    expect(d.dueToday.map((t) => t.id)).toEqual(['today']);
+    expect(d.overdue.map((t) => t.id)).toEqual(['debt']);
+  });
+
+  it('sorts both groups by due_at ascending (oldest debt / earliest deadline first)', () => {
+    const earlier = new Date(new Date(dayStart).getTime() + 9 * 3600_000).toISOString();
+    const older = new Date(new Date(dayStart).getTime() - 48 * 3600_000).toISOString();
+    const tasks = [
+      task({ id: 'noon', due_at: midDay }),
+      task({ id: 'nine', due_at: earlier }),
+      task({ id: 'yesterday', due_at: beforeDay }),
+      task({ id: 'lastWeek', due_at: older }),
+    ];
+    const d = dueItems(tasks, DAY);
+    expect(d.dueToday.map((t) => t.id)).toEqual(['nine', 'noon']);
+    expect(d.overdue.map((t) => t.id)).toEqual(['lastWeek', 'yesterday']);
+  });
+
+  it('is relative to the SELECTED day (navigating dates moves the boundary)', () => {
+    // Viewed from the NEXT day, a task due midDay of DAY rolls into overdue.
+    const tasks = [task({ id: 'a', due_at: midDay })];
+    const d = dueItems(tasks, '2026-07-02');
+    expect(d.dueToday).toEqual([]);
+    expect(d.overdue.map((t) => t.id)).toEqual(['a']);
+  });
+
+  it('excludes subtasks, matching the buckets', () => {
+    const tasks = [
+      task({ id: 'sub', due_at: midDay, parent_id: 'p' }),
+      task({ id: 'top', due_at: midDay }),
+    ];
+    expect(dueItems(tasks, DAY).dueToday.map((t) => t.id)).toEqual(['top']);
   });
 });
 

@@ -12,6 +12,7 @@ import { suggestTags } from '../agents/tags.js';
 import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { rescheduleTask } from '../engine/review.js';
 import { requestReplan } from '../engine/auto-defense.js';
+import { placeStartAnchoredTask, type StartAnchoredOutcome } from '../engine/autoplan.js';
 import { computeStreak } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
 import { firstObjectiveByTaskIds } from '../services/task-promotion.js';
@@ -114,9 +115,16 @@ export function tasksRouter() {
       blocked: blockedTaskIds().has(task.id),
     };
     broadcast(owner, 'task:created', out);
+    // AB1: opt-in `auto_place: true` → start-anchored placement (any trust mode).
+    // Default false — the wizard client creates its own block explicitly, so an
+    // unconditional hook here would double-place; the flag is for API/agent callers.
+    let placement: StartAnchoredOutcome | undefined;
+    if (body.auto_place === true && task.scheduledFor) {
+      try { placement = placeStartAnchoredTask(owner, task.id); } catch { /* best-effort */ }
+    }
     requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
     ctx.status = 201;
-    ctx.body = { task: out };
+    ctx.body = { task: out, ...(placement ? { placement } : {}) };
   });
 
   // POST /api/tasks/quick — natural-language quick add (deterministic + optional AI)

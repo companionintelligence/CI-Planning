@@ -116,6 +116,10 @@ export async function promotePossible(
       // Carry the ingest-time estimate (0114) — the hands-off auto-schedule the caller
       // runs after promote (requireEstimate) places nothing without it.
       estimatedMinutes: possible.proposedEstimatedMinutes ?? undefined,
+      // AB2 (0115): carry the suggestion's START intent so the caller's post-promote
+      // placeStartAnchoredTask hook lands the block at the event's time on its day.
+      scheduledFor: possible.proposedScheduledFor ?? undefined,
+      taskTime: possible.proposedTaskTime ?? undefined,
       // proposedOwnerId equals `owner` here (getPossible scoped by it), but keep the
       // COALESCE-to-owner fallback the route had for defence in depth.
       ownerId: possible.proposedOwnerId ?? owner,

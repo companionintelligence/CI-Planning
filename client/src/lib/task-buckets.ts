@@ -76,6 +76,32 @@ export function bucketCounts(
 }
 
 /**
+ * Phase AB · AB4 — the always-visible "Due" card on the Today view.
+ *
+ * The card's two groups for a selected local day, top-level tasks only:
+ *   dueToday — ACTIVE status AND due_at within the local day (same rule as the
+ *              'dueToday' bucket, so the card and the count button always agree);
+ *   overdue  — ACTIVE status AND due_at before the local day's midnight (the
+ *              rollup; same rule as the 'overdue' bucket).
+ * Both sorted by due_at ascending (oldest debt first / earliest deadline first).
+ * Works for any navigated date, not just today — "overdue" is relative to the
+ * SELECTED day, matching the buckets.
+ */
+export interface DueItems {
+  overdue: Task[];
+  dueToday: Task[];
+}
+
+export function dueItems(tasks: Task[], date: string): DueItems {
+  const top = tasks.filter((t) => !t.parent_id);
+  const byDueAt = (a: Task, b: Task) => (a.due_at ?? '').localeCompare(b.due_at ?? '');
+  return {
+    overdue: top.filter((t) => ACTIVE.has(t.status) && isBeforeDay(t.due_at, date)).sort(byDueAt),
+    dueToday: top.filter((t) => ACTIVE.has(t.status) && isOnDay(t.due_at, date)).sort(byDueAt),
+  };
+}
+
+/**
  * A single-step paging window over a list: `size` visible rows starting at
  * `offset`, clamped so the window never runs past the end. Returns the clamped
  * offset, the visible slice, how many rows remain below the window, and whether
