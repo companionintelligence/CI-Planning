@@ -79,4 +79,13 @@ describe('task dependencies', () => {
       await srv.close();
     }
   });
+
+  it('owner-scoping a huge depends_on list chunks the IN-query (no bound-param overflow)', () => {
+    const a = addTask('A');
+    // >SQLITE_MAX_VARIABLE_NUMBER worth of ids: a single IN(?, …) would throw.
+    const many = Array.from({ length: 1500 }, (_, i) => `nonexistent-${i}`);
+    expect(() => setDependencies(a, many, SYSTEM_OWNER)).not.toThrow();
+    // None are owner-owned tasks, so all are dropped — no edges created.
+    expect(getDependencies(a)).toEqual([]);
+  });
 });
