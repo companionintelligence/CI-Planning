@@ -330,12 +330,16 @@ export function objectiveChildrenRows(owner: string, parentId: string): Objectiv
 export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | undefined {
   return sqlite
     .prepare(
+      // Scope BOTH sides by owner (objective + task): the join to `tasks` makes this
+      // self-sufficiently owner-safe — a stray/dangling objective_tasks row (sync/import)
+      // pointing at another owner's task can't surface an objective here.
       `SELECT o.* FROM objectives o
          JOIN objective_tasks ot ON ot.objective_id = o.id
-        WHERE ot.task_id = ? AND ot.linked = 1 AND o.owner_id = ?
+         JOIN tasks t ON t.id = ot.task_id
+        WHERE ot.task_id = ? AND ot.linked = 1 AND o.owner_id = ? AND t.owner_id = ?
         ORDER BY o.created_at, o.id LIMIT 1`,
     )
-    .get(taskId, owner) as ObjectiveRow | undefined;
+    .get(taskId, owner, owner) as ObjectiveRow | undefined;
 }
 
 /** The task ids currently linked (linked=1) to an objective, priority-then-id ordered. */
