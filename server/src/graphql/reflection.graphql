@@ -74,9 +74,10 @@ input DeleteReflectionInput {
   position: Int!
 }
 
-# A mutation payload. `reflection` is null when the write deleted the row (empty body) or
-# for a done-toggle/delete (which return only success). `deleted` reports whether the write
-# removed the row, so a client needn't re-query to know.
+# A mutation payload. `reflection` is the resulting row, or null when the write removed it
+# (empty body) or for a done-toggle/delete that returns no row. `deleted` is true iff a row
+# was actually removed — a delete/empty-body write that matched no row reports false (the
+# op still succeeds; delete is idempotent).
 type ReflectionPayload {
   reflection: ReflectionType
   deleted: Boolean!
