@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
-import { localISODate } from '../src/lib/dates.js';
 import { suggestFromMemory, MEMORY_PENDING_CAP } from '../src/agents/memory-suggest.js';
 import { upsertPossible } from '../src/agents/ingest.js';
 import { runScheduledJob } from '../src/jobs/index.js';
@@ -13,9 +12,13 @@ import { resetDb, startTestServer, api, createOwner, type TestServer } from './h
  * source_ref='ci:<node-id>'. Covers gating (flag / availability), idempotent
  * re-runs, dismissed-is-terminal, the pending cap, polish degradation, the
  * scheduled-job registration, the manual trigger route, multi-owner isolation
- * (0114 owner-scoped dedup), and the promote → auto-schedule integration driven
- * entirely through the real routes (source + 30m estimate carried; hands-off
- * places a block with zero manual engine calls).
+ * (0114 owner-scoped dedup), and the promote integration through the real routes.
+ *
+ * Phase AB · AB2 — suggestions MIRROR the event: title = event name (no "Prep for"),
+ * proposed_scheduled_for/task_time = the event start in the owner tz (UTC here),
+ * estimate = event duration (fixture: 1h review → 60, 2h dinner → 120), due_at =
+ * event start. Promote carries the intent to the task and places the block at the
+ * event's exact UTC instant on the event's day in ANY trust mode (AB1).
  */
 
 const OWNER = SYSTEM_OWNER;
@@ -98,16 +101,29 @@ describe('staging from the fixture graph', () => {
     expect(rows.length).toBe(2);
     for (const row of rows) expect(row.source_ref).toMatch(/^ci:[0-9a-f-]{36}$/);
     const titles = rows.map((x) => x.raw_title).sort();
-    expect(titles).toEqual(['Prep for Dinner with Sam', 'Prep for Quarterly planning review']);
+    expect(titles).toEqual(['Dinner with Sam', 'Quarterly planning review']); // AB2: the event name, no "Prep for"
 
-    // Participants ride the payload; the due date anchors to the event start; the
-    // template's default 30m prep estimate persists (0114) so promote can carry it.
+    // Participants ride the payload; due_at anchors to the event start; AB2 mirror:
+    // the estimate is the EVENT DURATION (dinner now+30h→now+32h = 120m) and the
+    // START intent is the event start in the owner tz (UTC here), so
+    // proposed_scheduled_for/task_time are exactly the due instant's date/HH:MM slices.
     const payloadRow = sqlite
-      .prepare(`SELECT source_payload, proposed_due_at, proposed_estimated_minutes FROM possible_tasks WHERE raw_title = 'Prep for Dinner with Sam'`)
-      .get() as { source_payload: string; proposed_due_at: string; proposed_estimated_minutes: number };
+      .prepare(
+        `SELECT source_payload, proposed_due_at, proposed_estimated_minutes, proposed_scheduled_for, proposed_task_time
+           FROM possible_tasks WHERE raw_title = 'Dinner with Sam'`,
+      )
+      .get() as {
+      source_payload: string;
+      proposed_due_at: string;
+      proposed_estimated_minutes: number;
+      proposed_scheduled_for: string;
+      proposed_task_time: string;
+    };
     expect(payloadRow.source_payload).toContain('Sam Rivera');
     expect(Date.parse(payloadRow.proposed_due_at)).toBeGreaterThan(Date.now());
-    expect(payloadRow.proposed_estimated_minutes).toBe(30);
+    expect(payloadRow.proposed_estimated_minutes).toBe(120);
+    expect(payloadRow.proposed_scheduled_for).toBe(payloadRow.proposed_due_at.slice(0, 10));
+    expect(payloadRow.proposed_task_time).toBe(payloadRow.proposed_due_at.slice(11, 16));
   });
 
   it('re-runs are idempotent on (source_kind, source_ref)', async () => {
@@ -169,8 +185,8 @@ describe('staging from the fixture graph', () => {
     expect(r.status).toBe('ran');
     expect(r.created).toBe(2);
     expect(memoryPossibles('pending').map((x) => x.raw_title).sort()).toEqual([
-      'Prep for Dinner with Sam',
-      'Prep for Quarterly planning review',
+      'Dinner with Sam',
+      'Quarterly planning review',
     ]);
   });
 
@@ -282,44 +298,45 @@ describe('multi-owner isolation (0114 owner-scoped dedup)', () => {
   });
 });
 
-describe('integration: fixture graph → possible → promote → task (→ block under hands-off)', () => {
-  it('promote via the real route carries source + 30m estimate; hands-off places a block with no manual engine call', async () => {
+describe('integration: fixture graph → possible → promote → block AT the event time (AB1+AB2)', () => {
+  it('promote mirrors the event: start intent on the task, block at the event UTC instant on its day, estimate = duration — in the default BALANCED trust mode', async () => {
     await run(() => suggestFromMemory({ polish: false }));
     const list = await api(srv.url, '/api/possible-tasks');
-    const possible = (list.body.possibles as { id: string; source_kind: string; source_ref: string }[]).find(
-      (p) => p.source_kind === 'memory',
-    )!;
-    expect(possible).toBeDefined();
+    const possibles = (
+      list.body.possibles as { id: string; raw_title: string; source_kind: string; source_ref: string; proposed_due_at: string }[]
+    ).filter((p) => p.source_kind === 'memory');
+    expect(possibles.length).toBe(2);
+    const byTitle = new Map(possibles.map((p) => [p.raw_title, p]));
 
-    // Hands-off through the real prefs API. The route's post-promote auto-schedule
-    // runs on TODAY, so give it a full-day 'home'-tagged Plan container (memory
-    // suggestions carry the 'home' direction tag, D4) — placement then can't depend
-    // on time-of-day (same fixture shape as possibles.test.ts).
-    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { trust_mode: 'hands_off' } });
-    const today = localISODate();
-    sqlite
-      .prepare(
-        `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status, owner_id)
-         VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', 'home', ?, ?, 0, 'manual', 'planned', ?)`,
-      )
-      .run(`${today}T00:00:00.000Z`, `${today}T23:59:00.000Z`, OWNER);
+    // Trust stays 'balanced' (resetDb baseline): start-anchored placement is NOT
+    // trust-gated — the accepted suggestion stated the day/time. Deliberately NO
+    // engine call and NO Plan container in this test.
+    for (const [title, durMin] of [
+      ['Quarterly planning review', 60], // fixture: now+20h → now+21h
+      ['Dinner with Sam', 120], // fixture: now+30h → now+32h
+    ] as const) {
+      const possible = byTitle.get(title)!;
+      expect(possible).toBeDefined();
+      const promoted = await api(srv.url, `/api/possible-tasks/${possible.id}/promote`, { method: 'POST' });
+      expect(promoted.status).toBe(201);
+      const task = promoted.body.task;
+      expect(task.source_kind).toBe('memory');
+      expect(task.source_ref).toBe(possible.source_ref);
+      expect(task.estimated_minutes).toBe(durMin);
+      // AB2: the START intent rode proposed_* → tasks.scheduled_for/task_time (owner
+      // tz = UTC, so they're the due instant's date/HH:MM slices).
+      expect(task.scheduled_for).toBe(possible.proposed_due_at.slice(0, 10));
+      expect(task.task_time).toBe(possible.proposed_due_at.slice(11, 16));
 
-    const promoted = await api(srv.url, `/api/possible-tasks/${possible.id}/promote`, { method: 'POST' });
-    expect(promoted.status).toBe(201);
-    expect(promoted.body.task.source_kind).toBe('memory');
-    expect(promoted.body.task.source_ref).toBe(possible.source_ref);
-    const taskId = promoted.body.task.id as string;
-
-    // The template's default 30m prep estimate rode possible_tasks.proposed_estimated_minutes
-    // → tasks.estimated_minutes, so the route's own TM-5 auto-schedule (requireEstimate)
-    // must have placed a block — deliberately NO autoScheduleOnIngest call in this test.
-    const task = sqlite.prepare(`SELECT estimated_minutes FROM tasks WHERE id = ?`).get(taskId) as { estimated_minutes: number };
-    expect(task.estimated_minutes).toBe(30);
-    const block = sqlite
-      .prepare(`SELECT id FROM time_blocks WHERE task_id = ? AND block_kind = 'task'`)
-      .get(taskId) as { id: string } | undefined;
-    expect(block).toBeDefined();
-
-    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { trust_mode: 'balanced' } });
+      // AB1: the block landed at the event's UTC instant (minute precision — task_time
+      // is HH:MM) on the EVENT's day (not "today"), sized to the event duration.
+      const block = sqlite
+        .prepare(`SELECT start_at, end_at, is_auto FROM time_blocks WHERE task_id = ? AND block_kind = 'task'`)
+        .get(task.id) as { start_at: string; end_at: string; is_auto: number } | undefined;
+      expect(block).toBeDefined();
+      expect(block!.start_at).toBe(`${possible.proposed_due_at.slice(0, 16)}:00.000Z`);
+      expect(Date.parse(block!.end_at) - Date.parse(block!.start_at)).toBe(durMin * 60_000);
+      expect(block!.is_auto).toBe(0); // user-intent block: never wiped by clearPriorAuto
+    }
   });
 });

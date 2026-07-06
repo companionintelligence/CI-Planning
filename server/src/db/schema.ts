@@ -108,6 +108,11 @@ export const possibleTasks = sqliteTable('possible_tasks', {
   // NOTE: 0114 also rescoped the table's dedup key to UNIQUE(proposed_owner_id,
   // source_kind, source_ref) (was global since 0001).
   proposedEstimatedMinutes: integer('proposed_estimated_minutes'),
+  // AB2 (0115): the suggestion's START intent — event day (owner-tz YYYY-MM-DD) +
+  // wall-clock HH:MM. Promote copies them to tasks.scheduled_for / task_time, then
+  // AB1's placeStartAnchoredTask lands the block at the event's time on its day.
+  proposedScheduledFor: text('proposed_scheduled_for'),
+  proposedTaskTime: text('proposed_task_time'),
 });
 
 export const timeBlocks = sqliteTable('time_blocks', {

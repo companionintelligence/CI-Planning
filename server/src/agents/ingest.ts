@@ -77,12 +77,15 @@ export function upsertPossible(
     sqlite
       .prepare(
         `UPDATE possible_tasks SET raw_title = ?, raw_summary = ?, proposed_due_at = ?,
+         proposed_scheduled_for = ?, proposed_task_time = ?,
          proposed_priority = ?, proposed_estimated_minutes = ?, source_payload = ?, confidence = ? WHERE id = ?`
       )
       .run(
         task.title,
         task.summary ?? null,
         task.dueAt ?? null,
+        task.scheduledFor ?? null,
+        task.taskTime ?? null,
         task.priority,
         task.estimatedMinutes ?? null,
         JSON.stringify(payload),
@@ -95,14 +98,17 @@ export function upsertPossible(
     const row = sqlite
       .prepare(
         `INSERT INTO possible_tasks
-         (id, raw_title, raw_summary, proposed_due_at, proposed_priority, proposed_estimated_minutes,
+         (id, raw_title, raw_summary, proposed_due_at, proposed_scheduled_for, proposed_task_time,
+          proposed_priority, proposed_estimated_minutes,
           proposed_owner_id, source_kind, source_ref, source_payload, confidence, status)
-         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
       )
       .get(
         task.title,
         task.summary ?? null,
         task.dueAt ?? null,
+        task.scheduledFor ?? null,
+        task.taskTime ?? null,
         task.priority,
         task.estimatedMinutes ?? null,
         owner, // was a stale `1` literal — broke the owners FK after CON-1 (0030)

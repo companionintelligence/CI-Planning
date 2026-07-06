@@ -20,6 +20,10 @@ export interface ExtractedTask {
   summary?: string;
   priority: number; // 1 (highest) .. 5 (lowest)
   dueAt?: string | null; // ISO date or null
+  // AB2: START intent (scheduled_for day + optional wall-clock time, in the OWNER's
+  // timezone). due_at stays a deadline only — it never selects the placement day.
+  scheduledFor?: string | null; // YYYY-MM-DD or null
+  taskTime?: string | null; // HH:MM or null
   estimatedMinutes?: number | null;
   tags: string[];
   confidence: number; // 0..1

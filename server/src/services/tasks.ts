@@ -127,6 +127,10 @@ export type CreateTaskInput = {
   tags?: string[];
   secondary_tags?: string[];
   depends_on?: string[];
+  // AB1: route-level opt-in — POST /api/tasks runs placeStartAnchoredTask after create
+  // when true AND scheduled_for is set. Ignored by the service itself (default false;
+  // the wizard client creates its own block explicitly, so no unconditional hook).
+  auto_place?: boolean;
   recurrence_rule?: string;
   recurrence_dtstart?: string;
   is_habit?: boolean;

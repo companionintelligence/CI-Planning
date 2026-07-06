@@ -19,7 +19,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
-import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { taskTagNames } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
@@ -61,6 +61,7 @@ interface PrefsRow {
   max_focus_block_minutes: number | null;
   auto_fill_workday: number | null;
   fill_order: string | null;
+  default_time_block_minutes: number | null;
 }
 interface PlanRow {
   id: string;
@@ -109,7 +110,7 @@ function recordRun(owner: string, runId: string, blocksCreated: number): void {
 
 function prefsOf(owner: string): PrefsRow | undefined {
   return sqlite
-    .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
+    .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
 }
 
@@ -380,11 +381,25 @@ function placeHintWindows(
 
 /** STEP 1: propose open-task candidates (not already staged) into the flight-plan.
  * Habits are excluded — they're auto-placed daily from their recurrence, so they
- * shouldn't flood the flight-plan as one-off candidates. */
+ * shouldn't flood the flight-plan as one-off candidates.
+ *
+ * AB1: `scheduled_for` is a START intent, so a task scheduled for a DIFFERENT day
+ * never leaks into this fill's plan (`opts.date`, default today). A task scheduled
+ * for the fill date itself may still stage — but only while it has no active block
+ * yet (start-anchored placement usually created one already; staging it again would
+ * double-book it). due_at remains ordering-only and never selects the day. */
+/** Today in the OWNER's timezone (YYYY-MM-DD). `scheduled_for` is owner-local, so the
+ *  fill/exclusion day must be too — comparing it to a server-tz `localISODate()` would
+ *  mis-window scheduled tasks around midnight for owners in a different timezone. */
+function ownerToday(owner: string): string {
+  return localDateInTZ(new Date().toISOString(), prefsOf(owner)?.timezone || serverTimezone());
+}
+
 export function fillFlightPlanCandidates(
   owner: string = currentOwnerId(),
-  opts: { requireEstimate?: boolean } = {},
+  opts: { requireEstimate?: boolean; date?: string } = {},
 ): number {
+  const fillDate = opts.date ?? ownerToday(owner);
   // TM-3: the auto-block path stages only estimate-bearing tasks (we won't fabricate a
   // block duration for a task the user never sized). Default false ⇒ unchanged staging.
   const estimateClause = opts.requireEstimate ? `AND estimated_minutes IS NOT NULL` : '';
@@ -396,11 +411,16 @@ export function fillFlightPlanCandidates(
           AND parent_id IS NULL
           AND recurrence_parent_id IS NULL
           ${estimateClause}
+          AND (scheduled_for IS NULL
+               OR (scheduled_for = ? AND NOT EXISTS (
+                     SELECT 1 FROM time_blocks tb
+                      WHERE tb.task_id = tasks.id AND tb.block_kind = 'task'
+                        AND tb.status NOT IN ('completed','skipped','cancelled'))))
           AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)
         ORDER BY priority, COALESCE(due_at, '9999-12-31'), id
         LIMIT ?`
     )
-    .all(owner, owner, CANDIDATE_LIMIT) as { id: string }[];
+    .all(owner, fillDate, owner, CANDIDATE_LIMIT) as { id: string }[];
   const { m } = sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number };
   // Filled candidates arrive SELECTED (deselect-to-exclude model, req 8): manual
   // staging already inserts selected = 1, so both paths now align.
@@ -781,8 +801,167 @@ export function autoScheduleOnIngest(
   opts: { date?: string; requireEstimate?: boolean } = {},
 ): AutoResult | null {
   if (!resolveTrustPolicy(owner).autoBlock) return null;
-  fillFlightPlanCandidates(owner, { requireEstimate: opts.requireEstimate }); // stage new open tasks, all selected
-  const date = opts.date ?? localISODate();
+  const date = opts.date ?? ownerToday(owner);
+  fillFlightPlanCandidates(owner, { requireEstimate: opts.requireEstimate, date }); // stage new open tasks, all selected
   if (selectedStaged(owner, date).length === 0) return null;
-  return placeFlightPlan(owner, { date: opts.date });
+  // Place the SAME day we filled — passing the resolved `date` (not raw opts.date) keeps
+  // fill and placement on one owner-local day when the caller omitted a date.
+  return placeFlightPlan(owner, { date });
+}
+
+// ─── Phase AB · AB1 — start-anchored placement ─────────────────────────────────
+
+export type StartAnchoredOutcome =
+  | { placed: true; blockId: string; startAt: string; endAt: string }
+  | { placed: false; reason: 'not_found' | 'no_start' | 'day_full' };
+
+/**
+ * Blocks created by start-anchored placement are engine-written but USER-intended
+ * (`scheduled_for`/`task_time` came from the wizard or an accepted suggestion), so
+ * they are `is_auto = 0`: `clearPriorAuto` — which wipes `is_auto = 1` agent blocks
+ * at the start of every Auto run — must never delete a stated start time. They keep
+ * `source_kind = 'agent'` for provenance and carry no `auto_run_id` (honoring intent
+ * is not an undoable engine run).
+ */
+const insAnchoredBlock = () =>
+  sqlite.prepare(
+    `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
+     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 0, 'agent', 'planned') RETURNING id`,
+  );
+
+/**
+ * AB1 — place a task exactly where its START intent says (the spec's
+ * `placeStartAnchoredTask`). NOT trust-gated: the user (or an accepted suggestion)
+ * stated the day/time, so honoring it is not engine autonomy — the trust dial keeps
+ * gating engine-CHOSEN placement only (autoScheduleOnIngest, start-less tasks).
+ *
+ *  - `task_time` set → one block exactly at (scheduled_for, task_time), duration =
+ *    estimated_minutes (fallback: the default_time_block_minutes pref, 60). If that
+ *    exact span overlaps an active block (locked / meeting / open task block — Plan
+ *    containers don't count; a stated time inside a Plan is fine), fall back to the
+ *    open gap NEAREST the requested time on the SAME local day.
+ *  - no `task_time` → the engine picks the time on THAT date: earliest fit inside the
+ *    task's direction windows for the date's day-type (pass-2a semantics, incl. the
+ *    per-direction auto_fill gate), else the earliest open workday gap on that date.
+ *  - Works for any future date. Returns the block or `{ placed:false, 'day_full' }`.
+ *
+ * due_at plays no role here — it is a deadline, never a placement-day selector.
+ */
+export function placeStartAnchoredTask(
+  owner: string,
+  taskId: string,
+  opts: { silent?: boolean } = {},
+): StartAnchoredOutcome {
+  const task = sqlite
+    .prepare(`SELECT id, title, scheduled_for, task_time, estimated_minutes FROM tasks WHERE id = ? AND owner_id = ?`)
+    .get(taskId, owner) as
+    | { id: string; title: string; scheduled_for: string | null; task_time: string | null; estimated_minutes: number | null }
+    | undefined;
+  if (!task) return { placed: false, reason: 'not_found' };
+  if (!task.scheduled_for) return { placed: false, reason: 'no_start' };
+
+  // Idempotent: if the task already has an active block, don't create a second one.
+  // These blocks are is_auto=0, so clearPriorAuto never sweeps them — a double invoke
+  // (retry, multiple promote paths) would otherwise leave a duplicate. Treat the
+  // existing block as the placement (and still clear any staged copy).
+  const existing = sqlite
+    .prepare(
+      `SELECT id, start_at, end_at FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+        ORDER BY start_at LIMIT 1`,
+    )
+    .get(taskId, owner) as { id: string; start_at: string; end_at: string } | undefined;
+  if (existing) {
+    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
+    return { placed: true, blockId: existing.id, startAt: existing.start_at, endAt: existing.end_at };
+  }
+
+  const prefs = prefsOf(owner);
+  const tz = prefs?.timezone || serverTimezone();
+  const date = task.scheduled_for;
+  const durMs = Math.max((task.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
+  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+
+  const create = (startMs: number, endMs: number): StartAnchoredOutcome => {
+    const startAt = new Date(startMs).toISOString();
+    const endAt = new Date(endMs).toISOString();
+    const { id: blockId } = insAnchoredBlock().get(task.id, owner, task.title, startAt, endAt) as { id: string };
+    // A staged copy of this task must not be auto-placed AGAIN by the next Auto run.
+    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, task.id);
+    if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: 1, placed: 1, unplaced: 0 });
+    return { placed: true, blockId, startAt, endAt };
+  };
+
+  /** Earliest gap fitting the full duration inside [winStart, winEnd], flowing around Plans. */
+  const earliestFit = (winStartMs: number, winEndMs: number): number | null => {
+    if (winEndMs - winStartMs < durMs) return null;
+    const fixed = dayObstacles(owner, winStartMs, winEndMs, { includePlans: true });
+    for (const g of buildGaps(winStartMs, winEndMs, fixed, breakMs)) {
+      if (g.end - g.cursor >= durMs) return g.cursor;
+    }
+    return null;
+  };
+
+  if (task.task_time) {
+    // Exact-time placement. Plan containers are NOT obstacles here — the user picked
+    // this time; a block inside a Plan's span is normal grouping, not double-booking.
+    const startMs = Date.parse(zonedWallTimeToUTC(date, task.task_time, tz));
+    const endMs = startMs + durMs;
+    if (dayObstacles(owner, startMs, endMs).length === 0) return create(startMs, endMs);
+
+    // Occupied → the open gap NEAREST the requested time on the SAME local day.
+    const bounds = utcDayBounds(date, tz);
+    const dayStart = Date.parse(bounds.start);
+    const dayEnd = Date.parse(bounds.end);
+    const gaps = buildGaps(dayStart, dayEnd, dayObstacles(owner, dayStart, dayEnd), breakMs);
+    let bestStart: number | null = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const g of gaps) {
+      if (g.end - g.cursor < durMs) continue;
+      const s = Math.min(Math.max(startMs, g.cursor), g.end - durMs); // closest in-gap start to the request
+      const dist = Math.abs(s - startMs);
+      if (dist < bestDist) { bestStart = s; bestDist = dist; }
+    }
+    if (bestStart === null) return { placed: false, reason: 'day_full' };
+    return create(bestStart, bestStart + durMs);
+  }
+
+  // No task_time → direction-window placement for THAT date (pass-2a semantics):
+  // the task's level-1 direction tags, minus those gated off by auto_fill=false,
+  // union of their windows for the date's day-type, earliest-first.
+  const dayType = resolveDayType(owner, date);
+  const patWindows = getPatternBlocks(owner, dayType);
+  if (Object.keys(patWindows).length > 0) {
+    const dprefs = getPatternPrefs(owner);
+    const dirIds = (
+      sqlite
+        .prepare(
+          `SELECT DISTINCT tg.id FROM entity_tags et
+             JOIN tags tg ON tg.id = et.tag_id
+            WHERE et.entity_kind = 'task' AND et.entity_id = ? AND et.level = 1
+              AND tg.kind = 'direction' AND tg.owner_id = ?`,
+        )
+        .all(task.id, owner) as { id: string }[]
+    ).map((r) => r.id);
+    const ranges = dirIds
+      .filter((dirId) => dprefs[dirId]?.auto_fill ?? true)
+      .flatMap((dirId) => patWindows[dirId] ?? [])
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+    for (const range of ranges) {
+      const s = earliestFit(
+        Date.parse(zonedWallTimeToUTC(date, range.start_time, tz)),
+        Date.parse(zonedWallTimeToUTC(date, range.end_time, tz)),
+      );
+      if (s !== null) return create(s, s + durMs);
+    }
+  }
+
+  // Workday-gap fallback on that date.
+  const s = earliestFit(
+    Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz)),
+    Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz)),
+  );
+  if (s !== null) return create(s, s + durMs);
+  return { placed: false, reason: 'day_full' };
 }

@@ -1,9 +1,10 @@
 import Router from '@koa/router';
 import { broadcast } from './sse.js';
+import { logger } from '../lib/logger.js';
 import { toApiList, taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { listPossibles, promotePossible, dismissPossible } from '../services/possibles.js';
-import { autoScheduleOnIngest } from '../engine/autoplan.js';
+import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
 
 /**
  * Possible-task inbox (ingest-produced items awaiting promote/dismiss). Phase W (Decision
@@ -35,10 +36,19 @@ export function possiblesRouter() {
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const out = taskToApi(res.task);
     broadcast(owner, 'possible:promoted', { id, task: out });
-    // TM-5: in the Hands-off trust mode, auto-block the promoted work (estimate-bearing
-    // only). Best-effort — a placement hiccup must not fail the promote. No-op in
-    // Cautious/Balanced. Runs AFTER the broadcast (see module docstring).
-    try { autoScheduleOnIngest(owner, { requireEstimate: true }); } catch { /* best-effort */ }
+    // Best-effort placement — a hiccup must not fail the promote. Runs AFTER the
+    // broadcast (see module docstring). AB1: a task with a START intent is placed at
+    // it in ANY trust mode (the user/suggestion stated the day — honoring it is not
+    // engine autonomy); a start-less task keeps the TM-5 trust-gated hands-off
+    // auto-block (estimate-bearing only; no-op in Cautious/Balanced).
+    try {
+      if (res.task.scheduledFor) placeStartAnchoredTask(owner, res.taskId);
+      else autoScheduleOnIngest(owner, { requireEstimate: true });
+    } catch (err) {
+      // Best-effort — promote already succeeded; surface the reason so a placement
+      // regression is diagnosable rather than silently invisible.
+      logger.warn('promote: post-promote placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
+    }
     ctx.status = 201;
     ctx.body = { task: out };
   });
