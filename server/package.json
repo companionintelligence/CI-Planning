@@ -20,6 +20,7 @@
   "dependencies": {
     "@apollo/server": "^5.5.1",
     "@as-integrations/koa": "^2.0.0",
+    "@graphiql/toolkit": "0.12.1",
     "@koa/cors": "^5.0.0",
     "@koa/router": "^15.6.0",
     "@modelcontextprotocol/sdk": "1.29.0",
@@ -28,11 +29,14 @@
     "chrono-node": "^2.9.1",
     "croner": "^10.0.1",
     "drizzle-orm": "^0.45.2",
+    "graphiql": "5.2.4",
     "graphql": "^16.14.2",
     "koa": "^3.2.1",
     "koa-bodyparser": "^4.4.1",
     "koa-static": "^5.0.0",
     "nodemailer": "^9.0.3",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
     "rrule": "^2.8.1",
     "sqlite-vec": "^0.1.9",
     "web-push": "^3.6.7"
@@ -47,6 +51,9 @@
     "@types/nodemailer": "^8.0.1",
     "@types/web-push": "^3.6.4",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "0.25.12",
+    "monaco-editor": "0.52.2",
+    "monaco-graphql": "1.8.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
