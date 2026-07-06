@@ -79,3 +79,22 @@ describe('POST /api/block-templates/:id/apply-to-block', () => {
     expect(n).toBe(2);
   });
 });
+
+describe('block-template tag normalization', () => {
+  it('trims tags and stores empty/whitespace-only as null, consistently across create and update', async () => {
+    // Create with a whitespace-only tag → persisted as null, not "   ".
+    const blank = await api(srv.url, '/api/block-templates', { method: 'POST', json: { name: 'A', tag: '   ' } });
+    expect(blank.status).toBe(201);
+    expect(blank.body.block_template.tag).toBeNull();
+
+    // Create with a padded tag → trimmed (mirrors how `name` is trimmed).
+    const padded = await api(srv.url, '/api/block-templates', { method: 'POST', json: { name: 'B', tag: '  focus  ' } });
+    expect(padded.body.block_template.tag).toBe('focus');
+
+    // Update with a whitespace-only tag → clears to null (same rule as create; the
+    // pre-refactor split trimmed neither on create nor updated '   ' to null).
+    const id = padded.body.block_template.id as string;
+    const cleared = await api(srv.url, `/api/block-templates/${id}`, { method: 'PATCH', json: { tag: '   ' } });
+    expect(cleared.body.block_template.tag).toBeNull();
+  });
+});

@@ -39,6 +39,7 @@ export function resetDb(): void {
     DELETE FROM sync_state;
     DELETE FROM connection_tokens;
     DELETE FROM time_blocks;
+    DELETE FROM block_templates;
     DELETE FROM possible_tasks;
     DELETE FROM flight_plan;
     DELETE FROM tasks;
