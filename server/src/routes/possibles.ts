@@ -1,5 +1,6 @@
 import Router from '@koa/router';
 import { broadcast } from './sse.js';
+import { logger } from '../lib/logger.js';
 import { toApiList, taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { listPossibles, promotePossible, dismissPossible } from '../services/possibles.js';
@@ -43,7 +44,11 @@ export function possiblesRouter() {
     try {
       if (res.task.scheduledFor) placeStartAnchoredTask(owner, res.taskId);
       else autoScheduleOnIngest(owner, { requireEstimate: true });
-    } catch { /* best-effort */ }
+    } catch (err) {
+      // Best-effort — promote already succeeded; surface the reason so a placement
+      // regression is diagnosable rather than silently invisible.
+      logger.warn('promote: post-promote placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
+    }
     ctx.status = 201;
     ctx.body = { task: out };
   });

@@ -33,8 +33,10 @@ export function snapToSlot(mins: number, snapMin = 15): number {
 export const minuteToHHMM = (mins: number): string =>
   `${pad(Math.floor(mins / 60))}:${pad(mins % 60)}`;
 
-/** Done-ish statuses no longer occupy their span — their slot is open again. */
-const INACTIVE_STATUSES = new Set(['completed', 'cancelled', 'skipped']);
+/** Done-ish statuses no longer occupy their span — their slot is open again.
+ *  Mirrors the server's block DONE_STATUSES (engine/blocks-place.ts): a 'missed' or
+ *  'done' block is finished, so its slot is free for click-to-create. */
+const INACTIVE_STATUSES = new Set(['completed', 'done', 'cancelled', 'skipped', 'missed']);
 
 /**
  * Does `minute` (of `day`) fall inside any ACTIVE block's [start, end) span?

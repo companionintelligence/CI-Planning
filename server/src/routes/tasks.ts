@@ -1,5 +1,6 @@
 import Router from '@koa/router';
 import { eq, and, like, asc, lte, ne } from 'drizzle-orm';
+import { logger } from '../lib/logger.js';
 import { db, sqlite } from '../db/index.js';
 import { tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
@@ -120,7 +121,11 @@ export function tasksRouter() {
     // unconditional hook here would double-place; the flag is for API/agent callers.
     let placement: StartAnchoredOutcome | undefined;
     if (body.auto_place === true && task.scheduledFor) {
-      try { placement = placeStartAnchoredTask(owner, task.id); } catch { /* best-effort */ }
+      try {
+        placement = placeStartAnchoredTask(owner, task.id);
+      } catch (err) {
+        logger.warn('auto_place: start-anchored placement failed', { owner, taskId: task.id, err: (err as Error).message });
+      }
     }
     requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
     ctx.status = 201;
