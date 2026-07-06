@@ -21,7 +21,7 @@
 import { sqlite } from '../db/index.js';
 import { newId } from '../lib/ids.js';
 import { broadcast } from '../routes/sse.js';
-import { recomputeProgress, linkObjectiveTask } from '../routes/objectives.js';
+import { recomputeProgress, linkObjectiveTask } from './objectives.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 
