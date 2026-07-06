@@ -3,6 +3,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from '../routes/sse.js';
 import { taskToApi } from '../lib/serialize.js';
 import { getTask } from '../services/tasks.js';
+import { autoScheduleOnIngest } from '../engine/autoplan.js';
 import {
   listPossibles,
   getPossible,
@@ -18,9 +19,11 @@ import {
  * is invisible (query → undefined → null; promote/dismiss → NOT_FOUND).
  *
  * Mutations reproduce the REST SSE envelope (possible:promoted with {id, task}, and
- * possible:dismissed with {id}). writeAudit + the best-effort auto-schedule already fire
- * INSIDE the service, so none here. There are no create/update mutations — possibles are
- * produced by ingest, matching the REST surface.
+ * possible:dismissed with {id}). writeAudit fires INSIDE the service; the best-effort
+ * TM-5 auto-schedule fires HERE, after the broadcast — mirroring routes/possibles.ts so
+ * `possible:promoted` keeps a lower sync_events seq than any placement broadcast it
+ * triggers (see services/possibles.ts's module docstring). There are no create/update
+ * mutations — possibles are produced by ingest, matching the REST surface.
  *
  * The promote payload's `task` returns `getTask(owner, taskId)` (the canonical camelCase
  * row shape TaskType's field resolvers consume) rather than the raw drizzle insert row.
@@ -53,6 +56,10 @@ export const possibleTaskResolvers = {
         getTask(owner, res.taskId),
         getPossible(owner, args.input.id),
       ]);
+      // TM-5: best-effort — a placement hiccup must not fail the promote. Runs AFTER
+      // the broadcast (see module docstring) and after the response is computed, since
+      // it's fire-and-forget and mustn't affect what this mutation returns.
+      try { autoScheduleOnIngest(owner, { requireEstimate: true }); } catch { /* best-effort */ }
       return { task: task ?? null, possibleTask: possible ?? null, success: true };
     },
 
