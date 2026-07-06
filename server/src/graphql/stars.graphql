@@ -1,0 +1,58 @@
+# Phase W · W8c — DayStarsType + DailyRecapType. The gamified-day READS, ALONGSIDE the
+# REST GET /api/stars route, through services/stars.ts (Decision 3). Read-only: these
+# mirror existing REST/table reads; there are no star/recap write mutations in REST, so
+# none here.
+#
+# DayStarsType = the derived five-star day for one date (engine/stars.ts computeStars, or
+#   the frozen daily_recap snapshot when present). `id` is the 'YYYY-MM-DD' local date
+#   (natural-key-as-Node-id, per owner — the same convention FlightPlanEntry/TagPref use).
+#   The five stars + `total` are the score; `frozen` says whether it came from the frozen
+#   snapshot (true) or a live recompute (false).
+#
+# DailyRecapType = the stored daily_recap row for one (owner, date): the immutable frozen
+#   star snapshot co-located (mig 0096) with the MUTABLE summary cache (prose/stats/focus,
+#   written by agents/summarize.ts). `id` is the 'YYYY-MM-DD' date. Unlike dayStars, this
+#   reflects only what is on disk (no live fallback) and returns null when no row exists.
+#   `stats`/`focus` are JSON blobs (JSON scalar); every date field is a local-date String
+#   (not DateTime); `frozenAt` is a full UTC instant (DateTime) or null when not yet frozen.
+#   Star columns are nullable because a row may hold only the summary group (frozenAt null).
+
+type DayStarsType implements Node {
+  id: ID!                    # the 'YYYY-MM-DD' local date
+  date: String!
+  objective: Boolean!        # S1 — the day's intention reflection is done
+  habits: Boolean!           # S2 — >=1 habit that day, all done
+  tasks: Boolean!            # S3 — >=1 plannable task planned, all done
+  bonus: Boolean!            # S4 — an unplanned completion
+  note: Boolean!             # S5 — a done task + a non-empty day note
+  total: Int!                # count of the five stars that are lit (0..5)
+  frozen: Boolean!           # true = frozen snapshot; false = live recompute
+}
+
+type DailyRecapType implements Node {
+  id: ID!                    # the 'YYYY-MM-DD' local date
+  date: String!
+  # summary group (mutable content cache; null until the summarizer writes it)
+  prose: String
+  stats: JSON
+  focus: JSON
+  llm: Boolean
+  inputsHash: String
+  # star group (immutable once frozen; null until the freeze job writes it)
+  objective: Boolean
+  habits: Boolean
+  tasks: Boolean
+  bonus: Boolean
+  note: Boolean
+  total: Int
+  frozenAt: DateTime         # the freeze instant, or null when not yet frozen
+}
+
+extend type Query {
+  # The five-star day for every date in [from, to] inclusive — a plain bounded list
+  # (not a Relay connection), mirroring REST GET /api/stars which returns an array that
+  # backs one calendar month. Owner-scoped; range is capped (~2 years) in the service.
+  dayStars(from: String!, to: String!): [DayStarsType!]!
+  # The stored daily_recap row for one date, or null when no row has been written.
+  dailyRecap(date: String!): DailyRecapType
+}
