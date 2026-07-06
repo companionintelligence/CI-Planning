@@ -321,6 +321,27 @@ export function objectiveChildrenRows(owner: string, parentId: string): Objectiv
   return sqlite.prepare(`SELECT * FROM objectives WHERE owner_id = ? AND parent_id = ? ORDER BY created_at, id`).all(owner, parentId) as ObjectiveRow[];
 }
 
+/**
+ * The FIRST objective a task is linked to (over objective_tasks, linked=1), owner-scoped —
+ * backs GraphQL `TaskType.objective`. Deterministic pick: earliest-created, then id (a task
+ * may be linked to several objectives). Undefined when none / the task isn't the owner's.
+ * Owner-scoped via the objectives.owner_id join, so a cross-owner link can't leak.
+ */
+export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | undefined {
+  return sqlite
+    .prepare(
+      // Scope BOTH sides by owner (objective + task): the join to `tasks` makes this
+      // self-sufficiently owner-safe — a stray/dangling objective_tasks row (sync/import)
+      // pointing at another owner's task can't surface an objective here.
+      `SELECT o.* FROM objectives o
+         JOIN objective_tasks ot ON ot.objective_id = o.id
+         JOIN tasks t ON t.id = ot.task_id
+        WHERE ot.task_id = ? AND ot.linked = 1 AND o.owner_id = ? AND t.owner_id = ?
+        ORDER BY o.created_at, o.id LIMIT 1`,
+    )
+    .get(taskId, owner, owner) as ObjectiveRow | undefined;
+}
+
 /** The task ids currently linked (linked=1) to an objective, priority-then-id ordered. */
 export function objectiveTaskIds(objectiveId: string): string[] {
   return (
