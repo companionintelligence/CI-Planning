@@ -1,0 +1,71 @@
+# Phase W — BlockTemplateType. CRUD ALONGSIDE the REST /api/block-templates routes;
+# every field and mutation reads/writes through services/block-templates.ts (Decision 3),
+# never re-deriving owner-scoping.
+#
+# A block template is a saved, tagged Plan container (Phase G, G3 + PR-B) with a default
+# duration, optionally carrying the tasks that sat inside it — re-instantiated onto a day.
+#
+# Scope: core CRUD only. The engine-ish ops that materialize real time_blocks/tasks onto
+# the calendar — instantiate + apply-to-block — stay REST-only for now (a later mutation
+# ticket, like flight-plan's Auto and patterns' promote). So this type has no `block`/day
+# fields; it's the reusable definition, not a placement.
+#
+# `tasks` is JSON, NOT a list of a concrete type on the OUTPUT: the saved-task shape
+# (`{title, tag, estimatedMinutes, offsetMinutes}`) is an opaque array the client round-
+# trips verbatim (mirrors PatternKindType.reminderConfig). The INPUT side is typed
+# (BlockTemplateTaskInput) so a create validates the shape.
+
+type BlockTemplateType implements Node {
+  id: ID!
+  name: String!
+  tag: String              # a single direction/category tag string, or null
+  defaultMinutes: Int!     # container duration in minutes (defaults to 60 on create)
+  tasks: JSON!             # saved tasks [{title, tag, estimated_minutes, offset_minutes}] — [] when none
+}
+
+# The saved-task shape for the create input (snake_case fields on the JSON output;
+# camelCase here to match GraphQL input convention — the resolver maps them back).
+input BlockTemplateTaskInput {
+  title: String!
+  tag: String
+  estimatedMinutes: Int
+  offsetMinutes: Int
+}
+
+input CreateBlockTemplateInput {
+  name: String!
+  tag: String
+  defaultMinutes: Int
+  tasks: [BlockTemplateTaskInput!]
+}
+
+input UpdateBlockTemplateInput {
+  id: ID!
+  name: String
+  tag: String
+  defaultMinutes: Int
+}
+
+type CreateBlockTemplatePayload {
+  blockTemplate: BlockTemplateType
+  success: Boolean!
+}
+
+type UpdateBlockTemplatePayload {
+  blockTemplate: BlockTemplateType
+  success: Boolean!
+}
+
+extend type Query {
+  # A user's saved templates are a small, hand-curated set, so this is a plain ordered
+  # list (by name) rather than a Relay connection — mirrors the REST single-shot GET.
+  blockTemplates: [BlockTemplateType!]!
+  blockTemplate(id: ID!): BlockTemplateType
+}
+
+extend type Mutation {
+  createBlockTemplate(input: CreateBlockTemplateInput!): CreateBlockTemplatePayload!
+  updateBlockTemplate(input: UpdateBlockTemplateInput!): UpdateBlockTemplatePayload!
+  # Reuses the shared DeleteByIdInput/DeleteByIdPayload (declared in tag.graphql).
+  deleteBlockTemplate(input: DeleteByIdInput!): DeleteByIdPayload!
+}
