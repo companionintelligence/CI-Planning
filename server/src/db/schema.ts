@@ -103,6 +103,11 @@ export const possibleTasks = sqliteTable('possible_tasks', {
   status: text('status').default('pending'),         // pending | promoted | dismissed | duplicate
   promotedTaskId: text('promoted_task_id').references(() => tasks.id),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
+  // Extractor/template duration estimate, carried to tasks.estimated_minutes on promote
+  // (0114) — the hands-off auto-schedule path requires an estimate to place a block.
+  // NOTE: 0114 also rescoped the table's dedup key to UNIQUE(proposed_owner_id,
+  // source_kind, source_ref) (was global since 0001).
+  proposedEstimatedMinutes: integer('proposed_estimated_minutes'),
 });
 
 export const timeBlocks = sqliteTable('time_blocks', {
@@ -266,6 +271,10 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   memorySyncReflections: integer('memory_sync_reflections', { mode: 'boolean' }).default(true),
   memoryAccount: text('memory_account'),            // connected account (null = not connected)
   memoryLastSyncedAt: text('memory_last_synced_at'), // UTC ISO of the last successful push
+  // Phase AA (0113): master flag for PULLING the CI-Server memory graph into the
+  // agentic surfaces (inbox suggestions). Default OFF — flag-off is byte-identical.
+  // Distinct from memorySyncEnabled (the one-way PUSH toggle above, AA4).
+  memoryPullEnabled: integer('memory_pull_enabled', { mode: 'boolean' }).default(false),
 });
 
 export const tags = sqliteTable('tags', {
