@@ -70,6 +70,13 @@ export function getWeeklyGoals(owner: string, period: string): ReflectionRow[] {
     .all(owner, weekKey) as ReflectionRow[];
 }
 
+/** One weekly-goal slot by its exact ISO-week key + position (no day→week conversion). */
+export function getWeeklyGoalSlot(owner: string, weekKey: string, position: number): ReflectionRow | undefined {
+  return sqlite
+    .prepare(`SELECT * FROM reflections WHERE owner_id=? AND kind='weekly_goal' AND period_key=? AND position=?`)
+    .get(owner, weekKey, position) as ReflectionRow | undefined;
+}
+
 /** The single day note for a day, if any. */
 export function getDayNote(owner: string, period: string): ReflectionRow | undefined {
   return sqlite
@@ -308,21 +315,22 @@ export function toggleDone(
   return { ok: true };
 }
 
-export type DeleteGoalResult = { ok: true } | { ok: false; error: 'bad_kind' | 'period_key_required' };
+export type DeleteGoalResult = { ok: true; removed: boolean } | { ok: false; error: 'bad_kind' | 'period_key_required' };
 
 /**
  * Delete a today/weekly goal row by composite key. Idempotent (a missing row still
- * succeeds). Mirrors DELETE /api/reflections/:kind/:position exactly.
+ * succeeds). Mirrors DELETE /api/reflections/:kind/:position exactly. `removed` reports
+ * whether a row actually existed (from the DELETE `changes` count).
  */
 export function deleteGoal(owner: string, kind: string, position: number, period_key: string | undefined): DeleteGoalResult {
   if (!GOAL_KINDS.has(kind)) return { ok: false, error: 'bad_kind' };
   if (!period_key) return { ok: false, error: 'period_key_required' };
 
-  sqlite
+  const result = sqlite
     .prepare(`DELETE FROM reflections WHERE owner_id=? AND kind=? AND period_key=? AND position=?`)
     .run(owner, kind, period_key, position);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `reflection:${kind}:${period_key}:${position}` });
-  return { ok: true };
+  return { ok: true, removed: result.changes > 0 };
 }
 
 /** Convenience: today's local date, matching the routes' default period. */

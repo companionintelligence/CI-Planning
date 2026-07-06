@@ -2,8 +2,9 @@ import { GraphQLError } from 'graphql';
 import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from '../routes/sse.js';
 import { getOwnedTag } from '../services/tags.js';
+import { isValidISODate } from '../lib/dates.js';
 import {
-  getTodayGoal, getWeeklyGoals, getDayNote, categoryColorToken, noteDates,
+  getTodayGoal, getWeeklyGoals, getWeeklyGoalSlot, getDayNote, categoryColorToken, noteDates,
   upsertTodayGoal, upsertWeeklyGoal, upsertDayNote, toggleDone, deleteGoal,
   type ReflectionRow,
 } from '../services/reflections.js';
@@ -30,6 +31,9 @@ export const reflectionResolvers = {
   Query: {
     reflections: (_p: unknown, args: { period: string }) => {
       const owner = currentOwnerId();
+      // `getWeeklyGoals` derives the ISO week via isoWeekKey(period), which throws on a
+      // non-date — guard here so a bad input is a clean BAD_USER_INPUT, not a 500.
+      if (!isValidISODate(args.period)) throw new GraphQLError('period must be YYYY-MM-DD', { extensions: { code: 'BAD_USER_INPUT' } });
       return {
         period: args.period,
         today: getTodayGoal(owner, args.period) ?? null,
@@ -91,7 +95,11 @@ export const reflectionResolvers = {
       }
       broadcast(owner, 'reflection:updated', { kind: i.kind, period_key: i.periodKey, position: i.position });
       // done-toggle mutates in place; return the refreshed row so the client sees done_at.
-      const row = i.kind === 'today_goal' ? getTodayGoal(owner, i.periodKey) : getWeeklyGoals(owner, i.periodKey).find((r) => r.position === i.position);
+      // A weekly goal's periodKey is already the ISO-week key, so read it by exact key
+      // (getWeeklyGoals would re-run isoWeekKey and throw on the week-key input).
+      const row = i.kind === 'today_goal'
+        ? getTodayGoal(owner, i.periodKey)
+        : getWeeklyGoalSlot(owner, i.periodKey, i.position);
       return { reflection: row ?? null, deleted: false, success: true };
     },
 
@@ -103,7 +111,8 @@ export const reflectionResolvers = {
         throw new GraphQLError(res.error === 'bad_kind' ? 'invalid kind' : 'periodKey is required', { extensions: { code: 'BAD_USER_INPUT' } });
       }
       broadcast(owner, 'reflection:deleted', { kind: i.kind, period_key: i.periodKey, position: i.position });
-      return { reflection: null, deleted: true, success: true };
+      // `deleted` reflects whether a row actually existed (idempotent — still success:true).
+      return { reflection: null, deleted: res.removed, success: true };
     },
   },
 

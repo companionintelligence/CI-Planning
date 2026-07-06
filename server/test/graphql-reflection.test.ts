@@ -102,6 +102,12 @@ describe('W8b — reflections query + goal mutations', () => {
     const bad = await gql(`mutation { setDayNote(input: { periodKey: "not-a-date", body: "x" }) { success } }`);
     expect(bad.body.errors?.[0]?.message).toMatch(/YYYY-MM-DD/i);
   });
+
+  it('reflections(period) with a non-date is a clean BAD_USER_INPUT, not a 500', async () => {
+    const bad = await gql(`{ reflections(period: "2026-W25") { today { id } } }`);
+    expect(bad.status).toBe(200);
+    expect(bad.body.errors?.[0]?.message).toMatch(/YYYY-MM-DD/i);
+  });
 });
 
 describe('W8b — done toggle + delete', () => {
@@ -111,6 +117,14 @@ describe('W8b — done toggle + delete', () => {
     expect(on.body.data.toggleReflectionDone.reflection.doneAt).not.toBeNull();
     const off = await gql(`mutation { toggleReflectionDone(input: { kind: "today_goal", periodKey: "${DAY}", position: 0, done: false }) { reflection { doneAt } } }`);
     expect(off.body.data.toggleReflectionDone.reflection.doneAt).toBeNull();
+  });
+
+  it('toggleReflectionDone works on a weekly goal (periodKey is the week key, not a day)', async () => {
+    await gql(`mutation { setWeeklyGoal(input: { periodKey: "${WEEK_KEY}", position: 1, body: "Weekly" }) { success } }`);
+    const on = await gql(`mutation { toggleReflectionDone(input: { kind: "weekly_goal", periodKey: "${WEEK_KEY}", position: 1, done: true }) { success reflection { doneAt position } } }`);
+    expect(on.body.errors).toBeUndefined();
+    expect(on.body.data.toggleReflectionDone.reflection.position).toBe(1);
+    expect(on.body.data.toggleReflectionDone.reflection.doneAt).not.toBeNull();
   });
 
   it('toggleReflectionDone is NOT_FOUND when the row is missing; rejects a non-goal kind', async () => {
@@ -126,8 +140,9 @@ describe('W8b — done toggle + delete', () => {
     expect(d.body.data.deleteReflection).toEqual({ success: true, deleted: true });
     const q = await gql(`{ reflections(period: "${DAY}") { today { id } } }`);
     expect(q.body.data.reflections.today).toBeNull();
-    // Idempotent — a second delete still succeeds.
-    expect((await gql(`mutation { deleteReflection(input: { kind: "today_goal", periodKey: "${DAY}", position: 0 }) { success } }`)).body.data.deleteReflection.success).toBe(true);
+    // Idempotent — a second delete still succeeds, but reports deleted:false (nothing removed).
+    const again = await gql(`mutation { deleteReflection(input: { kind: "today_goal", periodKey: "${DAY}", position: 0 }) { success deleted } }`);
+    expect(again.body.data.deleteReflection).toEqual({ success: true, deleted: false });
     // Non-goal kind rejected.
     expect((await gql(`mutation { deleteReflection(input: { kind: "day_note", periodKey: "${DAY}", position: 0 }) { success } }`)).body.errors?.[0]?.message).toMatch(/invalid kind/i);
   });
