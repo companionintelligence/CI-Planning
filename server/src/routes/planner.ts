@@ -1,12 +1,11 @@
 import { join } from 'node:path';
 import Router from '@koa/router';
 import { currentOwnerId } from '../lib/context.js';
-import { isValidISODate } from '../lib/dates.js';
 import { clearPlannerRange } from '../engine/clear-range.js';
-import { MAX_SPAN_DAYS } from '../engine/recurrence.js';
 import { snapshot, backupDir } from '../lib/backup.js';
 import { writeAudit } from '../lib/audit.js';
 import { broadcast } from './sse.js';
+import { validateClearRange } from '../services/engine-ops.js';
 
 /**
  * Phase P · P2 — owner-facing "Clear Date Range". A first-class wrapper over the
@@ -25,44 +24,20 @@ export function plannerRouter() {
   // POST /api/planner/clear  { start, end?, dry_run? }
   router.post('/api/planner/clear', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { start?: unknown; end?: unknown; dry_run?: unknown };
-    const start = body.start;
-    const end = body.end === undefined || body.end === null || body.end === '' ? null : body.end;
 
-    if (!isValidISODate(start)) {
+    // Validation lives in services/engine-ops.ts (shared with GraphQL): all the 400 checks
+    // (start/end YYYY-MM-DD, end >= start, bounded span <= MAX_SPAN_DAYS, dry_run boolean)
+    // from ONE source. The bounded-span cap is a 400 here rather than letting the engine
+    // throw a bare Error → 500. The snapshot + clearPlannerRange + broadcast stay in the
+    // transport (route + resolver each fire them).
+    const v = validateClearRange({ start: body.start, end: body.end, dryRun: body.dry_run });
+    if (!v.ok) {
       ctx.status = 400;
-      ctx.body = { error: 'start must be a YYYY-MM-DD date' };
+      ctx.body = { error: v.error };
       return;
     }
-    if (end !== null && !isValidISODate(end)) {
-      ctx.status = 400;
-      ctx.body = { error: 'end must be a YYYY-MM-DD date' };
-      return;
-    }
-    if (end !== null && (end as string) < (start as string)) {
-      ctx.status = 400;
-      ctx.body = { error: 'end must be on or after start' };
-      return;
-    }
-    // Cap the bounded span here (a 400) rather than letting the engine throw a bare
-    // Error → 500 leaking an internal message, and before wasting a snapshot on apply.
-    if (end !== null) {
-      const span = Math.floor((Date.parse(`${end as string}T00:00:00Z`) - Date.parse(`${start as string}T00:00:00Z`)) / 86_400_000);
-      if (span > MAX_SPAN_DAYS) {
-        ctx.status = 400;
-        ctx.body = { error: `end must be within ${MAX_SPAN_DAYS} days of start` };
-        return;
-      }
-    }
-
-    // `dry_run` must be an explicit boolean if present — otherwise a truthy non-bool
-    // (e.g. the string "false") would silently flip an intended apply into a preview.
-    if (body.dry_run !== undefined && typeof body.dry_run !== 'boolean') {
-      ctx.status = 400;
-      ctx.body = { error: 'dry_run must be a boolean' };
-      return;
-    }
+    const { start, end, dryRun } = v;
     const owner = currentOwnerId();
-    const dryRun = body.dry_run === true;
 
     // Snapshot BEFORE a real apply — this is a bulk destructive op. Return only the
     // snapshot FILENAME to the client (not the absolute host path, which would leak

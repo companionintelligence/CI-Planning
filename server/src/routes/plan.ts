@@ -1,38 +1,11 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
 import { localISODate } from '../lib/dates.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
-import { newId } from '../lib/ids.js';
 import { broadcast } from './sse.js';
-import { authorPlanOrder, parseInstruction, InstructError, type PlanPin, type PlanHint } from '../agents/plan.js';
+import { authorPlanOrder, InstructError } from '../agents/plan.js';
 import { reflow, clearSuggestion, outstandingSuggestion } from '../engine/auto-defense.js';
-
-/** Apply parsed time pins as locked, non-auto obstacle blocks the placer routes around. */
-function applyPins(owner: string, pins: PlanPin[]): number {
-  if (pins.length === 0) return 0;
-  const ins = sqlite.prepare(
-    `INSERT INTO time_blocks (id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
-     VALUES (?, ?, ?, 'meeting', ?, ?, 1, 0, 'instruct', 'planned')`,
-  );
-  sqlite.transaction(() => { for (const p of pins) ins.run(newId(), owner, p.title, p.start_at, p.end_at); })();
-  return pins.length;
-}
-
-/**
- * Persist parsed tag hints for (owner, date). They take effect on the next autoplan
- * run: `placeFlightPlan` reads them as transient per-tag day-windows, and
- * `authorPlanOrder` folds them into the ordering prompt. Idempotent (INSERT OR IGNORE
- * against the dedupe index), so a repeated instruct doesn't pile up duplicates.
- */
-function applyHints(owner: string, date: string, hints: PlanHint[]): number {
-  if (hints.length === 0) return 0;
-  const ins = sqlite.prepare(
-    `INSERT OR IGNORE INTO plan_hints (id, owner_id, date, kind, tag, time) VALUES (?, ?, ?, ?, ?, ?)`,
-  );
-  sqlite.transaction(() => { for (const h of hints) ins.run(newId(), owner, date, h.kind, h.tag, h.time ?? null); })();
-  return hints.length;
-}
+import { instructPlan } from '../services/engine-ops.js';
 
 /**
  * Phase M B4 — the escalation accept/dismiss endpoints. These are the ONLY reactive
@@ -54,9 +27,12 @@ export function planRouter() {
     const date = body.date ?? localISODate();
     const owner = currentOwnerId();
 
-    let result;
+    // Parse + apply lives in services/engine-ops.ts (shared with GraphQL); writeAudit fires
+    // inside it. `parseInstruction` validates fully BEFORE any write, so a rejected
+    // instruction never leaves a partial pin/hint behind — the InstructError maps here.
+    let outcome;
     try {
-      result = await parseInstruction(owner, date, text); // validates fully BEFORE any write
+      outcome = await instructPlan(owner, date, text);
     } catch (err) {
       if (err instanceof InstructError) {
         ctx.status = err.code === 'unavailable' ? 503 : 422;
@@ -66,13 +42,8 @@ export function planRouter() {
       throw err;
     }
 
-    // Both writes run ONLY after a clean parse (parseInstruction threw on invalid), so a
-    // rejected instruction never leaves a partial pin or hint behind.
-    const created = applyPins(owner, result.pins);
-    applyHints(owner, date, result.hints);
-    if (created > 0) broadcast(owner, 'block:created', { added: created });
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'instruct', entity: `plan:${date}` });
-    ctx.body = { ok: true, date, pins: result.pins, hints: result.hints, created };
+    if (outcome.created > 0) broadcast(owner, 'block:created', { added: outcome.created });
+    ctx.body = { ok: true, date, pins: outcome.pins, hints: outcome.hints, created: outcome.created };
   });
 
   // GET /api/plan/suggestion — the owner's outstanding re-plan nudge (or null).
