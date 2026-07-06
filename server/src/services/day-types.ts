@@ -1,7 +1,10 @@
 import { sqlite } from '../db/index.js';
 import { newId } from '../lib/ids.js';
+import { writeAudit } from '../lib/audit.js';
 
 export interface DayType { id: string; key: string; name: string; is_builtin: boolean }
+
+const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 /**
  * UTC day-of-week at noon — matches the legacy `isWeekendDate()` (autoplan.ts) so the
@@ -130,4 +133,44 @@ export function dayTypeKeyExists(ownerId: string, key: string): boolean {
   return !!sqlite
     .prepare(`SELECT 1 FROM day_types WHERE owner_id = ? AND key = ? LIMIT 1`)
     .get(ownerId, key);
+}
+
+// ── Validated catalog CRUD (Phase W · W7, Decision 3) ─────────────────────────
+// Slug/name/dup/builtin validation extracted from routes/day-types.ts so REST + GraphQL
+// share one owner-scoped path. writeAudit fires here; these routes emit no SSE.
+
+export type CreateDayTypeResult = { ok: true; dayType: DayType } | { ok: false; error: 'bad_key' | 'name_required' | 'duplicate' };
+
+export function createDayTypeChecked(ownerId: string, rawKey: unknown, rawName: unknown): CreateDayTypeResult {
+  const key = String(rawKey ?? '').trim().toLowerCase();
+  const name = String(rawName ?? '').trim();
+  if (!KEY_RE.test(key)) return { ok: false, error: 'bad_key' };
+  if (!name) return { ok: false, error: 'name_required' };
+  if (dayTypeKeyExists(ownerId, key)) return { ok: false, error: 'duplicate' };
+  const dayType = createDayType(ownerId, key, name);
+  writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `day-type:${key}` });
+  return { ok: true, dayType };
+}
+
+export type RenameDayTypeResult = { ok: true; dayType: DayType } | { ok: false; error: 'not_found' | 'name_required' };
+
+export function renameDayTypeChecked(ownerId: string, id: string, rawName: unknown): RenameDayTypeResult {
+  const dt = getDayType(ownerId, id);
+  if (!dt) return { ok: false, error: 'not_found' };
+  const name = String(rawName ?? '').trim();
+  if (!name) return { ok: false, error: 'name_required' };
+  renameDayType(ownerId, dt.id, name);
+  writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `day-type:${dt.key}` });
+  return { ok: true, dayType: { ...dt, name } };
+}
+
+export type DeleteDayTypeResult = { ok: true; dayType: DayType } | { ok: false; error: 'not_found' | 'builtin' };
+
+export function deleteDayTypeChecked(ownerId: string, id: string): DeleteDayTypeResult {
+  const dt = getDayType(ownerId, id);
+  if (!dt) return { ok: false, error: 'not_found' };
+  if (dt.is_builtin) return { ok: false, error: 'builtin' };
+  deleteDayType(ownerId, dt);
+  writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `day-type:${dt.key}` });
+  return { ok: true, dayType: dt };
 }

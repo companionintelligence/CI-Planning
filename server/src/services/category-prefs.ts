@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { newId } from '../lib/ids.js';
+import { writeAudit } from '../lib/audit.js';
 
 /**
  * Per-(owner × category-tag) display config. A trimmed mirror of services/pattern-prefs.ts:
@@ -77,4 +78,31 @@ export function setCategoryPref(
     .run(newId(), ownerId, categoryTagId, merged.color_token, merged.default_minutes);
 
   return merged;
+}
+
+export type SetCategoryPrefResult =
+  | { ok: true; pref: CategoryPref }
+  | { ok: false; error: 'tag_not_found' | 'not_category' | 'color_token_invalid' | 'default_minutes_invalid' };
+
+/**
+ * Validate + upsert a category-axis pref (Phase W · W7, Decision 3): the owner-scoped
+ * tag/kind check + field constraints extracted from routes/category-prefs.ts so REST +
+ * GraphQL share one implementation. `patch` carries raw (unknown-typed) values.
+ */
+export function setCategoryPrefChecked(
+  ownerId: string,
+  tagId: string,
+  patch: { color_token?: unknown; default_minutes?: unknown },
+): SetCategoryPrefResult {
+  const tag = sqlite.prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(tagId, ownerId) as { kind: string } | undefined;
+  if (!tag) return { ok: false, error: 'tag_not_found' };
+  if (tag.kind !== 'category') return { ok: false, error: 'not_category' };
+  if (patch.color_token !== undefined && (typeof patch.color_token !== 'string' || !patch.color_token)) return { ok: false, error: 'color_token_invalid' };
+  if (patch.default_minutes !== undefined && !(Number.isInteger(patch.default_minutes) && (patch.default_minutes as number) > 0)) return { ok: false, error: 'default_minutes_invalid' };
+  const pref = setCategoryPref(ownerId, tagId, {
+    color_token: patch.color_token as string | undefined,
+    default_minutes: patch.default_minutes as number | undefined,
+  });
+  writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `category-prefs:${tagId}` });
+  return { ok: true, pref };
 }

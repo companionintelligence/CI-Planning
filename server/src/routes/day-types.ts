@@ -2,12 +2,10 @@ import Router from '@koa/router';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
 import {
-  listDayTypes, getDayType, createDayType, renameDayType, deleteDayType,
+  listDayTypes, createDayTypeChecked, renameDayTypeChecked, deleteDayTypeChecked,
   getWeekMap, setWeekMap, listAssignments, assignDate, clearAssignment,
   dayTypeKeyExists, resolveDayTypeWithSource,
 } from '../services/day-types.js';
-
-const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 /** A real 'YYYY-MM-DD' calendar date (rejects shape-valid nonsense like 2026-13-99). */
 function isISODate(s: string): boolean {
@@ -30,37 +28,32 @@ export function dayTypesRouter() {
   });
 
   router.post('/api/day-types', (ctx) => {
-    const owner = currentOwnerId();
     const body = ctx.request.body as { key?: unknown; name?: unknown };
-    const key = String(body?.key ?? '').trim().toLowerCase();
-    const name = String(body?.name ?? '').trim();
-    if (!KEY_RE.test(key)) { ctx.status = 422; ctx.body = { error: 'key must be a lowercase slug' }; return; }
-    if (!name) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
-    if (dayTypeKeyExists(owner, key)) { ctx.status = 409; ctx.body = { error: 'A day type with that key already exists' }; return; }
-    const dt = createDayType(owner, key, name);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `day-type:${key}` });
+    const res = createDayTypeChecked(currentOwnerId(), body?.key, body?.name);
+    if (!res.ok) {
+      if (res.error === 'bad_key') { ctx.status = 422; ctx.body = { error: 'key must be a lowercase slug' }; return; }
+      if (res.error === 'name_required') { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
+      ctx.status = 409; ctx.body = { error: 'A day type with that key already exists' }; return;
+    }
     ctx.status = 201;
-    ctx.body = { day_type: dt };
+    ctx.body = { day_type: res.dayType };
   });
 
   router.patch('/api/day-types/:id', (ctx) => {
-    const owner = currentOwnerId();
-    const dt = getDayType(owner, ctx.params.id);
-    if (!dt) { ctx.status = 404; ctx.body = { error: 'Day type not found' }; return; }
-    const name = String((ctx.request.body as { name?: unknown })?.name ?? '').trim();
-    if (!name) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
-    renameDayType(owner, dt.id, name);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `day-type:${dt.key}` });
-    ctx.body = { day_type: { ...dt, name } };
+    const res = renameDayTypeChecked(currentOwnerId(), ctx.params.id, (ctx.request.body as { name?: unknown })?.name);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'Day type not found' }; return; }
+      ctx.status = 422; ctx.body = { error: 'name is required' }; return;
+    }
+    ctx.body = { day_type: res.dayType };
   });
 
   router.delete('/api/day-types/:id', (ctx) => {
-    const owner = currentOwnerId();
-    const dt = getDayType(owner, ctx.params.id);
-    if (!dt) { ctx.status = 404; ctx.body = { error: 'Day type not found' }; return; }
-    if (dt.is_builtin) { ctx.status = 422; ctx.body = { error: 'Built-in day types cannot be deleted' }; return; }
-    deleteDayType(owner, dt);
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `day-type:${dt.key}` });
+    const res = deleteDayTypeChecked(currentOwnerId(), ctx.params.id);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'Day type not found' }; return; }
+      ctx.status = 422; ctx.body = { error: 'Built-in day types cannot be deleted' }; return;
+    }
     ctx.body = { ok: true };
   });
 
