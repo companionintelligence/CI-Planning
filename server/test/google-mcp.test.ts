@@ -4,7 +4,7 @@ import { createFixtureGoogleClient, createGoogleClient, createLiveGoogleClient }
 import type { McpConnectionFactory } from '../src/mcp/client.js';
 import { seal } from '../src/lib/crypto/index.js';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { newId } from '../src/lib/ids.js';
 import { resetDb } from './helpers.js';
 
@@ -106,7 +106,7 @@ describe('Google MCP client (live mode, fail-closed)', () => {
     let threw: Error | null = null;
     let rows: unknown[] | null = null;
     try {
-      rows = await runWithOwner(SYSTEM_OWNER, () => client.listEmails());
+      rows = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => client.listEmails());
     } catch (err) {
       threw = err as Error;
     }
@@ -152,9 +152,9 @@ describe('Google MCP client (live mode, fail-closed)', () => {
       },
     });
     const client = createLiveGoogleClient({ command: 'noop', connectionFactory: okFactory });
-    const emails = await runWithOwner(SYSTEM_OWNER, () => client.listEmails());
+    const emails = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => client.listEmails());
     expect(emails[0]).toMatchObject({ id: 'm1', subject: 'Hi' });
-    const events = await runWithOwner(SYSTEM_OWNER, () => client.listEvents());
+    const events = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => client.listEvents());
     expect(events[0]).toMatchObject({ id: 'e1', title: 'Standup', description: '' });
   });
 });

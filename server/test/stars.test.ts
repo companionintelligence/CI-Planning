@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { computeStars } from '../src/engine/stars.js';
 import { freezeStars } from '../src/jobs/freeze-stars.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
@@ -62,7 +62,7 @@ function setNote(body: string, date = DAY) {
 const at = (date: string, hh = '12') => `${date}T${hh}:00:00.000Z`;
 // A full UTC instant (freezeStars' 2nd arg is now a `nowISO`, not a bare date).
 const iso = (date: string, hhmm = '00:20') => `${date}T${hhmm}:00.000Z`;
-const stars = (date = DAY) => runWithOwner(SYSTEM_OWNER, () => computeStars(SYSTEM_OWNER, date));
+const stars = (date = DAY) => runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => computeStars(SYSTEM_OWNER, date));
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -250,7 +250,7 @@ describe('freezeStars — nightly snapshot', () => {
   it('snapshots the day that just ended (yesterday relative to now)', () => {
     setToday('Done goal', true);
     // now = a NEXT_DAY instant → yesterday = DAY.
-    const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, iso(NEXT_DAY, '00:20')));
+    const r = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, iso(NEXT_DAY, '00:20')));
     expect(r.date).toBe(DAY);
     expect(r.created).toBe(true); // FIX 6 — a first freeze is a create
     const row = frozenRow();
@@ -264,7 +264,7 @@ describe('freezeStars — nightly snapshot', () => {
     // 2026-06-16T05:00Z is still 2026-06-15 22:00 in Los Angeles, so the owner-tz
     // "today" is still 2026-06-15 (DAY) and yesterday is 2026-06-14 — NOT DAY.
     // The 00:20-local cron fires when it's 07:20Z (2026-06-16T07:20Z) on that day.
-    const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, '2026-06-16T07:20:00.000Z'));
+    const r = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, '2026-06-16T07:20:00.000Z'));
     // 07:20Z on 06-16 = 00:20 local on 06-16 in LA → yesterday-local = 06-15 = DAY.
     expect(r.date).toBe(DAY);
     expect(frozenRow(DAY)).toMatchObject({ total: 1 });
@@ -276,7 +276,7 @@ describe('freezeStars — nightly snapshot', () => {
     resetDb();
     setTz('America/Los_Angeles');
     setToday('Goal2', true, DAY);
-    const r2 = runWithOwner(SYSTEM_OWNER, () => freezeStars(undefined, '2026-06-17T04:00:00.000Z'));
+    const r2 = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(undefined, '2026-06-17T04:00:00.000Z'));
     expect(r2.date).toBe(DAY);            // LA yesterday, not UTC yesterday (06-16)
     expect(frozenRow(NEXT_DAY)).toBeUndefined();
   });
@@ -284,12 +284,12 @@ describe('freezeStars — nightly snapshot', () => {
   it('a later edit to a frozen past day leaves the frozen row unchanged', () => {
     // Freeze DAY with a single done goal → total 1.
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     expect(frozenRow().total).toBe(1);
 
     // Later: complete an unplanned task on DAY (would be +1 live). Frozen row must not change.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
-    expect(runWithOwner(SYSTEM_OWNER, () => computeStars(SYSTEM_OWNER, DAY)).total).toBe(2); // live sees it
+    expect(runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => computeStars(SYSTEM_OWNER, DAY)).total).toBe(2); // live sees it
     expect(frozenRow().total).toBe(1); // frozen unchanged (no re-freeze)
   });
 
@@ -297,13 +297,13 @@ describe('freezeStars — nightly snapshot', () => {
   // FIX 6 — created=true on the first freeze, false on the no-op re-run.
   it('re-running freeze after mutating the day leaves the frozen row unchanged', () => {
     setToday('Goal', true);
-    const first = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    const first = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     expect(first.total).toBe(1);
     expect(first.created).toBe(true);
 
     // Owner edits DAY (adds an unplanned completion) then a manual job re-run fires.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
-    const second = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '09:00')));
+    const second = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '09:00')));
     expect(second.total).toBe(1);                 // returns the EXISTING total, no recompute
     expect(second.created).toBe(false);           // no-op, not a create
     expect(frozenRow().total).toBe(1);            // row untouched
@@ -313,8 +313,8 @@ describe('freezeStars — nightly snapshot', () => {
 
   it('is idempotent — re-running never creates a second row', () => {
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     const rows = sqlite.prepare(`SELECT COUNT(*) AS n FROM daily_recap WHERE owner_id=? AND date=?`).get(SYSTEM_OWNER, DAY) as { n: number };
     expect(rows.n).toBe(1);
     expect(frozenRow().total).toBe(1);
@@ -344,7 +344,7 @@ describe('GET /api/stars', () => {
   it('returns the FROZEN row over the live value', async () => {
     // Freeze DAY at total 1.
     setToday('Goal', true);
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, iso(TODAY, '00:20')));
+    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, iso(TODAY, '00:20')));
     // Change the live world so recompute would give 2.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
 
@@ -373,7 +373,7 @@ describe('daily_recap co-location (summary cache + immutable star freeze)', () =
       .run(SYSTEM_OWNER, DAY);
 
     setToday('Done goal', true); // objective star → total 1
-    const r = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    const r = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
 
     expect(r.created).toBe(true); // it actually froze — the bug an existence-guard would introduce is that it would NOT
     const row = recapRow();
@@ -384,7 +384,7 @@ describe('daily_recap co-location (summary cache + immutable star freeze)', () =
 
   it('a summary refresh never disturbs a frozen star row', () => {
     setToday('Done goal', true);
-    runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
     const beforeFrozenAt = recapRow().frozen_at;
 
     // Simulate summarizeDay's partial upsert onto the already-frozen row.
@@ -406,12 +406,12 @@ describe('daily_recap co-location (summary cache + immutable star freeze)', () =
 
   it('re-freeze stays a no-op even after the live world changed (first-freeze-wins)', () => {
     setToday('Done goal', true);
-    const first = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
+    const first = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T00:20:00.000Z`));
     expect(first.created).toBe(true);
 
     // An unplanned completion that would raise the live score, then re-freeze.
     makeTask({ title: 'Late win', status: 'done', completedAt: `${DAY}T15:00:00.000Z` });
-    const second = runWithOwner(SYSTEM_OWNER, () => freezeStars(DAY, `${TODAY}T09:00:00.000Z`));
+    const second = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => freezeStars(DAY, `${TODAY}T09:00:00.000Z`));
     expect(second.created).toBe(false);
     expect(recapRow().total).toBe(first.total);
   });

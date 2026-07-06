@@ -14,13 +14,13 @@
 
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { FixtureConnector } from '../src/connectors/fixture.js';
 import { syncConnector } from '../src/agents/sync.js';
 import { config } from '../src/lib/config.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 
-const sync = (c: FixtureConnector) => runWithOwner(SYSTEM_OWNER, () => syncConnector(c));
+const sync = (c: FixtureConnector) => runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => syncConnector(c));
 
 function futureDate(daysAhead: number, hourOffset = 0): string {
   const d = new Date();

@@ -10,7 +10,7 @@ import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../src/lib/context.j
  */
 describe('currentOwnerId — fail-loud outside a context', () => {
   it('returns the bound owner inside runWithOwner', () => {
-    expect(runWithOwner('owner-x', () => currentOwnerId())).toBe('owner-x');
+    expect(runWithOwner('owner-x', [], () => currentOwnerId())).toBe('owner-x');
   });
 
   it('falls back to SYSTEM_OWNER outside a context in test mode', () => {
@@ -29,7 +29,7 @@ describe('currentOwnerId — fail-loud outside a context', () => {
     try {
       expect(() => currentOwnerId()).toThrow(/runWithOwner/);
       // ...but still resolves cleanly when properly scoped, even in prod mode.
-      expect(runWithOwner('owner-y', () => currentOwnerId())).toBe('owner-y');
+      expect(runWithOwner('owner-y', [], () => currentOwnerId())).toBe('owner-y');
     } finally {
       process.env.NODE_ENV = orig;
     }

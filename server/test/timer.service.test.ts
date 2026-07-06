@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
+import { ALL_SCOPES, runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTimer, stopTimer, stopRunning, getRunning } from '../src/services/timer.js';
 import { elapsedMinutes } from '../src/lib/duration.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
@@ -74,7 +74,7 @@ describe('timer service', () => {
 
   it('start creates exactly one running entry', () => {
     const task = insertTask();
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, ALL_SCOPES, () => {
       const { entry, stopped } = startTimer(task);
       expect(stopped).toBeNull();
       expect(entry.task_id).toBe(task);
@@ -87,7 +87,7 @@ describe('timer service', () => {
   it('starting a 2nd timer stops the 1st (partial unique index never violated)', () => {
     const a = insertTask('A');
     const b = insertTask('B');
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, ALL_SCOPES, () => {
       const first = startTimer(a);
       const second = startTimer(b);
 
@@ -120,7 +120,7 @@ describe('timer service', () => {
         )
         .get(task, OWNER) as { id: string }
     ).id;
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, ALL_SCOPES, () => {
       const { entry } = startTimer(task, blockId);
       expect(entry.source).toBe('block');
       expect(entry.block_id).toBe(blockId);
@@ -134,7 +134,7 @@ describe('timer service', () => {
     insertEntry(task, '2026-06-15T09:00:00.000Z', '2026-06-15T10:00:00.000Z'); // 60
     recompute(task); // baseline 90
 
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, ALL_SCOPES, () => {
       const { entry } = startTimer(task);
       // Backdate the live entry's start so the stop produces a deterministic duration.
       const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -164,7 +164,7 @@ describe('timer service', () => {
     expect(recompute(task)).toBe(75);
 
     // A stop also recomputes from the source of truth.
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, ALL_SCOPES, () => {
       const { entry } = startTimer(task);
       const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
       sqlite.prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`).run(fiveMinAgo, entry.id);
@@ -183,7 +183,7 @@ describe('timer service', () => {
   });
 
   it('stopTimer with no running timer returns null', () => {
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, ALL_SCOPES, () => {
       expect(stopTimer()).toBeNull();
       expect(stopRunning(OWNER)).toBeNull();
     });
@@ -191,7 +191,7 @@ describe('timer service', () => {
 
   it('getRunning returns the live entry, then null after stop', () => {
     const task = insertTask();
-    runWithOwner(OWNER, () => {
+    runWithOwner(OWNER, ALL_SCOPES, () => {
       const { entry } = startTimer(task);
       const live = getRunning(OWNER);
       expect(live).not.toBeNull();

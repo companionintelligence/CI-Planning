@@ -10,6 +10,7 @@ import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/gro
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { runWithOwner, currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
+import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN } from '../lib/auth/types.js';
 import { writeAudit } from '../lib/audit.js';
 import { snapshot, pruneOldSnapshots, backupDir } from '../lib/backup.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
@@ -252,6 +253,10 @@ export async function runJob(kind: string): Promise<void> {
  * review_day and fire_reminders iterate owners internally, snapshot_db is a single
  * DB-file copy, and prune_sync_events prunes globally by age.
  */
+/** Jobs run as themselves — trusted system maintenance — so they carry every scope
+ *  (incl. admin) inside their runWithOwner binding (W12). */
+const JOB_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
+
 const OWNER_SCOPED_KINDS = new Set([
   'ingest_gmail',
   'ingest_gcal',
@@ -285,7 +290,7 @@ export async function runScheduledJob(kind: string): Promise<void> {
   if (OWNER_SCOPED_KINDS.has(kind)) {
     for (const ownerId of allOwnerIds()) {
       try {
-        await runWithOwner(ownerId, () => runJob(kind));
+        await runWithOwner(ownerId, JOB_SCOPES, () => runJob(kind));
       } catch (err) {
         logger.error(`Scheduled job ${kind} failed for owner ${ownerId}`, {
           err: err instanceof Error ? err.message : String(err),
@@ -296,7 +301,7 @@ export async function runScheduledJob(kind: string): Promise<void> {
   }
 
   try {
-    await runWithOwner(SYSTEM_OWNER, () => runJob(kind));
+    await runWithOwner(SYSTEM_OWNER, JOB_SCOPES, () => runJob(kind));
   } catch (err) {
     logger.error(`Scheduled job ${kind} failed`, {
       err: err instanceof Error ? err.message : String(err),

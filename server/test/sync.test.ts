@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { FixtureConnector } from '../src/connectors/fixture.js';
 import { syncConnector, syncAll, enqueueOutbound } from '../src/agents/sync.js';
 import { config } from '../src/lib/config.js';
 import { resetDb } from './helpers.js';
 
 // All sync calls run inside SYSTEM_OWNER context (matches cron scheduler behavior).
-const sync = (c: FixtureConnector) => runWithOwner(SYSTEM_OWNER, () => syncConnector(c));
+const sync = (c: FixtureConnector) => runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => syncConnector(c));
 
 // Return an ISO date N days from now at (09 + hourOffset):00 UTC.
 // Stays inside the sync window (−7d to +30d) as long as daysAhead ≤ 29.
@@ -414,13 +414,13 @@ describe('calendar sync — fixture mode (offline)', () => {
       config.sync.writeback = true;
 
       // Control: enabled → the block is queued for the active connector.
-      runWithOwner(SYSTEM_OWNER, () => enqueueOutbound(blockId));
+      runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => enqueueOutbound(blockId));
       expect(outboundQueue()).toHaveLength(1);
 
       // Kill switch: disabled → a fresh enqueue adds nothing.
       sqlite.prepare('DELETE FROM outbound_queue').run();
       config.sync.disabled = true;
-      runWithOwner(SYSTEM_OWNER, () => enqueueOutbound(blockId));
+      runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => enqueueOutbound(blockId));
       expect(outboundQueue()).toHaveLength(0);
     });
 
@@ -435,7 +435,7 @@ describe('calendar sync — fixture mode (offline)', () => {
         .run(SYSTEM_OWNER);
       config.sync.disabled = true;
 
-      const results = await runWithOwner(SYSTEM_OWNER, () => syncAll());
+      const results = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => syncAll());
       expect(results).toEqual([]);
     });
   });
