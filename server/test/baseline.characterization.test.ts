@@ -102,7 +102,9 @@ function seedApiFixture(): void {
   insertNoId('flight_plan', { owner_id: OWNER, task_id: meditate, source_kind: 'pattern', source_ref: pattern, selected: 0, position: 1 });
 
   insert('block_templates', { owner_id: OWNER, name: 'Deep work', tag: 'work', default_minutes: 90 });
-  insert('possible_tasks', { raw_title: 'Maybe call dentist', source_kind: 'gmail', source_ref: 'msg-1', status: 'pending', proposed_priority: 3 });
+  // proposed_owner_id is the possible_tasks owner key (T4) — ingest always sets it; the
+  // GET is owner-scoped by it (Phase W · W9), so seed it here to stay visible.
+  insert('possible_tasks', { raw_title: 'Maybe call dentist', source_kind: 'gmail', source_ref: 'msg-1', status: 'pending', proposed_priority: 3, proposed_owner_id: OWNER });
 }
 
 describe('behavior baseline — read API serialization', () => {

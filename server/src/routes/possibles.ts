@@ -1,33 +1,20 @@
 import Router from '@koa/router';
-import { eq } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
-import { possibleTasks, tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { toApiList, taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
-import { writeAudit } from '../lib/audit.js';
+import { listPossibles, promotePossible, dismissPossible } from '../services/possibles.js';
 import { autoScheduleOnIngest } from '../engine/autoplan.js';
 
 /**
- * Linchpin (auto-scheduling finding 2): copy a possible-task's suggested tags onto
- * the promoted task's entity_tags, or the direction tag the Auto engine matches on
- * vanishes exactly when an item becomes schedulable. Level by kind — the direction
- * (pattern) tag lands at level 1 (the placement-relevant read, taskTagNames), content
- * (intention) tags at level 2 (secondary). Idempotent inserts onto a fresh task.
+ * Possible-task inbox (ingest-produced items awaiting promote/dismiss). Phase W (Decision
+ * 3): the read + promote + dismiss logic lives in services/possibles.ts so REST + GraphQL
+ * share ONE owner-scoped implementation; these handlers are thin shells over it. The
+ * service scopes by `proposed_owner_id` (the table's owner key, T4) — closing the
+ * pre-extraction cross-tenant read-leak/IDOR. writeAudit fires inside the service; SSE
+ * broadcast + the best-effort TM-5 auto-schedule stay here (transport-side), in that
+ * order — matching the pre-extraction route exactly, so `possible:promoted` keeps a
+ * lower sync_events seq than any placement broadcast auto-schedule triggers.
  */
-const selectPossibleTags = sqlite.prepare(
-  `SELECT pt.tag_id AS id, tg.kind AS kind FROM possible_task_tags pt
-     JOIN tags tg ON tg.id = pt.tag_id
-    WHERE pt.possible_task_id = ?`,
-);
-const insertTaskTag = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`,
-);
-function carryPossibleTags(possibleId: string, taskId: string): void {
-  for (const r of selectPossibleTags.all(possibleId) as { id: string; kind: string }[]) {
-    insertTaskTag.run(taskId, r.id, r.kind === 'direction' ? 1 : 2);
-  }
-}
 
 export function possiblesRouter() {
   const router = new Router();
@@ -35,68 +22,34 @@ export function possiblesRouter() {
   // GET /api/possible-tasks
   router.get('/api/possible-tasks', async (ctx) => {
     const { status = 'pending' } = ctx.query as Record<string, string>;
-    const rows = await db
-      .select()
-      .from(possibleTasks)
-      .where(eq(possibleTasks.status, status));
+    const rows = await listPossibles(currentOwnerId(), status);
     ctx.body = { possibles: toApiList(rows) };
   });
 
   // POST /api/possible-tasks/:id/promote
   router.post('/api/possible-tasks/:id/promote', async (ctx) => {
+    const owner = currentOwnerId();
     const id = ctx.params.id;
-    const [possible] = await db.select().from(possibleTasks).where(eq(possibleTasks.id, id));
-    if (!possible) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-
-    const overrides = (ctx.request.body ?? {}) as Partial<{
-      title: string;
-      due_at: string;
-      priority: number;
-    }>;
-
-    const [task] = await db
-      .insert(tasks)
-      .values({
-        title: overrides.title ?? possible.rawTitle,
-        description: possible.rawSummary ?? undefined,
-        dueAt: overrides.due_at ?? possible.proposedDueAt ?? undefined,
-        priority: overrides.priority ?? possible.proposedPriority ?? 3,
-        ownerId: possible.proposedOwnerId ?? currentOwnerId(),
-        sourceKind: possible.sourceKind ?? 'agent',
-        sourceRef: possible.sourceRef ?? undefined,
-      })
-      .returning();
-
-    carryPossibleTags(id, task.id);
-
-    await db
-      .update(possibleTasks)
-      .set({ status: 'promoted', promotedTaskId: task.id })
-      .where(eq(possibleTasks.id, id));
-
-    const out = taskToApi(task);
-    broadcast(currentOwnerId(), 'possible:promoted', { id, task: out });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'promote', entity: `possible:${id}` });
-
-    // TM-5: in the Hands-off trust mode, auto-block the promoted work (estimate-bearing only).
-    // Best-effort — a placement hiccup must not fail the promote. No-op in Cautious/Balanced.
-    try { autoScheduleOnIngest(currentOwnerId(), { requireEstimate: true }); } catch { /* best-effort */ }
-
+    const overrides = (ctx.request.body ?? {}) as Partial<{ title: string; due_at: string; priority: number }>;
+    const res = await promotePossible(owner, id, overrides);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const out = taskToApi(res.task);
+    broadcast(owner, 'possible:promoted', { id, task: out });
+    // TM-5: in the Hands-off trust mode, auto-block the promoted work (estimate-bearing
+    // only). Best-effort — a placement hiccup must not fail the promote. No-op in
+    // Cautious/Balanced. Runs AFTER the broadcast (see module docstring).
+    try { autoScheduleOnIngest(owner, { requireEstimate: true }); } catch { /* best-effort */ }
     ctx.status = 201;
     ctx.body = { task: out };
   });
 
   // POST /api/possible-tasks/:id/dismiss
   router.post('/api/possible-tasks/:id/dismiss', async (ctx) => {
+    const owner = currentOwnerId();
     const id = ctx.params.id;
-    const [possible] = await db
-      .update(possibleTasks)
-      .set({ status: 'dismissed' })
-      .where(eq(possibleTasks.id, id))
-      .returning();
-    if (!possible) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    broadcast(currentOwnerId(), 'possible:dismissed', { id });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'dismiss', entity: `possible:${id}` });
+    const res = await dismissPossible(owner, id);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    broadcast(owner, 'possible:dismissed', { id });
     ctx.body = { ok: true };
   });
 

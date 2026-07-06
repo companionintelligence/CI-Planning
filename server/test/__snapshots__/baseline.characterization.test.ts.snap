@@ -320,7 +320,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
       "id": "entity#1",
       "promoted_task_id": null,
       "proposed_due_at": null,
-      "proposed_owner_id": null,
+      "proposed_owner_id": "owner#1",
       "proposed_priority": 3,
       "raw_summary": null,
       "raw_title": "Maybe call dentist",

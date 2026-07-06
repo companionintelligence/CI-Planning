@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 
 describe('tasks / blocks / tags / possibles API', () => {
   let server: TestServer;
@@ -159,12 +160,14 @@ describe('tasks / blocks / tags / possibles API', () => {
   it('promotes and dismisses possible tasks', async () => {
     // Seed a couple of possibles directly through the DB-backed promote/dismiss endpoints.
     const { sqlite } = await import('../src/db/index.js');
+    // proposed_owner_id is the possible_tasks owner key (T4); the route is owner-scoped
+    // by it (Phase W · W9), so seed it to the (test) caller = SYSTEM_OWNER.
     sqlite
       .prepare(
-        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status)
-         VALUES (uuid7(), 'Promote me', 'gmail', 'x#0', 0.9, 'pending'), (uuid7(), 'Dismiss me', 'gmail', 'y#0', 0.4, 'pending')`
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id)
+         VALUES (uuid7(), 'Promote me', 'gmail', 'x#0', 0.9, 'pending', ?), (uuid7(), 'Dismiss me', 'gmail', 'y#0', 0.4, 'pending', ?)`
       )
-      .run();
+      .run(SYSTEM_OWNER, SYSTEM_OWNER);
 
     const pending = await api(server.url, '/api/possible-tasks');
     expect(pending.body.possibles.length).toBe(2);
