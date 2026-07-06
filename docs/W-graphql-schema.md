@@ -2,9 +2,10 @@
 
 **Status:** This began as the design / SDL-skeleton review artifact called for by
 `W-graphql-crud.md`'s Definition of Done ("a representation doc — type ↔ REST route ↔
-underlying table — published"). **Step 1 (bootstrap) is now built and mounted** (Apollo at
-`/api/graphql`, base SDL + `viewer` + scalars + complexity limiter — see §6); the entity
-types below (TagType, Task, TimeBlock, …) are the remaining, not-yet-wired skeleton.
+underlying table — published"). **Phase W is now COMPLETE — every type below is built + merged**
+(Apollo at `/api/graphql`, base SDL + `viewer` + scalars + complexity limiter — see §6; the full
+CRUD surface in §2, W1–W13 + W-sandbox + W-close). This doc is now the living as-built reference;
+the SDL skeletons below match what shipped.
 
 **Decisions locked (owner, 2026-07-03):**
 - **D1 Library = Apollo** — as-built: **Apollo Server 5 + `@as-integrations/koa`** (Koa 3 mount), convention-parity with CI-Server. Complexity limiting is a custom Apollo plugin on `graphql` directly (see §5), NOT `graphql-query-complexity`.
@@ -64,22 +65,24 @@ Each entity type gets a matching `type XConnection implements Connection` + `typ
 
 ## 2. Three-way mapping (GraphQL type ↔ REST router ↔ table(s) ↔ service status)
 
-| GraphQL type | REST router | DB table(s) | Service layer for D3 |
+**As-built (Phase W complete):** every W-phase type below is built + merged, and every "extract" is done — each row's service now exists and is shared by REST + GraphQL (Decision 3). The "Service layer for D3" column records the as-built service.
+
+| GraphQL type | REST router | DB table(s) | Service layer for D3 (as-built) |
 |---|---|---|---|
-| `TaskType` (Node, Taggable) | `tasksRouter` | `tasks`, `entity_tags`, `task_dependencies` | **none — extract** (`services/tasks.ts` TBD) |
-| `TimeBlockType` (Node, Taggable) | `blocksRouter` | `time_blocks`, `entity_tags` | **none — extract**; `services/block-task-sync.ts` partial |
-| `BlockTemplateType` (Node) | `blockTemplatesRouter` | `block_templates` | none — extract |
-| `PossibleTaskType` (Node) | `possiblesRouter` | `possible_tasks` | `services/task-promotion.ts` (promote = mutation w/ side effects) |
-| `TagType` (Node, + hybrid) | `tagsRouter` | `tags`, `tag_directions`, `tag_categories`, `entity_tags` | **`services/tags.ts` (rich)** — pilot-ready |
-| `PatternType`†, `PatternBlockType`, `PatternPrefType` | `patternsRouter`, `patternBlocksRouter`, `patternPrefsRouter` | `patterns`, `pattern_tasks`, `pattern_blocks`, `tag_prefs` | `services/patterns.ts`, `pattern-blocks.ts`, `pattern-prefs.ts` |
-| `TagPrefType` (was CategoryPref) | `categoryPrefsRouter` | `tag_prefs` (post-S2) | `services/category-prefs.ts` |
-| `DayTypeType` | `dayTypesRouter` | `day_types`, `day_of_week_map`, `day_assignments` | `services/day-types.ts` |
-| `FlightPlanEntryType` | `flightPlanRouter` | `flight_plan` | none — extract |
-| `SchedulingPrefsType` | `prefsRouter` | `scheduling_prefs` (~39 cols) | none — extract; see §5 grouping note |
-| `ReflectionType`, `ObjectiveType`, `DayStarsType`, `DailyRecapType` | `reflectionsRouter`, `objectivesRouter`, `starsRouter`, `summaryRouter`, `reviewRouter` | `reflections`, `objectives`, `objective_tasks`, `daily_recap` | `services/weekly-review.ts` partial |
-| `ScheduledJobType`, `JobRunType` | `jobsRouter` | `scheduled_jobs`, `job_runs` | none — **gate behind an admin scope** |
-| `ReminderType`, `PushSubscriptionType` | `notificationsRouter` | `reminders`, `push_subscriptions` | none — extract |
-| **Mutations only (not CRUD types):** autoplan / find-slot / instruct | `scheduleRouter`, `planRouter`, `plannerRouter` | — | existing engine fns |
+| `TaskType` (Node, Taggable) — **merged #255** | `tasksRouter` | `tasks`, `entity_tags`, `task_dependencies` | `services/tasks.ts` (extracted + owner-scoped, #243/#244/#245) |
+| `TimeBlockType` (Node, Taggable) — **merged #259** | `blocksRouter` | `time_blocks`, `entity_tags` | `services/blocks.ts` (extracted #254); `services/block-task-sync.ts` |
+| `BlockTemplateType` (Node) — **merged** | `blockTemplatesRouter` | `block_templates` | `services/block-templates.ts` (extracted) |
+| `PossibleTaskType` (Node) — **merged** | `possiblesRouter` | `possible_tasks` | `services/task-promotion.ts` (promote = mutation w/ side effects) |
+| `TagType` (Node, + hybrid) — **merged #238** (`.entities` reverse edge #265) | `tagsRouter` | `tags`, `tag_directions`, `tag_categories`, `entity_tags` | `services/tags.ts` (rich; shared with REST) |
+| `PatternType`†, `PatternBlockType`, `PatternPrefType` — **merged #271/#272** | `patternsRouter`, `patternBlocksRouter`, `patternPrefsRouter` | `patterns`, `pattern_tasks`, `pattern_blocks`, `tag_prefs` | `services/patterns.ts`, `pattern-blocks.ts`, `pattern-prefs.ts` |
+| `TagPrefType` (was CategoryPref) — **merged #273** | `categoryPrefsRouter` | `tag_prefs` (post-S2) | `services/category-prefs.ts` |
+| `DayTypeType` — **merged #273** | `dayTypesRouter` | `day_types`, `day_of_week_map`, `day_assignments` | `services/day-types.ts` |
+| `FlightPlanEntryType` — **merged #270** | `flightPlanRouter` | `flight_plan` | `services/flight-plan.ts` (extracted) |
+| `SchedulingPrefsType` — **merged (W11)** | `prefsRouter` | `scheduling_prefs` (~39 cols) | `services/prefs.ts` (extracted); see §5 grouping note |
+| `ReflectionType`, `ObjectiveType`, `DayStarsType`, `DailyRecapType` — **merged (W8)** | `reflectionsRouter`, `objectivesRouter`, `starsRouter`, `summaryRouter`, `reviewRouter` | `reflections`, `objectives`, `objective_tasks`, `daily_recap` | `services/objectives.ts`; `services/weekly-review.ts` |
+| `ScheduledJobType`, `JobRunType` — **merged (W12)** | `jobsRouter` | `scheduled_jobs`, `job_runs` | `services/jobs.ts` (extracted) — **admin-scope gated** (system-global, not owner-scoped) |
+| `ReminderType`, `PushSubscriptionType` — **merged (W10)** | `notificationsRouter` | `reminders`, `push_subscriptions` | `services/notifications.ts` (extracted) |
+| **Mutations only (not CRUD types):** autoplan / find-slot / instruct — **merged (W13 #285)** | `scheduleRouter`, `planRouter`, `plannerRouter` | — | `services/engine-ops.ts` (extracted) + existing engine fns |
 | **Excluded from GraphQL** | `backupRouter`, `oauthRouter`, `syncRouter`, `sseRouter`, `memoryRouter`, `llmRouter`, `healthRouter` | — | file I/O, OAuth redirects, SSE, AI-facing, liveness — don't map to CRUD |
 
 † `PatternType` here is CI-Planner's routine/habit *pattern* entity — unrelated to CI-Server's `type XType` naming. Named `PatternType` (its `XType` form); the pattern *category* (`pattern_types` table) becomes `PatternKindType` to avoid the collision. **Sequencing (Phase Z / W1):** the planned `patterns`→`routines` rename (Z-W1) renames these tables + `/api/patterns`; if W1 lands before this resolver group is authored, name them `RoutineType`/`RoutineKindType` from the start — if this group ships first, W1 renames the GraphQL types with it.
