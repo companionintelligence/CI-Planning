@@ -9,8 +9,11 @@ export interface RequestContext {
   scopes: string[];
 }
 
-/** Every scope — the trusted-context default (test mode + crons/jobs running as themselves). */
-const ALL_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
+/** Every scope — the trusted-context default (test mode + crons/jobs running as themselves).
+ *  Exported so a test harness that mirrors the cron/scheduled-job path (which binds this same
+ *  set via the dispatcher) can bind it too, rather than an empty scope list that would diverge
+ *  from production once `currentScopes()` gating spreads. */
+export const ALL_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
 
 const als = new AsyncLocalStorage<RequestContext>();
 

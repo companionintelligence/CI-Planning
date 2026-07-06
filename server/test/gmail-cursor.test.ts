@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import type { GoogleClient, EmailMessage } from '../src/mcp/google.js';
 
 // Control extraction per-message: the poison id throws a NON-transient (non-Ollama) error;
@@ -26,7 +26,7 @@ vi.mock('../src/agents/extract.js', () => ({
 
 import { ingestEmails } from '../src/agents/ingest.js';
 
-const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, [], fn);
+const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, ALL_SCOPES, fn);
 
 const ACCOUNT = 'primary';
 

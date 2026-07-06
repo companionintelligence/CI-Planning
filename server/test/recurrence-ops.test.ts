@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
+import { ALL_SCOPES, runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
 import {
   skipInstance,
   computeStreak,
@@ -96,7 +96,7 @@ describe('skipInstance', () => {
     // Delete the skipped row to isolate EXDATE from the unique-index guard, then
     // regenerate a window that covers 06-10.
     sqlite.prepare(`DELETE FROM tasks WHERE id = ?`).run(inst);
-    runWithOwner(OWNER, [], () => generateRecurrences({ today: '2026-06-09', horizonDays: 3 }));
+    runWithOwner(OWNER, ALL_SCOPES, () => generateRecurrences({ today: '2026-06-09', horizonDays: 3 }));
 
     // 06-10 stays excluded by EXDATE; 06-09, 06-11, 06-12 are created.
     const days = sqlite

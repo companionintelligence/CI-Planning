@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import type { GoogleClient, CalendarEvent } from '../src/mcp/google.js';
 
 // Mock the LLM extraction so this test is deterministic and Ollama-independent: every event
@@ -40,7 +40,7 @@ function fakeClient(events: CalendarEvent[]): GoogleClient {
   };
 }
 
-const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, [], fn);
+const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, ALL_SCOPES, fn);
 
 describe('ingestEvents — no meeting-block mirror (WP5)', () => {
   beforeEach(() => {

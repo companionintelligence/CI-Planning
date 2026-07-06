@@ -40,7 +40,7 @@ export function listJobs(): ScheduledJobWithLastRun[] {
       `SELECT j.*, r.started_at as last_started, r.status as last_status, r.items_created, r.items_updated
          FROM scheduled_jobs j
          LEFT JOIN job_runs r ON r.id = (
-           SELECT id FROM job_runs WHERE job_id = j.id ORDER BY started_at DESC LIMIT 1
+           SELECT id FROM job_runs WHERE job_id = j.id ORDER BY started_at DESC, id DESC LIMIT 1
          )
          ORDER BY j.name`,
     )

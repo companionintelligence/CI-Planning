@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { randomBytes, createSign, generateKeyPairSync } from 'node:crypto';
 import { config } from '../src/lib/config.js';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { newId } from '../src/lib/ids.js';
 import { issueApiKey } from '../src/lib/auth/apiKey.js';
 import { SCOPE_READ, SCOPE_WRITE } from '../src/lib/auth/types.js';
@@ -477,19 +477,19 @@ describe('accounts listing + disconnect', () => {
     expect(oqN.n).toBe(0);
 
     // getConnectors() now returns nothing for this owner.
-    const connectors = runWithOwner(SYSTEM_OWNER, [], () => getConnectors());
+    const connectors = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => getConnectors());
     expect(connectors).toHaveLength(0);
   });
 
   it('getConnectors() skips a status<>active row', async () => {
     seedToken('revoked@example.com', 'revoked');
-    const connectors = runWithOwner(SYSTEM_OWNER, [], () => getConnectors());
+    const connectors = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => getConnectors());
     expect(connectors).toHaveLength(0);
   });
 
   it('getConnectors() returns a connector for an active row', async () => {
     seedToken('active@example.com', 'active');
-    const connectors = runWithOwner(SYSTEM_OWNER, [], () => getConnectors());
+    const connectors = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => getConnectors());
     expect(connectors).toHaveLength(1);
     expect(connectors[0].account).toBe('active@example.com');
   });

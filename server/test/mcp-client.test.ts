@@ -13,7 +13,7 @@ import {
 } from '../src/mcp/client.js';
 import { seal } from '../src/lib/crypto/index.js';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { newId } from '../src/lib/ids.js';
 import { logger } from '../src/lib/logger.js';
 import { GoogleCalendarConnector } from '../src/connectors/google.js';
@@ -107,7 +107,7 @@ function httpError(status: number): Error {
 }
 
 function run<T>(fn: () => Promise<T>): Promise<T> {
-  return runWithOwner(SYSTEM_OWNER, [], fn);
+  return runWithOwner(SYSTEM_OWNER, ALL_SCOPES, fn);
 }
 
 describe('McpGoogleSession', () => {
