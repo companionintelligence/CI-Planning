@@ -1,0 +1,268 @@
+import { sqlite } from '../db/index.js';
+import { currentOwnerId } from '../lib/context.js';
+import { logger } from '../lib/logger.js';
+import { generateJson, OllamaUnavailable } from '../mcp/ollama.js';
+import {
+  graphData,
+  nodeStartTime,
+  MemoryUnavailable,
+  type MemoryGraph,
+  type MemoryNode,
+} from '../connectors/memory.js';
+import { memoryConnectorAvailable } from '../services/memory.js';
+import { upsertPossible } from './ingest.js';
+import type { ExtractedTask } from './extract.js';
+
+/**
+ * Phase AA · AA1 — memory suggestion agent. Pulls the owner's next-48h CI-Server
+ * memory graph (events + participants) and stages candidate prep tasks into the
+ * possible-task inbox via the existing `upsertPossible()` seam — the inbox, promote
+ * route, trust dial, and auto-schedule path are all reused untouched.
+ *
+ * Drafting is deterministic templates first; an optional Ollama polish pass refines
+ * titles/summaries but NEVER blocks: any polish failure (Ollama down, bad JSON)
+ * degrades to the templates (the OllamaUnavailable contract).
+ *
+ * Guards: gated on scheduling_prefs.memory_pull_enabled AND connector availability;
+ * a source_ref whose possible was dismissed is TERMINAL (never re-staged); at most
+ * MEMORY_PENDING_CAP pending memory possibles per owner; idempotent re-runs
+ * (upsertPossible keys on (proposed_owner_id, source_kind, source_ref) — owner-scoped,
+ * 0114: in fixture mode all owners share graph.json, so refs collide across owners).
+ */
+
+/** Max PENDING possibles with source_kind='memory' per owner — new staging stops here. */
+export const MEMORY_PENDING_CAP = 5;
+
+/** How far ahead the agent looks for upcoming events. */
+export const MEMORY_WINDOW_HOURS = 48;
+
+export const MEMORY_SOURCE_KIND = 'memory';
+
+export interface MemorySuggestResult {
+  status: 'ran' | 'flag_off' | 'unavailable';
+  /** Event candidates found in the window. */
+  pulled: number;
+  created: number;
+  updated: number;
+  skippedDismissed: number;
+  skippedCap: number;
+}
+
+interface EventCandidate {
+  node: MemoryNode;
+  start: string; // ISO
+  people: string[];
+}
+
+/** A polish pass over the drafted tasks. Injectable for tests; default = Ollama. */
+export type PolishFn = (
+  candidates: EventCandidate[],
+  drafts: Map<string, ExtractedTask>,
+) => Promise<Map<string, Partial<ExtractedTask>>>;
+
+function skipped(status: 'flag_off' | 'unavailable'): MemorySuggestResult {
+  return { status, pulled: 0, created: 0, updated: 0, skippedDismissed: 0, skippedCap: 0 };
+}
+
+function pullEnabled(owner: string): boolean {
+  const row = sqlite
+    .prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { memory_pull_enabled?: number } | undefined;
+  return !!row?.memory_pull_enabled;
+}
+
+/** Upcoming event nodes in [from,to] with their linked person names. */
+function eventCandidates(graph: MemoryGraph, from: string, to: string): EventCandidate[] {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const out: EventCandidate[] = [];
+  const blankIdNames: string[] = [];
+  for (const node of graph.nodes) {
+    if (node.entityType.toLowerCase() !== 'event') continue;
+    // A malformed node maps to id '' (connector fallback) → source_ref 'ci:' — the
+    // SAME ref for every such node AND every owner. Skip it; never stage on a blank id.
+    if (!node.id.trim()) {
+      blankIdNames.push(node.name || '(unnamed)');
+      continue;
+    }
+    const start = nodeStartTime(node);
+    if (!start || start < from || start > to) continue;
+    const people: string[] = [];
+    for (const l of graph.links) {
+      const otherId = l.source === node.id ? l.target : l.target === node.id ? l.source : null;
+      if (!otherId) continue;
+      const other = byId.get(otherId);
+      if (other && other.entityType.toLowerCase() === 'person' && other.name) people.push(other.name);
+    }
+    out.push({ node, start, people });
+  }
+  if (blankIdNames.length) {
+    logger.warn('memory suggest: skipped event node(s) with a blank id', { names: blankIdNames });
+  }
+  // Soonest first — when the cap bites, the nearest events win the pending slots.
+  return out.sort((a, b) => a.start.localeCompare(b.start));
+}
+
+/** Deterministic template draft — always produced, with or without Ollama. */
+function templateTask(c: EventCandidate): ExtractedTask {
+  const parts = [
+    c.node.description ?? '',
+    c.people.length ? `With ${c.people.join(', ')}` : '',
+    `Starts ${c.start}`,
+  ].filter(Boolean);
+  return {
+    title: `Prep for ${c.node.name}`.slice(0, 200),
+    summary: parts.join(' · ').slice(0, 500) || undefined,
+    priority: 3,
+    dueAt: c.start,
+    // Default prep-block estimate: without one, promote leaves the task estimate-less
+    // and the hands-off auto-schedule (requireEstimate) can never place it (TM-5).
+    estimatedMinutes: 30,
+    tags: [],
+    confidence: 0.6,
+  };
+}
+
+/**
+ * Default polish: one small-tier Ollama call over the whole batch refining
+ * title/summary/priority/confidence. Throws (OllamaUnavailable or parse error);
+ * the caller degrades to templates.
+ */
+async function ollamaPolish(
+  candidates: EventCandidate[],
+  drafts: Map<string, ExtractedTask>,
+): Promise<Map<string, Partial<ExtractedTask>>> {
+  const items = candidates.map((c) => ({
+    ref: c.node.id,
+    event: c.node.name,
+    description: c.node.description ?? '',
+    start: c.start,
+    people: c.people,
+    draftTitle: drafts.get(c.node.id)?.title ?? '',
+  }));
+  const prompt = `You refine draft preparation tasks for upcoming calendar events in a personal planner.
+For each item, improve the task title (short imperative phrase, e.g. "Draft roadmap notes for planning review")
+and write a one-sentence summary. priority: 1=urgent .. 5=someday (default 3). confidence: 0..1.
+
+Items:
+${JSON.stringify(items)}
+
+Respond ONLY with JSON in exactly this shape:
+{"tasks":[{"ref":"...","title":"...","summary":"...","priority":3,"confidence":0.7}]}`;
+  const raw = await generateJson<{ tasks?: { ref?: string; title?: string; summary?: string; priority?: number; confidence?: number }[] }>(
+    prompt,
+    { tier: 'small', timeoutMs: 30_000 },
+  );
+  const out = new Map<string, Partial<ExtractedTask>>();
+  for (const t of raw.tasks ?? []) {
+    if (!t.ref || typeof t.title !== 'string' || !t.title.trim()) continue;
+    out.set(t.ref, {
+      title: t.title.trim().slice(0, 200),
+      summary: typeof t.summary === 'string' ? t.summary.trim().slice(0, 500) : undefined,
+      priority:
+        typeof t.priority === 'number' && Number.isFinite(t.priority)
+          ? Math.min(5, Math.max(1, Math.round(t.priority)))
+          : undefined,
+      confidence: typeof t.confidence === 'number' ? Math.min(1, Math.max(0, t.confidence)) : undefined,
+    });
+  }
+  return out;
+}
+
+/**
+ * Run one suggestion pass for the current owner. Returns 'flag_off' / 'unavailable'
+ * without touching the DB when gated; otherwise stages/refreshes possibles and
+ * reports counts. `opts.polish`: false disables the LLM pass (deterministic tests);
+ * a function injects a custom polisher.
+ */
+export async function suggestFromMemory(
+  opts: { polish?: PolishFn | false } = {},
+): Promise<MemorySuggestResult> {
+  const owner = currentOwnerId();
+  if (!pullEnabled(owner)) return skipped('flag_off');
+  if (!memoryConnectorAvailable(owner)) return skipped('unavailable');
+
+  const from = new Date().toISOString();
+  const to = new Date(Date.now() + MEMORY_WINDOW_HOURS * 3_600_000).toISOString();
+  let graph: MemoryGraph;
+  try {
+    graph = await graphData(owner, { from, to });
+  } catch (err) {
+    if (err instanceof MemoryUnavailable) {
+      logger.warn('memory suggest: CI-Server unavailable — skipping', { err: err.message });
+      return skipped('unavailable');
+    }
+    throw err;
+  }
+
+  const candidates = eventCandidates(graph, from, to);
+  const result: MemorySuggestResult = {
+    status: 'ran',
+    pulled: candidates.length,
+    created: 0,
+    updated: 0,
+    skippedDismissed: 0,
+    skippedCap: 0,
+  };
+  if (candidates.length === 0) return result;
+
+  const drafts = new Map(candidates.map((c) => [c.node.id, templateTask(c)]));
+
+  // Optional polish — best-effort by contract. OllamaUnavailable is the expected
+  // degrade; a parse/shape failure is equally non-fatal for a cosmetic pass.
+  if (opts.polish !== false) {
+    const polish = opts.polish ?? ollamaPolish;
+    try {
+      const refined = await polish(candidates, drafts);
+      for (const [ref, patch] of refined) {
+        const base = drafts.get(ref);
+        if (base) drafts.set(ref, { ...base, ...patch });
+      }
+    } catch (err) {
+      const level = err instanceof OllamaUnavailable ? 'warn' : 'error';
+      logger[level]('memory suggest: polish failed — using templates', { err: (err as Error).message });
+    }
+  }
+
+  let pending = (
+    sqlite
+      .prepare(
+        `SELECT COUNT(*) AS n FROM possible_tasks
+          WHERE proposed_owner_id = ? AND source_kind = ? AND status = 'pending'`,
+      )
+      .get(owner, MEMORY_SOURCE_KIND) as { n: number }
+  ).n;
+
+  for (const c of candidates) {
+    const ref = `ci:${c.node.id}`;
+    // Owner-scoped (0114): another owner's dismissed/pending row on the same fixture
+    // ref must neither suppress this owner's suggestion nor be overwritten by it.
+    const existing = sqlite
+      .prepare(`SELECT status FROM possible_tasks WHERE proposed_owner_id = ? AND source_kind = ? AND source_ref = ?`)
+      .get(owner, MEMORY_SOURCE_KIND, ref) as { status: string } | undefined;
+    if (existing && existing.status !== 'pending') {
+      // dismissed is TERMINAL for a source_ref; promoted/other settled possibles are
+      // never rewritten either — the suggestion already ran its course.
+      if (existing.status === 'dismissed') result.skippedDismissed++;
+      continue;
+    }
+    if (!existing && pending >= MEMORY_PENDING_CAP) {
+      result.skippedCap++;
+      continue;
+    }
+    const task = drafts.get(c.node.id) ?? templateTask(c);
+    const outcome = upsertPossible(task, MEMORY_SOURCE_KIND, ref, {
+      node: c.node,
+      participants: c.people,
+      start: c.start,
+    });
+    if (outcome === 'created') {
+      result.created++;
+      pending++;
+    } else {
+      result.updated++;
+    }
+  }
+
+  logger.info('memory suggest done', { ...result });
+  return result;
+}

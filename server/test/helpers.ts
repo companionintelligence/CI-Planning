@@ -98,7 +98,8 @@ export function resetDb(): void {
       ambient_color_enabled = 1,
       calibration_loop_enabled = 1,
       z_experiment_arm = NULL,
-      view_prefs = NULL;
+      view_prefs = NULL,
+      memory_pull_enabled = 0;
   `);
 }
 

@@ -310,6 +310,12 @@ export const api = {
   memory: {
     status: () => request<MemoryStatus>('GET', '/memory/status'),
     sync: () => request<{ ok: boolean; syncedAt?: string }>('POST', '/memory/sync', {}),
+    // AA0 — CI-Server connection (pull). api_key travels once on connect; it is
+    // stored KEK-encrypted server-side and never echoed back.
+    connect: (body: { url: string; api_key?: string }) => request<MemoryStatus>('POST', '/memory/connect', body),
+    disconnect: () => request<MemoryStatus>('POST', '/memory/disconnect', {}),
+    // AA1 — manual "pull suggestions now" trigger.
+    suggest: () => request<MemorySuggestResult>('POST', '/memory/suggest', {}),
   },
 
   jobs: {
@@ -684,6 +690,8 @@ export interface Prefs {
   memory_sync_enabled?: boolean; memory_sync_completed?: boolean;
   memory_sync_habits?: boolean; memory_sync_reflections?: boolean;
   memory_account?: string | null; memory_last_synced_at?: string | null;
+  // Companion Memory pull (Phase AA): feed the CI-Server memory graph into suggestions.
+  memory_pull_enabled?: boolean;
   // Cross-device calendar view-state (0111); null/absent = use built-in defaults.
   view_prefs?: ViewPrefs | null;
 }
@@ -701,6 +709,14 @@ export interface MemoryStatus {
   enabled: boolean; connected: boolean; account: string | null;
   lastSyncedAt: string | null; available: boolean;
   scopes: { completed: boolean; habits: boolean; reflections: boolean };
+  // Phase AA — pull-side connection state (CI-Server memory graph).
+  pull: { enabled: boolean; available: boolean; source: 'settings' | 'env' | null; host: string | null };
+}
+
+// Phase AA · AA1 — result of POST /api/memory/suggest.
+export interface MemorySuggestResult {
+  status: 'ran'; pulled: number; created: number; updated: number;
+  skippedDismissed: number; skippedCap: number;
 }
 
 // ── Reminders (Phase H) ────────────────────────────────────────────────────────

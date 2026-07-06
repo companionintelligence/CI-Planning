@@ -1,0 +1,58 @@
+{
+  "_comment": "Fixture CI-Server memory graph (MEMORY_MODE=fixture). Event times use now±Nh/now±Nd, resolved at load by connectors/memory.ts, so the fixture always holds upcoming events (no time-bomb dates). Shape mirrors GET /graph/data's data.{nodes,links}.",
+  "nodes": [
+    {
+      "entity_id": "6f1b2a10-9c3d-4e5f-8a71-0d2c4b6e8f01",
+      "entity_type": "event",
+      "name": "Quarterly planning review",
+      "description": "Q3 planning review with the product team — bring the roadmap draft",
+      "properties": { "start_time": "now+20h", "end_time": "now+21h", "location": "Zoom" }
+    },
+    {
+      "entity_id": "7a2c3b21-0d4e-4f60-9b82-1e3d5c7f9a02",
+      "entity_type": "event",
+      "name": "Dinner with Sam",
+      "description": "Catch-up dinner at Osteria La Spiga",
+      "properties": { "start_time": "now+30h", "end_time": "now+32h", "location": "Osteria La Spiga" }
+    },
+    {
+      "entity_id": "8b3d4c32-1e5f-4071-8c93-2f4e6d8a0b03",
+      "entity_type": "event",
+      "name": "Dentist appointment",
+      "description": "Routine cleaning at Cascade Dental",
+      "properties": { "start_time": "now+90h", "end_time": "now+91h" }
+    },
+    {
+      "entity_id": "9c4e5d43-2f60-4182-9da4-305f7e9b1c04",
+      "entity_type": "person",
+      "name": "Sam Rivera",
+      "description": "Close friend, moved to Portland last spring",
+      "properties": {}
+    },
+    {
+      "entity_id": "0d5f6e54-3071-4293-8eb5-4160809c2d05",
+      "entity_type": "person",
+      "name": "Alex Chen",
+      "description": "Product manager on the platform team",
+      "properties": {}
+    }
+  ],
+  "links": [
+    {
+      "relationship_id": "1e607f65-4182-43a4-9fc6-5271910d3e06",
+      "source": "6f1b2a10-9c3d-4e5f-8a71-0d2c4b6e8f01",
+      "target": "0d5f6e54-3071-4293-8eb5-4160809c2d05",
+      "relationship_type": "participant",
+      "strength": 0.9,
+      "properties": {}
+    },
+    {
+      "relationship_id": "2f718076-5293-44b5-8ad7-6382021e4f07",
+      "source": "7a2c3b21-0d4e-4f60-9b82-1e3d5c7f9a02",
+      "target": "9c4e5d43-2f60-4182-9da4-305f7e9b1c04",
+      "relationship_type": "participant",
+      "strength": 0.95,
+      "properties": {}
+    }
+  ]
+}

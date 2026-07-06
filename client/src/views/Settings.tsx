@@ -30,6 +30,7 @@ interface SettingsForm {
   fast_model: string; quality_model: string; embed_model: string;
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
+  memory_pull_enabled: boolean; // Phase AA — pull memory graph into suggestions
   recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
   time_sense_enabled: boolean; // Phase Z master flag
   focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
@@ -53,6 +54,7 @@ const DEFAULTS: SettingsForm = {
   fast_model: '', quality_model: '', embed_model: '',
   memory_sync_enabled: false, memory_sync_completed: true,
   memory_sync_habits: true, memory_sync_reflections: true,
+  memory_pull_enabled: false,
   recall_keeps_pattern: false,
   time_sense_enabled: false,
   focus_ritual_enabled: true, haptic_cues_enabled: true,
@@ -172,6 +174,7 @@ export function Settings() {
       memory_sync_completed:      p.memory_sync_completed ?? true,
       memory_sync_habits:         p.memory_sync_habits ?? true,
       memory_sync_reflections:    p.memory_sync_reflections ?? true,
+      memory_pull_enabled:        p.memory_pull_enabled ?? false,
     });
   });
 
@@ -405,16 +408,27 @@ export function Settings() {
   const ollamaModels = () => integrations()?.ollama.models ?? [];
   const ollamaUp = () => integrations()?.ollama.available ?? false;
 
+  // Phase AA · AA0 — connect the CI-Server memory appliance (URL + API key). The key
+  // travels once and is stored KEK-encrypted server-side; the status never echoes it.
+  const [memConnectOpen, setMemConnectOpen] = createSignal(false);
+  const [memUrl, setMemUrl] = createSignal('');
+  const [memApiKey, setMemApiKey] = createSignal('');
+  const [memBusy, setMemBusy] = createSignal(false);
   async function connectMemory() {
-    if (!memStatus()?.available) {
-      showToast('Companion Memory connection arrives with the auth phase (Phase I)', 'default');
-      return;
-    }
-    // (Phase I) hand off to CI-Server sign-in here.
+    if (!memUrl().trim()) { showToast('Enter the CI-Server URL', 'error'); return; }
+    setMemBusy(true);
+    try {
+      await api.memory.connect({ url: memUrl().trim(), ...(memApiKey().trim() ? { api_key: memApiKey().trim() } : {}) });
+      setMemConnectOpen(false);
+      setMemUrl(''); setMemApiKey('');
+      refetchPrefs(); refetchMem();
+      showToast('Connected to Companion Memory', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setMemBusy(false); }
   }
   async function disconnectMemory() {
     try {
-      await api.prefs.update({ memory_account: null });
+      await api.memory.disconnect();
       refetchPrefs(); refetchMem();
       showToast('Disconnected from Companion Memory', 'default');
     } catch (err) { showToast((err as Error).message, 'error'); }
@@ -1030,7 +1044,81 @@ export function Settings() {
               <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
 
-            {/* Master toggle */}
+            {/* Connection (shared: AA0 pull now, AA4 push later) */}
+            <div class="flex flex-col gap-2 mb-4">
+              <Show
+                when={memStatus()?.pull.available}
+                fallback={
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="text-xs text-muted-foreground">Not connected</span>
+                    <button type="button" onClick={() => setMemConnectOpen(!memConnectOpen())} class="btn-secondary text-xs px-3 py-1.5">
+                      <Link2 size={12} /> Connect
+                    </button>
+                  </div>
+                }
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <span class="flex items-center gap-1.5 text-xs text-foreground">
+                    <CheckCircle2 size={13} class="text-primary" />
+                    Connected to {memStatus()!.pull.host}
+                    <Show when={memStatus()!.pull.source === 'env'}>
+                      <span class="text-muted-foreground">(from server environment)</span>
+                    </Show>
+                  </span>
+                  <Show when={memStatus()!.pull.source === 'settings'}>
+                    <button type="button" onClick={disconnectMemory} class="btn-ghost text-xs px-2 py-1">
+                      <Unlink size={12} /> Disconnect
+                    </button>
+                  </Show>
+                </div>
+              </Show>
+
+              {/* Inline connect form */}
+              <Show when={memConnectOpen() && !memStatus()?.pull.available}>
+                <div class="flex flex-col gap-2 p-3 rounded-md bg-muted/40 border border-border">
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs text-muted-foreground">CI-Server URL</span>
+                    <input class="input" type="url" placeholder="http://localhost:3000"
+                      value={memUrl()} onInput={(e) => setMemUrl(e.currentTarget.value)} />
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs text-muted-foreground">API key <span class="opacity-70">· stored encrypted, never shown again</span></span>
+                    <input class="input" type="password" autocomplete="off"
+                      value={memApiKey()} onInput={(e) => setMemApiKey(e.currentTarget.value)} />
+                  </label>
+                  <div class="flex items-center gap-2 justify-end">
+                    <button type="button" onClick={() => setMemConnectOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                    <button type="button" onClick={connectMemory} disabled={memBusy()} class="btn-secondary text-xs px-3 py-1.5">
+                      <Link2 size={12} /> {memBusy() ? 'Connecting…' : 'Connect'}
+                    </button>
+                  </div>
+                </div>
+              </Show>
+            </div>
+
+            {/* Pull toggle (Phase AA) */}
+            <label class="flex items-start gap-3 cursor-pointer select-none mb-4">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form().memory_pull_enabled}
+                onClick={() => setField('memory_pull_enabled', !form().memory_pull_enabled)}
+                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                classList={{ 'bg-primary': form().memory_pull_enabled, 'bg-muted border border-border': !form().memory_pull_enabled }}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                  classList={{ 'translate-x-4': form().memory_pull_enabled }} />
+              </button>
+              <div class="flex-1">
+                <div class="text-sm font-medium text-foreground">Use Memory for suggestions</div>
+                <div class="text-xs text-muted-foreground mt-0.5">
+                  Pull upcoming events from your Companion Memory into Inbox suggestions.
+                  <Show when={!memStatus()?.pull.available}> Connect Companion Memory first.</Show>
+                </div>
+              </div>
+            </label>
+
+            {/* Master toggle (one-way push) */}
             <label class="flex items-start gap-3 cursor-pointer select-none">
               <button
                 type="button"
@@ -1051,31 +1139,9 @@ export function Settings() {
               </div>
             </label>
 
-            {/* Connection + scopes (only meaningful when enabled) */}
+            {/* Scopes (only meaningful when push sync is enabled) */}
             <Show when={form().memory_sync_enabled}>
               <div class="flex flex-col gap-3 mt-4 pt-4 border-t border-border">
-                {/* Connection row */}
-                <Show
-                  when={memStatus()?.connected}
-                  fallback={
-                    <div class="flex items-center justify-between gap-3">
-                      <span class="text-xs text-muted-foreground">Not connected</span>
-                      <button type="button" onClick={connectMemory} class="btn-secondary text-xs px-3 py-1.5">
-                        <Link2 size={12} /> Connect
-                      </button>
-                    </div>
-                  }
-                >
-                  <div class="flex items-center justify-between gap-3">
-                    <span class="flex items-center gap-1.5 text-xs text-foreground">
-                      <CheckCircle2 size={13} class="text-primary" /> Connected as {memStatus()!.account}
-                    </span>
-                    <button type="button" onClick={disconnectMemory} class="btn-ghost text-xs px-2 py-1">
-                      <Unlink size={12} /> Disconnect
-                    </button>
-                  </div>
-                </Show>
-
                 {/* What syncs */}
                 <div class="flex flex-col gap-2">
                   <span class="text-xs text-muted-foreground">What syncs</span>
@@ -1090,7 +1156,7 @@ export function Settings() {
                     <Show when={memStatus()?.lastSyncedAt} fallback="Never synced">
                       Last synced {new Date(memStatus()!.lastSyncedAt!).toLocaleString()}
                     </Show>
-                    <Show when={!memStatus()?.available}> · connector arrives with the auth phase</Show>
+                    {' '}· push arrives with a later phase
                   </span>
                   <button type="button" onClick={syncNow} class="btn-secondary text-xs px-3 py-1.5"
                     disabled={!memStatus()?.connected}>
