@@ -1,0 +1,59 @@
+# Phase W · W9 — PossibleTaskType. CRUD ALONGSIDE the REST /api/possible-tasks routes;
+# every field and mutation reads/writes through services/possibles.ts (Decision 3),
+# never re-deriving owner-scoping (the service scopes by proposed_owner_id, the table's
+# owner key — T4).
+#
+# A possible task is an ingest-produced inbox item (a proposed task the agents surfaced
+# from email/calendar/etc) awaiting the owner's decision. It is PRODUCED BY INGEST, never
+# by the API — so, mirroring the REST route, there is NO create/update mutation: the only
+# actions are read, promote (→ a real task), and dismiss.
+
+type PossibleTaskType implements Node {
+  id: ID!
+  rawTitle: String!            # the surfaced title (raw_title)
+  rawSummary: String           # optional agent summary (raw_summary), or null
+  status: String!              # pending | promoted | dismissed | duplicate
+  confidence: Float            # agent confidence 0..1, or null
+  proposedDueAt: DateTime      # proposed_due_at, or null
+  proposedPriority: Int        # proposed_priority, or null
+  sourceKind: String           # gmail | gcal | agent | … (source_kind), or null
+  createdAt: DateTime          # created_at
+  # The task this item was promoted into, once promoted (promoted_task_id), else null.
+  # Resolved owner-scoped via getTask — a cross-owner/unknown ref reads null.
+  promotedTask: TaskType
+}
+
+input PromotePossibleTaskInput {
+  id: ID!
+  title: String                # override the promoted task's title (default: rawTitle)
+  dueAt: DateTime              # override the due date (default: proposedDueAt)
+  priority: Int                # override the priority (default: proposedPriority ?? 3)
+}
+
+input DismissPossibleTaskInput {
+  id: ID!
+}
+
+type PromotePossibleTaskPayload {
+  task: TaskType               # the newly-created task
+  possibleTask: PossibleTaskType   # the possible, now status='promoted'
+  success: Boolean!
+}
+
+type DismissPossibleTaskPayload {
+  possibleTask: PossibleTaskType   # the possible, now status='dismissed'
+  success: Boolean!
+}
+
+extend type Query {
+  # A user's pending inbox is a small, hand-curated set, so this is a plain list
+  # (default status 'pending' in the resolver) rather than a Relay connection —
+  # mirrors the REST single-shot GET.
+  possibleTasks(status: String): [PossibleTaskType!]!
+  possibleTask(id: ID!): PossibleTaskType
+}
+
+extend type Mutation {
+  promotePossibleTask(input: PromotePossibleTaskInput!): PromotePossibleTaskPayload!
+  dismissPossibleTask(input: DismissPossibleTaskInput!): DismissPossibleTaskPayload!
+}
