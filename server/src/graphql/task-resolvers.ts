@@ -4,6 +4,7 @@ import { broadcast } from '../routes/sse.js';
 import { requestReplan } from '../engine/auto-defense.js';
 import { taskToApi } from '../lib/serialize.js';
 import { entityTagsFull } from '../services/tags.js';
+import { objectiveForTask } from '../services/objectives.js';
 import {
   createTask as createTaskService,
   updateTask as updateTaskService,
@@ -166,5 +167,8 @@ export const taskResolvers = {
     // listTasks), so its entity_tags are the owner's. id/label/taggedAt map to
     // EntityTagType's fields via default resolvers — no EntityTagType resolver needed.
     tags: (t: TaskRow) => entityTagsFull('task', t.id).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
+    // W8a follow-up: the first objective this task is linked to (owner-scoped in the
+    // service). The returned raw ObjectiveRow is shaped by ObjectiveType's field resolvers.
+    objective: (t: TaskRow) => objectiveForTask(currentOwnerId(), t.id) ?? null,
   },
 };

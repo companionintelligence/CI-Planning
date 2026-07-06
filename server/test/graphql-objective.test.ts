@@ -116,6 +116,17 @@ describe('W8a — mutations reuse the REST services', () => {
     const r = await gql(`{ objective(id: "${id}") { category { id label } } }`);
     expect(r.body.data.objective.category).toEqual({ id: cat, label: 'Health' });
   });
+
+  it('TaskType.objective resolves the first linked objective (null when none)', async () => {
+    const obj = await create('title: "Ship"');
+    const t = insertTask('Do it');
+    await gql(`mutation { linkObjectiveTask(input: { objectiveId: "${obj}", taskId: "${t}" }) { success } }`);
+    const linked = await gql(`{ task(id: "${t}") { objective { id title } } }`);
+    expect(linked.body.data.task.objective).toEqual({ id: obj, title: 'Ship' });
+
+    const t2 = insertTask('Unlinked');
+    expect((await gql(`{ task(id: "${t2}") { objective { id } } }`)).body.data.task.objective).toBeNull();
+  });
 });
 
 describe('W8a — owner scoping', () => {
