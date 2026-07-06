@@ -1,0 +1,103 @@
+# Phase W · W8b — ReflectionType. CRUD ALONGSIDE the REST /api/reflections routes,
+# through services/reflections.ts (Decision 3): every read/write/validation + writeAudit
+# lives in the service, so REST + GraphQL share one owner-scoped path. The mutations
+# reproduce the REST SSE envelope (reflection:updated / reflection:deleted).
+#
+# A `reflections` row has NO surrogate id — it is fully addressed by
+# (owner_id, kind, period_key, position). The Node `id` is the natural key
+# `kind:period_key:position` (owner is always the current owner), mirroring the
+# EntityTagType/PatternPref/TagPref natural-key-as-Node-id convention.
+#
+# `kind` is a free-form TEXT column ('today_goal' | 'weekly_goal' | 'day_note' | 'evening')
+# → plain String, NOT an enum (a DB value outside an enum would crash serialization).
+# `sourceKind` ('manual' | 'task' | 'objective') is likewise String. `periodKey` is a local
+# date ('YYYY-MM-DD') or ISO-week key ('YYYY-Www') the client round-trips verbatim → String,
+# NOT DateTime. `doneAt`/`createdAt`/`updatedAt` are real instants → DateTime.
+#
+# `sourceRef` stays a plain String id, NOT a resolved Task/Objective relation: the ref is
+# cross-table and may dangle (the `body` is the display source of truth), so a non-null
+# relation would be dishonest — the client resolves it via task(id)/objective(id) if wanted.
+
+type ReflectionType implements Node {
+  id: ID!                    # 'kind:periodKey:position'
+  kind: String!              # 'today_goal' | 'weekly_goal' | 'day_note' | 'evening'
+  periodKey: String!         # 'YYYY-MM-DD' (day kinds) or 'YYYY-Www' (weekly_goal)
+  position: Int!
+  body: String!
+  doneAt: DateTime           # goal completion timestamp; null for notes / open goals
+  sourceKind: String!        # 'manual' | 'task' | 'objective'
+  sourceRef: String          # tasks.id | objectives.id | null (cross-table, may dangle)
+  category: TagType          # category_id (a tags.kind='category' row), nullable
+  colorToken: String         # the category's tag_prefs color token, or null
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+# The whole reflection bundle for a day — the today goal, the (≤3) weekly goals for that
+# day's ISO week, and the day note. A small, bounded, hand-curated set keyed by one date,
+# so a plain object with list fields, NOT a Relay connection (mirrors the REST GET).
+type ReflectionDay {
+  period: String!            # the requested day ('YYYY-MM-DD')
+  today: ReflectionType      # the single today goal, or null
+  weekly: [ReflectionType!]! # 0–3 weekly goals for the day's ISO week (position order)
+  note: ReflectionType       # the single day note, or null
+}
+
+input SetTodayGoalInput {
+  periodKey: String!
+  body: String!              # empty/whitespace = delete the slot (same rule as REST)
+  categoryId: ID
+  sourceKind: String         # 'manual' | 'task' | 'objective' (unknown → manual)
+  sourceRef: String
+}
+input SetWeeklyGoalInput {
+  periodKey: String!         # the ISO-week key 'YYYY-Www'
+  position: Int!             # 0, 1, or 2
+  body: String!              # empty/whitespace = delete the slot
+  categoryId: ID
+  sourceKind: String
+  sourceRef: String
+}
+input SetDayNoteInput {
+  periodKey: String!         # 'YYYY-MM-DD'
+  body: String!              # empty/whitespace = delete the note
+}
+input ToggleReflectionDoneInput {
+  kind: String!              # 'today_goal' | 'weekly_goal'
+  periodKey: String!
+  position: Int!
+  done: Boolean!
+}
+input DeleteReflectionInput {
+  kind: String!              # 'today_goal' | 'weekly_goal'
+  periodKey: String!
+  position: Int!
+}
+
+# A mutation payload. `reflection` is the resulting row, or null when the write removed it
+# (empty body) or for a done-toggle/delete that returns no row. `deleted` is true iff a row
+# was actually removed — a delete/empty-body write that matched no row reports false (the
+# op still succeeds; delete is idempotent).
+type ReflectionPayload {
+  reflection: ReflectionType
+  deleted: Boolean!
+  success: Boolean!
+}
+
+extend type Query {
+  # The reflection bundle for a day (today goal + that week's weekly goals + day note).
+  reflections(period: String!): ReflectionDay!
+  # Local dates in [from, to] that carry a non-empty day note (the calendar-dot source).
+  reflectionNoteDates(from: String!, to: String!): [String!]!
+}
+
+extend type Mutation {
+  # Empty/whitespace body deletes the slot (deleted:true, reflection:null), matching REST.
+  setTodayGoal(input: SetTodayGoalInput!): ReflectionPayload!
+  setWeeklyGoal(input: SetWeeklyGoalInput!): ReflectionPayload!
+  setDayNote(input: SetDayNoteInput!): ReflectionPayload!
+  # Toggle a today/weekly goal's done_at. NOT_FOUND if the row doesn't exist.
+  toggleReflectionDone(input: ToggleReflectionDoneInput!): ReflectionPayload!
+  # Idempotent delete of a today/weekly goal by composite key.
+  deleteReflection(input: DeleteReflectionInput!): ReflectionPayload!
+}

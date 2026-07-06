@@ -2,7 +2,6 @@ import { and, eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { possibleTasks, tasks } from '../db/schema.js';
 import { writeAudit } from '../lib/audit.js';
-import { autoScheduleOnIngest } from '../engine/autoplan.js';
 
 /**
  * Possible-task inbox CRUD (Phase W · W9) — extracted from routes/possibles.ts so
@@ -20,9 +19,16 @@ import { autoScheduleOnIngest } from '../engine/autoplan.js';
  * by id alone) — byte-equivalent for the real owner (ingest set their id), only changing
  * behavior in multi-tenant, in the safe direction (cf. W3.1a, tasks.ts owner-scoping).
  *
- * `writeAudit` + the best-effort `autoScheduleOnIngest` fire INSIDE promote/dismiss so
- * REST + GraphQL behave identically. SSE `broadcast` stays transport-side (route +
- * resolver each fire it), matching the block-template/flight-plan precedent.
+ * `writeAudit` fires INSIDE promote/dismiss so REST + GraphQL behave identically. SSE
+ * `broadcast` stays transport-side (route + resolver each fire it), matching the
+ * block-template/flight-plan precedent. The best-effort TM-5 auto-schedule call
+ * (`autoScheduleOnIngest`) also stays transport-side, called by each caller AFTER its
+ * own broadcast — the pre-extraction route always broadcast `possible:promoted` BEFORE
+ * running it, and `autoScheduleOnIngest` can itself synchronously broadcast
+ * `auto:placed`/`flight_plan:updated`; since `broadcast()` assigns a monotonic
+ * `sync_events.seq`, firing it from inside this service (after `writeAudit`, before
+ * returning) would flip that relative ordering for any SSE/sync_events-replay consumer.
+ * Keeping it in the caller preserves the original ordering exactly.
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase row
  * shape for `taskToApi`), so the writers are async; better-sqlite3 executes them
@@ -87,9 +93,10 @@ export type PromoteResult =
  * → not_found), create the task with the same columns/fallbacks the route always used
  * (override||raw title, rawSummary description, override||proposed due/priority, the
  * proposed owner [== the scope owner], agent source_kind fallback), carry the suggested
- * tags, flip the possible → promoted with its promoted_task_id, audit, and best-effort
- * auto-block the new work (TM-5, Hands-off trust mode; a placement hiccup must not fail
- * the promote). Returns the inserted drizzle row (camelCase) for `taskToApi`.
+ * tags, flip the possible → promoted with its promoted_task_id, and audit. Returns the
+ * inserted drizzle row (camelCase) for `taskToApi`. The caller is responsible for
+ * broadcasting `possible:promoted` and then running the best-effort TM-5 auto-schedule
+ * (see the module docstring for why that stays transport-side and ordered after).
  */
 export async function promotePossible(
   owner: string,
@@ -122,11 +129,6 @@ export async function promotePossible(
     .where(and(eq(possibleTasks.id, id), eq(possibleTasks.proposedOwnerId, owner)));
 
   writeAudit({ ownerId: owner, actor: 'owner', action: 'promote', entity: `possible:${id}` });
-
-  // TM-5: in the Hands-off trust mode, auto-block the promoted work (estimate-bearing
-  // only). Best-effort — a placement hiccup must not fail the promote. No-op in
-  // Cautious/Balanced. Fires INSIDE the service so REST + GraphQL behave identically.
-  try { autoScheduleOnIngest(owner, { requireEstimate: true }); } catch { /* best-effort */ }
 
   return { ok: true, task, taskId: task.id };
 }
