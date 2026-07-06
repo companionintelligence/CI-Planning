@@ -24,8 +24,8 @@ describe('T0 multi-tenant scaffolding', () => {
 
   it('runWithOwner routes currentOwnerId() per scope', () => {
     createOwner();
-    expect(runWithOwner(SECOND_OWNER_ID, () => currentOwnerId())).toBe(SECOND_OWNER_ID);
-    expect(runWithOwner(SYSTEM_OWNER, () => currentOwnerId())).toBe(SYSTEM_OWNER);
+    expect(runWithOwner(SECOND_OWNER_ID, [], () => currentOwnerId())).toBe(SECOND_OWNER_ID);
+    expect(runWithOwner(SYSTEM_OWNER, [], () => currentOwnerId())).toBe(SYSTEM_OWNER);
   });
 
   it('resetDb prunes non-system owners (no cross-file leak)', () => {

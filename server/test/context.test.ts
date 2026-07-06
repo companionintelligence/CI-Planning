@@ -7,13 +7,13 @@ describe('owner request context', () => {
   });
 
   it('binds the owner inside runWithOwner and restores it after', () => {
-    const inside = runWithOwner(42, () => currentOwnerId());
+    const inside = runWithOwner(42, [], () => currentOwnerId());
     expect(inside).toBe(42);
     expect(currentOwnerId()).toBe(SYSTEM_OWNER);
   });
 
   it('propagates the owner across awaits', async () => {
-    const seen = await runWithOwner(7, async () => {
+    const seen = await runWithOwner(7, [], async () => {
       await Promise.resolve();
       return currentOwnerId();
     });

@@ -15,7 +15,7 @@ vi.mock('../src/engine/auto-defense.js', async (importActual) => {
 });
 
 import { sqlite } from '../src/db/index.js';
-import { runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
+import { ALL_SCOPES, runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTimer } from '../src/services/timer.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
@@ -31,7 +31,7 @@ function insertBlock(taskId: string, startAt: string, endAt: string): string {
 }
 /** Start a timer on (task, block) and backdate its start so the session lasts `sessionMin`. */
 function startBackdated(task: string, block: string | undefined, sessionMin: number): void {
-  runWithOwner(OWNER, () => {
+  runWithOwner(OWNER, ALL_SCOPES, () => {
     const { entry } = startTimer(task, block as unknown as number);
     const startedAt = new Date(Date.now() - sessionMin * 60_000).toISOString();
     sqlite.prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`).run(startedAt, entry.id);
