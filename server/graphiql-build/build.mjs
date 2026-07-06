@@ -23,7 +23,7 @@
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outdir = join(__dirname, '..', 'graphiql-assets');
@@ -40,6 +40,14 @@ async function main() {
     platform: 'browser',
     target: ['es2020'],
     outfile: join(outdir, 'sandbox.js'),
+    // Explicit for the same reason as the worker builds below: bare imports inside
+    // entry.tsx ("react", "graphiql", ...) should resolve node_modules-style relative
+    // to server/, not silently depend on esbuild's default (which, for an absolute
+    // entryPoints path like this one, already walks up from entry.tsx's own directory —
+    // verified this line doesn't change the bundle's output either way). Spelling it
+    // out removes the implicit dependency on that default holding across esbuild
+    // versions or future entry-point changes, and keeps both build() calls consistent.
+    absWorkingDir: join(__dirname, '..'),
     // Monaco's codicon icon font (.ttf) is pulled in transitively via its own CSS
     // `url(./codicon.ttf)`. Inline it as a data: URI (same approach graphiql's own
     // style.css already uses for its fonts) so there's no extra same-origin request to
