@@ -93,6 +93,18 @@ export function getBlockTemplate(owner: string, id: string): TemplateRow | undef
   return sqlite.prepare(`SELECT * FROM block_templates WHERE id = ? AND owner_id = ?`).get(id, owner) as TemplateRow | undefined;
 }
 
+/**
+ * Normalize a freeform `tag`: trim, and treat empty/whitespace-only as NULL — so a
+ * meaningless "" or "   " never persists and reads back as an empty tag. Shared by create
+ * + update so tag semantics are identical across both CRUD paths and both transports
+ * (mirrors how `name` is trimmed above). Unifies the pre-refactor REST split where create
+ * used `tag ?? null` (kept "") and update used `tag || null` (dropped "" but not "   ").
+ */
+const normalizeTag = (t: string | null | undefined): string | null => {
+  const v = t?.trim();
+  return v ? v : null;
+};
+
 export type CreateBlockTemplateInput = { name?: string | null; tag?: string | null; default_minutes?: number | null; tasks?: TemplateTask[] | null };
 export type CreateResult = { ok: true; row: TemplateRow } | { ok: false; error: 'name_required' };
 
@@ -103,7 +115,7 @@ export function createBlockTemplate(owner: string, input: CreateBlockTemplateInp
   const tasksJson = Array.isArray(input.tasks) && input.tasks.length ? JSON.stringify(input.tasks) : null;
   const row = sqlite
     .prepare(`INSERT INTO block_templates (id, owner_id, name, tag, default_minutes, tasks) VALUES (uuid7(), ?, ?, ?, ?, ?) RETURNING *`)
-    .get(owner, input.name.trim(), input.tag ?? null, input.default_minutes ?? 60, tasksJson) as TemplateRow;
+    .get(owner, input.name.trim(), normalizeTag(input.tag), input.default_minutes ?? 60, tasksJson) as TemplateRow;
   writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `block-template:${row.id}` });
   return { ok: true, row };
 }
@@ -126,7 +138,7 @@ export function updateBlockTemplate(owner: string, id: string, input: UpdateBloc
     .prepare(`UPDATE block_templates SET name = ?, tag = ?, default_minutes = ? WHERE id = ? AND owner_id = ? RETURNING *`)
     .get(
       name,
-      input.tag !== undefined ? (input.tag || null) : existing.tag,
+      input.tag !== undefined ? normalizeTag(input.tag) : existing.tag,
       input.default_minutes !== undefined ? input.default_minutes : existing.default_minutes,
       id, owner,
     ) as TemplateRow;
