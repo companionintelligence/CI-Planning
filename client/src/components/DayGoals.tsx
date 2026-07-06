@@ -395,13 +395,16 @@ function Typeahead(props: {
 }
 
 /**
- * Today's Brief pop-up — the parked Morning Briefing (prose + capacity) plus the
- * top-tasks list (non-habit, non-routine, day-ranked). The only surface top tasks
- * appear on. Each row links to the real task; the done-circle completes it.
+ * Today's Brief — a bullseye-sibling popover in the Today header (same idiom as
+ * FocusMenu): the parked Morning Briefing (prose + capacity) plus the top-tasks
+ * list (non-habit, non-routine, day-ranked). The only surface top tasks appear on.
+ * Each row links to the real task; the done-circle completes it.
  */
-export function TodaysBrief(props: { date: string; onClose: () => void }) {
-  const [summary, { mutate }] = createResource(() => props.date, (d) => api.summary.get(d));
-  const [topTasks, { refetch: refetchTop }] = createResource(() => props.date, (d) => api.summary.topTasks(d).then((r) => r.tasks));
+export function BriefMenu(props: { date: string }) {
+  const [open, setOpen] = createSignal(false);
+  // Fetch only while the popover is open (matches the old modal's mount-on-open).
+  const [summary, { mutate }] = createResource(() => (open() ? props.date : null), (d) => api.summary.get(d));
+  const [topTasks, { refetch: refetchTop }] = createResource(() => (open() ? props.date : null), (d) => api.summary.topTasks(d).then((r) => r.tasks));
   const [refreshing, setRefreshing] = createSignal(false);
 
   const capacity = () => summary()?.capacity;
@@ -445,24 +448,33 @@ export function TodaysBrief(props: { date: string; onClose: () => void }) {
 
   function openTask(t: TopTask) {
     setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: t.id } });
-    props.onClose();
+    setOpen(false);
   }
 
   return (
-    <div class="modal-backdrop" onClick={props.onClose}>
-      <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
-        <div class="px-4 py-3 border-b border-border flex items-center justify-between">
-          <span class="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-            <Cpu size={14} class="text-primary" /> Today's Brief
-            <Show when={summary()?.llm}><span class="text-[10px] text-muted-foreground font-normal ml-0.5">(AI)</span></Show>
-          </span>
-          <div class="flex items-center gap-1">
+    <div class="relative">
+      {/* Cpu trigger — same btn-icon idiom as the FocusMenu bullseye. */}
+      <button
+        class="btn-icon text-muted-foreground"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open()}
+        title="Today's Brief"
+      >
+        <Cpu size={16} />
+      </button>
+      <Show when={open()}>
+        {/* click-away backdrop */}
+        <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+        <div class="absolute right-0 mt-1 z-30 w-[24rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover shadow-lg">
+          <div class="px-4 py-3 border-b border-border flex items-center justify-between">
+            <span class="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+              <Cpu size={14} class="text-primary" /> Today's Brief
+              <Show when={summary()?.llm}><span class="text-[10px] text-muted-foreground font-normal ml-0.5">(AI)</span></Show>
+            </span>
             <button class="btn-icon opacity-50 hover:opacity-100" onClick={refresh} disabled={refreshing()} title="Regenerate briefing">
               <RefreshCw size={13} classList={{ 'animate-spin': refreshing() }} />
             </button>
-            <button class="btn-icon" onClick={props.onClose} title="Close"><X size={14} /></button>
           </div>
-        </div>
 
         <div class="p-4 flex flex-col gap-3 max-h-[70vh] overflow-auto">
           {/* Prose */}
@@ -478,7 +490,7 @@ export function TodaysBrief(props: { date: string; onClose: () => void }) {
               const ev = () => summary()!.evening!;
               const openCarry = (taskId: string) => {
                 setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id: taskId } });
-                props.onClose();
+                setOpen(false);
               };
               return (
                 <div class="border-t border-border/50 pt-3">
@@ -557,7 +569,8 @@ export function TodaysBrief(props: { date: string; onClose: () => void }) {
             </Show>
           </div>
         </div>
-      </div>
+        </div>
+      </Show>
     </div>
   );
 }
