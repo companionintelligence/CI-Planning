@@ -1,8 +1,6 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
-import { getCategoryPrefs, setCategoryPref } from '../services/category-prefs.js';
-import { writeAudit } from '../lib/audit.js';
+import { getCategoryPrefs, setCategoryPrefChecked } from '../services/category-prefs.js';
 
 /**
  * Per-category display config. Clone of routes/pattern-prefs.ts, trimmed to the two
@@ -19,30 +17,19 @@ export function categoryPrefsRouter() {
   });
 
   // PUT /api/category-prefs/:categoryTagId  body: { color_token?: string, default_minutes?: number }
+  // Validation + upsert live in services/category-prefs.ts (shared with GraphQL).
   router.put('/api/category-prefs/:categoryTagId', (ctx) => {
-    const owner = currentOwnerId();
-    const { categoryTagId } = ctx.params;
-
-    const tag = sqlite.prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(categoryTagId, owner) as { kind: string } | undefined;
-    if (!tag) { ctx.status = 404; ctx.body = { error: 'Tag not found' }; return; }
-    if (tag.kind !== 'category') { ctx.status = 422; ctx.body = { error: 'Tag is not a category' }; return; }
-
-    const body = (ctx.request.body ?? {}) as { color_token?: unknown; default_minutes?: unknown };
-
-    if (body.color_token !== undefined && (typeof body.color_token !== 'string' || !body.color_token)) {
-      ctx.status = 422; ctx.body = { error: 'color_token must be a non-empty string' }; return;
+    const res = setCategoryPrefChecked(currentOwnerId(), ctx.params.categoryTagId, (ctx.request.body ?? {}) as Record<string, unknown>);
+    if (!res.ok) {
+      switch (res.error) {
+        case 'tag_not_found': ctx.status = 404; ctx.body = { error: 'Tag not found' }; return;
+        case 'not_category': ctx.status = 422; ctx.body = { error: 'Tag is not a category' }; return;
+        case 'color_token_invalid': ctx.status = 422; ctx.body = { error: 'color_token must be a non-empty string' }; return;
+        case 'default_minutes_invalid': ctx.status = 422; ctx.body = { error: 'default_minutes must be a positive integer' }; return;
+      }
+      return;
     }
-    if (body.default_minutes !== undefined &&
-        !(Number.isInteger(body.default_minutes) && (body.default_minutes as number) > 0)) {
-      ctx.status = 422; ctx.body = { error: 'default_minutes must be a positive integer' }; return;
-    }
-
-    const pref = setCategoryPref(owner, categoryTagId, {
-      color_token: body.color_token as string | undefined,
-      default_minutes: body.default_minutes as number | undefined,
-    });
-    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `category-prefs:${categoryTagId}` });
-    ctx.body = { pref };
+    ctx.body = { pref: res.pref };
   });
 
   return router;
