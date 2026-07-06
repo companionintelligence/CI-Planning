@@ -28,6 +28,10 @@ export function prefsRouter() {
 
     const res = await updatePrefs(owner, body);
     if (!res.ok) {
+      // Zero rows affected (no seeded scheduling_prefs row for this owner) isn't a
+      // client input error — mirrors the pre-extraction route's `prefs ? ... : null`
+      // guard, which tolerated this same case gracefully rather than 422ing it.
+      if (res.error === 'not_found') { ctx.body = { prefs: null }; return; }
       ctx.status = 422;
       ctx.body = {
         error:

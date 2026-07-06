@@ -159,6 +159,9 @@ export const prefsResolvers = {
 
       const res = await updatePrefs(owner, body);
       if (!res.ok) {
+        if (res.error === 'not_found') {
+          throw new GraphQLError('scheduling prefs not found for owner', { extensions: { code: 'NOT_FOUND' } });
+        }
         if (res.error === 'bad_recurrence_horizon') {
           throw new GraphQLError('planning.recurrenceHorizonDays must be one of 7, 15, 30, 60, 90, 180', { extensions: { code: 'BAD_USER_INPUT' } });
         }
