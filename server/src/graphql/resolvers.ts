@@ -15,6 +15,7 @@ import { possibleTaskResolvers } from './possible-task-resolvers.js';
 import { notificationResolvers } from './notification-resolvers.js';
 import { prefsResolvers } from './prefs-resolvers.js';
 import { jobResolvers } from './job-resolvers.js';
+import { engineOpsResolvers } from './engine-ops-resolvers.js';
 
 /**
  * Root resolver map. Entity resolvers live in per-type modules (e.g. tag-resolvers.ts)
@@ -43,6 +44,7 @@ export const resolvers = {
     ...notificationResolvers.Query,
     ...prefsResolvers.Query,
     ...jobResolvers.Query,
+    ...engineOpsResolvers.Query,
   },
   Mutation: {
     ...tagResolvers.Mutation,
@@ -59,6 +61,7 @@ export const resolvers = {
     ...notificationResolvers.Mutation,
     ...prefsResolvers.Mutation,
     ...jobResolvers.Mutation,
+    ...engineOpsResolvers.Mutation,
   },
   TagType: tagResolvers.TagType,
   TaskType: taskResolvers.TaskType,
