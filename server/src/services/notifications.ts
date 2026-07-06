@@ -37,13 +37,9 @@ export function ownerTz(ownerId: string): string {
 }
 
 // ── Web Push subscriptions ──────────────────────────────────────────────────
-
-/** The public key the browser subscribes with. Empty when VAPID isn't configured. */
-export function vapidPublicKey(): string {
-  // Imported lazily by callers via lib/config directly is also fine, but centralizing
-  // here keeps every notifications concern in one service module.
-  return '';
-}
+// The VAPID public key itself isn't a notifications-service concern — both the REST
+// route and the GraphQL resolver read `config.vapidPublicKey` directly (the one source
+// of truth already established in lib/config.ts).
 
 export type SubscribePushInput = { endpoint?: string; p256dh?: string; auth?: string; userAgent?: string | null };
 export type SubscribePushResult = { ok: true } | { ok: false; error: 'missing_fields' };
