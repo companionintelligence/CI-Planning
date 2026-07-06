@@ -4,7 +4,7 @@ import { BaseOAuth2Client } from '../src/connectors/base.js';
 import type { RemoteEvent, RemoteEventInput, ListEventsResult } from '../src/connectors/base.js';
 import { seal } from '../src/lib/crypto/index.js';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { newId } from '../src/lib/ids.js';
 import { resetDb } from './helpers.js';
 
@@ -73,7 +73,7 @@ describe('BaseOAuth2Client — refresh single-flight', () => {
     seedTokenRow('sf@x.io', '2000-01-01T00:00:00.000Z'); // expired
     const c = new CountingConnector('sf@x.io');
 
-    const results = await runWithOwner(SYSTEM_OWNER, () =>
+    const results = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () =>
       Promise.all([c.token(), c.token(), c.token(), c.token(), c.token()]),
     );
 
@@ -87,7 +87,7 @@ describe('BaseOAuth2Client — refresh single-flight', () => {
     seedTokenRow('sf2@x.io', '2000-01-01T00:00:00.000Z');
     const c = new CountingConnector('sf2@x.io');
 
-    await runWithOwner(SYSTEM_OWNER, () => c.token());
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => c.token());
     expect(c.refreshCalls).toBe(1);
 
     // Force the stored token expired again, then read once more → a fresh refresh.
@@ -96,14 +96,14 @@ describe('BaseOAuth2Client — refresh single-flight', () => {
       .prepare(`UPDATE connection_tokens SET iv = ?, auth_tag = ?, ciphertext = ? WHERE account = 'sf2@x.io'`)
       .run(expired.iv, expired.authTag, expired.ciphertext);
 
-    await runWithOwner(SYSTEM_OWNER, () => c.token());
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => c.token());
     expect(c.refreshCalls).toBe(2);
   });
 
   it('does not refresh a still-valid token', async () => {
     seedTokenRow('sf3@x.io', new Date(Date.now() + 3600_000).toISOString());
     const c = new CountingConnector('sf3@x.io');
-    const tok = await runWithOwner(SYSTEM_OWNER, () => c.token());
+    const tok = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => c.token());
     expect(c.refreshCalls).toBe(0);
     expect(tok).toBe('stale'); // the seeded access token, unrefreshed
   });

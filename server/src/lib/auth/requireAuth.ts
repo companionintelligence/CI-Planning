@@ -4,7 +4,11 @@ import { runWithOwner, SYSTEM_OWNER } from '../context.js';
 import { verifyApiKey } from './apiKey.js';
 import { verifySession } from './session.js';
 import { hasScope } from './scopes.js';
-import type { VerifiedClaims } from './types.js';
+import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN, type VerifiedClaims } from './types.js';
+
+/** The full trusted scope set the test owner carries by default (test mode is the
+ *  trusted local/dev/test operator). A test can narrow it via the x-test-scopes header. */
+const ALL_TEST_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
 
 /**
  * The single auth guard (Phase I). Mounted in app.ts after bodyParser and before
@@ -77,7 +81,17 @@ export function requireAuth(): Koa.Middleware {
       // isolation tests) via the `x-test-owner` header. Honored ONLY in test mode,
       // so it adds zero auth surface to standalone/SSO. Defaults to SYSTEM_OWNER.
       const testOwner = ctx.get('x-test-owner').trim();
-      return runWithOwner(testOwner || SYSTEM_OWNER, () => next());
+      // Test-only companion (W12): `x-test-scopes` lets a test simulate a non-admin (or
+      // otherwise narrowed) caller to exercise the scope gate — the FORBIDDEN path can't
+      // be reached otherwise, since the default test owner carries every scope. A
+      // comma-separated scope list; absent → all three scopes (so existing tests are
+      // unaffected). Test-mode-only, so it adds zero production auth surface (test mode is
+      // hard-rejected under NODE_ENV=production).
+      const rawScopes = ctx.get('x-test-scopes').trim();
+      const scopes = rawScopes
+        ? rawScopes.split(',').map((s) => s.trim()).filter(Boolean)
+        : ALL_TEST_SCOPES;
+      return runWithOwner(testOwner || SYSTEM_OWNER, scopes, () => next());
     }
 
     let claims: VerifiedClaims;
@@ -115,6 +129,6 @@ export function requireAuth(): Koa.Middleware {
       return;
     }
 
-    await runWithOwner(claims.ownerId, () => next());
+    await runWithOwner(claims.ownerId, claims.scopes, () => next());
   };
 }
