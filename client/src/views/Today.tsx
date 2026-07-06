@@ -365,7 +365,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
         {/* Header doubles as the collapse toggle for the whole due list. */}
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => setExpanded((v) => { const next = !v; if (!next) setShowOverdue(false); return next; })}
           aria-expanded={expanded()}
           class="flex items-center gap-2"
           title={expanded() ? 'Collapse due list' : 'Expand due list'}
