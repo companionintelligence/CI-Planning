@@ -7,6 +7,7 @@ import { flightPlanResolvers } from './flight-plan-resolvers.js';
 import { patternResolvers } from './pattern-resolvers.js';
 import { patternBlockResolvers } from './pattern-block-resolvers.js';
 import { dayTypeResolvers } from './daytype-resolvers.js';
+import { objectiveResolvers } from './objective-resolvers.js';
 import { blockTemplateResolvers } from './block-template-resolvers.js';
 
 /**
@@ -28,6 +29,7 @@ export const resolvers = {
     ...patternResolvers.Query,
     ...patternBlockResolvers.Query,
     ...dayTypeResolvers.Query,
+    ...objectiveResolvers.Query,
     ...blockTemplateResolvers.Query,
   },
   Mutation: {
@@ -38,6 +40,7 @@ export const resolvers = {
     ...patternResolvers.Mutation,
     ...patternBlockResolvers.Mutation,
     ...dayTypeResolvers.Mutation,
+    ...objectiveResolvers.Mutation,
     ...blockTemplateResolvers.Mutation,
   },
   TagType: tagResolvers.TagType,
@@ -50,6 +53,7 @@ export const resolvers = {
   PatternPrefType: patternBlockResolvers.PatternPrefType,
   DayTypeType: dayTypeResolvers.DayTypeType,
   TagPrefType: dayTypeResolvers.TagPrefType,
+  ObjectiveType: objectiveResolvers.ObjectiveType,
   BlockTemplateType: blockTemplateResolvers.BlockTemplateType,
   // W4b union: __resolveType for TagType.entities' Task ∪ TimeBlock members.
   TaggedEntity: tagResolvers.TaggedEntity,
