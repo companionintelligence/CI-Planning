@@ -1,5 +1,6 @@
 import { GraphQLError } from 'graphql';
 import { currentOwnerId } from '../lib/context.js';
+import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
 import { taskToApi } from '../lib/serialize.js';
 import { getTask } from '../services/tasks.js';
@@ -64,7 +65,9 @@ export const possibleTaskResolvers = {
       try {
         if (res.task.scheduledFor) placeStartAnchoredTask(owner, res.taskId);
         else autoScheduleOnIngest(owner, { requireEstimate: true });
-      } catch { /* best-effort */ }
+      } catch (err) {
+        logger.warn('promotePossibleTask: post-promote placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
+      }
       return { task: task ?? null, possibleTask: possible ?? null, success: true };
     },
 

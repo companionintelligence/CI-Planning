@@ -114,6 +114,17 @@ describe('placeStartAnchoredTask — exact time', () => {
     expect(res).toEqual({ placed: false, reason: 'day_full' });
     expect(blocksOf(id).length).toBe(0);
   });
+
+  it('is idempotent — a second call reuses the existing block, never duplicating (is_auto=0 blocks are not swept by clearPriorAuto)', async () => {
+    const date = dPlus(3);
+    const id = await createTask({ scheduled_for: date, task_time: '14:00', estimated_minutes: 60 });
+
+    const first = placeStartAnchoredTask(OWNER, id);
+    const second = placeStartAnchoredTask(OWNER, id);
+    expect(first).toMatchObject({ placed: true });
+    expect(second).toMatchObject({ placed: true, blockId: (first as { blockId: string }).blockId });
+    expect(blocksOf(id).length).toBe(1); // no duplicate
+  });
 });
 
 describe('placeStartAnchoredTask — no task_time (engine picks the time on THAT date)', () => {

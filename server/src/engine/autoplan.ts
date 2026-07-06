@@ -19,7 +19,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
-import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { taskTagNames } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
@@ -388,11 +388,18 @@ function placeHintWindows(
  * for the fill date itself may still stage — but only while it has no active block
  * yet (start-anchored placement usually created one already; staging it again would
  * double-book it). due_at remains ordering-only and never selects the day. */
+/** Today in the OWNER's timezone (YYYY-MM-DD). `scheduled_for` is owner-local, so the
+ *  fill/exclusion day must be too — comparing it to a server-tz `localISODate()` would
+ *  mis-window scheduled tasks around midnight for owners in a different timezone. */
+function ownerToday(owner: string): string {
+  return localDateInTZ(new Date().toISOString(), prefsOf(owner)?.timezone || serverTimezone());
+}
+
 export function fillFlightPlanCandidates(
   owner: string = currentOwnerId(),
   opts: { requireEstimate?: boolean; date?: string } = {},
 ): number {
-  const fillDate = opts.date ?? localISODate();
+  const fillDate = opts.date ?? ownerToday(owner);
   // TM-3: the auto-block path stages only estimate-bearing tasks (we won't fabricate a
   // block duration for a task the user never sized). Default false ⇒ unchanged staging.
   const estimateClause = opts.requireEstimate ? `AND estimated_minutes IS NOT NULL` : '';
@@ -794,10 +801,12 @@ export function autoScheduleOnIngest(
   opts: { date?: string; requireEstimate?: boolean } = {},
 ): AutoResult | null {
   if (!resolveTrustPolicy(owner).autoBlock) return null;
-  const date = opts.date ?? localISODate();
+  const date = opts.date ?? ownerToday(owner);
   fillFlightPlanCandidates(owner, { requireEstimate: opts.requireEstimate, date }); // stage new open tasks, all selected
   if (selectedStaged(owner, date).length === 0) return null;
-  return placeFlightPlan(owner, { date: opts.date });
+  // Place the SAME day we filled — passing the resolved `date` (not raw opts.date) keeps
+  // fill and placement on one owner-local day when the caller omitted a date.
+  return placeFlightPlan(owner, { date });
 }
 
 // ─── Phase AB · AB1 — start-anchored placement ─────────────────────────────────
@@ -850,6 +859,23 @@ export function placeStartAnchoredTask(
     | undefined;
   if (!task) return { placed: false, reason: 'not_found' };
   if (!task.scheduled_for) return { placed: false, reason: 'no_start' };
+
+  // Idempotent: if the task already has an active block, don't create a second one.
+  // These blocks are is_auto=0, so clearPriorAuto never sweeps them — a double invoke
+  // (retry, multiple promote paths) would otherwise leave a duplicate. Treat the
+  // existing block as the placement (and still clear any staged copy).
+  const existing = sqlite
+    .prepare(
+      `SELECT id, start_at, end_at FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+        ORDER BY start_at LIMIT 1`,
+    )
+    .get(taskId, owner) as { id: string; start_at: string; end_at: string } | undefined;
+  if (existing) {
+    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
+    return { placed: true, blockId: existing.id, startAt: existing.start_at, endAt: existing.end_at };
+  }
 
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();

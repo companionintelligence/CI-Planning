@@ -82,8 +82,8 @@ describe('isSlotOccupied', () => {
     expect(isSlotOccupied(active, DAY, 585)).toBe(false); // before → free
   });
 
-  it('completed / cancelled / skipped blocks free their slot again', () => {
-    for (const status of ['completed', 'cancelled', 'skipped']) {
+  it('done-ish blocks free their slot again (matches server DONE_STATUSES)', () => {
+    for (const status of ['completed', 'done', 'cancelled', 'skipped', 'missed']) {
       expect(isSlotOccupied([block({ id: 'x', status })], DAY, 630)).toBe(false);
     }
     // …but planned and in_progress-style statuses occupy.
