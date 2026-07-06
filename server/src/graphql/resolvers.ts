@@ -7,6 +7,7 @@ import { flightPlanResolvers } from './flight-plan-resolvers.js';
 import { patternResolvers } from './pattern-resolvers.js';
 import { patternBlockResolvers } from './pattern-block-resolvers.js';
 import { dayTypeResolvers } from './daytype-resolvers.js';
+import { objectiveResolvers } from './objective-resolvers.js';
 
 /**
  * Root resolver map. Entity resolvers live in per-type modules (e.g. tag-resolvers.ts)
@@ -27,6 +28,7 @@ export const resolvers = {
     ...patternResolvers.Query,
     ...patternBlockResolvers.Query,
     ...dayTypeResolvers.Query,
+    ...objectiveResolvers.Query,
   },
   Mutation: {
     ...tagResolvers.Mutation,
@@ -36,6 +38,7 @@ export const resolvers = {
     ...patternResolvers.Mutation,
     ...patternBlockResolvers.Mutation,
     ...dayTypeResolvers.Mutation,
+    ...objectiveResolvers.Mutation,
   },
   TagType: tagResolvers.TagType,
   TaskType: taskResolvers.TaskType,
@@ -47,6 +50,7 @@ export const resolvers = {
   PatternPrefType: patternBlockResolvers.PatternPrefType,
   DayTypeType: dayTypeResolvers.DayTypeType,
   TagPrefType: dayTypeResolvers.TagPrefType,
+  ObjectiveType: objectiveResolvers.ObjectiveType,
   // W4b union: __resolveType for TagType.entities' Task ∪ TimeBlock members.
   TaggedEntity: tagResolvers.TaggedEntity,
 };
