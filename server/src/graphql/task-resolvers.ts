@@ -133,11 +133,13 @@ export const taskResolvers = {
         // service (commit 1); mirror REST's 409.
         throw new GraphQLError('dependency cycle', { extensions: { code: 'CONFLICT', detail: res.detail } });
       }
-      broadcast(owner, 'task:updated', taskToApi(res.task));
       // REQ2 reverse-sync parity with routes/tasks.ts: when a time/day/estimate edit moved
       // the task's placed block in lockstep, emit block:updated so other devices refresh it
       // (the GraphQL mutation was previously silent here → a stale block on other clients).
+      // Emitted BEFORE task:updated to mirror the REST route's exact ordering (it broadcasts
+      // the synced block first, then the task).
       if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
+      broadcast(owner, 'task:updated', taskToApi(res.task));
       requestReplan('task:updated'); // B2: edits to priority/due/estimate can re-order the day
       return { task: res.task, success: true };
     },
