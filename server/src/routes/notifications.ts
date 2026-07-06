@@ -1,19 +1,11 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
-import { newId } from '../lib/ids.js';
 import { currentOwnerId } from '../lib/context.js';
 import { config } from '../lib/config.js';
 import { broadcast } from './sse.js';
-import { writeAudit } from '../lib/audit.js';
-import { zonedWallTimeToUTC, serverTimezone } from '../lib/tz.js';
-
-/** The owner's IANA timezone (falls back to the server zone). */
-function ownerTz(ownerId: string): string {
-  const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(ownerId) as
-    | { timezone: string | null }
-    | undefined;
-  return row?.timezone || serverTimezone();
-}
+import {
+  subscribePushChecked, unsubscribePushChecked,
+  listReminders, createReminderChecked, cancelReminderChecked, snoozeReminderChecked,
+} from '../services/notifications.js';
 
 export function notificationsRouter() {
   const router = new Router();
@@ -33,28 +25,21 @@ export function notificationsRouter() {
       subscription?: { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
     };
     const sub = body.subscription;
-    if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
-      ctx.status = 400; ctx.body = { error: 'a subscription with endpoint + keys is required' }; return;
-    }
-    sqlite
-      .prepare(
-        `INSERT INTO push_subscriptions (id, owner_id, endpoint, p256dh, auth, user_agent)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(endpoint) DO UPDATE SET
-           owner_id = excluded.owner_id, p256dh = excluded.p256dh,
-           auth = excluded.auth, user_agent = excluded.user_agent`,
-      )
-      .run(newId(), currentOwnerId(), sub.endpoint, sub.keys.p256dh, sub.keys.auth, ctx.get('user-agent') || null);
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'subscribe', entity: 'push:subscribe' });
+    const res = subscribePushChecked(currentOwnerId(), {
+      endpoint: sub?.endpoint,
+      p256dh: sub?.keys?.p256dh,
+      auth: sub?.keys?.auth,
+      userAgent: ctx.get('user-agent') || null,
+    });
+    if (!res.ok) { ctx.status = 400; ctx.body = { error: 'a subscription with endpoint + keys is required' }; return; }
     ctx.status = 201; ctx.body = { ok: true };
   });
 
   // DELETE /api/push/subscribe — { endpoint }. Remove on unsubscribe.
   router.delete('/api/push/subscribe', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { endpoint?: string };
-    if (!body.endpoint) { ctx.status = 400; ctx.body = { error: 'endpoint is required' }; return; }
-    sqlite.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ? AND owner_id = ?`).run(body.endpoint, currentOwnerId());
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'unsubscribe', entity: 'push:unsubscribe' });
+    const res = unsubscribePushChecked(currentOwnerId(), body.endpoint);
+    if (!res.ok) { ctx.status = 400; ctx.body = { error: 'endpoint is required' }; return; }
     ctx.body = { ok: true };
   });
 
@@ -63,12 +48,9 @@ export function notificationsRouter() {
   // GET /api/reminders — the owner's live reminders (not cancelled), soonest first.
   router.get('/api/reminders', async (ctx) => {
     ctx.body = {
-      reminders: sqlite
-        .prepare(
-          `SELECT id, task_id, block_id, fire_at, status, fired_at
-             FROM reminders WHERE owner_id = ? AND status <> 'cancelled' ORDER BY fire_at`,
-        )
-        .all(currentOwnerId()),
+      reminders: listReminders(currentOwnerId()).map((r) => ({
+        id: r.id, task_id: r.task_id, block_id: r.block_id, fire_at: r.fire_at, status: r.status, fired_at: r.fired_at,
+      })),
     };
   });
 
@@ -79,32 +61,21 @@ export function notificationsRouter() {
     const body = (ctx.request.body ?? {}) as {
       taskId?: string; blockId?: string; fireAt?: string; date?: string; time?: string;
     };
-    const hasTask = !!body.taskId, hasBlock = !!body.blockId;
-    if (hasTask === hasBlock) { ctx.status = 422; ctx.body = { error: 'exactly one of taskId or blockId is required' }; return; }
-
-    let fireAt = body.fireAt;
-    if (!fireAt && body.date && body.time) fireAt = zonedWallTimeToUTC(body.date, body.time, ownerTz(currentOwnerId()));
-    if (!fireAt) { ctx.status = 422; ctx.body = { error: 'fireAt (UTC ISO) or date+time is required' }; return; }
-
-    const reminder = sqlite
-      .prepare(
-        `INSERT INTO reminders (id, owner_id, task_id, block_id, fire_at) VALUES (?, ?, ?, ?, ?)
-         RETURNING id, task_id, block_id, fire_at, status`,
-      )
-      .get(newId(), currentOwnerId(), body.taskId ?? null, body.blockId ?? null, fireAt) as { id: string };
-    broadcast(currentOwnerId(), 'reminder:created', { id: reminder.id });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `reminder:${reminder.id}` });
-    ctx.status = 201; ctx.body = { reminder };
+    const res = createReminderChecked(currentOwnerId(), body);
+    if (!res.ok) {
+      const error = res.error === 'target' ? 'exactly one of taskId or blockId is required' : 'fireAt (UTC ISO) or date+time is required';
+      ctx.status = 422; ctx.body = { error }; return;
+    }
+    broadcast(currentOwnerId(), 'reminder:created', { id: res.reminder.id });
+    ctx.status = 201;
+    ctx.body = { reminder: { id: res.reminder.id, task_id: res.reminder.task_id, block_id: res.reminder.block_id, fire_at: res.reminder.fire_at, status: res.reminder.status } };
   });
 
   // DELETE /api/reminders/:id — soft-cancel (keeps the row, off the dispatcher).
   router.delete('/api/reminders/:id', async (ctx) => {
-    const row = sqlite
-      .prepare(`UPDATE reminders SET status = 'cancelled' WHERE id = ? AND owner_id = ? RETURNING id`)
-      .get(ctx.params.id, currentOwnerId());
-    if (!row) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    const res = cancelReminderChecked(currentOwnerId(), ctx.params.id);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(currentOwnerId(), 'reminder:cancelled', { id: ctx.params.id });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `reminder:${ctx.params.id}` });
     ctx.body = { ok: true };
   });
 
@@ -113,19 +84,13 @@ export function notificationsRouter() {
   // and schedules exactly one new one — no double-fire.
   router.post('/api/reminders/:id/snooze', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { minutes?: number };
-    const minutes = Number(body.minutes);
-    if (!Number.isFinite(minutes) || minutes <= 0) { ctx.status = 422; ctx.body = { error: 'minutes must be a positive number' }; return; }
-    const fireAt = new Date(Date.now() + minutes * 60_000).toISOString();
-    const reminder = sqlite
-      .prepare(
-        `UPDATE reminders SET fire_at = ?, status = 'pending', fired_at = NULL
-           WHERE id = ? AND owner_id = ? RETURNING id, task_id, block_id, fire_at, status`,
-      )
-      .get(fireAt, ctx.params.id, currentOwnerId());
-    if (!reminder) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    broadcast(currentOwnerId(), 'reminder:snoozed', { id: ctx.params.id, fireAt });
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'snooze', entity: `reminder:${ctx.params.id}` });
-    ctx.body = { reminder };
+    const res = snoozeReminderChecked(currentOwnerId(), ctx.params.id, body.minutes);
+    if (!res.ok) {
+      if (res.error === 'bad_minutes') { ctx.status = 422; ctx.body = { error: 'minutes must be a positive number' }; return; }
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+    broadcast(currentOwnerId(), 'reminder:snoozed', { id: ctx.params.id, fireAt: res.reminder.fire_at });
+    ctx.body = { reminder: { id: res.reminder.id, task_id: res.reminder.task_id, block_id: res.reminder.block_id, fire_at: res.reminder.fire_at, status: res.reminder.status } };
   });
 
   return router;
