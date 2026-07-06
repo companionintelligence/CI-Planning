@@ -9,6 +9,7 @@ import { config } from '../lib/config.js';
 import { currentOwnerId } from '../lib/context.js';
 import { resolvers } from './resolvers.js';
 import { complexityPlugin } from './complexity.js';
+import { mountGraphqlSandbox, sandboxEnabled } from './sandbox.js';
 
 // Schema-first: the SDL is the source of truth (kept diff-comparable to CI-Server's
 // generated schema.graphql). Loaded relative to this module — the server runs via tsx
@@ -61,5 +62,15 @@ export async function mountGraphql(app: Koa): Promise<void> {
   // POST-only: GraphQL queries + mutations all POST, and this keeps the method→scope
   // mapping unambiguous (a GET would map to planning:read and let a read-only credential in).
   router.post('/api/graphql', gqlMiddleware);
+
+  // W-sandbox: self-hosted, vendored GraphiQL IDE at GET /api/graphql/sandbox. Registered
+  // in this same function (not a separate mount point) precisely so it inherits the same
+  // requireAuth gating as POST /api/graphql above — see sandbox.ts for the full design
+  // rationale (why vendored/hand-bundled instead of graphiql's own CDN-based examples)
+  // and the prod-gating rule. mountGraphqlSandbox is itself a no-op when disabled, so
+  // GET /api/graphql/sandbox naturally 404s (no route registered, no catch-all for
+  // /api/* — see app.ts) rather than needing an explicit 404 handler here.
+  mountGraphqlSandbox(router, sandboxEnabled());
+
   app.use(router.routes()).use(router.allowedMethods());
 }

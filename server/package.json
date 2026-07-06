@@ -38,6 +38,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@graphiql/toolkit": "0.12.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/koa": "^3.0.3",
     "@types/koa-bodyparser": "^4.3.13",
@@ -47,6 +48,12 @@
     "@types/nodemailer": "^8.0.1",
     "@types/web-push": "^3.6.4",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "0.25.12",
+    "graphiql": "5.2.4",
+    "monaco-editor": "0.52.2",
+    "monaco-graphql": "1.8.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
