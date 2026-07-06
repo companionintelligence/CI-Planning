@@ -8,16 +8,16 @@ import { showToast, setElementModal, refetchTasks, type ToastAction } from '../s
 type Tab = 'today' | 'week';
 
 /**
- * Phase O · O0 — the FOCUS card in the Today cockpit (formerly "Goals").
- * One today focus + three weekly focuses, each a typeahead that can LINK to
- * existing work (a task for today, any objective for the week) while still
- * accepting freeform text (source_kind='manual'). A "Today's Brief" button opens
- * a pop-up with the AI briefing prose + capacity line + a top-tasks list.
+ * Phase O · O0 (Phase AC — collapsed to a header button): the Focus menu, a
+ * bullseye-triggered popover in the Today header. One today focus + three weekly
+ * focuses, each a typeahead that can LINK to existing work (a task for today, any
+ * objective for the week) while still accepting freeform text (source_kind='manual').
+ * The "Today's Brief" pop-up (`TodaysBrief`, exported) is now a sibling header button.
  * Category color as a 3px left border (color-styling-rules.md).
  */
-export function DayGoals(props: { date: string }) {
+export function FocusMenu(props: { date: string }) {
+  const [open, setOpen] = createSignal(false);
   const [tab, setTab] = createSignal<Tab>('today');
-  const [briefOpen, setBriefOpen] = createSignal(false);
 
   const [data, { refetch }] = createResource(() => props.date, (d) => api.reflections.get(d));
 
@@ -155,37 +155,44 @@ export function DayGoals(props: { date: string }) {
     return `var(--${colorToken})`;
   }
 
-  return (
-    <div class="rounded-xl border border-border bg-card p-4">
-      {/* Top row: FOCUS label · [Today's Brief] · [ Today | This week ] toggle */}
-      <div class="flex items-center justify-between mb-3">
-        <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">FOCUS</div>
-        <div class="flex items-center gap-2">
-          <button
-            class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors"
-            onClick={() => setBriefOpen(true)}
-            title="Today's Brief"
-          >
-            <Cpu size={11} /> Today's Brief
-          </button>
-          <div class="flex rounded-md border border-border overflow-hidden text-[11px]">
-            <button
-              class={`px-2.5 py-1 ${tab() === 'today' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-              onClick={() => setTab('today')}
-            >
-              Today
-            </button>
-            <button
-              class={`px-2.5 py-1 ${tab() === 'week' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-              onClick={() => setTab('week')}
-            >
-              This week
-            </button>
-          </div>
-        </div>
-      </div>
+  const hasFocus = () => !!data()?.today || (data()?.weekly?.length ?? 0) > 0;
 
-      {/* Today tab — the single today focus (typeahead over today's tasks) */}
+  return (
+    <div class="relative">
+      {/* Bullseye trigger — accent-tinted when a focus is set. */}
+      <button
+        class="btn-icon"
+        classList={{ 'text-primary': hasFocus(), 'text-muted-foreground': !hasFocus() }}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open()}
+        title="Focus — today & this week"
+      >
+        <Target size={16} />
+      </button>
+      <Show when={open()}>
+        {/* click-away backdrop */}
+        <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+        <div class="absolute right-0 mt-1 z-30 w-[22rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-4 shadow-lg">
+          {/* FOCUS label · [ Today | This week ] toggle */}
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Focus</div>
+            <div class="flex rounded-md border border-border overflow-hidden text-[11px]">
+              <button
+                class={`px-2.5 py-1 ${tab() === 'today' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => setTab('today')}
+              >
+                Today
+              </button>
+              <button
+                class={`px-2.5 py-1 ${tab() === 'week' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => setTab('week')}
+              >
+                This week
+              </button>
+            </div>
+          </div>
+
+          {/* Today tab — the single today focus (typeahead over today's tasks) */}
       <Show when={tab() === 'today'}>
         <Show
           when={data()?.today}
@@ -320,9 +327,7 @@ export function DayGoals(props: { date: string }) {
         </div>
       </Show>
 
-      {/* Today's Brief pop-up — the parked Morning Briefing + top tasks */}
-      <Show when={briefOpen()}>
-        <TodaysBrief date={props.date} onClose={() => setBriefOpen(false)} />
+        </div>
       </Show>
     </div>
   );
@@ -394,7 +399,7 @@ function Typeahead(props: {
  * top-tasks list (non-habit, non-routine, day-ranked). The only surface top tasks
  * appear on. Each row links to the real task; the done-circle completes it.
  */
-function TodaysBrief(props: { date: string; onClose: () => void }) {
+export function TodaysBrief(props: { date: string; onClose: () => void }) {
   const [summary, { mutate }] = createResource(() => props.date, (d) => api.summary.get(d));
   const [topTasks, { refetch: refetchTop }] = createResource(() => props.date, (d) => api.summary.topTasks(d).then((r) => r.tasks));
   const [refreshing, setRefreshing] = createSignal(false);

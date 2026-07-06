@@ -1,5 +1,5 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
-import { Plus, AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Target } from 'lucide-solid';
+import { AlertCircle, CalendarClock, CalendarCheck, ListTodo, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Cpu, Zap } from 'lucide-solid';
 import { blocks, tasks, taskOf, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, scheduledByTaskId, isRoutineTask, prefs } from '../stores/index.js';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
@@ -13,8 +13,7 @@ import { DayTypeControl } from '../components/DayTypeControl.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
-import { PlanInstruct } from '../components/PlanInstruct.js';
-import { DayGoals } from '../components/DayGoals.js';
+import { FocusMenu, TodaysBrief } from '../components/DayGoals.js';
 
 /**
  * TODAY — the planner cockpit (Phase G, G5). Four regions on the CI-Hub tokens:
@@ -119,6 +118,8 @@ export function Today() {
     return after[0] ?? null;
   });
   const [focusOpen, setFocusOpen] = createSignal(false);
+  // Phase AC — Today's Brief pop-up, now triggered from a header button (was in the FOCUS card).
+  const [briefOpen, setBriefOpen] = createSignal(false);
 
   // ── Capacity bar (relocated from the removed Morning Briefing, Phase O · O3) ──
   const capacity = () => summary()?.capacity;
@@ -174,9 +175,6 @@ export function Today() {
       <div class="rounded-xl border border-border bg-card p-4">
         <div class="flex items-start justify-between gap-3">
           <div>
-            <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mb-1">
-              {isToday() ? 'Today' : 'Day Overview'}
-            </div>
             <div class="flex items-center gap-1.5">
               <button onClick={() => stepDay(-1)} class="btn-icon" title="Previous day"><ChevronLeft size={16} /></button>
               <div class="flex items-baseline gap-2">
@@ -198,8 +196,17 @@ export function Today() {
               </Show>
             </div>
           </div>
-          {/* Right column: day note affordance + Add button */}
+          {/* Right column, aligned with the date: Today's Brief · Focus · Note
+              (Phase AC — collapsed from the removed FOCUS card). The FAB (App.tsx)
+              is the create affordance now; the Add button is gone. */}
           <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
+            {/* Today's Brief — the AI briefing pop-up. */}
+            <button onClick={() => setBriefOpen(true)} class="btn-icon text-muted-foreground" title="Today's Brief">
+              <Cpu size={16} />
+            </button>
+            {/* Focus — bullseye popover: today & this-week focus (add/edit/delete/complete). */}
+            <FocusMenu date={selectedDay()} />
+            {/* Day note. */}
             <button
               onClick={startEditNote}
               class="btn-icon"
@@ -208,14 +215,12 @@ export function Today() {
             >
               <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
             </button>
+            {/* Focus Ritual entry — only while a block is in progress (Time-Sense). */}
             <Show when={currentFocusBlock()}>
               <button onClick={() => setFocusOpen(true)} class="btn-ghost text-xs px-3 py-1.5 border border-primary/50 text-primary" title="Enter the Focus Ritual for the block in progress">
-                <Target size={13} /> Focus
+                <Zap size={13} /> Focus
               </button>
             </Show>
-            <button onClick={() => setElementModal({ open: true, mode: 'add', kind: null })} class="btn-primary text-xs px-3 py-1.5">
-              <Plus size={13} /> Add
-            </button>
           </div>
         </div>
 
@@ -339,11 +344,6 @@ export function Today() {
           an overdue rollup. The primary due surface (the count buttons above stay). */}
       <DueCard date={selectedDay()} onOpen={openTask} />
 
-      {/* Phase N0: FOCUS card (holds the Today's Brief pop-up — prose + capacity + top tasks) */}
-      <DayGoals date={selectedDay()} />
-
-      {/* Natural-language planning instruction — pins become blocks, hints are noted (A4) */}
-      <PlanInstruct />
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
       <ReplanBanner />
       {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
@@ -364,6 +364,11 @@ export function Today() {
           <span class="text-muted-foreground">Shift+= → Routine · Esc to clear</span>
           <button onClick={() => clearSelection()} class="btn-icon"><X size={14} /></button>
         </div>
+      </Show>
+
+      {/* Today's Brief pop-up — header-triggered (moved out of the removed FOCUS card). */}
+      <Show when={briefOpen()}>
+        <TodaysBrief date={selectedDay()} onClose={() => setBriefOpen(false)} />
       </Show>
 
       {/* Phase Z · Z3b — Focus Ritual full-screen overlay for the in-progress block. */}
@@ -419,6 +424,7 @@ export function Today() {
 function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
   const items = createMemo(() => dueItems(tasks() ?? [], props.date));
   const [showOverdue, setShowOverdue] = createSignal(false);
+  const [expanded, setExpanded] = createSignal(true); // AC — the whole due list is collapsible
   const fmtTime = (iso: string) =>
     new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   const fmtDay = (iso: string) =>
@@ -446,12 +452,22 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
   return (
     <div class="rounded-xl border border-border bg-card p-4">
       <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
+        {/* Header doubles as the collapse toggle for the whole due list. */}
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded()}
+          class="flex items-center gap-2"
+          title={expanded() ? 'Collapse due list' : 'Expand due list'}
+        >
           <CalendarClock size={13} class="text-primary" />
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Due</span>
           <span class="text-[10px] text-muted-foreground">deadlines for this day</span>
-        </div>
-        {/* Overdue rollup toggle — hidden when there's no debt to roll up. */}
+          <Show when={expanded()} fallback={<ChevronDown size={12} class="text-muted-foreground" />}>
+            <ChevronUp size={12} class="text-muted-foreground" />
+          </Show>
+        </button>
+        {/* Overdue rollup toggle — the optional filter; hidden when there's no debt. */}
         <Show when={items().overdue.length > 0}>
           <button
             type="button"
@@ -470,25 +486,28 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
         </Show>
       </div>
 
-      {/* Overdue list (expanded rollup) — oldest debt first, red due dates. */}
-      <Show when={showOverdue() && items().overdue.length > 0}>
-        <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-destructive/30 bg-background/40">
-          <For each={items().overdue}>
-            {(t) => <Row task={t} when={t.due_at ? fmtDay(t.due_at) : ''} danger />}
-          </For>
-        </ul>
-      </Show>
+      {/* Body — collapsible (AC). Overdue rollup (optional filter) then the day's dues. */}
+      <Show when={expanded()}>
+        {/* Overdue list (expanded rollup) — oldest debt first, red due dates. */}
+        <Show when={showOverdue() && items().overdue.length > 0}>
+          <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-destructive/30 bg-background/40">
+            <For each={items().overdue}>
+              {(t) => <Row task={t} when={t.due_at ? fmtDay(t.due_at) : ''} danger />}
+            </For>
+          </ul>
+        </Show>
 
-      {/* The day's due list — always visible (the AB4 point: no click to reveal). */}
-      <Show
-        when={items().dueToday.length > 0}
-        fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing due this day.</p>}
-      >
-        <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-border bg-background/40">
-          <For each={items().dueToday}>
-            {(t) => <Row task={t} when={t.due_at ? fmtTime(t.due_at) : ''} />}
-          </For>
-        </ul>
+        {/* The day's due list. */}
+        <Show
+          when={items().dueToday.length > 0}
+          fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing due this day.</p>}
+        >
+          <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-border bg-background/40">
+            <For each={items().dueToday}>
+              {(t) => <Row task={t} when={t.due_at ? fmtTime(t.due_at) : ''} />}
+            </For>
+          </ul>
+        </Show>
       </Show>
     </div>
   );
