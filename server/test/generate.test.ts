@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
+import { ALL_SCOPES, runWithOwner, SYSTEM_OWNER } from '../src/lib/context.js';
 import { utcDayBounds } from '../src/lib/tz.js';
 import { instanceStartUTC } from '../src/engine/recurrence.js';
 import { generateRecurrences } from '../src/engine/recurrence-generate.js';
@@ -57,7 +57,7 @@ function insertTemplate(o: TemplateOpts = {}): string {
 }
 
 const gen = (opts: { today?: string; horizonDays?: number }) =>
-  runWithOwner(OWNER, [], () => generateRecurrences(opts));
+  runWithOwner(OWNER, ALL_SCOPES, () => generateRecurrences(opts));
 
 interface InstanceRow {
   id: string;
