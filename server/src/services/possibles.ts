@@ -113,6 +113,9 @@ export async function promotePossible(
       description: possible.rawSummary ?? undefined,
       dueAt: overrides.due_at ?? possible.proposedDueAt ?? undefined,
       priority: overrides.priority ?? possible.proposedPriority ?? 3,
+      // Carry the ingest-time estimate (0114) — the hands-off auto-schedule the caller
+      // runs after promote (requireEstimate) places nothing without it.
+      estimatedMinutes: possible.proposedEstimatedMinutes ?? undefined,
       // proposedOwnerId equals `owner` here (getPossible scoped by it), but keep the
       // COALESCE-to-owner fallback the route had for defence in depth.
       ownerId: possible.proposedOwnerId ?? owner,

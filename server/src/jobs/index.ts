@@ -6,6 +6,7 @@ import { sweepMissedBlocks, requestReplan } from '../engine/auto-defense.js';
 import { reviewAndReschedule } from '../engine/review.js';
 import { fireDueReminders } from '../engine/reminders.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
+import { suggestFromMemory } from '../agents/memory-suggest.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
@@ -67,6 +68,24 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
         log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles`,
+      };
+    }
+    case 'memory_suggest': {
+      // AA1: pull the next-48h CI-Server memory graph and stage inbox suggestions.
+      // Gated inside the agent (memory_pull_enabled + connector availability), so a
+      // flag-off / creds-less owner is a logged no-op, never an error.
+      const r = await suggestFromMemory();
+      if (r.status !== 'ran') {
+        return {
+          itemsCreated: 0,
+          itemsUpdated: 0,
+          log: r.status === 'flag_off' ? 'Memory pull disabled — skipped' : 'Companion Memory unavailable — skipped',
+        };
+      }
+      return {
+        itemsCreated: r.created,
+        itemsUpdated: r.updated,
+        log: `Pulled ${r.pulled} upcoming memory event(s) → ${r.created} new, ${r.updated} refreshed suggestion(s); skipped ${r.skippedDismissed} dismissed, ${r.skippedCap} over cap`,
       };
     }
     case 'promote_possibles': {
@@ -260,6 +279,7 @@ const JOB_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
 const OWNER_SCOPED_KINDS = new Set([
   'ingest_gmail',
   'ingest_gcal',
+  'memory_suggest',
   'promote_possibles',
   'nightly_grooming',
   'auto_schedule',

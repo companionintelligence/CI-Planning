@@ -54,8 +54,10 @@ function fallbackTask(source: ExtractSource): ExtractedTask {
 }
 
 /**
- * Upsert one extracted task into possible_tasks keyed by (source_kind, source_ref).
- * Returns 'created' | 'updated'.
+ * Upsert one extracted task into possible_tasks keyed by (proposed_owner_id,
+ * source_kind, source_ref) — owner-scoped since 0114: in fixture mode all owners see
+ * the same source_refs, so an unscoped key let one owner's row absorb another's
+ * content. Returns 'created' | 'updated'.
  */
 export function upsertPossible(
   task: ExtractedTask,
@@ -63,9 +65,10 @@ export function upsertPossible(
   sourceRef: string,
   payload: unknown
 ): 'created' | 'updated' {
+  const owner = currentOwnerId();
   const existing = sqlite
-    .prepare('SELECT id FROM possible_tasks WHERE source_kind = ? AND source_ref = ?')
-    .get(sourceKind, sourceRef) as { id: string } | undefined;
+    .prepare('SELECT id FROM possible_tasks WHERE proposed_owner_id = ? AND source_kind = ? AND source_ref = ?')
+    .get(owner, sourceKind, sourceRef) as { id: string } | undefined;
 
   let possibleId: string;
   let outcome: 'created' | 'updated';
@@ -74,13 +77,14 @@ export function upsertPossible(
     sqlite
       .prepare(
         `UPDATE possible_tasks SET raw_title = ?, raw_summary = ?, proposed_due_at = ?,
-         proposed_priority = ?, source_payload = ?, confidence = ? WHERE id = ?`
+         proposed_priority = ?, proposed_estimated_minutes = ?, source_payload = ?, confidence = ? WHERE id = ?`
       )
       .run(
         task.title,
         task.summary ?? null,
         task.dueAt ?? null,
         task.priority,
+        task.estimatedMinutes ?? null,
         JSON.stringify(payload),
         task.confidence,
         existing.id
@@ -91,16 +95,17 @@ export function upsertPossible(
     const row = sqlite
       .prepare(
         `INSERT INTO possible_tasks
-         (id, raw_title, raw_summary, proposed_due_at, proposed_priority, proposed_owner_id,
-          source_kind, source_ref, source_payload, confidence, status)
-         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
+         (id, raw_title, raw_summary, proposed_due_at, proposed_priority, proposed_estimated_minutes,
+          proposed_owner_id, source_kind, source_ref, source_payload, confidence, status)
+         VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
       )
       .get(
         task.title,
         task.summary ?? null,
         task.dueAt ?? null,
         task.priority,
-        currentOwnerId(), // was a stale `1` literal — broke the owners FK after CON-1 (0030)
+        task.estimatedMinutes ?? null,
+        owner, // was a stale `1` literal — broke the owners FK after CON-1 (0030)
         sourceKind,
         sourceRef,
         JSON.stringify(payload),
