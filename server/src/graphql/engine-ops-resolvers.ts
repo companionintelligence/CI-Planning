@@ -152,8 +152,14 @@ export const engineOpsResolvers = {
     // audit + broadcast (all transport-side, mirroring the route + the W11 prefs prune split).
     clearPlanner: async (_p: unknown, args: { input: { start: string; end?: string | null; dryRun?: boolean | null } }) => {
       const owner = currentOwnerId();
-      const v = validateClearRange({ start: args.input.start, end: args.input.end, dryRun: args.input.dryRun ?? undefined });
-      if (!v.ok) throw new GraphQLError(v.error, { extensions: { code: 'BAD_USER_INPUT' } });
+      // Pass dryRun through UNCHANGED (not `?? undefined`): an explicit `dryRun: null` must
+      // reach validateClearRange's "explicit boolean if present" check and be rejected, exactly
+      // as REST rejects `dry_run: null` — collapsing null→undefined would silently treat it as
+      // an apply. Only a truly-omitted field arrives as `undefined` (GraphQL leaves it unset).
+      const v = validateClearRange({ start: args.input.start, end: args.input.end, dryRun: args.input.dryRun });
+      // The shared validator phrases the field as `dry_run` (REST's wire name); rename it to the
+      // GraphQL input field `dryRun` at this boundary. Only that one message contains the token.
+      if (!v.ok) throw new GraphQLError(v.error.replace('dry_run', 'dryRun'), { extensions: { code: 'BAD_USER_INPUT' } });
       const { start, end, dryRun } = v;
 
       // Snapshot BEFORE a real apply (bulk destructive). Return only the FILENAME (not the
