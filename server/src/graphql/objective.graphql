@@ -1,0 +1,81 @@
+# Phase W · W8a — ObjectiveType (Phase N life-planning). CRUD ALONGSIDE the REST
+# /api/objectives routes, through services/objectives.ts (Decision 3). Unblocks
+# TaskType.objective (a later wiring step).
+#
+# The Goal › Project › Objective tree is built bottom-up: `level` ('goal'|'project'|
+# 'objective') is DERIVED from a node's height, re-stamped by the service on every
+# structure change — clients read it, never set it. Tasks live only at leaf objectives.
+#
+# `level`/`horizon`/`status`/`cadence` are plain String (free-form TEXT columns, no enum —
+# a DB value outside a GraphQL enum would crash serialization). `targetDate` is a local
+# date string kept as String (not DateTime) so clients don't shift it across timezones.
+# `progressCache` is the estimate-weighted completion (0..1) or null.
+
+type ObjectiveType implements Node {
+  id: ID!
+  title: String!
+  description: String
+  level: String!
+  horizon: String!
+  status: String!
+  cadence: String!
+  targetDate: String
+  priority: Int!
+  progressCache: Float
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  completedAt: DateTime
+  parent: ObjectiveType             # parent_id (null at a root)
+  children: [ObjectiveType!]!       # direct children (created_at order)
+  tasks: [TaskType!]!               # linked tasks (objective_tasks, linked=1); only leaf objectives carry them
+  category: TagType                 # category_id (a tags.kind='category' row), nullable
+}
+
+input CreateObjectiveInput {
+  title: String!
+  parentId: ID
+  horizon: String
+  status: String
+  cadence: String
+  targetDate: String
+  categoryId: ID
+  priority: Int
+  description: String
+}
+input UpdateObjectiveInput {
+  id: ID!
+  title: String
+  parentId: ID
+  horizon: String
+  status: String
+  cadence: String
+  targetDate: String
+  categoryId: ID
+  priority: Int
+  description: String
+  completedAt: DateTime      # matches ObjectiveType.completedAt (DateTime), like UpdateTaskInput
+}
+
+input LinkObjectiveTaskInput { objectiveId: ID! taskId: ID! }
+
+type ObjectivePayload {
+  objective: ObjectiveType
+  success: Boolean!
+}
+
+extend type Query {
+  # All the owner's objectives, flat (created_at order) — navigate structure via
+  # parent/children. `objective(id)` fetches one.
+  objectives: [ObjectiveType!]!
+  objective(id: ID!): ObjectiveType
+}
+
+extend type Mutation {
+  createObjective(input: CreateObjectiveInput!): ObjectivePayload!
+  updateObjective(input: UpdateObjectiveInput!): ObjectivePayload!
+  # Reuses the shared DeleteByIdInput/DeleteByIdPayload (declared in tag.graphql).
+  deleteObjective(input: DeleteByIdInput!): DeleteByIdPayload!
+  # Link/unlink a task to a leaf objective (returns the refreshed objective).
+  linkObjectiveTask(input: LinkObjectiveTaskInput!): ObjectivePayload!
+  unlinkObjectiveTask(input: LinkObjectiveTaskInput!): ObjectivePayload!
+}
