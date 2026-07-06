@@ -5,7 +5,7 @@ import { EtagConflictError } from '../src/connectors/base.js';
 import { McpGoogleSession, type McpConnectionFactory } from '../src/mcp/client.js';
 import { seal } from '../src/lib/crypto/index.js';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
 import { newId } from '../src/lib/ids.js';
 import { resetDb } from './helpers.js';
 
@@ -99,7 +99,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
     }));
     const connector = connectorWith(factory);
 
-    const res = await runWithOwner(SYSTEM_OWNER, () => connector.listEvents({ syncToken: 'tok-prev' }));
+    const res = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => connector.listEvents({ syncToken: 'tok-prev' }));
 
     expect(res.nextSyncToken).toBe('tok-next');
     expect(res.events).toHaveLength(3);
@@ -124,7 +124,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
     const factory = makeFactory(rec, () => ({ structuredContent: { events: [], nextSyncToken: 't' } }));
     const connector = connectorWith(factory);
 
-    await runWithOwner(SYSTEM_OWNER, () =>
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () =>
       connector.listEvents({ from: '2026-06-01T00:00:00Z', to: '2026-06-30T00:00:00Z' }),
     );
     expect(rec.calls[0].args).toMatchObject({
@@ -157,7 +157,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
     });
     const connector = connectorWith(factory);
 
-    const out = await runWithOwner(SYSTEM_OWNER, () =>
+    const out = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () =>
       connector.createEvent({
         title: 'Block',
         start: '2026-06-24T09:00:00Z',
@@ -187,7 +187,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
     });
     const connector = connectorWith(factory);
 
-    const out = await runWithOwner(SYSTEM_OWNER, () =>
+    const out = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () =>
       connector.createEvent({ title: 'Fresh', start: '2026-06-24T09:00:00Z', end: '2026-06-24T10:00:00Z' }),
     );
     expect(out).toMatchObject({ id: 'minted', title: 'Fresh', etag: 'W/"new"' });
@@ -203,7 +203,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
     });
     const connector = connectorWith(factory);
 
-    const p = runWithOwner(SYSTEM_OWNER, () =>
+    const p = runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () =>
       connector.updateEvent('e1', { title: 'X', start: '2026-06-24T09:00:00Z', end: '2026-06-24T10:00:00Z' }, 'W/"old"'),
     );
     await expect(p).rejects.toBeInstanceOf(EtagConflictError);
@@ -222,7 +222,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
     const connector = connectorWith(factory);
 
     await expect(
-      runWithOwner(SYSTEM_OWNER, () => connector.deleteEvent('e9', 'W/"old"')),
+      runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => connector.deleteEvent('e9', 'W/"old"')),
     ).rejects.toBeInstanceOf(EtagConflictError);
 
     const call = rec.calls.find((c) => c.name === 'calendar_delete_event')!;
@@ -236,7 +236,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
       return {};
     });
     const connector = connectorWith(factory);
-    await expect(runWithOwner(SYSTEM_OWNER, () => connector.deleteEvent('gone', null))).resolves.toBeUndefined();
+    await expect(runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => connector.deleteEvent('gone', null))).resolves.toBeUndefined();
   });
 
   it('resolves deleteEvent successfully on a 410 (already gone)', async () => {
@@ -245,7 +245,7 @@ describe('GoogleCalendarConnector (MCP-backed)', () => {
       return {};
     });
     const connector = connectorWith(factory);
-    await expect(runWithOwner(SYSTEM_OWNER, () => connector.deleteEvent('gone', null))).resolves.toBeUndefined();
+    await expect(runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => connector.deleteEvent('gone', null))).resolves.toBeUndefined();
   });
 
   // ── providerEventId determinism ────────────────────────────────────────────

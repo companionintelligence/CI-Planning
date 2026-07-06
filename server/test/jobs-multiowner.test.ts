@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { runWithOwner } from '../src/lib/context.js';
+import { ALL_SCOPES, runWithOwner } from '../src/lib/context.js';
 import { runScheduledJob, runJob } from '../src/jobs/index.js';
 import { createOwner, resetDb, SECOND_OWNER_ID } from './helpers.js';
 
@@ -38,7 +38,7 @@ describe('T3 cron per-owner fan-out', () => {
 
   it('manual runJob runs once for the calling owner (no fan-out)', async () => {
     createOwner();
-    await runWithOwner(SECOND_OWNER_ID, () => runJob('freeze_stars'));
+    await runWithOwner(SECOND_OWNER_ID, ALL_SCOPES, () => runJob('freeze_stars'));
     expect(runCount('freeze_stars')).toBe(1);
   });
 });
