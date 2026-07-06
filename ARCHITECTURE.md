@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-04 · migration head `0110`
+**Status:** Living document · last updated 2026-07-06 · migration head `0112`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -26,7 +26,7 @@ Companion Planning is a **local-first, AI-assisted personal planning system**. I
 | DB | **SQLite** via `better-sqlite3` | WAL mode, embedded, zero-ops |
 | Migrations | Plain TypeScript functions | Sequential, idempotent; `_migrations` table |
 | ORM | **Drizzle ORM** + raw `better-sqlite3` | Typed schema; raw SQL for hot paths |
-| GraphQL | **Apollo Server 5** + `@as-integrations/koa` | Schema-first SDL at `POST /api/graphql`, alongside REST; custom complexity limiter; `graphql@16` (Phase W, in progress) |
+| GraphQL | **Apollo Server 5** + `@as-integrations/koa` | Schema-first SDL at `POST /api/graphql`, alongside REST; custom complexity limiter; `graphql@16` (Phase W, complete) |
 | LLM runtime | **Ollama** (local) | Graceful degradation when offline |
 | MCP | `@modelcontextprotocol/sdk` | Gmail + Google Calendar over OAuth |
 | Cron | `croner` + `scheduled_jobs` table | Persistent job registry |
@@ -53,7 +53,7 @@ graph TB
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>15 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0110 on boot"]
+            Migrate["Migration runner<br/>0001–0112 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -105,13 +105,13 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0110_entity_tags_created_at
+│       │   ├── migrations/   0001_baseline → 0112_graphql_perf_indexes
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
 │       ├── graphql/          Apollo schema-first SDL + resolvers (Phase W, alongside routes/)
 │       ├── jobs/             Croner job definitions
-│       ├── services/         weekly-review · tags · notifications · tasks · blocks (tasks.ts + blocks.ts extracted so REST + GraphQL share one owner-scoped impl)
+│       ├── services/         tags · tasks · blocks · flight-plan · patterns · objectives · notifications · prefs · jobs · engine-ops · weekly-review (extracted so REST + GraphQL share one owner-scoped impl)
 │       ├── connectors/       Google OAuth 2.1 + Calendar/Gmail MCP bridge
 │       ├── agents/           ingest · groom · sync reconciler
 │       └── lib/              config · crypto · dates · tz · logger · ids
@@ -208,17 +208,19 @@ Two clocks drive the day:
 
 ---
 
-## 6a. GraphQL layer (Phase W — in progress)
+## 6a. GraphQL layer (Phase W — complete)
 
-Companion Planning exposes an **Apollo Server 5** GraphQL surface at `POST /api/graphql`, mounted via `@as-integrations/koa` **alongside** the REST API — REST remains authoritative and untouched. The schema is **schema-first** (hand-authored SDL) and follows CI-Server-compatible conventions: `Node` / Relay-style `Connection`/`Edge`/`PageInfo` pagination, and `DateTime` / `JSON` custom scalars. Introspection is on; a **custom complexity-limiter plugin** (not `graphql-query-complexity`) guards query cost, and `graphql` is pinned to 16.x. The whole surface sits under `requireAuth`, and the resolver context reads `currentOwnerId()` from the same `AsyncLocalStorage` the REST routes use. **Decision 3:** every resolver calls the existing `services/*.ts` functions — it never re-derives owner-scoping. A shared service layer (`services/tasks.ts` + `services/blocks.ts`, extracted alongside the pre-existing `services/tags.ts`) gives REST and GraphQL one owner-scoped implementation.
+Companion Planning exposes an **Apollo Server 5** GraphQL surface at `POST /api/graphql`, mounted via `@as-integrations/koa` **alongside** the REST API — REST remains authoritative and untouched. The schema is **schema-first** (hand-authored SDL) and follows CI-Server-compatible conventions: `Node` / Relay-style `Connection`/`Edge`/`PageInfo` pagination, and `DateTime` / `JSON` custom scalars. Introspection is on; a **custom complexity-limiter plugin** (not `graphql-query-complexity`) guards query cost, and `graphql` is pinned to 16.x. The whole surface sits under `requireAuth`, and the resolver context reads `currentOwnerId()` from the same `AsyncLocalStorage` the REST routes use. **Decision 3:** every resolver calls the existing `services/*.ts` functions — it never re-derives owner-scoping. A shared service layer (`services/tasks.ts`, `blocks.ts`, `flight-plan.ts`, `patterns.ts`, `objectives.ts`, `notifications.ts`, `prefs.ts`, `jobs.ts`, `engine-ops.ts`, alongside the pre-existing `services/tags.ts`) gives REST and GraphQL one owner-scoped implementation per resource area.
 
-Types live so far:
-- **TagType** (direction / intention / category hierarchy connections)
-- **TaskType**
-- **TimeBlockType**
-- **EntityTagType** (forward `Taggable.tags` on Task + TimeBlock)
+The full CRUD surface is now live (W1–W13 + W-sandbox + W-close):
+- **TagType** (direction / intention / category hierarchy connections + `entities` reverse edge)
+- **TaskType**, **TimeBlockType**, **EntityTagType** (forward `Taggable.tags` on Task + TimeBlock)
+- **FlightPlanEntryType**; **Pattern / PatternKind / PatternBlock / PatternPref**; **DayType / TagPref**
+- **Objective / Reflection / DayStars / DailyRecap** (unblocks `TaskType.objective`); **PossibleTask / BlockTemplate**
+- **Reminder / PushSubscription**; **SchedulingPrefs**; **ScheduledJob / JobRun** (admin-scope gated, system-global)
+- mutation-only **engine ops** (autoplan / find-slot / instruct / clear-planner)
 
-Remaining CRUD types (FlightPlanEntry, routine/pattern family, DayType/TagPref, life-planning, inbox, notifications, scheduling prefs, admin, mutation-only engine ops) and a self-hosted, flag-gated GraphiQL sandbox are queued — see [docs/W-graphql-crud.md](docs/W-graphql-crud.md).
+A self-hosted, flag-gated GraphiQL sandbox (`GET /api/graphql/sandbox`, `GRAPHQL_SANDBOX`, prod-off) ships too. Perf indexes for the tag keyset connections landed in migration 0112. See [docs/W-graphql-crud.md](docs/W-graphql-crud.md).
 
 ---
 
