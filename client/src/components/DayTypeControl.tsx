@@ -12,7 +12,7 @@ import { SchedulePatternEditor } from './SchedulePatternEditor.js';
  * The resolve fetch is keyed on the shared patternBlocks store signal so it refreshes
  * whenever a day-type mutation calls refetchPatternBlocks() (assign/clear/window-edit).
  */
-export function DayTypeControl(props: { date: string; trailing?: JSX.Element }) {
+export function DayTypeControl(props: { date: string; trailing?: JSX.Element; hideLabel?: boolean }) {
   const [resolved] = createResource(
     () => [props.date, patternBlocks()] as const,
     ([d]) => api.dayTypes.resolve(d),
@@ -35,8 +35,10 @@ export function DayTypeControl(props: { date: string; trailing?: JSX.Element }) 
   return (
     <div class="flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
-        <CalendarCog size={13} class="text-muted-foreground" />
-        <span class="text-[11px] uppercase tracking-wide text-muted-foreground">Day type</span>
+        <Show when={!props.hideLabel}>
+          <CalendarCog size={13} class="text-muted-foreground" />
+          <span class="text-[11px] uppercase tracking-wide text-muted-foreground">Day type</span>
+        </Show>
         <select
           class="input w-auto py-0.5 text-sm"
           value={isOverride() ? currentKey() : ''}
