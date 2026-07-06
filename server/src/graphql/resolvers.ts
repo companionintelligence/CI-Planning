@@ -8,6 +8,7 @@ import { patternResolvers } from './pattern-resolvers.js';
 import { patternBlockResolvers } from './pattern-block-resolvers.js';
 import { dayTypeResolvers } from './daytype-resolvers.js';
 import { objectiveResolvers } from './objective-resolvers.js';
+import { reflectionResolvers } from './reflection-resolvers.js';
 import { blockTemplateResolvers } from './block-template-resolvers.js';
 
 /**
@@ -30,6 +31,7 @@ export const resolvers = {
     ...patternBlockResolvers.Query,
     ...dayTypeResolvers.Query,
     ...objectiveResolvers.Query,
+    ...reflectionResolvers.Query,
     ...blockTemplateResolvers.Query,
   },
   Mutation: {
@@ -41,6 +43,7 @@ export const resolvers = {
     ...patternBlockResolvers.Mutation,
     ...dayTypeResolvers.Mutation,
     ...objectiveResolvers.Mutation,
+    ...reflectionResolvers.Mutation,
     ...blockTemplateResolvers.Mutation,
   },
   TagType: tagResolvers.TagType,
@@ -54,6 +57,7 @@ export const resolvers = {
   DayTypeType: dayTypeResolvers.DayTypeType,
   TagPrefType: dayTypeResolvers.TagPrefType,
   ObjectiveType: objectiveResolvers.ObjectiveType,
+  ReflectionType: reflectionResolvers.ReflectionType,
   BlockTemplateType: blockTemplateResolvers.BlockTemplateType,
   // W4b union: __resolveType for TagType.entities' Task ∪ TimeBlock members.
   TaggedEntity: tagResolvers.TaggedEntity,
