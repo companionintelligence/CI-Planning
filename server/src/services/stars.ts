@@ -27,7 +27,7 @@ export interface DailyRecapRow {
   objective: boolean | null;
   habits: boolean | null;
   tasks: boolean | null;
-  bonusStar: boolean | null;
+  bonus: boolean | null;
   note: boolean | null;
   total: number | null;
   frozenAt: string | null;
@@ -121,7 +121,7 @@ export function getDailyRecap(owner: string, date: string): DailyRecapRow | null
     objective: bool(row.star_objective),
     habits: bool(row.star_habits),
     tasks: bool(row.star_tasks),
-    bonusStar: bool(row.star_bonus),
+    bonus: bool(row.star_bonus),
     note: bool(row.star_note),
     total: row.total,
     frozenAt: row.frozen_at,

@@ -17,11 +17,11 @@ import {
  * serializes a real object, not a doubly-encoded string.
  */
 
-function requireISODate(date: string): string {
-  if (!isValidISODate(date)) {
-    throw new GraphQLError('date must be YYYY-MM-DD', { extensions: { code: 'BAD_USER_INPUT' } });
+function requireISODate(value: string, argName: string): string {
+  if (!isValidISODate(value)) {
+    throw new GraphQLError(`${argName} must be YYYY-MM-DD`, { extensions: { code: 'BAD_USER_INPUT' } });
   }
-  return date;
+  return value;
 }
 
 /** Parse a JSON-TEXT column into a JS value; null stays null, bad JSON becomes null. */
@@ -37,9 +37,9 @@ function parseJson(text: string | null): unknown {
 export const starsResolvers = {
   Query: {
     dayStars: (_p: unknown, args: { from: string; to: string }): DayStarsRow[] =>
-      listDayStars(currentOwnerId(), requireISODate(args.from), requireISODate(args.to)),
+      listDayStars(currentOwnerId(), requireISODate(args.from, 'from'), requireISODate(args.to, 'to')),
     dailyRecap: (_p: unknown, args: { date: string }): DailyRecapRow | null =>
-      getDailyRecap(currentOwnerId(), requireISODate(args.date)),
+      getDailyRecap(currentOwnerId(), requireISODate(args.date, 'date')),
   },
 
   DayStarsType: {
@@ -51,7 +51,6 @@ export const starsResolvers = {
     id: (r: DailyRecapRow) => r.date,
     stats: (r: DailyRecapRow) => parseJson(r.stats),
     focus: (r: DailyRecapRow) => parseJson(r.focus),
-    bonus: (r: DailyRecapRow) => r.bonusStar,
-    // date/prose/llm/inputsHash/objective/habits/tasks/note/total/frozenAt map by name.
+    // date/prose/llm/inputsHash/objective/habits/tasks/bonus/note/total/frozenAt map by name.
   },
 };
