@@ -25,9 +25,9 @@ describe('promote carries possible-task tags onto the task (linchpin)', () => {
       sqlite
         .prepare(
           `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id)
-           VALUES (uuid7(), 'Send invoice', 'gmail', 'm1', 0.9, 'pending', '${SYSTEM_OWNER}') RETURNING id`,
+           VALUES (uuid7(), 'Send invoice', 'gmail', 'm1', 0.9, 'pending', ?) RETURNING id`,
         )
-        .get() as { id: string }
+        .get(SYSTEM_OWNER) as { id: string }
     ).id;
     sqlite.prepare(`INSERT INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?), (?, ?)`).run(pid, work, pid, finance);
 
@@ -48,9 +48,9 @@ describe('promote carries possible-task tags onto the task (linchpin)', () => {
       sqlite
         .prepare(
           `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id)
-           VALUES (uuid7(), 'Untagged', 'text', 't1', 0.5, 'pending', '${SYSTEM_OWNER}') RETURNING id`,
+           VALUES (uuid7(), 'Untagged', 'text', 't1', 0.5, 'pending', ?) RETURNING id`,
         )
-        .get() as { id: string }
+        .get(SYSTEM_OWNER) as { id: string }
     ).id;
     const res = await api(srv.url, `/api/possible-tasks/${pid}/promote`, { method: 'POST', json: {} });
     expect(res.status).toBe(201);
