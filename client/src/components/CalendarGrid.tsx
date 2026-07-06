@@ -18,6 +18,7 @@ import {
 } from '../lib/day-axis.js';
 import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom } from '../stores/index.js';
 import { isAllDay, isTimed, isTaskBlock } from '../lib/overlay.js';
+import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
 import { localISODate, addDays } from '../lib/dates.js';
 
 // ── Palette (mirrors BlockCard's CI teal kinds) ───────────────────────────────
@@ -34,7 +35,6 @@ const kindColor: Record<string, string> = {
 // never altered, position math still uses the true minutes.
 const MIN_CHIP_PX = 18;
 
-const pad = (n: number) => String(n).padStart(2, '0');
 // A pointer move under this many px is treated as a click (open the add wizard).
 const CLICK_PX = 5;
 
@@ -370,12 +370,15 @@ export function CalendarGrid(props: Props) {
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointerup', onUp);
       if (Math.abs(ev.clientX - startX) >= CLICK_PX || Math.abs(ev.clientY - startY) >= CLICK_PX) return;
-      // Round the (possibly fractional) minute before the 15-min snap so we don't
-      // bias earlier, and cap at the last valid slot 23:45 — axisMinAt can return
-      // 1440 at the bottom edge, which would render as 24:00 and roll to the next day.
-      const mins = Math.round(axisMinAt(ev.clientY - rect.top, axisState(), PX_PER_MIN));
-      const snapped = Math.min(Math.floor(mins / 15) * 15, 1425);
-      props.onCreateAt!(day, `${pad(Math.floor(snapped / 60))}:${pad(snapped % 60)}`);
+      // snapToSlot rounds the (possibly fractional) minute before the 15-min snap
+      // so we don't bias earlier, and caps at the last valid slot 23:45 — axisMinAt
+      // can return 1440 at the bottom edge, which would roll to the next day.
+      const snapped = snapToSlot(axisMinAt(ev.clientY - rect.top, axisState(), PX_PER_MIN));
+      // AB3 open-window rule: a snapped time inside an ACTIVE block's span is a
+      // no-op — chips swallow their own pointerdown (tap-to-edit is untouched), so
+      // this catches the snap landing back inside a span from nearby empty space.
+      if (isSlotOccupied(props.blocksByDay()[day] ?? [], day, snapped)) return;
+      props.onCreateAt!(day, minuteToHHMM(snapped));
     };
     window.addEventListener('pointerup', onUp);
   }

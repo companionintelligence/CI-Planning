@@ -15,6 +15,7 @@ import {
 import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta } from '../lib/drag.js';
 import { resolveGroup, containerAt, clampGroupDelta } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
+import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
@@ -742,12 +743,39 @@ export function Planner() {
   let gridEl: HTMLDivElement | undefined;
   const gridY = (clientY: number) => (gridEl ? clientY - gridEl.getBoundingClientRect().top : 0);
 
-  // Grid Y (px) → snapped minute-of-day on the segmented axis, then → a span. Mirrors
-  // the calendar's guard: round the (possibly fractional) minAt result before the
-  // SNAP_MIN snap, and never yield 24:00 (cap at the last slot, 23:45).
+  // Grid Y (px) → snapped minute-of-day on the segmented axis, then → a span. The
+  // shared snapToSlot rounds the (possibly fractional) minAt result before the
+  // SNAP_MIN snap and never yields 24:00 (caps at the last slot, 23:45) — the same
+  // guard the calendar's click-to-create uses.
   function minuteAtGridY(clientY: number): number {
-    const mins = Math.round(axisMinAt(gridY(clientY), axisState(), PX_PER_MIN));
-    return Math.min(Math.floor(mins / SNAP_MIN) * SNAP_MIN, MINUTES_PER_DAY - SNAP_MIN);
+    return snapToSlot(axisMinAt(gridY(clientY), axisState(), PX_PER_MIN), SNAP_MIN);
+  }
+
+  // AB3 — click-to-create: the promise the empty-state hint has been making. A
+  // near-zero pointer move (< CLICK_PX, same threshold as the block gestures) on
+  // EMPTY grid space opens the Add wizard prefilled at the clicked, snapped time;
+  // the wizard's task path maps day+start onto scheduled_for/task_time, so Save
+  // lands directly on the planner as a scheduled task. Chips, containers, expander
+  // bars, and the entity card all swallow their own pointerdown, so only true empty
+  // space arms this; real drags (≥ CLICK_PX) and flight-plan drops (whose
+  // pointerdown starts off-grid) are untouched. Open-window rule (owner decision
+  // 3): a snapped time inside an ACTIVE block's span is a no-op — no stacking a
+  // new block onto an occupied slot. Update mode is exempt entirely: there a chip
+  // tap (which does NOT stop propagation) means "toggle done", not "add".
+  function clickToCreate(e: PointerEvent) {
+    if (updateMode()) return;
+    const startX = e.clientX, startY = e.clientY;
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointerup', onUp);
+      if (Math.abs(ev.clientX - startX) >= CLICK_PX || Math.abs(ev.clientY - startY) >= CLICK_PX) return;
+      const minute = minuteAtGridY(ev.clientY);
+      if (isSlotOccupied(dayBlocks(), day(), minute)) return;
+      setElementModal({
+        open: true, mode: 'add', kind: 'task',
+        prefill: { day: day(), start: minuteToHHMM(minute) },
+      });
+    };
+    window.addEventListener('pointerup', onUp);
   }
 
   // Create a Time Block at grid Y, optionally bound to a flight-plan task; attach it
@@ -939,7 +967,8 @@ export function Planner() {
             class="relative border-l border-border/60 transition-colors"
             classList={{ 'bg-primary/[0.04]': gridDrop.isOver() }}
             style={{ height: `${axisHeightPx(axisState(), PX_PER_MIN)}px` }}
-            title="Drop a flight-plan task to schedule it"
+            title="Click an empty slot to add · drop a flight-plan task to schedule it"
+            onPointerDown={clickToCreate}
             onPointerUp={gridDrop.handlers.onPointerUp}
           >
             <PatternBlockOverlay bands={axisBands} />

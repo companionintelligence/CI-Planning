@@ -1,9 +1,10 @@
 import { GraphQLError } from 'graphql';
 import { currentOwnerId } from '../lib/context.js';
+import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
 import { taskToApi } from '../lib/serialize.js';
 import { getTask } from '../services/tasks.js';
-import { autoScheduleOnIngest } from '../engine/autoplan.js';
+import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
 import {
   listPossibles,
   getPossible,
@@ -56,10 +57,17 @@ export const possibleTaskResolvers = {
         getTask(owner, res.taskId),
         getPossible(owner, args.input.id),
       ]);
-      // TM-5: best-effort — a placement hiccup must not fail the promote. Runs AFTER
-      // the broadcast (see module docstring) and after the response is computed, since
-      // it's fire-and-forget and mustn't affect what this mutation returns.
-      try { autoScheduleOnIngest(owner, { requireEstimate: true }); } catch { /* best-effort */ }
+      // Best-effort — a placement hiccup must not fail the promote. Runs AFTER the
+      // broadcast (see module docstring) and after the response is computed, since
+      // it's fire-and-forget and mustn't affect what this mutation returns. AB1
+      // (REST parity): a START-anchored task is placed at its stated day/time in ANY
+      // trust mode; a start-less one keeps the TM-5 trust-gated auto-block.
+      try {
+        if (res.task.scheduledFor) placeStartAnchoredTask(owner, res.taskId);
+        else autoScheduleOnIngest(owner, { requireEstimate: true });
+      } catch (err) {
+        logger.warn('promotePossibleTask: post-promote placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
+      }
       return { task: task ?? null, possibleTask: possible ?? null, success: true };
     },
 

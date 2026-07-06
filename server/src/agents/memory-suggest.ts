@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
+import { serverTimezone, localDateInTZ, utcToZonedWallTime } from '../lib/tz.js';
 import { logger } from '../lib/logger.js';
 import { generateJson, OllamaUnavailable } from '../mcp/ollama.js';
 import {
@@ -15,9 +16,15 @@ import type { ExtractedTask } from './extract.js';
 
 /**
  * Phase AA · AA1 — memory suggestion agent. Pulls the owner's next-48h CI-Server
- * memory graph (events + participants) and stages candidate prep tasks into the
+ * memory graph (events + participants) and stages candidate tasks into the
  * possible-task inbox via the existing `upsertPossible()` seam — the inbox, promote
  * route, trust dial, and auto-schedule path are all reused untouched.
+ *
+ * Phase AB · AB2 — suggestions MIRROR the event: title = the event name, start
+ * intent (proposed_scheduled_for/task_time) = the event start in the owner's
+ * timezone, estimate = the event duration (end−start when known, else 30m), and
+ * due_at = the event start as a deadline only. On promote the intent lands on the
+ * task and AB1 places its block at the event's exact time on its day.
  *
  * Drafting is deterministic templates first; an optional Ollama polish pass refines
  * titles/summaries but NEVER blocks: any polish failure (Ollama down, bad JSON)
@@ -51,6 +58,7 @@ export interface MemorySuggestResult {
 interface EventCandidate {
   node: MemoryNode;
   start: string; // ISO
+  end: string | null; // ISO — drives the mirrored duration estimate (AB2)
   people: string[];
 }
 
@@ -69,6 +77,15 @@ function pullEnabled(owner: string): boolean {
     .prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as { memory_pull_enabled?: number } | undefined;
   return !!row?.memory_pull_enabled;
+}
+
+/** First parseable event END timestamp on a node, or null (mirror of nodeStartTime). */
+function nodeEndTime(node: MemoryNode): string | null {
+  for (const k of ['end_time', 'endTime', 'end']) {
+    const v = node.properties[k];
+    if (typeof v === 'string' && !Number.isNaN(Date.parse(v))) return new Date(v).toISOString();
+  }
+  return null;
 }
 
 /** Upcoming event nodes in [from,to] with their linked person names. */
@@ -93,7 +110,7 @@ function eventCandidates(graph: MemoryGraph, from: string, to: string): EventCan
       const other = byId.get(otherId);
       if (other && other.entityType.toLowerCase() === 'person' && other.name) people.push(other.name);
     }
-    out.push({ node, start, people });
+    out.push({ node, start, end: nodeEndTime(node), people });
   }
   if (blankIdNames.length) {
     logger.warn('memory suggest: skipped event node(s) with a blank id', { names: blankIdNames });
@@ -102,21 +119,32 @@ function eventCandidates(graph: MemoryGraph, from: string, to: string): EventCan
   return out.sort((a, b) => a.start.localeCompare(b.start));
 }
 
-/** Deterministic template draft — always produced, with or without Ollama. */
-function templateTask(c: EventCandidate): ExtractedTask {
+/**
+ * Deterministic template draft — always produced, with or without Ollama.
+ *
+ * AB2 mirror framing: the suggestion IS the event (title = event name, start intent =
+ * the event's start in the owner's timezone, estimate = the event's duration), not a
+ * "Prep for X" satellite task. due_at = the event start too, but as a DEADLINE only —
+ * scheduled_for/task_time are what pick the block's day/time (AB1).
+ */
+function templateTask(c: EventCandidate, tz: string): ExtractedTask {
   const parts = [
     c.node.description ?? '',
     c.people.length ? `With ${c.people.join(', ')}` : '',
     `Starts ${c.start}`,
   ].filter(Boolean);
+  const durationMin = c.end ? Math.round((Date.parse(c.end) - Date.parse(c.start)) / 60_000) : 0;
   return {
-    title: `Prep for ${c.node.name}`.slice(0, 200),
+    title: c.node.name.slice(0, 200),
     summary: parts.join(' · ').slice(0, 500) || undefined,
     priority: 3,
     dueAt: c.start,
-    // Default prep-block estimate: without one, promote leaves the task estimate-less
-    // and the hands-off auto-schedule (requireEstimate) can never place it (TM-5).
-    estimatedMinutes: 30,
+    scheduledFor: localDateInTZ(c.start, tz),
+    taskTime: utcToZonedWallTime(c.start, tz),
+    // Event duration when the end is known; else the 30m default. Without an
+    // estimate, promote leaves the task estimate-less and the hands-off
+    // auto-schedule (requireEstimate) can never place a start-less item (TM-5).
+    estimatedMinutes: durationMin > 0 ? durationMin : 30,
     tags: [],
     confidence: 0.6,
   };
@@ -139,9 +167,10 @@ async function ollamaPolish(
     people: c.people,
     draftTitle: drafts.get(c.node.id)?.title ?? '',
   }));
-  const prompt = `You refine draft preparation tasks for upcoming calendar events in a personal planner.
-For each item, improve the task title (short imperative phrase, e.g. "Draft roadmap notes for planning review")
-and write a one-sentence summary. priority: 1=urgent .. 5=someday (default 3). confidence: 0..1.
+  const prompt = `You refine draft tasks that MIRROR upcoming calendar events in a personal planner.
+Each task represents attending the event itself (scheduled at the event's time), so the title must stay
+recognizably the event's name (you may lightly clarify it, but do NOT reframe it as a preparation task).
+For each item, write a one-sentence summary. priority: 1=urgent .. 5=someday (default 3). confidence: 0..1.
 
 Items:
 ${JSON.stringify(items)}
@@ -205,7 +234,13 @@ export async function suggestFromMemory(
   };
   if (candidates.length === 0) return result;
 
-  const drafts = new Map(candidates.map((c) => [c.node.id, templateTask(c)]));
+  // Owner timezone: the mirrored scheduled_for/task_time are the event start's
+  // wall-clock in the OWNER's zone (blocks store UTC; intent columns store local).
+  const tz =
+    (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)
+      ?.timezone || serverTimezone();
+
+  const drafts = new Map(candidates.map((c) => [c.node.id, templateTask(c, tz)]));
 
   // Optional polish — best-effort by contract. OllamaUnavailable is the expected
   // degrade; a parse/shape failure is equally non-fatal for a cosmetic pass.
@@ -249,7 +284,7 @@ export async function suggestFromMemory(
       result.skippedCap++;
       continue;
     }
-    const task = drafts.get(c.node.id) ?? templateTask(c);
+    const task = drafts.get(c.node.id) ?? templateTask(c, tz);
     const outcome = upsertPossible(task, MEMORY_SOURCE_KIND, ref, {
       node: c.node,
       participants: c.people,
