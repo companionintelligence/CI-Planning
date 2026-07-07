@@ -361,7 +361,7 @@ The `McpGoogleSession` owns the MCP child process and injects the per-account ac
 
 ## 10a. CI-Server memory connector (Phase AA)
 
-A **pull-first, read-only** integration with the CI-Server `companion-memory` graph, entirely behind the `memory_pull_enabled` flag (default off ⇒ byte-identical). Creds are per-owner in `connection_tokens` (`provider='ci_memory'`, KEK-sealed) — either a manually pasted key/bearer, or a **CI-Portal OAuth** grant (AA0b: OAuth 2.1 + PKCE with `offline_access`; the connector self-refreshes the bearer). `MEMORY_MODE=fixture` (default) reads a committed sample graph with no network; `MEMORY_MODE=live` calls the real graph API. Every transport/4xx/5xx failure surfaces as `MemoryUnavailable`, so all consumers degrade deterministically.
+A **pull-first** integration with the CI-Server `companion-memory` graph. Two independent flags, both default off (⇒ byte-identical): **`memory_pull_enabled`** gates the read-only pull (suggestions, brief, ordering, estimate), and **`memory_sync_enabled`** separately gates the one-way `push_memory` sync — push can run with pull off, and vice-versa. Creds are per-owner in `connection_tokens` (`provider='ci_memory'`, KEK-sealed) — either a manually pasted key/bearer, or a **CI-Portal OAuth** grant (AA0b: OAuth 2.1 + PKCE with `offline_access`; the connector self-refreshes the bearer). `MEMORY_MODE=fixture` (default) reads a committed sample graph with no network; `MEMORY_MODE=live` calls the real graph API. Every transport/4xx/5xx failure surfaces as `MemoryUnavailable`, so all consumers degrade deterministically.
 
 ```mermaid
 flowchart LR
@@ -470,7 +470,8 @@ On CI Hub, install from the marketplace — the Hub mounts `${APP_DATA_DIR}/data
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `GOOGLE_MODE` | `fixture` | `fixture` (offline) or `live` (real OAuth) |
 | `MEMORY_MODE` | `fixture` | CI-Server memory transport: `fixture` (offline sample graph) or `live` |
-| `CI_SERVER_URL` / `CI_SERVER_API_KEY` | (unset) | Single-tenant dev fallback creds for the memory connector (ignored under multi-tenant SSO — creds are per-owner in `connection_tokens`) |
+| `CI_SERVER_URL` | (unset) | CI-Server memory API base — the single-tenant fallback base, and required by the CI-Portal memory connect flow even under SSO |
+| `CI_SERVER_API_KEY` | (unset) | Shared fallback API key — **ignored under multi-tenant SSO** (per-owner creds come from `connection_tokens`) |
 | `CP_KEK_B64` | (unset) | 32-byte AES key for token sealing |
 | `CP_SYNC_WRITEBACK` | `false` | Push local blocks to Google Calendar |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset) | Web Push keys |
