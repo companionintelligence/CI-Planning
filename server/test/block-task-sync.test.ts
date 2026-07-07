@@ -195,6 +195,33 @@ describe('task → block sync (reverse, PATCH /api/tasks/:id)', () => {
     expect(Date.parse(b.end_at) - Date.parse(b.start_at)).toBe(90 * 60_000);
   });
 
+  it('clearing scheduled_for UNSCHEDULES the task — block removed AND status reverts to open', async () => {
+    const task = insertTask('Unschedule me', { est: 30, scheduledFor: '2026-06-22', taskTime: '14:00' });
+    sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ?`).run(task); // a placed task is scheduled
+    const block = insertBlock({ taskId: task, start: '2026-06-22T21:00:00.000Z', end: '2026-06-22T21:30:00.000Z' });
+
+    const r = await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { scheduled_for: null } });
+    expect(r.status).toBe(200);
+    expect(sqlite.prepare(`SELECT COUNT(*) c FROM time_blocks WHERE id = ?`).get(block)).toEqual({ c: 0 });
+    expect(taskRow(task).scheduled_for).toBeNull();
+    // Not stranded at 'scheduled' with no block — back in the open backlog.
+    expect(taskRow(task).status).toBe('open');
+    expect((r.body as { task: { status: string } }).task.status).toBe('open'); // response reflects the revert
+  });
+
+  it('a LOCKED placement block survives clearing scheduled_for (explicit pin outranks the clear)', async () => {
+    const task = insertTask('Locked placement', { scheduledFor: '2026-06-22', taskTime: '14:00' });
+    const block = (sqlite
+      .prepare(
+        `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, owner_id)
+         VALUES (uuid7(), ?, 'L', 'task', ?, ?, 1, 0, 'manual', 'planned', ?) RETURNING id`,
+      )
+      .get(task, '2026-06-22T21:00:00.000Z', '2026-06-22T21:30:00.000Z', OWNER) as { id: string }).id;
+
+    await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { scheduled_for: null } });
+    expect(sqlite.prepare(`SELECT COUNT(*) c FROM time_blocks WHERE id = ?`).get(block)).toEqual({ c: 1 });
+  });
+
   it('editing only the task time does NOT revert a manual block resize (#1)', async () => {
     // Estimate is 30, but the block was manually resized to a 60-min span.
     const task = insertTask('Manual resize', { est: 30 });

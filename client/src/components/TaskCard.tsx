@@ -1,10 +1,10 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds } from '../stores/index.js';
-import { directionColorForTask, colorVar } from '../lib/pattern-meta.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId } from '../stores/index.js';
+import { directionColorForTask, directionShapeForTask, colorVar } from '../lib/pattern-meta.js';
 import { textureStyle } from '../lib/textures.js';
-import { TaskStatusIcon } from './TaskStatusIcon.js';
+import { ShapeIcon } from './ShapeIcon.js';
 import { EightPointStar } from './EightPointStar.js';
 import { useNavigate } from '@solidjs/router';
 
@@ -50,7 +50,15 @@ function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
 // Compact inline date field: a calendar-icon BUTTON that opens the native date
 // picker, plus a clear (×) button to reset the date. Matches the Today/Settings
 // "pick a day" pattern but with an explicit trigger + reset.
-function DateField(props: { label: string; value?: string | null; overdue?: boolean; onSet: (v: string) => void }) {
+function DateField(props: {
+  label: string;
+  value?: string | null;
+  overdue?: boolean;
+  /** Highlight the Start date when the task is scheduled: 'accent' = placed;
+   *  'routine' = a scheduled routine member (a filled pill behind the date). */
+  highlight?: 'accent' | 'routine' | null;
+  onSet: (v: string) => void;
+}) {
   const ymd = () => (props.value ? props.value.slice(0, 10) : '');
   const display = () => {
     const v = ymd();
@@ -63,11 +71,24 @@ function DateField(props: { label: string; value?: string | null; overdue?: bool
     // showPicker() needs a user gesture (this click) and an in-DOM, non-hidden input.
     try { inputRef?.showPicker(); } catch { inputRef?.focus(); }
   };
+  const labelClass = () =>
+    props.overdue ? 'text-red-400'
+    : props.highlight ? 'text-primary font-medium'
+    : 'text-muted-foreground';
   return (
     <div class="relative flex items-center gap-1 text-[11px]">
-      <button type="button" class="flex items-center gap-1 hover:text-foreground" title={`Set ${props.label.toLowerCase()} date`} onClick={openPicker}>
-        <CalendarDays size={11} class="flex-shrink-0 text-muted-foreground" />
-        <span class={props.overdue ? 'text-red-400' : 'text-muted-foreground'}>{props.label} {display()}</span>
+      <button
+        type="button"
+        class="flex items-center gap-1 rounded hover:text-foreground"
+        classList={{
+          'px-1 -mx-1 bg-primary/10': props.highlight === 'accent',
+          'px-1.5 -mx-1 bg-primary/20 ring-1 ring-primary/40': props.highlight === 'routine',
+        }}
+        title={`Set ${props.label.toLowerCase()} date`}
+        onClick={openPicker}
+      >
+        <CalendarDays size={11} class={`flex-shrink-0 ${props.highlight ? 'text-primary' : 'text-muted-foreground'}`} />
+        <span class={labelClass()}>{props.label} {display()}</span>
       </button>
       <Show when={ymd()}>
         <button type="button" class="text-muted-foreground hover:text-red-400" title={`Clear ${props.label.toLowerCase()} date`} onClick={() => props.onSet('')}>
@@ -159,12 +180,14 @@ export function TaskCard(props: Props) {
   }
   async function setDue(v: string) {
     if (!confirm(v ? `Set the due date to ${v}?` : 'Clear the due date?')) return;
-    try { await api.tasks.update(props.task.id, { due_at: v || undefined }); refetchTasks(); }
+    // Send explicit null to CLEAR — undefined is dropped by JSON.stringify and no-ops server-side.
+    try { await api.tasks.update(props.task.id, { due_at: v || null }); refetchTasks(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   async function setStart(v: string) {
-    if (!confirm(v ? `Set the start date to ${v}?` : 'Clear the start date?')) return;
-    try { await api.tasks.update(props.task.id, { scheduled_for: v || undefined }); refetchTasks(); }
+    if (!confirm(v ? `Set the start date to ${v}?` : 'Clear the start date? This unschedules the task.')) return;
+    // Clearing the start intent unschedules the task server-side (its placement block is removed).
+    try { await api.tasks.update(props.task.id, { scheduled_for: v || null }); refetchTasks(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
 
@@ -203,14 +226,25 @@ export function TaskCard(props: Props) {
   const dueOverdue = () =>
     !!props.task.due_at && new Date(props.task.due_at) < new Date() && props.task.status !== 'done';
 
-  // T-TASKS-3: outline the card in its direction (pattern-tag) colour. Only when the
-  // task actually has a pattern-tag — undirected tasks keep the default border.
-  const dirColor = (): string | null => {
-    const defs = tags() ?? [];
-    const names = props.task.tags ?? [];
-    const hasDir = defs.some((t) => t.kind === 'direction' && names.includes(t.name));
-    return hasDir ? directionColorForTask(props.task, defs, patternPrefs()?.prefs ?? {}) : null;
-  };
+  // Direction of the task, defaulting to 'work' when it carries no direction tag (so the
+  // merged toggle icon + card accent always read as a direction). Resolved through the
+  // shared pure helpers: a real direction tag → its shape/colour; else the 'work' base.
+  const dirDefs = () => tags() ?? [];
+  const hasDirection = () =>
+    dirDefs().some((t) => t.kind === 'direction' && (props.task.tags ?? []).includes(t.name));
+  const dirTaskForIcon = (): { tags: string[] } => (hasDirection() ? { tags: props.task.tags ?? [] } : { tags: ['work'] });
+  const dirColor = (): string => directionColorForTask(dirTaskForIcon(), dirDefs(), patternPrefs()?.prefs ?? {});
+  const dirShape = (): string => directionShapeForTask(dirTaskForIcon(), dirDefs(), patternPrefs()?.prefs ?? {});
+
+  // "Scheduled" = a real placement on the planner (any engine) OR a persisted scheduled
+  // status — drives the accent behind the Start date (a stronger pill for routine members).
+  const isScheduled = () =>
+    !props.task.is_habit && (props.task.status === 'scheduled' || scheduledByTaskId().has(props.task.id));
+  const startHighlight = (): 'accent' | 'routine' | null =>
+    !isScheduled() ? null : isRoutineTask(props.task.id) ? 'routine' : 'accent';
+
+  // The Routine this task belongs to (name + type icon), for the label line under the title.
+  const routine = () => (isRoutineTask(props.task.id) ? patternForTask(props.task.id) : undefined);
 
   const est = () => props.task.estimated_minutes
     ? <span class="text-xs font-mono text-slate-600">{props.task.estimated_minutes}m</span>
@@ -235,7 +269,7 @@ export function TaskCard(props: Props) {
           // direction when the task has a pattern-tag, default border otherwise.
           'border-left-style': 'solid',
           'border-left-width': '3px',
-          'border-left-color': dirColor() ?? 'var(--border)',
+          'border-left-color': dirColor(),
         }}
       >
         {/* §C: Routine texture background — a low-contrast whisper behind the content
@@ -254,14 +288,15 @@ export function TaskCard(props: Props) {
           )}
         </Show>
 
-        {/* Left gutter: checkbox / habit-marker, with the 8-pointed objective star
-            stacked below it (§J — additive; the only indicator that a task is part of
-            a larger strategic plan). Actions live in the right rail. */}
+        {/* Left gutter: the merged direction-icon / done toggle — a SQUARE button showing
+            the task's direction shape; clicking it checks the task off (filled + check when
+            done). Habits keep the non-clickable Repeat marker (done on the planner). The
+            8-pointed objective star stacks below. Actions live in the right rail. */}
         <div class="flex flex-col items-center gap-1 flex-shrink-0">
           <Show
             when={!props.task.is_habit}
             fallback={
-              <span class="checkbox mt-0.5 flex items-center justify-center cursor-default opacity-60"
+              <span class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border border-border flex items-center justify-center cursor-default opacity-60"
                 title="Habit — mark occurrences done on the planner, not here">
                 <Repeat size={11} class="text-muted-foreground" />
               </span>
@@ -269,10 +304,18 @@ export function TaskCard(props: Props) {
           >
             <button
               onClick={toggleDone}
-              class={`checkbox mt-0.5 ${props.task.status === 'done' ? 'checkbox-checked' : ''}`}
+              class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border flex items-center justify-center transition-colors hover:border-primary"
+              classList={{ 'border-border': props.task.status !== 'done' }}
+              style={props.task.status === 'done'
+                ? { background: dirColor(), 'border-color': dirColor() }
+                : { 'border-color': dirColor() }}
               title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
+              aria-pressed={props.task.status === 'done'}
             >
-              <Show when={props.task.status === 'done'}>
+              <Show
+                when={props.task.status === 'done'}
+                fallback={<span class="inline-flex" style={{ color: dirColor() }}><ShapeIcon shape={dirShape()} size={12} strokeWidth={1.75} /></span>}
+              >
                 <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
                   <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -290,10 +333,10 @@ export function TaskCard(props: Props) {
           </Show>
         </div>
 
-        {/* Content (unchanged: dot, title, description, tags, streak) */}
+        {/* Content — title, routine label, description, tags, streak; all flush-left now
+            that the direction icon lives in the toggle (no leading status dot). */}
         <div class="flex-1 min-w-0">
           <div class="flex items-start gap-2">
-            <span class="mt-[3px] flex-shrink-0"><TaskStatusIcon task={props.task} /></span>
             <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
               {props.task.title}
             </span>
@@ -316,14 +359,26 @@ export function TaskCard(props: Props) {
             </Show>
           </div>
 
+          {/* Routine label — the routine's icon + name, between title and description. */}
+          <Show when={routine()}>
+            {(r) => (
+              <div class="flex items-center gap-1 mt-0.5 text-[11px] text-muted-foreground" title={`In the "${r().pattern.name}" routine`}>
+                <span class="inline-flex" style={{ color: colorVar(r().type?.color_token) }}>
+                  <ShapeIcon shape={r().type?.icon_shape ?? 'circle'} size={11} strokeWidth={1.75} />
+                </span>
+                <span class="truncate">{r().pattern.name}</span>
+              </div>
+            )}
+          </Show>
+
           <Show when={props.task.notes || props.task.description}>
-            <p class="text-xs text-slate-500 mt-1 ml-4 line-clamp-2">
+            <p class="text-xs text-slate-500 mt-1 line-clamp-2">
               {props.task.notes ?? props.task.description}
             </p>
           </Show>
 
           <Show when={props.task.tags.length > 0 || (props.task.secondary_tags?.length ?? 0) > 0}>
-            <div class="flex flex-wrap gap-1 mt-1.5 ml-4">
+            <div class="flex flex-wrap gap-1 mt-1.5">
               {/* Primary tags (level 1) — solid badge; includes the home/work/community direction. */}
               <For each={props.task.tags}>
                 {(t) => <span class="badge-neutral text-[11px]">#{t}</span>}
@@ -345,7 +400,7 @@ export function TaskCard(props: Props) {
           {/* Habit streak strip */}
           <Show when={props.task.is_habit && streak()}>
             {(s) => (
-              <div class="flex items-center gap-1.5 mt-1.5 ml-4">
+              <div class="flex items-center gap-1.5 mt-1.5">
                 <div class="flex gap-0.5">
                   <For each={s().recent}>
                     {(r) => (
@@ -408,7 +463,7 @@ export function TaskCard(props: Props) {
           </div>
           <PriorityToggle value={p()} onPick={setPriority} />
           <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
-          <DateField label="Start" value={props.task.scheduled_for} onSet={setStart} />
+          <DateField label="Start" value={props.task.scheduled_for} highlight={startHighlight()} onSet={setStart} />
         </div>
       </div>
 

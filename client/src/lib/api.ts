@@ -99,7 +99,18 @@ export const api = {
     suggestTags: (title: string) => request<{ tags: string[] }>('POST', '/tasks/suggest-tags', { title }),
     update: (
       id: string,
-      body: Partial<TaskInput & { status: string; completed: boolean; completed_at?: string | null }>,
+      // due_at / scheduled_for / task_time accept null so a "clear" sends an explicit
+      // null (JSON.stringify drops `undefined`, so undefined would no-op server-side).
+      body: Partial<
+        Omit<TaskInput, 'due_at' | 'scheduled_for' | 'task_time'> & {
+          status: string;
+          completed: boolean;
+          completed_at?: string | null;
+          due_at?: string | null;
+          scheduled_for?: string | null;
+          task_time?: string | null;
+        }
+      >,
       scope?: 'instance' | 'series',
     ) => request<{ task: Task }>('PATCH', `/tasks/${id}${scope === 'series' ? '?scope=series' : ''}`, body),
     delete: (id: string) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
