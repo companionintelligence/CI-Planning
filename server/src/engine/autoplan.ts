@@ -570,11 +570,21 @@ export function placeFlightPlan(
     // exactly (with its nearest-gap-on-conflict + idempotency). When the day came only
     // from due_at (no scheduled_for), that path would misfire (it reads scheduled_for),
     // so pin inline at (date, task_time) with the same exact-or-nearest-gap semantics.
+    // Count toward blocksCreated ONLY when a NEW block is made — both pin paths are
+    // idempotent and return placed=true when reusing the task's existing active block,
+    // which would otherwise inflate auto:placed.blocksCreated + recordRun bookkeeping.
+    const hadBlock = !!sqlite
+      .prepare(
+        `SELECT 1 FROM time_blocks
+          WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+            AND status NOT IN ('completed','skipped','cancelled','missed') LIMIT 1`,
+      )
+      .get(t.task_id, owner);
     const pinned =
       t.scheduled_for === date
         ? placeStartAnchoredTask(owner, t.task_id, { silent: true }).placed
         : pinTaskAt(owner, t, date, tz, prefs);
-    if (pinned) { placedIds.add(t.task_id); blocksCreated++; }
+    if (pinned) { placedIds.add(t.task_id); if (!hadBlock) blocksCreated++; }
   }
 
   // Pass 1 — fill each tagged Plan with its matching tasks. Tag-matched Plans run
