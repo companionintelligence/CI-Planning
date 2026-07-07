@@ -21,7 +21,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
-import { taskTagNames, inheritContainerDirection } from '../services/tags.js';
+import { taskTagNames, inheritContainerDirection, removeEntityTags } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
@@ -418,13 +418,18 @@ function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: str
 
   // No same-day and no locked block anywhere → only stale UNLOCKED blocks on other days
   // remain (if any). Delete them so honoring the stated day doesn't leave a duplicate.
-  sqlite
+  // CON-3 cascade: these are HARD-deleted, so clear their entity_tags rows too
+  // (entity_tags.entity_id has no FK — an orphan would break tag-integrity), mirroring
+  // review.ts's dropBlocks/rescheduleTask cleanup.
+  const stale = sqlite
     .prepare(
       `DELETE FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 0
-          AND status NOT IN ('completed','skipped','cancelled','missed')`,
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+        RETURNING id`,
     )
-    .run(taskId, owner);
+    .all(taskId, owner) as { id: string }[];
+  for (const b of stale) removeEntityTags('time_block', b.id);
   return null;
 }
 
