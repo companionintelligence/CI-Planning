@@ -12,7 +12,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('7'); // '7' (Phase Z W2): direction-axis revert (tag_patterns→tag_directions)
+    expect(body.version).toBe('8'); // '8' (G-CASCADEXPORT): +copy_history, external_events, outbound_queue
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {
@@ -198,6 +198,46 @@ describe('POST /api/import', () => {
     expect(link?.task_id).toBe(taskId);
     const refl = sqlite.prepare(`SELECT body FROM reflections WHERE period_key = '2026-06-22'`).get() as { body: string } | undefined;
     expect(refl?.body).toBe('Focus on export coverage');
+  });
+
+  it('restores copy_history, external_events, and outbound_queue on a round-trip (v8 / G-CASCADEXPORT)', async () => {
+    const { id: ownerId } = sqlite.prepare('SELECT id FROM owners LIMIT 1').get() as { id: string };
+    const blockId = (sqlite.prepare('SELECT uuid7() AS id').get() as { id: string }).id;
+    // A container time_block for the sync rows to hang off (outbound_queue.block_id is NOT NULL).
+    sqlite.prepare(
+      `INSERT INTO time_blocks (id, owner_id, title, block_kind, start_at, end_at)
+       VALUES (?, ?, 'blk', 'timeblock', '2026-06-22T10:00:00.000Z', '2026-06-22T11:00:00.000Z')`
+    ).run(blockId, ownerId);
+    sqlite.prepare(
+      `INSERT INTO copy_history (id, owner_id, surface, signature) VALUES (uuid7(), ?, 'brief', 'sig-xyz')`
+    ).run(ownerId);
+    sqlite.prepare(
+      `INSERT INTO external_events (id, owner_id, provider, account, external_id, block_id)
+       VALUES (uuid7(), ?, 'google', 'acct@ci.test', 'ext-1', ?)`
+    ).run(ownerId, blockId);
+    sqlite.prepare(
+      `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
+       VALUES (uuid7(), ?, ?, 'google', 'acct@ci.test')`
+    ).run(ownerId, blockId);
+
+    const exp = await (await fetch(`${srv.url}/api/export`)).json() as Record<string, unknown>;
+    expect((exp.copy_history as { signature: string }[]).some((r) => r.signature === 'sig-xyz')).toBe(true);
+    expect((exp.external_events as { external_id: string }[]).some((r) => r.external_id === 'ext-1')).toBe(true);
+    expect((exp.outbound_queue as { block_id: string }[]).some((r) => r.block_id === blockId)).toBe(true);
+
+    resetDb();
+    // Prove the wipe cleared them, so a surviving import isn't a false positive.
+    expect((sqlite.prepare('SELECT count(*) as n FROM copy_history').get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare('SELECT count(*) as n FROM external_events').get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare('SELECT count(*) as n FROM outbound_queue').get() as { n: number }).n).toBe(0);
+
+    const { status, body } = await api<{ imported: Record<string, number> }>(
+      srv.url, '/api/import', { method: 'POST', json: exp }
+    );
+    expect(status).toBe(200);
+    expect(body.imported.copy_history).toBe(1);
+    expect(body.imported.external_events).toBe(1);
+    expect(body.imported.outbound_queue).toBe(1);
   });
 
   it('rolls back entirely when a row violates a NOT NULL constraint', async () => {
