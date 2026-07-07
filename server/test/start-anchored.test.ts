@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { ALL_SCOPES, SYSTEM_OWNER, runWithOwner } from '../src/lib/context.js';
-import { localISODate } from '../src/lib/dates.js';
 import { placeStartAnchoredTask, fillFlightPlanCandidates } from '../src/engine/autoplan.js';
 import { upsertPossible } from '../src/agents/ingest.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
@@ -159,7 +158,10 @@ describe('placeStartAnchoredTask — no task_time (engine picks the time on THAT
 
 describe('fillFlightPlanCandidates — scheduled_for exclusion (AB1)', () => {
   it('future-scheduled tasks never leak into the fill; same-date tasks stage only while block-less', async () => {
-    const today = localISODate();
+    // The fill uses ownerToday(owner) = the OWNER's tz (UTC baseline in tests), so the
+    // "same-date" tasks must use the UTC day too — a server-local localISODate() flakes
+    // past UTC-midnight on a non-UTC runner (the tz-baseline gotcha). dPlus(0) = UTC today.
+    const today = dPlus(0);
     const future = await createTask({ title: 'Future-scheduled', scheduled_for: dPlus(3) });
     const todayNoBlock = await createTask({ title: 'Today, no block', scheduled_for: today });
     const todayWithBlock = await createTask({ title: 'Today, has block', scheduled_for: today });
