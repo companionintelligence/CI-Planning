@@ -8,6 +8,8 @@ import {
   effectiveBlock,
   overrides,
   clampLiveDelta,
+  isAltFreeDrag,
+  neighboursForDrag,
   HANDLE_PX,
   MIN_DURATION_MIN,
 } from './drag.js';
@@ -189,6 +191,41 @@ describe('clampLiveDelta — live preview clamp (unsnapped)', () => {
   it('is unconstrained with no neighbours', () => {
     const b = block();
     expect(clampLiveDelta(b, DAY, 'move', 42, [])).toBe(42);
+  });
+});
+
+describe('AD5 — Alt free-drag (clamp bypass)', () => {
+  it('isAltFreeDrag is true only for a move with Alt held', () => {
+    expect(isAltFreeDrag('move', true)).toBe(true);
+    expect(isAltFreeDrag('move', false)).toBe(false);
+    // Resize never free-drags, even with Alt.
+    expect(isAltFreeDrag('resize-top', true)).toBe(false);
+    expect(isAltFreeDrag('resize-bottom', true)).toBe(false);
+  });
+
+  it('neighboursForDrag drops the clamp set on an Alt move, keeps it otherwise', () => {
+    const n = [{ topMin: 660, botMin: 720 }];
+    expect(neighboursForDrag('move', true, n)).toEqual([]);   // free-drag → no walls
+    expect(neighboursForDrag('move', false, n)).toBe(n);      // normal → clamp
+    expect(neighboursForDrag('resize-bottom', true, n)).toBe(n); // resize keeps its clamp
+  });
+
+  it('an Alt move overlaps a neighbour (no clamp) — commits where released', () => {
+    const b = block(); // 540–600
+    const below = [{ topMin: 660, botMin: 720 }]; // 11:00–12:00
+    // Non-Alt: clamped flush at 660. Alt: free — lands right on top of the neighbour.
+    const clamped = resolveGesture(b, DAY, 'move', 120 * PX_PER_MIN, below)!;
+    expect(minutesIntoDay(clamped.start_at, DAY)).toBe(600); // clamped
+    const free = resolveGesture(b, DAY, 'move', 120 * PX_PER_MIN, neighboursForDrag('move', true, below))!;
+    expect(minutesIntoDay(free.start_at, DAY)).toBe(660);    // overlaps neighbour, unclamped
+    expect(minutesIntoDay(free.end_at, DAY)).toBe(720);
+  });
+
+  it('an Alt move still snaps to the grid (only the clamp is bypassed)', () => {
+    const b = block();
+    const r = resolveGesture(b, DAY, 'move', 7, neighboursForDrag('move', true, []))!; // ~8.75min
+    const delta = minutesIntoDay(r.start_at, DAY) - minutesIntoDay(b.start_at, DAY);
+    expect(delta % 15).toBe(0); // snapped, not raw
   });
 });
 

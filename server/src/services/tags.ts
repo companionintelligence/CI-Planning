@@ -186,6 +186,45 @@ export function entityTagLevels(kind: EntityKind, entityId: string): { name: str
   return selectLevels.all(kind, entityId) as { name: string; level: number }[];
 }
 
+// ── AD2 — container → task direction inheritance ─────────────────────────────
+const taskLevel1DirectionStmt = sqlite.prepare(
+  `SELECT 1 FROM entity_tags et JOIN tags tg ON tg.id = et.tag_id
+    WHERE et.entity_kind = 'task' AND et.entity_id = ? AND et.level = 1
+      AND tg.kind = 'direction' AND tg.owner_id = ? LIMIT 1`,
+);
+const findDirectionByNameStmt = sqlite.prepare(
+  `SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`,
+);
+
+/** True if the task already carries a level-1 direction tag (a user-set primary direction). */
+export function taskHasLevel1Direction(taskId: string, owner: string): boolean {
+  return !!taskLevel1DirectionStmt.get(taskId, owner);
+}
+
+/**
+ * AD2 — when a task lands in a direction-tagged container, inherit that direction as the
+ * task's level-1 primary UNLESS the task already has one (never override a user's choice).
+ * `containerTag` is the container's denormalized `time_blocks.tag` string (base
+ * work/home/community). Resolves it to the owner's direction tag row (kind='direction');
+ * no-op when the tag is empty, isn't a known direction, or the task already has a
+ * level-1 direction. Returns the applied direction NAME so the caller can mirror it onto
+ * the created task-block's `tag` column, or null when nothing was inherited.
+ */
+export function inheritContainerDirection(
+  taskId: string,
+  containerTag: string | null | undefined,
+  owner: string,
+): string | null {
+  if (!containerTag) return null;
+  const name = normalizeTagName(containerTag);
+  if (!name) return null;
+  if (taskHasLevel1Direction(taskId, owner)) return null;
+  const dir = findDirectionByNameStmt.get(owner, name) as { id: string } | undefined;
+  if (!dir) return null;
+  insertAssoc.run('task', taskId, dir.id, 1);
+  return name;
+}
+
 // ── GraphQL Taggable forward edge (Phase W · W4a) ─────────────────────────────
 // The full EntityTagType shape (id + name + application time) for ONE entity. Returns
 // ALL levels — the honest "every tag applied to this entity"; the level distinction is
