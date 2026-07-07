@@ -248,10 +248,12 @@ function reflectionEvents(owner: string, since: string): MemoryEvent[] {
  * Guards: off → 'disabled', connected-but-no-creds → 'unavailable', not connected →
  * 'not_connected'. Builds task_completed / habit_done / reflection events past the
  * `memory_last_synced_at` watermark (or the last {@link INITIAL_WINDOW_DAYS} on a first
- * sync), honoring the per-entity scope toggles. On a successful push it stamps
- * `memory_last_synced_at`; a {@link MemoryUnavailable} degrades to
- * `{ ok:false, reason:'unavailable' }` WITHOUT stamping, so the next run retries the
- * same window.
+ * sync), honoring the per-entity scope toggles. The next watermark is captured BEFORE
+ * the SELECT so an event that occurs during the push is re-selected next run rather than
+ * skipped (idempotent ingest makes the rare double-push harmless). On a successful push
+ * it stamps that instant into `memory_last_synced_at`; a {@link MemoryUnavailable}
+ * degrades to `{ ok:false, reason:'unavailable' }` WITHOUT stamping, so the next run
+ * retries the same window.
  */
 export async function syncToMemory(owner: string): Promise<SyncResult> {
   const p = prefs(owner);
@@ -259,6 +261,12 @@ export async function syncToMemory(owner: string): Promise<SyncResult> {
   if (!p.memory_account) return { ok: false, reason: 'not_connected' };
   if (!pushConnectorAvailable(owner)) return { ok: false, reason: 'unavailable' };
 
+  // Capture the next watermark BEFORE selecting events. Stamping a timestamp taken
+  // AFTER the SELECT+push would skip any row whose completed_at/updated_at fell between
+  // the SELECT and the stamp — permanent data loss. Anchoring the stamp to a pre-SELECT
+  // instant means such a row is < syncedAt and so is re-selected next run; a rare
+  // double-push is harmless (CI-Server ingest is idempotent on source_id). No skips.
+  const syncedAt = new Date().toISOString();
   const since = p.memory_last_synced_at ?? new Date(Date.now() - INITIAL_WINDOW_DAYS * 86_400_000).toISOString();
   const wantHabits = !!p.memory_sync_habits;
 
@@ -281,7 +289,8 @@ export async function syncToMemory(owner: string): Promise<SyncResult> {
     throw err;
   }
 
-  const syncedAt = new Date().toISOString();
+  // Stamp the pre-SELECT instant (see above) — never a fresh "now" that could leapfrog
+  // events that occurred during the push.
   sqlite.prepare(`UPDATE scheduling_prefs SET memory_last_synced_at = ? WHERE owner_id = ?`).run(syncedAt, owner);
   const counts: SyncCounts = {
     completed: completed.length,
