@@ -274,23 +274,26 @@ describe('DST-correct day slab (clearPriorAuto)', () => {
   // 2026-11-02T05:00:00Z, which covers it. See tz.utcDayBounds.
   const DST_DAY = '2026-11-01';
 
-  it('clears a prior auto block in the shifted last hour of a fall-back local day', () => {
+  it("clears a re-placed task's prior block in the shifted last hour of a fall-back local day", () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/New_York' WHERE owner_id = ?`).run(OWNER);
-    // Stale agent auto block at local 23:00–23:30 on the fall-back day.
+    // The clear is scoped to the tasks a run re-places (AE reflow-correctness), so the
+    // stale block belongs to a STAGED task — the DST assertion is unchanged: the
+    // DST-correct utcDayBounds slab must still catch a block in the 25h day's last hour.
+    const t = insertTask('Stale-hour task', 30);
     sqlite
       .prepare(
         `INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at, is_auto, is_locked, source_kind, status, owner_id)
-         VALUES (uuid7(), NULL, 'Stale auto', 'task', ?, ?, 1, 0, 'agent', 'planned', ?)`,
+         VALUES (uuid7(), ?, 'Stale auto', 'task', ?, ?, 1, 0, 'agent', 'planned', ?)`,
       )
-      .run('2026-11-02T04:00:00.000Z', '2026-11-02T04:30:00.000Z', OWNER);
+      .run(t, '2026-11-02T04:00:00.000Z', '2026-11-02T04:30:00.000Z', OWNER);
+    stage(t);
 
-    // Empty flight plan → placeFlightPlan does nothing but run clearPriorAuto for the day.
     placeFlightPlan(OWNER, { date: DST_DAY });
 
-    const survivors = sqlite
-      .prepare(`SELECT title FROM time_blocks WHERE source_kind = 'agent'`)
-      .all() as { title: string }[];
-    expect(survivors.some((b) => b.title === 'Stale auto')).toBe(false); // cleared by the DST-correct slab
+    const stale = sqlite
+      .prepare(`SELECT 1 FROM time_blocks WHERE title = 'Stale auto' AND start_at = '2026-11-02T04:00:00.000Z'`)
+      .get();
+    expect(stale, 'cleared by the DST-correct slab').toBeUndefined();
   });
 });
 
@@ -306,9 +309,9 @@ describe('idempotent re-place', () => {
       .run(at('16:00'), at('16:30'), OWNER);
 
     placeFlightPlan(OWNER, { date: DAY }); // first run: places 'Coding', removes it from flight plan (item 5)
-    placeFlightPlan(OWNER, { date: DAY }); // second run: clearPriorAuto removes the prior block; not re-placed (de-staged)
+    placeFlightPlan(OWNER, { date: DAY }); // second run: 'Coding' is de-staged → NOT in the clear scope → survives
     const titles = (sqlite.prepare(`SELECT title FROM time_blocks WHERE block_kind = 'task'`).all() as { title: string }[]).map((t) => t.title);
-    expect(titles.filter((t) => t === 'Coding').length).toBe(0); // cleared on second run; never duplicated
+    expect(titles.filter((t) => t === 'Coding').length).toBe(1); // survives the re-run; never duplicated (AE)
     expect(titles).toContain('Routine task'); // pattern survived
     expect(titles).toContain('Manual');       // manual survived
     expect(plan.id).toBeTruthy();
