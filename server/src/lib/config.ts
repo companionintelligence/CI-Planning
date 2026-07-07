@@ -98,6 +98,8 @@ export interface CiPortalConfig {
   clientId?: string;      // our registered client id at CI-Portal (public PKCE)
   clientSecret?: string;  // only if CI-Portal registers us as a confidential client
   redirectUri: string;
+  /** AA0b — the memory connector's OAuth callback (offline_access refresh flow). */
+  memoryRedirectUri: string;
   scopes: string;
   // Optional endpoint overrides — normally left unset (discovered). Set to bypass
   // discovery (air-gapped deploys, or a provider without a discovery document).
@@ -212,6 +214,11 @@ export const config: Config = {
     clientId: process.env.CIPORTAL_CLIENT_ID, // must be registered with CI-Portal; no default
     clientSecret: process.env.CIPORTAL_CLIENT_SECRET,
     redirectUri: process.env.CIPORTAL_REDIRECT_URI ?? `${publicBaseUrl}/api/auth/ciportal/callback`,
+    // AA0b — the memory connector's OWN callback (distinct from the login redirect;
+    // both must be registered with CI-Portal). The connector flow requests
+    // `offline_access` so it gets a refresh token to self-refresh its CI-Server bearer.
+    memoryRedirectUri:
+      process.env.CIPORTAL_MEMORY_REDIRECT_URI ?? `${publicBaseUrl}/api/memory/ciportal/callback`,
     scopes: process.env.CIPORTAL_SCOPES ?? 'openid profile email',
     // Optional overrides — normally discovered from the issuer.
     authorizeUri: process.env.CIPORTAL_AUTHORIZE_URI,

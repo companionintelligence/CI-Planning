@@ -85,7 +85,7 @@ describe('creds resolution chain', () => {
   it('falls back to env (CI_SERVER_URL / CI_SERVER_API_KEY)', () => {
     process.env.CI_SERVER_URL = 'http://ci.local:3000';
     process.env.CI_SERVER_API_KEY = 'env-key';
-    expect(memoryCreds(OWNER)).toEqual({ url: 'http://ci.local:3000', apiKey: 'env-key', source: 'env' });
+    expect(memoryCreds(OWNER)).toEqual({ url: 'http://ci.local:3000', apiKey: 'env-key', source: 'env', authKind: null });
     expect(memoryConnectorAvailable(OWNER)).toBe(true);
   });
 
@@ -276,7 +276,7 @@ describe('routes', () => {
   it('GET /api/memory/status reflects real (un)availability + source', async () => {
     const off = await api(srv.url, '/api/memory/status');
     expect(off.status).toBe(200);
-    expect(off.body.pull).toEqual({ enabled: false, available: false, source: null, host: null });
+    expect(off.body.pull).toEqual({ enabled: false, available: false, source: null, authKind: null, host: null });
     expect(off.body.available).toBe(false);
 
     process.env.CI_SERVER_URL = 'http://ci.local:3000';
