@@ -106,7 +106,22 @@ export function tasksRouter() {
       if (res.error === 'title_required') { ctx.status = 400; ctx.body = { error: 'title is required' }; return; }
       ctx.status = 409; ctx.body = { error: 'dependency cycle', detail: res.detail }; return;
     }
-    const task = res.task;
+    let task = res.task;
+
+    // AB1: opt-in `auto_place: true` → start-anchored placement (any trust mode).
+    // Default false — the wizard client creates its own block explicitly, so an
+    // unconditional hook here would double-place; the flag is for API/agent callers.
+    // Runs BEFORE the payload is built: placement flips status open → scheduled (R2
+    // parity), and the response/broadcast must carry the post-placement row.
+    let placement: StartAnchoredOutcome | undefined;
+    if (body.auto_place === true && task.scheduledFor) {
+      try {
+        placement = placeStartAnchoredTask(owner, task.id);
+        if (placement.placed) [task] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+      } catch (err) {
+        logger.warn('auto_place: start-anchored placement failed', { owner, taskId: task.id, err: (err as Error).message });
+      }
+    }
 
     const out = {
       ...taskToApi(task),
@@ -116,17 +131,6 @@ export function tasksRouter() {
       blocked: blockedTaskIds().has(task.id),
     };
     broadcast(owner, 'task:created', out);
-    // AB1: opt-in `auto_place: true` → start-anchored placement (any trust mode).
-    // Default false — the wizard client creates its own block explicitly, so an
-    // unconditional hook here would double-place; the flag is for API/agent callers.
-    let placement: StartAnchoredOutcome | undefined;
-    if (body.auto_place === true && task.scheduledFor) {
-      try {
-        placement = placeStartAnchoredTask(owner, task.id);
-      } catch (err) {
-        logger.warn('auto_place: start-anchored placement failed', { owner, taskId: task.id, err: (err as Error).message });
-      }
-    }
     requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
     ctx.status = 201;
     ctx.body = { task: out, ...(placement ? { placement } : {}) };
@@ -151,7 +155,7 @@ export function tasksRouter() {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
     }
 
-    const [task] = await db
+    let [task] = await db
       .insert(tasks)
       .values({
         title: enriched.title,
@@ -174,7 +178,10 @@ export function tasksRouter() {
     // the quick-add itself (the task is already created).
     if (task.scheduledFor) {
       try {
-        placeStartAnchoredTask(currentOwnerId(), task.id);
+        const placed = placeStartAnchoredTask(currentOwnerId(), task.id);
+        // Placement flips status open → scheduled (R2 parity) — re-read so the
+        // response/broadcast carry the post-placement row.
+        if (placed.placed) [task] = await db.select().from(tasks).where(eq(tasks.id, task.id));
       } catch (err) {
         logger.warn('quick-add: start-anchored placement failed', { owner: currentOwnerId(), taskId: task.id, err: (err as Error).message });
       }
