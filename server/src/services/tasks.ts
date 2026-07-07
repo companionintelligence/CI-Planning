@@ -6,7 +6,7 @@ import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone, type GenerateResult } from '../engine/recurrence-generate.js';
 import { skipInstance, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
-import { syncBlockFromTask } from './block-task-sync.js';
+import { syncBlockFromTask, clearTaskPlacement } from './block-task-sync.js';
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
 import { ensureHabitPattern } from './patterns.js';
 import { entityTagLevels, syncLeveledEntityTags } from './tags.js';
@@ -283,6 +283,9 @@ export type UpdateTaskResult =
       updatedFields: string[];
       /** Block moved by the reverse task→block sync (REQ2), for the caller's block:updated. */
       syncedBlockId: string | null;
+      /** True when clearing `scheduled_for` removed the task's placement block(s) — the
+       *  caller broadcasts block:updated so the Planner drops the now-unscheduled task. */
+      unscheduled: boolean;
       /** Present when a series edit re-materialized instances (recurrence:generated). */
       generated?: GenerateResult;
     }
@@ -391,8 +394,14 @@ export async function updateTask(
   // REQ2 (reverse sync): editing a task's time/day/estimate moves its placed block in
   // lockstep. Instance scope only — a series edit re-materializes instances below.
   const estimateChanged = input.estimated_minutes !== undefined || input.estimatedMinutes !== undefined;
+  // Clearing the start intent (scheduled_for → null/empty) UNSCHEDULES the task: its
+  // placement block(s) are removed so it leaves the Planner and returns to the backlog.
+  const clearingStart = input.scheduled_for !== undefined && !input.scheduled_for;
   let syncedBlockId: string | null = null;
-  if (
+  let unscheduled = false;
+  if (scope === 'instance' && clearingStart) {
+    unscheduled = clearTaskPlacement(targetId, ownerId) > 0;
+  } else if (
     scope === 'instance' &&
     (input.scheduled_for !== undefined || input.task_time !== undefined || estimateChanged)
   ) {
@@ -427,7 +436,7 @@ export async function updateTask(
   // (the route stamped after the service returned; audit already fired inside the service).
   if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
 
-  return { ok: true, task, targetId, updatedFields, syncedBlockId, generated };
+  return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, generated };
 }
 
 export type DeleteTaskResult = { ok: true; task: TaskRow } | { ok: false; error: 'not_found' };

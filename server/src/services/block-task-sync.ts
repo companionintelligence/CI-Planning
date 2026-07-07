@@ -198,3 +198,18 @@ export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resiz
     .run(newStart, newEnd, block.id, ownerId);
   return block.id;
 }
+
+/**
+ * Unschedule a task: drop its (non-locked) placed task-blocks. Called when a task's
+ * start intent (`scheduled_for`) is CLEARED — the task returns to the backlog and leaves
+ * the Planner. Locked blocks are preserved (an explicit user pin outranks the clear).
+ * Returns the number of blocks removed (0 = nothing was placed / all locked).
+ */
+export function clearTaskPlacement(taskId: string, ownerId: string): number {
+  return sqlite
+    .prepare(
+      `DELETE FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 0`,
+    )
+    .run(taskId, ownerId).changes;
+}
