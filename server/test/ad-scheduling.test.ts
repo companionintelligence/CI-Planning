@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { localISODate } from '../src/lib/dates.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
 import { placeTasksInBlock } from '../src/engine/blocks-place.js';
 import { resetDb, startTestServer, type TestServer } from './helpers.js';
@@ -74,7 +73,7 @@ function insertContainer(startISO: string, endISO: string, tag: string | null): 
 describe('AD1 — flight-plan pins a task_time task while packing a time-less one', () => {
   it('pins the timed task at its exact time; the time-less task packs elsewhere without overlap', () => {
 
-      const day = localISODate();
+      const day = new Date().toISOString().slice(0, 10); // UTC day — owner-tz=UTC baseline; avoids the near-midnight flake
       const timed = insertTask('Meet client', { est: 60, scheduledFor: day, taskTime: '14:00' });
       const flexible = insertTask('Deep work', { est: 60 }); // no time, no scheduled day → workday fill
       stage(timed);
@@ -99,7 +98,7 @@ describe('AD1 — flight-plan pins a task_time task while packing a time-less on
 
   it('a timed task whose day ≠ placement date is NOT pinned on this day (packs normally, no pin block)', () => {
 
-      const day = localISODate();
+      const day = new Date().toISOString().slice(0, 10); // UTC day — owner-tz=UTC baseline; avoids the near-midnight flake
       const other = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
       const timedOtherDay = insertTask('Future meeting', { est: 60, scheduledFor: other, taskTime: '14:00' });
       stage(timedOtherDay);
