@@ -24,8 +24,6 @@
  *   • No past-due / equal-priority misordering (a past-due task should appear
  *     before a future-due same-priority task).
  */
-import type { InferSelectModel } from 'drizzle-orm';
-import { tasks, schedulingPrefs } from '../db/schema.js';
 import { sqlite } from '../db/index.js';
 import { generateJson, isAvailable } from '../mcp/ollama.js';
 import { taskTagNames } from '../services/tags.js';
@@ -36,9 +34,6 @@ import { writeAudit } from '../lib/audit.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-
-type Task = InferSelectModel<typeof tasks>;
-type Prefs = InferSelectModel<typeof schedulingPrefs>;
 
 /** A staged task as seen by the authoring loop. Exported for tests. */
 export interface PlanTask {
@@ -731,46 +726,3 @@ export async function parseInstruction(owner: string, date: string, text: string
   return validateInstruction(raw, date, tz, tagSet);
 }
 
-// ─── Legacy (kept for runScheduler / plan.test.ts; do not add new callers) ───
-
-/**
- * @deprecated Wired into the legacy runScheduler engine (not the user-driven
- * placeFlightPlan path). Use authorPlanOrder instead.  Kept so plan.test.ts
- * and any callers on the scheduler.ts path continue to compile without change.
- */
-export async function orderForToday(ranked: Task[], prefs: Prefs): Promise<Task[]> {
-  if ((prefs.planningMode !== 'smart' && prefs.trustMode !== 'hands_off') || ranked.length < 2) return ranked;
-  if (!(await isAvailable())) return ranked;
-
-  try {
-    const lines = ranked
-      .map(
-        (t, i) =>
-          `${i}: [P${t.priority ?? 3}] ${t.title}` +
-          `${t.dueAt ? ` (due ${t.dueAt.slice(0, 10)})` : ''} ~${t.estimatedMinutes ?? 30}m`,
-      )
-      .join('\n');
-
-    const prompt =
-      `You are planning today's work. Order these tasks from most to least important ` +
-      `to do today, weighing deadlines, priority (P1 is highest), and momentum. ` +
-      `Reply with ONLY a JSON array of the item numbers in your chosen order, e.g. [3,0,1,2].\n\n${lines}`;
-
-    const idx = await generateJson<number[]>(prompt, { tier: 'small', temperature: 0.2, timeoutMs: 20_000 });
-    if (!Array.isArray(idx)) return ranked;
-
-    const seen = new Set<number>();
-    const out: Task[] = [];
-    for (const i of idx) {
-      if (Number.isInteger(i) && i >= 0 && i < ranked.length && !seen.has(i)) {
-        seen.add(i);
-        out.push(ranked[i]);
-      }
-    }
-    for (let i = 0; i < ranked.length; i++) if (!seen.has(i)) out.push(ranked[i]);
-    return out.length === ranked.length ? out : ranked;
-  } catch (err) {
-    logger.warn('plan.orderForToday: falling back to deterministic order', { err: (err as Error).message });
-    return ranked;
-  }
-}
