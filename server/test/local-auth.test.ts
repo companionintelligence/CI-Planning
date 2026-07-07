@@ -4,6 +4,7 @@ import { config } from '../src/lib/config.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 import { provisionOwner } from '../src/lib/owners.js';
+import { getPatternBlocks } from '../src/services/pattern-blocks.js';
 import { hashPassword, findOwnerByUsername, localOwnerCount, verifyLoginPassword } from '../src/lib/auth/password.js';
 import { ensureLocalAuthBootstrap } from '../src/lib/auth/localBootstrap.js';
 import { __resetAuthRateLimit } from '../src/routes/auth.js';
@@ -215,6 +216,35 @@ describe('U2 — logout is inert outside local mode (no unauthenticated 500)', (
     } finally {
       await s.close();
       Object.assign(config.auth, saved);
+    }
+  });
+});
+
+describe('G-BASETAG — provisionOwner seeds default availability windows', () => {
+  it('gives a new owner the same pattern_blocks owner #1 got from 0037', () => {
+    const ownerId = provisionOwner({ name: 'Windowed', username: 'windowed', passwordHash: 'x' });
+
+    // 5 workday + 3 weekend = 8 rows (home wk 2 + work 1 + community 2; home we 1 + work 1 + community 1).
+    const byDayType = sqlite
+      .prepare(`SELECT day_type, COUNT(*) AS n FROM pattern_blocks WHERE owner_id = ? GROUP BY day_type`)
+      .all(ownerId) as { day_type: string; n: number }[];
+    const counts = Object.fromEntries(byDayType.map((r) => [r.day_type, r.n]));
+    expect(counts).toEqual({ workday: 5, weekend: 3 });
+
+    // Auto's direction-window pass reads these; both day types must be non-empty.
+    const workday = getPatternBlocks(ownerId, 'workday');
+    const weekend = getPatternBlocks(ownerId, 'weekend');
+    expect(Object.keys(workday).length).toBeGreaterThan(0);
+    expect(Object.keys(weekend).length).toBeGreaterThan(0);
+
+    // Windows key on THIS owner's own direction tags (no cross-owner leakage).
+    const ownDirIds = new Set(
+      (sqlite
+        .prepare(`SELECT id FROM tags WHERE owner_id = ? AND kind = 'direction'`)
+        .all(ownerId) as { id: string }[]).map((r) => r.id),
+    );
+    for (const dirTagId of [...Object.keys(workday), ...Object.keys(weekend)]) {
+      expect(ownDirIds.has(dirTagId)).toBe(true);
     }
   });
 });
