@@ -361,10 +361,11 @@ export function memoryRouter() {
     ctx.body = r;
   });
 
-  // POST /api/memory/sync — trigger a one-way push now. Stubbed until AA4 lands:
-  // returns 503 'unavailable' (sync off → 400, not connected → 400).
+  // POST /api/memory/sync — trigger a one-way push now (AA4). On success returns the
+  // per-scope + ingest counts; sync off → 400, not connected → 400, connector/creds
+  // unreachable → 503 'unavailable'.
   router.post('/api/memory/sync', async (ctx) => {
-    const r = syncToMemory(currentOwnerId());
+    const r = await syncToMemory(currentOwnerId());
     if (!r.ok) {
       ctx.status = r.reason === 'unavailable' ? 503 : 400;
       ctx.body = {
@@ -374,7 +375,7 @@ export function memoryRouter() {
             ? 'Memory sync is turned off'
             : r.reason === 'not_connected'
               ? 'Connect Companion Memory first'
-              : 'Companion Memory push arrives with AA4 — not available yet',
+              : 'Companion Memory is not reachable — connect it in Settings',
       };
       return;
     }
