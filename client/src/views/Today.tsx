@@ -1,6 +1,7 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
-import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap } from 'lucide-solid';
-import { blocks, tasks, taskOf, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
+import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter } from 'lucide-solid';
+import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
+import { dueFilter, dueFilterActive, toggleDirection, setHideHabits, setHideRoutines, passesDueFilter } from '../lib/due-filter.js';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
@@ -332,7 +333,15 @@ export function Today() {
  * reuse the bucket-list row styling and open the task editor the same way.
  */
 function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
-  const items = createMemo(() => dueItems(tasks() ?? [], props.date));
+  // The day's dues + overdue rollup, then narrowed by the persisted filter
+  // (direction include-set · hide habits · hide routines — habits & routines
+  // hidden by default). Both lists share one predicate so they stay consistent.
+  const items = createMemo(() => {
+    const raw = dueItems(tasks() ?? [], props.date);
+    const f = dueFilter();
+    const keep = (t: Task) => passesDueFilter(t, isRoutineTask(t.id), f);
+    return { overdue: raw.overdue.filter(keep), dueToday: raw.dueToday.filter(keep) };
+  });
   const [showOverdue, setShowOverdue] = createSignal(false);
   const [expanded, setExpanded] = createSignal(true); // AC — the whole due list is collapsible
   const fmtTime = (iso: string) =>
@@ -377,23 +386,27 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
             <ChevronUp size={12} class="text-muted-foreground" />
           </Show>
         </button>
-        {/* Overdue rollup toggle — the optional filter; hidden when there's no debt. */}
-        <Show when={items().overdue.length > 0}>
-          <button
-            type="button"
-            aria-expanded={showOverdue()}
-            onClick={() => setShowOverdue((v) => !v)}
-            class="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs transition-colors hover:border-destructive"
-            title={showOverdue() ? 'Hide overdue tasks' : 'Show overdue tasks'}
-          >
-            <AlertCircle size={12} class="text-destructive" />
-            <span class="tabular-nums font-semibold text-destructive">{items().overdue.length}</span>
-            <span class="text-muted-foreground">overdue</span>
-            <Show when={showOverdue()} fallback={<ChevronDown size={12} class="text-muted-foreground" />}>
-              <ChevronUp size={12} class="text-muted-foreground" />
-            </Show>
-          </button>
-        </Show>
+        <div class="flex items-center gap-1.5">
+          {/* Overdue rollup toggle — the optional filter; hidden when there's no debt. */}
+          <Show when={items().overdue.length > 0}>
+            <button
+              type="button"
+              aria-expanded={showOverdue()}
+              onClick={() => setShowOverdue((v) => !v)}
+              class="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs transition-colors hover:border-destructive"
+              title={showOverdue() ? 'Hide overdue tasks' : 'Show overdue tasks'}
+            >
+              <AlertCircle size={12} class="text-destructive" />
+              <span class="tabular-nums font-semibold text-destructive">{items().overdue.length}</span>
+              <span class="text-muted-foreground">overdue</span>
+              <Show when={showOverdue()} fallback={<ChevronDown size={12} class="text-muted-foreground" />}>
+                <ChevronUp size={12} class="text-muted-foreground" />
+              </Show>
+            </button>
+          </Show>
+          {/* Multi-select filter menu — direction · hide habits · hide routines. */}
+          <DueFilterMenu />
+        </div>
       </div>
 
       {/* Body — collapsible (AC). Overdue rollup (optional filter) then the day's dues. */}
@@ -418,6 +431,85 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
             </For>
           </ul>
         </Show>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * The Due card's multi-select filter dropdown. Five options — the three direction
+ * tags (INCLUDE filter) plus "Hide habits" / "Hide routines" (on by default). The
+ * menu stays open while toggling (each option filters the list in real time via the
+ * persisted `dueFilter` signal) and closes only on a click-away. Selections persist
+ * across reloads (localStorage), so the last settings stay active until changed again.
+ */
+function DueFilterMenu() {
+  const [open, setOpen] = createSignal(false);
+  const directionTags = createMemo(() => (tags() ?? []).filter((t) => t.kind === 'direction'));
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+  return (
+    <div class="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open()}
+        class="btn-icon"
+        classList={{ 'text-primary': dueFilterActive(dueFilter()), 'text-muted-foreground': !dueFilterActive(dueFilter()) }}
+        title="Filter due list"
+      >
+        <ListFilter size={15} />
+      </button>
+      <Show when={open()}>
+        {/* click-away backdrop — the only thing that closes the menu. z-40/z-50 sit
+            ABOVE the Planner's internal grid layers (which reach z-30 in this same
+            root stacking context), so the menu is never obscured by the calendar. */}
+        <div class="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+        <div class="absolute right-0 mt-1 z-50 w-56 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-3 shadow-lg">
+          {/* Direction include-set */}
+          <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground mb-1.5">Direction</div>
+          <Show
+            when={directionTags().length > 0}
+            fallback={<p class="text-xs text-muted-foreground mb-2">No direction tags yet.</p>}
+          >
+            <div class="flex flex-col gap-1.5 mb-3">
+              <For each={directionTags()}>
+                {(t) => (
+                  <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      class="accent-primary w-4 h-4"
+                      checked={dueFilter().directions.includes(t.name)}
+                      onChange={() => toggleDirection(t.name)}
+                    />
+                    <span class="text-foreground">{cap(t.name)}</span>
+                  </label>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          <div class="border-t border-border pt-2 flex flex-col gap-1.5">
+            <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                class="accent-primary w-4 h-4"
+                checked={dueFilter().hideHabits}
+                onChange={(e) => setHideHabits(e.currentTarget.checked)}
+              />
+              <span class="text-foreground">Hide habits</span>
+            </label>
+            <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                class="accent-primary w-4 h-4"
+                checked={dueFilter().hideRoutines}
+                onChange={(e) => setHideRoutines(e.currentTarget.checked)}
+              />
+              <span class="text-foreground">Hide routines</span>
+            </label>
+          </div>
+        </div>
       </Show>
     </div>
   );
