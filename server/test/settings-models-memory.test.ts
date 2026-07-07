@@ -77,12 +77,29 @@ describe('memory service', () => {
     expect(s.scopes.reflections).toBe(false);
   });
 
-  it('syncToMemory guards: disabled → not_connected → unavailable', () => {
-    expect(syncToMemory(OWNER)).toEqual({ ok: false, reason: 'disabled' });
+  it('syncToMemory guards: disabled → not_connected → unavailable (no creds)', async () => {
+    expect(await syncToMemory(OWNER)).toEqual({ ok: false, reason: 'disabled' });
     setPrefs({ memory_sync_enabled: 1 });
-    expect(syncToMemory(OWNER)).toEqual({ ok: false, reason: 'not_connected' });
+    expect(await syncToMemory(OWNER)).toEqual({ ok: false, reason: 'not_connected' });
     setPrefs({ memory_account: 'liam@x.io' });
-    expect(syncToMemory(OWNER)).toEqual({ ok: false, reason: 'unavailable' }); // connector stubbed
+    // Connected (account stamped) but no creds resolve (env cleared in beforeEach) → unavailable.
+    expect(await syncToMemory(OWNER)).toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('syncToMemory pushes (fixture, no network) once enabled + connected + creds resolve', async () => {
+    process.env.CI_SERVER_URL = 'http://ci.local:3000'; // env creds → available; MEMORY_MODE unset → fixture
+    setPrefs({ memory_sync_enabled: 1, memory_account: 'liam@x.io' });
+    const r = await syncToMemory(OWNER);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(typeof r.syncedAt).toBe('string');
+      expect(r.counts).toMatchObject({ completed: 0, habits: 0, reflections: 0, ingested: 0, duplicate: 0, rejected: 0 });
+      // The successful push stamps the watermark.
+      const stamped = sqlite
+        .prepare(`SELECT memory_last_synced_at AS ts FROM scheduling_prefs WHERE owner_id = ?`)
+        .get(OWNER) as { ts: string | null };
+      expect(stamped.ts).toBe(r.syncedAt);
+    }
   });
 });
 
@@ -114,13 +131,25 @@ describe('routes', () => {
     expect(get.body.prefs.memory_sync_reflections).toBe(false);
   });
 
-  it('POST /api/memory/sync: 400 when off, 503 when connected (connector pending)', async () => {
+  it('POST /api/memory/sync: 400 when off, 503 when connected-but-no-creds', async () => {
     const off = await api(srv.url, '/api/memory/sync', { method: 'POST' });
     expect(off.status).toBe(400);
+    expect(off.body.reason).toBe('disabled');
 
     await api(srv.url, '/api/prefs', { method: 'PATCH', json: { memory_sync_enabled: true, memory_account: 'liam@x.io' } });
+    // CI_SERVER_URL cleared in beforeEach → creds don't resolve → unavailable.
     const conn = await api(srv.url, '/api/memory/sync', { method: 'POST' });
     expect(conn.status).toBe(503);
     expect(conn.body.reason).toBe('unavailable');
+  });
+
+  it('POST /api/memory/sync: 200 with counts once connected + creds resolve (fixture, no network)', async () => {
+    process.env.CI_SERVER_URL = 'http://ci.local:3000'; // env creds → available; fixture transport
+    await api(srv.url, '/api/prefs', { method: 'PATCH', json: { memory_sync_enabled: true, memory_account: 'liam@x.io' } });
+    const r = await api(srv.url, '/api/memory/sync', { method: 'POST' });
+    expect(r.status).toBe(200);
+    expect(r.body.ok).toBe(true);
+    expect(r.body.counts).toMatchObject({ completed: 0, habits: 0, reflections: 0, ingested: 0 });
+    expect(typeof r.body.syncedAt).toBe('string');
   });
 });
