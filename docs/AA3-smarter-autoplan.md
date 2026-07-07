@@ -69,11 +69,13 @@ the day's graph, then mark each `PlanTask` related or not:
 2. Memory terms = the normalized names of `person` and `event` nodes in that graph
    (lowercased), plus each event node's tag read from `MemoryNode.properties.tag` (there is
    no top-level `tag` field on `MemoryNode` — it lives under `properties`).
-3. A task is **related** iff any of its tags (the level-1 names already in `PlanTask.tags`)
-   equals a memory term, **or** its title shares a *significant token* with a memory term.
-   Significant token = a lowercased word of length ≥ 4 after stripping punctuation, to keep
-   matches conservative (avoid "the"/"and"/short-word false positives). Exact person/event
-   name containment also counts regardless of token length.
+3. A task is **related** iff: a tag (the level-1 names in `PlanTask.tags`) equals a term or
+   event tag; **or** a *significant token* of its title matches a term token; **or** its
+   title contains a full **event**-name phrase (`title.includes(phrase)`). Significant
+   token = a lowercased word of length ≥ 4 after stripping punctuation, to keep matches
+   conservative (short words don't match). NOTE: full-phrase containment is applied to
+   **event** names only; **person** names contribute *tokens* (a person is matched by first
+   or last name, e.g. "lindqvist"), not a whole-name phrase.
 4. Result: `memoryRelated: Set<taskId>`. Empty when flag-off / unavailable / no graph terms
    → every downstream branch is a no-op (identical-to-today).
 

@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, type TestServer } from './helpers.js';
+import { resetDb } from './helpers.js';
 import {
   memoryTerms,
   memoryRelatedTasks,

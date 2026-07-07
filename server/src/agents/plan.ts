@@ -105,10 +105,12 @@ export function loadPlanHints(owner: string, date: string): PlanHint[] {
 
 interface MemoryTerms { tokens: Set<string>; phrases: string[]; tags: Set<string> }
 
-/** Significant lowercased tokens (len ≥ 4) of a name — short/common words are dropped so
- *  relatedness stays conservative (a noisy matcher reordering the whole day is worse). */
+/** Significant lowercased tokens (len ≥ 4) of a name — SHORT words are dropped so
+ *  relatedness stays conservative (a noisy matcher reordering the whole day is worse).
+ *  Unicode-aware split (`\p{L}\p{N}`, u-flag): diacritic / non-Latin names tokenize on
+ *  real word boundaries instead of shattering into empty ASCII fragments. */
 function nameTokens(name: string): string[] {
-  return name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
+  return name.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4);
 }
 
 /** Terms drawn from a memory graph: person/event name tokens, full event-name phrases,
