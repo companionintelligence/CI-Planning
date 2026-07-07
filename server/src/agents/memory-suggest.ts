@@ -11,6 +11,7 @@ import {
   type MemoryNode,
 } from '../connectors/memory.js';
 import { memoryConnectorAvailable } from '../services/memory.js';
+import { CONFIDENCE_FLOOR } from '../services/calibration.js';
 import { upsertPossible } from './ingest.js';
 import type { ExtractedTask } from './extract.js';
 
@@ -119,6 +120,48 @@ function eventCandidates(graph: MemoryGraph, from: string, to: string): EventCan
   return out.sort((a, b) => a.start.localeCompare(b.start));
 }
 
+/** The last-resort estimate when an event has no duration and there's no usable history. */
+const DEFAULT_ESTIMATE_MIN = 30;
+
+/** Median (index-quantile, matching calibration.ts's `quantile`) of a numeric list. */
+function median(nums: number[]): number {
+  const s = [...nums].sort((a, b) => a - b);
+  const idx = Math.min(Math.max(0, Math.round(0.5 * (s.length - 1))), s.length - 1);
+  return s[idx];
+}
+
+/**
+ * AA3b — a better default estimate (minutes) for a memory-drafted task when the event
+ * carries no scheduled duration (the common case: CI-Server rarely records an end).
+ *
+ * Uses the owner's TYPICAL ACTUAL task length — not calibration's ratios (which capture
+ * estimate BIAS, not absolute duration, and so can't answer "how long is this task"):
+ *   1. median actual_minutes over the owner's DONE memory-sourced tasks ("your meetings
+ *      run ~50m") — the closest population; memory drafts are untagged, so tag/subtype
+ *      scopes don't apply,
+ *   2. else the global median over ALL their done tasks,
+ * each gated by CONFIDENCE_FLOOR samples so a couple of outliers can't set the prior,
+ *   3. else the historical DEFAULT_ESTIMATE_MIN.
+ * Reads actual_minutes (timer truth) only; suggest-only — this seeds a possible's
+ * proposed estimate the user still reviews, exactly as the flat default did.
+ */
+export function memoryFallbackEstimate(owner: string): number {
+  const actuals = (memoryOnly: boolean): number[] =>
+    (sqlite
+      .prepare(
+        `SELECT actual_minutes AS m FROM tasks
+          WHERE owner_id = ? AND status = 'done' AND actual_minutes > 0`
+          + (memoryOnly ? ` AND source_kind = ?` : ``),
+      )
+      .all(...(memoryOnly ? [owner, MEMORY_SOURCE_KIND] : [owner])) as { m: number }[]).map((r) => r.m);
+
+  const mem = actuals(true);
+  if (mem.length >= CONFIDENCE_FLOOR) return Math.round(median(mem));
+  const glob = actuals(false);
+  if (glob.length >= CONFIDENCE_FLOOR) return Math.round(median(glob));
+  return DEFAULT_ESTIMATE_MIN;
+}
+
 /**
  * Deterministic template draft — always produced, with or without Ollama.
  *
@@ -126,8 +169,11 @@ function eventCandidates(graph: MemoryGraph, from: string, to: string): EventCan
  * the event's start in the owner's timezone, estimate = the event's duration), not a
  * "Prep for X" satellite task. due_at = the event start too, but as a DEADLINE only —
  * scheduled_for/task_time are what pick the block's day/time (AB1).
+ *
+ * AA3b: `fallbackMin` (the owner's typical actual duration) is used ONLY when the event
+ * has no scheduled duration — a real end−start is the event's own truth and always wins.
  */
-function templateTask(c: EventCandidate, tz: string): ExtractedTask {
+function templateTask(c: EventCandidate, tz: string, fallbackMin: number): ExtractedTask {
   const parts = [
     c.node.description ?? '',
     c.people.length ? `With ${c.people.join(', ')}` : '',
@@ -141,10 +187,10 @@ function templateTask(c: EventCandidate, tz: string): ExtractedTask {
     dueAt: c.start,
     scheduledFor: localDateInTZ(c.start, tz),
     taskTime: utcToZonedWallTime(c.start, tz),
-    // Event duration when the end is known; else the 30m default. Without an
-    // estimate, promote leaves the task estimate-less and the hands-off
-    // auto-schedule (requireEstimate) can never place a start-less item (TM-5).
-    estimatedMinutes: durationMin > 0 ? durationMin : 30,
+    // Event duration when the end is known; else the AA3b history-based fallback. Without
+    // an estimate, promote leaves the task estimate-less and the hands-off auto-schedule
+    // (requireEstimate) can never place a start-less item (TM-5).
+    estimatedMinutes: durationMin > 0 ? durationMin : fallbackMin,
     tags: [],
     confidence: 0.6,
   };
@@ -240,7 +286,10 @@ export async function suggestFromMemory(
     (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)
       ?.timezone || serverTimezone();
 
-  const drafts = new Map(candidates.map((c) => [c.node.id, templateTask(c, tz)]));
+  // AA3b: the owner's typical actual duration — computed ONCE per run (owner-scoped, same
+  // for every candidate), used only for events that carry no scheduled duration.
+  const fallbackMin = memoryFallbackEstimate(owner);
+  const drafts = new Map(candidates.map((c) => [c.node.id, templateTask(c, tz, fallbackMin)]));
 
   // Optional polish — best-effort by contract. OllamaUnavailable is the expected
   // degrade; a parse/shape failure is equally non-fatal for a cosmetic pass.
@@ -284,7 +333,7 @@ export async function suggestFromMemory(
       result.skippedCap++;
       continue;
     }
-    const task = drafts.get(c.node.id) ?? templateTask(c, tz);
+    const task = drafts.get(c.node.id) ?? templateTask(c, tz, fallbackMin);
     const outcome = upsertPossible(task, MEMORY_SOURCE_KIND, ref, {
       node: c.node,
       participants: c.people,
