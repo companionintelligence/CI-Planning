@@ -1,9 +1,11 @@
 import { createSignal, createResource, Show, For } from 'solid-js';
 import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight } from 'lucide-solid';
-import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId } from '../stores/index.js';
+import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
+import { colorVar } from '../lib/pattern-meta.js';
 import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
+import { ShapeIcon } from '../components/ShapeIcon.js';
 import { SortControl, type SortOrder } from '../components/SortControl.js';
 import { byPriority, byDueDateAsc } from '../lib/sort.js';
 import { RoutinesPanel } from '../components/RoutinesPanel.js';
@@ -25,6 +27,20 @@ export function AllTasks() {
   // done + cancelled live in the Archive view now, not the status filter.
   const statusOptions = ['', 'open', 'scheduled', 'in_progress', 'deferred'];
   const ARCHIVED = new Set(['done', 'cancelled']);
+
+  // A task completed TODAY (owner-tz baseline = UTC, as everywhere) stays in the active
+  // list — rendered checked — and only falls into the Archive once the day rolls over.
+  // Derived by date, so no background job is needed to "move at end of day".
+  const utcToday = () => new Date().toISOString().slice(0, 10);
+  const isDoneToday = (t: Task) =>
+    t.status === 'done' && !!t.completed_at && t.completed_at.slice(0, 10) === utcToday();
+  // Shown in the active backlog: everything not archived, PLUS today's completions
+  // (cancelled always archives immediately — no same-day grace). Routine tasks are a
+  // repeatable checklist: they are NEVER archived on completion — they stay in the list
+  // (checked) and the midnight `reset_routines` job flips them back to open. Only a
+  // cancelled (thrown-away) routine task leaves the active list.
+  const inActiveList = (t: Task) =>
+    isRoutineTask(t.id) ? t.status !== 'cancelled' : (!ARCHIVED.has(t.status) || isDoneToday(t));
 
   // Header count matches what the default Tasks view actually shows as "Open" (top-level,
   // non-routine, non-scheduled backlog) so the header number and the "Open ⟨n⟩" section agree.
@@ -49,14 +65,15 @@ export function AllTasks() {
   const directions = () => (tags() ?? []).filter((t) => t.kind === 'direction').map((t) => t.name);
   const taskDirection = (t: Task) => (t.tags ?? []).find((n) => patternNames().has(n));
 
-  // Active list — excludes archived (done/cancelled); filtered by tab + direction; sorted.
+  // Active list — excludes archived (done/cancelled) except today's completions; filtered
+  // by tab + direction; sorted.
   const shownList = () => {
-    let list = baseList().filter((t) => !ARCHIVED.has(t.status) && (view() === 'habits' ? t.is_habit : !t.is_habit));
+    let list = baseList().filter((t) => inActiveList(t) && (view() === 'habits' ? t.is_habit : !t.is_habit));
     if (direction()) list = list.filter((t) => taskDirection(t) === direction());
     return [...list].sort(order() === 'due' ? byDueDateAsc : byPriority);
   };
   const tabCount = (v: 'tasks' | 'habits') =>
-    baseList().filter((t) => !ARCHIVED.has(t.status) && (v === 'habits' ? t.is_habit : !t.is_habit)).length;
+    baseList().filter((t) => inActiveList(t) && (v === 'habits' ? t.is_habit : !t.is_habit)).length;
 
   // §E: partition the (already filtered+sorted) Tasks-tab backlog. Routine membership
   // wins the grouping (a routine task can also be scheduled — it still lands here);
@@ -71,12 +88,40 @@ export function AllTasks() {
   // Explicit status filter → flat list; routine tasks never appear under the 'open' filter.
   const explicitList = () => (taskFilter().status === 'open' ? shownList().filter((t) => !isRoutineTask(t.id)) : shownList());
 
-  // Archive — done + cancelled, fetched explicitly (the default list may omit them).
-  const [archived] = createResource(showArchive, async (on) => {
-    if (!on) return { done: [] as Task[], cancelled: [] as Task[] };
-    const [d, c] = await Promise.all([api.tasks.list({ status: 'done' }), api.tasks.list({ status: 'cancelled' })]);
-    return { done: d.tasks.filter(isTopLevel), cancelled: c.tasks.filter(isTopLevel) };
-  });
+  // §E follow-up: cluster the Routine section by routine, preserving the sorted order —
+  // each routine's members render together under a sub-header (icon + name + count).
+  interface RoutineGroup { id: string; name: string; iconShape?: string; colorToken?: string | null; items: Task[] }
+  const routineGroups = (): RoutineGroup[] => {
+    const groups = new Map<string, RoutineGroup>();
+    for (const t of routineList()) {
+      const info = patternForTask(t.id);
+      const id = info?.pattern.id ?? '_ungrouped';
+      let g = groups.get(id);
+      if (!g) {
+        g = { id, name: info?.pattern.name ?? 'Routine', iconShape: info?.type?.icon_shape, colorToken: info?.type?.color_token, items: [] };
+        groups.set(id, g);
+      }
+      g.items.push(t);
+    }
+    return [...groups.values()];
+  };
+
+  // Archive — done (before today) + cancelled, fetched explicitly. Re-keyed on tasks() so
+  // it refetches whenever a task mutates while the panel is open — e.g. un-checking a
+  // completed task there flips it back to open and it leaves the archive immediately.
+  // Today's completions are filtered out (they're still in the active list).
+  const [archived] = createResource(
+    () => (showArchive() ? (tasks() ?? []) : null),
+    async () => {
+      const [d, c] = await Promise.all([api.tasks.list({ status: 'done' }), api.tasks.list({ status: 'cancelled' })]);
+      return {
+        // Routine tasks are never archived on completion (they reset at midnight), so
+        // they never appear in Completed — only the day's completions are also withheld.
+        done: d.tasks.filter((t) => isTopLevel(t) && !isDoneToday(t) && !isRoutineTask(t.id)),
+        cancelled: c.tasks.filter(isTopLevel),
+      };
+    },
+  );
 
   /**
    * Auto-tag every untagged task in the CURRENT (active) view. Reuses the suggest-tags
@@ -246,7 +291,12 @@ export function AllTasks() {
                 <ArchiveSection title="Scheduled" open={schedSecOpen()} onToggle={() => setSchedSecOpen((v) => !v)} items={scheduledList()} loading={false} emptyLabel="" />
               </Show>
               <Show when={routineList().length > 0}>
-                <ArchiveSection title="Routine" open={routineSecOpen()} onToggle={() => setRoutineSecOpen((v) => !v)} items={routineList()} loading={false} emptyLabel="" />
+                <RoutineSection
+                  open={routineSecOpen()}
+                  onToggle={() => setRoutineSecOpen((v) => !v)}
+                  count={routineList().length}
+                  groups={routineGroups()}
+                />
               </Show>
             </Show>
           </Show>
@@ -309,6 +359,47 @@ function ArchiveSection(props: {
           <Show when={!props.loading && props.items.length === 0}>
             <div class="text-center text-slate-500 py-6 text-sm">{props.emptyLabel}</div>
           </Show>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/** The Routine backlog section — collapsible, with tasks clustered by routine under a
+ *  per-routine sub-header (icon + name + count). */
+function RoutineSection(props: {
+  open: boolean;
+  onToggle: () => void;
+  count: number;
+  groups: { id: string; name: string; iconShape?: string; colorToken?: string | null; items: Task[] }[];
+}) {
+  return (
+    <div class="card mb-3">
+      <button onClick={props.onToggle} class="flex items-center gap-2 w-full text-left text-sm font-semibold text-foreground">
+        <Show when={props.open} fallback={<ChevronRight size={15} class="text-muted-foreground" />}>
+          <ChevronDown size={15} class="text-muted-foreground" />
+        </Show>
+        Routine
+        <span class="opacity-60 tabular-nums font-normal">{props.count}</span>
+      </button>
+      <Show when={props.open}>
+        <div class="flex flex-col gap-4 mt-3">
+          <For each={props.groups}>
+            {(g) => (
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-1.5 text-xs font-medium text-muted-foreground" title={`Routine: ${g.name}`}>
+                  <span class="inline-flex" style={{ color: colorVar(g.colorToken) }}>
+                    <ShapeIcon shape={g.iconShape ?? 'circle'} size={12} strokeWidth={1.75} />
+                  </span>
+                  <span class="truncate">{g.name}</span>
+                  <span class="opacity-60 tabular-nums">{g.items.length}</span>
+                </div>
+                <For each={g.items}>
+                  {(task) => <TaskCard task={task} />}
+                </For>
+              </div>
+            )}
+          </For>
         </div>
       </Show>
     </div>

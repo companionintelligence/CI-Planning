@@ -19,6 +19,7 @@ import { syncAll } from '../agents/sync.js';
 import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
 import { freezeStars } from './freeze-stars.js';
+import { resetRoutineTasks } from './reset-routines.js';
 import { config } from '../lib/config.js';
 import { gmailLiveAllowed } from '../mcp/gmail-flag.js';
 import { join } from 'node:path';
@@ -221,6 +222,12 @@ async function execute(kind: string): Promise<JobOutcome> {
           : `Day stars for ${r.date} already frozen (${r.total}/5) — no-op`,
       };
     }
+    case 'reset_routines': {
+      // Midnight: Routine tasks are a repeatable checklist — never archived. Flip any
+      // completed routine member back to open so the routine is fresh for the new day.
+      const r = resetRoutineTasks();
+      return { itemsCreated: 0, itemsUpdated: r.reset, log: `Reset ${r.reset} completed routine task(s) to open` };
+    }
     default:
       return { itemsCreated: 0, itemsUpdated: 0, log: `Unknown job kind '${kind}'` };
   }
@@ -289,6 +296,7 @@ const OWNER_SCOPED_KINDS = new Set([
   'advance_objectives',
   'calibrate_estimates',
   'freeze_stars',
+  'reset_routines',
 ]);
 
 function allOwnerIds(): string[] {
