@@ -31,7 +31,9 @@ import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
 import { writeAudit } from '../lib/audit.js';
-import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+import { graphData, MemoryUnavailable, type MemoryGraph } from '../connectors/memory.js';
+import { memoryConnectorAvailable } from '../services/memory.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -91,6 +93,108 @@ export function loadPlanHints(owner: string, date: string): PlanHint[] {
     .prepare(`SELECT kind, tag, time FROM plan_hints WHERE owner_id = ? AND date = ?`)
     .all(owner, date) as { kind: string; tag: string; time: string | null }[];
   return rows.map((r) => ({ kind: r.kind as PlanHint['kind'], tag: r.tag, time: r.time ?? undefined }));
+}
+
+// ─── AA3a — memory-aware ordering (see docs/AA3-smarter-autoplan.md) ─────────────
+//
+// Rank tasks that RELATE to today's memory context (the people/events on the owner's
+// CI-Server graph for the authoring day) earlier — applied to BOTH the deterministic
+// sort and the smart prompt, so it works with AI off. Gated by memory_pull_enabled +
+// connector availability; flag-off / MemoryUnavailable / no terms ⇒ empty set ⇒ every
+// downstream branch is inert and the authored order is byte-identical to today.
+
+interface MemoryTerms { tokens: Set<string>; phrases: string[]; tags: Set<string> }
+
+/** Significant lowercased tokens (len ≥ 4) of a name — SHORT words are dropped so
+ *  relatedness stays conservative (a noisy matcher reordering the whole day is worse).
+ *  Unicode-aware split (`\p{L}\p{N}`, u-flag): diacritic / non-Latin names tokenize on
+ *  real word boundaries instead of shattering into empty ASCII fragments. */
+function nameTokens(name: string): string[] {
+  return name.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4);
+}
+
+/** Terms drawn from a memory graph: person/event name tokens, full event-name phrases,
+ *  and event tags. Person nodes are undated (a day-window graphData still returns them),
+ *  so person-token relatedness is date-stable; event terms are the day-specific signal. */
+export function memoryTerms(graph: MemoryGraph): MemoryTerms {
+  const tokens = new Set<string>();
+  const phrases: string[] = [];
+  const tags = new Set<string>();
+  for (const n of graph.nodes) {
+    const type = n.entityType.toLowerCase();
+    if (type !== 'person' && type !== 'event') continue;
+    for (const t of nameTokens(n.name)) tokens.add(t);
+    if (type === 'event') {
+      const phrase = n.name.toLowerCase().trim();
+      if (phrase) phrases.push(phrase);
+      const tag = n.properties.tag;
+      if (typeof tag === 'string' && tag.trim()) tags.add(tag.toLowerCase());
+    }
+  }
+  return { tokens, phrases, tags };
+}
+
+/** The staged tasks that relate to the memory terms (pure). A task relates iff a tag
+ *  equals a term, its title shares a significant token, or its title contains a full
+ *  event-name phrase. Empty terms ⇒ empty set (the identical-when-unavailable invariant). */
+export function memoryRelatedTasks(tasks: PlanTask[], terms: MemoryTerms): Set<string> {
+  const related = new Set<string>();
+  if (terms.tokens.size === 0 && terms.phrases.length === 0 && terms.tags.size === 0) return related;
+  for (const t of tasks) {
+    const title = t.title.toLowerCase();
+    const tagSet = t.tags.map((x) => x.toLowerCase());
+    const titleTokens = nameTokens(t.title);
+    const hit =
+      tagSet.some((tg) => terms.tags.has(tg) || terms.tokens.has(tg)) ||
+      titleTokens.some((w) => terms.tokens.has(w)) ||
+      terms.phrases.some((p) => title.includes(p));
+    if (hit) related.add(t.task_id);
+  }
+  return related;
+}
+
+function memoryPullEnabled(owner: string): boolean {
+  const row = sqlite.prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
+    | { memory_pull_enabled?: number }
+    | undefined;
+  return !!row?.memory_pull_enabled;
+}
+
+/**
+ * Build the memory-related task set for `date`'s owner-local day. Empty when the flag is
+ * off, the connector is unavailable, or the graph yields no terms. `deps.graphData` is
+ * injectable for tests (defaults to the real connector). NEVER throws — a MemoryUnavailable
+ * (or any) failure degrades to an empty set, so authoring is unaffected.
+ */
+export async function loadMemoryRelated(
+  owner: string,
+  date: string,
+  tasks: PlanTask[],
+  deps: { graphData: typeof graphData } = { graphData },
+): Promise<Set<string>> {
+  if (!memoryPullEnabled(owner) || !memoryConnectorAvailable(owner)) return new Set();
+  const { start, end } = utcDayBounds(date, ownerTimezone(owner));
+  try {
+    const graph = await deps.graphData(owner, { from: start, to: end });
+    return memoryRelatedTasks(tasks, memoryTerms(graph));
+  } catch (err) {
+    if (!(err instanceof MemoryUnavailable)) {
+      logger.warn('authorPlanOrder: memory relatedness fetch failed — ignoring', { owner, err: (err as Error).message });
+    }
+    return new Set();
+  }
+}
+
+/** The smart-prompt memory line: names the related task indices so the model doesn't
+ *  re-derive relatedness. Gives memory the SAME priority as the deterministic `memoryCmp`
+ *  band — ahead of the prompt's deadline/priority weighing, below only theme — so smart
+ *  and deterministic don't diverge (a "tiebreaker" phrasing would fight the band and churn
+ *  the revise loop). Empty when nothing is related (prompt stays byte-identical). */
+function memoryOrderLine(tasks: PlanTask[], related: Set<string>): string {
+  if (related.size === 0) return '';
+  const idxs = tasks.map((t, i) => (related.has(t.task_id) ? i : -1)).filter((i) => i >= 0);
+  if (idxs.length === 0) return '';
+  return `\nToday's memory context: tasks at indices ${idxs.join(', ')} relate to today's commitments — order them earliest (after any theme), ahead of the deadline and priority weighing above.`;
 }
 
 function getStagedTasks(owner: string): PlanTask[] {
@@ -161,6 +265,7 @@ export function deterministicIndices(
   tasks: PlanTask[],
   themeTag?: string | null,
   fillOrder?: string,
+  memoryRelated?: Set<string>,
 ): number[] {
   const priorityFirst = fillOrder === 'priority';
   const themeCmp = (a: number, b: number): number => {
@@ -168,6 +273,14 @@ export function deterministicIndices(
     const themA = tasks[a].tags.includes(themeTag) ? 0 : 1;
     const themB = tasks[b].tags.includes(themeTag) ? 0 : 1;
     return themA - themB;
+  };
+  // AA3a: memory-related tasks lead within their theme band (after theme, before
+  // deadline/priority). Inert when the set is absent/empty — byte-identical order.
+  const memCmp = (a: number, b: number): number => {
+    if (!memoryRelated || memoryRelated.size === 0) return 0;
+    const relA = memoryRelated.has(tasks[a].task_id) ? 0 : 1;
+    const relB = memoryRelated.has(tasks[b].task_id) ? 0 : 1;
+    return relA - relB;
   };
   const dueCmp = (a: number, b: number): number =>
     (tasks[a].due_at ?? '9999').localeCompare(tasks[b].due_at ?? '9999');
@@ -178,6 +291,8 @@ export function deterministicIndices(
     .sort((a, b) => {
       const theme = themeCmp(a, b);
       if (theme !== 0) return theme;
+      const mem = memCmp(a, b);
+      if (mem !== 0) return mem;
       const primary = priorityFirst ? priCmp(a, b) : dueCmp(a, b);
       if (primary !== 0) return primary;
       const secondary = priorityFirst ? dueCmp(a, b) : priCmp(a, b);
@@ -269,16 +384,24 @@ export function tagGroupPostPass(indices: number[], tasks: PlanTask[]): number[]
 
 // ─── Deterministic rubric checks (the hard gate) ─────────────────────────────
 
-export function checkOrder(order: number[], tasks: PlanTask[], today: string, themeTag?: string | null): Defect[] {
+export function checkOrder(
+  order: number[],
+  tasks: PlanTask[],
+  today: string,
+  themeTag?: string | null,
+  memoryRelated?: Set<string>,
+): Defect[] {
   const defects: Defect[] = [];
   const todayMs = Date.parse(today + 'T00:00:00Z');
   const themed = (t: PlanTask): boolean => (themeTag ? t.tags.includes(themeTag) : false);
+  const related = (t: PlanTask): boolean => (memoryRelated ? memoryRelated.has(t.task_id) : false);
 
   for (let i = 0; i < order.length && defects.length < 5; i++) {
     const a = tasks[order[i]];
     const aPrio = a.priority;
     const aDue = a.due_at ? Date.parse(a.due_at) : Infinity;
     const aThemed = themed(a);
+    const aRelated = related(a);
 
     for (let j = i + 1; j < order.length && defects.length < 5; j++) {
       const b = tasks[order[j]];
@@ -288,6 +411,10 @@ export function checkOrder(order: number[], tasks: PlanTask[], today: string, th
       // §C2: a themed task (earlier) legitimately leads an unthemed one (later) on a
       // themed day — theme is the primary key, so this is not a priority/deadline inversion.
       if (aThemed && !themed(b)) continue;
+
+      // AA3a: within the SAME theme band, a memory-related task legitimately leads an
+      // unrelated one — memory is the next band after theme, so this isn't an inversion.
+      if (aThemed === themed(b) && aRelated && !related(b)) continue;
 
       // Priority inversion: b (later) has higher priority (lower number) than a (earlier),
       // and a does not have an earlier deadline to justify being placed first.
@@ -340,7 +467,7 @@ export function constraintLine(hints: PlanHint[]): string {
  * §C2: when themeTag is provided, append a theme line after the capacity line.
  * §A4: when `constraint` is non-empty, append the NL-hint constraint line.
  */
-export function genPrompt(lines: string[], capacityMin: number, themeTag?: string | null, constraint = ''): string {
+export function genPrompt(lines: string[], capacityMin: number, themeTag?: string | null, constraint = '', memoryLine = ''): string {
   const themeLine = themeTag
     ? `\nToday's theme: ${themeTag} — favour ${themeTag}-tagged tasks earlier.`
     : '';
@@ -349,7 +476,7 @@ export function genPrompt(lines: string[], capacityMin: number, themeTag?: strin
     `1) hard deadlines (sooner due = earlier); 2) priority (P1 highest);\n` +
     `3) momentum — group related work, minimize context switches;\n` +
     `4) front-load demanding work while focus is fresh.\n` +
-    `Capacity today: ~${capacityMin} focused minutes.${themeLine}${constraint}\n\n` +
+    `Capacity today: ~${capacityMin} focused minutes.${themeLine}${constraint}${memoryLine}\n\n` +
     `Tasks (index: [priority] title (due) ~estimate tags):\n${lines.join('\n')}\n\n` +
     `Reply with ONLY a JSON array containing every index exactly once, in your chosen order. Example: [3,0,1,2]`
   );
@@ -485,14 +612,17 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const themeTag = todayThemeTag(prefs.day_theme, date);
   // fill_order maps onto the deterministic authoring sort (default deadline-first).
   const fillOrder = prefs.fill_order ?? 'overdue';
+  // AA3a: the tasks related to today's memory context (empty when the flag is off / the
+  // connector is unavailable → every use below is inert, order byte-identical to today).
+  const memoryRelated = await loadMemoryRelated(owner, date, staged);
 
   // Deterministic authoring — basic mode, AI off, Ollama unreachable at the pre-flight
   // check, OR (via the catch below) an LLM call that fails MID-loop. Centralised here so
   // the "never throws / always lands a valid order" invariant holds for every caller.
   const persistDeterministic = () => {
-    const detIndices = deterministicIndices(staged, themeTag, fillOrder);
+    const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated);
     const postPassed = tagGroupPostPass(detIndices, staged);
-    const defects = checkOrder(postPassed, staged, date, themeTag);
+    const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated);
     const final = defects.length === 0 ? postPassed : detIndices;
     persistOrder(owner, date, staged, final, 'deterministic');
   };
@@ -507,6 +637,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const capacityMin = workdayMinutes(prefs.workday_start, prefs.workday_end);
   // §A4: fold any persisted NL hints into a soft constraint line for the generator.
   const constraint = constraintLine(loadPlanHints(owner, date));
+  // AA3a: the memory-context nudge (empty string when nothing is related).
+  const memoryLine = memoryOrderLine(staged, memoryRelated);
 
   // B4 invariant (docs/M-ai-scheduler.md:270,303): an LLM failure MID-loop — Ollama dies
   // AFTER the pre-flight isAvailable() check (timeout, OOM, dropped connection) — must
@@ -521,8 +653,8 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         ownerId: owner,
 
         generate: async () => {
-          // §C2: pass theme tag to prompt; §A4: pass the NL-hint constraint line
-          const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag, constraint), {
+          // §C2: theme tag; §A4: NL-hint constraint line; AA3a: memory-context line
+          const raw = await generateJson<unknown>(genPrompt(lines, capacityMin, themeTag, constraint, memoryLine), {
             tier: 'small',
             system: genSystem(),
             temperature: 0.2,
@@ -534,7 +666,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
         check: (order) => {
           // §A2: apply post-pass before checking
           const postPassed = tagGroupPostPass(order, staged);
-          return checkOrder(postPassed, staged, date, themeTag);
+          return checkOrder(postPassed, staged, date, themeTag, memoryRelated);
         },
 
         judge: async (order): Promise<JudgeScore> => {
@@ -563,7 +695,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
           return safeOrder(raw, staged);
         },
 
-        baseline: () => deterministicIndices(staged, themeTag, fillOrder),
+        baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated),
       },
       {
         onEscape: (ownerId, stage, info) => {
@@ -580,7 +712,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
 
     // §A2: apply post-pass to the final LLM result
     const finalCandidate = tagGroupPostPass(result.candidate, staged);
-    const finalDefects = checkOrder(finalCandidate, staged, date, themeTag);
+    const finalDefects = checkOrder(finalCandidate, staged, date, themeTag, memoryRelated);
     const finalIndices = finalDefects.length === 0 ? finalCandidate : result.candidate;
 
     // §A3: only an LLM-authored order carries per-task rationales; an escape-hatch
