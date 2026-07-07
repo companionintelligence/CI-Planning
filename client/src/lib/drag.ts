@@ -34,6 +34,28 @@ export const MIN_DURATION_MIN = SNAP_MIN;
 export interface Neighbour { topMin: number; botMin: number }
 
 /**
+ * AD5 — Alt free-drag. A held Alt during a MOVE bypasses the collision clamp: the
+ * item follows the cursor and commits exactly where released (overlap allowed). This
+ * is a pure predicate so it's unit-testable and shared by the live preview + commit
+ * paths. Only `move` free-drags; resize always keeps its min-duration/no-invert clamps.
+ * A held Alt on a nested item ALSO detaches it (handled by the caller); this predicate
+ * only governs the clamp bypass.
+ */
+export function isAltFreeDrag(mode: GestureMode, altKey: boolean): boolean {
+  return mode === 'move' && altKey;
+}
+
+/**
+ * The neighbour set to clamp a gesture against — `[]` when Alt free-drag is active, so
+ * `resolveGesture`/`clampLiveDelta` snap to the grid without stopping at any neighbour.
+ * Empty neighbours is already the no-clamp path (see `clampMoveDelta`), so this keeps
+ * the default (non-Alt) behaviour byte-identical.
+ */
+export function neighboursForDrag(mode: GestureMode, altKey: boolean, neighbours: Neighbour[]): Neighbour[] {
+  return isAltFreeDrag(mode, altKey) ? [] : neighbours;
+}
+
+/**
  * Clamp a rigid move (`deltaMin`) so the block `[topMin, botMin]` never *increases*
  * its overlap with any neighbour ("don't worsen" policy). Pure, in minute space.
  *

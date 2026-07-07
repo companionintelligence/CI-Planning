@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { sqlite } from '../src/db/index.js';
 import { parseQuick } from '../src/engine/quickadd.js';
 import { resetDb, startTestServer, api } from './helpers.js';
 
@@ -34,18 +35,27 @@ describe('parseQuick — deterministic NL parse', () => {
     });
   }
 
-  // Time-bearing ⇒ due_at (a deadline) + task_time. (tz-robust: assert presence.)
+  // Time-bearing ⇒ due_at (a deadline) + task_time + scheduled_for (AD1: task_time is
+  // authoritative, so the timed task is scheduled onto that day). (tz-robust: assert presence.)
   const timed = ['Submit report tomorrow 9am', 'Standup today 3pm', 'Prep deck friday 10am', 'Dentist next monday 8:30am'];
   for (const phrase of timed) {
-    it(`time ⇒ due_at + task_time: "${phrase}"`, () => {
+    it(`time ⇒ due_at + task_time + scheduled_for: "${phrase}"`, () => {
       const p = parseQuick(phrase, REF);
       expect(p.dueAt, 'dueAt set').toBeTruthy();
       expect(p.dueAt!.endsWith('Z')).toBe(true); // a real UTC instant
       expect(p.taskTime).toMatch(TIME);
-      expect(p.scheduledFor).toBeUndefined();
+      expect(p.scheduledFor, 'scheduledFor set for a timed mention (AD1)').toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(p.title.length).toBeGreaterThan(0);
     });
   }
+
+  it('AD1: a timed mention sets scheduled_for to the parsed instant\'s local date + task_time', () => {
+    // 9am tomorrow relative to Mon 2026-06-15 → Tue 2026-06-16 09:00 local.
+    const p = parseQuick('Submit report tomorrow 9am', REF);
+    expect(p.scheduledFor).toBe('2026-06-16');
+    expect(p.taskTime).toBe('09:00');
+    expect(p.dueAt).toBeTruthy();
+  });
 
   // Date-only ⇒ scheduled_for (intent), never due_at.
   const dated = ['Submit report tomorrow', 'Call dad next friday', 'Renew passport in 2 weeks', 'Prep deck friday'];
@@ -98,6 +108,75 @@ describe('POST /api/tasks/quick', () => {
     try {
       const res = await api(srv.url, '/api/tasks/quick', { method: 'POST', json: { text: '   ' } });
       expect(res.status).toBe(400);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  // AD1: a scheduled quick-add is placed on its day right away (task_time → exact block;
+  // no time → that day's window/workday gap). Reads the created block by task id.
+  const blocksOf = (taskId: string) =>
+    sqlite
+      .prepare(`SELECT start_at, end_at, is_auto FROM time_blocks WHERE task_id = ? AND block_kind = 'task' ORDER BY start_at`)
+      .all(taskId) as { start_at: string; end_at: string; is_auto: number }[];
+
+  it('places a block at the parsed task_time when a time is given', async () => {
+    const srv = await startTestServer();
+    try {
+      // "at 2pm tomorrow" → scheduled_for = tomorrow, task_time = 14:00 (tz=UTC baseline).
+      const res = await api<{ task: { id: string; scheduled_for: string | null; task_time: string | null } }>(
+        srv.url,
+        '/api/tasks/quick',
+        { method: 'POST', json: { text: 'Call the vet tomorrow 2pm ~30m' } },
+      );
+      expect(res.status).toBe(201);
+      const { id, scheduled_for, task_time } = res.body.task;
+      expect(scheduled_for).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(task_time).toBe('14:00');
+      const blocks = blocksOf(id);
+      expect(blocks.length).toBe(1);
+      // Placed exactly at (scheduled_for, 14:00) — task_time is authoritative.
+      expect(blocks[0].start_at).toBe(`${scheduled_for}T14:00:00.000Z`);
+      expect(blocks[0].end_at).toBe(`${scheduled_for}T14:30:00.000Z`);
+      expect(blocks[0].is_auto).toBe(0); // user-intent, not auto-clearable
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('a time-LESS scheduled quick-add places into that day (workday gap when no direction window)', async () => {
+    const srv = await startTestServer();
+    try {
+      const res = await api<{ task: { id: string; scheduled_for: string | null; task_time: string | null } }>(
+        srv.url,
+        '/api/tasks/quick',
+        { method: 'POST', json: { text: 'Buy groceries tomorrow ~45m' } },
+      );
+      expect(res.status).toBe(201);
+      const { id, scheduled_for, task_time } = res.body.task;
+      expect(scheduled_for).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(task_time).toBeFalsy(); // no time given
+      const blocks = blocksOf(id);
+      expect(blocks.length).toBe(1);
+      // No direction window → earliest workday gap on that date (09:00, tz=UTC baseline).
+      expect(blocks[0].start_at).toBe(`${scheduled_for}T09:00:00.000Z`);
+      expect(blocks[0].end_at).toBe(`${scheduled_for}T09:45:00.000Z`);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('a bare (no-date) quick-add creates no block', async () => {
+    const srv = await startTestServer();
+    try {
+      const res = await api<{ task: { id: string; scheduled_for: string | null } }>(
+        srv.url,
+        '/api/tasks/quick',
+        { method: 'POST', json: { text: 'Pay invoice #finance ~20m' } },
+      );
+      expect(res.status).toBe(201);
+      expect(res.body.task.scheduled_for).toBeFalsy();
+      expect(blocksOf(res.body.task.id).length).toBe(0);
     } finally {
       await srv.close();
     }
