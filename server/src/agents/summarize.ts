@@ -4,7 +4,7 @@ import { generate } from '../mcp/ollama.js';
 import { renderCopy } from './render-copy.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { logger } from '../lib/logger.js';
-import { serverTimezone, utcDayBounds, utcToZonedWallTime } from '../lib/tz.js';
+import { serverTimezone, utcDayBounds, utcToZonedWallTime, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { addDays } from '../lib/dates.js';
 import { detectComboSuggestions, scopeLabel, CONFIDENCE_FLOOR, type ComboSuggestion, type ScopeKind } from '../services/calibration.js';
@@ -169,16 +169,41 @@ function pullEnabled(owner: string): boolean {
   return !!row?.memory_pull_enabled;
 }
 
-/** Person names linked to an event node (mirror of memory-suggest.ts's participant walk). */
+/**
+ * Person names linked to an event node, deduped (mirror of memory-suggest.ts's
+ * participant walk). The connector normalizes a missing id to '' (mapNode), so a
+ * blank node id — or a blank link endpoint — must never anchor a match: `'' === ''`
+ * would otherwise pull every ill-formed link's other end in as a "participant".
+ */
 function eventParticipants(node: MemoryNode, byId: Map<string, MemoryNode>, links: { source: string; target: string }[]): string[] {
-  const people: string[] = [];
+  if (!node.id.trim()) return []; // never match on a blank event id
+  const names = new Set<string>();
   for (const l of links) {
     const otherId = l.source === node.id ? l.target : l.target === node.id ? l.source : null;
-    if (!otherId) continue;
+    if (!otherId || !otherId.trim()) continue; // skip missing / blank endpoints
     const other = byId.get(otherId);
-    if (other && other.entityType.toLowerCase() === 'person' && other.name) people.push(other.name);
+    if (other && other.entityType.toLowerCase() === 'person' && other.name) names.add(other.name);
   }
-  return people;
+  return [...names];
+}
+
+/**
+ * Human label for `date` (YYYY-MM-DD) relative to the current day in the owner's
+ * timezone: `Today` / `Tomorrow`, else a short `Mon, Jul 7`. Owner-tz "today" keeps
+ * this consistent with how memoryBriefExcerpt derives its window (utcDayBounds, owner
+ * tz) — a server-zone `localISODate` could disagree by a day near the tz boundary.
+ * Matters because the excerpt is also built for the EOD Alignment with TOMORROW's date,
+ * where a hardcoded `Today:` would misdate evening events.
+ */
+function relativeDayLabel(date: string, tz: string): string {
+  const today = localDateInTZ(new Date().toISOString(), tz);
+  if (date === today) return 'Today';
+  if (date === addDays(today, 1)) return 'Tomorrow';
+  // Short, unambiguous fallback ("Mon, Jul 7"). Noon-UTC pivot avoids a tz/DST flip of
+  // the weekday for a date-only value; the label is a coarse day marker, not a clock.
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(
+    new Date(`${date}T12:00:00Z`),
+  );
 }
 
 /** Format a dated event into a brief line, e.g. `"Dinner with Maya (7:00 PM)"`. */
@@ -206,6 +231,9 @@ export async function memoryBriefExcerpt(owner: string, date: string): Promise<s
       .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
       .get(owner) as { timezone: string | null } | undefined;
     const tz = tzRow?.timezone || serverTimezone();
+    // Prefix is relative to the ACTUAL current day (owner tz), not the brief's `date`:
+    // the EOD path passes tomorrow, so its events must read "Tomorrow:", not "Today:".
+    const dayLabel = relativeDayLabel(date, tz);
     const { start } = utcDayBounds(date, tz);
     // Window: the day's start through +48h, so a late-evening event that rolls just
     // over the local-midnight boundary is still caught for the day's brief.
@@ -222,7 +250,7 @@ export async function memoryBriefExcerpt(owner: string, date: string): Promise<s
     if (events.length) {
       const lines: string[] = [];
       for (const e of events.slice(0, MEMORY_EXCERPT_LINES)) {
-        const line = `Today: ${eventLine(e.node, e.start, eventParticipants(e.node, byId, graph.links), tz)}`;
+        const line = `${dayLabel}: ${eventLine(e.node, e.start, eventParticipants(e.node, byId, graph.links), tz)}`;
         // Keep the whole excerpt inside the char budget; stop before overflowing.
         if (lines.join('\n').length + line.length + 1 > MEMORY_EXCERPT_MAX) break;
         lines.push(line);
@@ -231,6 +259,9 @@ export async function memoryBriefExcerpt(owner: string, date: string): Promise<s
     }
 
     // No dated events in-window → a trimmed context snapshot as the softer fallback.
+    // NOT day-labeled: graphContext is undated entity context (people/places), so a
+    // "Today:"/"Tomorrow:" prefix would assert a date it doesn't actually carry — the
+    // misdating bug only exists for dated event lines, which are handled above.
     const ctx = (await graphContext(owner)).trim();
     if (ctx) {
       const firstLine = ctx.split('\n')[0].trim();
