@@ -177,3 +177,99 @@ export function provisionOwner(fields: ProvisionOwnerFields): string {
   tx();
   return id;
 }
+
+/**
+ * Delete all of one owner's PORTABLE data (the export/restore table set) in reverse
+ * FK order. This is the same teardown the backup /import route runs before re-inserting
+ * a dump, extracted so restore and {@link deleteOwner} share one FK-safe ordering.
+ *
+ * PRECONDITION: the caller must already be inside a transaction with
+ * `PRAGMA defer_foreign_keys=ON` (both callers are). This function does NOT open its
+ * own transaction — better-sqlite3 forbids nesting.
+ *
+ * Scope = the portable set only. Non-portable owner tables (sync_events, sync_state,
+ * connection_tokens, oauth_states, api_keys, password_reset_tokens, audit_log) and the
+ * owners row itself are NOT touched here — a restore keeps them; {@link deleteOwner}
+ * removes them separately.
+ */
+export function purgeOwnerData(ownerId: string): void {
+  const run = (sql: string, ...params: unknown[]) => sqlite.prepare(sql).run(...params);
+  run('DELETE FROM push_subscriptions WHERE owner_id = ?', ownerId);
+  run('DELETE FROM reminders WHERE owner_id = ?', ownerId);
+  run(`DELETE FROM possible_task_tags
+       WHERE possible_task_id IN (SELECT id FROM possible_tasks WHERE proposed_owner_id = ?)`, ownerId);
+  run('DELETE FROM possible_tasks WHERE proposed_owner_id = ?', ownerId);
+  run(`DELETE FROM objective_tasks
+       WHERE objective_id IN (SELECT id FROM objectives WHERE owner_id = ?)`, ownerId);
+  run('DELETE FROM objectives WHERE owner_id = ?', ownerId);
+  run('DELETE FROM reflections WHERE owner_id = ?', ownerId);
+  run('DELETE FROM daily_plan WHERE owner_id = ?', ownerId);
+  run('DELETE FROM day_assignments WHERE owner_id = ?', ownerId);
+  run('DELETE FROM day_of_week_map WHERE owner_id = ?', ownerId);
+  run('DELETE FROM day_types WHERE owner_id = ?', ownerId);
+  run('DELETE FROM pattern_day_optouts WHERE owner_id = ?', ownerId);
+  run('DELETE FROM plan_hints WHERE owner_id = ?', ownerId);
+  run('DELETE FROM replan_suggestions WHERE owner_id = ?', ownerId);
+  run('DELETE FROM estimate_calibration WHERE owner_id = ?', ownerId);
+  run('DELETE FROM calibration_combo_pins WHERE owner_id = ?', ownerId);
+  run('DELETE FROM copy_history WHERE owner_id = ?', ownerId);
+  // entity_tags has no direct owner_id — delete by entity membership.
+  run(`DELETE FROM entity_tags WHERE entity_id IN (
+         SELECT id FROM tasks WHERE owner_id = ?
+         UNION SELECT id FROM patterns WHERE owner_id = ?
+         UNION SELECT id FROM time_blocks WHERE owner_id = ?
+       )`, ownerId, ownerId, ownerId);
+  run('DELETE FROM time_entries WHERE owner_id = ?', ownerId);
+  run('DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)', ownerId);
+  run('DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)', ownerId);
+  // Calendar-sync children of time_blocks (also cascade off it, but delete explicitly).
+  run('DELETE FROM external_events WHERE owner_id = ?', ownerId);
+  run('DELETE FROM outbound_queue WHERE owner_id = ?', ownerId);
+  run('DELETE FROM time_blocks WHERE owner_id = ?', ownerId);
+  run('DELETE FROM flight_plan WHERE owner_id = ?', ownerId);
+  run('DELETE FROM tag_prefs WHERE owner_id = ?', ownerId);
+  run('DELETE FROM pattern_blocks WHERE owner_id = ?', ownerId);
+  run('DELETE FROM block_templates WHERE owner_id = ?', ownerId);
+  run('DELETE FROM tasks WHERE owner_id = ?', ownerId);
+  run('DELETE FROM patterns WHERE owner_id = ?', ownerId);
+  run('DELETE FROM pattern_types WHERE owner_id = ?', ownerId);
+  // tags are owner-scoped; the 3 junctions scope through their parent tags.
+  run('DELETE FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)', ownerId);
+  run('DELETE FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)', ownerId);
+  run('DELETE FROM tag_directions WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)', ownerId);
+  run('DELETE FROM tags WHERE owner_id = ?', ownerId);
+  run('DELETE FROM daily_recap WHERE owner_id = ?', ownerId);
+  run('DELETE FROM scheduling_prefs WHERE owner_id = ?', ownerId);
+}
+
+// Non-portable owner-scoped tables purged only on full owner deletion (never exported /
+// kept across a restore): secrets, ephemeral sync state, and the audit spine.
+const NON_PORTABLE_OWNER_TABLES = [
+  'sync_events',
+  'sync_state',
+  'connection_tokens',
+  'oauth_states',
+  'api_keys',
+  'password_reset_tokens',
+  'audit_log',
+] as const;
+
+/**
+ * Permanently delete an owner and ALL their data — the account-deletion primitive.
+ * Runs in one transaction with deferred FK checks: purges the portable data set
+ * ({@link purgeOwnerData}), then the non-portable owner tables, then the owners row.
+ * The sentinel/system owner is never deletable.
+ */
+export function deleteOwner(ownerId: string): void {
+  if (ownerId === SYSTEM_OWNER_ID) {
+    throw new Error('refusing to delete the system owner');
+  }
+  sqlite.transaction(() => {
+    sqlite.exec('PRAGMA defer_foreign_keys=ON');
+    purgeOwnerData(ownerId);
+    for (const table of NON_PORTABLE_OWNER_TABLES) {
+      sqlite.prepare(`DELETE FROM ${table} WHERE owner_id = ?`).run(ownerId);
+    }
+    sqlite.prepare('DELETE FROM owners WHERE id = ?').run(ownerId);
+  })();
+}

@@ -3,6 +3,7 @@ import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from './sse.js';
 import { writeAudit } from '../lib/audit.js';
+import { purgeOwnerData } from '../lib/owners.js';
 
 // Bump whenever the export payload SHAPE changes (a table added / removed / renamed, or a
 // column becomes REQUIRED on an exported table).
@@ -21,7 +22,12 @@ import { writeAudit } from '../lib/audit.js';
 // (tag_patterns→tag_directions, and pattern_tag_id→direction_tag_id on tag_directions /
 // pattern_blocks / category_direction_optouts). A pre-Z '6' dump is still restorable — the
 // import remaps the old key + column (see the v6→v7 block below).
-const EXPORT_VERSION = '7';
+// · '8' G-CASCADEXPORT: three previously-omitted owner-scoped tables now exported —
+// copy_history (an oversight since 0109), plus external_events + outbound_queue (calendar
+// sync mirror + push queue; previously excluded as re-derivable but now round-tripped so a
+// restore doesn't drop pending pushes / sync identity). Purely additive — a '6'/'7' dump
+// lacks these keys and the restore treats an absent key as empty, so it still restores.
+const EXPORT_VERSION = '8';
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
@@ -59,26 +65,34 @@ const OWNER_TABLES = [
   // treats an absent payload key as empty, so an older dump lacking this table
   // still restores. (The '7' bump was for W2's direction rename, not this.)
   'calibration_combo_pins',
+  // Added in v8 (G-CASCADEXPORT): three owner-scoped tables the export dropped —
+  // copy_history (owner_id since 0109), and external_events + outbound_queue (both
+  // carry owner_id; they also cascade off time_blocks). Direct owner_id queries.
+  'copy_history',
+  'external_events',
+  'outbound_queue',
 ] as const;
 
 // Owner-scoped tables INTENTIONALLY excluded from export/import. Audited against every
-// owner_id-bearing table in server/src/db/migrations (0001–0097); each is either a
-// non-portable secret, ephemeral/re-derivable sync state, or the identity/audit spine:
+// owner_id-bearing table in server/src/db/migrations (0001–0114); each is either a
+// non-portable secret, ephemeral/device-specific sync state, or the identity/audit spine:
 //   • owners            — the tenant row itself; owner_id is carried at the payload top
 //                         level and validated on import (a foreign owner_id → 403).
 //   • api_keys          — host-issued API credentials (key_hash / scopes); re-issued per
 //                         host, security-sensitive, not portable content.
 //   • connection_tokens — OAuth tokens encrypted with a host-local key (key_version); the
 //                         ciphertext can't decrypt elsewhere. Secrets, re-linked per host.
-//   • oauth_states      — ephemeral OAuth CSRF/PKCE state (expires in minutes).
-//   • external_events   — calendar sync mirror; re-derived from the provider on next sync.
-//   • outbound_queue    — pending calendar-push queue; ephemeral sync plumbing.
+//   • oauth_states / auth_states — ephemeral OAuth CSRF/PKCE state (expires in minutes).
 //   • sync_events       — multi-device sync change-log; re-derived, device-scoped.
 //   • sync_state        — per-provider sync cursors; host/provider-specific.
+//   • password_reset_tokens — single-use secret tokens; never portable.
 //   • audit_log         — append-only audit trail; import writes its OWN 'import' row, and
 //                         a restore must not fabricate historical actor history.
 // (scheduled_jobs + job_runs have NO owner_id — a global system registry seeded by
 //  migrations — so they're outside an owner-scoped export by construction.)
+// NOTE: external_events + outbound_queue were previously excluded here as "re-derivable";
+// as of v8 they are exported (in OWNER_TABLES above) so a restore preserves sync identity
+// and pending pushes rather than depending on a fresh provider round-trip.
 
 /** Insert rows using their own column names. */
 function insertRows(table: string, rows: Record<string, unknown>[]): number {
@@ -203,6 +217,10 @@ export function backupRouter() {
       replan_suggestions: ownerData['replan_suggestions'],
       estimate_calibration: ownerData['estimate_calibration'],
       calibration_combo_pins: ownerData['calibration_combo_pins'],
+      // v8 (G-CASCADEXPORT): previously-omitted owner-scoped tables.
+      copy_history: ownerData['copy_history'],
+      external_events: ownerData['external_events'],
+      outbound_queue: ownerData['outbound_queue'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -226,9 +244,10 @@ export function backupRouter() {
       ctx.body = { error: 'Missing export version' };
       return;
     }
-    // Accept the current version and the immediately-prior v6 (pre-Phase-Z, when the grouping
-    // axis was kind='pattern'). A v6 dump is remapped to the reverted schema below.
-    const SUPPORTED_VERSIONS = ['6', EXPORT_VERSION];
+    // Accept the current version plus prior v6 (pre-Phase-Z, grouping axis kind='pattern')
+    // and v7 (pre-v8, before the three added tables). A v6 dump is remapped below; v7 and v8
+    // dumps differ only by the additive v8 keys, which the restore treats as empty if absent.
+    const SUPPORTED_VERSIONS = ['6', '7', EXPORT_VERSION];
     if (!SUPPORTED_VERSIONS.includes(String(body['version']))) {
       ctx.status = 400;
       ctx.body = { error: `Unsupported export version '${body['version']}'; expected one of ${SUPPORTED_VERSIONS.join(', ')}` };
@@ -281,55 +300,9 @@ export function backupRouter() {
       // time_blocks containers + their child task-blocks (parent_block_id), and the new
       // category_id refs. The complete dataset is consistent at commit. Auto-resets at tx end.
       sqlite.exec('PRAGMA defer_foreign_keys=ON');
-      // ── Delete in reverse FK order ─────────────────────────────────────────
-      sqlite.prepare('DELETE FROM push_subscriptions WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM reminders WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare(`DELETE FROM possible_task_tags
-        WHERE possible_task_id IN (SELECT id FROM possible_tasks WHERE proposed_owner_id = ?)`).run(ownerId);
-      sqlite.prepare('DELETE FROM possible_tasks WHERE proposed_owner_id = ?').run(ownerId);
-      // ── v4 owner-scoped tables (G-EXPORT-MISSING) — children before parents ─────
-      // objective_tasks & daily_plan FK tasks/objectives/time_blocks; delete them before
-      // those parents. pattern_day_optouts FKs patterns (deleted further down).
-      sqlite.prepare(`DELETE FROM objective_tasks
-        WHERE objective_id IN (SELECT id FROM objectives WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare('DELETE FROM objectives WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM reflections WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM daily_plan WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM day_assignments WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM day_of_week_map WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM day_types WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM pattern_day_optouts WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM plan_hints WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM replan_suggestions WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM estimate_calibration WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM calibration_combo_pins WHERE owner_id = ?').run(ownerId);
-      // entity_tags has no direct owner_id — delete by entity membership.
-      sqlite.prepare(`DELETE FROM entity_tags WHERE entity_id IN (
-        SELECT id FROM tasks WHERE owner_id = ?
-        UNION SELECT id FROM patterns WHERE owner_id = ?
-        UNION SELECT id FROM time_blocks WHERE owner_id = ?
-      )`).run(ownerId, ownerId, ownerId);
-      sqlite.prepare('DELETE FROM time_entries WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare(`DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare(`DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare('DELETE FROM time_blocks WHERE owner_id = ?').run(ownerId); // T1: owner-scoped wipe (incl. containers)
-      sqlite.prepare('DELETE FROM flight_plan WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM tag_prefs WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM pattern_blocks WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM block_templates WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM tasks WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM patterns WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM pattern_types WHERE owner_id = ?').run(ownerId);
-      // T2: tags are owner-scoped; the 3 junctions scope through their parent tags. Delete
-      // junctions first (by parent-tag membership), then the owner's tags. This owner-scoped
-      // tags DELETE is the final lock on entity_tags restore-isolation: the old global
-      // `DELETE FROM tags` cascade-wiped OTHER owners' entity_tags via entity_tags.tag_id.
-      sqlite.prepare(`DELETE FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare(`DELETE FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare(`DELETE FROM tag_directions WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).run(ownerId);
-      sqlite.prepare('DELETE FROM tags WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM daily_recap WHERE owner_id = ?').run(ownerId);
-      sqlite.prepare('DELETE FROM scheduling_prefs WHERE owner_id = ?').run(ownerId);
+      // ── Delete the owner's existing portable data in reverse FK order ──────
+      // Shared with deleteOwner() so the FK-safe ordering has one source of truth.
+      purgeOwnerData(ownerId);
 
       // ── Insert in FK-safe forward order ────────────────────────────────────
       const g = (key: string) => (Array.isArray(body[key]) ? (body[key] as Record<string, unknown>[]) : []);
@@ -369,6 +342,11 @@ export function backupRouter() {
       counts['replan_suggestions']  = insertRows('replan_suggestions', g('replan_suggestions'));
       counts['estimate_calibration']= insertRows('estimate_calibration', g('estimate_calibration'));
       counts['calibration_combo_pins'] = insertRows('calibration_combo_pins', g('calibration_combo_pins'));
+      // v8 (G-CASCADEXPORT). external_events/outbound_queue FK time_blocks(id); the blocks
+      // above are re-inserted with original ids, and defer_foreign_keys=ON makes order moot.
+      counts['copy_history']     = insertRows('copy_history', g('copy_history'));
+      counts['external_events']  = insertRows('external_events', g('external_events'));
+      counts['outbound_queue']   = insertRows('outbound_queue', g('outbound_queue'));
     })();
 
     writeAudit({ ownerId, actor: 'owner', action: 'import', entity: 'import' });
