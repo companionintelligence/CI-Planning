@@ -228,6 +228,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   trustMode: text('trust_mode').notNull().default('balanced'),
   // Leftover-fill ordering (0055): 'priority' (P1 first) | 'overdue' (due_at ASC first).
   fillOrder: text('fill_order').notNull().default('priority'),
+  // B2 (0066): gates reactive reflow (requestReplan) on a big disruption. Default ON.
+  // Read via raw SQL today; mirrored here so ORM queries see it (schema-parity).
+  autoDefenseEnabled: integer('auto_defense_enabled', { mode: 'boolean' }).notNull().default(true),
   conceptDefaultMinutes: integer('concept_default_minutes').default(60),
   conceptAutosurface: integer('concept_autosurface', { mode: 'boolean' }).default(true),
   conceptHorizonDays: integer('concept_horizon_days').default(30),
@@ -409,6 +412,9 @@ export const patternTypes = sqliteTable('pattern_types', {
   texture: text('texture'),                                     // motif override; null = derive from tag
   defaultEstMinutes: integer('default_est_minutes'),            // default est for this category
   notify: integer('notify', { mode: 'boolean' }).default(false), // per-type reminder toggle (Phase H fires)
+  // 0054: a catch-all Plan (the built-in "Community") accepts every staged task regardless
+  // of tag. Read via raw SQL today; mirrored here so ORM queries see it (schema-parity).
+  catchAll: integer('catch_all', { mode: 'boolean' }).notNull().default(false),
 });
 
 export const patterns = sqliteTable('patterns', {

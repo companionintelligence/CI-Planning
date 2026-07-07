@@ -49,6 +49,10 @@ const PUBLIC_PREFIXES = [
   '/api/auth/ciportal/start',
   '/api/auth/ciportal/callback',
   '/api/oauth/google/callback',
+  // AA0b — the memory connector's CI-Portal callback arrives with no app credential
+  // (the portal's redirect); the flow is resolved from the matched oauth_states row.
+  // (Its /start counterpart is credentialed and stays gated.)
+  '/api/memory/ciportal/callback',
 ];
 
 function isPublic(path: string): boolean {
