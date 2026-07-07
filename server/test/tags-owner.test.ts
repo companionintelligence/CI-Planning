@@ -190,7 +190,7 @@ describe('backup restore isolation (tag axis)', () => {
     await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'a-tag' } });
     const exported = await api(srv.url, '/api/export');
     expect(exported.status).toBe(200);
-    expect(exported.body.version).toBe('7');
+    expect(exported.body.version).toBe('8');
     const imported = await api(srv.url, '/api/import', { method: 'POST', json: exported.body });
     expect(imported.status).toBe(200);
 
