@@ -7,6 +7,7 @@ import { reviewAndReschedule } from '../engine/review.js';
 import { fireDueReminders } from '../engine/reminders.js';
 import { ingestEmails, ingestEvents } from '../agents/ingest.js';
 import { suggestFromMemory } from '../agents/memory-suggest.js';
+import { syncToMemory } from '../services/memory.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
@@ -87,6 +88,29 @@ async function execute(kind: string): Promise<JobOutcome> {
         itemsCreated: r.created,
         itemsUpdated: r.updated,
         log: `Pulled ${r.pulled} upcoming memory event(s) → ${r.created} new, ${r.updated} refreshed suggestion(s); skipped ${r.skippedDismissed} dismissed, ${r.skippedCap} over cap`,
+      };
+    }
+    case 'push_memory': {
+      // AA4: one-way push of the owner's completed tasks / habits / reflections to
+      // CI-Server. Gated inside syncToMemory (memory_sync_enabled + connection +
+      // creds), so a flag-off / not-connected / creds-less owner is a clean no-op
+      // log, never an error. itemsUpdated = total events pushed this pass.
+      const r = await syncToMemory(currentOwnerId());
+      if (!r.ok) {
+        const why =
+          r.reason === 'disabled'
+            ? 'Memory sync disabled'
+            : r.reason === 'not_connected'
+              ? 'Companion Memory not connected'
+              : 'Companion Memory unavailable';
+        return { itemsCreated: 0, itemsUpdated: 0, log: `${why} — skipped` };
+      }
+      const c = r.counts;
+      const pushed = c.completed + c.habits + c.reflections;
+      return {
+        itemsCreated: 0,
+        itemsUpdated: pushed,
+        log: `Pushed ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)) → ingested ${c.ingested}, duplicate ${c.duplicate}, rejected ${c.rejected}`,
       };
     }
     case 'promote_possibles': {
@@ -287,6 +311,7 @@ const OWNER_SCOPED_KINDS = new Set([
   'ingest_gmail',
   'ingest_gcal',
   'memory_suggest',
+  'push_memory',
   'promote_possibles',
   'nightly_grooming',
   'auto_schedule',
