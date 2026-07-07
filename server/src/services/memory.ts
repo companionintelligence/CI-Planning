@@ -11,7 +11,7 @@
  * so `pushConnectorAvailable()` is false and `syncToMemory` reports `unavailable`.
  */
 import { sqlite } from '../db/index.js';
-import { memoryCreds, type MemoryCredsSource } from '../connectors/memory.js';
+import { memoryCreds, type MemoryCredsSource, type MemoryAuthKind } from '../connectors/memory.js';
 
 export interface MemoryScopes {
   completed: boolean; // completed tasks & time actuals
@@ -27,6 +27,9 @@ export interface MemoryPullStatus {
   available: boolean;
   /** Where the creds came from; null when unavailable. */
   source: MemoryCredsSource | null;
+  /** How the settings connection authenticates (AA0b): 'oidc' = CI-Portal SSO,
+   *  'manual' = pasted key/bearer, null for the env fallback / when unavailable. */
+  authKind: MemoryAuthKind | null;
   /** Host of the connected CI-Server (display only — never the key). */
   host: string | null;
 }
@@ -106,6 +109,7 @@ export function memoryStatus(owner: string): MemoryStatus {
       enabled: !!p?.memory_pull_enabled,
       available: creds !== null,
       source: creds?.source ?? null,
+      authKind: creds?.authKind ?? null,
       host,
     },
   };

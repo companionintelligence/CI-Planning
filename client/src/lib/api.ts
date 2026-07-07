@@ -317,6 +317,9 @@ export const api = {
     // AA0 — CI-Server connection (pull). api_key travels once on connect; it is
     // stored KEK-encrypted server-side and never echoed back.
     connect: (body: { url: string; api_key?: string }) => request<MemoryStatus>('POST', '/memory/connect', body),
+    // AA0b — begin the CI-Portal SSO connect flow. Returns the authorize URL for a
+    // top-level browser navigation (the callback stores an offline_access refresh token).
+    ciportalStart: () => request<{ url: string }>('GET', '/memory/ciportal/start'),
     disconnect: () => request<MemoryStatus>('POST', '/memory/disconnect', {}),
     // AA1 — manual "pull suggestions now" trigger.
     suggest: () => request<MemorySuggestResult>('POST', '/memory/suggest', {}),
@@ -713,8 +716,14 @@ export interface MemoryStatus {
   enabled: boolean; connected: boolean; account: string | null;
   lastSyncedAt: string | null; available: boolean;
   scopes: { completed: boolean; habits: boolean; reflections: boolean };
-  // Phase AA — pull-side connection state (CI-Server memory graph).
-  pull: { enabled: boolean; available: boolean; source: 'settings' | 'env' | null; host: string | null };
+  // Phase AA — pull-side connection state (CI-Server memory graph). `authKind` (AA0b):
+  // 'oidc' = connected via CI-Portal SSO, 'manual' = pasted key/bearer, null otherwise.
+  pull: {
+    enabled: boolean; available: boolean;
+    source: 'settings' | 'env' | null;
+    authKind: 'manual' | 'oidc' | null;
+    host: string | null;
+  };
 }
 
 // Phase AA · AA1 — result of POST /api/memory/suggest.

@@ -53,9 +53,29 @@ becomes AA4 — not today's gate.
   (stored per-owner, KEK-encrypted → multi-tenant by construction). Status shows
   connected/available for real.
 
-AA0b (fast-follow, not today): "Use CI-Portal sign-in" — requires `offline_access` refresh
-tokens persisted at OIDC login (CP sessions are stateless cookies; id_tokens expire ~1h).
-The connector already accepts `bearer`, so this lands without touching callers.
+AA0b — "Sign in with CI-Portal" (BUILT). A dedicated connector OAuth flow, separate
+from login (CP login sessions are stateless cookies; their id_tokens expire ~1h, so they
+can't back the connector). It requests `offline_access` and PERSISTS the resulting refresh
+token so the connector self-refreshes its CI-Server bearer:
+
+- Routes (`routes/memory.ts`, mirroring the Google connector in `routes/oauth.ts`):
+  `GET /api/memory/ciportal/start` (credentialed; mints an `oauth_states` row with
+  `provider='ci_memory'`, returns the authorize URL — scope = login scopes + `offline_access`)
+  and `GET /api/memory/ciportal/callback` (PUBLIC — owner resolved SOLELY from the matched
+  state row). The callback exchanges the code, REQUIRES a refresh token (else refuses),
+  fully verifies the id_token (nonce/iss/aud/JWKS), and — when the owner has an SSO subject
+  — binds the connection to it (`claims.sub === owners.external_subject`, else rejects).
+- Storage: an `oidc` blob in `connection_tokens` (`provider='ci_memory'`, KEK-encrypted)
+  `{ url, kind:'oidc', accessToken, refreshToken, expiresAt, tokenEndpoint, clientId }`.
+  `resolveLiveMemoryCreds` (the live-request path) refreshes it via the `refresh_token`
+  grant when within 60s of expiry — single-flighted, rotation-safe; a dead refresh token
+  surfaces `MemoryUnavailable`. `memoryCreds` (sync availability/status) returns the stored
+  access token as the bearer, with `authKind='oidc'`.
+- Config: `CI_SERVER_URL` (the memory API base — the bearer is per-user so the shared URL
+  is fine) + `CIPORTAL_MEMORY_REDIRECT_URI` (its own registered callback). The connector
+  still accepts a manual `bearer`, so nothing downstream changed.
+- Settings (client): in SSO mode the memory card shows "Sign in with CI-Portal" (URL+key
+  stays as a fallback); a connected SSO connection reads "Connected to … (via CI-Portal)".
 
 ### AA1 — Memory suggestion agent → inbox → auto-scheduled tasks
 
