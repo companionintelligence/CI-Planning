@@ -3,6 +3,7 @@ import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
+import { localISODate } from '../lib/dates.js';
 import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
@@ -28,12 +29,13 @@ export function AllTasks() {
   const statusOptions = ['', 'open', 'scheduled', 'in_progress', 'deferred'];
   const ARCHIVED = new Set(['done', 'cancelled']);
 
-  // A task completed TODAY (owner-tz baseline = UTC, as everywhere) stays in the active
-  // list — rendered checked — and only falls into the Archive once the day rolls over.
-  // Derived by date, so no background job is needed to "move at end of day".
-  const utcToday = () => new Date().toISOString().slice(0, 10);
+  // A task completed TODAY stays in the active list — rendered checked — and only falls
+  // into the Archive once the day rolls over (derived by date, so no background job is
+  // needed to "move at end of day"). Uses the client's LOCAL day (localISODate) to match
+  // the rest of the client's day-boundary convention — a UTC comparison would flip the
+  // day around midnight for non-UTC users.
   const isDoneToday = (t: Task) =>
-    t.status === 'done' && !!t.completed_at && t.completed_at.slice(0, 10) === utcToday();
+    t.status === 'done' && !!t.completed_at && localISODate(new Date(t.completed_at)) === localISODate();
   // Shown in the active backlog: everything not archived, PLUS today's completions
   // (cancelled always archives immediately — no same-day grace). Routine tasks are a
   // repeatable checklist: they are NEVER archived on completion — they stay in the list

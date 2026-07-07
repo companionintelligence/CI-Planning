@@ -195,14 +195,18 @@ describe('task → block sync (reverse, PATCH /api/tasks/:id)', () => {
     expect(Date.parse(b.end_at) - Date.parse(b.start_at)).toBe(90 * 60_000);
   });
 
-  it('clearing scheduled_for UNSCHEDULES the task — its non-locked placement block is removed', async () => {
+  it('clearing scheduled_for UNSCHEDULES the task — block removed AND status reverts to open', async () => {
     const task = insertTask('Unschedule me', { est: 30, scheduledFor: '2026-06-22', taskTime: '14:00' });
+    sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ?`).run(task); // a placed task is scheduled
     const block = insertBlock({ taskId: task, start: '2026-06-22T21:00:00.000Z', end: '2026-06-22T21:30:00.000Z' });
 
     const r = await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { scheduled_for: null } });
     expect(r.status).toBe(200);
     expect(sqlite.prepare(`SELECT COUNT(*) c FROM time_blocks WHERE id = ?`).get(block)).toEqual({ c: 0 });
     expect(taskRow(task).scheduled_for).toBeNull();
+    // Not stranded at 'scheduled' with no block — back in the open backlog.
+    expect(taskRow(task).status).toBe('open');
+    expect((r.body as { task: { status: string } }).task.status).toBe('open'); // response reflects the revert
   });
 
   it('a LOCKED placement block survives clearing scheduled_for (explicit pin outranks the clear)', async () => {
