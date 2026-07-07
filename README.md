@@ -111,8 +111,8 @@ graph TB
         GQL[GraphQL /api/graphql<br/>Apollo, alongside REST — Phase W]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>15 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0110 on boot]
+        Cron[Croner Jobs<br/>18 scheduled jobs]
+        Migrate[Migration runner<br/>0001 → 0117 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -130,6 +130,7 @@ graph TB
     subgraph Sources["External Sources — fixture by default"]
         Gmail[Gmail ingest]
         GCal[Google Calendar ingest]
+        Mem["CI-Server memory<br/>pull graph · push events"]
     end
 
     UI -->|"fetch /api/*"| API
@@ -142,6 +143,7 @@ graph TB
     Cron --> Ollama
     Cron --> Gmail
     Cron --> GCal
+    Cron <--> Mem
     Drizzle --> DB
     Migrate --> DB
     Ollama --> Small
@@ -170,7 +172,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0110 ordered list
+                                    // migrations from the 0001–0117 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -321,7 +323,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Recurrence horizon** — a Settings control (7/15/30/60/90/180 days) bounding how far ahead recurring Routines/Habits/Time-Blocks materialize; lowering it prunes future auto-placed instances (snapshotted first, reversible by raising it back) without touching the underlying recurrence rule
 - **Clear Date Range** — a Settings tool to preview-then-clear any date range from the Planner (bounded → skips just that window and stays reversible; open-ended → permanently caps the recurrence rule); every apply snapshots the DB first and is fully audited
 - **Multi-device sync** — IndexedDB offline write log, field-level merge (not whole-record LWW) covering Tasks, Time Blocks, and Objectives (+ objective↔task links), monotonic guards so a stale offline op can't un-complete a task or revert a `scheduled` task to `open`, `Last-Event-ID` SSE catch-up replay for reconnecting devices (Phase L)
-- **GraphQL layer (in progress)** — a GraphQL CRUD surface is being added at `POST /api/graphql` (Apollo Server 5) **alongside** the authoritative REST API; it reuses the same owner-scoped service layer, so REST is untouched (Phase W)
+- **GraphQL layer** — a complete GraphQL CRUD surface at `POST /api/graphql` (Apollo Server 5) **alongside** the authoritative REST API; it reuses the same owner-scoped service layer, so REST is untouched (Phase W, done)
 
 ## How it works
 
@@ -403,17 +405,18 @@ them at different moments and can produce a corrupt or inconsistent database. Us
 `pnpm snapshot` or Litestream — both open a proper SQLite connection and export a
 consistent snapshot.
 
-## Project status (v0.3, 2026-06)
+## Project status (v0.3, 2026-07)
 
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0110): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0117): tasks, subtasks, time blocks, tags,
   entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
   block_templates, scheduled_jobs, reminders, push_subscriptions,
   replan_suggestions, audit_log, sync_events, reflections, objectives,
-  objective_tasks, estimate_calibration
+  objective_tasks, estimate_calibration, connection_tokens, external_events,
+  copy_history
 - All nine SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
@@ -444,6 +447,12 @@ consistent snapshot.
 - **Estimate calibration** — weekly `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review
 - **Recurrence horizon + Clear Date Range** (Phase P) — `recurrence_horizon_days` bounds materialization in both recurrence engines (patterns + blocks); lowering it auto-prunes via a shared `clearPlannerRange` engine, which also backs `POST /api/planner/clear` (dry-run preview, DB snapshot on apply) and the original `clear-planner-from.ts` CLI script
 - **Multi-device sync** — field-level merge, `sync_events` append-only log, `Last-Event-ID` SSE catch-up; `POST /api/sync` applies offline op-log entries
+- **GraphQL CRUD layer** (Phase W) — a complete Apollo Server 5 surface at `POST /api/graphql` alongside REST (REST authoritative/untouched); Relay-style connections, `Node`/`DateTime`/`JSON` conventions, shared owner-scoped service layer, flag-gated GraphiQL sandbox
+- **Natural scheduling** (Phase AB) — `scheduled_for` + `task_time` are START intent that drives placement (a 2pm task lands at 2pm), with `due_at` a deadline only; a shared `placeStartAnchoredTask` honors stated day/time across create, quick-add, and promote
+- **Calendar reliability** (Phase AD) — `task_time` honored uniformly (quick-add places on save; flight-plan pins timed tasks and packs flexible work around them); tasks inherit their container's direction tag; Alt-drag drops a block anywhere (overlap allowed)
+- **Reflow correctness** (Phase AE) — the reactive reflow is snapshot-based (clear set == re-place set), so editing one placed task can never wipe the other auto-placed blocks; placement status parity (`open`↔`scheduled`), a not-before-now clamp, and locked-block guards across reschedule/review/sweep
+- **Today + Tasks UI** (Phase AC) — Today's single header row (Brief · Focus · Note popovers + FAB, collapsible DUE); Tasks task-chip redesign, Routine grouping with end-of-day archive and a midnight `reset_routines` job
+- **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as Inbox suggestions, the Daily Brief folds in a memory excerpt, autoplan ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
 
 **Intentionally partial:**
 
@@ -457,6 +466,12 @@ consistent snapshot.
   is a master kill switch for the whole sync agent.
 - Web Push delivery needs VAPID keys set in the env (see below); without them push is
   dormant but in-app SSE reminders still fire
+- CI-Server **memory integration** (Phase AA) is **off by default** (`memory_pull_enabled` /
+  `memory_sync_enabled` both start `0`) and, in `live` mode, needs a reachable CI-Server plus
+  per-owner creds; `MEMORY_MODE=fixture` (the default) runs against a committed sample graph
+  with no network. Flag-off is byte-identical — the memory layer ships dark.
+- **Time-Sense** (Phase Z — Focus Ritual + estimate-calibration loop) is behind the
+  `time_sense_enabled` master flag (flag-off = behavior-neutral)
 - Later phases (auth, multi-device sync) in [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Run with Docker (CI Hub)
@@ -528,6 +543,9 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CP_MCP_RETRIES` | `3` | Retry budget for MCP requests. |
 | `CP_MCP_BREAKER_THRESHOLD` | `5` | Consecutive MCP failures before the circuit breaker opens. |
 | `CP_MCP_BREAKER_COOLDOWN_MS` | `30000` | How long the MCP circuit breaker stays open before it half-opens and retries. |
+| `MEMORY_MODE` | `fixture` | CI-Server memory transport (Phase AA): `fixture` (committed sample graph, fully offline) or `live` (real graph API). Availability is still creds-driven in both modes. |
+| `CI_SERVER_URL` | (unset) | CI-Server memory API base URL — single-tenant dev/standalone fallback creds. Ignored under multi-tenant SSO (creds are then per-owner in `connection_tokens`, connected in Settings). |
+| `CI_SERVER_API_KEY` | (unset) | API key paired with `CI_SERVER_URL` for the single-tenant fallback. |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset) | Web Push keys — generate once with `npx web-push generate-vapid-keys`. Unset ⇒ push disabled (in-app reminders still fire). Never commit them. |
 | `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push |
@@ -631,7 +649,7 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
-| POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, in progress) |
+| POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, done) |
 
 ## Tests
 
