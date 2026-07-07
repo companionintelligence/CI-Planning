@@ -17,6 +17,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { applyTaskPlacementStatus, syncTaskFromBlock } from '../services/block-task-sync.js';
+import { inheritContainerDirection } from '../services/tags.js';
 
 const DEFAULT_EST_MIN = 30;
 const MIN_SESSION_MS = 15 * MS_PER_MIN;
@@ -31,7 +32,7 @@ export interface PlaceTasksResult {
 }
 
 interface PrefsRow { min_break_minutes: number | null; max_focus_block_minutes: number | null }
-interface BlockRow { start_at: string; end_at: string; block_kind: string | null }
+interface BlockRow { start_at: string; end_at: string; block_kind: string | null; tag: string | null }
 interface TaskRow { id: string; title: string; estimated_minutes: number | null; status: string }
 
 /**
@@ -44,7 +45,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
     const empty: PlaceTasksResult = { blockId, blocksCreated: 0, placed: 0, unplaced: 0, skipped: 0 };
 
     const block = sqlite
-      .prepare(`SELECT start_at, end_at, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .prepare(`SELECT start_at, end_at, block_kind, tag FROM time_blocks WHERE id = ? AND owner_id = ?`)
       .get(blockId, owner) as BlockRow | undefined;
     if (!block || block.block_kind !== 'timeblock') return empty;
     const windowStartMs = Date.parse(block.start_at);
@@ -84,13 +85,17 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
     const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
     const ins = sqlite.prepare(
-      `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id)
-       VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 0, 'manual', 'planned', ?) RETURNING id`,
+      `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, tag)
+       VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 0, 'manual', 'planned', ?, ?) RETURNING id`,
     );
     let blocksCreated = 0;
     let placed = 0;
     let unplaced = 0;
     for (const t of toPlace) {
+      // AD2: inherit the container's direction as the task's level-1 primary (unless the
+      // task already has one). The child block's `tag` mirrors the container direction
+      // regardless (it's a child of that container), stamped in the INSERT below.
+      inheritContainerDirection(t.id, block.tag, owner);
       const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
       let placedSessions = 0;
       let firstBlockId: string | undefined;
@@ -99,7 +104,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
         if (!pick) break;
         const startMs = pick.gap.cursor;
         const endMs = startMs + pick.len;
-        const { id: bid } = ins.get(t.id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId) as { id: string };
+        const { id: bid } = ins.get(t.id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), blockId, block.tag ?? null) as { id: string };
         firstBlockId ??= bid;
         pick.gap.cursor = endMs + breakMs;
         blocksCreated++;

@@ -12,7 +12,7 @@ import {
   TOP_COLLAPSE_END,
   BOTTOM_COLLAPSE_START,
 } from '../lib/day-axis.js';
-import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta } from '../lib/drag.js';
+import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta, isAltFreeDrag, neighboursForDrag } from '../lib/drag.js';
 import { resolveGroup, containerAt, clampGroupDelta } from '../lib/group-move.js';
 import { spanAtY } from '../lib/place.js';
 import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
@@ -608,12 +608,14 @@ function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () 
  * segmented px→min conversion happened at the pointer seam).
  */
 function clampLiveDMinFor(b: Block, day: string, all: Block[], mode: GestureMode, dMin: number, ev: PointerEvent): number {
-  const altDetach = mode === 'move' && b.parent_block_id != null && ev.altKey;
-  if (mode === 'move' && !altDetach && (b.block_kind === 'timeblock' || b.parent_block_id != null)) {
+  // AD5 — a held-Alt MOVE free-drags: the item follows the cursor with no clamp, for
+  // BOTH loose chips and blocks/containers. It also detaches a nested item on drop (the
+  // commit path does that); here we only bypass the clamp. `isAltFreeDrag` guards mode.
+  if (isAltFreeDrag(mode, ev.altKey)) return dMin;
+  if (mode === 'move' && (b.block_kind === 'timeblock' || b.parent_block_id != null)) {
     return clampGroupDelta(resolveGroup(all, b.id), all, day, dMin);
   }
-  const n = altDetach ? neighboursFor({ ...b, parent_block_id: null }, day, all) : neighboursFor(b, day, all);
-  return clampLiveDelta(b, day, mode, dMin, n);
+  return clampLiveDelta(b, day, mode, dMin, neighboursFor(b, day, all));
 }
 
 export function Planner() {
@@ -682,8 +684,9 @@ export function Planner() {
   const isGroupAnchor = (b: Block) => b.block_kind === 'timeblock' || b.parent_block_id != null;
 
   function onMoveLive(anchor: Block, dMin: number, ev: PointerEvent) {
-    // Alt-detaching a member → only the member moves (no group ghost).
-    if (anchor.parent_block_id != null && ev.altKey) { setGhost(null); return; }
+    // AD5 — Alt free-drag: only the dragged item follows the cursor (no group ghost),
+    // whether it's a nested member (detach) or a container/loose chip.
+    if (isAltFreeDrag('move', ev.altKey)) { setGhost(null); return; }
     if (!isGroupAnchor(anchor)) return;
     const members = resolveGroup(blocks() ?? [], anchor.id);
     if (members.length <= 1) return;
@@ -696,15 +699,20 @@ export function Planner() {
     const dyPx = dMin * PX_PER_MIN;
     const deltaMin = Math.round(dMin / SNAP_MIN) * SNAP_MIN; // snapped group delta
 
-    // Member + Alt → detach this one and move it alone. It becomes loose, so clamp it
-    // against the loose obstacle set (as if it had no parent).
-    if (anchor.parent_block_id != null && ev.altKey) {
+    // AD5 — a held-Alt MOVE free-drags: resolve WITHOUT clamping (empty neighbours →
+    // snap-to-grid, no collision clamp) and commit exactly where released, overlap
+    // allowed. A nested item ALSO detaches (parent_block_id:null) on drop, keeping the
+    // existing behaviour; a loose chip or container just moves free (no attach/detach).
+    if (isAltFreeDrag('move', ev.altKey)) {
       setGhost(null);
-      const looseN = neighboursFor({ ...anchor, parent_block_id: null }, day(), blocks() ?? []);
-      const resolved = resolveGesture(anchor, day(), 'move', dyPx, looseN);
+      const resolved = resolveGesture(anchor, day(), 'move', dyPx, neighboursForDrag('move', true, []));
       if (!resolved) return;
-      try { await api.blocks.update(anchor.id, { ...resolved, parent_block_id: null }); refetchBlocks(); showToast('Detached from Time Block', 'default'); }
-      catch (err) { showToast((err as Error).message, 'error'); }
+      const detach = anchor.parent_block_id != null;
+      try {
+        await api.blocks.update(anchor.id, detach ? { ...resolved, parent_block_id: null } : resolved);
+        refetchBlocks();
+        if (detach) showToast('Detached from Time Block', 'default');
+      } catch (err) { showToast((err as Error).message, 'error'); }
       return;
     }
 
