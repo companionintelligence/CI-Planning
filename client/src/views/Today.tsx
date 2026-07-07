@@ -1,7 +1,8 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter } from 'lucide-solid';
 import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
-import { dueFilter, dueFilterActive, toggleDirection, setHideHabits, setHideRoutines, passesDueFilter } from '../lib/due-filter.js';
+import { dueFilterActive, passesDueFilter } from '../lib/due-filter.js';
+import { dueFilter, toggleDirection, setHideHabits, setHideRoutines } from '../stores/due-filter.js';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
