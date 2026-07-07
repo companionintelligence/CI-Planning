@@ -25,6 +25,7 @@ import { taskTagNames, inheritContainerDirection } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
+import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementStatus } from '../services/block-task-sync.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
@@ -98,6 +99,28 @@ function selectedStaged(owner: string, date: string): StagedTask[] {
     )
     .all(date, owner) as Omit<StagedTask, 'tags'>[];
   return rows.map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
+}
+
+/**
+ * Build the StagedTask list for an explicit task-id set, PRESERVING the caller's
+ * order (reflow passes the day's authored order with current-block order appended).
+ * Bypasses `flight_plan` entirely: a reflow re-places what is ON THE BOARD, and must
+ * not write to — or read through — the user's staging area (the old restage inserted
+ * rows there and leaked every re-place failure into the flight-plan UI).
+ */
+function stagedFromTaskIds(owner: string, ids: readonly string[]): StagedTask[] {
+  if (ids.length === 0) return [];
+  const rows = sqlite
+    .prepare(
+      `SELECT id AS task_id, title, estimated_minutes, priority, due_at, scheduled_for, task_time
+         FROM tasks WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+    )
+    .all(owner, ...ids) as Omit<StagedTask, 'tags'>[];
+  const byId = new Map(rows.map((r) => [r.task_id, r]));
+  return ids
+    .map((id) => byId.get(id))
+    .filter((r): r is Omit<StagedTask, 'tags'> => r !== undefined)
+    .map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
 }
 
 /** How many tasks are staged in the flight-plan (selected or not). */
@@ -258,22 +281,39 @@ const insBlock = () =>
 
 /**
  * Clear our OWN prior agent placements for the local day (pattern blocks survive).
+ *
+ * SCOPED to `taskIds` — the tasks this run is about to (re)place. The clear set and
+ * the re-place set must be the same set: an unscoped DELETE here was the reflow-wipe
+ * bug (and its explicit-path twin: a second Auto run of the day deleted the first
+ * run's placements, which were no longer staged). An empty `taskIds` clears nothing.
+ *
+ * Terminal statuses are never cleared — including 'missed'/'cancelled', which the old
+ * filter deleted despite the snapshot/obstacle queries treating them as settled
+ * history (the review surface's missed-evidence blocks vanished on every reflow).
+ *
  * `protectIds` — block ids the caller wants kept regardless (auto-defense passes the
  * in-progress / recently-moved / locked blocks here, in memory, so a reflow never has
  * to write is_locked to fence them off and can't leave a block stuck locked on a crash).
  */
-function clearPriorAuto(owner: string, date: string, tz: string, protectIds?: Set<string>): void {
+function clearPriorAuto(
+  owner: string,
+  date: string,
+  tz: string,
+  opts: { taskIds: readonly string[]; protectIds?: Set<string> },
+): void {
+  if (opts.taskIds.length === 0) return; // nothing to re-place → nothing to clear
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
-  const protect = protectIds && protectIds.size ? [...protectIds] : [];
+  const protect = opts.protectIds && opts.protectIds.size ? [...opts.protectIds] : [];
   const notIn = protect.length ? ` AND id NOT IN (${protect.map(() => '?').join(',')})` : '';
   sqlite
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
-          AND status NOT IN ('completed','skipped')
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND task_id IN (${opts.taskIds.map(() => '?').join(',')})
           AND start_at < ? AND end_at > ?` + notIn
     )
-    .run(owner, dayEndISO, dayStartISO, ...protect);
+    .run(owner, ...opts.taskIds, dayEndISO, dayStartISO, ...protect);
 }
 
 /**
@@ -287,9 +327,14 @@ function placeIntoWindow(
   windowStartMs: number,
   windowEndMs: number,
   prefs: PrefsRow | undefined,
-  opts: { parentBlockId?: string | null; includePlans?: boolean; runId?: string | null }
+  opts: { parentBlockId?: string | null; includePlans?: boolean; runId?: string | null; notBeforeMs?: number | null }
 ): { blocksCreated: number; placedTaskIds: Set<string> } {
   const placedTaskIds = new Set<string>();
+  // R3 clamp: an engine-chosen slot never starts before `now` (set by the caller only
+  // when placing on the owner-local current day) — a late-day re-pack must fill the
+  // REMAINING day, not move future work into already-past morning gaps that the missed
+  // sweep would immediately recycle (a churn loop).
+  if (opts.notBeforeMs != null) windowStartMs = Math.max(windowStartMs, opts.notBeforeMs);
   if (windowEndMs <= windowStartMs || tasks.length === 0) return { blocksCreated: 0, placedTaskIds };
 
   const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
@@ -325,7 +370,13 @@ function placeIntoWindow(
       blocksCreated++;
       placedAny = true;
     }
-    if (placedAny) placedTaskIds.add(t.task_id);
+    if (placedAny) {
+      placedTaskIds.add(t.task_id);
+      // R2 parity: placed = scheduled on EVERY path — flip open → scheduled and mirror
+      // the placement day (never task_time; see mirrorEnginePlacement) like the
+      // wizard/container/routine placement paths already do.
+      mirrorEnginePlacement(t.task_id, owner);
+    }
   }
   return { blocksCreated, placedTaskIds };
 }
@@ -340,7 +391,14 @@ function placeIntoWindow(
  * whether a block now exists for the task. Plan containers are NOT obstacles for the
  * exact hit — a stated time inside a Plan is normal grouping, not double-booking.
  */
-function pinTaskAt(owner: string, t: StagedTask, date: string, tz: string, prefs: PrefsRow | undefined): boolean {
+function pinTaskAt(
+  owner: string,
+  t: StagedTask,
+  date: string,
+  tz: string,
+  prefs: PrefsRow | undefined,
+  notBeforeMs?: number | null,
+): boolean {
   const existing = sqlite
     .prepare(
       `SELECT id FROM time_blocks
@@ -349,7 +407,14 @@ function pinTaskAt(owner: string, t: StagedTask, date: string, tz: string, prefs
         ORDER BY start_at LIMIT 1`,
     )
     .get(t.task_id, owner) as { id: string } | undefined;
-  if (existing) { sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id); return true; }
+  if (existing) {
+    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
+    // R2 parity: the existing block IS the placement — flip open → scheduled. Don't
+    // rewrite scheduled_for here: the block may sit on another day (stale drift), and
+    // the task's stated day must win over a leftover block.
+    applyTaskPlacementStatus(t.task_id, owner);
+    return true;
+  }
 
   const durMs = Math.max((t.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
   const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
@@ -358,14 +423,17 @@ function pinTaskAt(owner: string, t: StagedTask, date: string, tz: string, prefs
     const endAt = new Date(startMs + durMs).toISOString();
     insAnchoredBlock().get(t.task_id, owner, t.title, startAt, endAt);
     sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
+    mirrorEnginePlacement(t.task_id, owner); // R2 parity: scheduled_for = this day, open → scheduled
     return true;
   };
 
+  // The stated (date, task_time) instant is honored EXACTLY even if it has already
+  // passed (user intent, not an engine choice) — only the gap FALLBACK below clamps.
   const startMs = Date.parse(zonedWallTimeToUTC(date, t.task_time!, tz));
   if (dayObstacles(owner, startMs, startMs + durMs).length === 0) return create(startMs);
 
   const bounds = utcDayBounds(date, tz);
-  const dayStart = Date.parse(bounds.start);
+  const dayStart = Math.max(Date.parse(bounds.start), notBeforeMs ?? Number.NEGATIVE_INFINITY);
   const dayEnd = Date.parse(bounds.end);
   let bestStart: number | null = null;
   let bestDist = Number.POSITIVE_INFINITY;
@@ -398,6 +466,7 @@ function placeHintWindows(
   prefs: PrefsRow | undefined,
   tz: string,
   runId: string,
+  notBeforeMs?: number | null,
 ): { placedTaskIds: Set<string>; constrainedIds: Set<string>; blocksCreated: number } {
   const placedTaskIds = new Set<string>();
   const constrainedIds = new Set<string>();
@@ -432,7 +501,7 @@ function placeHintWindows(
     if (!matched) continue;
     constrainedIds.add(t.task_id); // hard: caller excludes these from the unconstrained fill
     if (end <= start) continue;    // contradictory/empty window → leave unplaced today
-    const r = placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId });
+    const r = placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
     r.placedTaskIds.forEach((id) => placedTaskIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -497,16 +566,28 @@ export function fillFlightPlanCandidates(
  */
 export function placeFlightPlan(
   owner: string = currentOwnerId(),
-  opts: { date?: string; blockId?: string; silent?: boolean; onlyTaskIds?: Set<string>; protectIds?: Set<string> } = {},
+  opts: {
+    date?: string;
+    blockId?: string;
+    silent?: boolean;
+    /** Reflow (auto-defense): re-place EXACTLY these tasks, in this order — the day's
+     *  movable snapshot. Bypasses `flight_plan` (a reflow re-packs the board; it never
+     *  reads or writes the user's staging area) and scopes the clear to the same set. */
+    replaceTaskIds?: readonly string[];
+    protectIds?: Set<string>;
+    /** Injectable clock for the R3 clamp (tests); defaults to Date.now(). */
+    nowMs?: number;
+  } = {},
 ): AutoResult {
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
-  const stagedAll = selectedStaged(owner, date);
-  // Reflow (auto-defense) passes `onlyTaskIds` to scope placement to the tasks already
-  // on the day — so a reactive reflow re-packs the EXISTING plan and never pulls in
-  // un-staged backlog or the user's pending flight-plan items (gap-close, not re-fill).
-  const staged = opts.onlyTaskIds ? stagedAll.filter((t) => opts.onlyTaskIds!.has(t.task_id)) : stagedAll;
+  const staged = opts.replaceTaskIds ? stagedFromTaskIds(owner, opts.replaceTaskIds) : selectedStaged(owner, date);
+  // R3: when placing on the owner-local CURRENT day, engine-chosen slots never start
+  // before now — a re-pack fills the remaining day. Other days are untouched (a future
+  // day has nothing to clamp; tests place on fixed past days deliberately).
+  const nowMs = opts.nowMs ?? Date.now();
+  const notBeforeMs = date === localDateInTZ(new Date(nowMs).toISOString(), tz) ? nowMs : null;
   const runId = newId(); // stamps every block this run creates, so Undo can target it (D2)
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
@@ -515,7 +596,6 @@ export function placeFlightPlan(
       | { start_at: string; end_at: string; tag: string | null; category_id: string | null }
       | undefined;
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
-    clearPriorAutoInWindow(owner, Date.parse(block.start_at), Date.parse(block.end_at));
     let cands: StagedTask[];
     let ordered: StagedTask[];
     if (block.category_id) {
@@ -539,8 +619,14 @@ export function placeFlightPlan(
         ordered = orderForPlan(cands, weights);
       }
     }
-    const r = placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId });
+    // Scoped clear (after cands are known): only the tasks this run will re-place into
+    // the Plan lose their prior agent blocks — a staged task that doesn't match this
+    // Plan keeps its existing placement.
+    clearPriorAutoInWindow(owner, Date.parse(block.start_at), Date.parse(block.end_at), cands.map((t) => t.task_id));
+    const r = placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs });
     recordRun(owner, runId, r.blocksCreated);
+    // A candidate whose block was cleared but found no room is back off the board.
+    for (const t of cands) if (!r.placedTaskIds.has(t.task_id)) revertTaskPlacementStatus(t.task_id, owner);
     if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     if (r.placedTaskIds.size > 0) {
       const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
@@ -551,7 +637,10 @@ export function placeFlightPlan(
   }
 
   // ── General Auto: Plans first, then the workday fallback ────────────────────
-  clearPriorAuto(owner, date, tz, opts.protectIds);
+  // Scoped to the tasks this run re-places (staged / replaceTaskIds): the clear set
+  // and the re-place set are the same set by construction, so a run can never delete
+  // a placement it isn't about to rebuild (the reflow-wipe bug, both paths).
+  clearPriorAuto(owner, date, tz, { taskIds: staged.map((t) => t.task_id), protectIds: opts.protectIds });
   const placedIds = new Set<string>();
   let blocksCreated = 0;
 
@@ -582,8 +671,8 @@ export function placeFlightPlan(
       .get(t.task_id, owner);
     const pinned =
       t.scheduled_for === date
-        ? placeStartAnchoredTask(owner, t.task_id, { silent: true }).placed
-        : pinTaskAt(owner, t, date, tz, prefs);
+        ? placeStartAnchoredTask(owner, t.task_id, { silent: true, nowMs }).placed
+        : pinTaskAt(owner, t, date, tz, prefs, notBeforeMs);
     if (pinned) { placedIds.add(t.task_id); if (!hadBlock) blocksCreated++; }
   }
 
@@ -609,7 +698,7 @@ export function placeFlightPlan(
       ordered = orderForPlan(cands, weights);
     }
     if (cands.length === 0) continue;
-    const r = placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
+    const r = placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -622,7 +711,7 @@ export function placeFlightPlan(
   for (const plan of dayCategoryPlans(owner, date, tz)) {
     const filtered = categoryCandidates(staged, plan.category_id, owner).filter((t) => !placedIds.has(t.task_id));
     if (filtered.length === 0) continue;
-    const r = placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId });
+    const r = placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -634,7 +723,7 @@ export function placeFlightPlan(
   // from the direction-window pass AND the workday fill below, so a hinted task never
   // lands outside its window (HARD: a full/empty window leaves it unplaced). Reflow honours
   // this automatically — it re-runs placeFlightPlan, which re-reads `plan_hints`.
-  const hintPass = placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId);
+  const hintPass = placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId, notBeforeMs);
   hintPass.placedTaskIds.forEach((id) => placedIds.add(id));
   blocksCreated += hintPass.blocksCreated;
   const hintConstrainedIds = hintPass.constrainedIds;
@@ -672,7 +761,7 @@ export function placeFlightPlan(
         if (placedIds.has(t.task_id)) break;
         const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
         const winEnd = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
-        const r = placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId });
+        const r = placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
       }
@@ -699,7 +788,7 @@ export function placeFlightPlan(
         : fillOrder === 'overdue' ? orderByOverdue(remaining) : orderForPlan(remaining);
       const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
       const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-      const r = placeIntoWindow(owner, ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
+      const r = placeIntoWindow(owner, ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
       r.placedTaskIds.forEach((id) => placedIds.add(id));
       blocksCreated += r.blocksCreated;
       placedInWorkday = r.placedTaskIds.size;
@@ -707,6 +796,10 @@ export function placeFlightPlan(
   }
 
   recordRun(owner, runId, blocksCreated);
+
+  // R2: a staged task whose prior block was cleared but that found no room is off the
+  // board again — return it to the open backlog (scheduled ⇒ open; no-op otherwise).
+  for (const t of staged) if (!placedIds.has(t.task_id)) revertTaskPlacementStatus(t.task_id, owner);
 
   // Link block_id in daily_plan for every placed task (Phase M §0 / A3: the block
   // detail view joins daily_plan on block_id to display the per-task rationale).
@@ -741,10 +834,13 @@ export function placeFlightPlan(
  * placed (Plans, meetings, prior auto/manual blocks). Never auto-runs — it is always an
  * explicit tap, in both modes. Gated by the `auto_fill_workday` pref (off → no-op).
  */
-export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: string } = {}): AutoResult {
+export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: string; nowMs?: number } = {}): AutoResult {
   const date = opts.date ?? localISODate();
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
+  // R3 clamp (see placeFlightPlan): today's engine-chosen slots start no earlier than now.
+  const nowMs = opts.nowMs ?? Date.now();
+  const notBeforeMs = date === localDateInTZ(new Date(nowMs).toISOString(), tz) ? nowMs : null;
   if ((prefs?.auto_fill_workday ?? 1) !== 1) {
     return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
   }
@@ -775,9 +871,9 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
   // A4: honour NL tag-window hints here too. A hint-constrained task is placed only within
   // its window (or left unplaced) and excluded from the unconstrained priority fill, so the
   // explicit top-up can't leak "no errands before noon" past its window.
-  const hintPass = placeHintWindows(owner, date, remaining, prefs, tz, runId);
+  const hintPass = placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs);
   const unconstrained = remaining.filter((t) => !hintPass.constrainedIds.has(t.task_id));
-  const r = placeIntoWindow(owner, orderForPlan(unconstrained), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId });
+  const r = placeIntoWindow(owner, orderForPlan(unconstrained), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
   const filled = new Set([...hintPass.placedTaskIds, ...r.placedTaskIds]);
   const blocksCreated = hintPass.blocksCreated + r.blocksCreated;
   recordRun(owner, runId, blocksCreated);
@@ -821,16 +917,20 @@ export function undoLastAuto(owner: string = currentOwnerId()): { removed: numbe
   return { removed, restaged };
 }
 
-/** Clear prior agent placements overlapping a specific window (the single-Plan path). */
-function clearPriorAutoInWindow(owner: string, windowStartMs: number, windowEndMs: number): void {
+/** Clear prior agent placements overlapping a specific window (the single-Plan path).
+ *  Scoped to `taskIds` — only the tasks this run re-places into the Plan (same
+ *  clear-set == re-place-set rule as clearPriorAuto). */
+function clearPriorAutoInWindow(owner: string, windowStartMs: number, windowEndMs: number, taskIds: readonly string[]): void {
+  if (taskIds.length === 0) return;
   sqlite
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
-          AND status NOT IN ('completed','skipped')
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND task_id IN (${taskIds.map(() => '?').join(',')})
           AND start_at < ? AND end_at > ?`
     )
-    .run(owner, new Date(windowEndMs).toISOString(), new Date(windowStartMs).toISOString());
+    .run(owner, ...taskIds, new Date(windowEndMs).toISOString(), new Date(windowStartMs).toISOString());
 }
 
 /**
@@ -942,7 +1042,7 @@ const insAnchoredBlock = () =>
 export function placeStartAnchoredTask(
   owner: string,
   taskId: string,
-  opts: { silent?: boolean } = {},
+  opts: { silent?: boolean; nowMs?: number } = {},
 ): StartAnchoredOutcome {
   const task = sqlite
     .prepare(`SELECT id, title, scheduled_for, task_time, estimated_minutes FROM tasks WHERE id = ? AND owner_id = ?`)
@@ -966,12 +1066,21 @@ export function placeStartAnchoredTask(
     .get(taskId, owner) as { id: string; start_at: string; end_at: string } | undefined;
   if (existing) {
     sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
+    // R2 parity: the existing block IS the placement — flip open → scheduled (status
+    // only; the task's stated scheduled_for wins over a possibly-stale block's day).
+    applyTaskPlacementStatus(taskId, owner);
     return { placed: true, blockId: existing.id, startAt: existing.start_at, endAt: existing.end_at };
   }
 
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
   const date = task.scheduled_for;
+  // R3 clamp: on the owner-local current day, ENGINE-CHOSEN slots (direction-window /
+  // workday fits and the nearest-gap fallback) start no earlier than now. The user's
+  // exact (scheduled_for, task_time) instant is exempt — stated intent is honored even
+  // in the past.
+  const nowMs = opts.nowMs ?? Date.now();
+  const notBeforeMs = date === localDateInTZ(new Date(nowMs).toISOString(), tz) ? nowMs : null;
   const durMs = Math.max((task.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
   const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
 
@@ -981,12 +1090,14 @@ export function placeStartAnchoredTask(
     const { id: blockId } = insAnchoredBlock().get(task.id, owner, task.title, startAt, endAt) as { id: string };
     // A staged copy of this task must not be auto-placed AGAIN by the next Auto run.
     sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, task.id);
+    applyTaskPlacementStatus(task.id, owner); // R2 parity: placed = scheduled
     if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: 1, placed: 1, unplaced: 0 });
     return { placed: true, blockId, startAt, endAt };
   };
 
   /** Earliest gap fitting the full duration inside [winStart, winEnd], flowing around Plans. */
   const earliestFit = (winStartMs: number, winEndMs: number): number | null => {
+    if (notBeforeMs != null) winStartMs = Math.max(winStartMs, notBeforeMs);
     if (winEndMs - winStartMs < durMs) return null;
     const fixed = dayObstacles(owner, winStartMs, winEndMs, { includePlans: true });
     for (const g of buildGaps(winStartMs, winEndMs, fixed, breakMs)) {
@@ -1002,9 +1113,10 @@ export function placeStartAnchoredTask(
     const endMs = startMs + durMs;
     if (dayObstacles(owner, startMs, endMs).length === 0) return create(startMs, endMs);
 
-    // Occupied → the open gap NEAREST the requested time on the SAME local day.
+    // Occupied → the open gap NEAREST the requested time on the SAME local day
+    // (engine-chosen, so the R3 clamp applies).
     const bounds = utcDayBounds(date, tz);
-    const dayStart = Date.parse(bounds.start);
+    const dayStart = Math.max(Date.parse(bounds.start), notBeforeMs ?? Number.NEGATIVE_INFINITY);
     const dayEnd = Date.parse(bounds.end);
     const gaps = buildGaps(dayStart, dayEnd, dayObstacles(owner, dayStart, dayEnd), breakMs);
     let bestStart: number | null = null;
