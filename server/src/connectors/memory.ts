@@ -368,6 +368,84 @@ async function getJson<T>(owner: string, path: string, params: Record<string, st
   }
 }
 
+// ── push transport (AA4) ─────────────────────────────────────────────────────────
+
+/**
+ * A single event pushed to CI-Server's capture ingest (`POST /v1/events`). The envelope
+ * is deliberately minimal and stable:
+ *
+ *   { source_system: 'companion-planning',   // constant, set by postEvents
+ *     source_id:     '<kind>:<entity-id>',    // idempotency key with (user_id, source_system)
+ *     type:          'task_completed' | 'habit_done' | 'reflection',
+ *     occurred_at:   '<ISO>',                  // when it happened (completion / update time)
+ *     payload:       { … } }                   // type-specific, small
+ *
+ * user_id is NEVER sent — CI-Server resolves the user from the x-api-key / Bearer
+ * credential (its JwtOrApiKeyAuthGuard), so a mislabeled user_id can't cross owners.
+ */
+export const MEMORY_SOURCE_SYSTEM = 'companion-planning';
+
+export interface MemoryEvent {
+  source_id: string;
+  type: string;
+  occurred_at: string;
+  payload: Record<string, unknown>;
+}
+
+/** CI-Server's idempotent ingest response: counts, tolerant of missing fields. */
+export interface MemoryIngestResult {
+  ingested: number;
+  duplicate: number;
+  rejected: number;
+}
+
+function num(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * One-way PUSH of the owner's events to CI-Server (`POST /v1/events`). Fixture mode does
+ * NO network — it reports every event as ingested (offline-by-default, mirroring the pull
+ * side, so tests never hit the wire). Live mode POSTs the batch with `memoryHeaders`
+ * (x-api-key + Bearer coexist) and `redirect: 'manual'` (undici keeps custom headers
+ * across a 3xx, so following one could exfiltrate the key). Every transport / 3xx / 4xx /
+ * 5xx / unparseable failure surfaces as {@link MemoryUnavailable} so callers degrade
+ * deterministically and never stamp a fake success.
+ */
+export async function postEvents(owner: string, events: MemoryEvent[]): Promise<MemoryIngestResult> {
+  if (events.length === 0) return { ingested: 0, duplicate: 0, rejected: 0 };
+  if (memoryMode() === 'fixture') {
+    return { ingested: events.length, duplicate: 0, rejected: 0 };
+  }
+  const creds = await resolveLiveMemoryCreds(owner);
+  if (!creds) throw new MemoryUnavailable('No CI-Server credentials configured (connect in Settings or set CI_SERVER_URL)');
+  const url = `${creds.url.replace(/\/+$/, '')}/v1/events`;
+  const body = JSON.stringify(events.map((e) => ({ source_system: MEMORY_SOURCE_SYSTEM, ...e })));
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { ...memoryHeaders(creds), 'Content-Type': 'application/json' },
+      body,
+      redirect: 'manual',
+    });
+  } catch (err) {
+    throw new MemoryUnavailable(`CI-Server unreachable at ${creds.url}: ${(err as Error).message}`);
+  }
+  if (res.status >= 300 && res.status < 400) {
+    throw new MemoryUnavailable(`CI-Server POST /v1/events responded with a redirect (HTTP ${res.status}); refusing to follow`);
+  }
+  if (!res.ok) {
+    throw new MemoryUnavailable(`CI-Server POST /v1/events failed: HTTP ${res.status}`);
+  }
+  try {
+    const json = (await res.json()) as Partial<MemoryIngestResult>;
+    return { ingested: num(json.ingested), duplicate: num(json.duplicate), rejected: num(json.rejected) };
+  } catch (err) {
+    throw new MemoryUnavailable(`CI-Server POST /v1/events returned unparseable JSON: ${(err as Error).message}`);
+  }
+}
+
 /** Raw node shape on the wire (fixture file uses the same snake_case envelope). */
 interface WireNode {
   id?: string;
