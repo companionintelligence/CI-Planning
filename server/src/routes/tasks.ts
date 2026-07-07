@@ -167,6 +167,19 @@ export function tasksRouter() {
     if (enriched.tags.length) applyTaskTagLevels(currentOwnerId(), task.id, { tags: enriched.tags });
     syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): quick-add may parse a due date
 
+    // AD1: a scheduled task is placed on its day right away — task_time set → exact
+    // placement; no time → that date's direction window → workday gap (owner decision).
+    // placeStartAnchoredTask broadcasts 'auto:placed' on success (its non-silent path),
+    // so the client refetches blocks. Best-effort: a placement failure must never fail
+    // the quick-add itself (the task is already created).
+    if (task.scheduledFor) {
+      try {
+        placeStartAnchoredTask(currentOwnerId(), task.id);
+      } catch (err) {
+        logger.warn('quick-add: start-anchored placement failed', { owner: currentOwnerId(), taskId: task.id, err: (err as Error).message });
+      }
+    }
+
     const out = { ...taskToApi(task), tags: enriched.tags, secondary_tags: taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });

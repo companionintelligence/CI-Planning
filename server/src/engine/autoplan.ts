@@ -21,7 +21,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
-import { taskTagNames } from '../services/tags.js';
+import { taskTagNames, inheritContainerDirection } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
@@ -51,6 +51,8 @@ interface StagedTask {
   estimated_minutes: number | null;
   priority: number;
   due_at: string | null;
+  scheduled_for: string | null; // AD1: START-day intent (owner-local YYYY-MM-DD)
+  task_time: string | null;     // AD1: wall-clock HH:MM pin — placed exactly at (day, time)
   tags: string[];
 }
 interface PrefsRow {
@@ -84,7 +86,7 @@ function tagsOf(taskId: string): string[] {
 function selectedStaged(owner: string, date: string): StagedTask[] {
   const rows = sqlite
     .prepare(
-      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at
+      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.scheduled_for, t.task_time
          FROM flight_plan fp
          JOIN tasks t ON t.id = fp.task_id
          LEFT JOIN daily_plan dp
@@ -250,8 +252,8 @@ function orderByOverdue(cands: StagedTask[]): StagedTask[] {
 
 const insBlock = () =>
   sqlite.prepare(
-    `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, auto_run_id)
-     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?)`
+    `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, auto_run_id, tag)
+     VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?, ?)`
   );
 
 /**
@@ -300,7 +302,17 @@ function placeIntoWindow(
   const ins = insBlock();
   let blocksCreated = 0;
 
+  // AD2: when placing INTO a Plan/container (parentBlockId set), read the container's
+  // direction (`time_blocks.tag`) so each child task inherits it as its level-1 primary
+  // (unless it already has one) and the child block mirrors it in `tag`. A category Plan
+  // has tag NULL → inheritContainerDirection is a no-op; direction-window/workday fills
+  // pass no parentBlockId, so their blocks keep tag NULL (unchanged).
+  const containerTag = opts.parentBlockId
+    ? ((sqlite.prepare(`SELECT tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(opts.parentBlockId, owner) as { tag: string | null } | undefined)?.tag ?? null)
+    : null;
+
   for (const t of tasks) {
+    if (opts.parentBlockId) inheritContainerDirection(t.task_id, containerTag, owner);
     const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
     let placedAny = false;
     for (const want of sessions) {
@@ -308,7 +320,7 @@ function placeIntoWindow(
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      ins.run(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null);
+      ins.run(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null);
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedAny = true;
@@ -316,6 +328,54 @@ function placeIntoWindow(
     if (placedAny) placedTaskIds.add(t.task_id);
   }
   return { blocksCreated, placedTaskIds };
+}
+
+/**
+ * AD1 — pin a `task_time` staged task at (date, task_time) when its target day was
+ * derived from due_at only (no scheduled_for, so placeStartAnchoredTask — which reads
+ * scheduled_for — can't be used). Same semantics as that path's exact-time branch:
+ * one is_auto=0 user-intent block at the exact instant; on conflict, the open gap
+ * NEAREST the requested time the SAME local day. Idempotent (skips if an active block
+ * already exists) and silent (the caller's run broadcasts once at the end). Returns
+ * whether a block now exists for the task. Plan containers are NOT obstacles for the
+ * exact hit — a stated time inside a Plan is normal grouping, not double-booking.
+ */
+function pinTaskAt(owner: string, t: StagedTask, date: string, tz: string, prefs: PrefsRow | undefined): boolean {
+  const existing = sqlite
+    .prepare(
+      `SELECT id FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+        ORDER BY start_at LIMIT 1`,
+    )
+    .get(t.task_id, owner) as { id: string } | undefined;
+  if (existing) { sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id); return true; }
+
+  const durMs = Math.max((t.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
+  const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
+  const create = (startMs: number): boolean => {
+    const startAt = new Date(startMs).toISOString();
+    const endAt = new Date(startMs + durMs).toISOString();
+    insAnchoredBlock().get(t.task_id, owner, t.title, startAt, endAt);
+    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
+    return true;
+  };
+
+  const startMs = Date.parse(zonedWallTimeToUTC(date, t.task_time!, tz));
+  if (dayObstacles(owner, startMs, startMs + durMs).length === 0) return create(startMs);
+
+  const bounds = utcDayBounds(date, tz);
+  const dayStart = Date.parse(bounds.start);
+  const dayEnd = Date.parse(bounds.end);
+  let bestStart: number | null = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const g of buildGaps(dayStart, dayEnd, dayObstacles(owner, dayStart, dayEnd), breakMs)) {
+    if (g.end - g.cursor < durMs) continue;
+    const s = Math.min(Math.max(startMs, g.cursor), g.end - durMs);
+    const dist = Math.abs(s - startMs);
+    if (dist < bestDist) { bestStart = s; bestDist = dist; }
+  }
+  return bestStart === null ? false : create(bestStart);
 }
 
 /**
@@ -494,6 +554,38 @@ export function placeFlightPlan(
   clearPriorAuto(owner, date, tz, opts.protectIds);
   const placedIds = new Set<string>();
   let blocksCreated = 0;
+
+  // AD1 — pin task_time tasks first. A staged task that carries a wall-clock `task_time`
+  // AND whose target day IS this placement date is honored EXACTLY at (date, task_time)
+  // via the start-anchored path (its blocks are is_auto=0, so this run's clearPriorAuto
+  // above — already done — won't touch them, and they become obstacles the packer flows
+  // around). Such tasks are then excluded from every gap-packer pass below, so a 2pm task
+  // never gets packed at 10am. Time-LESS staged tasks pack around the pins exactly as
+  // before (no regression). Target day = scheduled_for (preferred) or due_at's local date.
+  for (const t of staged) {
+    if (!t.task_time) continue;
+    const targetDay = t.scheduled_for ?? (t.due_at ? localDateInTZ(t.due_at, tz) : null);
+    if (targetDay !== date) continue;
+    // scheduled_for === date → placeStartAnchoredTask places at (scheduled_for, task_time)
+    // exactly (with its nearest-gap-on-conflict + idempotency). When the day came only
+    // from due_at (no scheduled_for), that path would misfire (it reads scheduled_for),
+    // so pin inline at (date, task_time) with the same exact-or-nearest-gap semantics.
+    // Count toward blocksCreated ONLY when a NEW block is made — both pin paths are
+    // idempotent and return placed=true when reusing the task's existing active block,
+    // which would otherwise inflate auto:placed.blocksCreated + recordRun bookkeeping.
+    const hadBlock = !!sqlite
+      .prepare(
+        `SELECT 1 FROM time_blocks
+          WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+            AND status NOT IN ('completed','skipped','cancelled','missed') LIMIT 1`,
+      )
+      .get(t.task_id, owner);
+    const pinned =
+      t.scheduled_for === date
+        ? placeStartAnchoredTask(owner, t.task_id, { silent: true }).placed
+        : pinTaskAt(owner, t, date, tz, prefs);
+    if (pinned) { placedIds.add(t.task_id); if (!hadBlock) blocksCreated++; }
+  }
 
   // Pass 1 — fill each tagged Plan with its matching tasks. Tag-matched Plans run
   // first (so they get first pick of their candidates); catch-all Plans run last
