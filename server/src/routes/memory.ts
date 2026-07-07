@@ -268,9 +268,14 @@ export function memoryRouter() {
       return;
     }
 
-    // offline_access must have yielded a refresh token — otherwise the connector can't
-    // self-refresh and would silently die in ~1h. Refuse rather than store a dead-end.
-    if (!tok.access_token || !tok.refresh_token) {
+    // Need an access token to talk to CI-Server AND — since offline_access was requested —
+    // a refresh token, or the connector can't self-refresh and would silently die in ~1h.
+    // Report each missing piece distinctly so a broken grant is diagnosable.
+    if (!tok.access_token) {
+      ctx.redirect(settingsRedirect('memory=error&reason=no_access_token'));
+      return;
+    }
+    if (!tok.refresh_token) {
       ctx.redirect(settingsRedirect('memory=error&reason=no_refresh_token'));
       return;
     }
