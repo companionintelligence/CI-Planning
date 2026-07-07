@@ -46,6 +46,9 @@ export function ElementWizard() {
   const [scheduledFor, setScheduledFor] = createSignal(localISODate());
   const [estimate, setEstimate] = createSignal(30);
   const [dueAt, setDueAt] = createSignal('');
+  // AD3 — default Due = Start. Until the user edits Due, it mirrors Start; once edited,
+  // it stays put. Reset on each open (in the seed effect).
+  const [dueEdited, setDueEdited] = createSignal(false);
   const [priority, setPriority] = createSignal(3);
   // task/habit recurrence + extras
   const [taskRepeat, setTaskRepeat] = createSignal<RepeatPreset>('none');
@@ -76,6 +79,9 @@ export function ElementWizard() {
   createEffect(() => { if (kind() === 'habit' && taskRepeat() === 'none') setTaskRepeat('daily'); });
   // Reset makeHabit when repeat is cleared.
   createEffect(() => { if (taskRepeat() === 'none') setMakeHabit(false); });
+  // AD3 — mirror Start → Due until the user edits Due. Reads scheduledFor so it re-runs
+  // on every Start change; guarded by dueEdited() so a user-set Due is never overwritten.
+  createEffect(() => { const s = scheduledFor(); if (!dueEdited()) setDueAt(s); });
   const currentTaskRule = () => buildRule(taskRepeat(), taskWeekdays(), taskCustomRule());
   const toggleWeekday = (d: string) => setTaskWeekdays((ws) => (ws.includes(d) ? ws.filter((x) => x !== d) : [...ws, d]));
   // T-TB-1: Time-Block weekly recurrence — its own weekday set, mirroring the task path.
@@ -176,7 +182,8 @@ export function ElementWizard() {
       // schedule fields (scheduled_for / task_time) so Save places it at that instant.
       // Add-mode only — Edit seeds from the target below.
       setScheduledFor(pf.day || localISODate()); setTaskTime(pf.start || '');
-      setEstimate(30); setDueAt(''); setPriority(3);
+      // AD3 — default Due = Start on open; mirror until the user edits Due.
+      setEstimate(30); setDueAt(pf.day || localISODate()); setDueEdited(false); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
       setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]); setCategoryId(''); setMakeHabit(false);
@@ -218,6 +225,7 @@ export function ElementWizard() {
       setTaskTime(t.task_time ?? '');
       setEstimate(t.estimated_minutes ?? 30);
       setDueAt(t.due_at ? t.due_at.slice(0, 10) : '');
+      setDueEdited(true); // edit: keep the saved Due; don't let the Start→Due mirror clobber it
       setPriority(t.priority ?? 3);
       setDeferUntil(t.defer_until ? t.defer_until.slice(0, 10) : '');
       setDependsOn(t.depends_on ?? []);
@@ -435,7 +443,31 @@ export function ElementWizard() {
 
               {/* ── Time-Block fields ── */}
               <Show when={kind() === 'timeblock'}>
-                {/* Category (0069) — replaces the direction picker for time blocks; direction is implied by the category. */}
+                {/* AD4 — Direction primary tag (Work/Home/Community). COEXISTS with the
+                    Category picker below (a block may carry both time_blocks.tag=direction
+                    and category_id). Reuses patternTagList() = tags with kind==='direction'.
+                    Selecting sets form.primary; clicking the active one clears it. */}
+                <div>
+                  <div class="text-[11px] text-muted-foreground mb-1">Direction</div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <For each={patternTagList()}>
+                      {(pt) => (
+                        <button type="button" onClick={() => pickPrimary(pt.name)}
+                          class="text-xs px-2 py-1 rounded-full border transition-colors capitalize"
+                          classList={{
+                            'border-primary text-primary bg-primary/10': primary().toLowerCase() === pt.name.toLowerCase(),
+                            'border-border text-muted-foreground hover:text-foreground': primary().toLowerCase() !== pt.name.toLowerCase(),
+                          }}>
+                          {pt.name}
+                        </button>
+                      )}
+                    </For>
+                    <Show when={patternTagList().length === 0}>
+                      <span class="text-xs text-muted-foreground">No direction tags yet.</span>
+                    </Show>
+                  </div>
+                </div>
+                {/* Category (0069) — coexists with the direction picker above. */}
                 <div>
                   <div class="text-[11px] text-muted-foreground mb-1">Category</div>
                   <div class="flex flex-wrap gap-1.5">
@@ -592,27 +624,29 @@ export function ElementWizard() {
                   </Show>
                 </div>
 
-                {/* Scheduling (hidden for Someday capture) */}
+                {/* Scheduling (hidden for Someday capture) — AD3 two-column layout:
+                    LEFT col = Start-day over Due-day; RIGHT col = Start-time over Duration. */}
                 <Show when={!someday()}>
-                  <label class="flex items-center gap-1.5">
-                    <span class="text-[11px] text-muted-foreground w-12 shrink-0">Start</span>
-                    <div class="relative flex-1">
-                      <Calendar size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                      <input
-                        type="date"
-                        class="input py-1 text-sm pl-8"
-                        value={scheduledFor()}
-                        onInput={(e) => setScheduledFor(e.currentTarget.value)}
-                      />
+                  <div class="grid grid-cols-2 gap-2">
+                    {/* LEFT: Start-day / Due-day */}
+                    <div class="flex flex-col gap-2">
+                      <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Start day</span>
+                        <div class="relative">
+                          <Calendar size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                          <input type="date" class="input py-1 text-sm pl-8" value={scheduledFor()} onInput={(e) => setScheduledFor(e.currentTarget.value)} />
+                        </div>
+                      </label>
+                      <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Due day</span>
+                        <input type="date" class="input py-1 text-sm" value={dueAt()}
+                          onInput={(e) => { setDueEdited(true); setDueAt(e.currentTarget.value); }} /></label>
                     </div>
-                  </label>
-                  <div class="grid grid-cols-3 gap-2">
-                    <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Time</span>
-                      <input type="time" class="input py-1 text-sm" value={taskTime()} onInput={(e) => setTaskTime(e.currentTarget.value)} /></label>
-                    <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Min</span>
-                      <input type="number" min="5" step="5" class="input py-1 text-sm" value={estimate()} onInput={(e) => setEstimate(Number(e.currentTarget.value) || 0)} /></label>
-                    <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Due</span>
-                      <input type="date" class="input py-1 text-sm" value={dueAt()} onInput={(e) => setDueAt(e.currentTarget.value)} /></label>
+                    {/* RIGHT: Start-time / Duration */}
+                    <div class="flex flex-col gap-2">
+                      <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Start time</span>
+                        <input type="time" class="input py-1 text-sm" value={taskTime()} onInput={(e) => setTaskTime(e.currentTarget.value)} /></label>
+                      <label class="flex flex-col gap-1"><span class="text-[11px] text-muted-foreground">Duration (min)</span>
+                        <input type="number" min="5" step="5" class="input py-1 text-sm" value={estimate()} onInput={(e) => setEstimate(Number(e.currentTarget.value) || 0)} /></label>
+                    </div>
                   </div>
                   {/* Phase Z · Z6 — suggest-only estimate chip (Time-Sense). */}
                   <Show when={estimateSuggestion()}>

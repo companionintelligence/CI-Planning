@@ -158,9 +158,9 @@ describe('placeStartAnchoredTask — no task_time (engine picks the time on THAT
 
 describe('fillFlightPlanCandidates — scheduled_for exclusion (AB1)', () => {
   it('future-scheduled tasks never leak into the fill; same-date tasks stage only while block-less', async () => {
-    // The fill uses ownerToday(owner) = the OWNER's tz (UTC baseline in tests), so the
-    // "same-date" tasks must use the UTC day too — a server-local localISODate() flakes
-    // past UTC-midnight on a non-UTC runner (the tz-baseline gotcha). dPlus(0) = UTC today.
+    // Owner tz is UTC in tests (see baseline), and fillFlightPlanCandidates keys on the
+    // owner-tz "today" — so build `today` in UTC, not the machine's local tz, or this
+    // flakes when the runner isn't UTC (server-local date ≠ UTC date near midnight).
     const today = dPlus(0);
     const future = await createTask({ title: 'Future-scheduled', scheduled_for: dPlus(3) });
     const todayNoBlock = await createTask({ title: 'Today, no block', scheduled_for: today });
