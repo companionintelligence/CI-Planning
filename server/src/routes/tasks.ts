@@ -332,6 +332,9 @@ export function tasksRouter() {
 
     // REQ2 (reverse sync): the service moved the placed block in lockstep.
     if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
+    // Clearing the start intent unscheduled the task (its block was removed) — tell the
+    // Planner to drop it.
+    if (res.unscheduled) broadcast(owner, 'block:updated', { unscheduled: id });
 
     const out = {
       ...taskToApi(res.task),
