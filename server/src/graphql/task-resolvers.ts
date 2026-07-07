@@ -10,6 +10,7 @@ import {
   updateTask as updateTaskService,
   deleteTask as deleteTaskService,
   getTask, listTasks, countTasks, listSubtasks, countSubtasks, dependsOn as dependsOnService,
+  updateTouchesSchedule,
   type TaskRow, type CreateTaskInput as SvcCreateInput, type UpdateTaskInput as SvcUpdateInput,
 } from '../services/tasks.js';
 import { clampFirst, decodeIdCursor, buildIdConnection } from './pagination.js';
@@ -140,7 +141,8 @@ export const taskResolvers = {
       // the synced block first, then the task).
       if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
       broadcast(owner, 'task:updated', taskToApi(res.task));
-      requestReplan('task:updated'); // B2: edits to priority/due/estimate can re-order the day
+      // B2: only a scheduling-relevant column change can re-order the day (mirrors REST).
+      if (updateTouchesSchedule(res.updatedFields)) requestReplan('task:updated');
       return { task: res.task, success: true };
     },
 

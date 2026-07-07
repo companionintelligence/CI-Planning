@@ -381,6 +381,53 @@ function placeIntoWindow(
   return { blocksCreated, placedTaskIds };
 }
 
+interface PriorPlacement { id: string; start_at: string; end_at: string }
+
+/**
+ * Day-scoped idempotency for a stated-day placement (H4). Returns the existing block to
+ * treat AS the placement — a still-active block already on the target local day, or a
+ * user-LOCKED pin on any day (never fight a deliberate pin) — else null after deleting
+ * this task's stale UNLOCKED active blocks on OTHER days (the "move": honoring a newly
+ * stated day must not leave a duplicate on the old one).
+ *
+ * The pre-H4 check treated ANY active block anywhere as "already placed", so a leftover
+ * block on a different day silently suppressed the stated (scheduled_for, task_time) —
+ * the task read as placed while its only block sat on the wrong (often past) day.
+ */
+function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: string, dayEndISO: string): PriorPlacement | null {
+  const sameDay = sqlite
+    .prepare(
+      `SELECT id, start_at, end_at FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND start_at < ? AND end_at > ?
+        ORDER BY start_at LIMIT 1`,
+    )
+    .get(taskId, owner, dayEndISO, dayStartISO) as PriorPlacement | undefined;
+  if (sameDay) return sameDay;
+
+  const lockedElsewhere = sqlite
+    .prepare(
+      `SELECT id, start_at, end_at FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 1
+          AND status NOT IN ('completed','skipped','cancelled','missed')
+        ORDER BY start_at LIMIT 1`,
+    )
+    .get(taskId, owner) as PriorPlacement | undefined;
+  if (lockedElsewhere) return lockedElsewhere;
+
+  // No same-day and no locked block anywhere → only stale UNLOCKED blocks on other days
+  // remain (if any). Delete them so honoring the stated day doesn't leave a duplicate.
+  sqlite
+    .prepare(
+      `DELETE FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 0
+          AND status NOT IN ('completed','skipped','cancelled','missed')`,
+    )
+    .run(taskId, owner);
+  return null;
+}
+
 /**
  * AD1 — pin a `task_time` staged task at (date, task_time) when its target day was
  * derived from due_at only (no scheduled_for, so placeStartAnchoredTask — which reads
@@ -399,20 +446,13 @@ function pinTaskAt(
   prefs: PrefsRow | undefined,
   notBeforeMs?: number | null,
 ): boolean {
-  const existing = sqlite
-    .prepare(
-      `SELECT id FROM time_blocks
-        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
-          AND status NOT IN ('completed','skipped','cancelled','missed')
-        ORDER BY start_at LIMIT 1`,
-    )
-    .get(t.task_id, owner) as { id: string } | undefined;
+  // H4: idempotent ONLY against a block already on the target day (or a locked pin
+  // anywhere); a stale unlocked block on another day is cleared so the stated day wins.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
+  const existing = reconcilePriorPlacement(owner, t.task_id, dayStartISO, dayEndISO);
   if (existing) {
     sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
-    // R2 parity: the existing block IS the placement — flip open → scheduled. Don't
-    // rewrite scheduled_for here: the block may sit on another day (stale drift), and
-    // the task's stated day must win over a leftover block.
-    applyTaskPlacementStatus(t.task_id, owner);
+    applyTaskPlacementStatus(t.task_id, owner); // R2 parity: the existing block IS the placement
     return true;
   }
 
@@ -1052,29 +1092,23 @@ export function placeStartAnchoredTask(
   if (!task) return { placed: false, reason: 'not_found' };
   if (!task.scheduled_for) return { placed: false, reason: 'no_start' };
 
-  // Idempotent: if the task already has an active block, don't create a second one.
-  // These blocks are is_auto=0, so clearPriorAuto never sweeps them — a double invoke
-  // (retry, multiple promote paths) would otherwise leave a duplicate. Treat the
-  // existing block as the placement (and still clear any staged copy).
-  const existing = sqlite
-    .prepare(
-      `SELECT id, start_at, end_at FROM time_blocks
-        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
-          AND status NOT IN ('completed','skipped','cancelled','missed')
-        ORDER BY start_at LIMIT 1`,
-    )
-    .get(taskId, owner) as { id: string; start_at: string; end_at: string } | undefined;
-  if (existing) {
-    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
-    // R2 parity: the existing block IS the placement — flip open → scheduled (status
-    // only; the task's stated scheduled_for wins over a possibly-stale block's day).
-    applyTaskPlacementStatus(taskId, owner);
-    return { placed: true, blockId: existing.id, startAt: existing.start_at, endAt: existing.end_at };
-  }
-
   const prefs = prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
   const date = task.scheduled_for;
+
+  // H4 idempotency: honour a block already on the STATED day (or a locked pin anywhere)
+  // as the placement; a stale unlocked block on another day is cleared so the stated
+  // day wins (pre-H4 this treated ANY active block as placed, so a leftover block on the
+  // wrong/past day meant the stated day was silently never honoured). These blocks are
+  // is_auto=0, so clearPriorAuto never sweeps them — this is the sole dedup guard.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
+  const existing = reconcilePriorPlacement(owner, taskId, dayStartISO, dayEndISO);
+  if (existing) {
+    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
+    applyTaskPlacementStatus(taskId, owner); // R2 parity: the existing block IS the placement
+    return { placed: true, blockId: existing.id, startAt: existing.start_at, endAt: existing.end_at };
+  }
+
   // R3 clamp: on the owner-local current day, ENGINE-CHOSEN slots (direction-window /
   // workday fits and the nearest-gap fallback) start no earlier than now. The user's
   // exact (scheduled_for, task_time) instant is exempt — stated intent is honored even
