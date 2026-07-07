@@ -14,20 +14,26 @@ import { newId, SYSTEM_OWNER_ID } from './ids.js';
  *                            proof via PRAGMA table_info, same as test createOwner).
  *   - base `tags`          — home/work/community (kind='direction') + family/social/me
  *                            (kind='category'), is_base=1 (mirrors 0036 + 0069).
- *                            Without pattern tags, Auto silently places nothing.
+ *                            Without direction tags, Auto silently places nothing.
+ *   - `pattern_blocks`     — default availability windows per direction × day type
+ *                            (mirrors 0037's DEFAULTS). Auto's direction-window pass
+ *                            (autoplan Pass 2a) is gated on the owner having windows;
+ *                            without these a new owner falls through to the flat
+ *                            workday fallback — a degraded experience vs owner #1,
+ *                            who DID receive these from 0037.
  *   - `tag_prefs`          — kind='category' rows w/ the 0069 color tokens; pattern
  *                            prefs are intentionally NOT seeded (read path folds in
  *                            DEFAULT_PREF; runtime pattern-tag creation doesn't seed
  *                            prefs either — provisioning matches runtime convention).
+ *                            Direction icons therefore render as the default circle
+ *                            rather than 0039's circle/square/triangle (cosmetic only).
  *   - `day_types` + `day_of_week_map` — workday/weekend builtins + Sun/Sat→weekend
  *                            mapping (mirrors 0068); resolveDayType reads these.
  *   - `pattern_types`      — Routine/Habit/Ritual builtins (0013) + the Community
  *                            catch-all (0054).
  *
- * `pattern_blocks` (availability windows) are deliberately NOT seeded — owner #1
- * never got defaults either; tasks without pattern windows fall back to the
- * workday_start/workday_end window from scheduling_prefs. All inserts run in ONE
- * transaction: a provisioned owner either fully exists or not at all.
+ * All inserts run in ONE transaction: a provisioned owner either fully exists or
+ * not at all.
  */
 export interface ProvisionOwnerFields {
   name: string;
@@ -38,6 +44,20 @@ export interface ProvisionOwnerFields {
 }
 
 const BASE_PATTERN_TAGS = ['home', 'work', 'community'] as const;
+// Default availability windows per day type × direction — mirrors 0037's DEFAULTS.
+// Duplicated (not imported) so the migration stays frozen. Times are HH:MM local.
+const DEFAULT_PATTERN_BLOCKS: Record<string, Record<string, readonly (readonly [string, string])[]>> = {
+  workday: {
+    home: [['07:00', '08:00'], ['18:00', '23:00']],
+    work: [['09:00', '18:00']],
+    community: [['08:00', '09:00'], ['18:00', '21:00']],
+  },
+  weekend: {
+    home: [['08:00', '23:00']],
+    work: [['10:00', '12:00']],
+    community: [['08:00', '22:00']],
+  },
+};
 // name → 0069's per-owner category_prefs color token.
 const BASE_CATEGORY_TAGS: readonly (readonly [string, string])[] = [
   ['family', 'chart-1'],
@@ -99,7 +119,29 @@ export function provisionOwner(fields: ProvisionOwnerFields): string {
     const insTag = sqlite.prepare(
       `INSERT INTO tags (id, owner_id, name, kind, is_base) VALUES (?, ?, ?, ?, 1)`,
     );
-    for (const name of BASE_PATTERN_TAGS) insTag.run(newId(), id, name, 'direction');
+    const dirTagId: Record<string, string> = {};
+    for (const name of BASE_PATTERN_TAGS) {
+      const tagId = newId();
+      insTag.run(tagId, id, name, 'direction');
+      dirTagId[name] = tagId;
+    }
+
+    // Default availability windows (G-BASETAG): mirrors 0037 so Auto's direction-window
+    // pass fires for a new owner exactly as it did for owner #1. Raw inserts inside this
+    // transaction — do NOT call the pattern-blocks service (it opens its own transaction,
+    // and better-sqlite3 forbids nesting).
+    const insWindow = sqlite.prepare(
+      `INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [dayType, dirs] of Object.entries(DEFAULT_PATTERN_BLOCKS)) {
+      for (const [dirName, ranges] of Object.entries(dirs)) {
+        for (const [start, end] of ranges) {
+          insWindow.run(newId(), id, dirTagId[dirName], dayType, start, end);
+        }
+      }
+    }
+
     const insCatPref = sqlite.prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
        VALUES (?, ?, ?, 'category', ?, 60)`,
