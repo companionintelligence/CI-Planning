@@ -261,23 +261,28 @@ export function reflow(
   // 5. Snapshot after and compute the diff. A task whose block the pin pass converted
   //    to a stated-time is_auto=0 block leaves the agent snapshot but is still placed —
   //    it must not be reported `removed` (B4 would nag about a task that's fine).
-  const hasActiveBlock = sqlite.prepare(
+  //    Scoped to THIS day's window (same bounds as the snapshots): an active block on a
+  //    DIFFERENT day must not mask a genuine same-day removal/unplaced.
+  const hasActiveBlockToday = sqlite.prepare(
     `SELECT 1 FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
-      AND status NOT IN ('completed','skipped','cancelled','missed') LIMIT 1`,
+      AND status NOT IN ('completed','skipped','cancelled','missed')
+      AND start_at < ? AND end_at > ? LIMIT 1`,
   );
+  const activeToday = (taskId: string) => !!hasActiveBlockToday.get(taskId, owner, dayEndISO, dayStartISO);
   const afterSnapshot = snapshotAutoBlocks(owner, dayStartISO, dayEndISO);
   const afterMap = toTaskMap(afterSnapshot);
   const { moved, removed: removedRaw, added } = diffBlocks(beforeMap, afterMap);
-  const removed = removedRaw.filter((r) => !hasActiveBlock.get(r.task_id, owner));
+  const removed = removedRaw.filter((r) => !activeToday(r.task_id));
 
   // 6. Stamp last_moved_at on blocks that actually changed time.
   const nowISO = new Date(nowMs).toISOString();
   const stamp = sqlite.prepare(`UPDATE time_blocks SET last_moved_at = ? WHERE id = ? AND owner_id = ?`);
   for (const m of moved) stamp.run(nowISO, m.block_id, owner);
 
-  // 7. Unplaced = tasks we tried to re-place that no longer hold ANY active block
-  //    (same pin-conversion caveat as `removed` above).
-  const unplaced = replaceTaskIds.filter((id) => !afterMap.has(id) && !hasActiveBlock.get(id, owner));
+  // 7. Unplaced = tasks we tried to re-place that no longer hold an active block ON
+  //    THIS DAY (same pin-conversion caveat as `removed` above; day-scoped so a block
+  //    on another day doesn't hide a genuine same-day failure to place).
+  const unplaced = replaceTaskIds.filter((id) => !afterMap.has(id) && !activeToday(id));
 
   return { moved, removed, added, unplaced };
 }
