@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { memoryBriefExcerpt, summarizeDay } from '../src/agents/summarize.js';
+import { addDays } from '../src/lib/dates.js';
 import { resetDb } from './helpers.js';
 
 /**
@@ -79,6 +83,8 @@ describe('AA2 — memoryBriefExcerpt', () => {
     expect(excerpt).toMatch(/Dinner with Sam|Quarterly planning review/);
     expect(excerpt).toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/); // a 12h clock time is rendered
     expect(excerpt.length).toBeLessThanOrEqual(200); // char budget respected
+    // Built for TODAY's date → the day-aware prefix is "Today:".
+    expect(excerpt).toMatch(/^Today: /);
   });
 
   it('names the linked participant on the event line (Maya)', async () => {
@@ -164,5 +170,121 @@ describe('AA2 — brief fold-in / byte-identical discipline', () => {
     if (s.prose.startsWith(`Plan for ${TODAY}:`)) {
       expect(s.prose).toContain(excerpt);
     }
+  });
+});
+
+/**
+ * Review-fix coverage (PR #298): the day-aware prefix (EOD passes tomorrow's date, so
+ * its events must read "Tomorrow:") and the eventParticipants hardening (blank-id guard
+ * + dedupe). Uses a controlled fixture dir via CP_MEMORY_FIXTURES_DIR so the assertions
+ * are deterministic regardless of wall-clock time. An event at now+30h always lands
+ * inside BOTH today's and tomorrow's [start, start+48h] window (tomorrow-start is 0–24h
+ * from now; now+30h is then 6–30h past it — always ≥ start and ≤ start+48h).
+ */
+describe('AA2 — day-aware prefix + participant hardening (custom fixture)', () => {
+  let dir: string;
+  const created: string[] = [];
+  const SAVED_FX = process.env.CP_MEMORY_FIXTURES_DIR;
+
+  /** Write a graph.json into the temp dir and point the connector at it. */
+  function writeFixture(graph: unknown) {
+    writeFileSync(join(dir, 'graph.json'), JSON.stringify(graph), 'utf8');
+  }
+
+  beforeEach(() => {
+    resetDb();
+    delete process.env.CI_SERVER_URL;
+    delete process.env.CI_SERVER_API_KEY;
+    delete process.env.MEMORY_MODE; // fixture transport
+    dir = mkdtempSync(join(tmpdir(), 'aa2-fx-'));
+    created.push(dir);
+    process.env.CP_MEMORY_FIXTURES_DIR = dir;
+    enablePull();
+    connectViaEnv();
+  });
+
+  afterAll(() => {
+    if (SAVED_FX === undefined) delete process.env.CP_MEMORY_FIXTURES_DIR;
+    else process.env.CP_MEMORY_FIXTURES_DIR = SAVED_FX;
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+  });
+
+  it('labels tomorrow\'s events "Tomorrow:" (EOD path) and today\'s "Today:"', async () => {
+    writeFixture({
+      nodes: [
+        {
+          entity_id: 'evt-1',
+          entity_type: 'event',
+          name: 'Dinner with Sam',
+          description: 'Catch-up',
+          properties: { start_time: 'now+30h', end_time: 'now+32h' },
+        },
+      ],
+      links: [],
+    });
+
+    const todayExcerpt = await memoryBriefExcerpt(OWNER, TODAY);
+    expect(todayExcerpt).toMatch(/^Today: Dinner with Sam /);
+
+    // The EOD Alignment builds the excerpt for TOMORROW's date — must NOT say "Today".
+    const tomorrowExcerpt = await memoryBriefExcerpt(OWNER, addDays(TODAY, 1));
+    expect(tomorrowExcerpt).toMatch(/^Tomorrow: Dinner with Sam /);
+    expect(tomorrowExcerpt).not.toMatch(/^Today:/);
+  });
+
+  it('uses a short weekday/date label for a day that is neither today nor tomorrow', async () => {
+    // Anchor an event two days out, and read the excerpt for that same day (+2). The
+    // window for date=+2 is [+2 start, +2 start+48h]; an event at +2 start + a few hours
+    // sits inside it. Use now+54h (≈ +2 days plus up to 6h) to stay clear of the boundary.
+    writeFixture({
+      nodes: [
+        {
+          entity_id: 'evt-2',
+          entity_type: 'event',
+          name: 'Team offsite',
+          description: null,
+          properties: { start_time: 'now+54h', end_time: 'now+56h' },
+        },
+      ],
+      links: [],
+    });
+    const excerpt = await memoryBriefExcerpt(OWNER, addDays(TODAY, 2));
+    // Neither "Today:" nor "Tomorrow:" — a "Wkd, Mon D:" style label instead.
+    expect(excerpt).not.toBe('');
+    expect(excerpt).not.toMatch(/^Today:/);
+    expect(excerpt).not.toMatch(/^Tomorrow:/);
+    expect(excerpt).toMatch(/^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}: Team offsite /);
+  });
+
+  it('dedupes repeated participant links and never matches a blank id', async () => {
+    writeFixture({
+      nodes: [
+        {
+          entity_id: 'evt-3',
+          entity_type: 'event',
+          name: 'Planning sync',
+          description: null,
+          properties: { start_time: 'now+30h', end_time: 'now+31h' },
+        },
+        { entity_id: 'p-1', entity_type: 'person', name: 'Sam Rivera', properties: {} },
+        // A person node with a MISSING id → connector maps it to '' (mapNode). A link
+        // to it must not spuriously match the event's blank-guarded walk.
+        { entity_type: 'person', name: 'Ghost Person', properties: {} },
+      ],
+      links: [
+        // Two links to the SAME person — the name must appear once, not twice.
+        { relationship_id: 'l-1', source: 'evt-3', target: 'p-1', relationship_type: 'participant' },
+        { relationship_id: 'l-2', source: 'evt-3', target: 'p-1', relationship_type: 'organizer' },
+        // A link whose other endpoint is the blank-id ghost node.
+        { relationship_id: 'l-3', source: 'evt-3', target: '', relationship_type: 'participant' },
+      ],
+    });
+
+    const excerpt = await memoryBriefExcerpt(OWNER, TODAY);
+    expect(excerpt).toMatch(/^Today: Planning sync with Sam Rivera /);
+    // Deduped: exactly one occurrence of the name.
+    expect(excerpt.match(/Sam Rivera/g)).toHaveLength(1);
+    // The blank-id ghost never leaks in.
+    expect(excerpt).not.toContain('Ghost Person');
   });
 });
