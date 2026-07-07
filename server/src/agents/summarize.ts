@@ -4,10 +4,12 @@ import { generate } from '../mcp/ollama.js';
 import { renderCopy } from './render-copy.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { logger } from '../lib/logger.js';
-import { serverTimezone, utcDayBounds } from '../lib/tz.js';
+import { serverTimezone, utcDayBounds, utcToZonedWallTime, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { addDays } from '../lib/dates.js';
 import { detectComboSuggestions, scopeLabel, CONFIDENCE_FLOOR, type ComboSuggestion, type ScopeKind } from '../services/calibration.js';
+import { graphData, graphContext, nodeStartTime, MemoryUnavailable, type MemoryNode } from '../connectors/memory.js';
+import { memoryConnectorAvailable } from '../services/memory.js';
 
 interface TaskRow {
   id: string;
@@ -103,7 +105,7 @@ function gather(date: string) {
   return { overdue, dueToday, open, blocks };
 }
 
-function fallbackProse(date: string, g: ReturnType<typeof gather>): string {
+function fallbackProse(date: string, g: ReturnType<typeof gather>, memoryExcerpt = ''): string {
   const lines: string[] = [];
   lines.push(`Plan for ${date}:`);
   if (g.overdue.length) lines.push(`• ${g.overdue.length} overdue item(s) — top: "${g.overdue[0].title}".`);
@@ -111,14 +113,23 @@ function fallbackProse(date: string, g: ReturnType<typeof gather>): string {
   if (g.blocks.length) lines.push(`• ${g.blocks.length} block(s) scheduled.`);
   if (g.open.length) lines.push(`• ${g.open.length} open task(s) in the backlog.`);
   if (lines.length === 1) lines.push('• Nothing pressing — a clear day.');
+  // AA2 — memory-derived life context appended AFTER the deterministic body. Empty
+  // excerpt (flag off / connector down / error) leaves the prose byte-identical.
+  if (memoryExcerpt) lines.push(memoryExcerpt);
   return lines.join('\n');
 }
 
-function buildPrompt(date: string, g: ReturnType<typeof gather>): string {
+function buildPrompt(date: string, g: ReturnType<typeof gather>, memoryExcerpt = ''): string {
   const fmt = (rows: TaskRow[]) =>
     rows.map((r) => `- [P${r.priority}] ${r.title}${r.due_at ? ` (due ${r.due_at.slice(0, 10)})` : ''}`).join('\n') || '(none)';
   const fmtBlocks = (rows: BlockRow[]) =>
     rows.map((b) => `- ${b.start_at.slice(11, 16)}–${b.end_at.slice(11, 16)} ${b.title} [${b.block_kind}]`).join('\n') || '(none)';
+
+  // AA2 — a short excerpt of the CI-Server memory graph (upcoming dated events +
+  // participants) folded into the model facts so the narrative can say "today you have
+  // dinner with Maya at 7pm". Appended so the block is empty-string-safe: no excerpt →
+  // the prompt is byte-for-byte what it was before AA2.
+  const life = memoryExcerpt ? `\n\nFrom your life context (mention naturally if relevant):\n${memoryExcerpt}` : '';
 
   return `Write a short, warm, focused morning briefing (3-5 sentences, no bullet lists, no preamble) for ${date}.
 Mention what's overdue, what's due today, and the shape of the scheduled day. Be concrete and encouraging.
@@ -133,7 +144,140 @@ Scheduled blocks:
 ${fmtBlocks(g.blocks)}
 
 Open backlog (top items):
-${fmt(g.open)}`;
+${fmt(g.open)}${life}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase AA · AA2 — memory-informed brief. Fold a short excerpt of the CI-Server
+// memory graph (upcoming dated events + their participants) into the morning Brief
+// and EOD Alignment so the narrative can name real life context. STRICT discipline:
+// flag off, connector unavailable, or ANY error → returns '' and every caller stays
+// byte-identical to pre-AA2. Ollama-only invariant is untouched — the memory
+// connector (connectors/memory.ts) is the sole new dependency and already routes
+// through the CI-Server read API; no cloud LLM is introduced.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Length ceiling for the whole excerpt handed to the brief (a few short lines). */
+const MEMORY_EXCERPT_MAX = 200;
+/** How many dated event lines to surface at most. */
+const MEMORY_EXCERPT_LINES = 3;
+
+function pullEnabled(owner: string): boolean {
+  const row = sqlite
+    .prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { memory_pull_enabled?: number } | undefined;
+  return !!row?.memory_pull_enabled;
+}
+
+/**
+ * Person names linked to an event node, deduped (mirror of memory-suggest.ts's
+ * participant walk). The connector normalizes a missing id to '' (mapNode), so a
+ * blank node id — or a blank link endpoint — must never anchor a match: `'' === ''`
+ * would otherwise pull every ill-formed link's other end in as a "participant".
+ */
+function eventParticipants(node: MemoryNode, byId: Map<string, MemoryNode>, links: { source: string; target: string }[]): string[] {
+  if (!node.id.trim()) return []; // never match on a blank event id
+  const names = new Set<string>();
+  for (const l of links) {
+    const otherId = l.source === node.id ? l.target : l.target === node.id ? l.source : null;
+    if (!otherId || !otherId.trim()) continue; // skip missing / blank endpoints
+    const other = byId.get(otherId);
+    if (other && other.entityType.toLowerCase() === 'person' && other.name) names.add(other.name);
+  }
+  return [...names];
+}
+
+/**
+ * Human label for `date` (YYYY-MM-DD) relative to the current day in the owner's
+ * timezone: `Today` / `Tomorrow`, else a short `Mon, Jul 7`. Owner-tz "today" keeps
+ * this consistent with how memoryBriefExcerpt derives its window (utcDayBounds, owner
+ * tz) — a server-zone `localISODate` could disagree by a day near the tz boundary.
+ * Matters because the excerpt is also built for the EOD Alignment with TOMORROW's date,
+ * where a hardcoded `Today:` would misdate evening events.
+ */
+function relativeDayLabel(date: string, tz: string): string {
+  const today = localDateInTZ(new Date().toISOString(), tz);
+  if (date === today) return 'Today';
+  if (date === addDays(today, 1)) return 'Tomorrow';
+  // Short, unambiguous fallback ("Mon, Jul 7"). Noon-UTC pivot avoids a tz/DST flip of
+  // the weekday for a date-only value; the label is a coarse day marker, not a clock.
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(
+    new Date(`${date}T12:00:00Z`),
+  );
+}
+
+/** Format a dated event into a brief line, e.g. `"Dinner with Sam (7:00 PM)"`. */
+function eventLine(node: MemoryNode, startISO: string, people: string[], tz: string): string {
+  const wall = utcToZonedWallTime(startISO, tz); // "HH:MM" 24h, DST-correct
+  const [hh, mm] = wall.split(':').map(Number);
+  const ampm = hh >= 12 ? 'PM' : 'AM';
+  const h12 = hh % 12 === 0 ? 12 : hh % 12;
+  const clock = `${h12}:${String(mm).padStart(2, '0')} ${ampm}`;
+  const who = people.length ? ` with ${people.join(', ')}` : '';
+  return `${node.name}${who} (${clock})`;
+}
+
+/**
+ * A short, human-readable excerpt of the owner's memory graph for `date`, or '' when
+ * the pull flag is off, the connector is unavailable, or anything throws. Prefers
+ * 1–3 dated event lines from the day forward (windowed start-of-day → +48h so a
+ * late-evening event just over the local-midnight boundary still surfaces); falls
+ * back to a trimmed graphContext when there are no dated nodes. Never throws.
+ */
+export async function memoryBriefExcerpt(owner: string, date: string): Promise<string> {
+  if (!pullEnabled(owner) || !memoryConnectorAvailable(owner)) return '';
+  try {
+    const tzRow = sqlite
+      .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
+      .get(owner) as { timezone: string | null } | undefined;
+    const tz = tzRow?.timezone || serverTimezone();
+    // Prefix is relative to the ACTUAL current day (owner tz), not the brief's `date`:
+    // the EOD path passes tomorrow, so its events must read "Tomorrow:", not "Today:".
+    const dayLabel = relativeDayLabel(date, tz);
+    const { start } = utcDayBounds(date, tz);
+    // Window: the day's start through +48h, so a late-evening event that rolls just
+    // over the local-midnight boundary is still caught for the day's brief.
+    const to = new Date(Date.parse(start) + 48 * 3_600_000).toISOString();
+    const graph = await graphData(owner, { from: start, to });
+
+    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    const events = graph.nodes
+      .filter((n) => n.entityType.toLowerCase() === 'event')
+      .map((n) => ({ node: n, start: nodeStartTime(n) }))
+      .filter((e): e is { node: MemoryNode; start: string } => !!e.start && e.start >= start && e.start <= to)
+      .sort((a, b) => a.start.localeCompare(b.start));
+
+    if (events.length) {
+      const lines: string[] = [];
+      for (const e of events.slice(0, MEMORY_EXCERPT_LINES)) {
+        const line = `${dayLabel}: ${eventLine(e.node, e.start, eventParticipants(e.node, byId, graph.links), tz)}`;
+        // Keep the whole excerpt inside the char budget; stop before overflowing.
+        if (lines.join('\n').length + line.length + 1 > MEMORY_EXCERPT_MAX) break;
+        lines.push(line);
+      }
+      if (lines.length) return lines.join('\n');
+    }
+
+    // No dated events in-window → a trimmed context snapshot as the softer fallback.
+    // NOT day-labeled: graphContext is undated entity context (people/places), so a
+    // "Today:"/"Tomorrow:" prefix would assert a date it doesn't actually carry — the
+    // misdating bug only exists for dated event lines, which are handled above.
+    const ctx = (await graphContext(owner)).trim();
+    if (ctx) {
+      const firstLine = ctx.split('\n')[0].trim();
+      return firstLine.slice(0, MEMORY_EXCERPT_MAX);
+    }
+    return '';
+  } catch (err) {
+    if (!(err instanceof MemoryUnavailable)) {
+      logger.warn('memoryBriefExcerpt: unexpected error, degrading to no memory context', {
+        owner,
+        date,
+        err: (err as Error).message,
+      });
+    }
+    return '';
+  }
 }
 
 /** Up to three concrete things to act on, most urgent first (deterministic). */
@@ -181,8 +325,12 @@ function buildCapacity(g: ReturnType<typeof gather>, focus: FocusItem[]): Capaci
 }
 
 /** Fingerprint of the inputs that feed a briefing; changes invalidate the cache. */
-function inputsHash(date: string, g: ReturnType<typeof gather>): string {
-  return createHash('sha256').update(JSON.stringify({ date, g })).digest('hex');
+function inputsHash(date: string, g: ReturnType<typeof gather>, memoryExcerpt = ''): string {
+  // AA2 — fold the memory excerpt into the fingerprint ONLY when non-empty, so a
+  // flag-off / connector-down brief hashes byte-identically to pre-AA2 (no cache churn),
+  // while a changing excerpt (or toggling memory on) correctly invalidates a cached recap.
+  const inputs = memoryExcerpt ? { date, g, memoryExcerpt } : { date, g };
+  return createHash('sha256').update(JSON.stringify(inputs)).digest('hex');
 }
 
 /**
@@ -203,7 +351,10 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
   };
   const focus = buildFocus(g);
   const capacity = buildCapacity(g, focus);
-  const hash = inputsHash(date, g);
+  // AA2 — computed once and threaded into the hash + both generation paths. '' when the
+  // flag is off / connector is down, keeping the hash + prose byte-identical to pre-AA2.
+  const memoryExcerpt = await memoryBriefExcerpt(currentOwnerId(), date);
+  const hash = inputsHash(date, g, memoryExcerpt);
 
   if (!opts.refresh) {
     const row = sqlite
@@ -232,19 +383,22 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     // returns the stored prose above without re-rendering, so copy_history records
     // exactly one signature per genuine (re)generation. renderCopy is Ollama-down-safe
     // and falls back to fallbackProse (passed as `fallback`), so this never throws.
-    const copy = await renderCopy('daily_brief', { facts: buildPrompt(date, g), fallback: fallbackProse(date, g) });
+    const copy = await renderCopy('daily_brief', {
+      facts: buildPrompt(date, g, memoryExcerpt),
+      fallback: fallbackProse(date, g, memoryExcerpt),
+    });
     prose = copy.text;
     llm = copy.source === 'model';
   } else {
     // Flag OFF → byte-identical Phase N/O: the brief is core, not a Time-Sense surface.
     try {
-      const out = await generate(buildPrompt(date, g), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
+      const out = await generate(buildPrompt(date, g, memoryExcerpt), { tier: 'medium', temperature: 0.4, timeoutMs: 60_000 });
       prose = out.trim();
       if (!prose) throw new Error('empty summary');
       llm = true;
     } catch (err) {
       logger.warn('summarizeDay fell back to deterministic prose', { date, err: (err as Error).message });
-      prose = fallbackProse(date, g);
+      prose = fallbackProse(date, g, memoryExcerpt);
       llm = false;
     }
   }
@@ -380,7 +534,7 @@ export function gatherEvening(date: string): EveningPayload {
   };
 }
 
-export function fallbackEveningProse(p: EveningPayload): string {
+export function fallbackEveningProse(p: EveningPayload, memoryExcerpt = ''): string {
   const lines: string[] = [];
   lines.push(`${p.date} in review:`);
   if (p.planned) lines.push(`• ${p.completed} of ${p.planned} planned block(s) completed.`);
@@ -394,10 +548,12 @@ export function fallbackEveningProse(p: EveningPayload): string {
     lines.push(`• Biggest estimate miss: "${d.title}" ran ${Math.abs(d.delta_minutes)}m ${dir}.`);
   }
   if (p.carry_forward.length) lines.push(`• ${p.carry_forward.length} task(s) carry forward to tomorrow.`);
+  // AA2 — tomorrow's life context, empty-string-safe (see fallbackProse).
+  if (memoryExcerpt) lines.push(memoryExcerpt);
   return lines.join('\n');
 }
 
-function buildEveningPrompt(p: EveningPayload): string {
+function buildEveningPrompt(p: EveningPayload, memoryExcerpt = ''): string {
   const deltas =
     p.estimate_deltas
       .map((d) => `- "${d.title}": estimated ${d.estimated_minutes}m, took ${d.actual_minutes}m`)
@@ -407,6 +563,9 @@ function buildEveningPrompt(p: EveningPayload): string {
     p.calibration
       .map((c) => `- ${c.label}: bias ${c.bias_ratio?.toFixed(2)} over ${c.sample_count} samples`)
       .join('\n') || '(none)';
+
+  // AA2 — life context appended empty-string-safe (see buildPrompt).
+  const life = memoryExcerpt ? `\n\nFrom your life context (mention naturally if relevant):\n${memoryExcerpt}` : '';
 
   return `Write a short, calm evening reflection (3-5 sentences, no bullet lists, no preamble, no praise-words) on this day.
 State what got done vs planned, name the biggest estimate miss if there is one, and end with one plain sentence about what carries into tomorrow.
@@ -421,7 +580,7 @@ Carrying forward:
 ${carries}
 
 Current estimate bias by scope:
-${cal}`;
+${cal}${life}`;
 }
 
 export interface EveningSummary {
@@ -470,14 +629,18 @@ export function morningCarryover(date: string): MorningCarryover {
  */
 export async function summarizeEvening(date: string): Promise<EveningSummary> {
   const payload = gatherEvening(date);
+  // AA2 — the EOD reflection ends on "what carries into tomorrow", so the useful memory
+  // context is TOMORROW's events. '' when the flag is off / connector is down, keeping
+  // the evening facts + fallback byte-identical to pre-AA2.
+  const memoryExcerpt = await memoryBriefExcerpt(currentOwnerId(), addDays(date, 1));
   // Phase Z · Z7 — the EOD narrative goes through the Voice loop too (one voice, no
   // repeats). summarizeEvening is Time-Sense-only code, reached solely via the
   // flag-gated POST /evening/open (an authoring action, so recording a copy_history
   // signature here doesn't touch the pure-read GET path). Ollama-down-safe: the
   // deterministic fallbackEveningProse is passed as `fallback`.
   const copy = await renderCopy('eod_alignment', {
-    facts: buildEveningPrompt(payload),
-    fallback: fallbackEveningProse(payload),
+    facts: buildEveningPrompt(payload, memoryExcerpt),
+    fallback: fallbackEveningProse(payload, memoryExcerpt),
   });
   return { date, prose: copy.text, llm: copy.source === 'model', payload };
 }
