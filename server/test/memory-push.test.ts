@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { syncToMemory } from '../src/services/memory.js';
 import { runScheduledJob } from '../src/jobs/index.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb } from './helpers.js';
 
 /**
  * Phase AA · AA4 — one-way PUSH to CI-Server companion-memory. Fixture mode (default)
@@ -241,6 +241,38 @@ describe('watermark', () => {
     const r = await syncToMemory(OWNER);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.counts.reflections).toBe(1);
+  });
+
+  it('the stamped watermark is captured BEFORE the push, so an event that occurs during the sync is re-picked next run (no skip)', async () => {
+    // First sync: nothing to push. The watermark it stamps is an instant captured
+    // BEFORE the (empty) SELECT — this is the anti-data-loss guarantee.
+    const first = await syncToMemory(OWNER);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const stamped = first.syncedAt;
+    expect(lastSyncedAt()).toBe(stamped);
+
+    // Simulate a task that completed "during" the sync: its completed_at is AFTER the
+    // stamped watermark (as a post-push `now` stamp would have been). Because the
+    // watermark was taken pre-SELECT, this row is strictly > the stored watermark and
+    // MUST be selected on the next run — never skipped.
+    const during = new Date(Date.parse(stamped) + 5).toISOString();
+    insertDoneTask('Completed during the sync', during);
+
+    // Next run MUST pick it up — this is the regression guard. (Had the first run stamped
+    // a post-push `now` instead of the pre-SELECT instant, that `now` would be >= `during`
+    // and the row would be skipped forever.)
+    const second = await syncToMemory(OWNER);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.counts.completed).toBe(1);
+
+    // Forward progress: once the watermark is at/after `during`, a further run with no new
+    // activity re-pushes nothing (no infinite re-push loop). Pin the watermark explicitly
+    // rather than racing the fixture-mode wall clock, which advances sub-millisecond.
+    setPrefs({ memory_last_synced_at: during });
+    const third = await syncToMemory(OWNER);
+    expect(third.ok && third.counts.completed).toBe(0);
   });
 
   it('on a first sync (null watermark) only the recent window is considered', async () => {
