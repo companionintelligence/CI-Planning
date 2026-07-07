@@ -6,7 +6,7 @@ import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone, type GenerateResult } from '../engine/recurrence-generate.js';
 import { skipInstance, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
-import { syncBlockFromTask, clearTaskPlacement } from './block-task-sync.js';
+import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus } from './block-task-sync.js';
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
 import { ensureHabitPattern } from './patterns.js';
 import { entityTagLevels, syncLeveledEntityTags } from './tags.js';
@@ -401,6 +401,9 @@ export async function updateTask(
   let unscheduled = false;
   if (scope === 'instance' && clearingStart) {
     unscheduled = clearTaskPlacement(targetId, ownerId) > 0;
+    // Removing the last active placement must not strand the task at status='scheduled'
+    // with no block — return it to the open backlog (no-op if a locked block remains).
+    if (revertTaskPlacementStatus(targetId, ownerId)) task.status = 'open';
   } else if (
     scope === 'instance' &&
     (input.scheduled_for !== undefined || input.task_time !== undefined || estimateChanged)
