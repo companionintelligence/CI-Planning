@@ -59,10 +59,11 @@ function rateLimited(ip: string): boolean {
 }
 
 const localLoginEnabled = () => config.auth.mode === 'sso' && config.auth.disableOidc;
-const ssoLoginEnabled = () => config.auth.mode === 'sso' && !config.auth.disableOidc;
+/** CI-Portal SSO active (shared by the login flow AND the AA0b memory connector flow). */
+export const ssoLoginEnabled = () => config.auth.mode === 'sso' && !config.auth.disableOidc;
 
 /** Minimal config to attempt a login: issuer (for discovery) + our client id. */
-function ciportalConfigured(): boolean {
+export function ciportalConfigured(): boolean {
   const c = config.ciportal;
   return Boolean(c.clientId && c.issuer);
 }
@@ -75,7 +76,7 @@ function ciportalConfigured(): boolean {
  * callback validates the id_token `iss` against — for better-auth that's the bare
  * origin, NOT the `…/api/auth` discovery URL.
  */
-async function ciportalEndpoints(): Promise<OidcDiscoveryDoc> {
+export async function ciportalEndpoints(): Promise<OidcDiscoveryDoc> {
   const c = config.ciportal;
   if (c.authorizeUri && c.tokenUri && c.jwksUri) {
     return {

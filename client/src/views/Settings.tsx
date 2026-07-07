@@ -72,6 +72,9 @@ export function Settings() {
   const [authCfg] = createResource(() => api.auth.config());
   const [me, { refetch: refetchMe }] = createResource(() => api.auth.me().catch(() => null));
   const localAuth = () => authCfg()?.mode === 'sso' && authCfg()?.disableOidc === true;
+  // AA0b — the CI-Portal "sign in" button only makes sense in SSO mode (mode='sso'
+  // with OIDC enabled); local-login / standalone deployments use the URL+key form.
+  const ssoAvailable = () => authCfg()?.mode === 'sso' && authCfg()?.disableOidc === false;
   const [backupEmail, setBackupEmail] = createSignal('');
   const [backupSaving, setBackupSaving] = createSignal(false);
   createEffect(() => { if (me()) setBackupEmail(me()!.backupEmail ?? ''); });
@@ -354,8 +357,12 @@ export function Settings() {
     const g = q.get('google');
     if (g === 'connected') { showToast('Google account connected', 'success'); refetchIntegrations(); }
     else if (g === 'error') { showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
-    if (g) {
-      q.delete('google'); q.delete('reason');
+    // AA0b — the memory CI-Portal connector callback bounces back here too.
+    const m = q.get('memory');
+    if (m === 'connected') { showToast('Connected to Companion Memory via CI-Portal', 'success'); refetchPrefs(); refetchMem(); }
+    else if (m === 'error') { showToast(`CI-Portal connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
+    if (g || m) {
+      q.delete('google'); q.delete('memory'); q.delete('reason');
       const qs = q.toString();
       window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
     }
@@ -425,6 +432,19 @@ export function Settings() {
       showToast('Connected to Companion Memory', 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
     finally { setMemBusy(false); }
+  }
+  // AA0b — begin the CI-Portal SSO connect flow. GET /memory/ciportal/start returns
+  // { url }; we fetch it (credentialed) then top-level-navigate to the portal. The
+  // callback stores an offline_access refresh token and bounces to ?memory=connected.
+  async function connectMemoryViaPortal() {
+    setMemBusy(true);
+    try {
+      const { url } = await api.memory.ciportalStart();
+      window.location.href = url;
+    } catch (err) {
+      showToast((err as Error).message || 'Could not start CI-Portal connect', 'error');
+      setMemBusy(false);
+    }
   }
   async function disconnectMemory() {
     try {
@@ -1051,9 +1071,18 @@ export function Settings() {
                 fallback={
                   <div class="flex items-center justify-between gap-3">
                     <span class="text-xs text-muted-foreground">Not connected</span>
-                    <button type="button" onClick={() => setMemConnectOpen(!memConnectOpen())} class="btn-secondary text-xs px-3 py-1.5">
-                      <Link2 size={12} /> Connect
-                    </button>
+                    <div class="flex items-center gap-1.5">
+                      {/* AA0b — SSO path (multi-tenant): a refresh token is stored so the
+                          connector self-refreshes; no key to paste. */}
+                      <Show when={ssoAvailable()}>
+                        <button type="button" onClick={connectMemoryViaPortal} disabled={memBusy()} class="btn-secondary text-xs px-3 py-1.5">
+                          <Link2 size={12} /> {memBusy() ? 'Connecting…' : 'Sign in with CI-Portal'}
+                        </button>
+                      </Show>
+                      <button type="button" onClick={() => setMemConnectOpen(!memConnectOpen())} class="btn-ghost text-xs px-3 py-1.5">
+                        <Show when={ssoAvailable()} fallback={<><Link2 size={12} /> Connect</>}>URL + key</Show>
+                      </button>
+                    </div>
                   </div>
                 }
               >
@@ -1061,6 +1090,9 @@ export function Settings() {
                   <span class="flex items-center gap-1.5 text-xs text-foreground">
                     <CheckCircle2 size={13} class="text-primary" />
                     Connected to {memStatus()!.pull.host}
+                    <Show when={memStatus()!.pull.authKind === 'oidc'}>
+                      <span class="text-muted-foreground">(via CI-Portal)</span>
+                    </Show>
                     <Show when={memStatus()!.pull.source === 'env'}>
                       <span class="text-muted-foreground">(from server environment)</span>
                     </Show>

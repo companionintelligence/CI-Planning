@@ -52,6 +52,41 @@ export interface MemoryCreds {
 }
 
 export type MemoryCredsSource = 'settings' | 'env';
+/** How the settings connection authenticates: a manually-pasted key/bearer, or a
+ *  CI-Portal SSO grant with a stored refresh token (AA0b). Null for the env fallback. */
+export type MemoryAuthKind = 'manual' | 'oidc';
+
+/**
+ * The two shapes stored (KEK-encrypted) in connection_tokens for provider='ci_memory':
+ *
+ *  - manual (AA0): a pasted `apiKey`/`bearer` alongside the CI-Server `url`. `kind`
+ *    is absent on legacy rows, so a missing discriminant reads as 'manual'.
+ *  - oidc  (AA0b): a CI-Portal Authorization-Code + PKCE grant obtained with the
+ *    `offline_access` scope. We persist the short-lived `accessToken` (sent to
+ *    CI-Server as the Bearer), the long-lived `refreshToken`, its `expiresAt`, and
+ *    the `tokenEndpoint`/`clientId`(/`clientSecret`) needed to self-refresh — so the
+ *    connector never needs a re-login while the refresh token stays valid.
+ */
+interface ManualBlob {
+  url: string;
+  kind?: 'manual';
+  apiKey?: string;
+  bearer?: string;
+}
+interface OidcBlob {
+  url: string;
+  kind: 'oidc';
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string; // ISO
+  tokenEndpoint: string;
+  clientId: string;
+  clientSecret?: string;
+}
+type MemoryBlob = ManualBlob | OidcBlob;
+
+/** Refresh a hair EARLY so an in-flight request never races the expiry boundary. */
+const REFRESH_SKEW_MS = 60_000;
 
 /** Normalized graph node (CI-Server GraphController response shape, camelCased). */
 export interface MemoryNode {
@@ -98,19 +133,32 @@ export function memoryMode(): 'live' | 'fixture' {
  * login): under multi-tenant SSO it is skipped, since one shared CI_SERVER_API_KEY
  * would resolve every owner to the same CI-Server user.
  */
-export function memoryCreds(owner: string): (MemoryCreds & { source: MemoryCredsSource }) | null {
+export type ResolvedMemoryCreds = MemoryCreds & { source: MemoryCredsSource; authKind: MemoryAuthKind | null };
+
+/** Decrypt the owner's active ci_memory blob, or null (missing row / decrypt failure). */
+function readMemoryBlob(owner: string): MemoryBlob | null {
+  const row = sqlite
+    .prepare(
+      `SELECT iv, auth_tag, ciphertext FROM connection_tokens
+        WHERE owner_id = ? AND provider = ? AND status = 'active'`,
+    )
+    .get(owner, MEMORY_PROVIDER) as { iv: string; auth_tag: string; ciphertext: string } | undefined;
+  if (!row) return null;
+  const parsed = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, loadKek())) as MemoryBlob;
+  return parsed.url ? parsed : null;
+}
+
+export function memoryCreds(owner: string): ResolvedMemoryCreds | null {
   try {
-    const row = sqlite
-      .prepare(
-        `SELECT iv, auth_tag, ciphertext FROM connection_tokens
-          WHERE owner_id = ? AND provider = ? AND status = 'active'`,
-      )
-      .get(owner, MEMORY_PROVIDER) as { iv: string; auth_tag: string; ciphertext: string } | undefined;
-    if (row) {
-      const parsed = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, loadKek())) as MemoryCreds;
-      if (parsed.url) {
-        return { url: parsed.url, apiKey: parsed.apiKey, bearer: parsed.bearer, source: 'settings' };
+    const blob = readMemoryBlob(owner);
+    if (blob) {
+      // OIDC: the STORED access token is returned as the bearer WITHOUT a network
+      // refresh — this is the sync availability/status probe. A live request path
+      // (getJson → resolveLiveMemoryCreds) refreshes it when it's expiring.
+      if (blob.kind === 'oidc') {
+        return { url: blob.url, bearer: blob.accessToken, source: 'settings', authKind: 'oidc' };
       }
+      return { url: blob.url, apiKey: blob.apiKey, bearer: blob.bearer, source: 'settings', authKind: 'manual' };
     }
   } catch (err) {
     // Decrypt/KEK failure → fall through to env. Never log ciphertext.
@@ -123,7 +171,7 @@ export function memoryCreds(owner: string): (MemoryCreds & { source: MemoryCreds
   if (config.auth.mode === 'sso' && !config.auth.disableOidc) return null;
   const url = process.env.CI_SERVER_URL;
   if (url) {
-    return { url, apiKey: process.env.CI_SERVER_API_KEY || undefined, source: 'env' };
+    return { url, apiKey: process.env.CI_SERVER_API_KEY || undefined, source: 'env', authKind: null };
   }
   return null;
 }
@@ -137,6 +185,36 @@ export function memoryCreds(owner: string): (MemoryCreds & { source: MemoryCreds
 export function storeMemoryConnection(owner: string, creds: MemoryCreds): string {
   const account = new URL(creds.url).host;
   const sealed = seal(JSON.stringify({ url: creds.url, apiKey: creds.apiKey, bearer: creds.bearer }), loadKek());
+  sqlite.transaction(() => {
+    sqlite.prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ?`).run(owner, MEMORY_PROVIDER);
+    sqlite
+      .prepare(
+        `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(newId(), owner, MEMORY_PROVIDER, account, sealed.iv, sealed.authTag, sealed.ciphertext);
+  })();
+  return account;
+}
+
+/**
+ * AA0b — store (or replace) a CI-Portal SSO connection: the OIDC token set + the
+ * bits needed to self-refresh. One logical connection per owner (prior ci_memory rows
+ * are deleted first), same as {@link storeMemoryConnection}. Returns the account label.
+ */
+export interface MemoryOidcConnection {
+  url: string; // CI-Server memory API base
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string; // ISO
+  tokenEndpoint: string;
+  clientId: string;
+  clientSecret?: string;
+}
+export function storeMemoryOidcConnection(owner: string, conn: MemoryOidcConnection): string {
+  const account = new URL(conn.url).host;
+  const blob: OidcBlob = { kind: 'oidc', ...conn };
+  const sealed = seal(JSON.stringify(blob), loadKek());
   sqlite.transaction(() => {
     sqlite.prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ?`).run(owner, MEMORY_PROVIDER);
     sqlite
@@ -164,10 +242,105 @@ export function memoryHeaders(creds: MemoryCreds): Record<string, string> {
   return h;
 }
 
+// ── OIDC refresh (AA0b) ──────────────────────────────────────────────────────────
+
+/**
+ * In-process refresh single-flight, keyed by owner: concurrent requests that all see
+ * the same expiring token share ONE refresh call, so CI-Portal's token endpoint is hit
+ * exactly once (no refresh-token stampede on the stored row). Mirrors BaseOAuth2Client.
+ */
+const refreshInFlight = new Map<string, Promise<string>>();
+
+interface RefreshResponse {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+}
+
+/** Exchange the refresh token for a fresh access token and re-seal the blob. */
+async function refreshOidcBlob(owner: string, blob: OidcBlob): Promise<string> {
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: blob.refreshToken,
+    client_id: blob.clientId,
+  });
+  if (blob.clientSecret) params.set('client_secret', blob.clientSecret);
+
+  let res: Response;
+  try {
+    res = await fetch(blob.tokenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: params.toString(),
+    });
+  } catch (err) {
+    throw new MemoryUnavailable(`CI-Portal token refresh unreachable: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    // A 400/401 here means the refresh token is dead (revoked / expired / rotated away):
+    // reconnect via CI-Portal is required. Surface as unavailable so callers degrade.
+    throw new MemoryUnavailable(`CI-Portal token refresh failed: HTTP ${res.status} — reconnect Companion Memory`);
+  }
+  let tok: RefreshResponse;
+  try {
+    tok = (await res.json()) as RefreshResponse;
+  } catch (err) {
+    throw new MemoryUnavailable(`CI-Portal token refresh returned unparseable JSON: ${(err as Error).message}`);
+  }
+  if (!tok.access_token) throw new MemoryUnavailable('CI-Portal token refresh returned no access_token');
+
+  const next: OidcBlob = {
+    ...blob,
+    accessToken: tok.access_token,
+    // Rotation-safe: keep the existing refresh token when the provider omits a new one.
+    refreshToken: tok.refresh_token || blob.refreshToken,
+    expiresAt: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString(),
+  };
+  const sealed = seal(JSON.stringify(next), loadKek());
+  sqlite
+    .prepare(
+      `UPDATE connection_tokens
+         SET iv = ?, auth_tag = ?, ciphertext = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+       WHERE owner_id = ? AND provider = ? AND status = 'active'`,
+    )
+    .run(sealed.iv, sealed.authTag, sealed.ciphertext, owner, MEMORY_PROVIDER);
+  logger.info('memory OIDC bearer refreshed', { owner });
+  return tok.access_token;
+}
+
+/**
+ * Resolve creds for a LIVE request. For an OIDC connection this refreshes the CI-Server
+ * bearer when it's within {@link REFRESH_SKEW_MS} of expiry (single-flighted); manual
+ * and env creds pass through {@link memoryCreds} untouched.
+ */
+export async function resolveLiveMemoryCreds(owner: string): Promise<MemoryCreds | null> {
+  let blob: MemoryBlob | null = null;
+  try {
+    blob = readMemoryBlob(owner);
+  } catch (err) {
+    logger.warn('resolveLiveMemoryCreds: failed to open ci_memory token', { owner, err: (err as Error).message });
+  }
+  if (blob?.kind === 'oidc') {
+    if (Date.parse(blob.expiresAt) - Date.now() > REFRESH_SKEW_MS) {
+      return { url: blob.url, bearer: blob.accessToken };
+    }
+    let inflight = refreshInFlight.get(owner);
+    if (!inflight) {
+      inflight = refreshOidcBlob(owner, blob).finally(() => refreshInFlight.delete(owner));
+      refreshInFlight.set(owner, inflight);
+    }
+    const bearer = await inflight;
+    return { url: blob.url, bearer };
+  }
+  // Manual settings row or env fallback — synchronous resolution is authoritative.
+  const creds = memoryCreds(owner);
+  return creds ? { url: creds.url, apiKey: creds.apiKey, bearer: creds.bearer } : null;
+}
+
 // ── live transport ─────────────────────────────────────────────────────────────
 
 async function getJson<T>(owner: string, path: string, params: Record<string, string | undefined>): Promise<T> {
-  const creds = memoryCreds(owner);
+  const creds = await resolveLiveMemoryCreds(owner);
   if (!creds) throw new MemoryUnavailable('No CI-Server credentials configured (connect in Settings or set CI_SERVER_URL)');
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
