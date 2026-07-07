@@ -1,10 +1,11 @@
 # AA3 — Smarter autoplan (memory-aware ordering)
 
-**Status: AA3a BUILT; AA3b deferred.** This pins down the one-line AA3 v-next bullet from
-`docs/AA-memory-agentic.md` into an implementable spec. Decision (owner, 2026-07-06):
-ship **AA3a — memory-aware ordering** with the signal *"rank memory-related tasks
-earlier."* **AA3b — memory actuals into estimate calibration** is defined here but
-**deferred** (rationale in [§ AA3b](#aa3b--memory-actuals-into-calibration-deferred)).
+**Status: AA3a BUILT; AA3b BUILT (reframed).** This pins down the one-line AA3 v-next
+bullet from `docs/AA-memory-agentic.md` into an implementable spec. Decision (owner,
+2026-07-06/07): ship **AA3a — memory-aware ordering** ("rank memory-related tasks
+earlier") and **AA3b — a better default estimate for memory-drafted tasks** (reframed
+from the doc's original "memory actuals → calibration", which was a category error; see
+[§ AA3b](#aa3b--better-default-estimate-for-memory-drafted-tasks-built)).
 
 AA3a shipped in `server/src/agents/plan.ts` (`memoryTerms` / `memoryRelatedTasks` /
 `loadMemoryRelated` + the `memoryCmp` band in `deterministicIndices`, the carve-out in
@@ -132,32 +133,51 @@ No migration, no new flag (reuses `memory_pull_enabled`). No client change.
 
 ---
 
-## AA3b — memory actuals into calibration (deferred)
+## AA3b — better default estimate for memory-drafted tasks (BUILT)
 
-**Why deferred.** Z0 calibration models the user's *estimate-vs-actual* bias from **done
-tasks with timer `actual_minutes`**. A promoted memory-suggested task is already a normal
-task: complete it with a timer and it calibrates through the existing path — **no new code
-needed** for that case. The only genuinely new idea is to treat a **past memory event's
-real elapsed duration** (`end − start` once the event is in the past) as a proxy
-`actual_minutes` for its mirrored task when the user logged no timer. That conflates two
-different signals — "how long the event was scheduled/ran" vs. "how long the user actually
-spent" — and would quietly bias the user's personal calibration with third-party data.
+**Reframed (owner, 2026-07-07).** The original one-liner ("memory actuals → Z0
+calibration") was a category error: Z0 calibration models the user's *estimate-vs-actual
+bias* (a ratio), and a memory event has no user estimate to compare against — so there's no
+ratio to harvest, and feeding event durations in would pollute the user's bias model with
+third-party data. The real, well-defined value is at **suggestion time**: give a
+memory-drafted task a smarter default `estimated_minutes` than the flat 30 m. And since
+CI-Server *rarely* records an event end/duration, the payoff is almost entirely in a better
+**no-duration fallback** (an event *never* lacks a start — `eventCandidates` filters
+start-less nodes — so "no scheduled window" means "no end").
 
-**If pursued later,** the firm definition is: for a `source_kind='memory'` task whose linked
-event has a *past* `end`, and which is `done` with `actual_minutes IS NULL`, backfill a
-**separate** signal (not `tasks.actual_minutes`) into a memory-scoped calibration input, and
-keep it out of the user's own `global`/`tag` scopes unless explicitly opted in. Recommend
-building only after AA3a ships and there's real promoted-memory-task volume to validate
-against. Until then, memory tasks calibrate exactly like any other task.
+**The estimate ladder** (`memory-suggest.ts › memoryFallbackEstimate` + `templateTask`):
+
+1. **Event has a real scheduled duration** (`end − start > 0`) → use it, unchanged. The
+   event's own duration is the strongest signal and always wins; it is NOT bias-adjusted
+   (calibration's bias is about the user's estimates, not a calendar's scheduled length).
+2. **No duration** (the common case) → the owner's TYPICAL ACTUAL length:
+   `median(actual_minutes)` over their **done, memory-sourced** tasks (`source_kind='memory'`,
+   the population a promoted memory task belongs to — memory drafts are untagged, so
+   tag/subtype scopes don't apply), else the **global** median over all their done tasks —
+   each gated by `CONFIDENCE_FLOOR` (5) samples so outliers can't set the prior.
+3. **No usable history** → `DEFAULT_ESTIMATE_MIN` (30), the prior behavior.
+
+Reads `actual_minutes` (timer truth) only — *not* `estimated_minutes` and *not*
+`estimate_calibration` (which stores ratio percentiles, not absolute minutes, and so can't
+answer "how long is this task"). Still **suggest-only**: it seeds a possible's
+`proposed_estimated_minutes`, which the user reviews before promote — exactly the boundary
+the flat 30 m default already had. Early on, completed-memory-task volume is low, so the
+global median carries it; still better than a blind 30 m.
+
+Tests (`server/test/aa3b-memory-estimate.test.ts`): the `memoryFallbackEstimate` ladder
+(no history → 30; sub-floor → next tier; memory-median preferred over global when ≥ floor),
+and integration via `suggestFromMemory` in fixture mode — an event WITH a duration uses it
+(history ignored), an end-less event uses the history median.
 
 ---
 
 ## Rollout
 
-Single PR for AA3a (server-only): the matcher + the three plug-ins (`deterministicIndices`,
-`genPrompt`, `checkOrder`) + `authorPlanOrder` wiring + tests + this doc's status flip.
-Sequenced **after** the reflow-correctness work (PR #296/#297, merged) and independent of
-the still-deferred live-smoke — AA3a is exercised end-to-end in fixture mode.
+AA3a shipped as PR #301 (server-only): the matcher + the three plug-ins
+(`deterministicIndices`, `genPrompt`, `checkOrder`) + `authorPlanOrder` wiring. AA3b ships
+as its own follow-up PR off merged main (the estimate ladder in `memory-suggest.ts` +
+tests + this section). Both are server-only, exercised end-to-end in fixture mode, and
+independent of the still-deferred live-smoke.
 
 Related: `docs/AA-memory-agentic.md` (AA0–AA4), `docs/archive/M-ai-scheduler.md` §A0/§A2/§A4
 (authoring loop + hint seam), `docs/Z-focus-ritual.md` (Z0 calibration).
