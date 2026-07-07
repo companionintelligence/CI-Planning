@@ -72,9 +72,15 @@ describe('no-overlap guarantee', () => {
     expect(first.length).toBeGreaterThan(0);
     for (const b of first) expect(overlaps(b, locked), `${b.title} overlaps locked block`).toBe(false);
 
-    placeFlightPlan(OWNER, { date: DAY }); // second run: clearPriorAuto removes first-run blocks; nothing staged → 0 placed
+    // Second run: nothing staged → the scoped clear touches NOTHING (clear set ==
+    // re-place set). The first run's placements survive untouched — a re-run is
+    // additive, never a wipe (AE reflow-correctness) — and still nothing duplicates.
+    placeFlightPlan(OWNER, { date: DAY });
     const second = agentBlocks();
-    expect(second.length).toBe(0); // tasks de-staged after first run; no duplicates
+    expect(second.map((b) => `${b.title}@${b.start_at}`).sort()).toEqual(
+      first.map((b) => `${b.title}@${b.start_at}`).sort(),
+    );
+    for (const b of second) expect(overlaps(b, locked), `${b.title} overlaps locked block`).toBe(false);
     expect(plan).toBeTruthy();
   });
 });

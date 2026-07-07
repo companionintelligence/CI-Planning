@@ -109,6 +109,40 @@ export function mirrorBlockStatusToTask(blockId: string, ownerId: string): strin
 }
 
 /**
+ * Mirror an ENGINE-CHOSEN placement onto its task: set `scheduled_for` to the owner-
+ * local day of the task's earliest still-active placement and flip open → scheduled.
+ *
+ * Unlike [[syncTaskFromBlock]] this NEVER writes `task_time`: a wall-clock time on the
+ * task is reserved for USER-stated intent (wizard / quick-add / task PATCH). If engine
+ * placement mirrored its chosen slot into `task_time`, the next Auto run's pin pass
+ * (AD1) would read it back as a stated time and pin it as an is_auto=0 block — one
+ * reflow cycle would freeze the whole day solid. `scheduled_for` is safe to mirror
+ * (the pin pass keys on `task_time` alone).
+ */
+export function mirrorEnginePlacement(taskId: string, ownerId: string): string | null {
+  const earliest = sqlite
+    .prepare(
+      `SELECT MIN(start_at) AS s FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+          AND status NOT IN ('completed','skipped','cancelled','missed')`,
+    )
+    .get(taskId, ownerId) as { s: string | null } | undefined;
+  if (!earliest?.s) return null;
+  const day = localDateInTZ(earliest.s, ownerTimezone(ownerId));
+  // Keep occurrence_date aligned for a recurring instance, mirroring syncTaskFromBlock.
+  sqlite
+    .prepare(
+      `UPDATE tasks SET scheduled_for = ?,
+         occurrence_date = CASE WHEN occurrence_date IS NOT NULL THEN ? ELSE occurrence_date END
+       WHERE id = ? AND owner_id = ? AND (scheduled_for IS NULL OR scheduled_for <> ?)`,
+    )
+    .run(day, day, taskId, ownerId, day);
+  applyTaskPlacementStatus(taskId, ownerId);
+  syncTaskReminders(ownerId, taskId);
+  return taskId;
+}
+
+/**
  * Placing a task on the Planner IS scheduling it: flip an `open` task to
  * `scheduled` when it gains a task placement. No-op for habits (their occurrences
  * are managed on the planner, not via this status) and for any non-open status —
@@ -141,7 +175,7 @@ export function revertTaskPlacementStatus(taskId: string, ownerId: string): stri
   const active = sqlite
     .prepare(
       `SELECT 1 FROM time_blocks
-        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('planned','overrun') LIMIT 1`,
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('planned','overrun','in_progress') LIMIT 1`,
     )
     .get(taskId, ownerId);
   if (active) return null;
