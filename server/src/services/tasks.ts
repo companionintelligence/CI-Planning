@@ -272,6 +272,21 @@ export type UpdateTaskInput = {
  *  (default) edits just this row. For a non-recurring task the two coincide. */
 export type UpdateTaskScope = 'instance' | 'series';
 
+/**
+ * The camelCase column names whose change can shift the day's plan — the ONLY edits
+ * that should trigger a reactive reflow (B2). A title/notes/description/parent/tag
+ * edit leaves placement untouched, so firing requestReplan for it needlessly churns
+ * the day (and, pre-AE, could surface a wipe). Callers pass `updateTask`'s
+ * `updatedFields`; tags/deps aren't columns so they never appear there (correct —
+ * neither re-packs the day). Shared by REST + GraphQL so both gate identically.
+ */
+const SCHEDULING_FIELDS = new Set([
+  'scheduledFor', 'taskTime', 'estimatedMinutes', 'priority', 'dueAt', 'status', 'completedAt', 'deferUntil',
+]);
+export function updateTouchesSchedule(updatedFields: readonly string[]): boolean {
+  return updatedFields.some((f) => SCHEDULING_FIELDS.has(f));
+}
+
 export type UpdateTaskResult =
   | {
       ok: true;

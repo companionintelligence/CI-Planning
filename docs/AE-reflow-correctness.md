@@ -1,9 +1,9 @@
 # AE — Reflow correctness: stop the wipe
 
-**Status: built (PR 1 of 2).** Fixes the bug where editing one placed task's start time
-made every other flight-plan-placed task disappear from the planner. PR 2 (hardening:
-narrowed replan triggers, locked-block guards on reschedule, legacy `runScheduler`
-removal, day-scoped pin idempotency) follows separately.
+**Status: built (PR 1 + PR 2).** Fixes the bug where editing one placed task's start time
+made every other flight-plan-placed task disappear from the planner, plus the peripheral
+scheduling-correctness findings. PR 1 = the reflow rewrite (below); PR 2 = the hardening
+in [§ PR 2](#pr-2--hardening).
 
 ## The bug
 
@@ -62,6 +62,39 @@ first run's placements (no longer staged, so cleared but not re-placed).
   block drag via `syncTaskFromBlock`) — never by engine placement.
 - A `'scheduled'` task always holds an active placement; every path that removes a
   task's last active block must call `revertTaskPlacementStatus`.
+- A `is_locked = 1` task block is a deliberate user pin: no engine path (reflow clear,
+  reschedule, nightly review, missed sweep) may delete, relabel, or relocate it.
+
+## PR 2 — hardening
+
+The peripheral findings from the same audit, each low-risk on its own but load-bearing
+for how safe the reflow fix stays over time.
+
+1. **Narrowed replan trigger (H1).** `requestReplan('task:updated')` now fires only when
+   the edit touched a scheduling column (`services/tasks.ts › updateTouchesSchedule`:
+   `scheduledFor`/`taskTime`/`estimatedMinutes`/`priority`/`dueAt`/`status`/`completedAt`/
+   `deferUntil`). A title/notes/tag edit no longer churns the day. Gated identically in
+   the REST route and the GraphQL `updateTask` resolver.
+2. **Locked-block guards (H2).** `rescheduleTask` and the nightly `reviewAndReschedule`
+   skip `is_locked = 1` blocks — a pinned placement is never destroyed by a reschedule
+   or a defer. The review's missed-detection query *also* excludes locked blocks, so a
+   pinned-but-not-done past block never triggers an endless nightly re-defer (it isn't
+   "missed work").
+3. **Legacy `runScheduler` removed (H3).** The unrouted backlog-packer in
+   `engine/scheduler.ts` had an unscoped day-clear (no `block_kind`/`source_kind`/
+   `is_locked` filter) that would delete routine and container blocks if ever re-wired.
+   Deleted along with its only caller-less helper `agents/plan.ts › orderForToday`; the
+   shared gap primitives (`buildGaps`/`pickGap`/`splitIntoSessions`/`dayObstacles`) stay.
+4. **Day-scoped pin idempotency (H4).** `placeStartAnchoredTask`/`pinTaskAt` treated
+   *any* active block anywhere as "already placed", so a stale block on another (often
+   past) day silently suppressed the stated `(scheduled_for, task_time)`. Now
+   `reconcilePriorPlacement` is idempotent only against a block **on the stated day** (or
+   a locked pin anywhere, which is honoured, not fought); a stale *unlocked* block on
+   another day is cleared so the stated day wins (a "move").
+5. **Sweep requeue positions (H5).** `sweepMissedBlocks` re-queues each task at
+   `nextPos()` instead of a hard-coded position `0`, so requeue order is stable across
+   sweeps. Multi-session edit behaviour was re-checked post-AE (the pin pass's day-scoped
+   idempotency absorbs the moved block) — characterized by a test: no double-placement.
 
 Related: `docs/AB-natural-scheduling.md` (start intent), `docs/AD-calendar-reliability.md`
 (AD1 pins), `docs/archive/M-ai-scheduler.md` §B (original reflow design, superseded here).

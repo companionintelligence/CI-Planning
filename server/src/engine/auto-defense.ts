@@ -409,8 +409,12 @@ export function sweepMissedBlocks(
 
   const markSkipped = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`);
   const restage = sqlite.prepare(
-    `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, 0)`
+    `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`
   );
+  // Append re-queued tasks at the END of the flight-plan (nextPos), not position 0 — a
+  // hard-coded 0 collided every requeued task onto the same slot, so the (position,
+  // task_id) order was arbitrary and unstable across sweeps.
+  let pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number }).m + 1;
   let requeued = 0;
   sqlite.transaction(() => {
     for (const blk of missed) {
@@ -421,7 +425,7 @@ export function sweepMissedBlocks(
       revertTaskPlacementStatus(blk.task_id, owner);
       // Only re-queue tasks that are still open (a completed task's stale block isn't work).
       const open = sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'open'`).get(blk.task_id);
-      if (open) { restage.run(owner, blk.task_id); requeued++; }
+      if (open && restage.run(owner, blk.task_id, pos).changes > 0) { pos++; requeued++; }
     }
   })();
 

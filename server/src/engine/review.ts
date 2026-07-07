@@ -63,6 +63,7 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
                 SELECT tb.task_id FROM time_blocks tb
                  WHERE tb.block_kind = 'task' AND tb.task_id IS NOT NULL
                    AND tb.status = 'planned' AND tb.end_at < @now
+                   AND tb.is_locked = 0
               )
           AND t.status NOT IN ('done','completed','cancelled','missed')
           ${ownerClause}
@@ -73,12 +74,15 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
   const bumpDefer = sqlite.prepare(
     `UPDATE tasks SET scheduled_for = ?, defer_count = defer_count + 1, status = 'open' WHERE id = ?`
   );
+  // is_locked = 0: a user-PINNED past block is a deliberate placement, not missed work
+  // the review may destroy/relabel. It's also excluded from the missed-detection query
+  // above, so a task pinned-but-not-done never triggers an endless nightly re-defer.
   const dropBlocks = sqlite.prepare(
-    `DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ? RETURNING id`
+    `DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ? AND is_locked = 0 RETURNING id`
   );
   const markMissed = sqlite.prepare(`UPDATE tasks SET status = 'missed' WHERE id = ?`);
   const markBlocksMissed = sqlite.prepare(
-    `UPDATE time_blocks SET status = 'missed' WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ?`
+    `UPDATE time_blocks SET status = 'missed' WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned' AND end_at < ? AND is_locked = 0`
   );
   // N4 lossy-slip fix: stamp daily_plan.outcome before block hard-delete so the
   // nightly aggregate can record planned-vs-done even after the block is gone.
@@ -159,13 +163,17 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
  * Missed surface, or any explicit reschedule). Clears the 'missed' status,
  * bumps scheduled_for + defer_count, and removes any stale missed/planned
  * blocks so it re-places cleanly on the new day.
+ *
+ * is_locked = 0: a user-PINNED placement survives the reschedule — the task's intent
+ * moves to the new day, but a deliberate pin is never silently destroyed (it stays put
+ * for the user to move or unpin themselves).
  */
 export function rescheduleTask(taskId: string, days: number, owner: string): { scheduled_for: string } {
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   const tx = sqlite.transaction(() => {
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
     // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
-    for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') RETURNING id`).all(taskId, owner) as { id: string }[]) {
+    for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') AND is_locked = 0 RETURNING id`).all(taskId, owner) as { id: string }[]) {
       removeEntityTags('time_block', b.id);
     }
   });

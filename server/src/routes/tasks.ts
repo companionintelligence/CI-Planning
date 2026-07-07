@@ -21,7 +21,7 @@ import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds } from '../
 import {
   createTask, createRecurringTask, updateTask, deleteTask,
   promoteToHabit, recallTask, skipRecurringInstance,
-  applyTaskTagLevels, taskSecondaryTags,
+  applyTaskTagLevels, taskSecondaryTags, updateTouchesSchedule,
   type CreateTaskInput, type UpdateTaskInput,
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
@@ -353,7 +353,9 @@ export function tasksRouter() {
     };
     broadcast(owner, 'task:updated', out);
     if (res.generated) broadcast(owner, 'recurrence:generated', res.generated);
-    requestReplan('task:updated'); // B2: edits to priority/due/estimate can re-order the day
+    // B2: only a scheduling-relevant column change can re-order the day — a title/notes/
+    // tag edit must not churn the plan (and, pre-AE, could surface the reflow wipe).
+    if (updateTouchesSchedule(res.updatedFields)) requestReplan('task:updated');
     ctx.body = { task: out, ...(res.generated ? { generated: res.generated } : {}) };
   });
 
