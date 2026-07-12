@@ -271,15 +271,6 @@ export const api = {
       request<{ ok: boolean }>('POST', `/block-templates/${id}/apply-to-block`, { block_id }),
   },
 
-  possibles: {
-    list: (status = 'pending') =>
-      request<{ possibles: Possible[] }>('GET', `/possible-tasks?status=${status}`),
-    promote: (id: string, overrides?: Partial<Task>) =>
-      request<{ task: Task }>('POST', `/possible-tasks/${id}/promote`, overrides ?? {}),
-    dismiss: (id: string) =>
-      request<{ ok: boolean }>('POST', `/possible-tasks/${id}/dismiss`, {}),
-  },
-
   tags: {
     list: () => request<{ tags: Tag[] }>('GET', '/tags'),
     create: (name: string, opts?: { kind?: 'direction' | 'intention' | 'category'; directions?: string[]; categories?: string[] }) =>
@@ -528,12 +519,6 @@ export interface Block {
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
-}
-
-export interface Possible {
-  id: string; raw_title: string; raw_summary?: string; proposed_due_at?: string;
-  proposed_priority?: number; source_kind?: string; confidence?: number;
-  status: string; created_at: string;
 }
 
 // ── Phase G: patterns, flight-plan, block templates ───────────────────────────

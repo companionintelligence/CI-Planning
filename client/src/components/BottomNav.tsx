@@ -1,13 +1,12 @@
 import { A, useNavigate } from '@solidjs/router';
 import { createSignal, createResource, Show, For } from 'solid-js';
-import { CheckSquare, Inbox, Tag, Settings, Activity, Sun, MoreHorizontal, CalendarDays, LogOut } from 'lucide-solid';
-import { possibles, showToast } from '../stores/index.js';
+import { CheckSquare, Tag, Settings, Activity, Sun, MoreHorizontal, CalendarDays, LogOut } from 'lucide-solid';
+import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 const primary = [
   { href: '/', label: 'Today', Icon: Sun },
-  { href: '/inbox', label: 'Inbox', Icon: Inbox, badge: true },
   { href: '/tasks', label: 'Tasks', Icon: CheckSquare },
   { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
 ];
@@ -19,7 +18,6 @@ const overflow = [
 
 /** Mobile bottom tab bar (hidden ≥ md, where the left rail takes over). */
 export function BottomNav() {
-  const pendingCount = () => possibles()?.length ?? 0;
   const [moreOpen, setMoreOpen] = createSignal(false);
   const navigate = useNavigate();
   const [cfg] = createResource(() => api.auth.config().catch(() => null));
@@ -77,11 +75,6 @@ export function BottomNav() {
             >
               <l.Icon size={19} />
               <span>{l.label}</span>
-              <Show when={l.badge && pendingCount() > 0}>
-                <span class="absolute top-1.5 left-1/2 ml-1.5 min-w-[15px] h-[15px] px-1 rounded-full text-[9px] font-bold bg-primary text-primary-foreground flex items-center justify-center">
-                  {pendingCount()}
-                </span>
-              </Show>
             </A>
           )}
         </For>
