@@ -44,7 +44,7 @@ export function ownerRouter() {
         sets.push('email = ?');
         values.push(email.trim());
       } else {
-        throw httpError(400, 'email must be a valid address (or null to clear)');
+        throw httpError(400, 'email must be a valid address (or null / empty string to clear)');
       }
     }
     if (sets.length === 0) throw httpError(400, 'nothing to update — provide name and/or email');
@@ -68,7 +68,7 @@ export function ownerRouter() {
     } else if (typeof backup_email === 'string' && EMAIL_RE.test(backup_email.trim())) {
       value = backup_email.trim();
     } else {
-      throw httpError(400, 'a valid email address (or null to clear) is required');
+      throw httpError(400, 'a valid email address (or null / empty string to clear) is required');
     }
 
     sqlite.prepare(`UPDATE owners SET backup_email = ? WHERE id = ?`).run(value, currentOwnerId());
