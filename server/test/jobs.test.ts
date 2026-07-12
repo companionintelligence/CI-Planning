@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { config } from '../src/lib/config.js';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER } from '../src/lib/context.js';
+import { SYSTEM_OWNER, runWithOwner, ALL_SCOPES } from '../src/lib/context.js';
 import { runJob } from '../src/jobs/index.js';
-import { resetDb, ollamaAvailable } from './helpers.js';
+import { resetDb, ollamaAvailable, createOwner, SECOND_OWNER_ID } from './helpers.js';
 
 function lastRun(kind: string) {
   return sqlite
@@ -105,6 +105,76 @@ describe('jobs', () => {
     expect(task).toBeDefined();
     const pending = sqlite.prepare(`SELECT COUNT(*) AS n FROM possible_tasks WHERE status = 'pending'`).get() as { n: number };
     expect(pending.n).toBe(0);
+  });
+
+  it('nightly_grooming is owner-scoped: each owner\'s run sweeps and counts ONLY its own rows (AF-CU1)', async () => {
+    createOwner(SECOND_OWNER_ID);
+    // One pending straggler + one overdue open task per owner. One pending row per
+    // owner keeps dedupe in its <2-rows early return — no embeddings dependency.
+    sqlite
+      .prepare(
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, status, proposed_owner_id)
+         VALUES (uuid7(), 'Mine straggler', 'text', 'mine#0', 'pending', ?),
+                (uuid7(), 'Theirs straggler', 'text', 'theirs#0', 'pending', ?)`
+      )
+      .run(SYSTEM_OWNER, SECOND_OWNER_ID);
+    sqlite
+      .prepare(
+        `INSERT INTO tasks (id, title, owner_id, status, priority, due_at)
+         VALUES (uuid7(), 'Mine overdue', ?, 'open', 3, '2020-01-01T00:00:00.000Z'),
+                (uuid7(), 'Theirs overdue', ?, 'open', 3, '2020-01-01T00:00:00.000Z')`
+      )
+      .run(SYSTEM_OWNER, SECOND_OWNER_ID);
+
+    // Owner B's fan-out iteration: only THEIR straggler promotes, only THEIR overdue bumps.
+    await runWithOwner(SECOND_OWNER_ID, ALL_SCOPES, () => runJob('nightly_grooming'));
+    const theirRun = lastRun('nightly_grooming');
+    expect(theirRun?.items_created).toBe(1); // job_runs credit = their row only
+    expect(theirRun?.items_updated).toBe(1); // 0 dups + their 1 overdue bump
+    const status = (title: string) =>
+      (sqlite.prepare(`SELECT status FROM possible_tasks WHERE raw_title = ?`).get(title) as { status: string }).status;
+    const prio = (title: string) =>
+      (sqlite.prepare(`SELECT priority FROM tasks WHERE title = ?`).get(title) as { priority: number }).priority;
+    expect(status('Theirs straggler')).toBe('promoted');
+    expect(status('Mine straggler')).toBe('pending'); // untouched by the other owner's run
+    expect(prio('Theirs overdue')).toBe(2);
+    expect(prio('Mine overdue')).toBe(3); // untouched by the other owner's run
+    const theirTask = sqlite
+      .prepare(`SELECT owner_id FROM tasks WHERE title = 'Theirs straggler'`)
+      .get() as { owner_id: string };
+    expect(theirTask.owner_id).toBe(SECOND_OWNER_ID);
+
+    // The default owner's own iteration then sweeps its rows.
+    await runJob('nightly_grooming');
+    const myRun = lastRun('nightly_grooming');
+    expect(myRun?.items_created).toBe(1);
+    expect(status('Mine straggler')).toBe('promoted');
+    expect(prio('Mine overdue')).toBe(2);
+    expect(prio('Theirs overdue')).toBe(2); // not double-bumped by the default owner's run
+  });
+
+  it('NULL-owner legacy possibles are claimed only by the DEFAULT owner\'s run (AF-CU1 deterministic backfill)', async () => {
+    createOwner(SECOND_OWNER_ID);
+    sqlite
+      .prepare(
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, status)
+         VALUES (uuid7(), 'Legacy row', 'text', 'legacy#0', 'pending')`
+      )
+      .run();
+    const legacy = () =>
+      sqlite
+        .prepare(`SELECT status, proposed_owner_id FROM possible_tasks WHERE raw_title = 'Legacy row'`)
+        .get() as { status: string; proposed_owner_id: string | null };
+
+    // A non-default owner's run must NOT grab it (pre-fix: whichever owner ran first did).
+    await runWithOwner(SECOND_OWNER_ID, ALL_SCOPES, () => runJob('promote_possibles'));
+    expect(legacy()).toEqual({ status: 'pending', proposed_owner_id: null });
+
+    // The default (SYSTEM_OWNER) run claims it: backfill + promote.
+    await runJob('promote_possibles');
+    expect(legacy()).toEqual({ status: 'promoted', proposed_owner_id: SYSTEM_OWNER });
+    const task = sqlite.prepare(`SELECT owner_id FROM tasks WHERE title = 'Legacy row'`).get() as { owner_id: string };
+    expect(task.owner_id).toBe(SYSTEM_OWNER);
   });
 
   it('an unknown job kind does not create a run row', async () => {

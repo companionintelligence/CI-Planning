@@ -145,6 +145,7 @@ describe('promoteAllPending (AF-3)', () => {
     expect(r.dedupeAvailable).toBe(true);
     expect(r.duplicates).toBe(1);
     expect(r.promoted).toBe(2);
+    expect(r.failed).toBe(0);
     expect(pendingCount()).toBe(0);
     // Exactly one of the two milk rows is the duplicate (uuid7 same-ms order isn't
     // strict — assert the invariant, not WHICH one, matching dedupe.test.ts).
@@ -175,6 +176,29 @@ describe('promoteAllPending (AF-3)', () => {
     expect(r.promoted).toBe(2);
     expect(pendingCount()).toBe(0);
     expect((sqlite.prepare(`SELECT COUNT(*) c FROM tasks`).get() as { c: number }).c).toBe(2);
+  });
+
+  it('a poison row is COUNTED as failed and left pending — not silently invisible (AF-CU1)', async () => {
+    // An existing task already claims (gmail, poison#0) — the 0027 partial
+    // UNIQUE(source_kind, source_ref) on tasks makes that row's promote throw.
+    sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, source_kind, source_ref) VALUES (uuid7(), 'Claimed', ?, 'open', 'gmail', 'poison#0')`)
+      .run(OWNER);
+    const healthy = insertPossible('Healthy item');
+    const poison = (sqlite
+      .prepare(
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, status, proposed_owner_id)
+         VALUES (uuid7(), 'Poison item', 'gmail', 'poison#0', 'pending', ?) RETURNING id`,
+      )
+      .get(OWNER) as { id: string }).id;
+
+    const r = await promoteAllPending(OWNER, { embedFn: async () => { throw new Error('no embeddings'); } });
+
+    expect(r.promoted).toBe(1);
+    expect(r.failed).toBe(1); // the poison row shows up in the result, not just a log line
+    expect(r.duplicates).toBe(0);
+    expect(statusOf(healthy)).toBe('promoted');
+    expect(statusOf(poison)).toBe('pending'); // left for the nightly sweeper / triage
   });
 
   it('promoted tasks carry proposed fields + suggestion tags exactly as manual promotion did, and audit rows are written', async () => {
