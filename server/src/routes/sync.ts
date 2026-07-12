@@ -2,6 +2,7 @@ import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { applyOp, type Op, type ApplyResult } from '../sync/apply.js';
+import { mirrorTaskStatusToBlocks } from '../services/block-task-sync.js';
 import { logSyncEvent, emitToClients } from './sse.js';
 
 /** Maximum ops in a single batch — prevents runaway requests. */
@@ -45,7 +46,28 @@ export function syncRouter() {
     sqlite.transaction(() => {
       for (const op of ops) {
         try {
+          // Capture the pre-merge status so a merged completion (or reopen) can run the
+          // task→block done-state mirror below — applyOp writes columns directly and
+          // never goes through services/tasks.ts, so without this a completion synced
+          // from another device would leave its Planner block sitting at 'planned'.
+          const statusBefore =
+            op.entity === 'task' && op.fields && 'status' in op.fields
+              ? (sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(op.entityId, ownerId) as { status: string } | undefined)?.status
+              : undefined;
           const result = applyOp(sqlite, op, ownerId);
+          const statusAfter = result.applied['status'] as string | undefined;
+          if (
+            statusBefore !== undefined &&
+            statusAfter !== undefined &&
+            (statusBefore === 'done') !== (statusAfter === 'done') &&
+            (statusAfter === 'done' || ['open', 'scheduled', 'in_progress'].includes(statusAfter))
+          ) {
+            for (const blockId of mirrorTaskStatusToBlocks(op.entityId, ownerId)) {
+              const blockPayload = { id: blockId };
+              const blockSeq = logSyncEvent(ownerId, 'block:updated', blockPayload);
+              toEmit.push({ seq: blockSeq, event: 'block:updated', payload: blockPayload });
+            }
+          }
           // An objective_task link change surfaces as an objective update (the
           // client re-derives the tree from the objective's links).
           const eventEntity = op.entity === 'objective_task' ? 'objective' : op.entity;

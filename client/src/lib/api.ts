@@ -682,7 +682,7 @@ export interface Prefs {
   // Trust dial (0070) — governs auto-blocking/planning. The top-bar Suggest/Schedule
   // toggle maps Schedule ⇔ 'hands_off' (auto-schedule on ingest) and Suggest ⇔
   // 'balanced'; 'cautious' also displays as Suggest. (Replaced the vestigial
-  // auto_mode column, dropped in 0122.)
+  // auto_mode column, dropped in 0123.)
   trust_mode?: 'cautious' | 'balanced' | 'hands_off';
   fill_order?: 'priority' | 'overdue'; // leftover fill ordering (0055); default 'priority'
   deep_work_windows?: { start: string; end: string }[];

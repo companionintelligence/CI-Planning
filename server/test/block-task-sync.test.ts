@@ -104,6 +104,80 @@ describe('block done-state mirror', () => {
     expect(t.status).toBe('scheduled');
     expect(t.completed_at).toBeNull();
   });
+
+  it('skipping a task-linked block reverts a scheduled task to the open backlog', async () => {
+    const task = insertTask('Skip me');
+    const created = await api(srv.url, '/api/blocks', {
+      method: 'POST',
+      json: { task_id: task, title: 'Skip me', block_kind: 'task', start_at: '2026-06-22T16:00:00.000Z', end_at: '2026-06-22T16:30:00.000Z' },
+    });
+    expect(taskRow(task).status).toBe('scheduled');
+    await api(srv.url, `/api/blocks/${created.body.block.id}`, { method: 'PATCH', json: { status: 'skipped' } });
+    const t = taskRow(task);
+    expect(t.status).toBe('open'); // no active placement left — not stranded at 'scheduled'
+    expect(t.completed_at).toBeNull(); // and never counted as done
+  });
+});
+
+describe('task → block done-state mirror (PATCH /api/tasks/:id)', () => {
+  const blockStatus = (id: string) =>
+    (sqlite.prepare(`SELECT status FROM time_blocks WHERE id = ?`).get(id) as { status: string }).status;
+
+  it('checking a task off completes its planned block; un-checking revives it', async () => {
+    const task = insertTask('Check me off');
+    const block = insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
+    sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ?`).run(task);
+
+    let r = await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { completed: true } });
+    expect(r.status).toBe(200);
+    expect(taskRow(task).status).toBe('done');
+    expect(blockStatus(block)).toBe('completed'); // the Planner no longer shows it pending
+
+    r = await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { completed: false } });
+    expect(r.status).toBe(200);
+    const t = taskRow(task);
+    expect(t.completed_at).toBeNull();
+    expect(t.status).toBe('scheduled'); // revived placement re-schedules the task
+    expect(blockStatus(block)).toBe('planned');
+  });
+
+  it('completes every active session block, locked pins included', async () => {
+    const task = insertTask('Two sessions');
+    const b1 = insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
+    const b2 = insertBlock({ taskId: task, start: '2026-06-22T18:00:00.000Z', end: '2026-06-22T18:30:00.000Z' });
+    sqlite.prepare(`UPDATE time_blocks SET is_locked = 1 WHERE id = ?`).run(b2);
+
+    await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { completed: true } });
+    expect(blockStatus(b1)).toBe('completed');
+    expect(blockStatus(b2)).toBe('completed');
+  });
+
+  it('re-completing an already-done task keeps the original completed_at', async () => {
+    const task = insertTask('Done once');
+    await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { completed: true } });
+    const first = taskRow(task).completed_at;
+    expect(first).toBeTruthy();
+    await new Promise((res) => setTimeout(res, 5));
+    await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { completed: true } });
+    expect(taskRow(task).completed_at).toBe(first);
+  });
+
+  it('completed:false on a task that is not done is a no-op', async () => {
+    const task = insertTask('Still open');
+    insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
+    sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ?`).run(task);
+    await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { completed: false } });
+    expect(taskRow(task).status).toBe('scheduled'); // never forced back to 'open'
+  });
+
+  it('done → cancelled does NOT resurrect the completed block', async () => {
+    const task = insertTask('Cancel after done');
+    const block = insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
+    await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { completed: true } });
+    expect(blockStatus(block)).toBe('completed');
+    await api(srv.url, `/api/tasks/${task}`, { method: 'PATCH', json: { status: 'cancelled' } });
+    expect(blockStatus(block)).toBe('completed'); // settled history stays settled
+  });
 });
 
 describe('placement status (open ↔ scheduled)', () => {

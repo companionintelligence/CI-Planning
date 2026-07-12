@@ -5,7 +5,9 @@ import { fillFlightPlanCandidates, autoScheduleOnIngest } from '../engine/autopl
 import { sweepMissedBlocks, requestReplan } from '../engine/auto-defense.js';
 import { reviewAndReschedule } from '../engine/review.js';
 import { fireDueReminders } from '../engine/reminders.js';
-import { ingestEmails, ingestEvents } from '../agents/ingest.js';
+import { ingestEmails, ingestEvents, type IngestResult } from '../agents/ingest.js';
+import { createGoogleClient } from '../mcp/google.js';
+import { googleAccounts } from '../connectors/index.js';
 import { suggestFromMemory } from '../agents/memory-suggest.js';
 import { syncToMemory } from '../services/memory.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
@@ -46,14 +48,49 @@ function autoBlockAfterPromote(): number {
   }
 }
 
+/** Zeroed ingest counters — the per-account loop below sums into this. */
+function emptyIngestTotals(): IngestResult {
+  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0, failed: 0 };
+}
+
+function addIngestTotals(a: IngestResult, b: IngestResult): IngestResult {
+  return {
+    itemsProcessed: a.itemsProcessed + b.itemsProcessed,
+    possiblesCreated: a.possiblesCreated + b.possiblesCreated,
+    possiblesUpdated: a.possiblesUpdated + b.possiblesUpdated,
+    blocksCreated: a.blocksCreated + b.blocksCreated,
+    promoted: a.promoted + b.promoted,
+    duplicates: a.duplicates + b.duplicates,
+    failed: a.failed + b.failed,
+  };
+}
+
 /** Execute a single job kind. Returns counts + a human-readable log line. */
 async function execute(kind: string): Promise<JobOutcome> {
   switch (kind) {
     case 'ingest_gmail': {
+      if (config.google.mode === 'off') {
+        return { itemsCreated: 0, itemsUpdated: 0, log: 'Google integration off (GOOGLE_MODE unset) — skipped' };
+      }
       if (!gmailLiveAllowed()) {
         return { itemsCreated: 0, itemsUpdated: 0, log: 'Gmail ingest skipped — set CP_GOOGLE_ENABLE_GMAIL=true to enable in live mode' };
       }
-      const r = await ingestEmails();
+      // Live mode ingests ONLY the owner's connected accounts (same posture as
+      // sync_calendar via getConnectors): no connection ⇒ clean no-op, and each
+      // account gets its own client/watermark instead of the env-default 'primary'.
+      // Fixture mode (explicit dev/demo opt-in) keeps the single canned client.
+      let r = emptyIngestTotals();
+      if (config.google.mode === 'live') {
+        const accounts = googleAccounts();
+        if (accounts.length === 0) {
+          return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
+        }
+        for (const account of accounts) {
+          r = addIngestTotals(r, await ingestEmails(createGoogleClient({ account }), { account }));
+        }
+      } else {
+        r = addIngestTotals(r, await ingestEmails());
+      }
       const placed = autoScheduleOnIngest(); // D1: schedule mode places tag-matched in the background; no-op in suggest
       return {
         itemsCreated: r.possiblesCreated,
@@ -65,7 +102,21 @@ async function execute(kind: string): Promise<JobOutcome> {
       // WP5: ingest no longer creates meeting blocks or auto-places. It only produces
       // possibles; the locked meeting mirror + placement live in sync_calendar now (so
       // placement packs around freshly-synced meeting obstacles, not stale ones).
-      const r = await ingestEvents();
+      if (config.google.mode === 'off') {
+        return { itemsCreated: 0, itemsUpdated: 0, log: 'Google integration off (GOOGLE_MODE unset) — skipped' };
+      }
+      let r = emptyIngestTotals();
+      if (config.google.mode === 'live') {
+        const accounts = googleAccounts();
+        if (accounts.length === 0) {
+          return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
+        }
+        for (const account of accounts) {
+          r = addIngestTotals(r, await ingestEvents(createGoogleClient({ account })));
+        }
+      } else {
+        r = addIngestTotals(r, await ingestEvents());
+      }
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
@@ -108,7 +159,8 @@ async function execute(kind: string): Promise<JobOutcome> {
       const c = r.counts;
       const pushed = c.completed + c.habits + c.reflections;
       // Fixture mode does no network — its "ingested" tally is simulated. Say so,
-      // rather than logging a push that never left the box.
+      // rather than logging a push that never left the box. (transport comes from the
+      // sync result itself, so the log can't diverge from what the service actually did.)
       const log =
         r.transport === 'fixture'
           ? `Fixture mode — simulated push of ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)); nothing sent to CI-Server`

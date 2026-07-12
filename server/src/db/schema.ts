@@ -218,7 +218,7 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // this gates whether leftover tasks also fill open 9–6 time. Default ON.
   autoFillWorkday: integer('auto_fill_workday', { mode: 'boolean' }).default(true),
   // Trust dial (0070) — the 3-state automation Setting that replaced the 0052
-  // auto_mode toggle (column dropped in 0122; the top-bar Suggest/Schedule toggle
+  // auto_mode toggle (column dropped in 0123; the top-bar Suggest/Schedule toggle
   // now writes this dial: Schedule ⇔ 'hands_off', Suggest ⇔ 'balanced').
   // AF-3 retired its auto-PROMOTE facet (all possibles now promote unconditionally at
   // ingestion); the dial governs ONLY auto-blocking/planning:

@@ -3,7 +3,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
 import { runMigrations, rebuildTable } from '../src/db/migrate.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
-import { up as dropAutoMode } from '../src/db/migrations/0122_drop_auto_mode.js';
+import { up as dropAutoMode } from '../src/db/migrations/0123_drop_auto_mode.js';
 
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 
@@ -154,7 +154,7 @@ describe('0049 api_keys store', () => {
 });
 
 describe('0052 auto-scheduling columns', () => {
-  it('adds auto_run_id and last_auto_run_id (auto_mode is dropped again by 0122)', () => {
+  it('adds auto_run_id and last_auto_run_id (auto_mode is dropped again by 0123)', () => {
     const db = fresh();
     runMigrations(db);
     expect(cols(db, 'time_blocks')).toContain('auto_run_id');
@@ -163,7 +163,7 @@ describe('0052 auto-scheduling columns', () => {
   });
 });
 
-describe('0122 drop auto_mode (Z · W4)', () => {
+describe('0123 drop auto_mode (Z · W4)', () => {
   it('the full chain ends with no auto_mode column and trust_mode present', () => {
     const db = fresh();
     runMigrations(db);
@@ -173,7 +173,7 @@ describe('0122 drop auto_mode (Z · W4)', () => {
   });
 
   it('carries a post-0070 Schedule click into trust_mode, never overriding an explicit dial', () => {
-    // Synthetic pre-0122 shape (rebuildTable-test precedent): the UI kept writing
+    // Synthetic pre-0123 shape (rebuildTable-test precedent): the UI kept writing
     // auto_mode after 0070, so 'schedule' + still-default 'balanced' is recorded
     // intent → upgrade to 'hands_off'. An explicit non-default dial wins.
     const db = fresh();

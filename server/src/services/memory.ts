@@ -309,7 +309,10 @@ export async function syncToMemory(owner: string): Promise<SyncResult> {
     duplicate: ingest.duplicate,
     rejected: ingest.rejected,
   };
-  const transport = memoryMode();
+  // 'off' can't reach here: memoryCreds returns null in off mode, so the
+  // pushConnectorAvailable guard above already returned 'unavailable'. A successful
+  // push therefore always rode a real transport — live or fixture.
+  const transport = memoryMode() === 'fixture' ? ('fixture' as const) : ('live' as const);
   logger.info('memory sync done', { owner, transport, ...counts });
   return { ok: true, syncedAt, counts, transport };
 }

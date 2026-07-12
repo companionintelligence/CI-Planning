@@ -62,14 +62,20 @@ afterAll(async () => {
   await srv.close();
 });
 
+const SAVED_GOOGLE_MODE = config.google.mode;
+
 beforeEach(() => {
   process.env.CP_KEK_B64 = KEY;
   config.google.clientId = 'test-client-id.apps.googleusercontent.com';
   config.google.clientSecret = 'test-secret';
+  // /start now fails closed unless the connector is live (the Settings Connect button
+  // is the only caller and is disabled otherwise) — these tests exercise the live flow.
+  config.google.mode = 'live';
 });
 
 afterEach(() => {
   config.auth.mode = 'test';
+  config.google.mode = SAVED_GOOGLE_MODE;
   config.google.clientId = SAVED_CLIENT_ID;
   config.google.clientSecret = SAVED_CLIENT_SECRET;
   if (SAVED_KEK === undefined) delete process.env.CP_KEK_B64;
@@ -110,6 +116,15 @@ describe('GET /api/oauth/google/start', () => {
     expect(verifier.length).toBeGreaterThanOrEqual(43);
     expect(verifier.length).toBeLessThanOrEqual(128);
     expect(body.url).not.toContain(verifier);
+  });
+
+  it('refuses with 409 when the connector is not live (off/fixture)', async () => {
+    config.auth.mode = 'standalone';
+    config.google.mode = 'off';
+    expect((await realApi('/api/oauth/google/start', authHeaders())).status).toBe(409);
+    config.google.mode = 'fixture';
+    expect((await realApi('/api/oauth/google/start', authHeaders())).status).toBe(409);
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_states').get()).toEqual({ n: 0 });
   });
 
   it('refuses with 409 in test mode and writes no oauth_states row (I2)', async () => {

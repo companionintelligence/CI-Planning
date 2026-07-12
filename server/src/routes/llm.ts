@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import { status } from '../mcp/ollama.js';
-import { createGoogleClient } from '../mcp/google.js';
+import { config } from '../lib/config.js';
 import { pushEnabled } from '../lib/push.js';
 import { connectionHealth } from '../lib/connections.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -16,7 +16,6 @@ export function llmRouter() {
   // GET /api/integrations — connection status for Ollama + Google MCP
   router.get('/api/integrations', async (ctx) => {
     const ollama = await status();
-    const google = createGoogleClient();
     ctx.body = {
       ollama: {
         available: ollama.available,
@@ -28,9 +27,12 @@ export function llmRouter() {
       // WP7: widen the google block with the live toggle + read-only connection
       // health (one entry per connected account; [] when none). connectionHealth
       // never throws on a bad token row, so this can't 500 the endpoint.
+      // Mode comes from config, not a client instance — createGoogleClient() throws in
+      // 'off' mode (fixture must never be handed out silently), and this endpoint must
+      // keep reporting status even when the integration is off.
       google: {
-        mode: google.mode,
-        liveEnabled: google.mode === 'live',
+        mode: config.google.mode,
+        liveEnabled: config.google.mode === 'live',
         connections: connectionHealth(currentOwnerId()),
       },
       // Phase H: whether Web Push can actually deliver (VAPID keys present). In-app

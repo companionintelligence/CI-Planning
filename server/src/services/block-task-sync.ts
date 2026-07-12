@@ -121,7 +121,53 @@ export function mirrorBlockStatusToTask(blockId: string, ownerId: string): strin
     syncTaskReminders(ownerId, block.task_id);
     return block.task_id;
   }
+  if (block.status === 'skipped') {
+    // Skipping a session settles the BLOCK but not the task's work. If that was the
+    // task's last active placement, return the task to the open backlog instead of
+    // leaving it 'scheduled' forever with nothing on the Planner.
+    return revertTaskPlacementStatus(block.task_id, ownerId);
+  }
   return null;
+}
+
+/**
+ * The inverse of [[mirrorBlockStatusToTask]]: mirror a TASK's done-state onto its
+ * calendar blocks, so checking a task off in the Tasks list settles its Planner
+ * placement too (and un-checking revives it).
+ *
+ * - task `done`  → every still-active placement (`planned`/`overrun`/`in_progress`,
+ *   the [[revertTaskPlacementStatus]] active triple) becomes `completed`. Locked
+ *   pins included — completing settled work never deletes or moves anything.
+ * - task not-done → its `completed` task-blocks return to `planned` (the symmetric
+ *   inverse; a reopened task's work is un-done again).
+ *
+ * Reads the task's CURRENT status — call it after the status write, on a
+ * done ⇄ not-done transition only. Returns the affected block ids so callers can
+ * broadcast `block:updated`. Never touches other statuses (`skipped`/`cancelled`/
+ * `missed` stay settled history).
+ */
+export function mirrorTaskStatusToBlocks(taskId: string, ownerId: string): string[] {
+  const task = sqlite
+    .prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`)
+    .get(taskId, ownerId) as { status: string } | undefined;
+  if (!task) return [];
+  const [fromList, to] =
+    task.status === 'done'
+      ? [`'planned','overrun','in_progress'`, 'completed']
+      : [`'completed'`, 'planned'];
+  const rows = sqlite
+    .prepare(
+      `SELECT id FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN (${fromList})`,
+    )
+    .all(taskId, ownerId) as { id: string }[];
+  if (rows.length === 0) return [];
+  const update = sqlite.prepare(`UPDATE time_blocks SET status = ? WHERE id = ? AND owner_id = ?`);
+  for (const { id } of rows) {
+    update.run(to, id, ownerId);
+    stampRow(sqlite, 'block', id, ['status']);
+  }
+  return rows.map((r) => r.id);
 }
 
 /**
