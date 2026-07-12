@@ -729,6 +729,11 @@ export interface MemoryStatus {
 export interface MemorySuggestResult {
   status: 'ran'; pulled: number; created: number; updated: number;
   skippedDismissed: number; skippedCap: number;
+  /** AF-3: pending possibles auto-promoted into tasks at the end of the run. */
+  promoted?: number;
+  /** AF-CU1: batch-promotion outcome split (optional until that lane lands). */
+  duplicates?: number;
+  failed?: number;
 }
 
 // ── Reminders (Phase H) ────────────────────────────────────────────────────────

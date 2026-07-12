@@ -3,12 +3,15 @@ import { X } from 'lucide-solid';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 
-/** Flatten the objectives tree into indented rows for the parent picker. */
-interface FlatObjective { id: string; title: string; level: string; depth: number; has_tasks: boolean }
-function flattenObjectives(nodes: Objective[], depth = 0, out: FlatObjective[] = []): FlatObjective[] {
+/** Flatten the objectives tree into indented rows for the parent picker.
+ *  AF-CU2: deliberately NOT the shared lib/objectives.ts `flattenObjectives`
+ *  (path-based, differently-shaped rows for the DayGoals typeahead) — renamed
+ *  to keep the two vocabularies from colliding. */
+interface ParentPickerOption { id: string; title: string; level: string; depth: number; has_tasks: boolean }
+function flattenForParentPicker(nodes: Objective[], depth = 0, out: ParentPickerOption[] = []): ParentPickerOption[] {
   for (const n of nodes) {
     out.push({ id: n.id, title: n.title, level: n.level, depth, has_tasks: n.has_tasks });
-    if (n.children?.length) flattenObjectives(n.children, depth + 1, out);
+    if (n.children?.length) flattenForParentPicker(n.children, depth + 1, out);
   }
   return out;
 }
@@ -71,7 +74,7 @@ export function ObjectiveModal(props: Props) {
   // the server (height-based leveling + containment) is the backstop for illegal moves.
   const [tree] = createResource(() => api.objectives.list().then((r) => r.objectives));
   const excluded = () => (props.objective ? subtreeIds(props.objective) : new Set<string>());
-  const parentOptions = () => flattenObjectives(tree() ?? []).filter((o) => !excluded().has(o.id));
+  const parentOptions = () => flattenForParentPicker(tree() ?? []).filter((o) => !excluded().has(o.id));
 
   // Translate the backend's containment 422 into a human message that names the
   // chosen parent, so the user understands why the nest was rejected.

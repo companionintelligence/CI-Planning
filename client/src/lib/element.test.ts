@@ -5,8 +5,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *
  *   • level-1 `tag` = the SINGLE primary (work/home/community) — intentions are
  *     no longer folded into a comma-joined string;
- *   • `secondary_tags` = authored intention chips ∪ preserved secondaryTags,
- *     deduped case-insensitively, minus the primary + category-name collisions;
+ *   • `secondary_tags` = authored intention chips, deduped case-insensitively,
+ *     minus the primary + category-name collisions (the wizard round-trips a
+ *     block's existing secondary_tags into the chips on load);
  *   • edit always sends `secondary_tags` (so chip removals clear level 2),
  *     create only when non-empty;
  *   • legacy comma-joined `tag` strings split first=primary / rest=secondary
@@ -99,14 +100,14 @@ describe('timeblockTagPayload — the AF-9 split', () => {
       secondary_tags: ['deep', 'errand'],
     });
   });
-  it('dedupes intentions against preserved secondaryTags (case-insensitive)', () => {
+  it('dedupes the chip list itself (case-insensitive, first spelling wins)', () => {
     expect(
-      timeblockTagPayload({ primary: 'work', intentions: ['Deep'], secondaryTags: ['deep', 'ops'] }),
+      timeblockTagPayload({ primary: 'work', intentions: ['Deep', 'deep', 'ops'] }),
     ).toEqual({ tag: 'work', secondary_tags: ['Deep', 'ops'] });
   });
   it('the primary never re-appears among the secondaries', () => {
     expect(
-      timeblockTagPayload({ primary: 'work', intentions: ['work', 'deep'], secondaryTags: ['Work'] }),
+      timeblockTagPayload({ primary: 'work', intentions: ['work', 'deep', 'Work'] }),
     ).toEqual({ tag: 'work', secondary_tags: ['deep'] });
   });
   it('category-name collisions are dropped from both slots', () => {
@@ -183,10 +184,38 @@ describe('saveElement(timeblock) — edit round-trip', () => {
     expect('tag' in wire).toBe(false);
   });
 
-  it('preserved-but-not-round-tripped secondaryTags still survive an edit (union path)', async () => {
-    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'home', intentions: ['deep'], secondaryTags: ['ops'] }, 'blk-3');
+  it('chips loaded from a block\'s existing secondary_tags round-trip through an edit', async () => {
+    // The wizard folds existing level-2 tags into `intentions` on load (AF-CU2
+    // removed the separate blind-preserve set) — an untouched edit re-sends them.
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'home', intentions: ['deep', 'ops'] }, 'blk-3');
     const body = lastUpdateBody();
     expect(body.tag).toBe('home');
     expect(body.secondary_tags).toEqual(['deep', 'ops']);
+  });
+});
+
+describe('saveElement(timeblock) — category clear-on-edit (AF-CU2)', () => {
+  it('edit with the category CLEARED sends category_id: null on the wire (omitted would be JSON-dropped and server-preserved)', async () => {
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work' }, 'blk-5');
+    const wire = JSON.parse(JSON.stringify(lastUpdateBody()));
+    expect(wire.category_id).toBeNull();           // survives serialization → server clears category_id + color_token
+  });
+
+  it('someday edit with the category cleared also sends category_id: null', async () => {
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', someday: true, goalDay: '2026-08-01' }, 'blk-6');
+    const wire = JSON.parse(JSON.stringify(lastUpdateBody()));
+    expect(wire.category_id).toBeNull();
+  });
+
+  it('edit with a category picked still sends it', async () => {
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', categoryId: 'c1' }, 'blk-7');
+    const wire = JSON.parse(JSON.stringify(lastUpdateBody()));
+    expect(wire.category_id).toBe('c1');
+  });
+
+  it('create without a category OMITS category_id from the wire body (nothing to clear)', async () => {
+    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work' });
+    const wire = JSON.parse(JSON.stringify(lastCreateBody()));
+    expect('category_id' in wire).toBe(false);
   });
 });
