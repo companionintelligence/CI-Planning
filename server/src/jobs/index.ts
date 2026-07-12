@@ -107,11 +107,13 @@ async function execute(kind: string): Promise<JobOutcome> {
       }
       const c = r.counts;
       const pushed = c.completed + c.habits + c.reflections;
-      return {
-        itemsCreated: 0,
-        itemsUpdated: pushed,
-        log: `Pushed ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)) → ingested ${c.ingested}, duplicate ${c.duplicate}, rejected ${c.rejected}`,
-      };
+      // Fixture mode does no network — its "ingested" tally is simulated. Say so,
+      // rather than logging a push that never left the box.
+      const log =
+        r.transport === 'fixture'
+          ? `Fixture mode — simulated push of ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)); nothing sent to CI-Server`
+          : `Pushed ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)) → ingested ${c.ingested}, duplicate ${c.duplicate}, rejected ${c.rejected}`;
+      return { itemsCreated: 0, itemsUpdated: pushed, log };
     }
     case 'promote_possibles': {
       // AF-3: the standalone cron row was retired (0118; nightly_grooming subsumes it),
