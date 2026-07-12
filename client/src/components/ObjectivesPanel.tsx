@@ -271,9 +271,9 @@ function ObjectiveNode(props: {
       } else {
         await api.tasks.update(t.id, { completed: true });
       }
-      // PATCH completion does NOT recompute progress server-side (only link/unlink/
-      // delete do) — ask for it explicitly so the % track moves without a reload.
-      await api.objectives.recompute(obj().id).catch(() => {});
+      // A done⇄not-done PATCH recomputes progress server-side (updateTask, alongside
+      // link/unlink/delete), so onRefetch's re-read of the objective picks up the moved
+      // % track — no explicit /recompute needed.
       refetchTasks();
       props.onRefetch();
     } catch (err) {
