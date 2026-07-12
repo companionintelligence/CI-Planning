@@ -10,10 +10,15 @@ import { serverTimezone, utcDayBounds } from '../lib/tz.js';
  *
  *   S1 objective  — the day's `today_goal` reflection has done_at set.
  *   S2 habits     — >=1 habit instance that day AND all of them are done.
- *   S3 tasks      — >=1 non-habit/non-routine task planned that day (daily_plan)
- *                   AND all such planned tasks are done.
- *   S4 bonus      — >=1 non-habit/non-routine task completed that day whose id is
- *                   NOT in that day's daily_plan (an unplanned win).
+ *   S3 tasks      — >=1 non-habit/non-routine task PLANNED for that day AND all such
+ *                   planned tasks are done. "Planned" = in that day's `daily_plan`
+ *                   (the authored plan) OR `scheduled_for` = that day (the user's own
+ *                   start intent — quick-add, New Task, wizard, and drag placements
+ *                   all stamp it via block-task-sync). HOW a task was scheduled must
+ *                   not change its star: self-placed work is planned work.
+ *   S4 bonus      — >=1 non-habit/non-routine task completed that day that was NOT
+ *                   planned for it (neither daily_plan nor scheduled_for) — a genuinely
+ *                   unplanned win.
  *   S5 note       — >=1 task done that day AND a non-empty day_note exists.
  *
  * Habit/routine exclusion (S3/S4): mirrors the Today's Brief top-tasks rule —
@@ -69,27 +74,34 @@ export function computeStars(
   const habits = habitStats.total > 0 && (habitStats.done ?? 0) === habitStats.total;
 
   // ── S3 — tasks (>=1 non-habit/non-routine planned task, all done) ────────────
-  // The `total` set is aligned with topTasksForDay (summary.ts): a planned task
-  // the owner cancels (soft-delete leaves the daily_plan row), or a skipped
-  // recurring instance, drops out of the "for the day" set entirely — so it can't
-  // pin total>done forever and lock the star dark. A `missed`/still-open planned
-  // task is a genuine incompletion and correctly keeps the star unlit.
+  // "Planned for the day" = the authored daily_plan ∪ tasks the user scheduled
+  // there themselves (scheduled_for = date, local YYYY-MM-DD like dp.date). Only
+  // the AI authoring path ever writes daily_plan, so without the union a self-
+  // scheduled task would score as an "unplanned bonus" — inconsistent scoring by
+  // scheduling path. The `total` set is aligned with topTasksForDay (summary.ts):
+  // a planned task the owner cancels (soft-delete leaves the daily_plan row), or a
+  // skipped recurring instance, drops out of the "for the day" set entirely — so it
+  // can't pin total>done forever and lock the star dark. A `missed`/still-open
+  // planned task is a genuine incompletion and correctly keeps the star unlit.
   const planStats = sqlite
     .prepare(
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done
-         FROM daily_plan dp
-         JOIN tasks t ON t.id = dp.task_id
-        WHERE dp.owner_id = ? AND dp.date = ?
+         FROM tasks t
+        WHERE t.owner_id = ?
+          AND (t.scheduled_for = ?
+               OR t.id IN (SELECT task_id FROM daily_plan WHERE owner_id = ? AND date = ?))
           AND t.status NOT IN ('cancelled', 'recurring', 'skipped')
           AND COALESCE(t.subtype, 'standard') != 'habit'
           AND t.recurrence_parent_id IS NULL
           AND t.id NOT IN (SELECT task_id FROM pattern_tasks)`,
     )
-    .get(owner, date) as { total: number; done: number | null };
+    .get(owner, date, owner, date) as { total: number; done: number | null };
   const tasks = planStats.total > 0 && (planStats.done ?? 0) === planStats.total;
 
   // ── S4 — bonus (an unplanned non-habit/non-routine completion today) ─────────
+  // The exclusion mirrors S3's planned set exactly (daily_plan ∪ scheduled_for=date),
+  // so one completion can never count as both planned work and an unplanned win.
   const bonusRow = sqlite
     .prepare(
       `SELECT COUNT(*) AS n
@@ -100,9 +112,10 @@ export function computeStars(
           AND COALESCE(t.subtype, 'standard') != 'habit'
           AND t.recurrence_parent_id IS NULL
           AND t.id NOT IN (SELECT task_id FROM pattern_tasks)
+          AND (t.scheduled_for IS NULL OR t.scheduled_for <> ?)
           AND t.id NOT IN (SELECT task_id FROM daily_plan WHERE owner_id = ? AND date = ?)`,
     )
-    .get(owner, dayStart, dayEnd, owner, date) as { n: number };
+    .get(owner, dayStart, dayEnd, date, owner, date) as { n: number };
   const bonus = bonusRow.n > 0;
 
   // ── S5 — reflection (>=1 task done today AND a non-empty day note) ───────────
