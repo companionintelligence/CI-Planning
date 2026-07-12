@@ -198,8 +198,8 @@ describe('day-authoring — theme matches L1 ∪ L2; clustering groups by the L1
   });
 
   it('tagGroupPostPass clusters by primary_tags (direction), not the widened match set', () => {
-    const mk = (id: string, tags: string[], primary: string[]): PlanTask =>
-      ({ task_id: id, title: id, priority: 3, due_at: null, estimated_minutes: 30, tags, primary_tags: primary });
+    const mk = (id: string, tags: string[], primary?: string[]): PlanTask =>
+      ({ task_id: id, title: id, priority: 3, due_at: null, estimated_minutes: 30, tags, ...(primary ? { primary_tags: primary } : {}) });
     const tasks = [
       mk('A', ['work', 'email'], ['work']),
       mk('B', ['home', 'email'], ['home']),
@@ -208,12 +208,40 @@ describe('day-authoring — theme matches L1 ∪ L2; clustering groups by the L1
     // Grouped by direction: A and C (work) cluster; 'email' shared by A/B must not group A with B.
     expect(tagGroupPostPass([0, 1, 2], tasks)).toEqual([0, 2, 1]);
     // Fallback for pre-split literals (no primary_tags): groups by tags[0] as before.
-    const legacy = [
-      { task_id: 'X', title: 'X', priority: 3, due_at: null, estimated_minutes: 30, tags: ['email'] },
-      { task_id: 'Y', title: 'Y', priority: 3, due_at: null, estimated_minutes: 30, tags: ['work'] },
-      { task_id: 'Z', title: 'Z', priority: 3, due_at: null, estimated_minutes: 30, tags: ['email'] },
-    ];
+    const legacy = [mk('X', ['email']), mk('Y', ['work']), mk('Z', ['email'])];
     expect(tagGroupPostPass([0, 1, 2], legacy)).toEqual([0, 2, 1]);
+    // Direction-less tasks (primary_tags ABSENT, per getStagedTasks — never []) fall
+    // back to their first intention: they must not all collapse into one '' group.
+    const mixed = [
+      mk('D', ['work', 'email'], ['work']), // directed
+      mk('E', ['errand']),                  // direction-less: intention only
+      mk('F', ['work'], ['work']),          // directed, same direction as D
+      mk('G', ['errand']),                  // direction-less, same intention as E
+    ];
+    // 'work' group first-seen@0 → D,F cluster; 'errand' group @1 → E,G cluster.
+    expect(tagGroupPostPass([0, 1, 2, 3], mixed)).toEqual([0, 2, 1, 3]);
+  });
+
+  it('authoring end-to-end: a direction-less task clusters by its L2 intention (fallback fires)', async () => {
+    // Equal priorities (no rubric defects); fill_order=priority (resetDb) makes the
+    // deterministic order due-date driven: A, B, C. The post-pass then pulls C (shares
+    // intention 'email' with A) ahead of B. Pre-fix, every direction-less task carried
+    // primary_tags: [] → groupKey '' for all three → order stayed A, B, C.
+    const a = insertTask('A-mail', { intentionsL2: ['email'] });
+    const b = insertTask('B-zebra', { intentionsL2: ['zebra'] });
+    const c = insertTask('C-mail', { intentionsL2: ['email'] });
+    const due = sqlite.prepare(`UPDATE tasks SET due_at = ? WHERE id = ?`);
+    due.run(`${DAY}T10:00:00.000Z`, a);
+    due.run(`${DAY}T11:00:00.000Z`, b);
+    due.run(`${DAY}T12:00:00.000Z`, c);
+    stage(a, 0);
+    stage(b, 1);
+    stage(c, 2);
+    await authorPlanOrder(OWNER, DAY);
+    const order = sqlite
+      .prepare(`SELECT task_id FROM daily_plan WHERE owner_id = ? AND date = ? ORDER BY position`)
+      .all(OWNER, DAY) as { task_id: string }[];
+    expect(order.map((r) => r.task_id)).toEqual([a, c, b]); // email-tagged tasks contiguous
   });
 });
 
