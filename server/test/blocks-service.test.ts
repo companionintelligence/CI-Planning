@@ -107,6 +107,28 @@ describe('createBlock', () => {
     expect(addedTag.block.categoryId).toBe(catId);
   });
 
+  it('AF-9 wizard shape: tag + secondary_tags + category_id together — level 1 = the single primary, level 2 = secondaries, all three read back', async () => {
+    const catId = (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, 'cat', 'category') RETURNING id`).get(OWNER) as { id: string }).id;
+    setCategoryPref(OWNER, catId, { color_token: 'chart-2' });
+
+    const res = unwrap(await createBlock(OWNER, {
+      title: 'Wizard', tag: 'work', secondary_tags: ['deep', 'errand'], category_id: catId,
+      start_at: at('09:00'), end_at: at('10:00'),
+    }));
+    expect(res.block.tag).toBe('work');
+    expect(res.block.categoryId).toBe(catId);
+    expect([...res.api.secondary_tags].sort()).toEqual(['deep', 'errand']);
+
+    const rows = sqlite
+      .prepare(`SELECT t.name, et.level FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = ? ORDER BY et.level, t.name`)
+      .all(res.block.id) as { name: string; level: number }[];
+    expect(rows).toEqual([
+      { name: 'work', level: 1 },   // exactly ONE level-1 tag — no comma-joined multi-primary
+      { name: 'deep', level: 2 },
+      { name: 'errand', level: 2 },
+    ]);
+  });
+
   it('AF-4 color precedence: with both tag and category set, the category-frozen color_token wins at create', async () => {
     const catId = (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, 'cat', 'category') RETURNING id`).get(OWNER) as { id: string }).id;
     setCategoryPref(OWNER, catId, { color_token: 'chart-4' });
