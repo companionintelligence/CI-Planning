@@ -324,7 +324,7 @@ export function TaskCard(props: Props) {
           </Show>
           <Show when={props.task.objective_id}>
             <button
-              onClick={() => navigate(`/objectives?focus=${props.task.objective_id}`)}
+              onClick={() => navigate(`/tasks?tab=objectives&focus=${props.task.objective_id}`)}
               class="btn-icon text-primary/70 hover:text-primary p-0"
               title="Part of an objective — view it"
             >
