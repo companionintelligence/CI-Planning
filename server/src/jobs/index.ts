@@ -58,7 +58,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new, ${r.possiblesUpdated} updated possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
+        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new, ${r.possiblesUpdated} updated possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'ingest_gcal': {
@@ -69,7 +69,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))`,
+        log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}`,
       };
     }
     case 'memory_suggest': {
@@ -87,7 +87,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.created,
         itemsUpdated: r.updated,
-        log: `Pulled ${r.pulled} upcoming memory event(s) → ${r.created} new, ${r.updated} refreshed suggestion(s); auto-promoted ${r.promoted}; skipped ${r.skippedDismissed} dismissed, ${r.skippedCap} over cap`,
+        log: `Pulled ${r.pulled} upcoming memory event(s) → ${r.created} new, ${r.updated} refreshed suggestion(s); auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}; skipped ${r.skippedDismissed} dismissed, ${r.skippedCap} over cap`,
       };
     }
     case 'push_memory': {
@@ -116,16 +116,24 @@ async function execute(kind: string): Promise<JobOutcome> {
     case 'promote_possibles': {
       // AF-3: the standalone cron row was retired (0118; nightly_grooming subsumes it),
       // but the kind stays executable for manual runs. Promotion is unconditional now.
-      const r = await promotePossibles();
+      // AF-CU1: owner-scoped — the fan-out (or manual run) sweeps only this owner's
+      // rows. NULL-owner legacy rows are claimed deterministically by the DEFAULT
+      // owner's run only (claimLegacy), never by whichever owner happens to run first.
+      const owner = currentOwnerId();
+      const r = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
       const blocked = autoBlockAfterPromote();
       return { itemsCreated: r.promoted, itemsUpdated: 0, log: `Promoted ${r.promoted}${r.failed ? `, ${r.failed} failed` : ''}${blocked ? `; auto-blocked ${blocked}` : ''}` };
     }
     case 'nightly_grooming': {
       // AF-3: producers auto-promote at ingestion, so dedupe is usually a no-op here
       // and promote is the straggler SWEEPER (unconditional — no trust gate/threshold).
-      const dedupe = await dedupePossibles();
-      const overdue = surfaceOverdue();
-      const promote = await promotePossibles();
+      // AF-CU1: all three sweeps are owner-scoped — this kind fans out per owner, so an
+      // unscoped pass would let the first owner's run process (and be credited for)
+      // every owner's rows. NULL-owner legacy rows: default owner's run only (claimLegacy).
+      const owner = currentOwnerId();
+      const dedupe = await dedupePossibles({ owner });
+      const overdue = surfaceOverdue(owner);
+      const promote = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
       const blocked = autoBlockAfterPromote();
       return {
         itemsCreated: promote.promoted,
