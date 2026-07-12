@@ -1144,7 +1144,7 @@ export function Settings() {
               <div class="flex-1">
                 <div class="text-sm font-medium text-foreground">Use Memory for suggestions</div>
                 <div class="text-xs text-muted-foreground mt-0.5">
-                  Pull upcoming events from your Companion Memory into Inbox suggestions.
+                  Pull upcoming events from your Companion Memory directly into your task list (New Today).
                   <Show when={!memStatus()?.pull.available}> Connect Companion Memory first.</Show>
                 </div>
               </div>

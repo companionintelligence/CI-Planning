@@ -14,6 +14,7 @@ import { RoutinesPanel } from '../components/RoutinesPanel.js';
 import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
 import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
 import { parseTasksTab, type TasksTab } from '../lib/tasks-tabs.js';
+import { partitionTaskSections } from '../lib/task-sections.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -23,7 +24,9 @@ export function AllTasks() {
   const [direction, setDirection] = createSignal('');
   const [doneOpen, setDoneOpen] = createSignal(true);
   const [cancelledOpen, setCancelledOpen] = createSignal(true);
-  // §E: the Tasks tab groups the backlog into Open / Scheduled / Routine sections.
+  // §E / AF-7: the Tasks tab groups the backlog into New Today / Open / Scheduled /
+  // Routine sections.
+  const [newTodaySecOpen, setNewTodaySecOpen] = createSignal(true);
   const [openSecOpen, setOpenSecOpen] = createSignal(true);
   const [schedSecOpen, setSchedSecOpen] = createSignal(true);
   const [routineSecOpen, setRoutineSecOpen] = createSignal(true);
@@ -82,16 +85,23 @@ export function AllTasks() {
   const tabCount = (v: 'tasks' | 'habits') =>
     baseList().filter((t) => inActiveList(t) && (v === 'habits' ? t.is_habit : !t.is_habit)).length;
 
-  // §E: partition the (already filtered+sorted) Tasks-tab backlog. Routine membership
-  // wins the grouping (a routine task can also be scheduled — it still lands here);
-  // then scheduled/in-progress; everything else (open/deferred/…) is Open.
+  // §E / AF-7: partition the (already filtered+sorted) Tasks-tab backlog into four
+  // sections. Precedence: Routine wins (a routine task can also be scheduled — it still
+  // lands here); then New Today (anything created on the owner-local today — manual,
+  // quick-add, or an AF-3 auto-promoted suggestion); then scheduled/in-progress; then
+  // Open. New Today drains from Open/Scheduled so nothing is listed twice, and yesterday's
+  // New Today tasks fall into Open/Scheduled purely because the local day rolled over — no
+  // schema column, no nightly job (see lib/task-sections.ts).
   const hasStatusFilter = () => !!taskFilter().status;
   // "Scheduled" = a real placement on the planner (any engine) OR a persisted scheduled/
   // in_progress status — so auto-placed tasks group correctly, not just manual ones.
   const isScheduledish = (t: Task) => t.status === 'scheduled' || t.status === 'in_progress' || scheduledByTaskId().has(t.id);
-  const routineList = () => shownList().filter((t) => isRoutineTask(t.id));
-  const scheduledList = () => shownList().filter((t) => !isRoutineTask(t.id) && isScheduledish(t));
-  const openList = () => shownList().filter((t) => !isRoutineTask(t.id) && !isScheduledish(t));
+  const sections = () =>
+    partitionTaskSections(shownList(), { isRoutine: (t) => isRoutineTask(t.id), isScheduled: isScheduledish });
+  const newTodayList = () => sections().newToday;
+  const routineList = () => sections().routine;
+  const scheduledList = () => sections().scheduled;
+  const openList = () => sections().open;
   // Explicit status filter → flat list; routine tasks never appear under the 'open' filter.
   const explicitList = () => (taskFilter().status === 'open' ? shownList().filter((t) => !isRoutineTask(t.id)) : shownList());
 
@@ -288,9 +298,14 @@ export function AllTasks() {
             }
           >
             <Show
-              when={openList().length + scheduledList().length + routineList().length > 0}
+              when={newTodayList().length + openList().length + scheduledList().length + routineList().length > 0}
               fallback={<div class="card text-center text-slate-500 py-12 text-sm">No tasks found.</div>}
             >
+              {/* AF-7: everything created on the local today, above the standing sections.
+                  Rolls into Open/Scheduled at the local midnight by pure date derivation. */}
+              <Show when={newTodayList().length > 0}>
+                <ArchiveSection title="New Today" open={newTodaySecOpen()} onToggle={() => setNewTodaySecOpen((v) => !v)} items={newTodayList()} loading={false} emptyLabel="" />
+              </Show>
               <Show when={openList().length > 0}>
                 <ArchiveSection title="Open" open={openSecOpen()} onToggle={() => setOpenSecOpen((v) => !v)} items={openList()} loading={false} emptyLabel="" />
               </Show>

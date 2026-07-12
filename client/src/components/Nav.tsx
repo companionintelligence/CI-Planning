@@ -1,17 +1,16 @@
 import { A, useNavigate } from '@solidjs/router';
 import { Show, createResource } from 'solid-js';
 import {
-  CheckSquare, Inbox, Tag, Settings, Activity,
+  CheckSquare, Tag, Settings, Activity,
   Sun, Cpu, CalendarDays, LogOut,
 } from 'lucide-solid';
-import { possibles, showToast } from '../stores/index.js';
+import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 const links = [
   { href: '/',            label: 'Today',      Icon: Sun },
   { href: '/calendar',   label: 'Calendar',   Icon: CalendarDays },
-  { href: '/inbox',      label: 'Inbox',      Icon: Inbox, badge: true },
   { href: '/tasks',      label: 'Tasks',      Icon: CheckSquare },
   { href: '/tags',       label: 'Tags',       Icon: Tag },
   { href: '/jobs',       label: 'Jobs',       Icon: Activity },
@@ -19,7 +18,6 @@ const links = [
 ];
 
 export function Nav() {
-  const pendingCount = () => possibles()?.length ?? 0;
   const navigate = useNavigate();
   // Sign-out is only meaningful when the deployment gates on auth (sso mode);
   // test/standalone have no session to end, so the affordance stays hidden.
@@ -66,18 +64,10 @@ export function Nav() {
           >
             <l.Icon size={15} class="flex-shrink-0" />
             <span class="flex-1">{l.label}</span>
-            <Show when={l.badge && pendingCount() > 0}>
-              <span
-                class="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
-                style={{ background: 'rgba(88,235,191,.2)', color: '#58ebbf' }}
-              >
-                {pendingCount()}
-              </span>
-            </Show>
           </A>
-          {/* Stroke line under Inbox — separates capture (Today/Calendar/Inbox)
-              from planning (Tasks/Tags/…). */}
-          <Show when={l.href === '/inbox'}>
+          {/* Stroke line under Calendar — separates capture (Today/Calendar) from
+              planning (Tasks/Tags/…). */}
+          <Show when={l.href === '/calendar'}>
             <div class="my-1.5 border-t border-border/60" />
           </Show>
         </>

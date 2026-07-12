@@ -11,7 +11,6 @@ import { ConflictBanner } from './components/ConflictBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
 import { Today }    from './views/Today.js';
 import { Calendar } from './views/Calendar.js';
-import { Inbox }    from './views/Inbox.js';
 import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
@@ -233,7 +232,9 @@ export function App() {
           <Route path="/" component={SessionGate}>
             <Route path="/"         component={Today} />
             <Route path="/calendar" component={Calendar} />
-            <Route path="/inbox"    component={Inbox} />
+            {/* AF-7: the Inbox is gone — created-today tasks surface in the Tasks tab's
+                "New Today" section; redirect stale /inbox deep-links there. */}
+            <Route path="/inbox"    component={() => <Navigate href="/tasks" />} />
             <Route path="/tasks"       component={AllTasks} />
             {/* AF-1: Objectives is a Tasks tab now; redirect preserves ?focus=. */}
             <Route path="/objectives"  component={ObjectivesRedirect} />
@@ -254,7 +255,8 @@ function UngatedRouter() {
     <Router root={Shell}>
       <Route path="/"         component={Today} />
       <Route path="/calendar" component={Calendar} />
-      <Route path="/inbox"    component={Inbox} />
+      {/* AF-7: Inbox removed; /inbox redirects to the Tasks tab ("New Today"). */}
+      <Route path="/inbox"    component={() => <Navigate href="/tasks" />} />
       <Route path="/tasks"       component={AllTasks} />
       {/* AF-1: Objectives is a Tasks tab now; redirect preserves ?focus=. */}
       <Route path="/objectives"  component={ObjectivesRedirect} />
