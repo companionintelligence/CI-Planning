@@ -223,6 +223,7 @@ export function routineDerivedTagsByIds(ids: string[]): Map<string, DerivedRouti
            JOIN tags tg ON tg.id = et.tag_id AND tg.owner_id = p.owner_id
           WHERE pt.pattern_id IN (${placeholders})
           ORDER BY pt.pattern_id, tg.kind, tg.name`,
+      )
       .all(...chunk) as { id: string; name: string; kind: string }[];
     for (const r of rows) {
       const bucket = out.get(r.id);
@@ -291,6 +292,25 @@ export function inheritContainerDirection(
     }
   }
   return primary;
+}
+
+/**
+ * AF-11 — split tag NAMES by whether they name one of the owner's direction tags.
+ * For write paths that receive a FLAT name list (quick-add enrichment) and must level
+ * it: known directions → level 1 (the primary axis), everything else — intentions AND
+ * brand-new names, which resolve-or-create with the column default kind='intention' —
+ * → level 2. Mirrors carryPossibleTags' kind-keyed leveling (services/possibles.ts).
+ * Names are matched normalized but returned as given (the sync path normalizes again).
+ */
+export function splitNamesByDirection(owner: string, names: string[]): { directions: string[]; others: string[] } {
+  const directions: string[] = [];
+  const others: string[] = [];
+  for (const raw of names) {
+    const norm = normalizeTagName(raw);
+    if (!norm) continue;
+    (findDirectionByNameStmt.get(owner, norm) ? directions : others).push(raw);
+  }
+  return { directions, others };
 }
 
 // ── GraphQL Taggable forward edge (Phase W · W4a) ─────────────────────────────

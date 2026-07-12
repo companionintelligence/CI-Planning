@@ -18,10 +18,11 @@ export const id = '0120_af11_routine_tag_cleanup';
  * can't throw (the T-phase col-exists lesson); entity_tags exists since 0033, before
  * any state this migration can run against, but gets the same guard for symmetry.
  *
- * NOTE (renumber-at-merge): numbered 0120 assuming the AF-11 slices-1-3 sibling lane
- * (claude/af11-task-tag-split) lands 0119 first. If it lands under a different
- * number, renumber this file/id at merge — the body is order-independent of 0119
- * (different tables: this touches patterns + entity_kind='routine' rows only).
+ * NOTE (renumber-at-merge, RESOLVED): numbered 0120 assuming the AF-11 slices-1-3
+ * sibling lane (claude/af11-task-tag-split) would land 0119 first. This file merged
+ * first instead, so the sibling renumbered its task-intention level move to 0121;
+ * 0119 stays unused. The bodies are order-independent (different tables: this touches
+ * patterns + entity_kind='routine' rows only; 0121 touches entity_kind='task' rows).
  */
 export function up(db: Database): void {
   const patternsHasTag = (db.prepare(`SELECT COUNT(*) AS n FROM pragma_table_info('patterns') WHERE name = 'tag'`).get() as { n: number }).n > 0;

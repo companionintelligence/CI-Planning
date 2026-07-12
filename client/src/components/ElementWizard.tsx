@@ -227,7 +227,7 @@ export function ElementWizard() {
       const t = (tasks() ?? []).find((x) => x.id === id);
       if (!t) return;
       setTitle(t.title);
-      seedTags(t.tags ?? []);
+      seedTags(t.tags ?? [], t.secondary_tags ?? []);
       setNote(t.notes ?? '');
       setScheduledFor(t.scheduled_for ?? localISODate());
       setTaskTime(t.task_time ?? '');
@@ -243,12 +243,16 @@ export function ElementWizard() {
       setEditScope('instance');
     }
   }
-  // Split a saved tag list into primary (first pattern-kind tag) + intentions.
-  function seedTags(names: string[]) {
+  // Seed primary + intention chips from a task's saved tags. AF-11: `names` is the
+  // level-1 list (post-split: just the direction; legacy rows: the old flat set) and
+  // `secondary` is the level-2 intentions — fold BOTH into the chips so an edit
+  // round-trips them (an unseeded chip set would save secondary_tags: [] and wipe L2).
+  function seedTags(names: string[], secondary: string[] = []) {
     const patternNames = new Set(patternTagList().map((p) => p.name.toLowerCase()));
     const prim = names.find((n) => patternNames.has(n.toLowerCase()));
     setPrimary(prim ?? '');
-    setIntentions(names.filter((n) => n !== prim));
+    setIntentions(mergeTagNames(names.filter((n) => n !== prim), secondary)
+      .filter((n) => n.toLowerCase() !== (prim ?? '').toLowerCase()));
   }
 
   // ── Tag interactions ────────────────────────────────────────────────────────
