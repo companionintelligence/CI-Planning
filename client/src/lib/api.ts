@@ -475,12 +475,32 @@ export const api = {
       request<{ ok: boolean }>('POST', '/auth/reset', { token, newPassword }),
   },
 
-  // V — the authenticated owner's own account settings (backup reset-email).
+  // V — the authenticated owner's own account settings (backup reset-email + profile).
   owner: {
     setBackupEmail: (backupEmail: string | null) =>
       request<{ ok: boolean; backup_email: string | null }>('PATCH', '/owner/backup-email', { backup_email: backupEmail }),
+    updateProfile: (body: { name?: string; email?: string | null }) =>
+      request<{ ok: boolean; name: string; email: string | null }>('PATCH', '/owner/profile', body),
+  },
+
+  // In-app Google connection setup (admin-gated; GET 403s for non-admin credentials).
+  googleConfig: {
+    get: () => request<GoogleConfigState>('GET', '/google-config'),
+    save: (body: { client_id?: string; client_secret?: string | null; enabled: boolean }) =>
+      request<GoogleConfigState>('PUT', '/google-config', body),
   },
 };
+
+export interface GoogleConfigState {
+  source: 'env' | 'app' | 'off';
+  mode: 'live' | 'fixture' | 'off';
+  envPinned: boolean;
+  kekAvailable: boolean;
+  clientId: string | null;
+  hasClientSecret: boolean;
+  enabled: boolean;
+  redirectUri: string;
+}
 
 export type AuthMode = 'test' | 'standalone' | 'sso';
 export interface AuthConfigResponse {
@@ -855,7 +875,7 @@ export interface ConnectionHealth {
 
 export interface Integrations {
   ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
-  google: { mode: string; liveEnabled: boolean; connections: ConnectionHealth[] };
+  google: { mode: string; liveEnabled: boolean; source: 'env' | 'app' | 'off'; connections: ConnectionHealth[] };
   push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver
 }
 

@@ -9,15 +9,17 @@ hardware and stays there.
 Companion Planning is currently in **v0.3 active development**. The core app is
 fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
 Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
-Google Calendar sync** are built in, gated behind `GOOGLE_MODE=live` plus
-`CP_GOOGLE_CLIENT_ID` / `CP_GOOGLE_CLIENT_SECRET` and a 32-byte `CP_KEK_B64` key that
-encrypts stored tokens. With `GOOGLE_MODE` unset (the default) Google integration is
-**off** — no ingest, no sync. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that
-runs fully offline on committed sample data (refused in production unless
-`CP_ALLOW_FIXTURE=true`). Outbound calendar write-back stays behind a second
-flag, `CP_SYNC_WRITEBACK` (off by default — inbound read-only is the safe posture).
+Google Calendar sync** are built in. Enable them either **in-app** (an admin pastes a
+Google OAuth client in Settings → Connections; needs only a 32-byte `CP_KEK_B64` key
+that encrypts stored secrets/tokens) or via env (`GOOGLE_MODE=live` +
+`CP_GOOGLE_CLIENT_ID` / `CP_GOOGLE_CLIENT_SECRET`, which pins the mode and makes the
+in-app setup read-only). With neither configured, Google integration is **off** — no
+ingest, no sync. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that runs fully
+offline on committed sample data (refused in production unless `CP_ALLOW_FIXTURE=true`).
+Outbound calendar write-back stays behind a second flag, `CP_SYNC_WRITEBACK` (off by
+default — inbound read-only is the safe posture).
 See **[docs/google-cloud-setup.md](docs/google-cloud-setup.md)** to provision a Google
-client and turn live mode on.
+client.
 
 - **Server** — Koa + TypeScript (`server/`), SQLite via better-sqlite3 + Drizzle, cron jobs via croner
 - **Client** — SolidJS + Tailwind PWA (`client/`), built by Vite into `server/public/`
@@ -109,7 +111,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>18 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0117 on boot]
+        Migrate[Migration runner<br/>0001 → 0123 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -124,7 +126,7 @@ graph TB
         Embed["nomic-embed-text<br/>dedupe embeddings"]
     end
 
-    subgraph Sources["External Sources — fixture by default"]
+    subgraph Sources["External Sources — off until connected"]
         Gmail[Gmail ingest]
         GCal[Google Calendar ingest]
         Mem["CI-Server memory<br/>pull graph · push events"]
@@ -169,7 +171,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0117 ordered list
+                                    // migrations from the 0001–0123 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -180,7 +182,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0110_entity_tags_created_at`) produce the following tables:
+Migrations (current head: `0123_drop_auto_mode`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -412,7 +414,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0117): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0123): tasks, subtasks, time blocks, tags,
   entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
   block_templates, scheduled_jobs, reminders, push_subscriptions,
@@ -480,15 +482,50 @@ consistent snapshot.
 
 ## Run with Docker (CI Hub)
 
-The published image is public and multi-arch (amd64 + arm64):
+The published image is public and multi-arch (amd64 + arm64). The image bakes
+`NODE_ENV=production`, and production **refuses the credential-free `test` auth mode at
+boot** — so you must pick a real auth mode or the container exits immediately.
+
+**Recommended: local username/password login.** One env-seeded account, sign in from any
+browser:
 
 ```bash
 docker run -d --name ci-planning \
   -p 3848:3848 \
   -v ci-planning-data:/data \
+  -e TZ=America/Los_Angeles \
+  -e AUTH_MODE=sso \
+  -e DISABLE_OIDC=true \
+  -e SESSION_SECRET="$(openssl rand -hex 32)" \
+  -e AUTH_DEFAULT_USERNAME=you \
+  -e AUTH_DEFAULT_PASSWORD='pick-a-strong-password' \
   ghcr.io/companionintelligence/ci-planning:latest
-# open http://localhost:3848
+# open http://localhost:3848 → sign in with the username/password you set above
 ```
+
+First-run notes:
+
+- **Set `TZ` to your IANA timezone** (e.g. `Europe/Berlin`). The container defaults to
+  UTC, which shifts what counts as "today" for the planner and the nightly jobs.
+- The username/password pair seeds **one** local owner on first boot only; afterwards it
+  is just your login (changing the env later doesn't rewrite the account — use the
+  in-app password reset, which needs `SMTP_*` configured to actually email links).
+- `SESSION_SECRET` signs the login cookie — keep it stable across container recreations
+  or every device gets signed out.
+- **Google Calendar (optional):** add `-e CP_KEK_B64="$(openssl rand -base64 32)"` to the
+  run command (it encrypts stored OAuth tokens — keep it stable like `SESSION_SECRET`),
+  then paste your Google OAuth client into **Settings → Connections → Google OAuth
+  client** and hit *Save & enable* — no other env vars, no restart. Each user then
+  connects their own Google account with the Connect button. See
+  [docs/google-cloud-setup.md](docs/google-cloud-setup.md) for creating the client.
+- **Quick trial without auth** (single machine, no real data): add
+  `-e NODE_ENV=development` instead of the five auth vars. This runs the dev
+  `AUTH_MODE=test` identity — do not expose it beyond localhost.
+- **API-only alternative** (`-e AUTH_MODE=standalone`): authenticates by hashed
+  `x-api-key` header. Mint the first key with
+  `docker exec ci-planning node_modules/.bin/tsx src/cli/issue-key.ts` (or
+  `pnpm key:issue` from `server/` in a source checkout) — note the **browser UI does not
+  attach API keys**, so this mode is for REST/GraphQL clients and agents, not the PWA.
 
 On a CI Hub appliance, install **Companion Planning** from the marketplace — the Hub
 mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
@@ -505,7 +542,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `OLLAMA_SMALL` | `qwen2.5:0.5b` | Fast model for extraction/triage. Must be pulled (`ollama pull`) or set to an installed model. |
 | `OLLAMA_MEDIUM` | `gemma3n:e4b` | Better model for briefings. Must be pulled (`ollama pull`) or set to an installed model. |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
-| `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
+| `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day. Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
 | `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (CI-Portal OIDC login or local username/password — mints a signed session cookie). |
 | `AUTH_JWKS_URL` | (unset) | **Currently unused.** Predates the CI-Portal OIDC (`CIPORTAL_*`) vars from Phase U; parsed into `config.auth` but that field is consumed by no code path. SSO derives the JWKS endpoint from CI-Portal discovery (`CIPORTAL_ISSUER`). Retained pending a repoint-or-retire decision. |
 | `AUTH_ISSUER` | (unset) | **Currently unused** (see `AUTH_JWKS_URL`). Parsed into `config.auth` but that field is consumed by no code path — the expected token `iss` comes from the discovered CI-Portal document. |
@@ -526,7 +563,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CIPORTAL_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` | Must match the URI registered with CI-Portal. |
 | `CIPORTAL_SCOPES` | `openid profile email` | Scopes requested at authorize. |
 | `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | (unset) | Advanced: set **all three** to bypass discovery (air-gapped / no discovery doc). When overriding, `CIPORTAL_ISSUER` must equal the token's actual `iss`. |
-| `GOOGLE_MODE` | (unset ⇒ off) | `live` (real Google OAuth + Calendar sync; each user connects their own account in Settings → Connections) or `fixture` (committed sample data, fully offline — dev/demo opt-in, refused in production unless `CP_ALLOW_FIXTURE=true`). Unset ⇒ Google integration is off. `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
+| `GOOGLE_MODE` | (unset ⇒ off / in-app) | `live` (real Google OAuth + Calendar sync; each user connects their own account in Settings → Connections) or `fixture` (committed sample data, fully offline — dev/demo opt-in, refused in production unless `CP_ALLOW_FIXTURE=true`). Unset ⇒ off, **unless an admin saves a Google OAuth client in Settings → Connections (in-app setup, needs `CP_KEK_B64`) — that flips live mode on at runtime with no env vars and no restart.** An explicit env value pins the mode and makes the in-app setup read-only. Env `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
 | `CP_ALLOW_FIXTURE` | (unset) | Escape hatch: allows `GOOGLE_MODE=fixture` under `NODE_ENV=production` (demo appliances only — fixture data looks like real tasks). |
 | `CP_GOOGLE_CLIENT_ID` | (unset) | Google OAuth client ID. Required when `GOOGLE_MODE=live`. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md). |
 | `CP_GOOGLE_CLIENT_SECRET` | (unset) | Google OAuth client secret. Needed for a **Web** client (ts.net HTTPS deploy); a **Desktop/installed** client with a loopback redirect can run without one. Never commit it. |
@@ -543,7 +580,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CP_KEK_B64_V{n}` | (unset) | Historical KEK for version `{n}`, used while rotating (e.g. `CP_KEK_B64_V2`). The current version may live in plain `CP_KEK_B64`. |
 | `CP_SYNC_WRITEBACK` | `false` | When `true`, sync pushes local block changes back to the provider. Off ⇒ inbound read-only. |
 | `CP_SYNC_DISABLED` | `false` | `true` is a master kill switch — disables the sync agent entirely. |
-| `CP_MCP_COMMAND` | (unset) | Command that launches the Calendar MCP server child the connector drives over stdio. **Required for `GOOGLE_MODE=live`** (unset ⇒ live sync fails with `McpUnavailable`). CP ships one: `node_modules/.bin/tsx src/scripts/mcp-google-server.ts` (run from `server/`). See [docs/google-cloud-setup.md](docs/google-cloud-setup.md) §7. |
+| `CP_MCP_COMMAND` | bundled MCP server | Command that launches the Calendar MCP server child the connector drives over stdio. **Defaults to the bundled one** (`node_modules/.bin/tsx src/scripts/mcp-google-server.ts`, resolved from `server/`), so live sync works out of the box; override only to swap in a different MCP server. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md) §7. |
 | `CP_MCP_TIMEOUT_MS` | `30000` | Per-call timeout for MCP requests. |
 | `CP_MCP_RETRIES` | `3` | Retry budget for MCP requests. |
 | `CP_MCP_BREAKER_THRESHOLD` | `5` | Consecutive MCP failures before the circuit breaker opens. |
@@ -570,7 +607,7 @@ volume at `/data` (as above) and your tasks survive container recreation.
 
 Runtime requirements:
 
-- Node.js `>=26 <27`
+- Node.js `>=22` (developed on 26; the Docker image ships Node 26)
 - pnpm `>=11 <12`
 
 ```bash
@@ -667,7 +704,9 @@ cd tests/container && npm i && APP_URL=http://localhost:3848 npx playwright test
 
 ## License
 
-MIT.
+Commercial — **CI-Commercial-1.0** (the same Commercial Standard License as CI-Server and CI-Hub).
+See [LICENSE.md](LICENSE.md). Copyright © 2019-2026 LifeScope INC, DBA Companion Intelligence.
+All rights reserved; use requires a purchased or subscribed license.
 
 ## Author
 

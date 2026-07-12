@@ -1,10 +1,11 @@
 {
   "name": "companion-planning",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
   "packageManager": "pnpm@11.5.3",
   "engines": {
-    "node": ">=26 <27",
+    "node": ">=22",
     "pnpm": ">=11 <12"
   },
   "scripts": {
