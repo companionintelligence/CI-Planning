@@ -78,11 +78,13 @@ export function computeStars(
   // there themselves (scheduled_for = date, local YYYY-MM-DD like dp.date). Only
   // the AI authoring path ever writes daily_plan, so without the union a self-
   // scheduled task would score as an "unplanned bonus" — inconsistent scoring by
-  // scheduling path. The `total` set is aligned with topTasksForDay (summary.ts):
-  // a planned task the owner cancels (soft-delete leaves the daily_plan row), or a
-  // skipped recurring instance, drops out of the "for the day" set entirely — so it
-  // can't pin total>done forever and lock the star dark. A `missed`/still-open
-  // planned task is a genuine incompletion and correctly keeps the star unlit.
+  // scheduling path. (Membership deliberately differs from topTasksForDay
+  // (summary.ts), which keys on daily_plan OR a block placed today; what IS shared
+  // are its status/exclusion rules:) a planned task the owner cancels (soft-delete
+  // leaves the daily_plan row), or a skipped recurring instance, drops out of the
+  // "for the day" set entirely — so it can't pin total>done forever and lock the
+  // star dark. A `missed`/still-open planned task is a genuine incompletion and
+  // correctly keeps the star unlit.
   const planStats = sqlite
     .prepare(
       `SELECT COUNT(*) AS total,

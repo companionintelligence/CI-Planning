@@ -44,6 +44,9 @@ const MIN_PASSWORD_LENGTH = 8;       // V: server-side floor for a reset passwor
 // `ip:<addr>` for per-IP (login, ciportal start, reset-request) and `reset:<identifier>`
 // for the per-account reset-request axis (V9 — hammering one account's mailbox).
 const attempts = new Map<string, number[]>();
+// Once-per-process latch for the reset-request "SMTP not configured" warning — the
+// endpoint is public, so a per-request warn would let anyone spam the logs.
+let warnedResetWithoutSmtp = false;
 function rateLimitedKey(key: string): boolean {
   const { windowMs, issueMax } = config.auth.rateLimit;
   const now = Date.now();
@@ -217,7 +220,11 @@ export function authRouter() {
           message:
             'This server has no outgoing email configured. If an account matches, the reset link was written to the server log — ask the operator for it.',
         };
-    if (!config.mail.host) {
+    if (!config.mail.host && !warnedResetWithoutSmtp) {
+      // Once per process: this endpoint is public and rate-limit-spammable, and the
+      // condition is config-level, so repeating it per request is pure log noise.
+      // (Startup already warns via lib/config.ts when local login is on in production.)
+      warnedResetWithoutSmtp = true;
       logger.warn('reset-request: SMTP not configured — any reset link is only written to the server log');
     }
 
