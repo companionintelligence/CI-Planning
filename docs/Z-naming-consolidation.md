@@ -189,12 +189,16 @@ routine rows), or (b) keep + rename only (`ensureHabitRoutine`). Ritual stays (o
 
 ---
 
-### W4 — Drop vestigial `auto_mode` (independent, any time)
+### W4 — Drop vestigial `auto_mode` (independent, any time) — ✅ SHIPPED
 
-**Migration `0107_drop_auto_mode`**: `scheduling_prefs.auto_mode` has had no readers since
-0070's `trust_mode`. `DROP COLUMN` (SQLite ≥3.35) or rebuildTable; remove `autoMode` from
-schema.ts; grep stragglers; baseline snapshot; bump EXPORT_VERSION (or fold into W1's bump if
-they ship together).
+**As-built (2026-07-12; migration renumbered `0122_drop_auto_mode`)**: `DROP COLUMN` with a
+guarded intent-carry backfill first (the top-bar toggle kept WRITING `auto_mode` after 0070,
+so `'schedule'` + still-default `'balanced'` upgrades to `'hands_off'`; an explicit
+non-default dial is never overridden). `autoMode` removed from schema.ts; baseline snapshot
+updated. The toggle itself now drives `trust_mode` (Schedule ⇔ `hands_off`, Suggest ⇔
+`'balanced'`). NO EXPORT_VERSION bump: instead the import path (`insertRows`) intersects a
+backup's keys with the live table shape, so pre-drop exports still restore (and the same
+tolerance covers the earlier 0048/0061/0081 drops).
 
 ## 4. Cross-cutting mechanics (every migration/PR)
 

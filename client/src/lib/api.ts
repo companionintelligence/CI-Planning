@@ -252,7 +252,9 @@ export const api = {
     suggestion: () => request<{ suggestion: ReplanSuggestion | null }>('GET', '/plan/suggestion'),
     reauthor: (date: string) => request<{ ok: boolean; date: string }>('POST', '/plan/reauthor', { date }),
     dismiss: (date: string) => request<{ ok: boolean }>('POST', '/plan/reauthor/dismiss', { date }),
-    // §A4 (pins-first): parse a natural-language instruction → pinned blocks + surfaced hints.
+    // §A4: parse a natural-language instruction → pinned blocks + persisted hints
+    // (hints are enforced by the next autoplan run: hard tag windows in placement,
+    // soft constraint line in smart-mode authoring).
     instruct: (text: string, date?: string) => request<InstructResponse>('POST', '/plan/instruct', { text, date }),
   },
 
@@ -465,8 +467,10 @@ export const api = {
       request<{ ok: boolean }>('POST', '/auth/login', { username, password }),
     logout: () => request<{ ok: boolean }>('POST', '/auth/logout'),
     // V — password reset (local sign-in). reset-request always resolves to a neutral 200.
+    // `delivery`/`message` are config-derived only (email vs. server-log fallback when
+    // SMTP is unconfigured) — never account-derived, so anti-enumeration holds.
     resetRequest: (identifier: string) =>
-      request<{ ok: boolean; message: string }>('POST', '/auth/reset-request', { identifier }),
+      request<{ ok: boolean; delivery: 'email' | 'log'; message: string }>('POST', '/auth/reset-request', { identifier }),
     reset: (token: string, newPassword: string) =>
       request<{ ok: boolean }>('POST', '/auth/reset', { token, newPassword }),
   },
@@ -611,7 +615,8 @@ export interface ReplanSuggestion {
   summary?: string;
 }
 
-/** Phase M A4: a parsed NL planning instruction. Pins are applied; hints are surfaced only (MVP). */
+/** Phase M A4: a parsed NL planning instruction. Pins are applied as locked blocks;
+ *  hints persist to plan_hints and are enforced on the next autoplan run. */
 export interface PlanPin { title: string; start_at: string; end_at: string }
 export interface PlanHint { kind: 'tag_before' | 'tag_after' | 'batch'; tag: string; time?: string }
 export interface InstructResponse { ok: boolean; date: string; pins: PlanPin[]; hints: PlanHint[]; created: number }
@@ -674,7 +679,11 @@ export interface ViewPrefs {
 export interface Prefs {
   id: string; owner_id: string; workday_start: string; workday_end: string;
   auto_fill_workday?: boolean; // gates the workday fallback fill (0028)
-  auto_mode?: 'suggest' | 'schedule'; // trust toggle (0052); default 'suggest'
+  // Trust dial (0070) — governs auto-blocking/planning. The top-bar Suggest/Schedule
+  // toggle maps Schedule ⇔ 'hands_off' (auto-schedule on ingest) and Suggest ⇔
+  // 'balanced'; 'cautious' also displays as Suggest. (Replaced the vestigial
+  // auto_mode column, dropped in 0122.)
+  trust_mode?: 'cautious' | 'balanced' | 'hands_off';
   fill_order?: 'priority' | 'overdue'; // leftover fill ordering (0055); default 'priority'
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
