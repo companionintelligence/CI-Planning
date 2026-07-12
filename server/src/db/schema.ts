@@ -221,10 +221,12 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // VESTIGIAL since 0070 — superseded by trustMode below; no readers, kept for one
   // release before a contract migration drops it. Do not add new readers.
   autoMode: text('auto_mode').notNull().default('suggest'),
-  // Trust dial (0070) — the 3-state automation Setting that replaced auto_mode:
-  // 'cautious' (no auto-promote, no auto-block) | 'balanced' (auto-promote ≥0.7,
-  // no auto-block; the default) | 'hands_off' (auto-promote + auto-block estimate-bearing
-  // promoted tasks). Read via resolveTrustPolicy() in engine/autoplan.ts, never raw.
+  // Trust dial (0070) — the 3-state automation Setting that replaced auto_mode.
+  // AF-3 retired its auto-PROMOTE facet (all possibles now promote unconditionally at
+  // ingestion); the dial governs ONLY auto-blocking/planning:
+  // 'cautious' | 'balanced' (no auto-block; the default) | 'hands_off' (auto-block
+  // estimate-bearing promoted tasks; agents/plan.ts maps hands_off → smart).
+  // Read via resolveTrustPolicy() in engine/autoplan.ts, never raw.
   trustMode: text('trust_mode').notNull().default('balanced'),
   // Leftover-fill ordering (0055): 'priority' (P1 first) | 'overdue' (due_at ASC first).
   fillOrder: text('fill_order').notNull().default('priority'),

@@ -158,8 +158,8 @@ async function main() {
   });
   logger.info(`seed: calendar processed (${events.length})`);
 
-  // 4) Promote (low threshold — this is test data we want surfaced).
-  const promoted = promotePossibles({ threshold: 0.5 });
+  // 4) Promote — unconditional since AF-3 (every pending possible becomes a task).
+  const promoted = await promotePossibles();
   logger.info('seed: promoted', promoted);
 
   // 5) Top up to the target with deterministic filler so the deliverable is guaranteed.

@@ -3,6 +3,7 @@ import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, api, type TestS
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { localISODate } from '../src/lib/dates.js';
+import { promoteAllPending } from '../src/services/possibles.js';
 
 /**
  * Phase W · W9 — REST /api/possible-tasks owner-scoping lock. The route now delegates to
@@ -118,5 +119,146 @@ describe('possibles REST — promote broadcast ordering (regression)', () => {
     // nothing about ordering.
     expect(placementSeqs.length).toBeGreaterThan(0);
     for (const s of placementSeqs) expect(promotedSeq!).toBeLessThan(s);
+  });
+});
+
+// ─── AF-3 · promoteAllPending — the hands-off ingestion batch path ─────────────
+
+// 'Buy milk' ≈ 'Buy milk please' (cosine ≈ 0.995 ≥ 0.92); 'File taxes' orthogonal.
+// Same deterministic embedFn idiom as dedupe.test.ts (no module mock — shared process).
+const embedFn = async (text: string): Promise<number[]> =>
+  text.includes('milk') ? (text.includes('please') ? [0.99, 0.1, 0] : [1, 0, 0]) : [0, 1, 0];
+
+const statusOf = (id: string): string =>
+  (sqlite.prepare(`SELECT status FROM possible_tasks WHERE id = ?`).get(id) as { status: string }).status;
+const pendingCount = (): number =>
+  (sqlite.prepare(`SELECT COUNT(*) c FROM possible_tasks WHERE status = 'pending'`).get() as { c: number }).c;
+
+describe('promoteAllPending (AF-3)', () => {
+  it('a batch with near-duplicates → one promoted task + one duplicate, zero pending', async () => {
+    const a = insertPossible('Buy milk');
+    const dup = insertPossible('Buy milk please');
+    const t = insertPossible('File taxes');
+
+    const r = await promoteAllPending(OWNER, { embedFn });
+
+    expect(r.dedupeAvailable).toBe(true);
+    expect(r.duplicates).toBe(1);
+    expect(r.promoted).toBe(2);
+    expect(pendingCount()).toBe(0);
+    // Exactly one of the two milk rows is the duplicate (uuid7 same-ms order isn't
+    // strict — assert the invariant, not WHICH one, matching dedupe.test.ts).
+    expect([statusOf(a), statusOf(dup)].sort()).toEqual(['duplicate', 'promoted']);
+    expect(statusOf(t)).toBe('promoted');
+    const titles = (sqlite.prepare(`SELECT title FROM tasks ORDER BY title`).all() as { title: string }[]).map((x) => x.title);
+    expect(titles.length).toBe(2);
+    expect(titles).toContain('File taxes');
+    // The duplicate row never became a task and has no promoted_task_id.
+    const dupRow = sqlite
+      .prepare(`SELECT promoted_task_id FROM possible_tasks WHERE status = 'duplicate'`)
+      .get() as { promoted_task_id: string | null };
+    expect(dupRow.promoted_task_id).toBeNull();
+  });
+
+  it('embeddings unavailable → dedupe skips gracefully, EVERYTHING promotes, none stuck pending', async () => {
+    insertPossible('Buy milk');
+    insertPossible('Buy milk please');
+
+    const r = await promoteAllPending(OWNER, {
+      embedFn: async () => {
+        throw new Error('ollama down');
+      },
+    });
+
+    expect(r.dedupeAvailable).toBe(false);
+    expect(r.duplicates).toBe(0);
+    expect(r.promoted).toBe(2);
+    expect(pendingCount()).toBe(0);
+    expect((sqlite.prepare(`SELECT COUNT(*) c FROM tasks`).get() as { c: number }).c).toBe(2);
+  });
+
+  it('promoted tasks carry proposed fields + suggestion tags exactly as manual promotion did, and audit rows are written', async () => {
+    const pid = (sqlite
+      .prepare(
+        `INSERT INTO possible_tasks (id, raw_title, raw_summary, proposed_due_at, proposed_priority,
+                                     proposed_estimated_minutes, proposed_scheduled_for, proposed_task_time,
+                                     source_kind, source_ref, status, proposed_owner_id)
+         VALUES (uuid7(), 'Review contract', 'From legal', '2026-08-01T12:00:00.000Z', 2, 45, '2026-07-20', '09:30',
+                 'gmail', 'm9#0', 'pending', ?) RETURNING id`,
+      )
+      .get(OWNER) as { id: string }).id;
+    const dirTag = (sqlite
+      .prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'work', 'direction', ?) RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    const contentTag = (sqlite
+      .prepare(`INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), 'legal', ?) RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    sqlite.prepare(`INSERT INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?), (?, ?)`).run(pid, dirTag, pid, contentTag);
+
+    const r = await promoteAllPending(OWNER);
+    expect(r.promoted).toBe(1);
+
+    const task = sqlite
+      .prepare(`SELECT * FROM tasks WHERE title = 'Review contract'`)
+      .get() as Record<string, unknown> & { id: string };
+    expect(task).toMatchObject({
+      description: 'From legal',
+      due_at: '2026-08-01T12:00:00.000Z',
+      priority: 2,
+      estimated_minutes: 45,
+      scheduled_for: '2026-07-20',
+      task_time: '09:30',
+      owner_id: OWNER,
+      source_kind: 'gmail',
+      source_ref: 'm9#0',
+    });
+    // Tag carry-over levels: direction → 1 (placement-relevant), content → 2.
+    const tags = sqlite
+      .prepare(`SELECT tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ? ORDER BY level`)
+      .all(task.id) as { tag_id: string; level: number }[];
+    expect(tags).toEqual([
+      { tag_id: dirTag, level: 1 },
+      { tag_id: contentTag, level: 2 },
+    ]);
+    expect(possibleStatus(pid)).toBe('promoted');
+    // The per-item audit row still fires (inside promotePossible).
+    const audits = (sqlite
+      .prepare(`SELECT COUNT(*) c FROM audit_log WHERE action = 'promote' AND entity = ?`)
+      .get(`possible:${pid}`) as { c: number }).c;
+    expect(audits).toBe(1);
+  });
+
+  it('broadcasts every possible:promoted BEFORE any placement broadcast (batch SSE-order contract)', async () => {
+    // Same hands-off fixture as the route-ordering test above: a whole-day Plan window
+    // plus an unrelated estimate-bearing tag-matched open task the post-batch
+    // autoScheduleOnIngest sweep will place.
+    sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = 'hands_off' WHERE owner_id = ?`).run(OWNER);
+    const today = localISODate();
+    sqlite.prepare(
+      `INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status, owner_id)
+       VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', 'errands', ?, ?, 0, 'manual', 'planned', ?)`,
+    ).run(`${today}T00:00:00.000Z`, `${today}T23:59:00.000Z`, OWNER);
+    const taskId = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes, priority) VALUES (uuid7(), 'Buy stamps', ?, 'open', 30, 3) RETURNING id`)
+      .get(OWNER) as { id: string }).id;
+    const tag = (sqlite
+      .prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), 'errands', 'direction', ?) RETURNING id`)
+      .get(OWNER) as { id: string });
+    sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(taskId, tag.id);
+
+    const p1 = insertPossible('Inbox item one');
+    const p2 = insertPossible('Inbox item two');
+    const r = await promoteAllPending(OWNER, { embedFn: async () => { throw new Error('no embeddings'); } });
+    expect(r.promoted).toBe(2);
+
+    const events = sqlite
+      .prepare(`SELECT seq, event FROM sync_events WHERE owner_id = ? ORDER BY seq ASC`)
+      .all(OWNER) as { seq: number; event: string }[];
+    const promotedSeqs = events.filter((e) => e.event === 'possible:promoted').map((e) => e.seq);
+    const placementSeqs = events.filter((e) => e.event === 'auto:placed' || e.event === 'flight_plan:updated').map((e) => e.seq);
+    expect(promotedSeqs.length).toBe(2);
+    expect(placementSeqs.length).toBeGreaterThan(0); // fixture really triggered placement
+    for (const p of promotedSeqs) for (const s of placementSeqs) expect(p).toBeLessThan(s);
+    expect([possibleStatus(p1), possibleStatus(p2)]).toEqual(['promoted', 'promoted']);
   });
 });
