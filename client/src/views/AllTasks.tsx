@@ -14,7 +14,7 @@ import { RoutinesPanel } from '../components/RoutinesPanel.js';
 import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
 import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
 import { parseTasksTab, type TasksTab } from '../lib/tasks-tabs.js';
-import { partitionTaskSections } from '../lib/task-sections.js';
+import { partitionTaskSections, headerOpenCount } from '../lib/task-sections.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -50,9 +50,13 @@ export function AllTasks() {
   const inActiveList = (t: Task) =>
     isRoutineTask(t.id) ? t.status !== 'cancelled' : (!ARCHIVED.has(t.status) || isDoneToday(t));
 
-  // Header count matches what the default Tasks view actually shows as "Open" (top-level,
-  // non-routine, non-scheduled backlog) so the header number and the "Open ⟨n⟩" section agree.
-  const activeTaskCount = () => openList().length;
+  // Header "N open" count — owner decision (AF-7 follow-up): a task created today is
+  // open IMMEDIATELY, so the count spans the New Today AND Open sections (a task sits in
+  // exactly one, so no double-count). Scheduled/Routine stay excluded exactly as before —
+  // even when a scheduled task is sitting in New Today — and done/cancelled rows never
+  // count. The midnight rollover (New Today → Open) leaves this number unchanged.
+  const activeTaskCount = () =>
+    headerOpenCount(shownList(), { isRoutine: (t) => isRoutineTask(t.id), isScheduled: isScheduledish });
 
   // Tasks/Objectives/Habits/Routines/Timeblock tabs. Tasks & Habits list the backlog
   // (both exclude subtasks + recurrence instances — a series collapses to its template);
