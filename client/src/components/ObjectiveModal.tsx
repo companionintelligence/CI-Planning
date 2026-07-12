@@ -1,4 +1,4 @@
-import { createSignal, createResource, For, Show } from 'solid-js';
+import { createSignal, createResource, For } from 'solid-js';
 import { X } from 'lucide-solid';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
