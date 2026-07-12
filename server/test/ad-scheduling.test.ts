@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { placeFlightPlan } from '../src/engine/autoplan.js';
@@ -23,8 +23,16 @@ const OWNER = SYSTEM_OWNER;
 
 
 let srv: TestServer;
-beforeAll(async () => { srv = await startTestServer(); });
-afterAll(async () => { await srv.close(); });
+beforeAll(async () => {
+  // Pin the clock (Date only) to NOON of the real current day. AD1 pins a task at 14:00
+  // on "today" inside the 09:00–18:00 workday — with the real clock, any run after
+  // 14:00Z can't place the pin (the ≥now clamp) and after 18:00Z nothing places at all,
+  // so the test was an hour-of-day bomb. Precedent: recurrence-horizon.test.ts.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(`${new Date().toISOString().slice(0, 10)}T12:00:00.000Z`));
+  srv = await startTestServer();
+});
+afterAll(async () => { await srv.close(); vi.useRealTimers(); });
 beforeEach(() => {
   resetDb();
   sqlite.exec(`DELETE FROM flight_plan;`);

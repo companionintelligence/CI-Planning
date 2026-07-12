@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,6 +30,11 @@ const KEY_B64 = randomBytes(32).toString('base64');
 // The fixture events resolve to now+20h / now+30h / now+90h, so the brief window must be
 // TODAY's real calendar day for them to fall inside [day-start, day-start+48h].
 const TODAY = new Date().toISOString().slice(0, 10);
+// Pin the clock to NOON of that day (Date only — timers/await stay real). The now-relative
+// fixture offsets are hour-of-day bombs otherwise: past 18:00Z, now+30h crosses the
+// [day-start, day-start+48h] window's far edge and the "Today:"-labeled event silently
+// drops to the undated-context fallback. Noon keeps every offset well inside its window.
+const NOON = new Date(`${TODAY}T12:00:00.000Z`);
 
 const SAVED = {
   kek: process.env.CP_KEK_B64,
@@ -40,9 +45,12 @@ const SAVED = {
 
 beforeAll(() => {
   process.env.CP_KEK_B64 = KEY_B64;
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOON);
 });
 
 afterAll(() => {
+  vi.useRealTimers();
   const restore = (k: string, v: string | undefined) => {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -177,9 +185,9 @@ describe('AA2 — brief fold-in / byte-identical discipline', () => {
  * Review-fix coverage (PR #298): the day-aware prefix (EOD passes tomorrow's date, so
  * its events must read "Tomorrow:") and the eventParticipants hardening (blank-id guard
  * + dedupe). Uses a controlled fixture dir via CP_MEMORY_FIXTURES_DIR so the assertions
- * are deterministic regardless of wall-clock time. An event at now+30h always lands
- * inside BOTH today's and tomorrow's [start, start+48h] window (tomorrow-start is 0–24h
- * from now; now+30h is then 6–30h past it — always ≥ start and ≤ start+48h).
+ * are deterministic regardless of wall-clock time. With the clock pinned to NOON (top of
+ * file), an event at now+30h is tomorrow 18:00 — inside BOTH today's and tomorrow's
+ * [start, start+48h] windows. (Unpinned, now+30h escapes today's window past 18:00Z.)
  */
 describe('AA2 — day-aware prefix + participant hardening (custom fixture)', () => {
   let dir: string;
