@@ -29,18 +29,19 @@ export function leafObjectives(tree: Objective[]): FlatObjective[] {
 
 /**
  * Build the dropdown rows: leaf-only, typeahead-filtered (title + ancestor
- * path, case-insensitive), with depth preserved from the tree and the
- * currently-linked objective (the card's derived task.objective_id — the first
- * linked one, which is the one the card knows about) marked checked.
+ * path, case-insensitive), with depth preserved from the tree and EVERY
+ * currently-linked objective marked checked (AF-10: tasks↔objectives is M:N —
+ * the card passes the full linked set, task.objective_ids, not just the first).
  */
 export function buildPickerRows(
   tree: Objective[],
   query: string,
-  linkedObjectiveId: string | null | undefined,
+  linkedObjectiveIds: readonly string[],
 ): ObjectivePickerRow[] {
+  const linked = new Set(linkedObjectiveIds);
   return matchObjectives(leafObjectives(tree), query).map((o) => ({
     ...o,
     depth: o.path ? o.path.split(' › ').length : 0,
-    checked: o.id === linkedObjectiveId,
+    checked: linked.has(o.id),
   }));
 }
