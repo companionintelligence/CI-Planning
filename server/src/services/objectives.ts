@@ -136,10 +136,29 @@ function wouldCycle(objId: string, proposedParent: string): boolean {
   return row !== undefined;
 }
 
+/** Minimal task row attached to leaf objectives in the GET /api/objectives tree (AF-2). */
+export interface ObjectiveTaskSummary {
+  id: string;
+  title: string;
+  status: string;
+  priority: number | null;
+  due_at: string | null;
+  scheduled_for: string | null;
+  parent_id: string | null;
+  completed_at: string | null;
+}
+
 /**
  * The decorated forest for GET /api/objectives (REST). For each objective computes
  * next_action / effective_target / pace_expected / has_tasks, then nests children under
  * parents. Fetches up-front (no N+1 over rows). Owner-scoped.
+ *
+ * AF-2: every node also carries `tasks: ObjectiveTaskSummary[]` — ALWAYS present, so the
+ * client never branches on shape. Only LEAF nodes (no children in the owner's forest) are
+ * populated; non-leaves are always `[]` (leaf-only linking is enforced on writes, so this
+ * loses nothing). Active links only (linked=1), cancelled tasks excluded. Fetched in ONE
+ * batched query for the whole forest, ordered priority ASC → due_at ASC (NULLs last) → id.
+ * next_action / has_tasks are unchanged (the client depends on them until Wave 2).
  */
 export function buildTree(owner: string) {
   const now = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -157,11 +176,34 @@ export function buildTree(owner: string) {
     effective_target: string | null;
     pace_expected: number | null;
     has_tasks: boolean;
+    tasks: ObjectiveTaskSummary[];
     children: unknown[];
   }>();
 
   for (const o of objs) {
-    byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, has_tasks: false, children: [] });
+    byId.set(o.id, { ...o, next_action: null, effective_target: null, pace_expected: null, has_tasks: false, tasks: [], children: [] });
+  }
+
+  // AF-2: linked tasks for LEAF nodes, one batched query for the whole forest (no per-node
+  // loop). Owner-scoped on BOTH sides (objective + task) like objectiveForTask, so a
+  // stray/dangling objective_tasks row can't leak another owner's task. Active links only
+  // (linked=1 — tombstones excluded), cancelled tasks excluded.
+  const isParent = new Set(objs.map((o) => o.parent_id).filter((p): p is string => p != null));
+  const linkedTasks = sqlite
+    .prepare(
+      `SELECT ot.objective_id AS objective_id,
+              t.id, t.title, t.status, t.priority, t.due_at, t.scheduled_for, t.parent_id, t.completed_at
+         FROM objective_tasks ot
+         JOIN tasks t ON t.id = ot.task_id
+         JOIN objectives o ON o.id = ot.objective_id
+        WHERE o.owner_id = ? AND t.owner_id = ? AND ot.linked = 1 AND t.status != 'cancelled'
+        ORDER BY t.priority ASC, (t.due_at IS NULL) ASC, t.due_at ASC, t.id ASC`,
+    )
+    .all(owner, owner) as (ObjectiveTaskSummary & { objective_id: string })[];
+  for (const { objective_id, ...task } of linkedTasks) {
+    const node = byId.get(objective_id);
+    if (!node || isParent.has(objective_id)) continue; // leaf-only (write-enforced; belt-and-braces)
+    node.tasks.push(task);
   }
 
   // Only ACTIVE links count (migration 0087: unlink tombstones as linked=0, read paths
