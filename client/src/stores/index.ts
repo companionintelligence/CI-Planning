@@ -178,13 +178,13 @@ export function taskOf(taskId?: string): Task | undefined {
   return taskId ? taskById().get(taskId) : undefined;
 }
 
-// ── Possibles ────────────────────────────────────────────────────────────────
-export const [possibles, { refetch: refetchPossibles }] = createResource(() =>
-  api.possibles.list().then((r) => r.possibles)
-);
-
-on('possible:promoted',  () => { refetchPossibles(); refetchTasks(); });
-on('possible:dismissed', () => refetchPossibles());
+// ── Auto-promoted suggestions (AF-3 / AF-7) ────────────────────────────────────
+// There is no Inbox surface anymore (AF-7): a promoted suggestion becomes a real task
+// that lands in the Tasks tab's "New Today" section. The server still broadcasts
+// `possible:promoted` when AF-3 auto-promotes a staged suggestion at ingestion, so we
+// keep a slim handler that refetches tasks — the new task then appears live with no
+// user action. (`possible:dismissed` no longer has a client surface to update.)
+on('possible:promoted', () => refetchTasks());
 
 // ── Phase G: flight-plan, patterns, pattern types ──────────────────────────────
 // The flight-plan is the persisted, owner-scoped staging area the two-step Auto
@@ -366,7 +366,7 @@ on('job:run', () => refetchJobs());
 
 // A full import replaces all owner data — refetch every core resource.
 on('data:imported', () => {
-  refetchTasks(); refetchBlocks(); refetchConcepts(); refetchPossibles();
+  refetchTasks(); refetchBlocks(); refetchConcepts();
   refetchFlightPlan(); refetchPatterns(); refetchPatternTypes();
   refetchTags(); refetchPrefs(); refetchPatternBlocks(); refetchPatternPrefs(); refetchCategoryPrefs(); refetchJobs();
 });

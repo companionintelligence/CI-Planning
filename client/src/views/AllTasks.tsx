@@ -1,4 +1,4 @@
-import { createSignal, createResource, Show, For } from 'solid-js';
+import { createSignal, createResource, createMemo, onCleanup, Show, For } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
 import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight } from 'lucide-solid';
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask } from '../stores/index.js';
@@ -14,6 +14,7 @@ import { RoutinesPanel } from '../components/RoutinesPanel.js';
 import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
 import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
 import { parseTasksTab, type TasksTab } from '../lib/tasks-tabs.js';
+import { partitionTaskSections, headerOpenCount } from '../lib/task-sections.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -23,7 +24,9 @@ export function AllTasks() {
   const [direction, setDirection] = createSignal('');
   const [doneOpen, setDoneOpen] = createSignal(true);
   const [cancelledOpen, setCancelledOpen] = createSignal(true);
-  // §E: the Tasks tab groups the backlog into Open / Scheduled / Routine sections.
+  // §E / AF-7: the Tasks tab groups the backlog into New Today / Open / Scheduled /
+  // Routine sections.
+  const [newTodaySecOpen, setNewTodaySecOpen] = createSignal(true);
   const [openSecOpen, setOpenSecOpen] = createSignal(true);
   const [schedSecOpen, setSchedSecOpen] = createSignal(true);
   const [routineSecOpen, setRoutineSecOpen] = createSignal(true);
@@ -47,9 +50,13 @@ export function AllTasks() {
   const inActiveList = (t: Task) =>
     isRoutineTask(t.id) ? t.status !== 'cancelled' : (!ARCHIVED.has(t.status) || isDoneToday(t));
 
-  // Header count matches what the default Tasks view actually shows as "Open" (top-level,
-  // non-routine, non-scheduled backlog) so the header number and the "Open ⟨n⟩" section agree.
-  const activeTaskCount = () => openList().length;
+  // Header "N open" count — owner decision (AF-7 follow-up): a task created today is
+  // open IMMEDIATELY, so the count spans the New Today AND Open sections (a task sits in
+  // exactly one, so no double-count). Scheduled/Routine stay excluded exactly as before —
+  // even when a scheduled task is sitting in New Today — and done/cancelled rows never
+  // count. The midnight rollover (New Today → Open) leaves this number unchanged.
+  // Derived from the shared `sections` memo (defined below) — no second partition run.
+  const activeTaskCount = () => headerOpenCount(sections(), isScheduledish);
 
   // Tasks/Objectives/Habits/Routines/Timeblock tabs. Tasks & Habits list the backlog
   // (both exclude subtasks + recurrence instances — a series collapses to its template);
@@ -82,16 +89,45 @@ export function AllTasks() {
   const tabCount = (v: 'tasks' | 'habits') =>
     baseList().filter((t) => inActiveList(t) && (v === 'habits' ? t.is_habit : !t.is_habit)).length;
 
-  // §E: partition the (already filtered+sorted) Tasks-tab backlog. Routine membership
-  // wins the grouping (a routine task can also be scheduled — it still lands here);
-  // then scheduled/in-progress; everything else (open/deferred/…) is Open.
+  // §E / AF-7: partition the (already filtered+sorted) Tasks-tab backlog into four
+  // sections. Precedence: Routine wins (a routine task can also be scheduled — it still
+  // lands here); then New Today (anything created on the owner-local today — manual,
+  // quick-add, or an AF-3 auto-promoted suggestion); then scheduled/in-progress; then
+  // Open. New Today drains from Open/Scheduled so nothing is listed twice, and yesterday's
+  // New Today tasks fall into Open/Scheduled purely because the local day rolled over — no
+  // schema column, no nightly job (see lib/task-sections.ts).
   const hasStatusFilter = () => !!taskFilter().status;
   // "Scheduled" = a real placement on the planner (any engine) OR a persisted scheduled/
   // in_progress status — so auto-placed tasks group correctly, not just manual ones.
   const isScheduledish = (t: Task) => t.status === 'scheduled' || t.status === 'in_progress' || scheduledByTaskId().has(t.id);
-  const routineList = () => shownList().filter((t) => isRoutineTask(t.id));
-  const scheduledList = () => shownList().filter((t) => !isRoutineTask(t.id) && isScheduledish(t));
-  const openList = () => shownList().filter((t) => !isRoutineTask(t.id) && !isScheduledish(t));
+
+  // Day-tick: the New Today boundary must move at the local midnight even if the view
+  // just sits open — otherwise New Today never drains until some unrelated state change.
+  // A signal holds today's local date; a timeout re-armed for the NEXT local midnight
+  // (delay recomputed each fire — DST can stretch/shrink a day, so never assume 24h)
+  // bumps it, which re-runs the sections memo below. Small buffer past midnight guards
+  // against timers firing a hair early. Component-scoped; cleaned up on unmount.
+  const [todayISO, setTodayISO] = createSignal(localISODate());
+  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+  const armMidnightTick = () => {
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+    midnightTimer = setTimeout(() => {
+      setTodayISO(localISODate());
+      armMidnightTick();
+    }, nextMidnight.getTime() - now.getTime() + 250);
+  };
+  armMidnightTick();
+  onCleanup(() => clearTimeout(midnightTimer));
+
+  // One shared partition for the section lists AND the header count (component-scoped
+  // memo — repo gotcha: module-scope memos evaluate eagerly and break resource ordering).
+  const sections = createMemo(() =>
+    partitionTaskSections(shownList(), { isRoutine: (t) => isRoutineTask(t.id), isScheduled: isScheduledish, todayISO: todayISO() }));
+  const newTodayList = () => sections().newToday;
+  const routineList = () => sections().routine;
+  const scheduledList = () => sections().scheduled;
+  const openList = () => sections().open;
   // Explicit status filter → flat list; routine tasks never appear under the 'open' filter.
   const explicitList = () => (taskFilter().status === 'open' ? shownList().filter((t) => !isRoutineTask(t.id)) : shownList());
 
@@ -288,9 +324,14 @@ export function AllTasks() {
             }
           >
             <Show
-              when={openList().length + scheduledList().length + routineList().length > 0}
+              when={newTodayList().length + openList().length + scheduledList().length + routineList().length > 0}
               fallback={<div class="card text-center text-slate-500 py-12 text-sm">No tasks found.</div>}
             >
+              {/* AF-7: everything created on the local today, above the standing sections.
+                  Rolls into Open/Scheduled at the local midnight by pure date derivation. */}
+              <Show when={newTodayList().length > 0}>
+                <ArchiveSection title="New Today" open={newTodaySecOpen()} onToggle={() => setNewTodaySecOpen((v) => !v)} items={newTodayList()} loading={false} emptyLabel="" />
+              </Show>
               <Show when={openList().length > 0}>
                 <ArchiveSection title="Open" open={openSecOpen()} onToggle={() => setOpenSecOpen((v) => !v)} items={openList()} loading={false} emptyLabel="" />
               </Show>
