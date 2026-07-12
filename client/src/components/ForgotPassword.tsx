@@ -21,9 +21,12 @@ export function ForgotPassword(props: Props) {
   const [sent, setSent] = createSignal(false);
   // The server's confirmation is config-derived only (email delivery vs. the
   // no-SMTP server-log fallback) — displaying it verbatim reveals nothing about
-  // whether the account exists.
+  // whether the account exists. delivery starts null (UNKNOWN) and is only set from
+  // an actual server response: on a transport error we have no signal, so the
+  // email-specific "check your inbox" instructions must not render — promising an
+  // email we can't vouch for is the exact honesty gap this flow fixes.
   const [message, setMessage] = createSignal<string | null>(null);
-  const [delivery, setDelivery] = createSignal<'email' | 'log'>('email');
+  const [delivery, setDelivery] = createSignal<'email' | 'log' | null>(null);
 
   async function submit(e: Event) {
     e.preventDefault();
@@ -35,7 +38,7 @@ export function ForgotPassword(props: Props) {
       if (r.delivery) setDelivery(r.delivery);
     } catch {
       // Even a transport error shouldn't reveal anything — fall through to the same
-      // neutral confirmation. (Rate-limit 429s also land here.)
+      // neutral confirmation, with delivery left unknown. (Rate-limit 429s also land here.)
     } finally {
       setSubmitting(false);
       setSent(true);
