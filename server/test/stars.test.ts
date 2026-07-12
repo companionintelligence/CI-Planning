@@ -20,16 +20,17 @@ const TODAY = '2026-06-17';      // the pinned "now" for freeze tests
 function makeTask(opts: {
   title: string; subtype?: string; priority?: number; recurrenceParentId?: string | null;
   status?: string; occurrenceDate?: string | null; completedAt?: string | null;
+  scheduledFor?: string | null;
 }): string {
   return (sqlite
     .prepare(
-      `INSERT INTO tasks (id, title, subtype, priority, recurrence_parent_id, status, occurrence_date, completed_at, owner_id)
-       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO tasks (id, title, subtype, priority, recurrence_parent_id, status, occurrence_date, completed_at, scheduled_for, owner_id)
+       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .get(
       opts.title, opts.subtype ?? 'standard', opts.priority ?? 3,
       opts.recurrenceParentId ?? null, opts.status ?? 'open',
-      opts.occurrenceDate ?? null, opts.completedAt ?? null, SYSTEM_OWNER,
+      opts.occurrenceDate ?? null, opts.completedAt ?? null, opts.scheduledFor ?? null, SYSTEM_OWNER,
     ) as { id: string }).id;
 }
 function plan(taskId: string, position: number, date = DAY) {
@@ -152,6 +153,32 @@ describe('computeStars — S3 tasks', () => {
     plan(makeTask({ title: 'B', status: 'cancelled' }), 0);
     expect(stars().tasks).toBe(false);
   });
+
+  // Path-independence: HOW a task was scheduled must not change its star. A
+  // self-scheduled task (scheduled_for = date; quick-add / New Task / drag — no
+  // daily_plan row, which only the AI authoring path writes) is planned work.
+  it('a self-scheduled (scheduled_for) done task earns S3 with no daily_plan row at all', () => {
+    makeTask({ title: 'Self-placed', status: 'done', scheduledFor: DAY });
+    expect(stars().tasks).toBe(true);
+  });
+  it('a self-scheduled task still open keeps S3 dark', () => {
+    makeTask({ title: 'Self-placed', status: 'open', scheduledFor: DAY });
+    expect(stars().tasks).toBe(false);
+  });
+  it('authored ∪ self-scheduled: ALL planned tasks must be done, whichever way they were planned', () => {
+    plan(makeTask({ title: 'Authored', status: 'done' }), 0);
+    makeTask({ title: 'Self-placed', status: 'open', scheduledFor: DAY });
+    expect(stars().tasks).toBe(false);
+  });
+  it('a task scheduled for ANOTHER day is not part of this day\'s planned set', () => {
+    makeTask({ title: 'Tomorrow', status: 'open', scheduledFor: NEXT_DAY });
+    expect(stars().tasks).toBe(false); // empty-set rule, not an incompletion
+  });
+  it('a task both authored AND self-scheduled counts once', () => {
+    const t = makeTask({ title: 'Both', status: 'done', scheduledFor: DAY });
+    plan(t, 0);
+    expect(stars().tasks).toBe(true);
+  });
 });
 
 // ── S4 bonus (unplanned completion) ─────────────────────────────────────────────
@@ -178,6 +205,19 @@ describe('computeStars — S4 bonus', () => {
   it('a completion on another day does not earn today\'s bonus', () => {
     makeTask({ title: 'Yesterday', status: 'done', completedAt: at(NEXT_DAY) });
     expect(stars().bonus).toBe(false);
+  });
+
+  // The S4 exclusion mirrors S3's widened planned set: a self-scheduled completion
+  // is planned work (S3), never double-counted as an unplanned win.
+  it('completing a SELF-SCHEDULED task does NOT earn the bonus (it earns S3 instead)', () => {
+    makeTask({ title: 'Self-placed', status: 'done', completedAt: at(DAY), scheduledFor: DAY });
+    const s = stars();
+    expect(s.bonus).toBe(false);
+    expect(s.tasks).toBe(true);
+  });
+  it('a task scheduled for ANOTHER day but completed today still earns the bonus', () => {
+    makeTask({ title: 'Pulled forward', status: 'done', completedAt: at(DAY), scheduledFor: NEXT_DAY });
+    expect(stars().bonus).toBe(true);
   });
 });
 

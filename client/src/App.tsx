@@ -77,10 +77,15 @@ function Shell(props: { children?: any }) {
   const location = useLocation();
   useTaskReminders();
 
-  const mode = () => prefs()?.auto_mode ?? 'suggest';
+  // The toggle drives the trust dial (scheduling_prefs.trust_mode, 0070): Schedule ⇔
+  // 'hands_off' (new tasks auto-schedule on ingest, N-day planning horizon), Suggest ⇔
+  // 'balanced'. 'cautious' (API-only today) also displays as Suggest — the same-mode
+  // guard below means merely viewing never rewrites it; only an explicit Schedule →
+  // Suggest round-trip lands on 'balanced'.
+  const mode = () => (prefs()?.trust_mode === 'hands_off' ? 'schedule' : 'suggest');
   async function setMode(m: 'suggest' | 'schedule') {
     if (m === mode()) return;
-    try { await api.prefs.update({ auto_mode: m }); refetchPrefs(); }
+    try { await api.prefs.update({ trust_mode: m === 'schedule' ? 'hands_off' : 'balanced' }); refetchPrefs(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
 
