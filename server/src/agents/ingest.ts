@@ -6,16 +6,33 @@ import { inferDirection } from './direction.js';
 import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
 import { logger } from '../lib/logger.js';
+import { promoteAllPending } from '../services/possibles.js';
 
 export interface IngestResult {
   itemsProcessed: number;
   possiblesCreated: number;
   possiblesUpdated: number;
   blocksCreated: number;
+  /** AF-3: possibles auto-promoted into tasks at the end of this batch. */
+  promoted: number;
+  /** AF-3: possibles the inline semantic dedupe marked 'duplicate' this batch. */
+  duplicates: number;
 }
 
 function emptyResult(): IngestResult {
-  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0 };
+  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0 };
+}
+
+/**
+ * AF-3 — hands-off pipeline: at the end of every producer batch, dedupe + promote ALL
+ * of the owner's pending possibles into real tasks (services/possibles.ts). The Inbox
+ * review step is gone; possible_tasks remains as the dedup/audit trail. Mutates
+ * `result` with the batch counts.
+ */
+async function promoteBatch(result: IngestResult): Promise<void> {
+  const r = await promoteAllPending(currentOwnerId());
+  result.promoted += r.promoted;
+  result.duplicates += r.duplicates;
 }
 
 /** Normalize a tag name the same way the tasks route does. */
@@ -290,6 +307,9 @@ export async function ingestEmails(
   // Advance-after-commit: only after the loop's possibles are committed.
   if (newestProcessed) advanceGmailSince(ownerId, account, newestProcessed);
 
+  // AF-3: auto-promote the batch (dedupe → promote ALL pending) before returning.
+  await promoteBatch(result);
+
   logger.info('ingestEmails done', result);
   return result;
 }
@@ -319,6 +339,10 @@ export async function ingestEvents(
       );
     }
   }
+
+  // AF-3: auto-promote the batch (dedupe → promote ALL pending) before returning.
+  await promoteBatch(result);
+
   logger.info('ingestEvents done', result);
   return result;
 }
@@ -331,6 +355,10 @@ export async function ingestText(
 ): Promise<IngestResult> {
   const result = emptyResult();
   await runExtraction({ kind: 'text', ref, text }, opts.tier ?? 'medium', { ref }, result);
+
+  // AF-3: auto-promote the batch (dedupe → promote ALL pending) before returning.
+  await promoteBatch(result);
+
   logger.info('ingestText done', result);
   return result;
 }

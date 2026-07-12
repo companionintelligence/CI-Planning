@@ -13,13 +13,15 @@ import {
 import { memoryConnectorAvailable } from '../services/memory.js';
 import { CONFIDENCE_FLOOR } from '../services/calibration.js';
 import { upsertPossible } from './ingest.js';
+import { promoteAllPending } from '../services/possibles.js';
 import type { ExtractedTask } from './extract.js';
 
 /**
  * Phase AA · AA1 — memory suggestion agent. Pulls the owner's next-48h CI-Server
- * memory graph (events + participants) and stages candidate tasks into the
- * possible-task inbox via the existing `upsertPossible()` seam — the inbox, promote
- * route, trust dial, and auto-schedule path are all reused untouched.
+ * memory graph (events + participants) and stages candidate tasks as possible_tasks
+ * via the existing `upsertPossible()` seam. AF-3: at the end of each run the batch is
+ * auto-promoted (`promoteAllPending`) — every staged suggestion becomes a real task
+ * immediately; possible_tasks remains as the dedup/audit trail.
  *
  * Phase AB · AB2 — suggestions MIRROR the event: title = the event name, start
  * intent (proposed_scheduled_for/task_time) = the event start in the owner's
@@ -54,6 +56,8 @@ export interface MemorySuggestResult {
   updated: number;
   skippedDismissed: number;
   skippedCap: number;
+  /** AF-3: pending possibles auto-promoted into tasks at the end of this run. */
+  promoted: number;
 }
 
 interface EventCandidate {
@@ -70,7 +74,7 @@ export type PolishFn = (
 ) => Promise<Map<string, Partial<ExtractedTask>>>;
 
 function skipped(status: 'flag_off' | 'unavailable'): MemorySuggestResult {
-  return { status, pulled: 0, created: 0, updated: 0, skippedDismissed: 0, skippedCap: 0 };
+  return { status, pulled: 0, created: 0, updated: 0, skippedDismissed: 0, skippedCap: 0, promoted: 0 };
 }
 
 function pullEnabled(owner: string): boolean {
@@ -245,12 +249,14 @@ Respond ONLY with JSON in exactly this shape:
 
 /**
  * Run one suggestion pass for the current owner. Returns 'flag_off' / 'unavailable'
- * without touching the DB when gated; otherwise stages/refreshes possibles and
- * reports counts. `opts.polish`: false disables the LLM pass (deterministic tests);
- * a function injects a custom polisher.
+ * without touching the DB when gated; otherwise stages possibles and auto-promotes
+ * the batch (AF-3), reporting counts. `opts.polish`: false disables the LLM pass
+ * (deterministic tests); a function injects a custom polisher. `opts.embedFn` is
+ * threaded to the inline dedupe inside promoteAllPending (same injectable-for-tests
+ * idiom as dedupePossibles — avoids cross-file module mocks).
  */
 export async function suggestFromMemory(
-  opts: { polish?: PolishFn | false } = {},
+  opts: { polish?: PolishFn | false; embedFn?: (text: string) => Promise<number[]> } = {},
 ): Promise<MemorySuggestResult> {
   const owner = currentOwnerId();
   if (!pullEnabled(owner)) return skipped('flag_off');
@@ -277,6 +283,7 @@ export async function suggestFromMemory(
     updated: 0,
     skippedDismissed: 0,
     skippedCap: 0,
+    promoted: 0,
   };
   if (candidates.length === 0) return result;
 
@@ -346,6 +353,12 @@ export async function suggestFromMemory(
       result.updated++;
     }
   }
+
+  // AF-3: auto-promote the batch (dedupe → promote ALL of this owner's pending
+  // possibles) — the accepted suggestion becomes a real task with no Inbox stop; the
+  // start intent places its block at the event time via the AB1 hook inside.
+  const batch = await promoteAllPending(owner, { embedFn: opts.embedFn });
+  result.promoted = batch.promoted;
 
   logger.info('memory suggest done', { ...result });
   return result;

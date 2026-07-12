@@ -17,7 +17,7 @@ function lastRun(kind: string) {
 describe('jobs', () => {
   beforeEach(() => resetDb());
 
-  it('promote_possibles promotes high-confidence possibles into tasks and logs a run', async () => {
+  it('promote_possibles (manual run) promotes ALL pending possibles — no confidence gate (AF-3)', async () => {
     sqlite
       .prepare(
         `INSERT INTO possible_tasks (id, raw_title, proposed_priority, source_kind, source_ref, confidence, status)
@@ -26,15 +26,22 @@ describe('jobs', () => {
       )
       .run();
 
+    // The cron row is gone (0118) so no job_runs row is recorded, but the kind stays
+    // executable for manual runs and now sweeps EVERYTHING pending.
     await runJob('promote_possibles');
 
     const tasks = sqlite.prepare('SELECT * FROM tasks').all() as { title: string }[];
-    expect(tasks.some((t) => t.title === 'Sign the contract')).toBe(true);
-    expect(tasks.length).toBe(1); // low-confidence one stays pending
+    expect(tasks.map((t) => t.title).sort()).toEqual(['Maybe look into X', 'Sign the contract']);
+    const pending = sqlite.prepare(`SELECT COUNT(*) AS n FROM possible_tasks WHERE status = 'pending'`).get() as { n: number };
+    expect(pending.n).toBe(0);
+    expect(lastRun('promote_possibles')).toBeUndefined(); // no scheduled_jobs row → no run row
+  });
 
-    const run = lastRun('promote_possibles');
-    expect(run?.status).toBe('done');
-    expect(run?.items_created).toBe(1);
+  it('the promote_possibles cron row was retired by 0118; nightly_grooming remains scheduled', () => {
+    const promoteRow = sqlite.prepare(`SELECT id FROM scheduled_jobs WHERE kind = 'promote_possibles'`).get();
+    expect(promoteRow).toBeUndefined();
+    const grooming = sqlite.prepare(`SELECT enabled FROM scheduled_jobs WHERE kind = 'nightly_grooming'`).get() as { enabled: number };
+    expect(grooming).toBeDefined();
   });
 
   it('promotion carries suggested tags across to the new task', async () => {
@@ -81,16 +88,23 @@ describe('jobs', () => {
     expect(run?.items_created).toBe(2);
   });
 
-  it('nightly_grooming runs end-to-end and records a run (no hard LLM dependency)', async () => {
+  it('nightly_grooming runs end-to-end, sweeps stragglers unconditionally, and records a run (no hard LLM dependency)', async () => {
+    // A LOW-confidence straggler: pre-AF-3 the 0.7 threshold kept it pending forever;
+    // the sweeper now promotes it.
     sqlite
       .prepare(
         `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status)
-         VALUES (uuid7(), 'Groom me', 'text', 'g1#0', 0.8, 'pending')`
+         VALUES (uuid7(), 'Groom me', 'text', 'g1#0', 0.2, 'pending')`
       )
       .run();
     await runJob('nightly_grooming');
     const run = lastRun('nightly_grooming');
     expect(run?.status).toBe('done');
+    expect(run?.items_created).toBe(1); // the sweeper promoted the straggler
+    const task = sqlite.prepare(`SELECT id FROM tasks WHERE title = 'Groom me'`).get();
+    expect(task).toBeDefined();
+    const pending = sqlite.prepare(`SELECT COUNT(*) AS n FROM possible_tasks WHERE status = 'pending'`).get() as { n: number };
+    expect(pending.n).toBe(0);
   });
 
   it('an unknown job kind does not create a run row', async () => {
