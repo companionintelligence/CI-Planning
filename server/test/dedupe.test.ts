@@ -10,7 +10,8 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { resetDb } from './helpers.js';
+import { resetDb, createOwner, SECOND_OWNER_ID } from './helpers.js';
+import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { dedupePossibles, _setVecForTest } from '../src/agents/groom.js';
 
 // 'Buy milk' ≈ 'Buy milk please' (cosine ≈ 0.995 ≥ 0.92); 'File taxes' orthogonal.
@@ -67,6 +68,22 @@ describe('dedupePossibles (C3)', () => {
   it('fewer than 2 pending → available, nothing compared', async () => {
     insertPossible('only one');
     expect(await dedupePossibles({ embedFn })).toEqual({ compared: 0, duplicates: 0, available: true });
+  });
+
+  it('AF-3: opts.owner scopes the pass — another owner\'s near-identical pending row is neither compared nor marked', async () => {
+    createOwner(SECOND_OWNER_ID);
+    const insertFor = (title: string, owner: string): string =>
+      (sqlite
+        .prepare(`INSERT INTO possible_tasks (id, raw_title, status, proposed_owner_id) VALUES (uuid7(), ?, 'pending', ?) RETURNING id`)
+        .get(title, owner) as { id: string }).id;
+    const mineA = insertFor('Buy milk', SYSTEM_OWNER);
+    const mineDup = insertFor('Buy milk please', SYSTEM_OWNER);
+    const theirs = insertFor('Buy milk', SECOND_OWNER_ID); // near-identical, different owner
+
+    const r = await dedupePossibles({ embedFn, owner: SYSTEM_OWNER });
+    expect(r.duplicates).toBe(1);
+    expect([statusOf(mineA), statusOf(mineDup)].sort()).toEqual(['duplicate', 'pending']);
+    expect(statusOf(theirs)).toBe('pending'); // untouched — cross-owner rows never collide
   });
 
   it('leaves no vec0 temp table behind (snapshot-safe)', async () => {

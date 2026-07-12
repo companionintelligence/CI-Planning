@@ -64,5 +64,21 @@ describe('ingestEvents — no meeting-block mirror (WP5)', () => {
     const possibles = (sqlite.prepare('SELECT COUNT(*) AS n FROM possible_tasks').get() as { n: number }).n;
     expect(possibles).toBeGreaterThan(0);
     expect(result.possiblesCreated).toBeGreaterThan(0);
+
+    // AF-3: the batch auto-promoted at ingestion — zero rows stay pending (each is
+    // 'promoted' or 'duplicate'), and each promoted row became a real task. Under the
+    // default balanced trust the promoted (estimate-less, start-less) tasks still
+    // create no blocks, so the no-mirror assertion above is unchanged.
+    const pending = (sqlite.prepare(`SELECT COUNT(*) AS n FROM possible_tasks WHERE status = 'pending'`).get() as { n: number }).n;
+    expect(pending).toBe(0);
+    expect(result.promoted).toBeGreaterThan(0);
+    const promotedRows = sqlite
+      .prepare(`SELECT promoted_task_id FROM possible_tasks WHERE status = 'promoted'`)
+      .all() as { promoted_task_id: string | null }[];
+    expect(promotedRows.length).toBe(result.promoted);
+    for (const row of promotedRows) {
+      expect(row.promoted_task_id).toBeTruthy();
+      expect(sqlite.prepare(`SELECT id FROM tasks WHERE id = ?`).get(row.promoted_task_id)).toBeDefined();
+    }
   });
 });

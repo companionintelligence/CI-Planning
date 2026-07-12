@@ -58,7 +58,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new, ${r.possiblesUpdated} updated possibles${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
+        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new, ${r.possiblesUpdated} updated possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate)${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'ingest_gcal': {
@@ -69,7 +69,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles`,
+        log: `Processed ${r.itemsProcessed} events → ${r.possiblesCreated} new possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate)`,
       };
     }
     case 'memory_suggest': {
@@ -87,7 +87,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.created,
         itemsUpdated: r.updated,
-        log: `Pulled ${r.pulled} upcoming memory event(s) → ${r.created} new, ${r.updated} refreshed suggestion(s); skipped ${r.skippedDismissed} dismissed, ${r.skippedCap} over cap`,
+        log: `Pulled ${r.pulled} upcoming memory event(s) → ${r.created} new, ${r.updated} refreshed suggestion(s); auto-promoted ${r.promoted}; skipped ${r.skippedDismissed} dismissed, ${r.skippedCap} over cap`,
       };
     }
     case 'push_memory': {
@@ -114,11 +114,15 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'promote_possibles': {
+      // AF-3: the standalone cron row was retired (0118; nightly_grooming subsumes it),
+      // but the kind stays executable for manual runs. Promotion is unconditional now.
       const r = promotePossibles();
       const blocked = autoBlockAfterPromote();
-      return { itemsCreated: r.promoted, itemsUpdated: 0, log: `Promoted ${r.promoted}, kept ${r.keptPending} pending${blocked ? `; auto-blocked ${blocked}` : ''}` };
+      return { itemsCreated: r.promoted, itemsUpdated: 0, log: `Promoted ${r.promoted}${blocked ? `; auto-blocked ${blocked}` : ''}` };
     }
     case 'nightly_grooming': {
+      // AF-3: producers auto-promote at ingestion, so dedupe is usually a no-op here
+      // and promote is the straggler SWEEPER (unconditional — no trust gate/threshold).
       const dedupe = await dedupePossibles();
       const overdue = surfaceOverdue();
       const promote = promotePossibles();

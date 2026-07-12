@@ -6,8 +6,8 @@ import { resetDb } from './helpers.js';
 // ingest_gcal must run without Ollama and without creating meeting blocks (WP5). Mock the
 // agent so the job body exercises ONLY the placement-gating change.
 vi.mock('../src/agents/ingest.js', () => ({
-  ingestEvents: vi.fn(async () => ({ itemsProcessed: 1, possiblesCreated: 1, possiblesUpdated: 0, blocksCreated: 0 })),
-  ingestEmails: vi.fn(async () => ({ itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0 })),
+  ingestEvents: vi.fn(async () => ({ itemsProcessed: 1, possiblesCreated: 1, possiblesUpdated: 0, blocksCreated: 0, promoted: 1, duplicates: 0 })),
+  ingestEmails: vi.fn(async () => ({ itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0 })),
 }));
 
 // sync_calendar must run without a real Google connection. The mock simulates applyInbound

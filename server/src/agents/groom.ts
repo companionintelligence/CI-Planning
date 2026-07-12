@@ -2,11 +2,9 @@ import { sqlite, vecAvailable } from '../db/index.js';
 import { embed } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
-import { resolveTrustPolicy } from '../engine/autoplan.js';
 
 export interface PromoteResult {
   promoted: number;
-  keptPending: number;
 }
 
 interface PossibleRow {
@@ -14,7 +12,10 @@ interface PossibleRow {
   raw_title: string;
   raw_summary: string | null;
   proposed_due_at: string | null;
+  proposed_scheduled_for: string | null;
+  proposed_task_time: string | null;
   proposed_priority: number | null;
+  proposed_estimated_minutes: number | null;
   proposed_owner_id: string | null;
   source_kind: string | null;
   source_ref: string | null;
@@ -22,43 +23,36 @@ interface PossibleRow {
 }
 
 /**
- * Promote pending possible_tasks whose confidence meets the threshold into real tasks.
- * Copies suggested tags over to the new task. Lower-confidence items stay in the queue
- * for manual review.
+ * Promote ALL pending possible_tasks into real tasks, copying suggested tags across.
+ *
+ * AF-3: promotion is UNCONDITIONAL — no trust-mode gate, no confidence threshold. The
+ * ingestion producers auto-promote at batch end (services/possibles.ts
+ * `promoteAllPending`), so this function is the nightly SWEEPER for stragglers only
+ * (rows created outside the producer paths, or left over from a mid-batch crash).
+ * trust_mode now governs auto-BLOCKING only (resolveTrustPolicy → autoBlock).
  */
-export function promotePossibles(opts: { threshold?: number } = {}): PromoteResult {
-  const policy = resolveTrustPolicy(currentOwnerId());
+export function promotePossibles(): PromoteResult {
   const pending = sqlite
     .prepare("SELECT * FROM possible_tasks WHERE status = 'pending'")
     .all() as PossibleRow[];
 
-  // TM-5: Cautious trust mode never auto-promotes — everything waits in the Inbox for a
-  // manual promote. (An explicit `threshold` override, used by tests, still promotes.)
-  if (opts.threshold === undefined && !policy.autoPromote) {
-    logger.info('promotePossibles skipped (cautious)', { keptPending: pending.length });
-    return { promoted: 0, keptPending: pending.length };
-  }
-  const threshold = opts.threshold ?? policy.promoteThreshold;
-
   let promoted = 0;
-  let keptPending = 0;
 
   const tx = sqlite.transaction((rows: PossibleRow[]) => {
     for (const p of rows) {
-      if ((p.confidence ?? 0) < threshold) {
-        keptPending++;
-        continue;
-      }
       const task = sqlite
         .prepare(
-          `INSERT INTO tasks (id, title, description, due_at, priority, owner_id, source_kind, source_ref, status)
-           VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, 'open') RETURNING id`
+          `INSERT INTO tasks (id, title, description, due_at, scheduled_for, task_time, priority, estimated_minutes, owner_id, source_kind, source_ref, status)
+           VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open') RETURNING id`
         )
         .get(
           p.raw_title,
           p.raw_summary,
           p.proposed_due_at,
+          p.proposed_scheduled_for,
+          p.proposed_task_time,
           p.proposed_priority ?? 3,
+          p.proposed_estimated_minutes,
           p.proposed_owner_id ?? currentOwnerId(),
           p.source_kind ?? 'agent',
           p.source_ref
@@ -81,8 +75,8 @@ export function promotePossibles(opts: { threshold?: number } = {}): PromoteResu
   });
   tx(pending);
 
-  logger.info('promotePossibles done', { promoted, keptPending, threshold });
-  return { promoted, keptPending };
+  logger.info('promotePossibles done', { promoted });
+  return { promoted };
 }
 
 function cosine(a: number[], b: number[]): number {
@@ -150,15 +144,24 @@ export interface DedupeResult {
 /**
  * Mark near-duplicate pending possibles using embeddings (best-effort).
  * If Ollama embeddings are unavailable, returns { available: false } without throwing.
+ *
+ * AF-3: `opts.owner` scopes the pass to one owner's pending rows (by
+ * `proposed_owner_id`, the table's owner key) — the inline post-ingest dedupe uses it
+ * so one owner's batch never compares against (or marks) another owner's rows. The
+ * nightly grooming call stays unscoped (its historical whole-table sweep).
  */
 export async function dedupePossibles(
-  opts: { threshold?: number; embedFn?: (text: string) => Promise<number[]> } = {},
+  opts: { threshold?: number; embedFn?: (text: string) => Promise<number[]>; owner?: string } = {},
 ): Promise<DedupeResult> {
   const threshold = opts.threshold ?? 0.92;
   const embedFn = opts.embedFn ?? embed; // injectable for tests (avoids cross-file module mocks)
-  const pending = sqlite
-    .prepare("SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' ORDER BY id ASC")
-    .all() as { id: string; raw_title: string }[];
+  const pending = (
+    opts.owner
+      ? sqlite
+          .prepare("SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' AND proposed_owner_id = ? ORDER BY id ASC")
+          .all(opts.owner)
+      : sqlite.prepare("SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' ORDER BY id ASC").all()
+  ) as { id: string; raw_title: string }[];
 
   if (pending.length < 2) return { compared: 0, duplicates: 0, available: true };
 
