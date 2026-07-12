@@ -11,7 +11,7 @@ import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine
 import { placeTasksInBlock, type PlaceTasksResult } from '../engine/blocks-place.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from './tags.js';
 import { getCategoryPrefs } from './category-prefs.js';
-import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus } from './block-task-sync.js';
+import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from './block-task-sync.js';
 
 /**
  * Time-Block CRUD orchestration (Phase W step 3.2) — extracted from routes/blocks.ts so
@@ -600,12 +600,15 @@ export type ClearDayAutoBlocksResult = { removedCount: number; revertedTaskIds: 
 
 /**
  * Clear the day's AUTO-PLACED task blocks only. The predicate mirrors clearPriorAuto
- * (engine/autoplan.ts) exactly: only our own agent auto placements (`is_auto=1
- * AND is_locked=0 AND block_kind='task' AND source_kind='agent'`). It therefore
- * preserves — by construction — user-placed blocks (is_auto=0 / source 'manual'),
- * locked blocks, calendar meeting mirrors (block_kind!='task'), pattern/habit
- * placements (source_kind!='agent'), and completed/skipped occurrences. Keep this
- * WHERE in sync with autoplan.ts:187.
+ * (engine/autoplan.ts): only our own agent auto placements (`is_auto=1
+ * AND is_locked=0 AND block_kind='task' AND source_kind='agent'`) that are not in a
+ * terminal status ([[TERMINAL_BLOCK_STATUS_SQL]] — the shared vocabulary in
+ * services/block-task-sync.ts). It therefore preserves — by construction —
+ * user-placed blocks (is_auto=0 / source 'manual'), locked blocks, calendar meeting
+ * mirrors (block_kind!='task'), pattern/habit placements (source_kind!='agent'),
+ * and every terminal occurrence: completed/skipped outcomes AND the
+ * cancelled/missed evidence the review surface reads (Phase AE status-vocabulary
+ * alignment, docs/AE-reflow-correctness.md).
  */
 export function clearDayAutoBlocks(ownerId: string, date: string): ClearDayAutoBlocksResult {
   const tzRow = sqlite
@@ -619,7 +622,7 @@ export function clearDayAutoBlocks(ownerId: string, date: string): ClearDayAutoB
       `DELETE FROM time_blocks
         WHERE owner_id = ?
           AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
-          AND status NOT IN ('completed','skipped')
+          AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
           AND start_at < ? AND end_at > ?
         RETURNING id, task_id`,
     )

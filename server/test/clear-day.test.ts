@@ -6,7 +6,9 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 /**
  * T-CORE-4 — POST /api/days/:date/clear clears ONLY the day's auto-placed agent
  * task blocks, mirroring clearPriorAuto. It must preserve user-placed, locked,
- * calendar meetings, pattern/habit placements, and completed/skipped blocks.
+ * calendar meetings, pattern/habit placements, and every TERMINAL-status block
+ * (completed/skipped outcomes AND cancelled/missed review evidence — the shared
+ * TERMINAL_BLOCK_STATUS_SQL vocabulary, Phase AE status-vocabulary alignment).
  */
 
 const exists = (id: string) => !!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ?`).get(id);
@@ -72,6 +74,22 @@ describe('POST /api/days/:date/clear', () => {
     expect(exists(meeting)).toBe(true);
     expect(exists(habit)).toBe(true);
     expect(exists(completed)).toBe(true);
+  });
+
+  it("preserves 'cancelled'/'missed' auto blocks (terminal evidence, AE status-vocabulary alignment)", async () => {
+    // Regression: clear-day once used a narrower NOT IN ('completed','skipped') copy
+    // of the predicate and deleted the cancelled/missed evidence blocks that
+    // clearPriorAuto/reflow deliberately preserve for the review surface.
+    const cancelled = insertBlock({ title: 'cancelled auto', auto: true, source: 'agent', status: 'cancelled' });
+    const missed = insertBlock({ title: 'missed auto', auto: true, source: 'agent', status: 'missed' });
+    const live = insertBlock({ title: 'live auto', auto: true, source: 'agent' });
+
+    const { body } = await api(srv.url, '/api/days/2026-06-20/clear', { method: 'POST', json: {} });
+    expect(body.cleared).toBe(1);
+
+    expect(exists(cancelled), 'cancelled evidence must survive clear-day').toBe(true);
+    expect(exists(missed), 'missed evidence must survive clear-day').toBe(true);
+    expect(exists(live)).toBe(false);
   });
 
   it('does not touch auto blocks on a different day', async () => {

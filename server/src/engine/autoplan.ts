@@ -25,7 +25,7 @@ import { taskTagNames, inheritContainerDirection, removeEntityTags } from '../se
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
-import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementStatus } from '../services/block-task-sync.js';
+import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from '../services/block-task-sync.js';
 import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
@@ -310,7 +310,7 @@ function clearPriorAuto(
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
-          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
           AND task_id IN (${opts.taskIds.map(() => '?').join(',')})
           AND start_at < ? AND end_at > ?` + notIn
     )
@@ -400,7 +400,7 @@ function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: str
     .prepare(
       `SELECT id, start_at, end_at FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
-          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
           AND start_at < ? AND end_at > ?
         ORDER BY start_at LIMIT 1`,
     )
@@ -411,7 +411,7 @@ function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: str
     .prepare(
       `SELECT id, start_at, end_at FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 1
-          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
         ORDER BY start_at LIMIT 1`,
     )
     .get(taskId, owner) as PriorPlacement | undefined;
@@ -426,7 +426,7 @@ function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: str
     .prepare(
       `DELETE FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 0
-          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
         RETURNING id`,
     )
     .all(taskId, owner) as { id: string }[];
@@ -712,7 +712,7 @@ export function placeFlightPlan(
       .prepare(
         `SELECT 1 FROM time_blocks
           WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
-            AND status NOT IN ('completed','skipped','cancelled','missed') LIMIT 1`,
+            AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL}) LIMIT 1`,
       )
       .get(t.task_id, owner);
     const pinned =
@@ -973,7 +973,7 @@ function clearPriorAutoInWindow(owner: string, windowStartMs: number, windowEndM
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
-          AND status NOT IN ('completed','skipped','cancelled','missed')
+          AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
           AND task_id IN (${taskIds.map(() => '?').join(',')})
           AND start_at < ? AND end_at > ?`
     )

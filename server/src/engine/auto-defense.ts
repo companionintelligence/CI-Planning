@@ -40,7 +40,7 @@ import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { sendPush } from '../lib/push.js';
 import { subsFor } from './reminders.js';
-import { revertTaskPlacementStatus } from '../services/block-task-sync.js';
+import { revertTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from '../services/block-task-sync.js';
 
 const STABILITY_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 const DEBOUNCE_MS = 1500; // B2: per-owner trailing debounce — collapse a burst of triggers to one reflow
@@ -265,7 +265,7 @@ export function reflow(
   //    DIFFERENT day must not mask a genuine same-day removal/unplaced.
   const hasActiveBlockToday = sqlite.prepare(
     `SELECT 1 FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
-      AND status NOT IN ('completed','skipped','cancelled','missed')
+      AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
       AND start_at < ? AND end_at > ? LIMIT 1`,
   );
   const activeToday = (taskId: string) => !!hasActiveBlockToday.get(taskId, owner, dayEndISO, dayStartISO);
