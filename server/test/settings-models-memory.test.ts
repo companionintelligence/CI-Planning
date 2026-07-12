@@ -87,7 +87,8 @@ describe('memory service', () => {
   });
 
   it('syncToMemory pushes (fixture, no network) once enabled + connected + creds resolve', async () => {
-    process.env.CI_SERVER_URL = 'http://ci.local:3000'; // env creds → available; MEMORY_MODE unset → fixture
+    process.env.CI_SERVER_URL = 'http://ci.local:3000'; // env creds → available
+    process.env.MEMORY_MODE = 'fixture'; // explicit fixture opt-in (unset = off)
     setPrefs({ memory_sync_enabled: 1, memory_account: 'liam@x.io' });
     const r = await syncToMemory(OWNER);
     expect(r.ok).toBe(true);

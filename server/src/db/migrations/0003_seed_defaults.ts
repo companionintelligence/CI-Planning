@@ -17,7 +17,9 @@ export function up(db: Database): void {
 
   const existing = db.prepare('SELECT id FROM owners WHERE id = 1').get();
   if (!existing) {
-    db.prepare('INSERT INTO owners (id, name, email) VALUES (1, ?, ?)').run('Liam', 'liam.broza@gmail.com');
+    // Neutral identity — this row becomes the SYSTEM owner sentinel (remapped in 0030)
+    // and, in single-owner mode, the identity the UI shows. Never seed personal data.
+    db.prepare('INSERT INTO owners (id, name, email) VALUES (1, ?, ?)').run('System', null);
     db.prepare('INSERT INTO scheduling_prefs (owner_id, timezone) VALUES (1, ?)').run(serverTimezone());
   }
 

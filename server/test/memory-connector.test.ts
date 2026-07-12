@@ -73,7 +73,7 @@ beforeEach(() => {
   `);
   delete process.env.CI_SERVER_URL;
   delete process.env.CI_SERVER_API_KEY;
-  delete process.env.MEMORY_MODE;
+  process.env.MEMORY_MODE = 'fixture';
 });
 
 describe('creds resolution chain', () => {

@@ -15,6 +15,25 @@ export type { CalendarConnector, RemoteEvent, RemoteEventInput, ListEventsResult
  * broken connection never silently resumes syncing. Returns an empty array when no
  * active tokens are stored — sync becomes a no-op.
  */
+/**
+ * Active Google account names for the current owner (connection_tokens rows with
+ * status='active'). Empty when nothing is connected — ingest becomes a no-op, the
+ * same posture getConnectors() gives sync.
+ */
+export function googleAccounts(): string[] {
+  const ownerId = currentOwnerId();
+  try {
+    const rows = sqlite
+      .prepare(
+        "SELECT account FROM connection_tokens WHERE owner_id = ? AND provider = 'google' AND status = 'active'",
+      )
+      .all(ownerId) as { account: string }[];
+    return rows.map((r) => r.account);
+  } catch {
+    return [];
+  }
+}
+
 export function getConnectors(): CalendarConnector[] {
   const ownerId = currentOwnerId();
   let rows: { provider: string; account: string }[];

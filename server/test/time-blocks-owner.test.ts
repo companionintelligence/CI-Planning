@@ -132,7 +132,7 @@ describe('0099 time_blocks.owner_id — backfill', () => {
       );
     `);
     // SYSTEM_OWNER_ID sorts first (zero timestamp bytes) → it is the "single owner" fallback.
-    db.prepare(`INSERT INTO owners (id, name) VALUES (?, 'Liam'), (?, 'Owner B')`).run(SYSTEM_OWNER_ID, SECOND_OWNER_ID);
+    db.prepare(`INSERT INTO owners (id, name) VALUES (?, 'System'), (?, 'Owner B')`).run(SYSTEM_OWNER_ID, SECOND_OWNER_ID);
     db.prepare(`INSERT INTO tasks (id, owner_id) VALUES ('task-b', ?)`).run(SECOND_OWNER_ID);
     db.prepare(`INSERT INTO time_blocks (id, task_id, title, start_at, end_at) VALUES ('blk-task', 'task-b', 'T', '2026-06-22T10:00:00Z', '2026-06-22T11:00:00Z')`).run();
     db.prepare(`INSERT INTO time_blocks (id, task_id, title, block_kind, start_at, end_at) VALUES ('blk-cont', NULL, 'Container', 'timeblock', '2026-06-22T09:00:00Z', '2026-06-22T12:00:00Z')`).run();

@@ -25,11 +25,12 @@ import { logger } from '../lib/logger.js';
  * the config singleton) so tests can toggle it — same precedent as mcp/google.ts
  * fixturesDir().
  *
- * Transport modes (MEMORY_MODE, default 'fixture'): fixture reads
- * server/fixtures/memory/graph.json and never touches the network — the same
- * offline-by-default posture as the Google fixture connector. NOTE: fixture mode is a
- * TRANSPORT switch only; availability (memoryConnectorAvailable) stays creds-driven in
- * both modes, so flag-off/no-creds behavior is identical across modes.
+ * Transport modes (MEMORY_MODE, unset ⇒ 'off'): off disables the transport entirely
+ * (memoryCreds reports unavailable, every transport call throws MemoryUnavailable);
+ * fixture — an explicit dev/demo opt-in — reads server/fixtures/memory/graph.json and
+ * never touches the network, the same posture as the Google fixture connector. NOTE:
+ * fixture mode is a TRANSPORT switch only; availability (memoryConnectorAvailable)
+ * stays creds-driven in live/fixture, so flag-off/no-creds behavior is identical.
  *
  * Every transport/4xx/5xx failure surfaces as MemoryUnavailable so callers degrade
  * deterministically (the McpUnavailable / OllamaUnavailable contract).
@@ -118,9 +119,15 @@ export interface GraphDataFilters {
   includeTypes?: string[];
 }
 
-/** Transport mode. Read per-call (tests flip it); default fixture = fully offline. */
-export function memoryMode(): 'live' | 'fixture' {
-  return process.env.MEMORY_MODE === 'live' ? 'live' : 'fixture';
+/**
+ * Transport mode. Read per-call (tests flip it). Unset ⇒ 'off': no memory transport at
+ * all. Fixture — a committed sample graph plus faked push success — must be an explicit
+ * opt-in (MEMORY_MODE=fixture), never a default a real deployment hits by omission.
+ */
+export function memoryMode(): 'live' | 'fixture' | 'off' {
+  if (process.env.MEMORY_MODE === 'live') return 'live';
+  if (process.env.MEMORY_MODE === 'fixture') return 'fixture';
+  return 'off';
 }
 
 /**
@@ -149,6 +156,9 @@ function readMemoryBlob(owner: string): MemoryBlob | null {
 }
 
 export function memoryCreds(owner: string): ResolvedMemoryCreds | null {
+  // MEMORY_MODE unset ⇒ the memory layer is off: report unavailable so every consumer
+  // (suggest agent, brief, push job) degrades to its clean "not connected" no-op.
+  if (memoryMode() === 'off') return null;
   try {
     const blob = readMemoryBlob(owner);
     if (blob) {
@@ -340,6 +350,9 @@ export async function resolveLiveMemoryCreds(owner: string): Promise<MemoryCreds
 // ── live transport ─────────────────────────────────────────────────────────────
 
 async function getJson<T>(owner: string, path: string, params: Record<string, string | undefined>): Promise<T> {
+  if (memoryMode() === 'off') {
+    throw new MemoryUnavailable('Memory transport is off (set MEMORY_MODE=live or fixture)');
+  }
   const creds = await resolveLiveMemoryCreds(owner);
   if (!creds) throw new MemoryUnavailable('No CI-Server credentials configured (connect in Settings or set CI_SERVER_URL)');
   const qs = new URLSearchParams();
@@ -414,7 +427,12 @@ function num(v: unknown): number {
  */
 export async function postEvents(owner: string, events: MemoryEvent[]): Promise<MemoryIngestResult> {
   if (events.length === 0) return { ingested: 0, duplicate: 0, rejected: 0 };
+  if (memoryMode() === 'off') {
+    throw new MemoryUnavailable('Memory transport is off (set MEMORY_MODE=live or fixture)');
+  }
   if (memoryMode() === 'fixture') {
+    // Explicit dev/demo opt-in: nothing leaves the box; the caller's job log marks
+    // this "(fixture — nothing sent)" so operators aren't misled by the counts.
     return { ingested: events.length, duplicate: 0, rejected: 0 };
   }
   const creds = await resolveLiveMemoryCreds(owner);

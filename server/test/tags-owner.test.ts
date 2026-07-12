@@ -95,7 +95,7 @@ describe('0100 tags.owner_id — backfill', () => {
       id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE,
       kind TEXT NOT NULL DEFAULT 'intention', muted INTEGER NOT NULL DEFAULT 0, is_base INTEGER NOT NULL DEFAULT 0
     );`);
-    db.prepare(`INSERT INTO owners (id, name) VALUES (?, 'Liam'), (?, 'B')`).run(SYSTEM_OWNER_ID, SECOND_OWNER_ID);
+    db.prepare(`INSERT INTO owners (id, name) VALUES (?, 'System'), (?, 'B')`).run(SYSTEM_OWNER_ID, SECOND_OWNER_ID);
     db.prepare(`INSERT INTO tags (id, name, kind, is_base) VALUES ('t1', 'work', 'pattern', 1), ('t2', 'errands', 'intention', 0)`).run();
 
     m0100.up(db);
