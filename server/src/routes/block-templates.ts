@@ -13,6 +13,7 @@ import {
   listBlockTemplates,
   getBlockTemplate,
   createBlockTemplate,
+  upsertBlockTemplateByName,
   updateBlockTemplate,
   deleteBlockTemplate,
 } from '../services/block-templates.js';
@@ -38,12 +39,29 @@ export function blockTemplatesRouter() {
     ctx.body = { block_templates: listBlockTemplates(currentOwnerId()).map(serializeTemplate) };
   });
 
+  // AF-8: optional `upsert: true` routes "save as template" through the by-name
+  // upsert so re-saving a block refreshes the existing template instead of
+  // duplicating it. Convention: 201 + `{ block_template, updated: false }` when a
+  // new row was created, 200 + `{ block_template, updated: true }` when an existing
+  // same-named template was refreshed. Without the flag (absent/false) the handler
+  // is byte-identical to the historical create-always path: 201 + `{ block_template }`
+  // (no `updated` key).
   router.post('/api/block-templates', async (ctx) => {
-    const body = (ctx.request.body ?? {}) as { name?: string; tag?: string; default_minutes?: number; tasks?: unknown };
-    const res = createBlockTemplate(currentOwnerId(), body as Parameters<typeof createBlockTemplate>[1]);
+    const body = (ctx.request.body ?? {}) as { name?: string; tag?: string; default_minutes?: number; tasks?: unknown; upsert?: boolean };
+    const owner = currentOwnerId();
+    if (body.upsert === true) {
+      const res = upsertBlockTemplateByName(owner, body as Parameters<typeof upsertBlockTemplateByName>[1]);
+      if (!res.ok) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
+      const out = serializeTemplate(res.row);
+      broadcast(owner, res.kind === 'updated' ? 'block_template:updated' : 'block_template:created', out);
+      ctx.status = res.kind === 'updated' ? 200 : 201;
+      ctx.body = { block_template: out, updated: res.kind === 'updated' };
+      return;
+    }
+    const res = createBlockTemplate(owner, body as Parameters<typeof createBlockTemplate>[1]);
     if (!res.ok) { ctx.status = 422; ctx.body = { error: 'name is required' }; return; }
     const out = serializeTemplate(res.row);
-    broadcast(currentOwnerId(), 'block_template:created', out);
+    broadcast(owner, 'block_template:created', out);
     ctx.status = 201;
     ctx.body = { block_template: out };
   });

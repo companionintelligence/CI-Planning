@@ -257,8 +257,11 @@ export const api = {
 
   blockTemplates: {
     list: () => request<{ block_templates: BlockTemplate[] }>('GET', '/block-templates'),
-    create: (body: { name: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[] }) =>
-      request<{ block_template: BlockTemplate }>('POST', '/block-templates', body),
+    // AF-8: pass `upsert: true` to update the owner's existing template of the same
+    // (case-insensitive) name instead of duplicating it; the response then carries
+    // `updated` (true = refreshed an existing template, false = created new).
+    create: (body: { name: string; tag?: string; default_minutes?: number; tasks?: TemplateTask[]; upsert?: boolean }) =>
+      request<{ block_template: BlockTemplate; updated?: boolean }>('POST', '/block-templates', body),
     update: (id: string, body: { name?: string; tag?: string | null; default_minutes?: number }) =>
       request<{ block_template: BlockTemplate }>('PATCH', `/block-templates/${id}`, body),
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/block-templates/${id}`),
