@@ -168,8 +168,9 @@ export function PlannerEntityCard(props: {
         offset_minutes: Math.max(0, Math.round((Date.parse(x.start_at) - s) / 60000)),
       }));
     try {
-      await api.blockTemplates.create({ name: b.title, tag: b.tag ?? undefined, default_minutes: Math.round((e - s) / 60000), tasks: members });
-      showToast(`Saved "${b.title}" template (${members.length} task${members.length === 1 ? '' : 's'})`, 'success');
+      // AF-8: upsert by name — re-saving a same-named block refreshes its template.
+      const { updated } = await api.blockTemplates.create({ name: b.title, tag: b.tag ?? undefined, default_minutes: Math.round((e - s) / 60000), tasks: members, upsert: true });
+      showToast(`${updated ? 'Updated' : 'Saved'} "${b.title}" template (${members.length} task${members.length === 1 ? '' : 's'})`, 'success');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
   // §L: quick-add a routine's tasks into this Plan (reuses place-today with a block_id).
