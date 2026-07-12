@@ -43,7 +43,8 @@ export interface Task {
   is_habit?: boolean;
   is_fast_task?: boolean; // ritual-local, hidden from the task list (Step 3)
   subtype?: 'standard' | 'habit' | 'quick'; // CON-2c canonical Task subtype (is_habit/is_fast_task kept as aliases)
-  objective_id?: string | null; // §I: first linked objective — drives the 8-pointed star + its click target
+  objective_id?: string | null; // §I: first linked objective — drives the 8-pointed star + its click target. Invariant: === objective_ids[0] ?? null
+  objective_ids?: string[]; // AF-10: ALL linked objectives (owner-scoped, created_at,id order — first element == objective_id)
 }
 
 export interface TaskInput {

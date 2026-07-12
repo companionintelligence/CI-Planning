@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 
 let srv: TestServer;
 beforeAll(async () => { srv = await startTestServer(); });
@@ -121,6 +121,17 @@ describe('auto-promote task-with-subtasks → objective', () => {
     expect(sqlite.prepare(`SELECT 1 FROM objectives WHERE id = ?`).get(objId)).toBeTruthy();
   });
 
+  it('subtasks endpoint carries objective_ids alongside objective_id', async () => {
+    const parent = await createTask('Promoted parent');
+    const sub = await createTask('a sub', parent);
+    const objId = objectivesOf(parent)[0];
+    const subs = (await api(srv.url, `/api/tasks/${parent}/subtasks`, { method: 'GET' })).body
+      .subtasks as { id: string; objective_id: string | null; objective_ids: string[] }[];
+    const row = subs.find((s) => s.id === sub)!;
+    expect(row.objective_ids).toEqual([objId]);
+    expect(row.objective_id).toBe(objId);
+  });
+
   it('cancelling a linked task does not inflate objective progress', async () => {
     const parent = await createTask('Progress host');
     const s1 = await createTask('s1', parent);
@@ -132,5 +143,91 @@ describe('auto-promote task-with-subtasks → objective', () => {
     const p = (sqlite.prepare(`SELECT progress_cache FROM objectives WHERE id = ?`).get(objId) as { progress_cache: number | null }).progress_cache;
     // Remaining linked tasks (parent + s2) are all open → 0, never inflated by the cancel.
     expect(p === null || p === 0).toBe(true);
+  });
+});
+
+/**
+ * AF-10 — `objective_ids` surfaces ALL links (M:N made honest) with the same
+ * semantics as GraphQL TaskType.objective: owner-scoped, linked=1 only,
+ * ORDER BY objectives.created_at, id; objective_id stays = objective_ids[0].
+ */
+describe('AF-10 — objective_ids on task payloads', () => {
+  const insertObjective = (id: string, title: string, createdAt: string, owner = SYSTEM_OWNER): string => {
+    sqlite
+      .prepare(`INSERT INTO objectives (id, owner_id, title, level, horizon, status, cadence, created_at, updated_at) VALUES (?, ?, ?, 'objective', 'none', 'active', 'none', ?, ?)`)
+      .run(id, owner, title, createdAt, createdAt);
+    return id;
+  };
+  const link = (objectiveId: string, taskId: string, linked = 1): void => {
+    sqlite.prepare(`INSERT INTO objective_tasks (objective_id, task_id, linked) VALUES (?, ?, ?)`).run(objectiveId, taskId, linked);
+  };
+  const taskRow = async (taskId: string) => {
+    const list = (await api(srv.url, '/api/tasks', { method: 'GET' })).body.tasks as {
+      id: string; objective_id: string | null; objective_ids: string[];
+    }[];
+    return list.find((t) => t.id === taskId)!;
+  };
+
+  it('carries ALL links ordered by created_at then id; objective_id === objective_ids[0]', async () => {
+    const taskId = await createTask('Serves three objectives');
+    // created_at is the primary sort key (NOT the surrogate id): give the
+    // LATEST-sorting id the EARLIEST created_at so id-ordering would misplace it.
+    const late = insertObjective('00000000-0000-7000-8000-00000000000f', 'earliest created', '2026-01-01');
+    const a = insertObjective('00000000-0000-7000-8000-00000000000a', 'tiebreak a', '2026-02-01');
+    const b = insertObjective('00000000-0000-7000-8000-00000000000b', 'tiebreak b', '2026-02-01');
+    // Scrambled insertion order — must not leak into the response order.
+    link(b, taskId); link(late, taskId); link(a, taskId);
+
+    const row = await taskRow(taskId);
+    expect(row.objective_ids).toEqual([late, a, b]); // created_at first, then id tiebreak
+    expect(row.objective_id).toBe(row.objective_ids[0]);
+  });
+
+  it('excludes tombstoned links (linked=0)', async () => {
+    const taskId = await createTask('Had two, kept one');
+    const kept = insertObjective('00000000-0000-7000-8000-000000000001', 'kept', '2026-01-01');
+    const dropped = insertObjective('00000000-0000-7000-8000-000000000002', 'dropped', '2026-01-02');
+    link(kept, taskId); link(dropped, taskId, 0);
+
+    const row = await taskRow(taskId);
+    expect(row.objective_ids).toEqual([kept]);
+    expect(row.objective_id).toBe(kept);
+  });
+
+  it("owner isolation: a stray link to another owner's objective never surfaces", async () => {
+    createOwner(SECOND_OWNER_ID);
+    const taskId = await createTask('Mine');
+    const mine = insertObjective('00000000-0000-7000-8000-000000000011', 'mine', '2026-01-02');
+    const foreign = insertObjective('00000000-0000-7000-8000-000000000010', 'foreign', '2026-01-01', SECOND_OWNER_ID);
+    // Dangling cross-owner row (sync/import corruption) — must be invisible even
+    // though its objective sorts FIRST (earlier created_at).
+    link(foreign, taskId); link(mine, taskId);
+
+    const row = await taskRow(taskId);
+    expect(row.objective_ids).toEqual([mine]);
+    expect(row.objective_id).toBe(mine);
+  });
+
+  it('no links → objective_ids [] and objective_id null', async () => {
+    const row = await taskRow(await createTask('Loose'));
+    expect(row.objective_ids).toEqual([]);
+    expect(row.objective_id).toBeNull();
+  });
+
+  it('REST objective_id agrees with GraphQL TaskType.objective on a multi-linked task', async () => {
+    const taskId = await createTask('Parity check');
+    const first = insertObjective('00000000-0000-7000-8000-000000000022', 'first by created_at', '2026-01-01');
+    const second = insertObjective('00000000-0000-7000-8000-000000000021', 'second despite lower id', '2026-01-02');
+    link(second, taskId); link(first, taskId);
+
+    const rest = await taskRow(taskId);
+    const res = await fetch(`${srv.url}/api/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: `{ task(id: "${taskId}") { objective { id } } }` }),
+    });
+    const gqlObjective = ((await res.json()) as { data: { task: { objective: { id: string } | null } } }).data.task.objective;
+    expect(gqlObjective?.id).toBe(first);
+    expect(rest.objective_id).toBe(gqlObjective?.id ?? null); // REST ↔ GraphQL same first pick
   });
 });

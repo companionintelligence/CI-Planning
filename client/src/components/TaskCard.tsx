@@ -130,7 +130,11 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
   });
   const [query, setQuery] = createSignal('');
   const leafCount = () => leafObjectives(objectivesTree() ?? []).length;
-  const rows = () => buildPickerRows(objectivesTree() ?? [], query(), props.task.objective_id);
+  // AF-10: checked-state comes from the FULL linked set (M:N), not just the first
+  // link. objective_id fallback covers payloads from before objective_ids shipped.
+  const linkedIds = () =>
+    props.task.objective_ids ?? (props.task.objective_id ? [props.task.objective_id] : []);
+  const rows = () => buildPickerRows(objectivesTree() ?? [], query(), linkedIds());
 
   async function link(id: string, title: string) {
     try {
@@ -196,14 +200,8 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
             <p class="px-3 py-1.5 text-xs text-muted-foreground">No match</p>
           </Show>
         </div>
-        <Show when={props.task.objective_id}>
-          <button
-            onClick={() => unlink(props.task.objective_id!)}
-            class="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"
-          >
-            <X size={12} /> Remove from objective
-          </button>
-        </Show>
+        {/* AF-10: no "Remove from objective" footer — with M:N links a single
+            footer is ambiguous; each CHECKED row toggles ITS OWN link off. */}
       </Show>
     </div>
   );

@@ -16,7 +16,7 @@ import { requestReplan } from '../engine/auto-defense.js';
 import { placeStartAnchoredTask, type StartAnchoredOutcome } from '../engine/autoplan.js';
 import { computeStreak } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
-import { firstObjectiveByTaskIds } from '../services/task-promotion.js';
+import { objectiveIdsByTaskIds } from '../services/task-promotion.js';
 import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds } from '../services/tags.js';
 import {
   createTask, createRecurringTask, updateTask, deleteTask,
@@ -62,14 +62,16 @@ export function tasksRouter() {
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
-    const objectiveById = firstObjectiveByTaskIds(ids); // §I: drives the 8-pointed star + its link target
+    const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
       depends_on: getDependencies(t.id),
       blocked: blocked.has(t.id),
-      objective_id: objectiveById.get(t.id) ?? null,
+      // §I star + AF-10 card picker. objective_id = objective_ids[0] ?? null (back compat).
+      objective_ids: objectivesById.get(t.id) ?? [],
+      objective_id: objectivesById.get(t.id)?.[0] ?? null,
     }));
 
     // Filter by tag after attachment (simple approach for v1)
@@ -208,12 +210,14 @@ export function tasksRouter() {
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
-    const objectiveById = firstObjectiveByTaskIds(ids); // §I: subtasks of a promoted parent are linked too — show their star
+    const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
-      objective_id: objectiveById.get(t.id) ?? null,
+      // objective_id = objective_ids[0] ?? null (back compat with the single-link shape).
+      objective_ids: objectivesById.get(t.id) ?? [],
+      objective_id: objectivesById.get(t.id)?.[0] ?? null,
     }));
     ctx.body = { subtasks: withTags };
   });
