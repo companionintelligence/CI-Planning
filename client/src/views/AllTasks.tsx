@@ -1,4 +1,4 @@
-import { createSignal, createResource, Show, For } from 'solid-js';
+import { createSignal, createResource, createMemo, onCleanup, Show, For } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
 import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight } from 'lucide-solid';
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask } from '../stores/index.js';
@@ -55,8 +55,8 @@ export function AllTasks() {
   // exactly one, so no double-count). Scheduled/Routine stay excluded exactly as before —
   // even when a scheduled task is sitting in New Today — and done/cancelled rows never
   // count. The midnight rollover (New Today → Open) leaves this number unchanged.
-  const activeTaskCount = () =>
-    headerOpenCount(shownList(), { isRoutine: (t) => isRoutineTask(t.id), isScheduled: isScheduledish });
+  // Derived from the shared `sections` memo (defined below) — no second partition run.
+  const activeTaskCount = () => headerOpenCount(sections(), isScheduledish);
 
   // Tasks/Objectives/Habits/Routines/Timeblock tabs. Tasks & Habits list the backlog
   // (both exclude subtasks + recurrence instances — a series collapses to its template);
@@ -100,8 +100,30 @@ export function AllTasks() {
   // "Scheduled" = a real placement on the planner (any engine) OR a persisted scheduled/
   // in_progress status — so auto-placed tasks group correctly, not just manual ones.
   const isScheduledish = (t: Task) => t.status === 'scheduled' || t.status === 'in_progress' || scheduledByTaskId().has(t.id);
-  const sections = () =>
-    partitionTaskSections(shownList(), { isRoutine: (t) => isRoutineTask(t.id), isScheduled: isScheduledish });
+
+  // Day-tick: the New Today boundary must move at the local midnight even if the view
+  // just sits open — otherwise New Today never drains until some unrelated state change.
+  // A signal holds today's local date; a timeout re-armed for the NEXT local midnight
+  // (delay recomputed each fire — DST can stretch/shrink a day, so never assume 24h)
+  // bumps it, which re-runs the sections memo below. Small buffer past midnight guards
+  // against timers firing a hair early. Component-scoped; cleaned up on unmount.
+  const [todayISO, setTodayISO] = createSignal(localISODate());
+  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+  const armMidnightTick = () => {
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+    midnightTimer = setTimeout(() => {
+      setTodayISO(localISODate());
+      armMidnightTick();
+    }, nextMidnight.getTime() - now.getTime() + 250);
+  };
+  armMidnightTick();
+  onCleanup(() => clearTimeout(midnightTimer));
+
+  // One shared partition for the section lists AND the header count (component-scoped
+  // memo — repo gotcha: module-scope memos evaluate eagerly and break resource ordering).
+  const sections = createMemo(() =>
+    partitionTaskSections(shownList(), { isRoutine: (t) => isRoutineTask(t.id), isScheduled: isScheduledish, todayISO: todayISO() }));
   const newTodayList = () => sections().newToday;
   const routineList = () => sections().routine;
   const scheduledList = () => sections().scheduled;

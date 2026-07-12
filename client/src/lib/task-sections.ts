@@ -4,10 +4,15 @@ import { localISODate } from './dates.js';
 /**
  * AF-7 · Tasks-tab sectioning.
  *
- * The default Tasks tab groups the active backlog into four derived sections, in
- * render order: New Today → Open → Scheduled → Routine. This module is the single,
- * pure authority for that partition so it can be unit-tested without a DOM (the
- * client test runner has no jsdom).
+ * The default Tasks tab groups the active backlog into four derived sections. Two
+ * distinct orderings are at play — don't conflate them:
+ *
+ * - UI render order (top → bottom):     New Today, Open, Scheduled, Routine.
+ * - Membership precedence (which single section a task lands in, first match wins):
+ *   Routine > New Today > Scheduled > Open — see `partitionTaskSections`.
+ *
+ * This module is the single, pure authority for that partition so it can be
+ * unit-tested without a DOM (the client test runner has no jsdom).
  */
 
 /** Top-level = not a subtask and not a recurrence instance; those nest under a parent. */
@@ -82,10 +87,11 @@ export function partitionTaskSections(list: Task[], opts: SectionPredicates): Ta
  * task lands in exactly one section, so summing the two filtered sections cannot
  * double-count. Counting by predicate rather than by section also means the midnight
  * rollover (New Today → Open) leaves the total unchanged when nothing else changes.
+ * Takes an already-computed partition so callers reuse their sections memo instead of
+ * re-running the partition just for the count.
  */
-export function headerOpenCount(list: Task[], opts: SectionPredicates): number {
-  const s = partitionTaskSections(list, opts);
+export function headerOpenCount(sections: TaskSections, isScheduled: (t: Task) => boolean): number {
   const isOpenish = (t: Task) =>
-    t.status !== 'done' && t.status !== 'cancelled' && !opts.isScheduled(t);
-  return s.open.filter(isOpenish).length + s.newToday.filter(isOpenish).length;
+    t.status !== 'done' && t.status !== 'cancelled' && !isScheduled(t);
+  return sections.open.filter(isOpenish).length + sections.newToday.filter(isOpenish).length;
 }
