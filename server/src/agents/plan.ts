@@ -44,7 +44,9 @@ import { memoryConnectorAvailable } from '../services/memory.js';
  * tags after 0121 moved them to level 2 (this is exactly the pre-split flat set).
  * `primary_tags` is the level-1-only list (the direction) for `tags[0]`-style
  * PRIMARY reads (clustering) — optional so test literals that only set `tags`
- * keep working; absent, primary reads fall back to `tags` (the pre-split shape). */
+ * keep working. It is set ONLY when level 1 is non-empty: absent (direction-less
+ * task / pre-split literal), primary reads fall back to `tags`, so clustering
+ * still keys on the first intention rather than collapsing into one '' group. */
 export interface PlanTask {
   task_id: string;
   title: string;
@@ -218,11 +220,17 @@ function getStagedTasks(owner: string): PlanTask[] {
   // primary_tags = L1 only. See the PlanTask doc for which consumers read which.
   return rows.map((r) => {
     const levels = entityTagLevels('task', r.task_id);
+    const primary = levels.filter((t) => t.level === 1).map((t) => t.name);
     return {
       ...r,
       priority: r.priority ?? 3,
       tags: levels.map((t) => t.name),
-      primary_tags: levels.filter((t) => t.level === 1).map((t) => t.name),
+      // OMITTED (not []) when the task has no level-1 tag: tagGroupPostPass reads
+      // `(primary_tags ?? tags)[0]`, and only an ABSENT field reaches the `tags`
+      // fallback — so a direction-less task clusters by its first intention (the
+      // pre-split behavior). An empty array would defeat the ?? and lump every
+      // direction-less task into one '' group.
+      ...(primary.length ? { primary_tags: primary } : {}),
     };
   });
 }
@@ -375,8 +383,10 @@ export function tagGroupPostPass(indices: number[], tasks: PlanTask[]): number[]
 
   // AF-11: cluster by the PRIMARY (level-1 direction) tag — grouping the day by
   // direction is the desired outcome, so this deliberately ignores the widened
-  // L1∪L2 match set. Falls back to `tags` for callers that don't set primary_tags
-  // (test literals; pre-split shape).
+  // L1∪L2 match set. `primary_tags` is ABSENT (never []) for a direction-less
+  // task and for callers that don't set it (test literals; pre-split shape) —
+  // both fall back to `tags`, so a direction-less task still clusters by its
+  // first intention.
   const groupKey = (idx: number): string => (tasks[idx].primary_tags ?? tasks[idx].tags)[0] ?? '';
 
   // Determine the first-seen position for each group
