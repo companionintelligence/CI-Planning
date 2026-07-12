@@ -29,10 +29,13 @@ export function llmRouter() {
       // never throws on a bad token row, so this can't 500 the endpoint.
       // Mode comes from config, not a client instance — createGoogleClient() throws in
       // 'off' mode (fixture must never be handed out silently), and this endpoint must
-      // keep reporting status even when the integration is off.
+      // keep reporting status even when the integration is off. `source` says where the
+      // mode came from: 'env' (GOOGLE_MODE pinned), 'app' (in-app Settings setup), or
+      // 'off' (neither) — the Settings card words its states off this.
       google: {
         mode: config.google.mode,
         liveEnabled: config.google.mode === 'live',
+        source: config.google.envPinned ? 'env' : config.google.mode === 'live' ? 'app' : 'off',
         connections: connectionHealth(currentOwnerId()),
       },
       // Phase H: whether Web Push can actually deliver (VAPID keys present). In-app
