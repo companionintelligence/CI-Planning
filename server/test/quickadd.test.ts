@@ -108,6 +108,27 @@ describe('POST /api/tasks/quick', () => {
     }
   });
 
+  it('rides the shared createTask service — exactly one audit row per quick-add', async () => {
+    // Quick-add used to insert directly into tasks (its own audit + reminders),
+    // skipping the service seam. Now it calls createTask like POST /api/tasks, so
+    // service-side rules apply and the audit trail is single-sourced.
+    const srv = await startTestServer();
+    try {
+      const res = await api<{ task: { id: string } }>(
+        srv.url,
+        '/api/tasks/quick',
+        { method: 'POST', json: { text: 'Audit me #ops' } },
+      );
+      expect(res.status).toBe(201);
+      const rows = sqlite
+        .prepare(`SELECT action FROM audit_log WHERE entity = ?`)
+        .all(`task:${res.body.task.id}`) as { action: string }[];
+      expect(rows).toEqual([{ action: 'create' }]);
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('400s on empty text', async () => {
     const srv = await startTestServer();
     try {

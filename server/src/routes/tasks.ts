@@ -15,13 +15,12 @@ import { rescheduleTask } from '../engine/review.js';
 import { requestReplan } from '../engine/auto-defense.js';
 import { placeStartAnchoredTask, type StartAnchoredOutcome } from '../engine/autoplan.js';
 import { computeStreak } from '../engine/recurrence-ops.js';
-import { syncTaskReminders } from '../engine/reminders.js';
 import { objectiveIdsByTaskIds } from '../services/task-promotion.js';
 import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, splitNamesByDirection } from '../services/tags.js';
 import {
   createTask, createRecurringTask, updateTask, deleteTask,
   promoteToHabit, recallTask, skipRecurringInstance,
-  applyTaskTagLevels, taskSecondaryTags, updateTouchesSchedule,
+  taskSecondaryTags, updateTouchesSchedule,
   type CreateTaskInput, type UpdateTaskInput,
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
@@ -159,29 +158,32 @@ export function tasksRouter() {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
     }
 
-    let [task] = await db
-      .insert(tasks)
-      .values({
-        title: enriched.title,
-        dueAt: enriched.dueAt,
-        scheduledFor: enriched.scheduledFor,
-        taskTime: enriched.taskTime,
-        estimatedMinutes: enriched.estimatedMinutes,
-        priority: enriched.priority ?? 3,
-        ownerId: currentOwnerId(),
-      })
-      .returning();
+    // AF-11 Slice 2: quick-add's flat name list is leveled BY KIND — known direction
+    // names land at level 1 (the single primary axis), everything else (intentions +
+    // brand-new names, created with the default kind='intention') at level 2. The
+    // split stays at the route (it's quick-add's parse shape, not a create rule);
+    // the leveled write itself rides createTask's tags/secondary_tags.
+    const { directions, others } = splitNamesByDirection(currentOwnerId(), enriched.tags);
 
-    if (enriched.tags.length) {
-      // AF-11 Slice 2: quick-add's flat name list is leveled BY KIND — known direction
-      // names land at level 1 (the single primary axis), everything else (intentions +
-      // brand-new names, created with the default kind='intention') at level 2. Before
-      // the split this wrote every name at L1, minting the L1 intentions that 0121
-      // reclassifies.
-      const { directions, others } = splitNamesByDirection(currentOwnerId(), enriched.tags);
-      applyTaskTagLevels(currentOwnerId(), task.id, { tags: directions, secondary: others });
+    // Shared create path (services/tasks.ts) — the same service POST /api/tasks uses,
+    // so tag-level sync, reminders, dependency handling, parent promotion, and the
+    // audit row are one code path and any future create rule applies here too.
+    const res = await createTask(currentOwnerId(), {
+      title: enriched.title,
+      due_at: enriched.dueAt,
+      scheduled_for: enriched.scheduledFor,
+      task_time: enriched.taskTime,
+      estimated_minutes: enriched.estimatedMinutes,
+      priority: enriched.priority ?? 3,
+      ...(enriched.tags.length ? { tags: directions, secondary_tags: others } : {}),
+    });
+    if (!res.ok) {
+      // Only title_required is reachable (no depends_on here) — defensive mapping.
+      ctx.status = 400;
+      ctx.body = { error: 'title is required' };
+      return;
     }
-    syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): quick-add may parse a due date
+    let task = res.task;
 
     // AD1: a scheduled task is placed on its day right away — task_time set → exact
     // placement; no time → that date's direction window → workday gap (owner decision).
@@ -204,7 +206,7 @@ export function tasksRouter() {
     // response matches what a follow-up GET returns; intentions ride in secondary_tags.
     const out = { ...taskToApi(task), tags: taskTagNames(task.id), secondary_tags: taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
-    writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
+    // No writeAudit here — createTask already wrote the 'create' audit row.
     ctx.status = 201;
     ctx.body = { task: out, parsed: enriched, llm };
   });
