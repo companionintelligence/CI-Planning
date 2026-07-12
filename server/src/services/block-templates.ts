@@ -120,6 +120,38 @@ export function createBlockTemplate(owner: string, input: CreateBlockTemplateInp
   return { ok: true, row };
 }
 
+export type UpsertResult = { ok: true; kind: 'created' | 'updated'; row: TemplateRow } | { ok: false; error: 'name_required' };
+
+/**
+ * AF-8 — "save as template" upserts by name so repeated saves of the same block
+ * refresh ONE template instead of piling up duplicates in TASKS > Time Blocks.
+ * Matches on (owner_id, name) with the incoming name trimmed and compared
+ * case-insensitively (NOCASE — same ASCII folding SQLite uses elsewhere). On a hit,
+ * tag / default_minutes / tasks are FULLY REPLACED with the same defaulting create
+ * uses (absent tag → NULL, minutes → 60, empty tasks → NULL); the stored name keeps
+ * its original casing. Pre-existing duplicates: the oldest row wins (uuid7 order).
+ * On a miss this IS createBlockTemplate — blank-name rejection identical. SSE stays
+ * transport-side (route fires block_template:created/updated off `kind`).
+ */
+export function upsertBlockTemplateByName(owner: string, input: CreateBlockTemplateInput): UpsertResult {
+  const name = input.name?.trim();
+  if (!name) return { ok: false, error: 'name_required' };
+  const existing = sqlite
+    .prepare(`SELECT * FROM block_templates WHERE owner_id = ? AND name = ? COLLATE NOCASE ORDER BY id LIMIT 1`)
+    .get(owner, name) as TemplateRow | undefined;
+  if (existing) {
+    const tasksJson = Array.isArray(input.tasks) && input.tasks.length ? JSON.stringify(input.tasks) : null;
+    const row = sqlite
+      .prepare(`UPDATE block_templates SET tag = ?, default_minutes = ?, tasks = ? WHERE id = ? AND owner_id = ? RETURNING *`)
+      .get(normalizeTag(input.tag), input.default_minutes ?? 60, tasksJson, existing.id, owner) as TemplateRow;
+    writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `block-template:${row.id}` });
+    return { ok: true, kind: 'updated', row };
+  }
+  const created = createBlockTemplate(owner, input);
+  if (!created.ok) return created; // unreachable (name already validated); keeps the type honest
+  return { ok: true, kind: 'created', row: created.row };
+}
+
 export type UpdateBlockTemplateInput = { name?: string; tag?: string | null; default_minutes?: number };
 export type UpdateResult = { ok: true; row: TemplateRow } | { ok: false; error: 'not_found' | 'name_required' };
 

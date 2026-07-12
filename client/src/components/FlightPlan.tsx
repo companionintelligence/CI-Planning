@@ -330,13 +330,15 @@ export function FlightPlan() {
       const n = name().trim();
       if (!n) return;
       try {
-        await api.blockTemplates.create({
+        // AF-8: upsert by name — a same-named saved block is refreshed, not duplicated.
+        const { updated } = await api.blockTemplates.create({
           name: n,
           default_minutes: Math.max(5, Number(minutes()) || 60),
           tag: tag().trim().replace(/^#/, '') || undefined,
+          upsert: true,
         });
         refetchBlockTemplates();
-        showToast(`Saved "${n}"`, 'success');
+        showToast(updated ? `Updated "${n}"` : `Saved "${n}"`, 'success');
         setName(''); setMinutes(60); setTag(''); setOpenForm(false);
       } catch (err) { showToast((err as Error).message, 'error'); }
     }
