@@ -36,7 +36,7 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
 
 | # | Noun | Definition |
 |---|------|------------|
-| 5 | **Inbox** | Capture / triage queue. (internal: `possible_tasks`; promoting one creates a Task) |
+| 5 | **Inbox** *(retired surface — Phase AF)* | Ingested "possible tasks" are deduplicated inline and **auto-promoted into Tasks** at the end of each run (AF-3) — no manual triage gate remains, and the standalone Inbox view is removed (AF-7). Newly created tasks (including auto-promoted suggestions) surface in the **New Today** section at the top of the Tasks view until the owner-local midnight rollover. (internal: `possible_tasks`, kept as the audit/dedup trail) |
 | 6 | **Flight-plan** | The day’s staging tray — what Auto runs over. |
 | 7 | **Planner** | The single-day, date-navigable cockpit board where Time Blocks live. The multi-day day/week/month view over the same Time Blocks is the **Calendar** (`/calendar`). |
 | 8 | **Pattern-block** | A named availability window tying a direction to a time range on a given day type. Constrains auto-placement and shades the Planner. | Workday (Mon–Fri) · Weekend (Sat–Sun) *(day types)* |

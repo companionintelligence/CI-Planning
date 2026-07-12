@@ -87,18 +87,19 @@ export function mergeTagNames(...lists: (string[] | undefined)[]): string[] {
 /**
  * AF-9 save shape for a time block: the level-1 `tag` is the SINGLE primary
  * (WORK/HOME/COMMUNITY — no more folding intentions into a comma-joined string)
- * and everything else — authored intention chips ∪ any preserved existing
- * secondary_tags — lands at level 2, deduped case-insensitively, minus the
- * primary itself and any category-name collisions (a category is never an
- * entity tag; same guard as the task path).
+ * and the authored intention chips land at level 2, deduped case-insensitively,
+ * minus the primary itself and any category-name collisions (a category is
+ * never an entity tag; same guard as the task path). The wizard round-trips a
+ * block's existing secondary_tags INTO `intentions` on load, so chips are the
+ * single level-2 source.
  */
 export function timeblockTagPayload(
-  form: Pick<ElementForm, 'primary' | 'intentions' | 'secondaryTags'>,
+  form: Pick<ElementForm, 'primary' | 'intentions'>,
   categoryNames: Set<string> = new Set(),
 ): { tag: string | undefined; secondary_tags: string[] } {
   const primary = form.primary.trim();
   const tag = primary && !categoryNames.has(primary.toLowerCase()) ? primary : undefined;
-  const secondary_tags = mergeTagNames(form.intentions, form.secondaryTags).filter(
+  const secondary_tags = mergeTagNames(form.intentions).filter(
     (n) => n.toLowerCase() !== primary.toLowerCase() && !categoryNames.has(n.toLowerCase()),
   );
   return { tag, secondary_tags };
@@ -136,10 +137,6 @@ export interface ElementForm {
   goalDay?: string;           // YYYY-MM-DD (someday)
   recurrenceRule?: string | null;  // time-block RRULE ('' / null clears)
   categoryId?: string;             // time-block: the Time Block Category (0069); direction implied
-  // time-block: existing level-2 tags a caller wants preserved WITHOUT round-tripping
-  // them into the chips (the wizard now loads them into `intentions` instead; on save
-  // this set is unioned + deduped with the chips — see timeblockTagPayload).
-  secondaryTags?: string[];
   // time-block membership (scheduled only): existing tasks/habits to scatter inside,
   // routines to place inside, and child blocks to detach — all applied on Save.
   attachTaskIds?: string[];
@@ -247,9 +244,9 @@ export async function saveElement(
 
   // timeblock
   const durMin = Math.max(form.durationMin ?? 60, 15);
-  // AF-9: level-1 tag = the single primary; intention chips ∪ preserved
-  // secondaryTags land at level 2 (deduped). Always send secondary_tags on edit
-  // so chip removals actually clear level 2; on create only when non-empty.
+  // AF-9: level-1 tag = the single primary; intention chips land at level 2
+  // (deduped). Always send secondary_tags on edit so chip removals actually
+  // clear level 2; on create only when non-empty.
   const { tag, secondary_tags } = timeblockTagPayload(form, categoryNames);
   const extra: Record<string, unknown> = {};
   if (mode === 'edit' || secondary_tags.length) extra.secondary_tags = secondary_tags;
@@ -258,6 +255,14 @@ export async function saveElement(
   // semantics preserve an omitted `tag`, so send the documented clearing value
   // (null → empties level 1 + nulls the column). Create keeps omitting.
   const tagOut = tag !== undefined ? tag : mode === 'edit' ? null : undefined;
+  // AF-CU2: category has the same JSON-drop hazard as `tag` — an omitted
+  // category_id is PRESERVED by the server's partial PATCH, so an EDIT that
+  // cleared the category must send the documented clearing value (null →
+  // clears category_id + color_token). Create keeps omitting when empty.
+  const categoryOut: Record<string, unknown> =
+    form.categoryId ? { category_id: form.categoryId }
+    : mode === 'edit' ? { category_id: null }
+    : {};
   let body: Record<string, unknown>;
   if (form.someday) {
     const goal = form.goalDay || localISODate();
@@ -267,7 +272,7 @@ export async function saveElement(
       tag: tagOut, goal_start_date: goal, duration_minutes: durMin, all_day: true,
       note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
-      ...(form.categoryId ? { category_id: form.categoryId } : {}),
+      ...categoryOut,
       ...extra,
     };
   } else {
@@ -277,7 +282,7 @@ export async function saveElement(
       tag: tagOut, note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...(form.recurrenceRule !== undefined ? { recurrence_rule: form.recurrenceRule } : {}),
-      ...(form.categoryId ? { category_id: form.categoryId } : {}),
+      ...categoryOut,
       ...extra,
     };
   }
