@@ -223,6 +223,7 @@ export function routineDerivedTagsByIds(ids: string[]): Map<string, DerivedRouti
            JOIN tags tg ON tg.id = et.tag_id AND tg.owner_id = p.owner_id
           WHERE pt.pattern_id IN (${placeholders})
           ORDER BY pt.pattern_id, tg.kind, tg.name`,
+      )
       .all(...chunk) as { id: string; name: string; kind: string }[];
     for (const r of rows) {
       const bucket = out.get(r.id);
