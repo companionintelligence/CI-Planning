@@ -27,7 +27,7 @@ Inert Suggest/Schedule toggle repointed to `trust_mode` (dead `auto_mode` column
 - **Profile editor**: `PATCH /api/owner/profile` + a Settings Profile card (all auth modes) — owners are no longer stuck as "System".
 - **Timezone auto-adopt**: a UTC-defaulted install adopts the browser zone once per browser.
 - **In-app Google connection setup** (migration 0124, `app_config`): an admin pastes a Google OAuth client in Settings → Connections and the connector flips to live at runtime — no env vars, no restart. Secret is KEK-sealed; `CP_MCP_COMMAND` now defaults to the bundled MCP server.
-- Docs truth pass: versions 0.3.0, migration heads 0124, Node engines 0`>=22`.
+- Docs truth pass: versions → 0.3.0, migration-head references corrected, Node engines → `>=22`. (#327 itself added migration 0124, so the current head on main is **0124**.)
 
 ### PR #328 — cross-tenant data-leak fixes (OPEN, green)
 The multi-tenant leak audit ran three parallel sweeps (REST/services, GraphQL/SSE/sync/export, schema/jobs/auth). **The planning-data core is fully owner-isolated** — tasks, blocks, tags, objectives, sync, SSE, export, and every GraphQL resolver/edge return "not found" for a cross-owner id. Four *edge* leaks were fixed:
@@ -54,8 +54,8 @@ The owner chose **true multi-tenant SaaS with a real operator/tenant role split*
 4. Verify per the doc: migration backfill, member/viewer/operator scope gating, last-operator guards, and the E2E (operator sees Accounts UI, member does not).
 
 ## Repo facts worth carrying over
-- **Windows/pnpm worktree**: run `pnpm install` in a fresh worktree; tests are `TZ=UTC pnpm vitest run` from `server/` and `client/`. Full server suite ~1,890 tests, client ~454.
-- **Dev DB** lives at `~/Library/Application Support/CompanionPlanning/companion.db` even on Windows (macOS default path); starting the server applies pending migrations to it.
+- **Windows/pnpm worktree**: run `pnpm install` in a fresh worktree; tests are `TZ=UTC pnpm test` from `server/` and `client/` (the `test` script runs `vitest run`; use `pnpm exec vitest run <path>` for a single file). Full server suite ~1,890 tests, client ~454.
+- **Dev DB**: `DB_PATH` should be set explicitly on Linux/Windows (per README + `.env.example`). When it's **unset**, `config.ts` falls back to the macOS-style default `~/Library/Application Support/CompanionPlanning/companion.db` regardless of OS — which is where this session's Windows dev DB landed. Starting the server applies pending migrations to whatever `DB_PATH` resolves to, so set it deliberately to avoid creating a DB in an unexpected directory.
 - **Auth modes**: `test` (dev, forbidden in production), `standalone` (hashed `x-api-key`, per-key scopes already supported), `sso` (CI-Portal OIDC or `DISABLE_OIDC` local username/password). Tests drive identity via `x-test-owner` / `x-test-scopes` headers.
 - **Migration convention**: additive/idempotent TS functions, appended to the `MIGRATIONS` array in `db/migrations/index.ts`; gaps 0009 and 0119 are intentionally unused — don't reuse them.
 - One trivial open PR unrelated to this work: **#324** (docs: require green CI before merge).
