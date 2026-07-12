@@ -8,7 +8,6 @@ import { fireDueReminders } from '../engine/reminders.js';
 import { ingestEmails, ingestEvents, type IngestResult } from '../agents/ingest.js';
 import { createGoogleClient } from '../mcp/google.js';
 import { googleAccounts } from '../connectors/index.js';
-import { memoryMode } from '../connectors/memory.js';
 import { suggestFromMemory } from '../agents/memory-suggest.js';
 import { syncToMemory } from '../services/memory.js';
 import { promotePossibles, dedupePossibles, surfaceOverdue } from '../agents/groom.js';
@@ -159,12 +158,14 @@ async function execute(kind: string): Promise<JobOutcome> {
       }
       const c = r.counts;
       const pushed = c.completed + c.habits + c.reflections;
-      const fixtureNote = memoryMode() === 'fixture' ? ' (fixture — nothing sent)' : '';
-      return {
-        itemsCreated: 0,
-        itemsUpdated: pushed,
-        log: `Pushed ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)) → ingested ${c.ingested}, duplicate ${c.duplicate}, rejected ${c.rejected}${fixtureNote}`,
-      };
+      // Fixture mode does no network — its "ingested" tally is simulated. Say so,
+      // rather than logging a push that never left the box. (transport comes from the
+      // sync result itself, so the log can't diverge from what the service actually did.)
+      const log =
+        r.transport === 'fixture'
+          ? `Fixture mode — simulated push of ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)); nothing sent to CI-Server`
+          : `Pushed ${pushed} event(s) (${c.completed} completed, ${c.habits} habit(s), ${c.reflections} reflection(s)) → ingested ${c.ingested}, duplicate ${c.duplicate}, rejected ${c.rejected}`;
+      return { itemsCreated: 0, itemsUpdated: pushed, log };
     }
     case 'promote_possibles': {
       // AF-3: the standalone cron row was retired (0118; nightly_grooming subsumes it),

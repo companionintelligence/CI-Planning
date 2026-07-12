@@ -1162,7 +1162,6 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "enable_rituals",
       "auto_fill_workday",
       "recall_keeps_pattern",
-      "auto_mode",
       "fill_order",
       "auto_defense_enabled",
       "trust_mode",

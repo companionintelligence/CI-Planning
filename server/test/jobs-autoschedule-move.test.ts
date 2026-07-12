@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb } from './helpers.js';
@@ -25,6 +25,15 @@ const OWNER = SYSTEM_OWNER;
 // The job calls autoScheduleOnIngest() with no explicit date → it places for TODAY. Build
 // the Plan window on today's UTC date so the tag-matched placement (Pass 1) can route into it.
 const DATE = new Date().toISOString().slice(0, 10);
+
+beforeAll(() => {
+  // Pin the clock (Date only) to NOON of that day: the Plan window below is 16:00–18:00Z
+  // on the real today, so with a live clock any run after ~17:30Z has no room left to
+  // place the 30-min task (≥now clamp) and the test was an hour-of-day bomb.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(`${DATE}T12:00:00.000Z`));
+});
+afterAll(() => { vi.useRealTimers(); });
 
 function lastRun(kind: string) {
   return sqlite

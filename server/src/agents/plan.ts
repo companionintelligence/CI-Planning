@@ -775,14 +775,17 @@ function signalPlanNeedsReview(owner: string, date: string, score: number): void
   broadcast(owner, 'plan:needs_review', { date, score });
 }
 
-// ─── §A4 — NL planning constraints (pins-first MVP) ──────────────────────────
+// ─── §A4 — NL planning constraints ────────────────────────────────────────────
 //
 // `POST /api/plan/instruct` → parse free text into a TYPED, validated constraint
 // set the deterministic placer consumes. The rubric is pure schema validation (no
 // LLM judge): malformed/unknown/contradictory ⇒ `invalid` (the route returns 422,
 // never a partial apply); Ollama down ⇒ `unavailable` (503). Time PINS are applied
-// as locked obstacle blocks; tag/ordering HINTS are parsed + returned but not yet
-// wired into placement (deferred — see the doc's A4 "as-built").
+// as locked obstacle blocks. Tag/ordering HINTS are persisted to `plan_hints` (mig
+// 0071) and ENFORCED on the next autoplan run: `placeHintWindows` (engine/autoplan.ts)
+// hard-enforces tag_before/tag_after clock windows in placement, and `constraintLine`
+// below folds every hint (incl. `batch`; contiguity itself is §A2's post-pass) into
+// the smart-mode ordering prompt.
 
 export interface PlanPin { title: string; start_at: string; end_at: string }
 export interface PlanHint { kind: 'tag_before' | 'tag_after' | 'batch'; tag: string; time?: string }

@@ -44,6 +44,9 @@ const MIN_PASSWORD_LENGTH = 8;       // V: server-side floor for a reset passwor
 // `ip:<addr>` for per-IP (login, ciportal start, reset-request) and `reset:<identifier>`
 // for the per-account reset-request axis (V9 — hammering one account's mailbox).
 const attempts = new Map<string, number[]>();
+// Once-per-process latch for the reset-request "SMTP not configured" warning — the
+// endpoint is public, so a per-request warn would let anyone spam the logs.
+let warnedResetWithoutSmtp = false;
 function rateLimitedKey(key: string): boolean {
   const { windowMs, issueMax } = config.auth.rateLimit;
   const now = Date.now();
@@ -203,8 +206,27 @@ export function authRouter() {
           .prepare(`SELECT id, email, backup_email FROM owners WHERE username = ? AND id <> ? LIMIT 1`)
           .get(id, SYSTEM_OWNER_ID)) as { id: string; email: string | null; backup_email: string | null } | undefined;
 
-    // The neutral response is returned in every branch below.
-    const NEUTRAL = { ok: true, message: 'If an account matches, a reset link is on its way.' };
+    // The response is returned in every branch below and depends ONLY on server config,
+    // never on whether the identifier matched — the anti-enumeration invariant. With no
+    // SMTP configured the mail adapter can only log the link to the server console
+    // (lib/mail: console transport), so promising "a reset link is on its way" to a
+    // remote user would be a lie; say what actually happens instead. Config-derived text
+    // is constant across real and fake identifiers, so it leaks nothing about accounts.
+    const NEUTRAL = config.mail.host
+      ? { ok: true, delivery: 'email' as const, message: 'If an account matches, a reset link is on its way.' }
+      : {
+          ok: true,
+          delivery: 'log' as const,
+          message:
+            'This server has no outgoing email configured. If an account matches, the reset link was written to the server log — ask the operator for it.',
+        };
+    if (!config.mail.host && !warnedResetWithoutSmtp) {
+      // Once per process: this endpoint is public and rate-limit-spammable, and the
+      // condition is config-level, so repeating it per request is pure log noise.
+      // (Startup already warns via lib/config.ts when local login is on in production.)
+      warnedResetWithoutSmtp = true;
+      logger.warn('reset-request: SMTP not configured — any reset link is only written to the server log');
+    }
 
     if (owner) {
       // Primary destination is owners.email; backup_email is the fallback. A local owner

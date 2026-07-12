@@ -217,11 +217,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Auto's secondary workday-window fallback (0028). Plans are filled first;
   // this gates whether leftover tasks also fill open 9–6 time. Default ON.
   autoFillWorkday: integer('auto_fill_workday', { mode: 'boolean' }).default(true),
-  // Trust toggle (0052): 'suggest' (stepped taps) | 'schedule' (zero-click on ingest).
-  // VESTIGIAL since 0070 — superseded by trustMode below; no readers, kept for one
-  // release before a contract migration drops it. Do not add new readers.
-  autoMode: text('auto_mode').notNull().default('suggest'),
-  // Trust dial (0070) — the 3-state automation Setting that replaced auto_mode.
+  // Trust dial (0070) — the 3-state automation Setting that replaced the 0052
+  // auto_mode toggle (column dropped in 0123; the top-bar Suggest/Schedule toggle
+  // now writes this dial: Schedule ⇔ 'hands_off', Suggest ⇔ 'balanced').
   // AF-3 retired its auto-PROMOTE facet (all possibles now promote unconditionally at
   // ingestion); the dial governs ONLY auto-blocking/planning:
   // 'cautious' | 'balanced' (no auto-block; the default) | 'hands_off' (auto-block

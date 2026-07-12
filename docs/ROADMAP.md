@@ -63,7 +63,7 @@
 | | **Y** Env-config (`server/.env.example` documents every env var) | U, V | S | ✅ done (#217) |
 | | **Z** Time-Sense (Focus Ritual + calibration loop) — *flag-gated* | N, M | L | ✅ done, behind `time_sense_enabled` (flag-off = behavior-neutral; migs 0106–0109, #246/#251/#257) |
 | | **W** GraphQL CRUD layer *alongside* REST (`POST /api/graphql`, Apollo 5 + Koa 3) | T, U | L | ✅ **done** — full W1–W13 + W-sandbox + W-close surface merged (perf-index mig 0112); board [W-graphql-crud.md](W-graphql-crud.md) |
-| | **Z** *(naming consolidation — separate phase)* tag-axis revert `pattern`→`direction`; `patterns`→`routines`; drop `auto_mode` | — | S | ◐ **partial** — W2 done (mig 0105, #239); W1 + W4 planned/unbuilt |
+| | **Z** *(naming consolidation — separate phase)* tag-axis revert `pattern`→`direction`; `patterns`→`routines`; drop `auto_mode` | — | S | ◐ **partial** — W2 done (mig 0105, #239); W4 done (mig 0123); W1 planned/unbuilt |
 
 **G ticket order (✅ shipped):** G1 patterns → G3 time-blocks → G4/A′ flight-plan+Auto → G6/F′ PLANNER → G5 cockpit → G8 textures all landed (G2's "habit→pattern" was superseded: habits stayed **task-level** via `subtype`). **G7** custom Routine-type management UI is **shipped** (#115, W1-C); **G-INT** (timing intelligence) remains deferred. The detailed spec [archive/G-rituals-reflection.md](archive/G-rituals-reflection.md) is **HISTORICAL** (old `pattern_types`-as-routine model) — archived for history only.
 
@@ -84,7 +84,7 @@ Everything after N (the phase map above stopped at N in the old status). One lin
 **Two phases were both named "Z"** (confusingly):
 
 - **Z — Time-Sense** ✅ *flag-gated.* A Focus Ritual + estimate-calibration loop, entirely behind the `time_sense_enabled` master flag (flag-off = byte-identical to Phase N behavior). Z0 scoped estimate calibration, Z1 EOD alignment, Z2 daily-brief fold-in, Z3 "Keep working" `extendBlock` + "Schedule again", Z3b Focus Ritual client screen, Z4 focus-cue background reminders + vibrate, Z5 per-cue prefs, Z6 suggest-only estimate chip, Z7 voice loop. Migs 0106 (`time_sense_flag`) / 0107 (`calibration_scope`) / 0108 (`focus_prefs`) / 0109 (`copy_history`, not in owner export). PRs #246/#251/#257. Spec: docs/Z-focus-ritual.md.
-- **Z — Naming consolidation** ◐ *separate phase.* W2 (tag-axis revert `pattern`→`direction`: `tags.kind='direction'`, `tag_directions`, GraphQL `TagKind=DIRECTION`) **shipped** (mig 0105, #239). W1 (`patterns`→`routines` table rename) and W4 (drop vestigial `auto_mode`) remain **unbuilt/planned**.
+- **Z — Naming consolidation** ◐ *separate phase.* W2 (tag-axis revert `pattern`→`direction`: `tags.kind='direction'`, `tag_directions`, GraphQL `TagKind=DIRECTION`) **shipped** (mig 0105, #239). W4 (drop vestigial `auto_mode`) **shipped** (mig 0123; the top-bar Suggest/Schedule toggle now drives `trust_mode` — Schedule ⇔ `hands_off`). W1 (`patterns`→`routines` table rename) remains **unbuilt/planned**.
 
 **UI / calendar feedback waves** ✅ (owner feedback, landed): QuickAdd mounted in Today (#241), Planner de-scroll (#240), Flight-Plan tabs + saved-blocks + search (#242), calendar three-axis tag filter (#247), calendar container-outlines + click-to-add + no-task-drag (#248), select-date → day-type picker (#253), collapsed night hours (12am–7am / 9pm–midnight, #256).
 
