@@ -9,6 +9,7 @@ import { api, type Block, type Task } from '../lib/api.js';
 import { directionColorForTask, BASE_TAG_DEFAULTS } from '../lib/pattern-meta.js';
 import { blockColorVar } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
+import { splitTagNames } from '../lib/multi-tag.js';
 import { PX_PER_MIN, minutesIntoDay } from '../lib/grid.js';
 import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, TOP_COLLAPSE_END, BOTTOM_COLLAPSE_START } from '../lib/day-axis.js';
 import { isImmovable } from '../lib/drag.js';
@@ -95,17 +96,18 @@ export function PlannerEntityCard(props: {
     return b ? blockColorVar(b, categoryPrefs()?.prefs) : 'var(--primary)';
   };
 
-  // The grouping label: a block's #tag or its Time Block Category name (0069); a
-  // task's first tag.
-  const groupLabel = () => {
+  // The grouping labels: a block's #tag(s) or its Time Block Category name (0069); a
+  // task's first tag. AF-11 Slice 5: a block tag can be a comma-joined multi-direction
+  // union (legacy wizard / routine-container rows) — each name gets its own chip.
+  const groupLabels = (): string[] => {
     const b = blockSel();
     if (b) {
-      if (b.tag) return `#${b.tag}`;
-      if (b.category_id) { const c = (tags() ?? []).find((t) => t.id === b.category_id); if (c) return displayTag(c.name); }
-      return undefined;
+      if (b.tag) return splitTagNames(b.tag).map((n) => `#${n}`);
+      if (b.category_id) { const c = (tags() ?? []).find((t) => t.id === b.category_id); if (c) return [displayTag(c.name)]; }
+      return [];
     }
     const t = task();
-    return t?.tags?.[0] ? `#${t.tags[0]}` : undefined;
+    return t?.tags?.[0] ? [`#${t.tags[0]}`] : [];
   };
   const secondary = () => task()?.secondary_tags ?? blockSel()?.secondary_tags ?? [];
   const durationMin = () => {
@@ -186,7 +188,8 @@ export function PlannerEntityCard(props: {
       // The engine only places routine members whose tag matches a tagged block, and
       // only where a gap fits — so "placed 0" is a real outcome, not a success.
       if (result.placed > 0) showToast(`Added ${result.placed} from "${name}"`, 'success');
-      else if (b.tag) showToast(`Nothing in "${name}" is tagged #${b.tag} — nothing added`, 'default');
+      // AF-11 Slice 5: the block tag can be a multi-name union — show every name.
+      else if (b.tag) showToast(`Nothing in "${name}" is tagged ${splitTagNames(b.tag).map((n) => `#${n}`).join(' / ')} — nothing added`, 'default');
       else showToast(`"${name}" didn't fit this block`, 'default');
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -197,8 +200,12 @@ export function PlannerEntityCard(props: {
     const b = blockSel();
     const all = blockTemplates() ?? [];
     // Prefer templates matching the block's tag ("of a type"); fall back to all when
-    // the block is untagged/category-owned so the picker is never empty.
-    return b?.tag ? all.filter((t) => t.tag === b.tag) : all;
+    // the block is untagged/category-owned so the picker is never empty. AF-11 Slice 5:
+    // equality is PER-NAME — a multi-direction block matches a template on any of its
+    // names (and a legacy multi-name template tag is split the same way).
+    if (!b?.tag) return all;
+    const blockNames = new Set(splitTagNames(b.tag).map((n) => n.toLowerCase()));
+    return all.filter((t) => splitTagNames(t.tag).some((n) => blockNames.has(n.toLowerCase())));
   };
   async function applyTemplate(templateId: string, name: string) {
     const b = blockSel(); if (!b) return;
@@ -278,9 +285,9 @@ export function PlannerEntityCard(props: {
               </div>
             )}
           </Show>
-          <Show when={groupLabel() || secondary().length > 0}>
+          <Show when={groupLabels().length > 0 || secondary().length > 0}>
             <div class="flex flex-wrap items-center gap-1">
-              <Show when={groupLabel()}>{(lbl) => <span class="text-[11px] px-1.5 py-0.5 rounded-full" style={{ color: accent(), 'background-color': `color-mix(in srgb, ${accent()} 14%, transparent)` }}>{lbl()}</span>}</Show>
+              <For each={groupLabels()}>{(lbl) => <span class="text-[11px] px-1.5 py-0.5 rounded-full" style={{ color: accent(), 'background-color': `color-mix(in srgb, ${accent()} 14%, transparent)` }}>{lbl}</span>}</For>
               <For each={secondary()}>{(name) => <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground">{name}</span>}</For>
             </div>
           </Show>

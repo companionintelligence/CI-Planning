@@ -6,6 +6,7 @@ import { dueFilter, toggleDirection, setHideHabits, setHideRoutines } from '../s
 import { FocusRitual } from '../components/FocusRitual.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
+import { splitTagNames } from '../lib/multi-tag.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { dueItems } from '../lib/task-buckets.js';
 import { QuickAdd } from '../components/QuickAdd.js';
@@ -52,10 +53,12 @@ export function Today() {
   const stepDay = (n: number) => setSelectedDay(addDays(selectedDay(), n));
 
   // The tag set of everything scheduled today — the shape of the day at a glance.
+  // AF-11 Slice 5: a block tag can be a comma-joined multi-direction union — add
+  // each split name, never the raw joined string.
   const todayTags = createMemo(() => {
     const set = new Set<string>();
     for (const b of blocks() ?? []) {
-      if (b.tag) set.add(b.tag);
+      for (const n of splitTagNames(b.tag)) set.add(n);
       for (const t of taskOf(b.task_id)?.tags ?? []) set.add(t);
     }
     return [...set];

@@ -3,7 +3,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { placePatternOnDay } from '../engine/patterns-place.js';
-import { removeEntityTags } from '../services/tags.js';
+import { removeEntityTags, routineDerivedTagsByIds } from '../services/tags.js';
 import { writeAudit } from '../lib/audit.js';
 import {
   serializeType, serializePattern, taskIdsOf, setMembers, type PatternRow,
@@ -67,7 +67,11 @@ export function patternsRouter() {
 
   // ── Patterns ───────────────────────────────────────────────────────────────
   router.get('/api/patterns', async (ctx) => {
-    ctx.body = { patterns: listPatternRows(currentOwnerId()).map(serializePattern) };
+    // AF-11: derived tags are batched across the whole list (one union query),
+    // then handed to serializePattern per row — no per-routine N+1.
+    const rows = listPatternRows(currentOwnerId());
+    const derived = routineDerivedTagsByIds(rows.map((r) => r.id));
+    ctx.body = { patterns: rows.map((p) => serializePattern(p, derived.get(p.id))) };
   });
 
   router.get('/api/patterns/:id', async (ctx) => {
@@ -76,6 +80,8 @@ export function patternsRouter() {
     ctx.body = { pattern: serializePattern(p) };
   });
 
+  // AF-11: a `tag` in the POST/PATCH body is accepted for API compat but IGNORED —
+  // routines author no tags; their `directions`/`intentions` derive from member tasks.
   router.post('/api/patterns', async (ctx) => {
     const owner = currentOwnerId();
     const res = createPattern(owner, (ctx.request.body ?? {}) as Parameters<typeof createPattern>[1]);

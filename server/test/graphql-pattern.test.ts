@@ -80,13 +80,35 @@ describe('W6 — PatternType', () => {
     const m = await gql(`mutation { createPattern(input: { name: "Morning", kindId: "${kindId('Routine')}", tag: "am", taskIds: ["${a}", "${b}"] }) { success pattern { id name tag } } }`);
     expect(m.body.data.createPattern.success).toBe(true);
     const id = m.body.data.createPattern.pattern.id;
-    expect(m.body.data.createPattern.pattern).toMatchObject({ name: 'Morning', tag: 'am' });
+    // AF-11: `tag` in the input is accepted for API compat but IGNORED — routines
+    // author no tags (directions/intentions derive from member tasks).
+    expect(m.body.data.createPattern.pattern).toMatchObject({ name: 'Morning', tag: null });
 
     const r = await gql(`{ pattern(id: "${id}") { name kind { name } tasks { id title } } }`);
     expect(r.body.data.pattern.kind.name).toBe('Routine');
     expect(r.body.data.pattern.tasks.map((t: any) => t.title).sort()).toEqual(['Meditate', 'Stretch']);
     // REST sees the same pattern.
     expect((await api(srv.url, `/api/patterns/${id}`)).body.pattern.name).toBe('Morning');
+  });
+
+  it('directions/intentions derive from member tasks — union, multi-direction (AF-11)', async () => {
+    const tagId = (name: string, kind: string): string => {
+      const ex = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`).get(OWNER, name) as { id: string } | undefined;
+      return ex ? ex.id : (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, ?) RETURNING id`).get(OWNER, name, kind) as { id: string }).id;
+    };
+    const attach = (taskId: string, tag: string, kind: string, level = 1) =>
+      sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`).run(taskId, tagId(tag, kind), level);
+    const a = insertTask('Deep work');
+    const b = insertTask('Family dinner');
+    attach(a, 'work', 'direction'); attach(a, 'deep', 'intention', 2);
+    attach(b, 'home', 'direction'); attach(b, 'deep', 'intention', 2);
+    const m = await gql(`mutation { createPattern(input: { name: "Mixed", kindId: "${kindId('Routine')}", taskIds: ["${a}", "${b}"] }) { pattern { id directions intentions tag } } }`);
+    expect(m.body.errors).toBeUndefined();
+    expect(m.body.data.createPattern.pattern).toMatchObject({
+      tag: null,
+      directions: ['home', 'work'], // MULTIPLE directions are legal — name-sorted union
+      intentions: ['deep'],         // deduped across members
+    });
   });
 
   it('patterns lists the owner\'s patterns', async () => {
@@ -96,10 +118,10 @@ describe('W6 — PatternType', () => {
     expect(r.body.data.patterns.map((p: any) => p.name).sort()).toEqual(['P1', 'P2']);
   });
 
-  it('updatePattern renames + retags; deletePattern removes', async () => {
+  it('updatePattern renames (tag input is accepted-and-ignored, AF-11); deletePattern removes', async () => {
     const id = (await gql(`mutation { createPattern(input: { name: "Old", kindId: "${kindId('Routine')}" }) { pattern { id } } }`)).body.data.createPattern.pattern.id;
     const u = await gql(`mutation { updatePattern(input: { id: "${id}", name: "New", tag: "x" }) { pattern { name tag } } }`);
-    expect(u.body.data.updatePattern.pattern).toEqual({ name: 'New', tag: 'x' });
+    expect(u.body.data.updatePattern.pattern).toEqual({ name: 'New', tag: null });
     const d = await gql(`mutation { deletePattern(input: { id: "${id}" }) { success deletedId } }`);
     expect(d.body.data.deletePattern).toEqual({ success: true, deletedId: id });
     expect((await gql(`{ pattern(id: "${id}") { id } }`)).body.data.pattern).toBeNull();

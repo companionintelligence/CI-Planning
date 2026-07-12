@@ -392,7 +392,9 @@ export function TaskCard(props: Props) {
             <div
               aria-hidden="true"
               style={{
-                ...textureStyle(r().type?.icon_shape, r().pattern.tag),
+                // AF-11: routines no longer author a tag — seed from the first
+                // DERIVED direction (legacy pattern.tag as fallback).
+                ...textureStyle(r().type?.icon_shape, r().pattern.directions?.[0] ?? r().pattern.tag),
                 color: colorVar(r().type?.color_token),
                 'z-index': '-1',
                 'border-radius': 'inherit',

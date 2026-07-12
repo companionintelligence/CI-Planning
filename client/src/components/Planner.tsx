@@ -26,6 +26,7 @@ import { displayTag } from '../lib/tag-tax.js';
 import { pickNextUp, segmentExtentPx, dragDeltaMin } from '../lib/planner.js';
 import { computeBands, type Band } from '../lib/day-windows.js';
 import { localISODate } from '../lib/dates.js';
+import { splitTagNames } from '../lib/multi-tag.js';
 import { PatternBlockOverlay } from './PatternBlockOverlay.js';
 import { DirectionColumn } from './DirectionColumn.js';
 import { PlannerEntityCard } from './PlannerEntityCard.js';
@@ -35,14 +36,16 @@ function editTimeBlock(id: string) {
   setElementModal({ open: true, mode: 'edit', kind: 'timeblock', editTarget: { kind: 'timeblock', id } });
 }
 
-/** A block's grouping chip label: its #tag, else its Time Block Category name (0069). */
-function blockTagLabel(block: { tag?: string | null; category_id?: string | null }): string | undefined {
-  if (block.tag) return `#${block.tag}`;
+/** A block's grouping chip labels: its #tag(s), else its Time Block Category name (0069).
+ * AF-11 Slice 5: `tag` can be a comma-joined multi-direction union (legacy wizard /
+ * routine-container rows) — split it so each name renders as its own chip. */
+function blockTagLabels(block: { tag?: string | null; category_id?: string | null }): string[] {
+  if (block.tag) return splitTagNames(block.tag).map((n) => `#${n}`);
   if (block.category_id) {
     const c = (tags() ?? []).find((t) => t.id === block.category_id);
-    if (c) return displayTag(c.name);
+    if (c) return [displayTag(c.name)];
   }
-  return undefined;
+  return [];
 }
 
 /**
@@ -378,8 +381,8 @@ function ContainerOutline(props: { block: Block; day: string; state: () => AxisS
         </div>
         <Show when={e().heightPx >= 34}>
           <div class="flex flex-wrap items-center gap-x-1 text-[10px] leading-none opacity-90">
-            {/* 0069: the grouping label is the #tag OR the Time Block Category name. */}
-            <Show when={blockTagLabel(b())}>{(lbl) => <span class="truncate">{lbl()}</span>}</Show>
+            {/* 0069: the grouping label is the #tag(s) OR the Time Block Category name. */}
+            <For each={blockTagLabels(b())}>{(lbl) => <span class="truncate">{lbl}</span>}</For>
             <For each={b().secondary_tags ?? []}>{(s) => <span class="truncate">#{s}</span>}</For>
           </div>
         </Show>
@@ -411,7 +414,7 @@ function HeaderChip(props: { block: Block; concept?: boolean }) {
         <Pentagon size={10} class="text-muted-foreground flex-shrink-0" />
       </Show>
       <span class="text-foreground truncate">{props.block.title}</span>
-      <Show when={blockTagLabel(props.block)}>{(lbl) => <span class="text-primary flex-shrink-0">{lbl()}</span>}</Show>
+      <For each={blockTagLabels(props.block)}>{(lbl) => <span class="text-primary flex-shrink-0">{lbl}</span>}</For>
     </span>
   );
 }
@@ -423,7 +426,11 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
   // Linked subtasks of this chip's task (excludes thrown-away). Drives the count badge.
   const subCount = () => { const t = task(); return t ? (tasks() ?? []).filter((x) => x.parent_id === t.id && x.status !== 'cancelled').length : 0; };
   const pat = () => patternForTask(b().task_id);
-  const tag = () => task()?.tags?.[0] ?? b().tag ?? undefined;
+  // AF-11 Slice 5: a block's tag string can be a comma-joined union — split it. The
+  // task's own first tag stays the single primary; single-seed consumers (texture,
+  // hatch) take the FIRST name via tag(); the chip row renders every name.
+  const tagNames = () => { const t = task()?.tags?.[0]; return t ? [t] : splitTagNames(b().tag); };
+  const tag = () => tagNames()[0];
   // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
   const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
   const conflict = () => props.placed.cols > 1;
@@ -510,7 +517,9 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
     >
       {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
       <Show when={pat()}>
-        {(p) => <div style={textureStyle(p().type?.icon_shape, p().pattern.tag ?? tag() ?? null)} />}
+        {/* AF-11: routines no longer author a tag — seed the texture from the routine's
+            first DERIVED direction (pattern.tag stays as a legacy fallback). */}
+        {(p) => <div style={textureStyle(p().type?.icon_shape, p().pattern.directions?.[0] ?? p().pattern.tag ?? tag() ?? null)} />}
       </Show>
 
       {/* Update-mode checkbox (top-left) — the explicit affordance; tapping the
@@ -550,7 +559,7 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         </div>
         <Show when={e().heightPx >= 30}>
           <div class="flex items-center gap-1.5 text-muted-foreground truncate">
-            <Show when={tag()}>{(t) => <span class="text-primary truncate">#{t()}</span>}</Show>
+            <For each={tagNames()}>{(t) => <span class="text-primary truncate">#{t}</span>}</For>
             <span class="tabular-nums">{fmtTime(b().start_at)}–{fmtTime(b().end_at)}</span>
           </div>
         </Show>
@@ -892,14 +901,14 @@ export function Planner() {
         >
           <Pentagon size={10} class="text-muted-foreground flex-shrink-0" />
           <span class="text-foreground truncate">{props.block.title}</span>
-          <Show when={blockTagLabel(props.block)}>{(lbl) => <span class="text-primary flex-shrink-0">{lbl()}</span>}</Show>
+          <For each={blockTagLabels(props.block)}>{(lbl) => <span class="text-primary flex-shrink-0">{lbl}</span>}</For>
         </button>
         <Show when={open()}>
           <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div class="absolute top-full left-0 mt-1 z-30 w-56 rounded-lg border border-border bg-popover shadow-xl p-3">
             <div class="text-sm font-medium text-foreground truncate">{props.block.title}</div>
             <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Show when={blockTagLabel(props.block)}>{(lbl) => <span class="text-primary">{lbl()}</span>}</Show>
+              <For each={blockTagLabels(props.block)}>{(lbl) => <span class="text-primary">{lbl}</span>}</For>
               <Show when={props.block.goal_start_date}>{(d) => <span>· goal {d()}</span>}</Show>
               <Show when={props.block.duration_minutes}>{(m) => <span>· {m()}m</span>}</Show>
             </div>
