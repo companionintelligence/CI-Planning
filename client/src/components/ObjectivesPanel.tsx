@@ -1,5 +1,6 @@
-import { createResource, createSignal, createEffect, For, Show, onMount } from 'solid-js';
+import { createResource, createSignal, createEffect, For, Show, onMount, onCleanup } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
+import { on } from '../lib/sse.js';
 import {
   Plus, ChevronRight, ChevronDown, Circle, Square, Diamond,
   AlertTriangle, Clock, ArrowRight, Pencil, Trash2, Star,
@@ -54,6 +55,12 @@ export function ObjectivesPanel() {
   const expandState = new Map<string, boolean>();
   const [params] = useSearchParams();
   const focusId = () => (typeof params.focus === 'string' ? params.focus : undefined); // §K: clicking a task's star deep-links here
+  // AF-CU2: the ?focus scroll must be ONE-SHOT. Nothing consumes the param, so
+  // every refetch (quick-add, toggle-done, delete, wizard-close) used to remount
+  // the nodes and yank the viewport back to the focused row. Panel-scoped,
+  // non-reactive (like expandState): remember which id already scrolled; a NEW
+  // focus id scrolls once again. focusId keeps driving ancestor auto-expand.
+  const focusScroll: { consumedId?: string } = {};
   const [modal, setModal] = createSignal<
     null | { mode: 'create'; parentId?: string } | { mode: 'edit'; objective: Objective }
   >(null);
@@ -67,6 +74,25 @@ export function ObjectivesPanel() {
     if (wasOpen && !open) refetch();
     return open;
   }, elementModal().open);
+
+  // AF-CU2 (owner decision): live tree updates. The server broadcasts these four
+  // events (routes/objectives.ts, services/task-promotion.ts) but nothing client-
+  // side consumed them — the tab only refreshed on its own actions. Component-
+  // scoped on purpose (stores/index.ts belongs to another lane); `on()` returns
+  // an unsubscribe. Debounced trailing 300ms so an SSE burst (e.g. task-promotion
+  // fanning out objective + link events) collapses into one refetch.
+  let sseTimer: ReturnType<typeof setTimeout> | undefined;
+  const debouncedRefetch = () => {
+    clearTimeout(sseTimer);
+    sseTimer = setTimeout(() => refetch(), 300);
+  };
+  const unsubscribes = [
+    'objective:created', 'objective:updated', 'objective:deleted', 'objective_task:updated',
+  ].map((ev) => on(ev, debouncedRefetch));
+  onCleanup(() => {
+    clearTimeout(sseTimer);
+    for (const off of unsubscribes) off();
+  });
 
   async function deleteObjective(obj: Objective) {
     if (!confirm(`Delete "${obj.title}"?`)) return;
@@ -114,6 +140,7 @@ export function ObjectivesPanel() {
                 obj={obj}
                 depth={0}
                 expandState={expandState}
+                focusScroll={focusScroll}
                 focusId={focusId()}
                 onEdit={(o) => setModal({ mode: 'edit', objective: o })}
                 onDelete={deleteObjective}
@@ -158,6 +185,8 @@ function ObjectiveNode(props: {
   depth: number;
   /** Panel-scoped memory of explicit expand/collapse toggles — survives tree refetches. */
   expandState: Map<string, boolean>;
+  /** Panel-scoped one-shot latch for the ?focus scroll (AF-CU2) — survives refetch remounts. */
+  focusScroll: { consumedId?: string };
   focusId?: string;
   onEdit: (o: Objective) => void;
   onDelete: (o: Objective) => void;
@@ -178,8 +207,15 @@ function ObjectiveNode(props: {
   const isFocus = () => !!props.focusId && props.obj.id === props.focusId;
 
   // §K: when deep-linked (?focus=id), scroll the target node into view + highlight it.
+  // AF-CU2: ONE-SHOT per focus id — refetches remount every node, and without the
+  // latch each remount re-scrolled the viewport back here. Highlight (ring) stays.
   let rowRef: HTMLDivElement | undefined;
-  onMount(() => { if (isFocus() && rowRef) rowRef.scrollIntoView({ block: 'center', behavior: 'smooth' }); });
+  onMount(() => {
+    if (isFocus() && rowRef && props.focusScroll.consumedId !== props.obj.id) {
+      props.focusScroll.consumedId = props.obj.id;
+      rowRef.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  });
 
   // Rot: progress is null OR (cadence not 'none' AND no next action).
   const isRotting = () =>
@@ -503,6 +539,7 @@ function ObjectiveNode(props: {
                 obj={child}
                 depth={props.depth + 1}
                 expandState={props.expandState}
+                focusScroll={props.focusScroll}
                 focusId={props.focusId}
                 onEdit={props.onEdit}
                 onDelete={props.onDelete}
