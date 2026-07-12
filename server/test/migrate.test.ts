@@ -3,6 +3,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
 import { runMigrations, rebuildTable } from '../src/db/migrate.js';
 import { MIGRATIONS } from '../src/db/migrations/index.js';
+import { up as dropAutoMode } from '../src/db/migrations/0122_drop_auto_mode.js';
 
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 
@@ -153,16 +154,42 @@ describe('0049 api_keys store', () => {
 });
 
 describe('0052 auto-scheduling columns', () => {
-  it('adds auto_mode, auto_run_id, and last_auto_run_id', () => {
+  it('adds auto_run_id and last_auto_run_id (auto_mode is dropped again by 0122)', () => {
     const db = fresh();
     runMigrations(db);
-    expect(cols(db, 'scheduling_prefs')).toContain('auto_mode');
     expect(cols(db, 'time_blocks')).toContain('auto_run_id');
     expect(cols(db, 'owners')).toContain('last_auto_run_id');
+    db.close();
+  });
+});
 
-    // auto_mode defaults to the safe 'suggest' on any seeded prefs row.
-    const seeded = db.prepare(`SELECT auto_mode FROM scheduling_prefs LIMIT 1`).get() as { auto_mode: string } | undefined;
-    if (seeded) expect(seeded.auto_mode).toBe('suggest');
+describe('0122 drop auto_mode (Z · W4)', () => {
+  it('the full chain ends with no auto_mode column and trust_mode present', () => {
+    const db = fresh();
+    runMigrations(db);
+    expect(cols(db, 'scheduling_prefs')).not.toContain('auto_mode');
+    expect(cols(db, 'scheduling_prefs')).toContain('trust_mode');
+    db.close();
+  });
+
+  it('carries a post-0070 Schedule click into trust_mode, never overriding an explicit dial', () => {
+    // Synthetic pre-0122 shape (rebuildTable-test precedent): the UI kept writing
+    // auto_mode after 0070, so 'schedule' + still-default 'balanced' is recorded
+    // intent → upgrade to 'hands_off'. An explicit non-default dial wins.
+    const db = fresh();
+    db.exec(`CREATE TABLE scheduling_prefs (owner_id TEXT PRIMARY KEY, auto_mode TEXT NOT NULL DEFAULT 'suggest', trust_mode TEXT NOT NULL DEFAULT 'balanced');`);
+    db.prepare(`INSERT INTO scheduling_prefs VALUES ('clicked-schedule', 'schedule', 'balanced')`).run();
+    db.prepare(`INSERT INTO scheduling_prefs VALUES ('explicit-cautious', 'schedule', 'cautious')`).run();
+    db.prepare(`INSERT INTO scheduling_prefs VALUES ('plain-suggest', 'suggest', 'balanced')`).run();
+    dropAutoMode(db);
+    expect(cols(db, 'scheduling_prefs')).not.toContain('auto_mode');
+    const trust = (id: string) =>
+      (db.prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get(id) as { trust_mode: string }).trust_mode;
+    expect(trust('clicked-schedule')).toBe('hands_off');
+    expect(trust('explicit-cautious')).toBe('cautious');
+    expect(trust('plain-suggest')).toBe('balanced');
+    // Idempotent: a re-run (column already gone) is a no-op.
+    dropAutoMode(db);
     db.close();
   });
 });

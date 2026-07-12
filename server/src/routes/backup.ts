@@ -97,7 +97,15 @@ const OWNER_TABLES = [
 /** Insert rows using their own column names. */
 function insertRows(table: string, rows: Record<string, unknown>[]): number {
   if (!rows.length) return 0;
-  const cols = Object.keys(rows[0]);
+  // Intersect the backup's keys with the LIVE table shape: an export taken before a
+  // column was dropped (0048 is_habit, 0061, 0081, 0122 auto_mode, …) must still
+  // import — retired keys are ignored, and keys absent from the backup take the
+  // column default.
+  const live = new Set(
+    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name),
+  );
+  const cols = Object.keys(rows[0]).filter((c) => live.has(c));
+  if (!cols.length) return 0;
   const stmt = sqlite.prepare(
     `INSERT OR REPLACE INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
   );

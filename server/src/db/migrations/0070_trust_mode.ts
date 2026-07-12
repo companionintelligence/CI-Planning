@@ -16,8 +16,8 @@ export const id = '0070_trust_mode';
  *
  * SQLite can't cleanly change an existing column's DEFAULT, so this ADDS a new column
  * (default 'balanced' = today's behavior) and backfills 'hands_off' from any row that had
- * `auto_mode='schedule'`. `auto_mode` is left in place (vestigial once the readers repoint;
- * a later contract migration drops it).
+ * `auto_mode='schedule'`. `auto_mode` was left in place here (vestigial once the readers
+ * repointed) and is dropped by 0122.
  *
  * Additive + idempotent. Forward-only.
  */
