@@ -247,6 +247,27 @@ describe('reflow hygiene', () => {
     expect(taskBlocks(t1), "the review surface's missed evidence must survive a reflow").toHaveLength(1);
     expect(taskBlocks(t1)[0].status).toBe('missed');
   });
+
+  it("clearPriorAuto never deletes a re-placed task's own cancelled/missed blocks", () => {
+    // Sharper than the reflow case above: here the terminal blocks belong to the very
+    // task being re-placed, so they sit squarely inside clearPriorAuto's task-id scope —
+    // only the terminal-status filter keeps them alive.
+    const t1 = insertTask('Second attempt');
+    const insEvidence = sqlite.prepare(
+      `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
+       VALUES (uuid7(), ?, ?, 'Second attempt', 'task', ?, ?, 0, 1, 'agent', ?)`,
+    );
+    insEvidence.run(t1, OWNER, `${DATE}T09:00:00.000Z`, `${DATE}T09:30:00.000Z`, 'cancelled');
+    insEvidence.run(t1, OWNER, `${DATE}T10:00:00.000Z`, `${DATE}T10:30:00.000Z`, 'missed');
+    stage(t1, 0);
+
+    placeFlightPlan(OWNER, { date: DATE });
+
+    const statuses = taskBlocks(t1).map((b) => b.status).sort();
+    expect(statuses, 'terminal evidence survives alongside the new placement').toContain('cancelled');
+    expect(statuses).toContain('missed');
+    expect(statuses.filter((s) => s === 'planned'), 'the task still gets its new placement').toHaveLength(1);
+  });
 });
 
 // ─── R2 status parity ───────────────────────────────────────────────────────────

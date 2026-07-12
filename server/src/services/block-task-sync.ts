@@ -18,6 +18,22 @@ import { localDateInTZ, utcToZonedWallTime, zonedWallTimeToUTC } from '../lib/tz
 import { syncTaskReminders } from '../engine/reminders.js';
 import { stampRow } from '../sync/apply.js';
 
+/**
+ * TERMINAL time_block statuses — settled history the scheduling engine must never
+ * delete or re-place: 'completed'/'skipped' are done outcomes, 'cancelled'/'missed'
+ * are the review surface's evidence (Phase AE status-vocabulary alignment,
+ * docs/AE-reflow-correctness.md). Every auto-clear / active-placement predicate
+ * interpolates [[TERMINAL_BLOCK_STATUS_SQL]] instead of hand-writing the list, so
+ * the clear paths can't drift apart (clearDayAutoBlocks once carried a narrower
+ * copy and deleted the cancelled/missed evidence that reflow preserves).
+ *
+ * NB: distinct from the OBSTACLE predicate (scheduler.ts / extend-block.ts), which
+ * deliberately keeps 'missed' — a missed block still occupies its past slot.
+ */
+export const TERMINAL_BLOCK_STATUSES = ['completed', 'skipped', 'cancelled', 'missed'] as const;
+/** SQL list literal for `status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})`. */
+export const TERMINAL_BLOCK_STATUS_SQL = TERMINAL_BLOCK_STATUSES.map((s) => `'${s}'`).join(',');
+
 interface BlockRow {
   id: string;
   task_id: string | null;
@@ -124,7 +140,7 @@ export function mirrorEnginePlacement(taskId: string, ownerId: string): string |
     .prepare(
       `SELECT MIN(start_at) AS s FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
-          AND status NOT IN ('completed','skipped','cancelled','missed')`,
+          AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})`,
     )
     .get(taskId, ownerId) as { s: string | null } | undefined;
   if (!earliest?.s) return null;
