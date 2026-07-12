@@ -660,6 +660,13 @@ pnpm --filter client test      # client vitest — two projects: `unit` (pure lo
 cd tests/container && npm i && APP_URL=http://localhost:3848 npx playwright test   # container smoke
 ```
 
+## Contributing
+
+**Green CI is required before merging into `main`** — the *Typecheck + Unit +
+Integration* and *Build, screenshot-test, publish* checks must pass on a PR's latest
+commit (including any bot autofix/suggestion commits, which re-run the checks). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full merge policy.
+
 ## License
 
 MIT.
