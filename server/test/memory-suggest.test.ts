@@ -12,7 +12,12 @@ import { resetDb, startTestServer, api, createOwner, type TestServer } from './h
  * source_ref='ci:<node-id>'. Covers gating (flag / availability), idempotent
  * re-runs, dismissed-is-terminal, the pending cap, polish degradation, the
  * scheduled-job registration, the manual trigger route, multi-owner isolation
- * (0114 owner-scoped dedup), and the promote integration through the real routes.
+ * (0114 owner-scoped dedup), and the end-to-end auto-promote pipeline.
+ *
+ * Phase AF · AF-3 — every staged possible is AUTO-PROMOTED at the end of each run
+ * (promoteAllPending): rows land as status='promoted' (the audit trail), the task
+ * exists immediately, and the AB1 hook places its block at the event time. Nothing
+ * stays 'pending' after a run, and promoted/dismissed refs are terminal on re-runs.
  *
  * Phase AB · AB2 — suggestions MIRROR the event: title = event name (no "Prep for"),
  * proposed_scheduled_for/task_time = the event start in the owner tz (UTC here),
@@ -91,13 +96,15 @@ describe('gating', () => {
 });
 
 describe('staging from the fixture graph', () => {
-  it('stages one possible per in-window event with source_kind=memory and ci:<id> refs', async () => {
+  it('stages one possible per in-window event with source_kind=memory and ci:<id> refs, auto-promoted at run end (AF-3)', async () => {
     const r = await run(() => suggestFromMemory({ polish: false }));
     expect(r.status).toBe('ran');
     expect(r.pulled).toBe(2); // the now+90h event is outside the 48h window
     expect(r.created).toBe(2);
+    expect(r.promoted).toBe(2); // AF-3: the whole batch became tasks — no Inbox stop
+    expect(memoryPossibles('pending')).toEqual([]);
 
-    const rows = memoryPossibles('pending');
+    const rows = memoryPossibles('promoted');
     expect(rows.length).toBe(2);
     for (const row of rows) expect(row.source_ref).toMatch(/^ci:[0-9a-f-]{36}$/);
     const titles = rows.map((x) => x.raw_title).sort();
@@ -126,17 +133,25 @@ describe('staging from the fixture graph', () => {
     expect(payloadRow.proposed_task_time).toBe(payloadRow.proposed_due_at.slice(11, 16));
   });
 
-  it('re-runs are idempotent on (source_kind, source_ref)', async () => {
+  it('re-runs are idempotent — promoted refs are settled, never re-staged or re-promoted (AF-3)', async () => {
     await run(() => suggestFromMemory({ polish: false }));
     const again = await run(() => suggestFromMemory({ polish: false }));
     expect(again.created).toBe(0);
-    expect(again.updated).toBe(2);
-    expect(memoryPossibles('pending').length).toBe(2);
+    expect(again.updated).toBe(0); // promoted rows are terminal, not refreshed
+    expect(again.promoted).toBe(0);
+    expect(memoryPossibles('promoted').length).toBe(2);
+    // No duplicate tasks either — one task per event ref across both runs.
+    const tasks = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND source_kind = 'memory'`)
+      .get(OWNER) as { n: number };
+    expect(tasks.n).toBe(2);
   });
 
   it('a dismissed source_ref is terminal — never re-staged', async () => {
     await run(() => suggestFromMemory({ polish: false }));
-    const [victim] = memoryPossibles('pending');
+    // AF-3: rows land 'promoted'; flip one to dismissed via the real route (dismiss is
+    // a status write, valid on any settled row) to lock the terminal-ref behavior.
+    const [victim] = memoryPossibles('promoted');
     const d = await api(srv.url, `/api/possible-tasks/${victim.id}/dismiss`, { method: 'POST' });
     expect(d.status).toBe(200);
 
@@ -145,10 +160,11 @@ describe('staging from the fixture graph', () => {
     expect(r.created).toBe(0);
     const still = sqlite.prepare(`SELECT status FROM possible_tasks WHERE id = ?`).get(victim.id) as { status: string };
     expect(still.status).toBe('dismissed');
-    expect(memoryPossibles('pending').length).toBe(1);
+    expect(memoryPossibles('promoted').length).toBe(1);
   });
 
-  it('caps pending memory possibles per owner (updates still flow)', async () => {
+  it('caps pending memory possibles within a staging pass; the auto-promote then drains the queue (AF-3)', async () => {
+    // 5 pre-existing pending rows (staged outside the agent) fill the cap …
     await run(() => {
       for (let i = 0; i < MEMORY_PENDING_CAP; i++) {
         upsertPossible(
@@ -159,19 +175,24 @@ describe('staging from the fixture graph', () => {
         );
       }
     });
-    const r = await run(() => suggestFromMemory({ polish: false }));
+    // embedFn throws → inline dedupe skips deterministically (the 5 near-identical
+    // 'Filler N' titles would otherwise dedupe under a live Ollama and flake counts).
+    const noEmbed = async (): Promise<number[]> => { throw new Error('embeddings disabled (deterministic test)'); };
+    const r = await run(() => suggestFromMemory({ polish: false, embedFn: noEmbed }));
+    // … so this pass stages neither event (cap bites at staging time) …
     expect(r.created).toBe(0);
     expect(r.skippedCap).toBe(2);
-    expect(memoryPossibles('pending').length).toBe(MEMORY_PENDING_CAP);
+    // … but the batch auto-promote drains ALL pending fillers into tasks.
+    expect(r.promoted).toBe(MEMORY_PENDING_CAP);
+    expect(memoryPossibles('pending')).toEqual([]);
+    expect(memoryPossibles('promoted').length).toBe(MEMORY_PENDING_CAP);
 
-    // An UPDATE of an already-staged ref is not capped: dismiss one filler to free a
-    // slot, stage one event, then re-run with the cap full again.
-    const filler = memoryPossibles('pending')[0];
-    sqlite.prepare(`DELETE FROM possible_tasks WHERE id = ?`).run(filler.id);
+    // With the queue drained, the next run stages (and promotes) the 2 events.
     const second = await run(() => suggestFromMemory({ polish: false }));
-    expect(second.created).toBe(1);
-    const third = await run(() => suggestFromMemory({ polish: false }));
-    expect(third.updated).toBeGreaterThanOrEqual(1); // the staged event refreshes despite the full cap
+    expect(second.created).toBe(2);
+    expect(second.skippedCap).toBe(0);
+    expect(second.promoted).toBe(2);
+    expect(memoryPossibles('pending')).toEqual([]);
   });
 
   it('polish failure degrades to templates (never blocks staging)', async () => {
@@ -184,7 +205,7 @@ describe('staging from the fixture graph', () => {
     );
     expect(r.status).toBe('ran');
     expect(r.created).toBe(2);
-    expect(memoryPossibles('pending').map((x) => x.raw_title).sort()).toEqual([
+    expect(memoryPossibles('promoted').map((x) => x.raw_title).sort()).toEqual([
       'Dinner with Sam',
       'Quarterly planning review',
     ]);
@@ -197,7 +218,7 @@ describe('staging from the fixture graph', () => {
       }),
     );
     expect(r.created).toBe(2);
-    expect(memoryPossibles('pending').every((x) => x.raw_title.startsWith('Polished: '))).toBe(true);
+    expect(memoryPossibles('promoted').every((x) => x.raw_title.startsWith('Polished: '))).toBe(true);
   });
 });
 
@@ -209,9 +230,10 @@ describe('scheduled job (W12 infra)', () => {
     expect(row).toMatchObject({ kind: 'memory_suggest', cron: '0 */6 * * *', enabled: 1 });
   });
 
-  it('runScheduledJob stages suggestions per owner and records a job run', async () => {
+  it('runScheduledJob stages + auto-promotes suggestions per owner and records a job run', async () => {
     await runScheduledJob('memory_suggest');
-    expect(memoryPossibles('pending').length).toBe(2);
+    expect(memoryPossibles('pending')).toEqual([]);
+    expect(memoryPossibles('promoted').length).toBe(2);
     const jr = sqlite
       .prepare(
         `SELECT jr.status, jr.items_created, jr.log FROM job_runs jr
@@ -253,19 +275,21 @@ describe('manual trigger route', () => {
     expect(unavail.body.reason).toBe('unavailable');
   });
 
-  it('POST /api/memory/suggest stages and reports counts', async () => {
+  it('POST /api/memory/suggest stages, auto-promotes, and reports counts', async () => {
     const r = await api(srv.url, '/api/memory/suggest', { method: 'POST' });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ status: 'ran', created: 2 });
-    expect(memoryPossibles('pending').length).toBe(2);
+    expect(r.body).toMatchObject({ status: 'ran', created: 2, promoted: 2 });
+    expect(memoryPossibles('pending')).toEqual([]);
+    expect(memoryPossibles('promoted').length).toBe(2);
   });
 });
 
 describe('multi-owner isolation (0114 owner-scoped dedup)', () => {
   it("owner B stages its full set over the shared fixture; owner A's rows are untouched", async () => {
-    // Owner A stages both fixture events, then dismisses one via the real route.
+    // Owner A stages + auto-promotes both fixture events, then dismisses one via the
+    // real route (AF-3: rows are 'promoted' after the run; dismiss still flips status).
     await run(() => suggestFromMemory({ polish: false }));
-    const [victim] = memoryPossibles('pending');
+    const [victim] = memoryPossibles('promoted');
     const d = await api(srv.url, `/api/possible-tasks/${victim.id}/dismiss`, { method: 'POST' });
     expect(d.status).toBe(200);
     const aRowsBefore = sqlite
@@ -278,19 +302,26 @@ describe('multi-owner isolation (0114 owner-scoped dedup)', () => {
     const B = createOwner();
     const r = await runWithOwner(B, ALL_SCOPES, () => suggestFromMemory({ polish: false }));
     expect(r.status).toBe('ran');
-    // A's dismissal must not suppress B's suggestion, and A's pending row must not be
+    // A's dismissal must not suppress B's suggestion, and A's settled row must not be
     // absorbed as an "update" — pre-0114 the unscoped dedup key did both.
     expect(r.created).toBe(2);
     expect(r.updated).toBe(0);
     expect(r.skippedDismissed).toBe(0);
+    expect(r.promoted).toBe(2); // B's batch auto-promoted under B's own scope
     const bRows = sqlite
       .prepare(`SELECT status FROM possible_tasks WHERE proposed_owner_id = ? AND source_kind = 'memory'`)
       .all(B) as { status: string }[];
     expect(bRows.length).toBe(2);
-    expect(bRows.every((x) => x.status === 'pending')).toBe(true);
+    expect(bRows.every((x) => x.status === 'promoted')).toBe(true);
+    // B's promoted tasks belong to B, not A (owner-scoped promotion end to end).
+    const bTasks = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND source_kind = 'memory'`)
+      .get(B) as { n: number };
+    expect(bTasks.n).toBe(2);
 
     // Owner A's rows are byte-identical: the dismissed one stays dismissed (terminal
-    // per-owner, not globally) and the pending one keeps its id/content.
+    // per-owner, not globally) and the promoted one keeps its id/content — B's inline
+    // dedupe + promote (owner-scoped) never touched them.
     const aRowsAfter = sqlite
       .prepare(`SELECT id, source_ref, raw_title, status FROM possible_tasks WHERE proposed_owner_id = ? ORDER BY source_ref`)
       .all(OWNER);
@@ -298,28 +329,33 @@ describe('multi-owner isolation (0114 owner-scoped dedup)', () => {
   });
 });
 
-describe('integration: fixture graph → possible → promote → block AT the event time (AB1+AB2)', () => {
-  it('promote mirrors the event: start intent on the task, block at the event UTC instant on its day, estimate = duration — in the default BALANCED trust mode', async () => {
+describe('integration: fixture graph → auto-promoted task → block AT the event time, zero clicks (AF-3 + AB1 + AB2)', () => {
+  it('one suggestFromMemory run mirrors each event: task with start intent + block at the event UTC instant, estimate = duration — in the default BALANCED trust mode', async () => {
+    // AF-3: the single agent run stages AND promotes AND places — no route call, no
+    // Inbox stop. Trust stays 'balanced' (resetDb baseline): start-anchored placement
+    // is NOT trust-gated — the suggestion stated the day/time. Deliberately NO engine
+    // call and NO Plan container in this test.
     await run(() => suggestFromMemory({ polish: false }));
-    const list = await api(srv.url, '/api/possible-tasks');
-    const possibles = (
-      list.body.possibles as { id: string; raw_title: string; source_kind: string; source_ref: string; proposed_due_at: string }[]
-    ).filter((p) => p.source_kind === 'memory');
-    expect(possibles.length).toBe(2);
-    const byTitle = new Map(possibles.map((p) => [p.raw_title, p]));
 
-    // Trust stays 'balanced' (resetDb baseline): start-anchored placement is NOT
-    // trust-gated — the accepted suggestion stated the day/time. Deliberately NO
-    // engine call and NO Plan container in this test.
+    const rows = sqlite
+      .prepare(
+        `SELECT raw_title, source_ref, proposed_due_at, promoted_task_id FROM possible_tasks
+          WHERE proposed_owner_id = ? AND source_kind = 'memory' AND status = 'promoted'`,
+      )
+      .all(OWNER) as { raw_title: string; source_ref: string; proposed_due_at: string; promoted_task_id: string }[];
+    expect(rows.length).toBe(2);
+    const byTitle = new Map(rows.map((p) => [p.raw_title, p]));
+
     for (const [title, durMin] of [
       ['Quarterly planning review', 60], // fixture: now+20h → now+21h
       ['Dinner with Sam', 120], // fixture: now+30h → now+32h
     ] as const) {
       const possible = byTitle.get(title)!;
       expect(possible).toBeDefined();
-      const promoted = await api(srv.url, `/api/possible-tasks/${possible.id}/promote`, { method: 'POST' });
-      expect(promoted.status).toBe(201);
-      const task = promoted.body.task;
+      const task = sqlite
+        .prepare(`SELECT * FROM tasks WHERE id = ?`)
+        .get(possible.promoted_task_id) as Record<string, unknown> & { id: string };
+      expect(task).toBeDefined();
       expect(task.source_kind).toBe('memory');
       expect(task.source_ref).toBe(possible.source_ref);
       expect(task.estimated_minutes).toBe(durMin);
@@ -328,8 +364,9 @@ describe('integration: fixture graph → possible → promote → block AT the e
       expect(task.scheduled_for).toBe(possible.proposed_due_at.slice(0, 10));
       expect(task.task_time).toBe(possible.proposed_due_at.slice(11, 16));
 
-      // AB1: the block landed at the event's UTC instant (minute precision — task_time
-      // is HH:MM) on the EVENT's day (not "today"), sized to the event duration.
+      // AB1 (fired from inside the batch promote): the block landed at the event's UTC
+      // instant (minute precision — task_time is HH:MM) on the EVENT's day (not
+      // "today"), sized to the event duration.
       const block = sqlite
         .prepare(`SELECT start_at, end_at, is_auto FROM time_blocks WHERE task_id = ? AND block_kind = 'task'`)
         .get(task.id) as { start_at: string; end_at: string; is_auto: number } | undefined;
@@ -338,5 +375,13 @@ describe('integration: fixture graph → possible → promote → block AT the e
       expect(Date.parse(block!.end_at) - Date.parse(block!.start_at)).toBe(durMin * 60_000);
       expect(block!.is_auto).toBe(0); // user-intent block: never wiped by clearPriorAuto
     }
+
+    // The batch path broadcast one possible:promoted per item (the per-item SSE-order
+    // contract vs placement is locked in possibles.test.ts).
+    const events = sqlite
+      .prepare(`SELECT seq, event FROM sync_events WHERE owner_id = ? ORDER BY seq ASC`)
+      .all(OWNER) as { seq: number; event: string }[];
+    const promotedSeqs = events.filter((e) => e.event === 'possible:promoted').map((e) => e.seq);
+    expect(promotedSeqs.length).toBe(2);
   });
 });

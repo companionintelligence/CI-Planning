@@ -4,11 +4,15 @@ export const id = '0070_trust_mode';
 
 /**
  * Trust dial (FTUE gaps 5 & 6) — the 3-state automation Setting that replaces the
- * 2-state `auto_mode` toggle:
+ * 2-state `auto_mode` toggle. As shipped, the dial gated BOTH auto-promotion and
+ * auto-blocking:
  *   - 'cautious'  : nothing auto-promotes; nothing auto-blocks.
  *   - 'balanced'  : high-confidence possibles auto-promote (= old 'suggest'); no auto-block.
  *   - 'hands_off' : auto-promote AND auto-block promoted tasks that carry an estimate
  *                   (= old 'schedule', now also firing at the promotion boundary).
+ * NOTE (AF-3, 0118 era): the auto-PROMOTE facet was retired — every possible_task now
+ * promotes unconditionally at ingestion. trust_mode remains and governs ONLY
+ * auto-blocking/planning (see resolveTrustPolicy in engine/autoplan.ts).
  *
  * SQLite can't cleanly change an existing column's DEFAULT, so this ADDS a new column
  * (default 'balanced' = today's behavior) and backfills 'hands_off' from any row that had

@@ -7,8 +7,9 @@ import { resetDb } from './helpers.js';
 
 /**
  * Trust dial (TM-2/TM-3/TM-5; FTUE gaps 5 & 6). The dial is a Setting (not a glossary noun)
- * with three states resolved by `resolveTrustPolicy`; it gates auto-promotion and the
- * estimate-bearing-only auto-block at the promotion boundary. TZ=UTC (date-sensitive).
+ * with three states resolved by `resolveTrustPolicy`; since AF-3 it gates ONLY the
+ * estimate-bearing auto-block at the promotion boundary — the auto-PROMOTE facet was
+ * retired (promotion is unconditional at ingestion + nightly sweep). TZ=UTC (date-sensitive).
  */
 const OWNER = SYSTEM_OWNER;
 const DATE = '2026-06-22';
@@ -65,21 +66,21 @@ beforeEach(() => {
   sqlite.exec(`DELETE FROM flight_plan;`);
 });
 
-describe('resolveTrustPolicy (TM-2)', () => {
-  it('cautious → no auto-promote, no auto-block', () => {
+describe('resolveTrustPolicy (TM-2; AF-3 = auto-block only)', () => {
+  it('cautious → no auto-block', () => {
     setTrust('cautious');
-    expect(resolveTrustPolicy(OWNER)).toMatchObject({ mode: 'cautious', autoPromote: false, autoBlock: false });
+    expect(resolveTrustPolicy(OWNER)).toEqual({ mode: 'cautious', autoBlock: false });
   });
-  it('balanced (default) → auto-promote, no auto-block', () => {
+  it('balanced (default) → no auto-block', () => {
     setTrust('balanced');
-    expect(resolveTrustPolicy(OWNER)).toMatchObject({ mode: 'balanced', autoPromote: true, autoBlock: false, promoteThreshold: 0.7 });
+    expect(resolveTrustPolicy(OWNER)).toEqual({ mode: 'balanced', autoBlock: false });
   });
-  it('hands_off → auto-promote and auto-block', () => {
+  it('hands_off → auto-block', () => {
     setTrust('hands_off');
-    expect(resolveTrustPolicy(OWNER)).toMatchObject({ mode: 'hands_off', autoPromote: true, autoBlock: true });
+    expect(resolveTrustPolicy(OWNER)).toEqual({ mode: 'hands_off', autoBlock: true });
   });
   it('missing prefs row → safe balanced default', () => {
-    expect(resolveTrustPolicy('00000000-0000-0000-0000-000000000000')).toMatchObject({ mode: 'balanced', autoBlock: false });
+    expect(resolveTrustPolicy('00000000-0000-0000-0000-000000000000')).toEqual({ mode: 'balanced', autoBlock: false });
   });
 });
 
@@ -102,27 +103,37 @@ describe('fillFlightPlanCandidates requireEstimate (TM-3)', () => {
   });
 });
 
-describe('promotePossibles is dial-aware (TM-5)', () => {
-  it('cautious → promotes nothing (all kept pending)', () => {
+describe('promotePossibles is unconditional (AF-3 — promotion facet deliberately changed)', () => {
+  it('cautious no longer withholds promotion', () => {
     setTrust('cautious');
-    seedPossible('Send invoice', 0.95);
-    const r = promotePossibles();
-    expect(r.promoted).toBe(0);
-    expect(r.keptPending).toBe(1);
-    expect(openTaskCount()).toBe(0);
-  });
-  it('balanced → auto-promotes a high-confidence item', () => {
-    setTrust('balanced');
     seedPossible('Send invoice', 0.95);
     const r = promotePossibles();
     expect(r.promoted).toBe(1);
     expect(openTaskCount()).toBe(1);
   });
-  it('an explicit threshold override still promotes even under cautious (test escape hatch)', () => {
-    setTrust('cautious');
+  it('low-confidence items promote too — no threshold gate', () => {
+    setTrust('balanced');
     seedPossible('Send invoice', 0.95);
-    const r = promotePossibles({ threshold: 0.7 });
-    expect(r.promoted).toBe(1);
+    seedPossible('Maybe look into X', 0.2);
+    const r = promotePossibles();
+    expect(r.promoted).toBe(2);
+    expect(openTaskCount()).toBe(2);
+    const pendingLeft = (sqlite.prepare(`SELECT COUNT(*) c FROM possible_tasks WHERE status = 'pending'`).get() as { c: number }).c;
+    expect(pendingLeft).toBe(0);
+  });
+  it('carries the proposed start/estimate columns onto the swept task (parity with promotePossible)', () => {
+    sqlite
+      .prepare(
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id,
+                                     proposed_estimated_minutes, proposed_scheduled_for, proposed_task_time)
+         VALUES (uuid7(), 'Straggler', 'text', 's1#0', 0.4, 'pending', ?, 45, '2026-06-23', '14:30')`,
+      )
+      .run(OWNER);
+    promotePossibles();
+    const t = sqlite
+      .prepare(`SELECT estimated_minutes, scheduled_for, task_time FROM tasks WHERE title = 'Straggler'`)
+      .get() as { estimated_minutes: number; scheduled_for: string; task_time: string };
+    expect(t).toEqual({ estimated_minutes: 45, scheduled_for: '2026-06-23', task_time: '14:30' });
   });
 });
 

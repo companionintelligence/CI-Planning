@@ -997,21 +997,20 @@ export type TrustMode = 'cautious' | 'balanced' | 'hands_off';
 
 export interface TrustPolicy {
   mode: TrustMode;
-  /** auto-promote high-confidence Inbox items into Tasks (off only for 'cautious'). */
-  autoPromote: boolean;
-  /** confidence gate for auto-promotion (Balanced / Hands-off). */
-  promoteThreshold: number;
   /** auto-block promoted, estimate-bearing Tasks at the promotion boundary (Hands-off only). */
   autoBlock: boolean;
 }
 
-/** Default auto-promote confidence gate. The dial chooses *whether* to promote, not this value. */
-export const AUTO_PROMOTE_THRESHOLD = 0.7;
-
 /**
  * The owner's trust dial (TM-2; FTUE gaps 5 & 6) — the single source of truth that maps
  * `scheduling_prefs.trust_mode` to behavior. Read this, never the raw column. Defaults to
- * the safe 'balanced' when prefs are absent (auto-promote on, auto-block off — today's behavior).
+ * the safe 'balanced' when prefs are absent (auto-block off — today's behavior).
+ *
+ * AF-3 retired the dial's auto-PROMOTE facet (the old `autoPromote`/`promoteThreshold`
+ * fields): every possible_task is now promoted unconditionally at ingestion
+ * (services/possibles.ts promoteAllPending) and by the nightly sweeper (agents/groom.ts).
+ * trust_mode governs ONLY auto-blocking/planning — 'cautious'/'balanced' leave placement
+ * to the user; 'hands_off' auto-blocks (and agents/plan.ts maps hands_off → smart).
  */
 export function resolveTrustPolicy(owner: string = currentOwnerId()): TrustPolicy {
   const row = sqlite.prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
@@ -1020,8 +1019,6 @@ export function resolveTrustPolicy(owner: string = currentOwnerId()): TrustPolic
   const mode: TrustMode = row?.trust_mode === 'cautious' || row?.trust_mode === 'hands_off' ? row.trust_mode : 'balanced';
   return {
     mode,
-    autoPromote: mode !== 'cautious',
-    promoteThreshold: AUTO_PROMOTE_THRESHOLD,
     autoBlock: mode === 'hands_off',
   };
 }

@@ -2,6 +2,11 @@ import { and, eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { possibleTasks, tasks } from '../db/schema.js';
 import { writeAudit } from '../lib/audit.js';
+import { broadcast } from '../routes/sse.js';
+import { taskToApi } from '../lib/serialize.js';
+import { logger } from '../lib/logger.js';
+import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
+import { dedupePossibles } from '../agents/groom.js';
 
 /**
  * Possible-task inbox CRUD (Phase W · W9) — extracted from routes/possibles.ts so
@@ -29,6 +34,11 @@ import { writeAudit } from '../lib/audit.js';
  * `sync_events.seq`, firing it from inside this service (after `writeAudit`, before
  * returning) would flip that relative ordering for any SSE/sync_events-replay consumer.
  * Keeping it in the caller preserves the original ordering exactly.
+ *
+ * AF-3 `promoteAllPending` is the one in-module exception: for producer batches THIS
+ * function is the transport (there is no route), so it fires the same
+ * broadcast-then-place sequence itself, per item, preserving the identical
+ * `possible:promoted`-before-placement seq ordering.
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase row
  * shape for `taskToApi`), so the writers are async; better-sqlite3 executes them
@@ -138,6 +148,85 @@ export async function promotePossible(
   writeAudit({ ownerId: owner, actor: 'owner', action: 'promote', entity: `possible:${id}` });
 
   return { ok: true, task, taskId: task.id };
+}
+
+export interface PromoteAllResult {
+  /** Rows the inline semantic dedupe marked 'duplicate' (never promoted). */
+  duplicates: number;
+  /** Rows promoted into real tasks this pass. */
+  promoted: number;
+  /** false = Ollama embeddings unreachable → dedupe skipped gracefully, everything promoted. */
+  dedupeAvailable: boolean;
+}
+
+/**
+ * AF-3 — auto-promote EVERY pending possible for an owner (the server half of "remove
+ * the inbox"). Producers (agents/ingest.ts, agents/memory-suggest.ts) call this at the
+ * end of each batch, so a suggestion becomes a real task at ingestion with no manual
+ * review step. `possible_tasks` remains as the dedup/audit trail (rows flip to
+ * 'promoted'/'duplicate'; the REST/GraphQL promote+dismiss surface is untouched).
+ *
+ * Order per the module docstring's SSE contract: (1) inline semantic dedupe (the
+ * nightly groom step moved up; owner-scoped; embeddings unavailable → skip gracefully
+ * and promote everything), then per row (2) promotePossible (tag carry-over + audit
+ * inside), (3) broadcast `possible:promoted`, (4) placement — start-anchored tasks are
+ * placed at their stated time immediately (AB1, any trust mode); start-less ones get
+ * ONE trust-gated `autoScheduleOnIngest` sweep after the loop. An item's
+ * `possible:promoted` therefore always carries a lower seq than any placement
+ * broadcast it triggers (the tested contract — same ordering the promote route keeps).
+ * Placement stays best-effort: a hiccup never fails the batch.
+ *
+ * `opts.embedFn` is threaded to dedupePossibles for deterministic tests.
+ */
+export async function promoteAllPending(
+  owner: string,
+  opts: { embedFn?: (text: string) => Promise<number[]> } = {},
+): Promise<PromoteAllResult> {
+  const dd = await dedupePossibles({ owner, embedFn: opts.embedFn });
+  const pending = await listPossibles(owner, 'pending');
+
+  let promoted = 0;
+  let needsSweep = false;
+  for (const p of pending) {
+    let res: PromoteResult;
+    try {
+      res = await promotePossible(owner, p.id);
+    } catch (err) {
+      // Poison isolation (same philosophy as ingest's dead-letter): one bad row —
+      // e.g. a UNIQUE(source_kind, source_ref) collision with an existing task —
+      // must not wedge the rest of the batch. It stays 'pending' for the nightly
+      // sweeper / manual triage.
+      logger.error('promoteAllPending: promote failed for possible — skipping', { owner, possibleId: p.id, err: (err as Error).message });
+      continue;
+    }
+    if (!res.ok) continue; // vanished mid-batch — nothing to do
+    promoted++;
+    broadcast(owner, 'possible:promoted', { id: p.id, task: taskToApi(res.task) });
+    if (res.task.scheduledFor) {
+      // AB1: a stated START is honored in ANY trust mode (user/suggestion intent).
+      try {
+        placeStartAnchoredTask(owner, res.taskId);
+      } catch (err) {
+        logger.warn('promoteAllPending: start-anchored placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
+      }
+    } else {
+      needsSweep = true;
+    }
+  }
+  if (needsSweep) {
+    // TM-5: one hands-off-only, estimate-bearing sweep for the whole batch (a no-op in
+    // Cautious/Balanced) — after every possible:promoted broadcast above.
+    try {
+      autoScheduleOnIngest(owner, { requireEstimate: true });
+    } catch (err) {
+      logger.warn('promoteAllPending: post-promote auto-schedule failed', { owner, err: (err as Error).message });
+    }
+  }
+
+  if (promoted || dd.duplicates) {
+    logger.info('promoteAllPending done', { owner, promoted, duplicates: dd.duplicates, dedupeAvailable: dd.available });
+  }
+  return { duplicates: dd.duplicates, promoted, dedupeAvailable: dd.available };
 }
 
 export type DismissResult = { ok: true; row: PossibleTaskRow } | { ok: false; error: 'not_found' };
