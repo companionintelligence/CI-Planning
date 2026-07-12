@@ -434,7 +434,6 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
   // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
   const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
   const conflict = () => props.placed.cols > 1;
-  const done = () => ['completed', 'skipped'].includes(b().status);
   const completed = () => b().status === 'completed';
   const locked = () => isImmovable(b());
 

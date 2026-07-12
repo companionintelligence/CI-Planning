@@ -45,7 +45,7 @@ export interface JudgeScore {
 export type ScoreReason = 'deterministic-fail' | 'judged' | 'passed-no-judge';
 
 /** One entry in the append-only revision log: a candidate and how it scored. */
-export interface Revision<C> {
+export interface Revision {
   iter: number;
   /** A compact view of the candidate for the log (defaults to the candidate itself). */
   candidate: unknown;
@@ -67,7 +67,7 @@ export interface LoopResult<C> {
   score: number;
   iterations: number;
   /** The append-only revision log, oldest first. */
-  revisions: Revision<C>[];
+  revisions: Revision[];
 }
 
 /** The three prompts + the deterministic rubric for one authoring stage. */
@@ -96,7 +96,7 @@ export interface LoopStage<C> {
   describe?: (cand: C) => unknown;
 }
 
-export interface LoopOptions<C> {
+export interface LoopOptions {
   /** Hard cap on generate+revise rounds. Default 3. */
   maxIterations?: number;
   /** Judge samples per round for self-consistency; the median gates PASS. Default 3. */
@@ -112,7 +112,7 @@ export interface LoopOptions<C> {
    */
   callBudget?: number;
   /** Sink for each revision (default: append to audit_log). Injected in tests. */
-  record?: (ownerId: string, stage: string, rev: Revision<C>) => void;
+  record?: (ownerId: string, stage: string, rev: Revision) => void;
   /** Called once when the loop stalls. Default: logger.warn. The authoring caller ALSO checks
    * `result.escaped` and raises a "plan needs review" signal there (writeAudit + SSE) — see
    * agents/plan.ts signalPlanNeedsReview. (B4's disruption nudge is a separate path in auto-defense.) */
@@ -130,7 +130,7 @@ export function median(xs: number[]): number {
 }
 
 /** Default revision sink: append one compact row to audit_log (never throws — audit is fire-and-forget). */
-function auditRecord<C>(ownerId: string, stage: string, rev: Revision<C>): void {
+function auditRecord(ownerId: string, stage: string, rev: Revision): void {
   writeAudit({
     ownerId,
     actor: 'system',
@@ -155,7 +155,7 @@ function auditRecord<C>(ownerId: string, stage: string, rev: Revision<C>): void 
  * what to do with `result.escaped` (Workstream A persists deterministic positions AND
  * raises a "plan needs review" signal — audit row + SSE — so the fallback isn't silent).
  */
-export async function runLoop<C>(stage: LoopStage<C>, options: LoopOptions<C> = {}): Promise<LoopResult<C>> {
+export async function runLoop<C>(stage: LoopStage<C>, options: LoopOptions = {}): Promise<LoopResult<C>> {
   const maxIterations = options.maxIterations ?? DEFAULTS.maxIterations;
   const judgeSamples = options.judgeSamples ?? DEFAULTS.judgeSamples;
   const passThreshold = options.passThreshold ?? DEFAULTS.passThreshold;
@@ -166,7 +166,7 @@ export async function runLoop<C>(stage: LoopStage<C>, options: LoopOptions<C> = 
     logger.warn('plan loop escaped — falling back to deterministic baseline', { owner, stage: s, ...info }));
   const describe = stage.describe ?? ((c: C) => c as unknown);
 
-  const revisions: Revision<C>[] = [];
+  const revisions: Revision[] = [];
   let calls = 0;
   /** Run a counted LLM call, tripping the escape hatch (via throw) if it would exceed the budget. */
   const budgeted = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -207,7 +207,7 @@ export async function runLoop<C>(stage: LoopStage<C>, options: LoopOptions<C> = 
         reason = 'passed-no-judge';
       }
 
-      const rev: Revision<C> = { iter, candidate: describe(cand), defects, score, critique, reason };
+      const rev: Revision = { iter, candidate: describe(cand), defects, score, critique, reason };
       revisions.push(rev);
       record(stage.ownerId, stage.stage, rev);
 
