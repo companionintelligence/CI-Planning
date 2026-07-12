@@ -72,7 +72,7 @@ const lastSyncedAt = () =>
 
 beforeEach(() => {
   resetDb(); // clears tasks / reflections / patterns membership; keeps prefs row + builtin pattern_types
-  delete process.env.MEMORY_MODE; // fixture (no network)
+  process.env.MEMORY_MODE = 'fixture'; // fixture (no network)
   process.env.CI_SERVER_URL = 'http://ci.local:3000'; // env creds → available
   delete process.env.CI_SERVER_API_KEY;
   // Push side isn't reset by resetDb — pin to the "enabled + connected, all scopes on" baseline.

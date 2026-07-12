@@ -98,7 +98,7 @@ const OWNER_TABLES = [
 function insertRows(table: string, rows: Record<string, unknown>[]): number {
   if (!rows.length) return 0;
   // Intersect the backup's keys with the LIVE table shape: an export taken before a
-  // column was dropped (0048 is_habit, 0061, 0081, 0122 auto_mode, …) must still
+  // column was dropped (0048 is_habit, 0061, 0081, 0123 auto_mode, …) must still
   // import — retired keys are ignored, and keys absent from the backup take the
   // column default.
   const live = new Set(

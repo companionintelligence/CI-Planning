@@ -6,7 +6,7 @@ import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone, type GenerateResult } from '../engine/recurrence-generate.js';
 import { skipInstance, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
-import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus } from './block-task-sync.js';
+import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus, mirrorTaskStatusToBlocks, applyTaskPlacementStatus } from './block-task-sync.js';
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
 import { ensureHabitPattern } from './patterns.js';
 import { entityTagLevels, syncLeveledEntityTags } from './tags.js';
@@ -301,6 +301,10 @@ export type UpdateTaskResult =
       /** True when clearing `scheduled_for` removed the task's placement block(s) — the
        *  caller broadcasts block:updated so the Planner drops the now-unscheduled task. */
       unscheduled: boolean;
+      /** Blocks whose status was flipped by the task→block done-state mirror
+       *  (completed on task done; back to planned on reopen) — the caller broadcasts
+       *  block:updated for each so the Planner refreshes. */
+      mirroredBlockIds: string[];
       /** Present when a series edit re-materialized instances (recurrence:generated). */
       generated?: GenerateResult;
     }
@@ -355,6 +359,9 @@ export async function updateTask(
   if (sw) update.subtype = sw.subtype;
   if (input.recurrence_dtstart !== undefined) update.recurrenceDtstart = input.recurrence_dtstart;
   if (input.completed)                       { update.status = 'done'; update.completedAt = new Date().toISOString(); }
+  // `completed: false` reopens the task (refined against wasDone below — it only
+  // applies to a currently-done task). An explicit `status` in the same PATCH wins.
+  if (input.completed === false && input.status === undefined) { update.status = 'open'; update.completedAt = null; }
 
   // A recurrence-rule change is validated; an invalid rule is a 422, never a 500.
   if (input.recurrence_rule !== undefined) {
@@ -375,6 +382,16 @@ export async function updateTask(
   const wasDone = update.status !== undefined
     ? ((sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { status: string } | undefined)?.status === 'done')
     : undefined;
+
+  // Refine the `completed` shortcut against the pre-edit state:
+  //  - re-completing an already-done task must not clobber its original completed_at;
+  //  - `completed: false` on a task that isn't done is a no-op (never forces a
+  //    scheduled/in_progress task back to 'open').
+  if (input.completed === true && wasDone) delete update.completedAt;
+  if (input.completed === false && input.status === undefined && !wasDone) {
+    delete update.status;
+    delete update.completedAt;
+  }
 
   // Only issue an UPDATE when there are column changes; a tags/depends-only
   // PATCH still resolves the task (drizzle rejects an empty .set()). Both branches
@@ -458,8 +475,21 @@ export async function updateTask(
   // so refresh their progress_cache rollup here too (mirrors deleteTask, which already
   // recomputes on cancel). Guarded on an actual transition — a non-status edit, or a
   // status change that doesn't cross the done boundary, leaves the rollup untouched.
+  let mirroredBlockIds: string[] = [];
   if (wasDone !== undefined && wasDone !== (task.status === 'done')) {
     recomputeObjectivesForTask(targetId);
+    // Task→block done-state mirror (the inverse of mirrorBlockStatusToTask): checking
+    // a task off completes its Planner block(s); reopening it revives them. Instance
+    // scope only, and only toward a LIVE reopen status — a done→cancelled flip must
+    // not resurrect planned blocks.
+    if (scope === 'instance' && (task.status === 'done' || ['open', 'scheduled', 'in_progress'].includes(task.status ?? ''))) {
+      mirroredBlockIds = mirrorTaskStatusToBlocks(targetId, ownerId);
+      // Reviving a placement re-schedules an open task (same parity rule every other
+      // placement path follows).
+      if (task.status === 'open' && mirroredBlockIds.length > 0 && applyTaskPlacementStatus(targetId, ownerId)) {
+        task.status = 'scheduled';
+      }
+    }
   }
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `task:${targetId}` });
@@ -471,7 +501,7 @@ export async function updateTask(
   // (the route stamped after the service returned; audit already fired inside the service).
   if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
 
-  return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, generated };
+  return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds, generated };
 }
 
 export type DeleteTaskResult = { ok: true; task: TaskRow } | { ok: false; error: 'not_found' };

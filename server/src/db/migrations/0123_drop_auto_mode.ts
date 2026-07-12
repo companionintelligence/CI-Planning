@@ -1,9 +1,11 @@
 import type { Database } from 'better-sqlite3';
 
-export const id = '0122_drop_auto_mode';
+export const id = '0123_drop_auto_mode';
 
 /**
  * Z · W4 — drop the vestigial scheduling_prefs.auto_mode column.
+ * (Renumbered 0122→0123 at merge: #325's 0122_scrub_seed_owner landed on main first —
+ * the same renumber-at-merge precedent as 0119→0121.)
  *
  * 0070 introduced trust_mode and repointed every reader; auto_mode has had NO server
  * reader since. But the top-bar Suggest/Schedule toggle kept WRITING it until the

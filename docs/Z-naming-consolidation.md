@@ -191,7 +191,7 @@ routine rows), or (b) keep + rename only (`ensureHabitRoutine`). Ritual stays (o
 
 ### W4 — Drop vestigial `auto_mode` (independent, any time) — ✅ SHIPPED
 
-**As-built (2026-07-12; migration renumbered `0122_drop_auto_mode`)**: `DROP COLUMN` with a
+**As-built (2026-07-12; migration `0123_drop_auto_mode` — renumbered twice at merge, 0107→0122→0123)**: `DROP COLUMN` with a
 guarded intent-carry backfill first (the top-bar toggle kept WRITING `auto_mode` after 0070,
 so `'schedule'` + still-default `'balanced'` upgrades to `'hands_off'`; an explicit
 non-default dial is never overridden). `autoMode` removed from schema.ts; baseline snapshot

@@ -44,7 +44,7 @@ const SAVED_ENV = { kek: process.env.CP_KEK_B64, url: process.env.CI_SERVER_URL,
 
 beforeAll(() => {
   process.env.CP_KEK_B64 = KEY_B64;
-  delete process.env.MEMORY_MODE;
+  process.env.MEMORY_MODE = 'fixture';
 });
 afterAll(() => {
   const restore = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
