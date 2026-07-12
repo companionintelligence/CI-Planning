@@ -58,16 +58,18 @@ function tagsOf(taskId: string): string[] {
  * recurrence templates redirect to today's materialized instance when one
  * exists; completed/skipped/cancelled tasks are dropped.
  */
-function resolveMembers(patternId: string, date: string): MemberTask[] {
+function resolveMembers(owner: string, patternId: string, date: string): MemberTask[] {
+  // Owner-scope the membership join: even if a stray pattern_tasks row references
+  // another owner's task, its title/estimate must never surface on this owner's planner.
   const members = sqlite
     .prepare(
       `SELECT t.id AS task_id, t.title, t.estimated_minutes, t.status,
               t.recurrence_rule, t.recurrence_parent_id
          FROM pattern_tasks pt JOIN tasks t ON t.id = pt.task_id
-        WHERE pt.pattern_id = ?
+        WHERE pt.pattern_id = ? AND t.owner_id = ?
         ORDER BY pt.position, pt.task_id`
     )
-    .all(patternId) as {
+    .all(patternId, owner) as {
       task_id: string;
       title: string;
       estimated_minutes: number | null;
@@ -84,8 +86,8 @@ function resolveMembers(patternId: string, date: string): MemberTask[] {
     // cancelled) so a completed occurrence isn't re-placed.
     if (m.recurrence_rule && m.recurrence_parent_id == null) {
       const inst = sqlite
-        .prepare(`SELECT id, title, estimated_minutes, status FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ?`)
-        .get(m.task_id, date) as { id: string; title: string; estimated_minutes: number | null; status: string } | undefined;
+        .prepare(`SELECT id, title, estimated_minutes, status FROM tasks WHERE recurrence_parent_id = ? AND occurrence_date = ? AND owner_id = ?`)
+        .get(m.task_id, date, owner) as { id: string; title: string; estimated_minutes: number | null; status: string } | undefined;
       if (inst) {
         if (['completed', 'done', 'skipped', 'cancelled', 'missed'].includes(inst.status)) continue;
         out.push({ task_id: inst.id, title: inst.title, estimated_minutes: inst.estimated_minutes });
@@ -175,7 +177,7 @@ export function placePatternOnDay(
     }
 
     // Members → placeable tasks.
-    let toPlace = resolveMembers(patternId, date);
+    let toPlace = resolveMembers(owner, patternId, date);
     if (blockTag) toPlace = toPlace.filter((t) => tagsOf(t.task_id).includes(blockTag!));
     if (toPlace.length === 0) {
       return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };

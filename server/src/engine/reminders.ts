@@ -77,7 +77,9 @@ function contentFor(r: DueReminder): { title: string; body: string; url: string;
     return { title: "Time's up", body, url: '/', vibrate }; // focus_end
   }
   if (r.task_id) {
-    const t = sqlite.prepare(`SELECT title FROM tasks WHERE id = ?`).get(r.task_id) as { title: string } | undefined;
+    // Owner-scope the title lookup (the block branches already do): defense in depth so a
+    // reminder pointing at another owner's task can never render their title here.
+    const t = sqlite.prepare(`SELECT title FROM tasks WHERE id = ? AND owner_id = ?`).get(r.task_id, r.owner_id) as { title: string } | undefined;
     return { title: 'Task reminder', body: t?.title ?? 'A task is due', url: '/' };
   }
   const b = sqlite.prepare(`SELECT title FROM time_blocks WHERE id = ? AND owner_id = ?`).get(r.block_id!, r.owner_id) as { title: string } | undefined;
