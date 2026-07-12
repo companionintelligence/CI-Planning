@@ -980,6 +980,18 @@ export interface ObjectiveNextAction {
   scheduled_date: string | null;
 }
 
+/** AF-2: compact linked-task rows GET /objectives attaches to every node (leaves populated, non-leaves `[]`). */
+export interface ObjectiveTaskSummary {
+  id: string;
+  title: string;
+  status: string;
+  priority: number | null;
+  due_at: string | null;
+  scheduled_for: string | null;
+  parent_id: string | null;
+  completed_at: string | null;
+}
+
 export interface Objective {
   id: string;
   owner_id: string;
@@ -998,11 +1010,15 @@ export interface Objective {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /** Set when the objective was auto-promoted from a task (mig 0086); NULL for manual ones. */
+  source_task_id: string | null;
   // Server-precomputed fields returned by GET /objectives:
   next_action: ObjectiveNextAction | null;
   effective_target: string | null;
   pace_expected: number | null;
   has_tasks: boolean;
+  /** AF-2: linked open/done-recent tasks — leaves populated, non-leaves always `[]`. */
+  tasks: ObjectiveTaskSummary[];
   children: Objective[];
 }
 
