@@ -143,10 +143,12 @@ describe('headerOpenCount', () => {
     isScheduled: (t: Task) => t.status === 'scheduled' || t.status === 'in_progress' || t.id.startsWith('sched'),
     todayISO: TODAY,
   };
+  // Mirrors production: partition once, count from the shared result.
+  const count = (list: Task[], p = preds) => headerOpenCount(partitionTaskSections(list, p), p.isScheduled);
 
   it('counts a created-today open task immediately (New Today section)', () => {
     const t = task({ id: 'new1', created_at: '2026-07-11T08:00:00.000Z' });
-    expect(headerOpenCount([t], preds)).toBe(1);
+    expect(count([t])).toBe(1);
   });
 
   it('sums Open + New Today without double-counting', () => {
@@ -154,7 +156,7 @@ describe('headerOpenCount', () => {
       task({ id: 'new1', created_at: '2026-07-11T08:00:00.000Z' }),
       task({ id: 'old-open', created_at: '2026-07-01T08:00:00.000Z' }),
     ];
-    expect(headerOpenCount(list, preds)).toBe(2);
+    expect(count(list)).toBe(2);
   });
 
   it('excludes scheduled tasks — even one sitting in New Today because it was created today', () => {
@@ -164,12 +166,12 @@ describe('headerOpenCount', () => {
       task({ id: 'plain-new', created_at: '2026-07-11T08:00:00.000Z' }),
     ];
     // plain-new is open-status and created today → counts; both scheduled tasks don't.
-    expect(headerOpenCount(list, preds)).toBe(1);
+    expect(count(list)).toBe(1);
   });
 
   it('excludes a done-today task (rendered checked in the list, but not open)', () => {
     const t = task({ id: 'done1', status: 'done', completed_at: '2026-07-11T10:00:00.000Z', created_at: '2026-07-11T08:00:00.000Z' });
-    expect(headerOpenCount([t], preds)).toBe(0);
+    expect(count([t])).toBe(0);
   });
 
   it('excludes routine tasks and non-top-level rows', () => {
@@ -177,17 +179,19 @@ describe('headerOpenCount', () => {
       task({ id: 'routine1', created_at: '2026-07-11T08:00:00.000Z' }),
       task({ id: 'sub', parent_id: 'p', created_at: '2026-07-11T08:00:00.000Z' }),
     ];
-    expect(headerOpenCount(list, preds)).toBe(0);
+    expect(count(list)).toBe(0);
   });
 
   it('day rollover leaves the total unchanged when nothing else changes', () => {
-    // Created on the 10th: New Today on the 10th, Open on the 11th — same count both days.
+    // Created on the 10th: New Today on the 10th, Open on the 11th — same count both
+    // days. This is also the pure half of the midnight day-tick: the component bumps
+    // todayISO at local midnight and the partition simply responds to the new value.
     const list = [
       task({ id: 'roll', created_at: '2026-07-10T14:00:00.000Z' }),
       task({ id: 'old-open', created_at: '2026-07-01T08:00:00.000Z' }),
     ];
-    const onCreationDay = headerOpenCount(list, { ...preds, todayISO: '2026-07-10' });
-    const nextDay = headerOpenCount(list, { ...preds, todayISO: '2026-07-11' });
+    const onCreationDay = count(list, { ...preds, todayISO: '2026-07-10' });
+    const nextDay = count(list, { ...preds, todayISO: '2026-07-11' });
     expect(onCreationDay).toBe(2);
     expect(nextDay).toBe(2);
   });
