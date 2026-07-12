@@ -227,16 +227,17 @@ export async function saveElement(
   }
 
   if (kind === 'routine') {
+    // AF-11: routines author NO tags — their directions/intentions derive from member
+    // tasks server-side, so the old comma-joined `tag` is no longer sent.
     const routineType = (patternTypes() ?? []).find((t) => t.name === 'Routine');
     if (mode === 'add') {
       await api.patterns.create({
         type_id: routineType?.id ?? null,
         name: form.title.trim() || 'Routine',
-        tag: tagList.join(',') || null,
         task_ids: [],
       });
     } else {
-      await api.patterns.update(editId!, { name: form.title.trim() || 'Routine', tag: tagList.join(',') || null });
+      await api.patterns.update(editId!, { name: form.title.trim() || 'Routine' });
     }
     refetchPatterns(); refetchTags();
     return 'Routine saved';

@@ -186,6 +186,58 @@ export function entityTagLevels(kind: EntityKind, entityId: string): { name: str
   return selectLevels.all(kind, entityId) as { name: string; level: number }[];
 }
 
+// ── AF-11 (D2) — routine tags DERIVED from member tasks ──────────────────────
+// A routine authors NO tags of its own: its displayed tags are the UNION of its
+// member tasks' tags (pattern_tasks ⋈ entity_tags ⋈ tags), classified by tag kind.
+// Multiple directions per routine are expected and legal (members can span
+// directions). Derived at read time — never stored — so a task-tag edit needs no
+// fan-out hook to owning routines. Level-agnostic on purpose: classification is
+// by tags.kind, so the union is stable across the AF-11 intention level move.
+
+export interface DerivedRoutineTags {
+  directions: string[]; // member tags with kind='direction', name-sorted
+  intentions: string[]; // member tags with kind='intention', name-sorted
+}
+
+/**
+ * Batched derived tag union for a set of routines (no N+1 on the list read).
+ * Returns a Map keyed by pattern id; every requested id is present (empty arrays
+ * when untagged/memberless). Chunked like `taskTagNamesByIds`. Category-kind tags
+ * never appear in entity_tags (guarded at every write path), so only direction/
+ * intention rows can surface; anything else is dropped defensively.
+ */
+export function routineDerivedTagsByIds(ids: string[]): Map<string, DerivedRoutineTags> {
+  const out = new Map<string, DerivedRoutineTags>();
+  for (const id of ids) out.set(id, { directions: [], intentions: [] });
+  if (ids.length === 0) return out;
+  for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
+    const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = sqlite
+      .prepare(
+        `SELECT DISTINCT pt.pattern_id AS id, tg.name AS name, tg.kind AS kind
+           FROM pattern_tasks pt
+           JOIN entity_tags et ON et.entity_kind = 'task' AND et.entity_id = pt.task_id
+           JOIN tags tg ON tg.id = et.tag_id
+          WHERE pt.pattern_id IN (${placeholders})
+          ORDER BY pt.pattern_id, tg.kind, tg.name`,
+      )
+      .all(...chunk) as { id: string; name: string; kind: string }[];
+    for (const r of rows) {
+      const bucket = out.get(r.id);
+      if (!bucket) continue;
+      if (r.kind === 'direction') bucket.directions.push(r.name);
+      else if (r.kind === 'intention') bucket.intentions.push(r.name);
+    }
+  }
+  return out;
+}
+
+/** Single-routine variant (single reads / mutation responses / SSE payloads). */
+export function routineDerivedTags(patternId: string): DerivedRoutineTags {
+  return routineDerivedTagsByIds([patternId]).get(patternId)!;
+}
+
 // ── AD2 — container → task direction inheritance ─────────────────────────────
 const taskLevel1DirectionStmt = sqlite.prepare(
   `SELECT 1 FROM entity_tags et JOIN tags tg ON tg.id = et.tag_id
@@ -205,24 +257,39 @@ export function taskHasLevel1Direction(taskId: string, owner: string): boolean {
  * AD2 — when a task lands in a direction-tagged container, inherit that direction as the
  * task's level-1 primary UNLESS the task already has one (never override a user's choice).
  * `containerTag` is the container's denormalized `time_blocks.tag` string (base
- * work/home/community). Resolves it to the owner's direction tag row (kind='direction');
- * no-op when the tag is empty, isn't a known direction, or the task already has a
- * level-1 direction. Returns the applied direction NAME so the caller can mirror it onto
- * the created task-block's `tag` column, or null when nothing was inherited.
+ * work/home/community). No-op when the tag is empty, resolves to no known direction, or
+ * the task already has a level-1 direction. Returns the applied PRIMARY direction NAME so
+ * the caller can mirror it onto the created task-block's `tag` column, or null when
+ * nothing was inherited.
+ *
+ * AF-11 (Slice 5) multi-direction guard: a container tag can be a comma-joined union
+ * (legacy wizard rows; routine containers stamp only their first derived direction, but
+ * legacy data persists). Previously the WHOLE string was normalized and looked up as ONE
+ * direction — "work,home" matched nothing and inheritance silently no-opped. Now each
+ * split name is resolved: the FIRST known direction becomes the level-1 primary (the
+ * task model keeps ONE primary direction), and every subsequent known direction is
+ * inherited at level 2 so no direction is dropped.
  */
 export function inheritContainerDirection(
   taskId: string,
   containerTag: string | null | undefined,
   owner: string,
 ): string | null {
-  if (!containerTag) return null;
-  const name = normalizeTagName(containerTag);
-  if (!name) return null;
+  const names = splitTagString(containerTag);
+  if (names.length === 0) return null;
   if (taskHasLevel1Direction(taskId, owner)) return null;
-  const dir = findDirectionByNameStmt.get(owner, name) as { id: string } | undefined;
-  if (!dir) return null;
-  insertAssoc.run('task', taskId, dir.id, 1);
-  return name;
+  let primary: string | null = null;
+  for (const name of names) {
+    const dir = findDirectionByNameStmt.get(owner, name) as { id: string } | undefined;
+    if (!dir) continue;
+    if (primary == null) {
+      insertAssoc.run('task', taskId, dir.id, 1);
+      primary = name;
+    } else {
+      insertAssoc.run('task', taskId, dir.id, 2);
+    }
+  }
+  return primary;
 }
 
 // ── GraphQL Taggable forward edge (Phase W · W4a) ─────────────────────────────

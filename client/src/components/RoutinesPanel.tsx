@@ -8,6 +8,7 @@ import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { MinuteDial } from '../components/MinuteDial.js';
 import { colorVar } from '../lib/pattern-meta.js';
+import { routineChips } from '../lib/multi-tag.js';
 
 /**
  * Routines (and Rituals, when enabled) — the pattern-collection content extracted
@@ -117,14 +118,14 @@ export function RoutinesPanel() {
    * T-RTN-1 — create a Routine, then seed it with the chosen existing Tasks and any
    * new-by-name Tasks (created title-only), preserving order via `position`. No
    * auto-scheduling; new-by-name Tasks carry only a title (fleshed out later).
+   * AF-11: no authored tag — the routine's tags derive from its member tasks.
    */
-  async function createRoutineWithTasks(typeName: string, name: string, tag: string, attached: AttachItem[]) {
+  async function createRoutineWithTasks(typeName: string, name: string, attached: AttachItem[]) {
     const ty = typeByName().get(typeName);
     try {
       const { pattern } = await api.patterns.create({
         type_id: ty?.id ?? null,
         name: name.trim(),
-        tag: tag.trim().replace(/^#/, '') || null,
       });
       let position = 0;
       for (const item of attached) {
@@ -220,7 +221,18 @@ export function RoutinesPanel() {
             <Show when={open()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show>
           </button>
           <span class="flex-1 text-sm font-medium text-foreground truncate">{props.pattern.name}</span>
-          <Show when={props.pattern.tag}>{(t) => <span class="text-primary text-xs">#{t()}</span>}</Show>
+          {/* AF-11: the derived member-tag union — directions solid, intentions ghost
+              (TaskCard's solid/ghost idiom). Multiple directions are expected. */}
+          <For each={routineChips(props.pattern).directions}>
+            {(d) => <span class="badge-neutral text-[11px] flex-shrink-0">#{d}</span>}
+          </For>
+          <For each={routineChips(props.pattern).ghosts}>
+            {(t) => (
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80 flex-shrink-0" title="from member tasks">
+                {t}
+              </span>
+            )}
+          </For>
           <Show when={props.pattern.recurrence_rule}>
             <span class="text-[10px] text-muted-foreground" title={describe()}>{describe()}</span>
           </Show>
@@ -404,10 +416,9 @@ export function RoutinesPanel() {
     const ty = () => typeByName().get(props.typeName);
     const [creating, setCreating] = createSignal(false);
     const [name, setName] = createSignal('');
-    const [tag, setTag] = createSignal('');
     const [attached, setAttached] = createSignal<AttachItem[]>([]);
     const canAttach = props.typeName === 'Routine'; // T-RTN-1 is scoped to Routine creation
-    const reset = () => { setName(''); setTag(''); setAttached([]); setCreating(false); };
+    const reset = () => { setName(''); setAttached([]); setCreating(false); };
     return (
       <section class="mb-6">
         <div class="flex items-center gap-2 mb-2.5">
@@ -430,11 +441,10 @@ export function RoutinesPanel() {
           <div class="mb-2 rounded-lg border border-border bg-card p-2">
             <div class="flex items-center gap-2">
               <input class="input py-1 text-sm" placeholder={`${props.typeName} name`} value={name()} onInput={(e) => setName(e.currentTarget.value)} />
-              <input class="input py-1 text-sm w-28" placeholder="#tag" value={tag()} onInput={(e) => setTag(e.currentTarget.value)} />
               <button
                 class="btn-primary text-xs px-3 py-1.5"
                 disabled={!name().trim()}
-                onClick={() => { createRoutineWithTasks(props.typeName, name(), tag(), attached()); reset(); }}
+                onClick={() => { createRoutineWithTasks(props.typeName, name(), attached()); reset(); }}
               >Create</button>
               <button class="btn-ghost text-xs px-2 py-1" onClick={reset}>Cancel</button>
             </div>

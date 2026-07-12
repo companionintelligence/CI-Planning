@@ -551,13 +551,19 @@ export interface PatternTypeInput {
  */
 export interface Pattern {
   id: string; owner_id: string; type_id: string | null;
+  // AF-11: `tag` is the LEGACY authored column (always null after migration 0120);
+  // `directions`/`intentions` are DERIVED server-side — the union of member tasks'
+  // tags, kind-classified. Multiple directions per routine are legal.
   name: string; tag: string | null; notes: string | null;
+  directions: string[]; intentions: string[];
   recurrence_rule: string | null; recurrence_dtstart: string | null;
   created_at: string; task_ids: string[];
 }
 
+// AF-11: no `tag` — routines author no tags (the server accepts-and-ignores one
+// from old clients; new code must not send it).
 export interface PatternInput {
-  type_id?: string | null; name: string; tag?: string | null;
+  type_id?: string | null; name: string;
   notes?: string | null; task_ids?: string[];
   recurrence_rule?: string | null; recurrence_dtstart?: string | null;
 }
