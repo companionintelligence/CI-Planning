@@ -71,3 +71,21 @@ export function partitionTaskSections(list: Task[], opts: SectionPredicates): Ta
   }
   return { newToday, open, scheduled, routine };
 }
+
+/**
+ * Header "N open" count (owner decision, AF-7 follow-up): a task created today counts
+ * as open IMMEDIATELY — not only after it rolls into the Open section at midnight. So
+ * the count spans BOTH the New Today and Open sections, but keeps the Open section's
+ * historical exclusions: Scheduled and Routine never count (a scheduled task created
+ * today sits in New Today yet still doesn't count), and neither do completed/cancelled
+ * rows (a done-today task renders checked in the active list but isn't "open"). Each
+ * task lands in exactly one section, so summing the two filtered sections cannot
+ * double-count. Counting by predicate rather than by section also means the midnight
+ * rollover (New Today → Open) leaves the total unchanged when nothing else changes.
+ */
+export function headerOpenCount(list: Task[], opts: SectionPredicates): number {
+  const s = partitionTaskSections(list, opts);
+  const isOpenish = (t: Task) =>
+    t.status !== 'done' && t.status !== 'cancelled' && !opts.isScheduled(t);
+  return s.open.filter(isOpenish).length + s.newToday.filter(isOpenish).length;
+}
