@@ -9,6 +9,9 @@ Owner decisions (2026-07-06):
 Schema facts (verified live): direction axis = `tags.kind='direction'`, base work/home/community;
 task tags = `entity_tags(entity_kind='task', level=1)` for primary; time-block direction =
 `time_blocks.tag` (denormalized string); `tag`/`category_id` split is CONVENTION, not a DB CHECK.
+(AF-4, 2026-07-11: the leftover service-level tag-XOR-category guard in `services/blocks.ts` was
+relaxed to match this contract — create/update now accept both; category-frozen `color_token`
+still wins when both are set.)
 
 ## Root cause of the reliability bug (all reported symptoms = one cause)
 
