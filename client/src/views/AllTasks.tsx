@@ -174,9 +174,17 @@ export function AllTasks() {
    */
   async function autoTagUntagged() {
     const vocab = (tags() ?? []).map((t) => t.name);
-    const untagged = shownList().filter((t) => (t.tags?.length ?? 0) === 0);
+    // AF-11: "untagged" = no tags at EITHER level — a task carrying only level-2
+    // intentions (tags: []) must not be re-tagged (the split write below replaces
+    // both levels, so touching it would wipe its intentions).
+    const untagged = shownList().filter((t) => (t.tags?.length ?? 0) === 0 && (t.secondary_tags?.length ?? 0) === 0);
     if (vocab.length === 0) { showToast('No tags yet — create some first', 'default'); return; }
     if (untagged.length === 0) { showToast('No untagged tasks in view', 'default'); return; }
+    // AF-11: heuristic names are split BY KIND to match the task tag model — the first
+    // direction becomes the single level-1 primary (extras are dropped: a task has ONE
+    // direction), intentions land at level 2, and category names never attach (a
+    // category is a block axis, not an entity tag).
+    const kindOf = new Map((tags() ?? []).map((t) => [t.name.toLowerCase(), t.kind]));
     setTagging(true);
     let tagged = 0;
     try {
@@ -184,7 +192,15 @@ export function AllTasks() {
         let llm: string[] = [];
         try { llm = (await api.tasks.suggestTags(task.title)).tags; } catch { llm = []; }
         const merged = mergeSuggestedTags(llm, suggestTagsFromTitle(task.title, vocab), vocab);
-        if (merged.length) { await api.tasks.update(task.id, { tags: merged }); tagged++; }
+        const directions = merged.filter((n) => kindOf.get(n.toLowerCase()) === 'direction');
+        const intentions = merged.filter((n) => {
+          const k = kindOf.get(n.toLowerCase());
+          return k !== 'direction' && k !== 'category';
+        });
+        if (directions.length || intentions.length) {
+          await api.tasks.update(task.id, { tags: directions.slice(0, 1), secondary_tags: intentions });
+          tagged++;
+        }
       }
       refetchTasks();
       showToast(

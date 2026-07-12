@@ -17,7 +17,7 @@ import { placeStartAnchoredTask, type StartAnchoredOutcome } from '../engine/aut
 import { computeStreak } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
 import { objectiveIdsByTaskIds } from '../services/task-promotion.js';
-import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds } from '../services/tags.js';
+import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, splitNamesByDirection } from '../services/tags.js';
 import {
   createTask, createRecurringTask, updateTask, deleteTask,
   promoteToHabit, recallTask, skipRecurringInstance,
@@ -74,9 +74,11 @@ export function tasksRouter() {
       objective_id: objectivesById.get(t.id)?.[0] ?? null,
     }));
 
-    // Filter by tag after attachment (simple approach for v1)
+    // Filter by tag after attachment (simple approach for v1). AF-11 (D1): match
+    // level 1 ∪ level 2 — intentions live at level 2 since 0121, and ?tag=<intention>
+    // must keep finding them (an L1-only check would silently break intention filters).
     const filtered = tag
-      ? withTags.filter((t) => (t.tags as string[]).includes(tag))
+      ? withTags.filter((t) => (t.tags as string[]).includes(tag) || (t.secondary_tags as string[]).includes(tag))
       : withTags;
 
     ctx.body = { tasks: filtered };
@@ -170,7 +172,15 @@ export function tasksRouter() {
       })
       .returning();
 
-    if (enriched.tags.length) applyTaskTagLevels(currentOwnerId(), task.id, { tags: enriched.tags });
+    if (enriched.tags.length) {
+      // AF-11 Slice 2: quick-add's flat name list is leveled BY KIND — known direction
+      // names land at level 1 (the single primary axis), everything else (intentions +
+      // brand-new names, created with the default kind='intention') at level 2. Before
+      // the split this wrote every name at L1, minting the L1 intentions that 0121
+      // reclassifies.
+      const { directions, others } = splitNamesByDirection(currentOwnerId(), enriched.tags);
+      applyTaskTagLevels(currentOwnerId(), task.id, { tags: directions, secondary: others });
+    }
     syncTaskReminders(currentOwnerId(), task.id); // Phase H (b): quick-add may parse a due date
 
     // AD1: a scheduled task is placed on its day right away — task_time set → exact
@@ -190,7 +200,9 @@ export function tasksRouter() {
       }
     }
 
-    const out = { ...taskToApi(task), tags: enriched.tags, secondary_tags: taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
+    // `tags` reflects the LEVELED result (L1 = directions), not the flat parse — so the
+    // response matches what a follow-up GET returns; intentions ride in secondary_tags.
+    const out = { ...taskToApi(task), tags: taskTagNames(task.id), secondary_tags: taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `task:${task.id}` });
     ctx.status = 201;
