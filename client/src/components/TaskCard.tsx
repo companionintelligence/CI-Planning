@@ -114,7 +114,20 @@ function DateField(props: {
 // server rejects links to non-leaf objectives (422 non_leaf), so goals and
 // projects never appear here.
 function ObjectiveMenu(props: { task: Task; close: () => void }) {
-  const [objectivesTree] = createResource(() => api.objectives.list().then((r) => r.objectives));
+  // Fetch errors are caught HERE (toast + empty tree) so the menu stays usable and a
+  // failed request is never mistaken for the "No objectives yet" empty state below.
+  const [loadFailed, setLoadFailed] = createSignal(false);
+  const [objectivesTree] = createResource(async () => {
+    try {
+      const r = await api.objectives.list();
+      setLoadFailed(false);
+      return r.objectives;
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+      setLoadFailed(true);
+      return [];
+    }
+  });
   const [query, setQuery] = createSignal('');
   const leafCount = () => leafObjectives(objectivesTree() ?? []).length;
   const rows = () => buildPickerRows(objectivesTree() ?? [], query(), props.task.objective_id);
@@ -148,6 +161,7 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
               type="text"
               class="w-full bg-input border border-border rounded px-2 py-1 text-xs"
               placeholder="Search objectives…"
+              aria-label="Search objectives"
               value={query()}
               onInput={(e) => setQuery(e.currentTarget.value)}
               ref={(el) => setTimeout(() => el.focus())}
@@ -172,7 +186,10 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
               </button>
             )}
           </For>
-          <Show when={leafCount() === 0}>
+          <Show when={loadFailed()}>
+            <p class="px-3 py-1.5 text-xs text-red-400">Couldn't load objectives — close and retry.</p>
+          </Show>
+          <Show when={leafCount() === 0 && !loadFailed()}>
             <p class="px-3 py-1.5 text-xs text-muted-foreground">No objectives yet — create one on the Objectives tab.</p>
           </Show>
           <Show when={leafCount() > 0 && rows().length === 0}>
@@ -548,14 +565,15 @@ export function TaskCard(props: Props) {
               </Show>
               {/* AF-6: assign to / remove from an objective — leaf objectives only. */}
               <div class="relative">
-                <button onClick={() => setObjectiveMenu((v) => !v)} class="btn-icon hover:text-primary" title="Assign to objective"><Target size={13} /></button>
+                {/* The two dropdowns are mutually exclusive — opening one closes the other. */}
+                <button onClick={() => { setRoutineMenu(false); setObjectiveMenu((v) => !v); }} class="btn-icon hover:text-primary" title="Assign to objective"><Target size={13} /></button>
                 <Show when={objectiveMenu()}>
                   <ObjectiveMenu task={props.task} close={() => setObjectiveMenu(false)} />
                 </Show>
               </div>
               {/* Add to a routine — pick an existing one or create a new routine with this task. */}
               <div class="relative">
-                <button onClick={() => setRoutineMenu((v) => !v)} class="btn-icon hover:text-primary" title="Add to a routine"><Shapes size={13} /></button>
+                <button onClick={() => { setObjectiveMenu(false); setRoutineMenu((v) => !v); }} class="btn-icon hover:text-primary" title="Add to a routine"><Shapes size={13} /></button>
                 <Show when={routineMenu()}>
                   <div class="absolute z-20 right-0 top-full mt-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
                     <For each={routines()}>
