@@ -163,8 +163,8 @@ export const patternResolvers = {
     // AF-11 (D2): derived member-tag union. Patterns are a small hand-curated list
     // (see the Query comment in pattern.graphql), so per-node derivation here matches
     // the existing `tasks` resolver's bounded-N+1 stance; the REST list read batches.
-    directions: (p: PatternRow) => routineDerivedTags(p.id).directions,
-    intentions: (p: PatternRow) => routineDerivedTags(p.id).intentions,
+    directions: (p: PatternRow) => ((p as any).__derivedTags ??= routineDerivedTags(p.id)).directions,
+    intentions: (p: PatternRow) => ((p as any).__derivedTags ??= routineDerivedTags(p.id)).intentions,
     recurrenceRule: (p: PatternRow) => p.recurrence_rule,
     recurrenceDtstart: (p: PatternRow) => p.recurrence_dtstart,
     createdAt: (p: PatternRow) => p.created_at,
