@@ -9,15 +9,17 @@ hardware and stays there.
 Companion Planning is currently in **v0.3 active development**. The core app is
 fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorization
 Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
-Google Calendar sync** are built in, gated behind `GOOGLE_MODE=live` plus
-`CP_GOOGLE_CLIENT_ID` / `CP_GOOGLE_CLIENT_SECRET` and a 32-byte `CP_KEK_B64` key that
-encrypts stored tokens. With `GOOGLE_MODE` unset (the default) Google integration is
-**off** — no ingest, no sync. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that
-runs fully offline on committed sample data (refused in production unless
-`CP_ALLOW_FIXTURE=true`). Outbound calendar write-back stays behind a second
-flag, `CP_SYNC_WRITEBACK` (off by default — inbound read-only is the safe posture).
+Google Calendar sync** are built in. Enable them either **in-app** (an admin pastes a
+Google OAuth client in Settings → Connections; needs only a 32-byte `CP_KEK_B64` key
+that encrypts stored secrets/tokens) or via env (`GOOGLE_MODE=live` +
+`CP_GOOGLE_CLIENT_ID` / `CP_GOOGLE_CLIENT_SECRET`, which pins the mode and makes the
+in-app setup read-only). With neither configured, Google integration is **off** — no
+ingest, no sync. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that runs fully
+offline on committed sample data (refused in production unless `CP_ALLOW_FIXTURE=true`).
+Outbound calendar write-back stays behind a second flag, `CP_SYNC_WRITEBACK` (off by
+default — inbound read-only is the safe posture).
 See **[docs/google-cloud-setup.md](docs/google-cloud-setup.md)** to provision a Google
-client and turn live mode on.
+client.
 
 - **Server** — Koa + TypeScript (`server/`), SQLite via better-sqlite3 + Drizzle, cron jobs via croner
 - **Client** — SolidJS + Tailwind PWA (`client/`), built by Vite into `server/public/`
@@ -510,6 +512,12 @@ First-run notes:
   in-app password reset, which needs `SMTP_*` configured to actually email links).
 - `SESSION_SECRET` signs the login cookie — keep it stable across container recreations
   or every device gets signed out.
+- **Google Calendar (optional):** add `-e CP_KEK_B64="$(openssl rand -base64 32)"` to the
+  run command (it encrypts stored OAuth tokens — keep it stable like `SESSION_SECRET`),
+  then paste your Google OAuth client into **Settings → Connections → Google OAuth
+  client** and hit *Save & enable* — no other env vars, no restart. Each user then
+  connects their own Google account with the Connect button. See
+  [docs/google-cloud-setup.md](docs/google-cloud-setup.md) for creating the client.
 - **Quick trial without auth** (single machine, no real data): add
   `-e NODE_ENV=development` instead of the five auth vars. This runs the dev
   `AUTH_MODE=test` identity — do not expose it beyond localhost.
@@ -555,7 +563,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CIPORTAL_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` | Must match the URI registered with CI-Portal. |
 | `CIPORTAL_SCOPES` | `openid profile email` | Scopes requested at authorize. |
 | `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | (unset) | Advanced: set **all three** to bypass discovery (air-gapped / no discovery doc). When overriding, `CIPORTAL_ISSUER` must equal the token's actual `iss`. |
-| `GOOGLE_MODE` | (unset ⇒ off) | `live` (real Google OAuth + Calendar sync; each user connects their own account in Settings → Connections) or `fixture` (committed sample data, fully offline — dev/demo opt-in, refused in production unless `CP_ALLOW_FIXTURE=true`). Unset ⇒ Google integration is off. `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
+| `GOOGLE_MODE` | (unset ⇒ off / in-app) | `live` (real Google OAuth + Calendar sync; each user connects their own account in Settings → Connections) or `fixture` (committed sample data, fully offline — dev/demo opt-in, refused in production unless `CP_ALLOW_FIXTURE=true`). Unset ⇒ off, **unless an admin saves a Google OAuth client in Settings → Connections (in-app setup, needs `CP_KEK_B64`) — that flips live mode on at runtime with no env vars and no restart.** An explicit env value pins the mode and makes the in-app setup read-only. Env `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
 | `CP_ALLOW_FIXTURE` | (unset) | Escape hatch: allows `GOOGLE_MODE=fixture` under `NODE_ENV=production` (demo appliances only — fixture data looks like real tasks). |
 | `CP_GOOGLE_CLIENT_ID` | (unset) | Google OAuth client ID. Required when `GOOGLE_MODE=live`. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md). |
 | `CP_GOOGLE_CLIENT_SECRET` | (unset) | Google OAuth client secret. Needed for a **Web** client (ts.net HTTPS deploy); a **Desktop/installed** client with a loopback redirect can run without one. Never commit it. |
@@ -572,7 +580,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CP_KEK_B64_V{n}` | (unset) | Historical KEK for version `{n}`, used while rotating (e.g. `CP_KEK_B64_V2`). The current version may live in plain `CP_KEK_B64`. |
 | `CP_SYNC_WRITEBACK` | `false` | When `true`, sync pushes local block changes back to the provider. Off ⇒ inbound read-only. |
 | `CP_SYNC_DISABLED` | `false` | `true` is a master kill switch — disables the sync agent entirely. |
-| `CP_MCP_COMMAND` | (unset) | Command that launches the Calendar MCP server child the connector drives over stdio. **Required for `GOOGLE_MODE=live`** (unset ⇒ live sync fails with `McpUnavailable`). CP ships one: `node_modules/.bin/tsx src/scripts/mcp-google-server.ts` (run from `server/`). See [docs/google-cloud-setup.md](docs/google-cloud-setup.md) §7. |
+| `CP_MCP_COMMAND` | bundled MCP server | Command that launches the Calendar MCP server child the connector drives over stdio. **Defaults to the bundled one** (`node_modules/.bin/tsx src/scripts/mcp-google-server.ts`, resolved from `server/`), so live sync works out of the box; override only to swap in a different MCP server. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md) §7. |
 | `CP_MCP_TIMEOUT_MS` | `30000` | Per-call timeout for MCP requests. |
 | `CP_MCP_RETRIES` | `3` | Retry budget for MCP requests. |
 | `CP_MCP_BREAKER_THRESHOLD` | `5` | Consecutive MCP failures before the circuit breaker opens. |

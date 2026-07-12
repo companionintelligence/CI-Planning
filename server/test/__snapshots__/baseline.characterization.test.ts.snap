@@ -682,6 +682,14 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "key",
+      "value",
+      "updated_at",
+    ],
+    "table": "app_config",
+  },
+  {
+    "columns": [
       "id",
       "owner_id",
       "actor",

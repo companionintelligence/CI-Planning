@@ -75,6 +75,9 @@ export interface GoogleConfig {
   enableGmail: boolean;
   mcp: { command: string; timeoutMs: number; retries: number };
   mode: 'live' | 'fixture' | 'off';
+  /** True when GOOGLE_MODE was set explicitly in the environment — env is then
+   *  authoritative and the in-app (app_config) Google setup is read-only. */
+  envPinned: boolean;
 }
 
 /**
@@ -170,7 +173,11 @@ mkdirSync(dirname(dbPath), { recursive: true });
 const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3848';
 // Fail-closed default: unset (or unrecognized) GOOGLE_MODE means NO Google integration.
 // Fixture mode — canned sample emails/events — must be an explicit opt-in, never a
-// default a real deployment can hit by omission.
+// default a real deployment can hit by omission. When GOOGLE_MODE is unset, an
+// operator-saved in-app Google client (app_config, hydrated after boot by
+// services/google-config.ts) may flip the mode to 'live' at runtime; an explicit env
+// value pins the mode and makes the in-app setup read-only.
+const googleEnvPinned = process.env.GOOGLE_MODE === 'live' || process.env.GOOGLE_MODE === 'fixture';
 const googleMode: 'live' | 'fixture' | 'off' =
   process.env.GOOGLE_MODE === 'live' ? 'live'
   : process.env.GOOGLE_MODE === 'fixture' ? 'fixture'
@@ -264,11 +271,18 @@ export const config: Config = {
     // raw process.env read in oauth.ts) so WP8's Gmail go-live consumes one flag.
     enableGmail: process.env.CP_GOOGLE_ENABLE_GMAIL === 'true',
     mcp: {
-      command: process.env.CP_MCP_COMMAND ?? '',
+      // Default to the BUNDLED Calendar MCP server (README §google-cloud-setup §7) so a
+      // live connection works out of the box — previously the empty default meant an
+      // OAuth-connected account whose every sync failed with McpUnavailable until the
+      // operator discovered CP_MCP_COMMAND. Relative to the server package dir (the
+      // Dockerfile WORKDIR, the launchd WorkingDirectory, and `pnpm --filter server`
+      // all run there). Only consulted in live mode.
+      command: process.env.CP_MCP_COMMAND ?? 'node_modules/.bin/tsx src/scripts/mcp-google-server.ts',
       timeoutMs: Number(process.env.CP_MCP_TIMEOUT_MS ?? 30_000),
       retries: Number(process.env.CP_MCP_RETRIES ?? 3),
     },
     mode: googleMode,
+    envPinned: googleEnvPinned,
   },
   sync: {
     // Outbound write-back is OFF by default — pull-only is the safe posture (Phase J).
