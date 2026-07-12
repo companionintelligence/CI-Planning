@@ -407,6 +407,38 @@ describe('progress_cache rollup', () => {
     const res = await api(srv.url, '/api/objectives');
     expect(res.body.objectives.find((o: any) => o.id === id).progress_cache).toBeNull();
   });
+
+  // AF-5 regression: completing/reopening a linked task via PATCH /api/tasks/:id must
+  // refresh the rollup WITHOUT any explicit /recompute call. Before the fix, updateTask
+  // never recomputed, so the cache went stale for every completion surface but the
+  // objectives tab (which POSTed /recompute client-side as a workaround).
+  it('completing a linked task via PATCH recomputes progress (no explicit recompute)', async () => {
+    const id = insertObjective({ title: 'Auto rollup' });
+    const t = insertTask('Do the work', 60, 'open'); // est 60, open → 0
+    linkTask(id, t);
+    await api(srv.url, `/api/objectives/${id}/recompute`, { method: 'POST' });
+    let obj = (await api(srv.url, '/api/objectives')).body.objectives.find((o: any) => o.id === id);
+    expect(obj.progress_cache).toBeCloseTo(0, 2);
+
+    const done = await api(srv.url, `/api/tasks/${t}`, { method: 'PATCH', json: { completed: true } });
+    expect(done.status).toBe(200);
+    obj = (await api(srv.url, '/api/objectives')).body.objectives.find((o: any) => o.id === id);
+    expect(obj.progress_cache).toBeCloseTo(1, 2); // 60/60 done, no /recompute issued
+  });
+
+  it('reopening a completed linked task via PATCH recomputes progress back down', async () => {
+    const id = insertObjective({ title: 'Reopen rollup' });
+    const t = insertTask('Redo the work', 60, 'done'); // est 60, done → 1
+    linkTask(id, t);
+    await api(srv.url, `/api/objectives/${id}/recompute`, { method: 'POST' });
+    let obj = (await api(srv.url, '/api/objectives')).body.objectives.find((o: any) => o.id === id);
+    expect(obj.progress_cache).toBeCloseTo(1, 2);
+
+    const reopened = await api(srv.url, `/api/tasks/${t}`, { method: 'PATCH', json: { status: 'open', completed_at: null } });
+    expect(reopened.status).toBe(200);
+    obj = (await api(srv.url, '/api/objectives')).body.objectives.find((o: any) => o.id === id);
+    expect(obj.progress_cache).toBeCloseTo(0, 2); // back to 0/60, recomputed on reopen
+  });
 });
 
 // ── advance_objectives job ─────────────────────────────────────────────────────
