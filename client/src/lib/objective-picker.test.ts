@@ -46,7 +46,7 @@ describe('leafObjectives', () => {
 
 describe('buildPickerRows', () => {
   it('preserves hierarchy as depth from the ancestor path', () => {
-    const rows = buildPickerRows(tree, '', null);
+    const rows = buildPickerRows(tree, '', []);
     const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
     expect(byId['o1'].depth).toBe(2); // Health › Run a 10k
     expect(byId['o3'].depth).toBe(1); // Health
@@ -55,24 +55,33 @@ describe('buildPickerRows', () => {
   });
 
   it('filters by typeahead query over title + path, case-insensitive', () => {
-    expect(buildPickerRows(tree, 'long RUN', null).map((r) => r.id)).toEqual(['o1']);
+    expect(buildPickerRows(tree, 'long RUN', []).map((r) => r.id)).toEqual(['o1']);
     // Path match: "10k" appears only in ancestors of o1/o2.
-    expect(buildPickerRows(tree, '10k', null).map((r) => r.id)).toEqual(['o1', 'o2']);
+    expect(buildPickerRows(tree, '10k', []).map((r) => r.id)).toEqual(['o1', 'o2']);
     // A query matching only a non-leaf yields nothing (leaves filtered first).
-    expect(buildPickerRows(tree, 'Career', null)).toEqual([]);
+    expect(buildPickerRows(tree, 'Career', [])).toEqual([]);
   });
 
   it('empty query returns all leaves in tree order', () => {
-    expect(buildPickerRows(tree, '', null).map((r) => r.id)).toEqual(['o1', 'o2', 'o3', 'o4']);
+    expect(buildPickerRows(tree, '', []).map((r) => r.id)).toEqual(['o1', 'o2', 'o3', 'o4']);
   });
 
-  it('derives checked state from the linked objective id', () => {
-    const rows = buildPickerRows(tree, '', 'o2');
-    expect(rows.find((r) => r.id === 'o2')!.checked).toBe(true);
-    expect(rows.filter((r) => r.checked).map((r) => r.id)).toEqual(['o2']);
-    // No link → nothing checked (null and undefined both mean "no objective").
-    expect(buildPickerRows(tree, '', null).some((r) => r.checked)).toBe(false);
-    expect(buildPickerRows(tree, '', undefined).some((r) => r.checked)).toBe(false);
+  it('derives checked state from set membership over ALL linked ids (AF-10, M:N)', () => {
+    // Single link — only that row checked.
+    const single = buildPickerRows(tree, '', ['o2']);
+    expect(single.filter((r) => r.checked).map((r) => r.id)).toEqual(['o2']);
+    // Multi-link — EVERY linked objective is checked, not just the first.
+    const multi = buildPickerRows(tree, '', ['o4', 'o1']);
+    expect(multi.filter((r) => r.checked).map((r) => r.id)).toEqual(['o1', 'o4']); // tree order
+    // No links → nothing checked.
+    expect(buildPickerRows(tree, '', []).some((r) => r.checked)).toBe(false);
+    // A linked id that isn't a visible leaf (stale/foreign) checks nothing else.
+    expect(buildPickerRows(tree, '', ['ghost']).some((r) => r.checked)).toBe(false);
+  });
+
+  it('checked state survives typeahead filtering', () => {
+    const rows = buildPickerRows(tree, '10k', ['o2', 'o3']);
+    expect(rows.map((r) => [r.id, r.checked])).toEqual([['o1', false], ['o2', true]]);
   });
 
   it('search threshold is a sane positive bound', () => {
