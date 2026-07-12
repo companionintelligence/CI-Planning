@@ -138,16 +138,33 @@ export function recomputeObjectivesForTask(taskId: string): void {
 }
 
 /**
- * First linked objective per task id (M:N — a task can serve several objectives; the
- * task list only needs one, for the star + its click target). Batched to avoid N+1.
- * Ordered by objective id for a stable, deterministic choice.
+ * ALL linked objective ids per task id (M:N over objective_tasks, linked=1 only —
+ * tombstoned links excluded). Batched to avoid N+1. AF-10: backs the task payload's
+ * `objective_ids`; its first element backs the legacy `objective_id` decoration.
+ *
+ * Ordering + scoping deliberately mirror services/objectives.ts objectiveForTask
+ * (which backs GraphQL TaskType.objective): ORDER BY o.created_at, o.id, and BOTH
+ * sides owner-scoped (objective + task) so a stray/dangling objective_tasks row
+ * pointing at another owner's row can never surface here. That keeps REST's
+ * objective_id and GraphQL's objective agreeing on the same first objective.
  */
-export function firstObjectiveByTaskIds(taskIds: string[]): Map<string, string> {
-  const map = new Map<string, string>();
+export function objectiveIdsByTaskIds(ownerId: string, taskIds: string[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
   if (taskIds.length === 0) return map;
   const rows = sqlite
-    .prepare(`SELECT task_id, objective_id FROM objective_tasks WHERE linked = 1 AND task_id IN (${taskIds.map(() => '?').join(',')}) ORDER BY objective_id`)
-    .all(...taskIds) as { task_id: string; objective_id: string }[];
-  for (const r of rows) if (!map.has(r.task_id)) map.set(r.task_id, r.objective_id);
+    .prepare(
+      `SELECT ot.task_id, ot.objective_id FROM objective_tasks ot
+         JOIN objectives o ON o.id = ot.objective_id
+         JOIN tasks t ON t.id = ot.task_id
+        WHERE ot.linked = 1 AND o.owner_id = ? AND t.owner_id = ?
+          AND ot.task_id IN (${taskIds.map(() => '?').join(',')})
+        ORDER BY o.created_at, o.id`,
+    )
+    .all(ownerId, ownerId, ...taskIds) as { task_id: string; objective_id: string }[];
+  for (const r of rows) {
+    const list = map.get(r.task_id);
+    if (list) list.push(r.objective_id);
+    else map.set(r.task_id, [r.objective_id]);
+  }
   return map;
 }
