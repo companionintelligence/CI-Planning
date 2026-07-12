@@ -27,7 +27,7 @@ Inert Suggest/Schedule toggle repointed to `trust_mode` (dead `auto_mode` column
 - **Profile editor**: `PATCH /api/owner/profile` + a Settings Profile card (all auth modes) — owners are no longer stuck as "System".
 - **Timezone auto-adopt**: a UTC-defaulted install adopts the browser zone once per browser.
 - **In-app Google connection setup** (migration 0124, `app_config`): an admin pastes a Google OAuth client in Settings → Connections and the connector flips to live at runtime — no env vars, no restart. Secret is KEK-sealed; `CP_MCP_COMMAND` now defaults to the bundled MCP server.
-- Docs truth pass: versions → 0.3.0, migration heads → 0123, Node engines → `>=22`.
+- Docs truth pass: versions 0.3.0, migration heads 0124, Node engines 0`>=22`.
 
 ### PR #328 — cross-tenant data-leak fixes (OPEN, green)
 The multi-tenant leak audit ran three parallel sweeps (REST/services, GraphQL/SSE/sync/export, schema/jobs/auth). **The planning-data core is fully owner-isolated** — tasks, blocks, tags, objectives, sync, SSE, export, and every GraphQL resolver/edge return "not found" for a cross-owner id. Four *edge* leaks were fixed:
