@@ -54,6 +54,56 @@ export function rankedSecondaryTags(title: string, primaryName: string, llm: str
   return [...candidates].sort((a, b) => score(b) - score(a) || a.name.localeCompare(b.name));
 }
 
+// ── AF-9: time-block tag shape helpers (pure; unit-tested) ──────────────────────
+
+/**
+ * Split a stored `time_blocks.tag` string. Legacy wizard-era rows may be
+ * comma-joined ("work,deep,errand"): the FIRST segment is the primary and the
+ * remaining segments become secondary chips. Normalization is write-time only —
+ * a legacy row keeps its shape until the next save sends tag=primary +
+ * secondary_tags (read paths elsewhere are unchanged).
+ */
+export function splitBlockTag(tag: string | null | undefined): { primary: string; secondary: string[] } {
+  const parts = (tag ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return { primary: parts[0] ?? '', secondary: parts.slice(1) };
+}
+
+/** Merge tag-name lists, deduped case-insensitively (first occurrence wins). */
+export function mergeTagNames(...lists: (string[] | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of lists) {
+    for (const raw of list ?? []) {
+      const name = raw.trim();
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+/**
+ * AF-9 save shape for a time block: the level-1 `tag` is the SINGLE primary
+ * (WORK/HOME/COMMUNITY — no more folding intentions into a comma-joined string)
+ * and everything else — authored intention chips ∪ any preserved existing
+ * secondary_tags — lands at level 2, deduped case-insensitively, minus the
+ * primary itself and any category-name collisions (a category is never an
+ * entity tag; same guard as the task path).
+ */
+export function timeblockTagPayload(
+  form: Pick<ElementForm, 'primary' | 'intentions' | 'secondaryTags'>,
+  categoryNames: Set<string> = new Set(),
+): { tag: string | undefined; secondary_tags: string[] } {
+  const primary = form.primary.trim();
+  const tag = primary && !categoryNames.has(primary.toLowerCase()) ? primary : undefined;
+  const secondary_tags = mergeTagNames(form.intentions, form.secondaryTags).filter(
+    (n) => n.toLowerCase() !== primary.toLowerCase() && !categoryNames.has(n.toLowerCase()),
+  );
+  return { tag, secondary_tags };
+}
+
 // ── Date helpers (client-local) ─────────────────────────────────────────────────
 function isoAt(dateStr: string, hhmm: string): string {
   const [y, mo, d] = dateStr.split('-').map(Number);
@@ -86,7 +136,10 @@ export interface ElementForm {
   goalDay?: string;           // YYYY-MM-DD (someday)
   recurrenceRule?: string | null;  // time-block RRULE ('' / null clears)
   categoryId?: string;             // time-block: the Time Block Category (0069); direction implied
-  secondaryTags?: string[];        // preserved on time-block edit (not authored here)
+  // time-block: existing level-2 tags a caller wants preserved WITHOUT round-tripping
+  // them into the chips (the wizard now loads them into `intentions` instead; on save
+  // this set is unioned + deduped with the chips — see timeblockTagPayload).
+  secondaryTags?: string[];
   // time-block membership (scheduled only): existing tasks/habits to scatter inside,
   // routines to place inside, and child blocks to detach — all applied on Save.
   attachTaskIds?: string[];
@@ -194,17 +247,19 @@ export async function saveElement(
 
   // timeblock
   const durMin = Math.max(form.durationMin ?? 60, 15);
-  // Preserve secondary_tags (not authored in the wizard) and carry the recurrence
-  // rule (null clears) when present — so edits don't drop either.
+  // AF-9: level-1 tag = the single primary; intention chips ∪ preserved
+  // secondaryTags land at level 2 (deduped). Always send secondary_tags on edit
+  // so chip removals actually clear level 2; on create only when non-empty.
+  const { tag, secondary_tags } = timeblockTagPayload(form, categoryNames);
   const extra: Record<string, unknown> = {};
-  if (form.secondaryTags) extra.secondary_tags = form.secondaryTags;
+  if (mode === 'edit' || secondary_tags.length) extra.secondary_tags = secondary_tags;
   let body: Record<string, unknown>;
   if (form.someday) {
     const goal = form.goalDay || localISODate();
     const start = isoAtMidnight(goal);
     body = {
       title: form.title.trim() || 'Time Block', block_kind: 'timeblock', block_type: 'someday',
-      tag: tagList.join(',') || undefined, goal_start_date: goal, duration_minutes: durMin, all_day: true,
+      tag, goal_start_date: goal, duration_minutes: durMin, all_day: true,
       note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...(form.categoryId ? { category_id: form.categoryId } : {}),
@@ -214,7 +269,7 @@ export async function saveElement(
     const start = isoAt(form.day || localISODate(), form.start || nextHalfHour());
     body = {
       title: form.title.trim() || 'Time Block', block_kind: 'timeblock', block_type: 'scheduled',
-      tag: tagList.join(',') || undefined, note: form.note || undefined, start_at: start,
+      tag, note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...(form.recurrenceRule !== undefined ? { recurrence_rule: form.recurrenceRule } : {}),
       ...(form.categoryId ? { category_id: form.categoryId } : {}),
