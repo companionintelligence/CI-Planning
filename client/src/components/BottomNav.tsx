@@ -1,6 +1,6 @@
 import { A, useNavigate } from '@solidjs/router';
 import { createSignal, createResource, Show, For } from 'solid-js';
-import { CheckSquare, Inbox, Tag, Settings, Activity, Sun, MoreHorizontal, CalendarDays, Target, LogOut } from 'lucide-solid';
+import { CheckSquare, Inbox, Tag, Settings, Activity, Sun, MoreHorizontal, CalendarDays, LogOut } from 'lucide-solid';
 import { possibles, showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
@@ -12,7 +12,6 @@ const primary = [
   { href: '/calendar', label: 'Calendar', Icon: CalendarDays },
 ];
 const overflow = [
-  { href: '/objectives', label: 'Objectives', Icon: Target },
   { href: '/tags', label: 'Tags', Icon: Tag },
   { href: '/jobs', label: 'Jobs', Icon: Activity },
   { href: '/settings', label: 'Settings', Icon: Settings },
