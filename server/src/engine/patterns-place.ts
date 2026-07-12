@@ -20,7 +20,7 @@ import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js'
 import { localISODate, addDays } from '../lib/dates.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { occurrencesBetween, parseRule } from './recurrence.js';
-import { taskTagNames } from '../services/tags.js';
+import { taskTagNames, routineDerivedTags, syncLeveledEntityTags } from '../services/tags.js';
 import { syncTaskFromBlock, applyTaskPlacementStatus } from '../services/block-task-sync.js';
 
 const DEFAULT_EST_MIN = 30;
@@ -231,9 +231,18 @@ export function placePatternOnDay(
       // existing move-group then moves the whole routine together — "a container like a
       // time-block". The container shares the pattern marker so it's idempotent, survives
       // clear-day (source_kind='pattern'), and cascades on delete.
-      const meta = sqlite.prepare(`SELECT name, tag FROM patterns WHERE id = ?`).get(patternId) as
-        | { name: string; tag: string | null }
+      const meta = sqlite.prepare(`SELECT name FROM patterns WHERE id = ?`).get(patternId) as
+        | { name: string }
         | undefined;
+      // AF-11: the container stamp comes from the routine's DERIVED direction union
+      // (patterns.tag is authored-no-more and NULL after 0120). The stamp is cosmetic
+      // (§7b — placement never reads it), but downstream single-tag readers exist
+      // (inheritContainerDirection, `#tag` chips), so we do NOT comma-join: the FIRST
+      // derived direction lands in the `tag` column (+ entity_tags level 1, matching
+      // API-created blocks) and the REST become level-2 secondary tags — same shape
+      // applyBlockTagLevels writes. No derived direction → no stamp.
+      const derivedDirs = routineDerivedTags(patternId).directions;
+      const containerTag = derivedDirs[0] ?? null;
       const seq: { task: MemberTask; lenMs: number }[] = [];
       for (const t of toPlace) {
         for (const lenMs of splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs)) {
@@ -259,7 +268,13 @@ export function placePatternOnDay(
               `INSERT INTO time_blocks (id, owner_id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
                VALUES (uuid7(), ?, ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 1, 'pattern', ?, 'planned') RETURNING id`,
             )
-            .get(owner, meta?.name ?? 'Routine', meta?.tag ?? null, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)) as { id: string }).id;
+            .get(owner, meta?.name ?? 'Routine', containerTag, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)) as { id: string }).id;
+          if (derivedDirs.length > 0) {
+            syncLeveledEntityTags('time_block', containerId, [
+              { level: 1, names: [derivedDirs[0]] },
+              { level: 2, names: derivedDirs.slice(1) },
+            ], owner);
+          }
           const placedTaskIds = new Set<string>();
           for (const l of layout) {
             const { id: bid } = ins.get(l.task.task_id, owner, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId) as { id: string };

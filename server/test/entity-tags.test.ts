@@ -79,10 +79,14 @@ describe('CON-3 write-sync (through the routes)', () => {
     expect(orphanCount()).toBe(0);
   });
 
-  it('routine create syncs its tag', async () => {
+  it('routine create no longer mirrors a tag (AF-11: authored routine tags are ignored)', async () => {
+    // Routines derive their tags from member tasks at read time (D2) — the write
+    // path accepts `tag` for API compat but writes NEITHER the column NOR entity_tags.
     const created = await api(srv.url, '/api/patterns', { method: 'POST', json: { name: 'Evening', tag: 'wind-down' } });
     const id = created.body.pattern.id as string;
-    expect(tagRows('routine', id)).toEqual(['wind-down']);
+    expect(created.body.pattern.tag).toBeNull();
+    expect(tagRows('routine', id)).toEqual([]);
+    expect(orphanCount()).toBe(0);
   });
 });
 
@@ -111,10 +115,13 @@ describe('CON-3 orphan-free cascade (the integrity gate)', () => {
   });
 
   it('pattern delete clears the routine + its fast-task tag rows', async () => {
-    const pat = await api(srv.url, '/api/patterns', { method: 'POST', json: { name: 'Morning', tag: 'morning' } });
+    const pat = await api(srv.url, '/api/patterns', { method: 'POST', json: { name: 'Morning' } });
     const patId = pat.body.pattern.id as string;
     const ft = await api(srv.url, `/api/patterns/${patId}/fast-tasks`, { method: 'POST', json: { title: 'Stretch' } });
     const ftId = ft.body.task.id as string;
+    // AF-11: the API no longer writes routine rows — seed LEGACY ones raw (pre-0120
+    // data) to prove the delete cascade still clears them.
+    syncEntityTags('routine', patId, ['morning'], OWNER);
     // fast tasks aren't tagged by the route — simulate a user tagging one.
     syncEntityTags('task', ftId, ['mobility'], OWNER);
     expect(tagRows('routine', patId)).toEqual(['morning']);

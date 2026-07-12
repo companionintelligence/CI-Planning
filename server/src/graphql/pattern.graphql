@@ -33,7 +33,12 @@ type PatternKindType implements Node {
 type PatternType implements Node {
   id: ID!
   name: String!
+  # AF-11: legacy authored tag — always null after migration 0120; kept for API compat.
   tag: String
+  # AF-11 (D2): derived at read time — the union of member tasks' tags, classified by
+  # tag kind. Multiple directions per routine are legal (members can span directions).
+  directions: [String!]!
+  intentions: [String!]!
   notes: String
   recurrenceRule: String
   recurrenceDtstart: String
@@ -65,7 +70,7 @@ input UpdatePatternKindInput {
 input CreatePatternInput {
   name: String!
   kindId: ID                 # → patterns.type_id (a PatternKindType id)
-  tag: String
+  tag: String                # AF-11: accepted for API compat, IGNORED (tags derive from members)
   notes: String
   taskIds: [ID!]
   recurrenceRule: String
@@ -75,7 +80,7 @@ input UpdatePatternInput {
   id: ID!
   name: String
   kindId: ID
-  tag: String
+  tag: String                # AF-11: accepted for API compat, IGNORED (tags derive from members)
   notes: String
   taskIds: [ID!]
   recurrenceRule: String

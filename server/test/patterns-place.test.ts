@@ -134,6 +134,61 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     expect(blocks[0].task_id).toBe(instance); // not the template
   });
 
+  // ── AF-11 — the container stamp comes from the DERIVED direction union ────────
+  // (routines author no tags; patterns.tag is NULL post-0120 and never read here).
+  const directionTagId = (name: string): string => {
+    const ex = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`).get(OWNER, name) as { id: string } | undefined;
+    return ex ? ex.id : (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'direction') RETURNING id`).get(OWNER, name) as { id: string }).id;
+  };
+  const attachDirection = (taskId: string, name: string) =>
+    sqlite.prepare(`INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(taskId, directionTagId(name));
+  const containerEntityTags = (containerId: string) =>
+    sqlite.prepare(`SELECT t.name, et.level FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = ? ORDER BY et.level, t.name`).all(containerId) as { name: string; level: number }[];
+
+  it('AF-11: free-place stamps the FIRST derived direction into tag + the rest as level-2 secondary (no comma-join)', async () => {
+    const t1 = insertTask('Work thing', 30); attachDirection(t1, 'work');
+    const t2 = insertTask('Home thing', 30); attachDirection(t2, 'home');
+    const pid = insertPattern('Routine', 'Mixed directions', [t1, t2]);
+
+    placePatternOnDay(OWNER, pid, { date: DAY });
+    const container = patternContainer(pid);
+    expect(container).toBeTruthy();
+    // Derived union is name-sorted → 'home' is first; the rest never comma-join.
+    expect(container!.tag).toBe('home');
+    expect(containerEntityTags(container!.id)).toEqual([
+      { name: 'home', level: 1 },
+      { name: 'work', level: 2 },
+    ]);
+  });
+
+  it('AF-11: no derived direction → no stamp (container tag NULL, no entity_tags)', async () => {
+    const t = insertTask('Untagged member', 30);
+    const pid = insertPattern('Routine', 'Plain', [t]);
+    placePatternOnDay(OWNER, pid, { date: DAY });
+    const container = patternContainer(pid);
+    expect(container!.tag).toBeNull();
+    expect(containerEntityTags(container!.id)).toEqual([]);
+  });
+
+  it('AF-11 regression: placement is byte-identical whether or not the routine carries a LEGACY authored tag', async () => {
+    // Placement never read the routine's own tag — prove it stays true: two routines
+    // with identical members, one with a raw legacy patterns.tag, place at the same
+    // wall times (compared across two days so they don't compete for gaps).
+    const timesOf = (pid: string) => patternBlocks(pid).map((b) => [b.title, b.start_at.slice(11), b.end_at.slice(11)]);
+    const a1 = insertTask('Step 1', 30); const a2 = insertTask('Step 2', 60);
+    const clean = insertPattern('Routine', 'Twin', [a1, a2]);
+    const b1 = insertTask('Step 1', 30); const b2 = insertTask('Step 2', 60);
+    const legacy = insertPattern('Routine', 'Twin', [b1, b2]);
+    sqlite.prepare(`UPDATE patterns SET tag = 'work,home' WHERE id = ?`).run(legacy);
+
+    const rClean = placePatternOnDay(OWNER, clean, { date: DAY });
+    const rLegacy = placePatternOnDay(OWNER, legacy, { date: '2026-06-23' });
+    expect(rLegacy).toMatchObject({ placed: rClean.placed, unplaced: rClean.unplaced, blocksCreated: rClean.blocksCreated });
+    expect(timesOf(legacy)).toEqual(timesOf(clean));
+    // The legacy authored tag is NOT the stamp source — members are untagged → NULL.
+    expect(patternContainer(legacy)!.tag).toBeNull();
+  });
+
   it('locked block in the middle of the workday forces fits around it — both tasks still placed', async () => {
     const t1 = insertTask('Task A', 30);
     const t2 = insertTask('Task B', 30);
