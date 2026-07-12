@@ -217,11 +217,12 @@ export function routineDerivedTagsByIds(ids: string[]): Map<string, DerivedRouti
       .prepare(
         `SELECT DISTINCT pt.pattern_id AS id, tg.name AS name, tg.kind AS kind
            FROM pattern_tasks pt
-           JOIN entity_tags et ON et.entity_kind = 'task' AND et.entity_id = pt.task_id
-           JOIN tags tg ON tg.id = et.tag_id
+           JOIN patterns p ON p.id = pt.pattern_id
+           JOIN tasks tk ON tk.id = pt.task_id AND tk.owner_id = p.owner_id
+           JOIN entity_tags et ON et.entity_kind = 'task' AND et.entity_id = tk.id
+           JOIN tags tg ON tg.id = et.tag_id AND tg.owner_id = p.owner_id
           WHERE pt.pattern_id IN (${placeholders})
           ORDER BY pt.pattern_id, tg.kind, tg.name`,
-      )
       .all(...chunk) as { id: string; name: string; kind: string }[];
     for (const r of rows) {
       const bucket = out.get(r.id);
