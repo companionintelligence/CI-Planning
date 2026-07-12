@@ -54,7 +54,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   resetDb(); // pins memory_pull_enabled = 0
-  delete process.env.MEMORY_MODE; // fixture
+  process.env.MEMORY_MODE = 'fixture'; // fixture
   process.env.CI_SERVER_URL = 'http://ci.local:3000'; // availability via env creds
   delete process.env.CI_SERVER_API_KEY;
   // Flag round-trip through the real API (Z-phase lesson: not raw SQL only).

@@ -99,6 +99,14 @@ export function oauthRouter() {
       ctx.body = { error: 'oauth_disabled_in_test_mode' };
       return;
     }
+    // Fail closed: a connect attempt in off/fixture mode would mint a broken authorize
+    // URL (no client_id). The Settings button is disabled in these modes; this guards
+    // direct API calls too.
+    if (config.google.mode !== 'live') {
+      ctx.status = 409;
+      ctx.body = { error: 'google_mode_not_live' };
+      return;
+    }
 
     const ownerId = currentOwnerId();
     const codeVerifier = base64url(randomBytes(64)); // ~86 chars (within 43–128)

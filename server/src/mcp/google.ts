@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../lib/logger.js';
-import { McpGoogleSession, type McpConnectionFactory } from './client.js';
+import { McpGoogleSession, McpUnavailable, type McpConnectionFactory } from './client.js';
 import { config } from '../lib/config.js';
 
 /** Normalized Gmail message — shape the ingestion agent consumes. */
@@ -127,9 +127,17 @@ export function createLiveGoogleClient(opts: LiveGoogleClientOpts = {}): GoogleC
   };
 }
 
-/** Factory: honors GOOGLE_MODE env ("live" | "fixture"), defaults to fixture. */
-export function createGoogleClient(): GoogleClient {
-  return config.google.mode === 'live' ? createLiveGoogleClient() : createFixtureGoogleClient();
+/**
+ * Factory: honors GOOGLE_MODE ("live" | "fixture" | unset ⇒ off).
+ *
+ * `off` throws McpUnavailable rather than silently returning the fixture client —
+ * fixture data must never reach a caller that didn't opt in (GOOGLE_MODE=fixture).
+ * Callers already catch McpUnavailable and degrade.
+ */
+export function createGoogleClient(opts: { account?: string } = {}): GoogleClient {
+  if (config.google.mode === 'live') return createLiveGoogleClient(opts);
+  if (config.google.mode === 'fixture') return createFixtureGoogleClient();
+  throw new McpUnavailable('Google integration is off (set GOOGLE_MODE=live or fixture)');
 }
 
-export { McpUnavailable } from './client.js';
+export { McpUnavailable };
