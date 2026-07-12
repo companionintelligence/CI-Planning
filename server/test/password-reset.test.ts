@@ -344,7 +344,7 @@ describe('PATCH /api/owner/profile', () => {
     expect(row).toEqual({ name: 'Alex Hartman', email: 'alex@example.com' });
   });
 
-  it('a partial PATCH preserves the omitted field; null clears the email', async () => {
+  it('a partial PATCH preserves the omitted field; null and empty string both clear the email', async () => {
     await seedUser();
     const { cookie } = await login(USER, PW);
     await patchProfile(cookie, { name: 'Alex', email: 'alex@example.com' });
@@ -352,6 +352,10 @@ describe('PATCH /api/owner/profile', () => {
     expect(await r1.json()).toEqual({ ok: true, name: 'Alexandra', email: 'alex@example.com' });
     const r2 = await patchProfile(cookie, { email: null });
     expect(await r2.json()).toEqual({ ok: true, name: 'Alexandra', email: null });
+    // '' is an accepted clear value too (mirrors backup-email) — documented in the 400 message.
+    await patchProfile(cookie, { email: 'alex@example.com' });
+    const r3 = await patchProfile(cookie, { email: '' });
+    expect(await r3.json()).toEqual({ ok: true, name: 'Alexandra', email: null });
   });
 
   it('rejects an empty name, a malformed email, and an empty PATCH with 400', async () => {
