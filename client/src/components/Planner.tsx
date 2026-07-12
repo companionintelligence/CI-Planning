@@ -434,7 +434,9 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
   // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
   const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
   const conflict = () => props.placed.cols > 1;
-  const completed = () => b().status === 'completed';
+  // Settled = completed OR skipped, matching BlockCard.done() — the two views must
+  // agree on what reads as "done" (a skipped session is settled, just not counted).
+  const completed = () => b().status === 'completed' || b().status === 'skipped';
   const locked = () => isImmovable(b());
 
   // Quick-complete (Update mode): a tap toggles done. The completed chip wears a

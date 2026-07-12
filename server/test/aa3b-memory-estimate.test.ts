@@ -79,7 +79,7 @@ describe('AA3b suggestFromMemory integration (fixture mode)', () => {
     resetDb();
     sqlite.exec(`DELETE FROM possible_tasks WHERE proposed_owner_id = '${OWNER}'`);
     delete process.env.CP_MEMORY_FIXTURES_DIR;
-    delete process.env.MEMORY_MODE; // default fixture
+    process.env.MEMORY_MODE = 'fixture'; // explicit fixture opt-in (unset = off)
     enablePull();
     connectViaEnv();
   });

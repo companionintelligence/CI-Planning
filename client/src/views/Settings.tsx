@@ -1240,7 +1240,13 @@ export function Settings() {
                           type="button"
                           onClick={connectGoogle}
                           disabled={!i().google.liveEnabled}
-                          title={i().google.liveEnabled ? 'Connect a Google account' : 'Set GOOGLE_MODE=live to connect a Google account'}
+                          title={
+                            i().google.liveEnabled
+                              ? 'Connect a Google account'
+                              : i().google.mode === 'off'
+                                ? 'Google integration is not configured on this server — set GOOGLE_MODE=live to enable it'
+                                : 'Fixture mode serves sample data only — set GOOGLE_MODE=live to connect a real Google account'
+                          }
                           class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <Link2 size={12} /> Connect
@@ -1250,7 +1256,15 @@ export function Settings() {
 
                     <Show
                       when={i().google.connections.length > 0}
-                      fallback={<div class="text-xs text-slate-500">No Google accounts connected.</div>}
+                      fallback={
+                        <div class="text-xs text-slate-500">
+                          {i().google.mode === 'off'
+                            ? 'Google integration is not configured on this server.'
+                            : i().google.mode === 'fixture'
+                              ? 'Fixture mode — sample data only; no real account can be connected.'
+                              : 'No Google accounts connected.'}
+                        </div>
+                      }
                     >
                       <For each={i().google.connections}>
                         {(c) => (

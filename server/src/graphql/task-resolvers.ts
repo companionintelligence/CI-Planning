@@ -140,6 +140,8 @@ export const taskResolvers = {
       // Emitted BEFORE task:updated to mirror the REST route's exact ordering (it broadcasts
       // the synced block first, then the task).
       if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
+      // Task→block done-state mirror parity with REST: refresh each flipped block.
+      for (const blockId of res.mirroredBlockIds) broadcast(owner, 'block:updated', { id: blockId });
       broadcast(owner, 'task:updated', taskToApi(res.task));
       // B2: only a scheduling-relevant column change can re-order the day (mirrors REST).
       if (updateTouchesSchedule(res.updatedFields)) requestReplan('task:updated');

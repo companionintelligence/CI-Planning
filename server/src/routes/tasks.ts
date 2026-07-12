@@ -356,6 +356,9 @@ export function tasksRouter() {
 
     // REQ2 (reverse sync): the service moved the placed block in lockstep.
     if (res.syncedBlockId) broadcast(owner, 'block:updated', { id: res.syncedBlockId });
+    // Task→block done-state mirror: checking the task off completed its block(s) (or a
+    // reopen revived them) — tell the Planner to refresh each.
+    for (const blockId of res.mirroredBlockIds) broadcast(owner, 'block:updated', { id: blockId });
     // Clearing the start intent unscheduled the task (its block was removed) — tell the
     // Planner to drop it.
     if (res.unscheduled) broadcast(owner, 'block:updated', { unscheduled: id });
