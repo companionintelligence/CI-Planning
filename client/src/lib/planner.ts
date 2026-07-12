@@ -57,6 +57,18 @@ export function segmentExtentPx(
 }
 
 /**
+ * AF-11 — the tag a task-bound block created from the grid inherits: the task's
+ * PRIMARY (level-1) tag. Post-split, `task.tags` is level-1 only — i.e. the single
+ * direction — so `tags[0]` IS the direction (pre-split it could be whichever flat
+ * tag sorted first). Intentions live in `secondary_tags` and are deliberately not
+ * inherited onto the block's tag mirror. Returns undefined for an unknown or
+ * direction-less task (the block is created untagged).
+ */
+export function inheritedBlockTag(task: { tags?: string[] } | undefined): string | undefined {
+  return task?.tags?.[0];
+}
+
+/**
  * The SNAPPED-FREE minute delta of a drag on the segmented axis. A pixel delta
  * `dyPx` cannot be divided by `pxPerMin` to get minutes once a night region is
  * collapsed (the thin bar is not to scale), so we derive the delta from the two

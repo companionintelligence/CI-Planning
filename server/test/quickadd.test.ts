@@ -89,14 +89,19 @@ describe('POST /api/tasks/quick', () => {
   it('creates a task from the deterministic parse, regardless of Ollama', async () => {
     const srv = await startTestServer();
     try {
-      const res = await api<{ task: { title: string; tags: string[] }; parsed: { tags: string[] }; llm: boolean }>(
+      const res = await api<{ task: { title: string; tags: string[]; secondary_tags: string[] }; parsed: { tags: string[] }; llm: boolean }>(
         srv.url,
         '/api/tasks/quick',
         { method: 'POST', json: { text: 'Pay the AMD invoice friday 3pm #finance ~20m' } }
       );
       expect(res.status).toBe(201);
       expect(res.body.task.title).toBe('Pay the AMD invoice');
-      expect(res.body.task.tags).toEqual(['finance']);
+      // AF-11: quick-add levels its flat #tags by kind — 'finance' names no direction
+      // tag (it's created kind='intention'), so it lands at level 2 (secondary_tags)
+      // and the level-1 `tags` list stays empty. The parse still surfaces the raw name.
+      expect(res.body.task.tags).toEqual([]);
+      expect(res.body.task.secondary_tags).toEqual(['finance']);
+      expect(res.body.parsed.tags).toEqual(['finance']);
       expect(typeof res.body.llm).toBe('boolean'); // true if Ollama up, false (fallback) if down
     } finally {
       await srv.close();

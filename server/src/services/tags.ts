@@ -293,6 +293,25 @@ export function inheritContainerDirection(
   return primary;
 }
 
+/**
+ * AF-11 — split tag NAMES by whether they name one of the owner's direction tags.
+ * For write paths that receive a FLAT name list (quick-add enrichment) and must level
+ * it: known directions → level 1 (the primary axis), everything else — intentions AND
+ * brand-new names, which resolve-or-create with the column default kind='intention' —
+ * → level 2. Mirrors carryPossibleTags' kind-keyed leveling (services/possibles.ts).
+ * Names are matched normalized but returned as given (the sync path normalizes again).
+ */
+export function splitNamesByDirection(owner: string, names: string[]): { directions: string[]; others: string[] } {
+  const directions: string[] = [];
+  const others: string[] = [];
+  for (const raw of names) {
+    const norm = normalizeTagName(raw);
+    if (!norm) continue;
+    (findDirectionByNameStmt.get(owner, norm) ? directions : others).push(raw);
+  }
+  return { directions, others };
+}
+
 // ── GraphQL Taggable forward edge (Phase W · W4a) ─────────────────────────────
 // The full EntityTagType shape (id + name + application time) for ONE entity. Returns
 // ALL levels — the honest "every tag applied to this entity"; the level distinction is
