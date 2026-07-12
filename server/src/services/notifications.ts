@@ -112,6 +112,17 @@ export function createReminderChecked(ownerId: string, input: CreateReminderInpu
   const hasTask = !!input.taskId, hasBlock = !!input.blockId;
   if (hasTask === hasBlock) return { ok: false, error: 'target' };
 
+  // The target must be the caller's own. Without this a caller could point a reminder at
+  // another owner's task/block id; the dispatcher would then render that row's title into
+  // this owner's notification. Treated as an invalid target (same 'target' error, so a
+  // foreign id is indistinguishable from a missing one — no cross-owner probe).
+  if (hasTask && !sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?`).get(input.taskId, ownerId)) {
+    return { ok: false, error: 'target' };
+  }
+  if (hasBlock && !sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(input.blockId, ownerId)) {
+    return { ok: false, error: 'target' };
+  }
+
   let fireAt = input.fireAt ?? undefined;
   if (!fireAt && input.date && input.time) fireAt = zonedWallTimeToUTC(input.date, input.time, ownerTz(ownerId));
   if (!fireAt) return { ok: false, error: 'fire_at_required' };
