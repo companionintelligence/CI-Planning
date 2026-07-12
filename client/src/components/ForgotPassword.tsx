@@ -19,13 +19,20 @@ export function ForgotPassword(props: Props) {
   const [identifier, setIdentifier] = createSignal('');
   const [submitting, setSubmitting] = createSignal(false);
   const [sent, setSent] = createSignal(false);
+  // The server's confirmation is config-derived only (email delivery vs. the
+  // no-SMTP server-log fallback) — displaying it verbatim reveals nothing about
+  // whether the account exists.
+  const [message, setMessage] = createSignal<string | null>(null);
+  const [delivery, setDelivery] = createSignal<'email' | 'log'>('email');
 
   async function submit(e: Event) {
     e.preventDefault();
     if (!identifier().trim() || submitting()) return;
     setSubmitting(true);
     try {
-      await api.auth.resetRequest(identifier().trim());
+      const r = await api.auth.resetRequest(identifier().trim());
+      if (r.message) setMessage(r.message);
+      if (r.delivery) setDelivery(r.delivery);
     } catch {
       // Even a transport error shouldn't reveal anything — fall through to the same
       // neutral confirmation. (Rate-limit 429s also land here.)
@@ -47,10 +54,12 @@ export function ForgotPassword(props: Props) {
           when={!sent()}
           fallback={
             <div class="p-4 flex flex-col gap-3">
-              <p class="text-sm text-foreground">If an account matches, a reset link is on its way.</p>
-              <p class="text-xs text-muted-foreground">
-                Check your email and follow the link to choose a new password. The link expires shortly and can be used once.
-              </p>
+              <p class="text-sm text-foreground">{message() ?? 'If an account matches, a reset link is on its way.'}</p>
+              <Show when={delivery() === 'email'}>
+                <p class="text-xs text-muted-foreground">
+                  Check your email and follow the link to choose a new password. The link expires shortly and can be used once.
+                </p>
+              </Show>
               <div class="flex justify-end">
                 <button class="btn-primary text-sm px-4 py-1.5" onClick={props.onClose}>Done</button>
               </div>

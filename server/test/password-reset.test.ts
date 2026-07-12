@@ -122,6 +122,29 @@ describe('V — POST /api/auth/reset-request', () => {
     expect(exists.body).toEqual(ghost.body); // byte-identical body → no enumeration
   });
 
+  it('is honest when SMTP is unconfigured: delivery "log" + says the link went to the server log', async () => {
+    // The test env has no SMTP_HOST — exactly the deployment the honesty gap hit: the
+    // old response promised "a reset link is on its way" while the link only went to
+    // the console. The message is config-derived (never account-derived), so it stays
+    // enumeration-neutral (the byte-identical test above covers that).
+    await seedUser();
+    const r = await post('/api/auth/reset-request', { identifier: USER });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, delivery: 'log' });
+    expect(r.body.message).toContain('no outgoing email');
+    // With SMTP configured, the classic email promise returns. Ghost identifier only —
+    // nothing resolves, so this test never attempts a real SMTP send.
+    const savedHost = config.mail.host;
+    config.mail.host = 'smtp.example.com';
+    try {
+      const g = await post('/api/auth/reset-request', { identifier: 'nobody-here' });
+      expect(g.body).toMatchObject({ ok: true, delivery: 'email' });
+      expect(g.body.message).toContain('on its way');
+    } finally {
+      config.mail.host = savedHost;
+    }
+  });
+
   it('resolves by username OR email and emails a usable reset link', async () => {
     await seedUser();
     const r = await post('/api/auth/reset-request', { identifier: EMAIL });
