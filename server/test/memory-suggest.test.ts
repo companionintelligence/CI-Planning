@@ -195,6 +195,34 @@ describe('staging from the fixture graph', () => {
     expect(memoryPossibles('pending')).toEqual([]);
   });
 
+  it('reports the batch dedupe count in the result, so created > promoted runs are explainable (AF-CU1)', async () => {
+    // Two near-identical pre-existing pending memory rows: the run-end batch's inline
+    // dedupe marks one 'duplicate', and the result now SAYS so (count parity with the
+    // gmail/gcal IngestResult — previously the duplicate was silently discarded).
+    await run(() => {
+      upsertPossible({ title: 'Buy milk', priority: 3, tags: [], confidence: 0.5 }, 'memory', 'ci:milk-a', {});
+      upsertPossible({ title: 'Buy milk please', priority: 3, tags: [], confidence: 0.5 }, 'memory', 'ci:milk-b', {});
+    });
+    // Deterministic embeddings: the milk pair is near-identical (cosine ≈ 0.995); every
+    // other title gets its own orthogonal axis so the 2 fixture events never collide.
+    let nextAxis = 2;
+    const seen = new Map<string, number[]>();
+    const embedFn = async (text: string): Promise<number[]> => {
+      if (text.includes('milk')) return text.includes('please') ? [0.99, 0.1, 0, 0, 0] : [1, 0, 0, 0, 0];
+      let v = seen.get(text);
+      if (!v) { v = [0, 0, 0, 0, 0]; v[nextAxis++] = 1; seen.set(text, v); }
+      return v;
+    };
+    const r = await run(() => suggestFromMemory({ polish: false, embedFn }));
+    expect(r.status).toBe('ran');
+    expect(r.created).toBe(2); // the 2 fixture events
+    expect(r.duplicates).toBe(1); // one milk row marked by the batch dedupe
+    expect(r.failed).toBe(0);
+    expect(r.promoted).toBe(3); // 2 events + the kept milk row; 4 staged − 1 duplicate
+    expect(memoryPossibles('pending')).toEqual([]);
+    expect(memoryPossibles('duplicate').length).toBe(1);
+  });
+
   it('polish failure degrades to templates (never blocks staging)', async () => {
     const r = await run(() =>
       suggestFromMemory({

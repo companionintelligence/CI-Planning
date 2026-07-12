@@ -155,6 +155,10 @@ export interface PromoteAllResult {
   duplicates: number;
   /** Rows promoted into real tasks this pass. */
   promoted: number;
+  /** Rows whose promote threw (poison isolation) — left 'pending' for the nightly
+   *  sweeper / manual triage. AF-CU1: counted so a poison row is visible in the
+   *  batch result (parity with the sweeper's PromoteResult), not just a log line. */
+  failed: number;
   /** false = Ollama embeddings unreachable → dedupe skipped gracefully, everything promoted. */
   dedupeAvailable: boolean;
 }
@@ -186,6 +190,7 @@ export async function promoteAllPending(
   const pending = await listPossibles(owner, 'pending');
 
   let promoted = 0;
+  let failed = 0;
   let needsSweep = false;
   for (const p of pending) {
     let res: PromoteResult;
@@ -196,6 +201,7 @@ export async function promoteAllPending(
       // e.g. a UNIQUE(source_kind, source_ref) collision with an existing task —
       // must not wedge the rest of the batch. It stays 'pending' for the nightly
       // sweeper / manual triage.
+      failed++;
       logger.error('promoteAllPending: promote failed for possible — skipping', { owner, possibleId: p.id, err: (err as Error).message });
       continue;
     }
@@ -223,10 +229,10 @@ export async function promoteAllPending(
     }
   }
 
-  if (promoted || dd.duplicates) {
-    logger.info('promoteAllPending done', { owner, promoted, duplicates: dd.duplicates, dedupeAvailable: dd.available });
+  if (promoted || failed || dd.duplicates) {
+    logger.info('promoteAllPending done', { owner, promoted, failed, duplicates: dd.duplicates, dedupeAvailable: dd.available });
   }
-  return { duplicates: dd.duplicates, promoted, dedupeAvailable: dd.available };
+  return { duplicates: dd.duplicates, promoted, failed, dedupeAvailable: dd.available };
 }
 
 export type DismissResult = { ok: true; row: PossibleTaskRow } | { ok: false; error: 'not_found' };
