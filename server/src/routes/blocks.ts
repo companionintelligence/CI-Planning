@@ -84,7 +84,6 @@ export function blocksRouter() {
     const result = await createBlock(currentOwnerId(), body);
     if (!result.ok) {
       if (result.error === 'missing_fields') { ctx.status = 400; ctx.body = { error: 'title, start_at, and end_at are required' }; return; }
-      if (result.error === 'tag_and_category') { ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return; }
       ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return;
     }
 
@@ -128,7 +127,6 @@ export function blocksRouter() {
         ctx.body = { error: 'Calendar meeting blocks are read-only — edit the event in Google Calendar' };
         return;
       }
-      if (result.error === 'tag_and_category') { ctx.status = 422; ctx.body = { error: 'a time block may set a tag or a category, not both' }; return; }
       ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return;
     }
 

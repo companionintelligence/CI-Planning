@@ -10,6 +10,7 @@ import {
   clearDayAutoBlocks,
   addTasksToBlock,
 } from '../src/services/blocks.js';
+import { setCategoryPref } from '../src/services/category-prefs.js';
 import { resetDb, createOwner, SECOND_OWNER_ID } from './helpers.js';
 
 /**
@@ -79,10 +80,39 @@ describe('createBlock', () => {
     expect(audit.n).toBe(1);
   });
 
-  it('rejects a block that sets both tag and category_id', async () => {
+  it('AF-4: a block may carry BOTH a direction tag and a category (create + update), both persist', async () => {
     const catId = (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, 'cat', 'category') RETURNING id`).get(OWNER) as { id: string }).id;
-    const res = await createBlock(OWNER, { title: 'X', tag: 'work', category_id: catId, start_at: at('09:00'), end_at: at('10:00') });
-    expect(res).toEqual({ ok: false, error: 'tag_and_category' });
+    setCategoryPref(OWNER, catId, { color_token: 'chart-2' });
+
+    // Create with both → succeeds, both persist, and the entity_tags level-1 mirror
+    // still fires even with a category present.
+    const created = unwrap(await createBlock(OWNER, { title: 'Both', tag: 'work', category_id: catId, start_at: at('09:00'), end_at: at('10:00') }));
+    expect(created.block.tag).toBe('work');
+    expect(created.block.categoryId).toBe(catId);
+    const lvl1 = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = ? AND et.level = 1 AND t.name = 'work'`)
+      .get(created.block.id) as { n: number };
+    expect(lvl1.n).toBe(1);
+
+    // Update path: a tag block may later ADD a category (merged row carries both) …
+    const tagFirst = unwrap(await createBlock(OWNER, { title: 'Tag first', tag: 'work', start_at: at('11:00'), end_at: at('12:00') }));
+    const addedCat = unwrap(await updateBlock(OWNER, tagFirst.block.id, { category_id: catId }));
+    expect(addedCat.block.tag).toBe('work');
+    expect(addedCat.block.categoryId).toBe(catId);
+
+    // … and a category block may later ADD a tag.
+    const catFirst = unwrap(await createBlock(OWNER, { title: 'Cat first', category_id: catId, start_at: at('13:00'), end_at: at('14:00') }));
+    const addedTag = unwrap(await updateBlock(OWNER, catFirst.block.id, { tag: 'work' }));
+    expect(addedTag.block.tag).toBe('work');
+    expect(addedTag.block.categoryId).toBe(catId);
+  });
+
+  it('AF-4 color precedence: with both tag and category set, the category-frozen color_token wins at create', async () => {
+    const catId = (sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, 'cat', 'category') RETURNING id`).get(OWNER) as { id: string }).id;
+    setCategoryPref(OWNER, catId, { color_token: 'chart-4' });
+    const res = unwrap(await createBlock(OWNER, { title: 'Both', tag: 'work', category_id: catId, start_at: at('09:00'), end_at: at('10:00') }));
+    // Direction styling is unchanged; the block's frozen color comes from the category.
+    expect(res.block.colorToken).toBe('chart-4');
   });
 
   it('mirrors placement onto a linked task (REQ2) and flips it to scheduled', async () => {

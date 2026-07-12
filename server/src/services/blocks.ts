@@ -209,23 +209,22 @@ export type CreateBlockInput = {
 export type CreateBlockResult =
   | { ok: true; block: BlockRow; api: Record<string, unknown>; syncedTaskId: string | null }
   | { ok: false; error: 'missing_fields' }
-  | { ok: false; error: 'tag_and_category' }
   | { ok: false; error: 'invalid_category' };
 
 /**
  * Create a time block: insert + tag-level sync + (for a task placement) the REQ2
  * forward sync onto the linked task. Identical to the old POST /api/blocks path,
- * including the 0069 tag XOR category_id partition + frozen color-token stamp.
+ * including the frozen color-token stamp.
  */
 export async function createBlock(ownerId: string, input: CreateBlockInput): Promise<CreateBlockResult> {
   if (!input.title || !input.start_at || !input.end_at) return { ok: false, error: 'missing_fields' };
 
-  // 0069: a time block is owned by EITHER a tag (direction) OR a category — never
-  // both (the scheduler partitions on this). color_token is the forward-only stamp
-  // copied from category_prefs at create-time.
-  const hasTag = input.tag != null && input.tag !== '';
+  // AF-4: the 0069 tag-XOR-category guard is relaxed — a block may carry a direction
+  // tag AND a category simultaneously (the documented Phase AD coexist contract; the
+  // split is a convention, not a DB CHECK). color_token remains the forward-only
+  // stamp copied from category_prefs at create-time; when both are set, the
+  // category-frozen color wins.
   const hasCat = input.category_id != null && input.category_id !== '';
-  if (hasTag && hasCat) return { ok: false, error: 'tag_and_category' };
   if (hasCat) {
     const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
     if (!ok) return { ok: false, error: 'invalid_category' };
@@ -318,12 +317,11 @@ export type UpdateBlockResult =
     }
   | { ok: false; error: 'not_found' }
   | { ok: false; error: 'inbound_readonly' }
-  | { ok: false; error: 'tag_and_category' }
   | { ok: false; error: 'invalid_category' };
 
 /**
  * Update a block. Carries the full PATCH pipeline extracted from the route: the I10
- * inbound-calendar read-only guard → the 0069 tag/category partition + color re-stamp
+ * inbound-calendar read-only guard → category validation + color re-stamp
  * → column UPDATE → tag re-sync (partial PATCH preserves unset levels) → CON-4 series
  * re-anchor (drops + lets GET re-materialize future instances) → REQ2 reverse task sync.
  *
@@ -337,9 +335,9 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // guard below can run — otherwise the I10 guard leaks a foreign block's existence/state
   // (a title/time edit on someone else's inbound-mirrored block would 422 `inbound_readonly`
   // instead of 404, an existence oracle across owners). This SELECT also fetches
-  // tag/category_id for the 0069 partition check.
-  const existing = sqlite.prepare(`SELECT tag, category_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-    .get(id, ownerId) as { tag: string | null; category_id: string | null } | undefined;
+  // category_id for the color re-stamp check below.
+  const existing = sqlite.prepare(`SELECT category_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
+    .get(id, ownerId) as { category_id: string | null } | undefined;
   if (!existing) return { ok: false, error: 'not_found' };
 
   // I10: inbound calendar mirrors are authoritative — the owner may not directly
@@ -353,13 +351,9 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
     if (isInboundBlock) return { ok: false, error: 'inbound_readonly' };
   }
 
-  // 0069: enforce the tag XOR category_id partition on the MERGED row + validate the
-  // category kind. (color re-stamp is handled below, only when category_id changes.)
-  const effTag = input.tag !== undefined ? input.tag : existing.tag;
-  const effCat = input.category_id !== undefined ? input.category_id : existing.category_id;
-  if (effTag != null && effTag !== '' && effCat != null && effCat !== '') {
-    return { ok: false, error: 'tag_and_category' };
-  }
+  // AF-4: the 0069 tag-XOR-category partition is relaxed (Phase AD coexist contract —
+  // a block may carry a direction tag AND a category). Only the category kind is
+  // validated here. (color re-stamp is handled below, only when category_id changes.)
   if (input.category_id != null && input.category_id !== '') {
     const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
     if (!ok) return { ok: false, error: 'invalid_category' };
