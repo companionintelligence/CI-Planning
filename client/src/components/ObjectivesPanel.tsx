@@ -444,8 +444,10 @@ function ObjectiveNode(props: {
                   {t.title}
                 </span>
                 <Show when={t.due_at}>
+                  {/* Same normalization as TaskCard's DateField: due_at may carry a
+                      full timestamp — display the plain YYYY-MM-DD only. */}
                   <span class="text-[10px] text-muted-foreground flex items-center gap-0.5 flex-shrink-0">
-                    <Clock size={9} /> {t.due_at}
+                    <Clock size={9} /> {t.due_at!.slice(0, 10)}
                   </span>
                 </Show>
               </div>
@@ -457,7 +459,13 @@ function ObjectiveNode(props: {
             <div class="flex items-center gap-2 pl-6 py-1">
               <ListPlus size={12} class="text-muted-foreground flex-shrink-0" />
               <input
-                ref={(el) => setTimeout(() => el.focus())}
+                ref={(el) => {
+                  // Solid runs refs at element creation, BEFORE the node is inserted
+                  // (verified: el.isConnected is false here and a synchronous focus()
+                  // does not take). One microtask later the input is attached — focus
+                  // then, guarded in case it was removed (Esc) in the meantime.
+                  queueMicrotask(() => { if (el.isConnected) el.focus(); });
+                }}
                 type="text"
                 class="flex-1 min-w-0 bg-background border border-border rounded-md px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
                 placeholder="Task title — Enter to add, Esc to cancel"
