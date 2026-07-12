@@ -217,15 +217,15 @@ describe('W10 — owner scoping', () => {
     expect(listB.body.data.pushSubscriptions.some((s: any) => s.endpoint === 'https://push.example/owner-a')).toBe(false);
   });
 
-  it('a reminder linked to another owner\'s task/block cannot be created cross-owner (task/block not_found is not enforced at create — but ownership of the reminder itself is)', async () => {
-    // createReminder does not currently validate that taskId/blockId belongs to the
-    // caller (mirrors the REST route, which also doesn't) — but the created reminder is
-    // always owned by the CALLER, so a malicious taskId from another owner just produces
-    // a reminder whose task field resolver returns null (cross-owner getTask → undefined).
+  it('a reminder targeting another owner\'s task is rejected at create (tenant-isolation fix)', async () => {
+    // createReminder now validates the target belongs to the caller — a foreign taskId is
+    // treated as an invalid target (BAD_USER_INPUT, indistinguishable from a missing one),
+    // so a malicious taskId can no longer create a reminder whose dispatcher would render
+    // the victim's task title. (Previously this succeeded with a null-resolving task field.)
     createOwner(OTHER);
     const otherTaskId = insertTask(OTHER);
-    const m = await gql(`mutation { createReminder(input: { taskId: "${otherTaskId}", fireAt: "${FUTURE}" }) { reminder { id task { id } } } }`);
-    expect(m.body.errors).toBeUndefined();
-    expect(m.body.data.createReminder.reminder.task).toBeNull(); // cross-owner task never resolves
+    const m = await gql(`mutation { createReminder(input: { taskId: "${otherTaskId}", fireAt: "${FUTURE}" }) { reminder { id } } }`);
+    expect(m.body.errors?.[0]?.extensions?.code).toBe('BAD_USER_INPUT');
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM reminders WHERE task_id = ?`).get(otherTaskId) as { n: number }).n).toBe(0);
   });
 });

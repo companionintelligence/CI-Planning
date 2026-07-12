@@ -207,7 +207,7 @@ export function patternsRouter() {
     const p = sqlite
       .prepare(`INSERT INTO patterns (id, owner_id, type_id, name) VALUES (uuid7(), ?, ?, ?) RETURNING *`)
       .get(owner, routineType.id, name) as PatternRow;
-    if (taskIds.length) setMembers(p.id, taskIds);
+    if (taskIds.length) setMembers(owner, p.id, taskIds);
     return p;
   }
 

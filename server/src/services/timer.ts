@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
+import { httpError } from '../lib/http-error.js';
 
 /** A time_entries row as stored (snake_case columns). */
 export interface TimeEntryRow {
@@ -58,15 +59,19 @@ export function stopRunning(owner: string): StoppedEntry | null {
   const endedAt = new Date().toISOString();
   sqlite.prepare(`UPDATE time_entries SET ended_at = ? WHERE id = ?`).run(endedAt, running.id);
 
+  // Owner-scope BOTH the aggregate and the write (defense in depth): the task-wide
+  // total counts only this owner's finished entries, and actual_minutes is written
+  // only onto this owner's task — a stray entry pointing at another owner's task can
+  // never fold into their total or overwrite their row.
   const { total } = sqlite
     .prepare(
       `SELECT COALESCE(SUM((julianday(ended_at) - julianday(started_at)) * 24 * 60), 0) AS total
          FROM time_entries
-        WHERE task_id = ? AND ended_at IS NOT NULL`
+        WHERE task_id = ? AND owner_id = ? AND ended_at IS NOT NULL`
     )
-    .get(running.task_id) as { total: number };
+    .get(running.task_id, owner) as { total: number };
   const actual = Math.round(total);
-  sqlite.prepare(`UPDATE tasks SET actual_minutes = ? WHERE id = ?`).run(actual, running.task_id);
+  sqlite.prepare(`UPDATE tasks SET actual_minutes = ? WHERE id = ? AND owner_id = ?`).run(actual, running.task_id, owner);
 
   // §C1: overrun detection — compare *this session's* elapsed against the linked
   // block's planned span. actualMinutes is task-wide SUM; we must use started_at/ended_at.
@@ -106,6 +111,18 @@ export function stopRunning(owner: string): StoppedEntry | null {
  */
 export function startTimer(taskId: string, blockId?: number): StartedTimer {
   const owner = currentOwnerId();
+  // Validate the task is the caller's own BEFORE inserting an entry against it — the FK
+  // only guarantees the task exists, not that it belongs to this owner. Without this a
+  // caller could open a timer on another owner's task id (IDOR). 404 (indistinguishable
+  // from a truly-missing task) so ownership can't be probed.
+  if (!sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, owner)) {
+    throw httpError(404, 'task not found');
+  }
+  // A linked block must also be the caller's own (else the overrun check silently no-ops
+  // and the entry references a foreign block).
+  if (blockId != null && !sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(blockId, owner)) {
+    throw httpError(404, 'block not found');
+  }
   const tx = sqlite.transaction(() => {
     const stopped = stopRunning(owner);
     const now = new Date().toISOString();

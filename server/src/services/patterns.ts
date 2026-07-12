@@ -101,11 +101,19 @@ export const serializePattern = (p: PatternRow, derived?: DerivedRoutineTags) =>
   };
 };
 
-/** Replace a pattern's membership set with `taskIds` (in order). FK guards existence. */
-export function setMembers(patternId: string, taskIds: string[]) {
+/**
+ * Replace a pattern's membership set with `taskIds` (in order). Each insert is
+ * self-guarded to the OWNER's own tasks — the FK only checks a task exists, not that
+ * it belongs to this owner, so a foreign task id is silently dropped (mirroring how
+ * setDependencies drops cross-owner blockers) rather than leaking onto the pattern.
+ */
+export function setMembers(owner: string, patternId: string, taskIds: string[]) {
   sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ?`).run(patternId);
-  const ins = sqlite.prepare(`INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`);
-  taskIds.forEach((taskId, i) => ins.run(patternId, taskId, i));
+  const ins = sqlite.prepare(
+    `INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position)
+     SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?)`,
+  );
+  taskIds.forEach((taskId, i) => ins.run(patternId, taskId, i, taskId, owner));
 }
 
 /** The name of one of the OWNER's pattern types by id (used for the Ritual-recurrence
@@ -287,7 +295,7 @@ export function createPattern(owner: string, input: CreatePatternInput): CreateP
     ) as PatternRow;
   if (Array.isArray(input.task_ids) && input.task_ids.length) {
     try {
-      setMembers(p.id, input.task_ids);
+      setMembers(owner, p.id, input.task_ids);
     } catch (err) {
       return { ok: false, error: 'bad_membership', message: (err as Error).message };
     }
@@ -329,7 +337,7 @@ export function updatePattern(owner: string, id: string, input: UpdatePatternInp
     ) as PatternRow;
   if (Array.isArray(input.task_ids)) {
     try {
-      setMembers(id, input.task_ids);
+      setMembers(owner, id, input.task_ids);
     } catch (err) {
       return { ok: false, error: 'bad_membership', message: (err as Error).message };
     }
@@ -363,6 +371,11 @@ export type AddTaskResult = { ok: true } | { ok: false; error: 'not_found' | 'ad
  *  as add_failed (the route 400s it). Idempotent on the (pattern, task) PK. */
 export function addPatternTask(owner: string, patternId: string, taskId: string, position = 0): AddTaskResult {
   if (!sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, owner)) return { ok: false, error: 'not_found' };
+  // The task must be the owner's own too — the FK guards existence, not ownership, so
+  // without this a caller could add another owner's task to their pattern and read its
+  // title/estimate at placement time. not_found (same as a missing pattern) so ownership
+  // isn't probeable.
+  if (!sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, owner)) return { ok: false, error: 'not_found' };
   try {
     sqlite.prepare(`INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(patternId, taskId, position);
   } catch (err) {
