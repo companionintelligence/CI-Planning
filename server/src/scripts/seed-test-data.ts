@@ -159,7 +159,7 @@ async function main() {
   logger.info(`seed: calendar processed (${events.length})`);
 
   // 4) Promote — unconditional since AF-3 (every pending possible becomes a task).
-  const promoted = promotePossibles();
+  const promoted = await promotePossibles();
   logger.info('seed: promoted', promoted);
 
   // 5) Top up to the target with deterministic filler so the deliverable is guaranteed.

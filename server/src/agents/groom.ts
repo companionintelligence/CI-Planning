@@ -2,81 +2,61 @@ import { sqlite, vecAvailable } from '../db/index.js';
 import { embed } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
+import { promotePossible } from '../services/possibles.js';
 
 export interface PromoteResult {
   promoted: number;
-}
-
-interface PossibleRow {
-  id: string;
-  raw_title: string;
-  raw_summary: string | null;
-  proposed_due_at: string | null;
-  proposed_scheduled_for: string | null;
-  proposed_task_time: string | null;
-  proposed_priority: number | null;
-  proposed_estimated_minutes: number | null;
-  proposed_owner_id: string | null;
-  source_kind: string | null;
-  source_ref: string | null;
-  confidence: number | null;
+  /** Rows whose promote threw (e.g. a UNIQUE collision) — left pending for triage. */
+  failed: number;
 }
 
 /**
- * Promote ALL pending possible_tasks into real tasks, copying suggested tags across.
+ * Promote ALL pending possible_tasks into real tasks.
  *
  * AF-3: promotion is UNCONDITIONAL — no trust-mode gate, no confidence threshold. The
  * ingestion producers auto-promote at batch end (services/possibles.ts
  * `promoteAllPending`), so this function is the nightly SWEEPER for stragglers only
  * (rows created outside the producer paths, or left over from a mid-batch crash).
  * trust_mode now governs auto-BLOCKING only (resolveTrustPolicy → autoBlock).
+ *
+ * Each row goes through the ONE shared promotion core, `promotePossible`
+ * (services/possibles.ts) — same column copy, same tag leveling (direction → level 1,
+ * content → level 2), same audit row — so the sweeper can never drift from the manual
+ * route / batch path again. Per-item poison isolation (no wrapping transaction): a row
+ * whose promote throws (e.g. the 0027 partial UNIQUE(source_kind, source_ref) on tasks)
+ * is logged and left pending; the rest of the sweep proceeds.
  */
-export function promotePossibles(): PromoteResult {
+export async function promotePossibles(): Promise<PromoteResult> {
   const pending = sqlite
-    .prepare("SELECT * FROM possible_tasks WHERE status = 'pending'")
-    .all() as PossibleRow[];
+    .prepare("SELECT id, proposed_owner_id FROM possible_tasks WHERE status = 'pending'")
+    .all() as { id: string; proposed_owner_id: string | null }[];
 
   let promoted = 0;
+  let failed = 0;
 
-  const tx = sqlite.transaction((rows: PossibleRow[]) => {
-    for (const p of rows) {
-      const task = sqlite
-        .prepare(
-          `INSERT INTO tasks (id, title, description, due_at, scheduled_for, task_time, priority, estimated_minutes, owner_id, source_kind, source_ref, status)
-           VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open') RETURNING id`
-        )
-        .get(
-          p.raw_title,
-          p.raw_summary,
-          p.proposed_due_at,
-          p.proposed_scheduled_for,
-          p.proposed_task_time,
-          p.proposed_priority ?? 3,
-          p.proposed_estimated_minutes,
-          p.proposed_owner_id ?? currentOwnerId(),
-          p.source_kind ?? 'agent',
-          p.source_ref
-        ) as { id: string };
-
-      // Carry tags across: possible_task_tags → entity_tags (level 1). entity_tags is
-      // the sole task-tag store (CON-3 / migration 0041).
-      sqlite
-        .prepare(
-          `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level)
-           SELECT 'task', ?, tag_id, 1 FROM possible_task_tags WHERE possible_task_id = ?`
-        )
-        .run(task.id, p.id);
-
-      sqlite
-        .prepare("UPDATE possible_tasks SET status = 'promoted', promoted_task_id = ? WHERE id = ?")
-        .run(task.id, p.id);
-      promoted++;
+  for (const p of pending) {
+    // Legacy/hand-inserted rows may lack an owner; promotePossible is owner-scoped
+    // (matches by proposed_owner_id), so backfill to the current owner first — the
+    // same fallback the old inline INSERT applied at task-creation time.
+    let owner = p.proposed_owner_id;
+    if (!owner) {
+      owner = currentOwnerId();
+      sqlite.prepare(`UPDATE possible_tasks SET proposed_owner_id = ? WHERE id = ?`).run(owner, p.id);
     }
-  });
-  tx(pending);
+    try {
+      const res = await promotePossible(owner, p.id);
+      if (res.ok) promoted++;
+    } catch (err) {
+      failed++;
+      logger.error('promotePossibles: promote failed for possible — leaving pending', {
+        possibleId: p.id,
+        err: (err as Error).message,
+      });
+    }
+  }
 
-  logger.info('promotePossibles done', { promoted });
-  return { promoted };
+  logger.info('promotePossibles done', { promoted, failed });
+  return { promoted, failed };
 }
 
 function cosine(a: number[], b: number[]): number {

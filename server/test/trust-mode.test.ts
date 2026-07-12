@@ -104,24 +104,24 @@ describe('fillFlightPlanCandidates requireEstimate (TM-3)', () => {
 });
 
 describe('promotePossibles is unconditional (AF-3 — promotion facet deliberately changed)', () => {
-  it('cautious no longer withholds promotion', () => {
+  it('cautious no longer withholds promotion', async () => {
     setTrust('cautious');
     seedPossible('Send invoice', 0.95);
-    const r = promotePossibles();
+    const r = await promotePossibles();
     expect(r.promoted).toBe(1);
     expect(openTaskCount()).toBe(1);
   });
-  it('low-confidence items promote too — no threshold gate', () => {
+  it('low-confidence items promote too — no threshold gate', async () => {
     setTrust('balanced');
     seedPossible('Send invoice', 0.95);
     seedPossible('Maybe look into X', 0.2);
-    const r = promotePossibles();
+    const r = await promotePossibles();
     expect(r.promoted).toBe(2);
     expect(openTaskCount()).toBe(2);
     const pendingLeft = (sqlite.prepare(`SELECT COUNT(*) c FROM possible_tasks WHERE status = 'pending'`).get() as { c: number }).c;
     expect(pendingLeft).toBe(0);
   });
-  it('carries the proposed start/estimate columns onto the swept task (parity with promotePossible)', () => {
+  it('carries the proposed start/estimate columns onto the swept task (shared promotePossible core)', async () => {
     sqlite
       .prepare(
         `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id,
@@ -129,11 +129,34 @@ describe('promotePossibles is unconditional (AF-3 — promotion facet deliberate
          VALUES (uuid7(), 'Straggler', 'text', 's1#0', 0.4, 'pending', ?, 45, '2026-06-23', '14:30')`,
       )
       .run(OWNER);
-    promotePossibles();
+    await promotePossibles();
     const t = sqlite
       .prepare(`SELECT estimated_minutes, scheduled_for, task_time FROM tasks WHERE title = 'Straggler'`)
       .get() as { estimated_minutes: number; scheduled_for: string; task_time: string };
     expect(t).toEqual({ estimated_minutes: 45, scheduled_for: '2026-06-23', task_time: '14:30' });
+  });
+  it('poison isolation: one failing row is left pending, the rest sweep (no wrapping transaction)', async () => {
+    // An existing task already claims (gmail, poison#0) — the 0027 partial UNIQUE on
+    // tasks(source_kind, source_ref) makes the swept INSERT throw for that row only.
+    sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, source_kind, source_ref) VALUES (uuid7(), 'Claimed', ?, 'open', 'gmail', 'poison#0')`)
+      .run(OWNER);
+    seedPossible('Healthy item', 0.9); // helper: kind gmail, ref = title — no collision
+    sqlite
+      .prepare(
+        `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id)
+         VALUES (uuid7(), 'Poison item', 'gmail', 'poison#0', 0.9, 'pending', ?)`,
+      )
+      .run(OWNER);
+
+    const r = await promotePossibles();
+    expect(r.promoted).toBe(1);
+    expect(r.failed).toBe(1);
+    expect(sqlite.prepare(`SELECT id FROM tasks WHERE title = 'Healthy item'`).get()).toBeDefined();
+    const poison = sqlite
+      .prepare(`SELECT status FROM possible_tasks WHERE raw_title = 'Poison item'`)
+      .get() as { status: string };
+    expect(poison.status).toBe('pending'); // left for triage, sweep not wedged
   });
 });
 

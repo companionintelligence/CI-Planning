@@ -62,17 +62,28 @@ describe('CON-3 — entity_tags is the sole task-tag store (Wave 2)', () => {
     expect(taskTagIds(r.body.task.id).length).toBe(2);
   });
 
-  it('groom promotion carries inbox tags into entity_tags', async () => {
-    const tagId = (sqlite.prepare('INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?) RETURNING id').get('inbox', OWNER) as { id: string }).id;
+  it('groom promotion carries inbox tags into entity_tags with the shared leveling (direction→1, content→2)', async () => {
+    // AF-3: the sweeper now routes through the shared promotePossible core, so tag
+    // leveling matches manual promotion — a kind-less content tag lands at level 2,
+    // a 'direction' tag at level 1 (the placement-relevant read).
+    const contentTagId = (sqlite.prepare('INSERT INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?) RETURNING id').get('inbox', OWNER) as { id: string }).id;
+    const directionTagId = (sqlite.prepare(`INSERT INTO tags (id, name, kind, owner_id) VALUES (uuid7(), ?, 'direction', ?) RETURNING id`).get('work', OWNER) as { id: string }).id;
     const pid = (sqlite
       .prepare(`INSERT INTO possible_tasks (id, raw_title, confidence, status, proposed_owner_id) VALUES (uuid7(), ?, ?, 'pending', ?) RETURNING id`)
       .get('Promote me', 0.9, OWNER) as { id: string }).id;
-    sqlite.prepare('INSERT INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)').run(pid, tagId);
+    sqlite.prepare('INSERT INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?), (?, ?)').run(pid, contentTagId, pid, directionTagId);
 
-    promotePossibles();
+    await promotePossibles();
 
     const newTaskId = (sqlite.prepare("SELECT id FROM tasks WHERE title = 'Promote me'").get() as { id: string }).id;
-    expect(taskTagIds(newTaskId)).toEqual([tagId]);
+    expect(taskTagIds(newTaskId)).toEqual([directionTagId]); // level-1 read = direction only
+    const levels = sqlite
+      .prepare("SELECT tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ? ORDER BY level")
+      .all(newTaskId) as { tag_id: string; level: number }[];
+    expect(levels).toEqual([
+      { tag_id: directionTagId, level: 1 },
+      { tag_id: contentTagId, level: 2 },
+    ]);
   });
 
   // Order contract: served tags follow tag_id (the old task_tags PK order the client
