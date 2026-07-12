@@ -94,7 +94,12 @@ describe('patterns + membership', () => {
     expect(c.status).toBe(201);
     expect(c.body.pattern.type_id).toBe(ritual.id);
     expect(c.body.pattern.task_ids).toEqual([a, b]);
-    expect(c.body.pattern.tag).toBe('family');
+    // AF-11: an incoming `tag` is accepted for API compat but IGNORED — routines
+    // author no tags (directions/intentions derive from member tasks; see
+    // routine-derived-tags.test.ts).
+    expect(c.body.pattern.tag).toBeNull();
+    expect(c.body.pattern.directions).toEqual([]);
+    expect(c.body.pattern.intentions).toEqual([]);
   });
 
   it('a task can belong to two patterns (many-to-many)', async () => {

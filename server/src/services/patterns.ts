@@ -1,6 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { writeAudit } from '../lib/audit.js';
-import { syncEntityTags, removeEntityTags, splitTagString } from './tags.js';
+import { removeEntityTags, routineDerivedTags, type DerivedRoutineTags } from './tags.js';
 import { validatePatternRule } from '../engine/patterns-place.js';
 import { serverTimezone, zonedWallTimeToUTC } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
@@ -76,18 +76,30 @@ export function taskIdsOf(patternId: string): string[] {
   ).map((r) => r.task_id);
 }
 
-export const serializePattern = (p: PatternRow) => ({
-  id: p.id,
-  owner_id: p.owner_id,
-  type_id: p.type_id,
-  name: p.name,
-  tag: p.tag,
-  notes: p.notes,
-  recurrence_rule: p.recurrence_rule,
-  recurrence_dtstart: p.recurrence_dtstart,
-  created_at: p.created_at,
-  task_ids: taskIdsOf(p.id),
-});
+/**
+ * AF-11 (D2): a routine's tags are DERIVED — the union of its member tasks' tags,
+ * kind-classified into `directions` (multiple legal) + `intentions`. `tag` (the old
+ * authored column) is kept in the payload for API-shape compat but is always null
+ * after migration 0120. List callers pass the batched `derived` map entry (one query
+ * for the whole list — see routineDerivedTagsByIds); single-row callers omit it.
+ */
+export const serializePattern = (p: PatternRow, derived?: DerivedRoutineTags) => {
+  const d = derived ?? routineDerivedTags(p.id);
+  return {
+    id: p.id,
+    owner_id: p.owner_id,
+    type_id: p.type_id,
+    name: p.name,
+    tag: p.tag,
+    directions: d.directions,
+    intentions: d.intentions,
+    notes: p.notes,
+    recurrence_rule: p.recurrence_rule,
+    recurrence_dtstart: p.recurrence_dtstart,
+    created_at: p.created_at,
+    task_ids: taskIdsOf(p.id),
+  };
+};
 
 /** Replace a pattern's membership set with `taskIds` (in order). FK guards existence. */
 export function setMembers(patternId: string, taskIds: string[]) {
@@ -227,6 +239,7 @@ export function deletePatternType(owner: string, id: string): DeleteTypeResult {
 export interface CreatePatternInput {
   type_id?: string | null;
   name?: string;
+  /** AF-11: accepted for API compat, IGNORED — routines derive tags from members. */
   tag?: string | null;
   notes?: string | null;
   task_ids?: string[];
@@ -259,13 +272,15 @@ export function createPattern(owner: string, input: CreatePatternInput): CreateP
   const rec = buildRecurrenceFields(owner, input.type_id ?? null, input.recurrence_rule, input.recurrence_dtstart);
   if (!rec.ok) return { ok: false, error: 'bad_recurrence', message: rec.error };
 
+  // AF-11 (D2): routines author NO tags — their tags derive from member tasks at read
+  // time. An incoming `tag` is accepted for API compat (old clients still send it) but
+  // IGNORED: the column stays NULL and nothing is mirrored to entity_tags.
   const p = sqlite
-    .prepare(`INSERT INTO patterns (id, owner_id, type_id, name, tag, notes, recurrence_rule, recurrence_dtstart) VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+    .prepare(`INSERT INTO patterns (id, owner_id, type_id, name, tag, notes, recurrence_rule, recurrence_dtstart) VALUES (uuid7(), ?, ?, ?, NULL, ?, ?, ?) RETURNING *`)
     .get(
       owner,
       input.type_id ?? null,
       input.name.trim(),
-      input.tag ?? null,
       input.notes ?? null,
       rec.rule === undefined ? null : rec.rule,
       rec.dtstart === undefined ? null : rec.dtstart,
@@ -277,8 +292,6 @@ export function createPattern(owner: string, input: CreatePatternInput): CreateP
       return { ok: false, error: 'bad_membership', message: (err as Error).message };
     }
   }
-  // CON-3: mirror the routine's (denormalized) tag string into the normalized store.
-  if (input.tag !== undefined) syncEntityTags('routine', p.id, splitTagString(input.tag), owner);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
   return { ok: true, row: p };
 }
@@ -302,12 +315,13 @@ export function updatePattern(owner: string, id: string, input: UpdatePatternInp
   const rec = buildRecurrenceFields(owner, nextTypeId, input.recurrence_rule, input.recurrence_dtstart);
   if (!rec.ok) return { ok: false, error: 'bad_recurrence', message: rec.error };
 
+  // AF-11 (D2): `input.tag` is accepted-and-IGNORED (API compat) — the column is
+  // preserved as-is (NULL after migration 0120) and entity_tags is never written.
   const row = sqlite
-    .prepare(`UPDATE patterns SET type_id = ?, name = ?, tag = ?, notes = ?, recurrence_rule = ?, recurrence_dtstart = ? WHERE id = ? RETURNING *`)
+    .prepare(`UPDATE patterns SET type_id = ?, name = ?, notes = ?, recurrence_rule = ?, recurrence_dtstart = ? WHERE id = ? RETURNING *`)
     .get(
       nextTypeId,
       input.name?.trim() ?? existing.name,
-      input.tag !== undefined ? input.tag : existing.tag,
       input.notes !== undefined ? input.notes : existing.notes,
       rec.rule === undefined ? existing.recurrence_rule : rec.rule,
       rec.dtstart === undefined ? existing.recurrence_dtstart : rec.dtstart,
@@ -320,8 +334,6 @@ export function updatePattern(owner: string, id: string, input: UpdatePatternInp
       return { ok: false, error: 'bad_membership', message: (err as Error).message };
     }
   }
-  // CON-3: keep the normalized store in sync when the tag string changes (null/'' clears).
-  if (input.tag !== undefined) syncEntityTags('routine', id, splitTagString(input.tag), owner);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `routine:${id}` });
   return { ok: true, row };
 }

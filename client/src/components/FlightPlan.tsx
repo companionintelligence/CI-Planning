@@ -10,6 +10,7 @@ import {
 } from '../stores/index.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { useDraggable } from '../lib/draggable.js';
+import { splitTagNames } from '../lib/multi-tag.js';
 import {
   groupFlightPlan, buildRows, pageSlice, filterByName, defaultPlaceTimeHHMM, localDayTimeToISO,
   type PagedSlice, type FpRowModel,
@@ -301,7 +302,8 @@ export function FlightPlan() {
         >
           <Star size={12} class="text-primary flex-shrink-0" />
           <span class="flex-1 text-sm text-foreground truncate">{props.t.name}</span>
-          <Show when={props.t.tag}><span class="text-primary text-xs flex-shrink-0">#{props.t.tag}</span></Show>
+          {/* AF-11 Slice 5: a saved-block tag can be a multi-name union — one chip per name. */}
+          <For each={splitTagNames(props.t.tag)}>{(n) => <span class="text-primary text-xs flex-shrink-0">#{n}</span>}</For>
           <span class="text-[11px] font-mono text-muted-foreground flex-shrink-0">{props.t.default_minutes}m</span>
           <Show when={(props.t.tasks ?? []).length > 0}>
             <span class="text-[11px] text-muted-foreground flex-shrink-0">{(props.t.tasks ?? []).length} task{(props.t.tasks ?? []).length === 1 ? '' : 's'}</span>

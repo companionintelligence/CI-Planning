@@ -295,7 +295,9 @@ exports[`behavior baseline — read API serialization > serializes the canonical
   "patterns": [
     {
       "created_at": "<ts>",
+      "directions": [],
       "id": "pattern#1",
+      "intentions": [],
       "name": "Morning routine",
       "notes": null,
       "owner_id": "owner#1",

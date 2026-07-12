@@ -21,6 +21,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const blocksCreate = vi.fn(async (_b: unknown) => ({ block: { id: 'blk-new' } }));
 const blocksUpdate = vi.fn(async (_id: string, _b: unknown) => ({}));
 const tagsCreate = vi.fn(async (_n: string, _o?: unknown) => ({}));
+const patternsCreate = vi.fn(async (_b: unknown) => ({ pattern: { id: 'pat-new' } }));
+const patternsUpdate = vi.fn(async (_id: string, _b: unknown) => ({}));
 
 vi.mock('./api.js', () => ({
   api: {
@@ -30,7 +32,11 @@ vi.mock('./api.js', () => ({
       update: (id: string, b: unknown) => blocksUpdate(id, b),
       addTasks: vi.fn(async () => ({})),
     },
-    patterns: { create: vi.fn(async () => ({})), update: vi.fn(async () => ({})), placeToday: vi.fn(async () => ({})) },
+    patterns: {
+      create: (b: unknown) => patternsCreate(b),
+      update: (id: string, b: unknown) => patternsUpdate(id, b),
+      placeToday: vi.fn(async () => ({})),
+    },
     tasks: { create: vi.fn(async () => ({})), update: vi.fn(async () => ({})), suggestTags: vi.fn(async () => ({ tags: [] })) },
   },
 }));
@@ -65,6 +71,28 @@ beforeEach(() => {
   blocksCreate.mockClear();
   blocksUpdate.mockClear();
   tagsCreate.mockClear();
+  patternsCreate.mockClear();
+  patternsUpdate.mockClear();
+});
+
+// AF-11 Slices 4-6: routines author NO tags — the wizard's routine branch stops
+// sending the comma-joined `tag`; directions/intentions derive server-side.
+describe('AF-11 — routine saves send no tag', () => {
+  it('create: no tag key in the patterns.create body (even with primary + intentions set)', async () => {
+    await saveElement('routine', 'add', { ...baseForm, title: 'Morning', primary: 'work', intentions: ['deep'] });
+    const body = patternsCreate.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect('tag' in body).toBe(false);
+    expect(body.name).toBe('Morning');
+    expect(body.task_ids).toEqual([]);
+  });
+
+  it('edit: no tag key in the patterns.update body', async () => {
+    await saveElement('routine', 'edit', { ...baseForm, title: 'Morning 2', primary: 'home', intentions: [] }, 'pat-1');
+    const [id, body] = patternsUpdate.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    expect(id).toBe('pat-1');
+    expect('tag' in body).toBe(false);
+    expect(body).toEqual({ name: 'Morning 2' });
+  });
 });
 
 describe('splitBlockTag — legacy comma-joined level-1 strings', () => {
