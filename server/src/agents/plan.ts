@@ -26,7 +26,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { generateJson, isAvailable } from '../mcp/ollama.js';
-import { taskTagNames } from '../services/tags.js';
+import { entityTagLevels } from '../services/tags.js';
 import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
@@ -37,7 +37,16 @@ import { memoryConnectorAvailable } from '../services/memory.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-/** A staged task as seen by the authoring loop. Exported for tests. */
+/** A staged task as seen by the authoring loop. Exported for tests.
+ *
+ * AF-11 (D1): `tags` is the MATCH set — level 1 ∪ level 2 — so theme matching,
+ * memory relatedness, and the LLM prompt's #tag rendering keep seeing intention
+ * tags after 0121 moved them to level 2 (this is exactly the pre-split flat set).
+ * `primary_tags` is the level-1-only list (the direction) for `tags[0]`-style
+ * PRIMARY reads (clustering) — optional so test literals that only set `tags`
+ * keep working. It is set ONLY when level 1 is non-empty: absent (direction-less
+ * task / pre-split literal), primary reads fall back to `tags`, so clustering
+ * still keys on the first intention rather than collapsing into one '' group. */
 export interface PlanTask {
   task_id: string;
   title: string;
@@ -45,6 +54,7 @@ export interface PlanTask {
   due_at: string | null;
   estimated_minutes: number | null;
   tags: string[];
+  primary_tags?: string[];
 }
 
 interface PlanningPrefs {
@@ -206,7 +216,23 @@ function getStagedTasks(owner: string): PlanTask[] {
         ORDER BY fp.position, t.priority, fp.task_id`
     )
     .all(owner) as Omit<PlanTask, 'tags'>[];
-  return rows.map((r) => ({ ...r, priority: r.priority ?? 3, tags: taskTagNames(r.task_id) }));
+  // AF-11: tags = L1 ∪ L2 (entityTagLevels orders level-then-name, so L1 leads);
+  // primary_tags = L1 only. See the PlanTask doc for which consumers read which.
+  return rows.map((r) => {
+    const levels = entityTagLevels('task', r.task_id);
+    const primary = levels.filter((t) => t.level === 1).map((t) => t.name);
+    return {
+      ...r,
+      priority: r.priority ?? 3,
+      tags: levels.map((t) => t.name),
+      // OMITTED (not []) when the task has no level-1 tag: tagGroupPostPass reads
+      // `(primary_tags ?? tags)[0]`, and only an ABSENT field reaches the `tags`
+      // fallback — so a direction-less task clusters by its first intention (the
+      // pre-split behavior). An empty array would defeat the ?? and lump every
+      // direction-less task into one '' group.
+      ...(primary.length ? { primary_tags: primary } : {}),
+    };
+  });
 }
 
 function persistOrder(
@@ -355,7 +381,13 @@ function orderedTitles(indices: number[], tasks: PlanTask[]): string {
 export function tagGroupPostPass(indices: number[], tasks: PlanTask[]): number[] {
   if (indices.length < 2) return indices;
 
-  const groupKey = (idx: number): string => tasks[idx].tags[0] ?? '';
+  // AF-11: cluster by the PRIMARY (level-1 direction) tag — grouping the day by
+  // direction is the desired outcome, so this deliberately ignores the widened
+  // L1∪L2 match set. `primary_tags` is ABSENT (never []) for a direction-less
+  // task and for callers that don't set it (test literals; pre-split shape) —
+  // both fall back to `tags`, so a direction-less task still clusters by its
+  // first intention.
+  const groupKey = (idx: number): string => (tasks[idx].primary_tags ?? tasks[idx].tags)[0] ?? '';
 
   // Determine the first-seen position for each group
   const groupFirstPos = new Map<string, number>();

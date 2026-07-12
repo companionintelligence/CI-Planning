@@ -23,6 +23,8 @@ const blocksUpdate = vi.fn(async (_id: string, _b: unknown) => ({}));
 const tagsCreate = vi.fn(async (_n: string, _o?: unknown) => ({}));
 const patternsCreate = vi.fn(async (_b: unknown) => ({ pattern: { id: 'pat-new' } }));
 const patternsUpdate = vi.fn(async (_id: string, _b: unknown) => ({}));
+const tasksCreate = vi.fn(async (_b: unknown) => ({ task: { id: 'task-new' } }));
+const tasksUpdate = vi.fn(async (_id: string, _b: unknown, _scope?: string) => ({}));
 
 vi.mock('./api.js', () => ({
   api: {
@@ -37,7 +39,11 @@ vi.mock('./api.js', () => ({
       update: (id: string, b: unknown) => patternsUpdate(id, b),
       placeToday: vi.fn(async () => ({})),
     },
-    tasks: { create: vi.fn(async () => ({})), update: vi.fn(async () => ({})), suggestTags: vi.fn(async () => ({ tags: [] })) },
+    tasks: {
+      create: (b: unknown) => tasksCreate(b),
+      update: (id: string, b: unknown, scope?: string) => tasksUpdate(id, b, scope),
+      suggestTags: vi.fn(async () => ({ tags: [] })),
+    },
   },
 }));
 
@@ -60,10 +66,12 @@ vi.mock('../stores/index.js', () => ({
   refetchPatterns: vi.fn(), refetchTags: vi.fn(),
 }));
 
-const { saveElement, splitBlockTag, mergeTagNames, timeblockTagPayload } = await import('./element.js');
+const { saveElement, splitBlockTag, mergeTagNames, timeblockTagPayload, taskTagPayload } = await import('./element.js');
 
 const lastCreateBody = () => blocksCreate.mock.calls.at(-1)![0] as Record<string, unknown>;
 const lastUpdateBody = () => blocksUpdate.mock.calls.at(-1)![1] as Record<string, unknown>;
+const lastTaskCreateBody = () => tasksCreate.mock.calls.at(-1)![0] as Record<string, unknown>;
+const lastTaskUpdateBody = () => tasksUpdate.mock.calls.at(-1)![1] as Record<string, unknown>;
 
 const baseForm = { title: 'Focus', intentions: [] as string[], day: '2026-07-10', start: '09:00', durationMin: 60 };
 
@@ -73,6 +81,8 @@ beforeEach(() => {
   tagsCreate.mockClear();
   patternsCreate.mockClear();
   patternsUpdate.mockClear();
+  tasksCreate.mockClear();
+  tasksUpdate.mockClear();
 });
 
 // AF-11 Slices 4-6: routines author NO tags — the wizard's routine branch stops
@@ -245,5 +255,80 @@ describe('saveElement(timeblock) — category clear-on-edit (AF-CU2)', () => {
     await saveElement('timeblock', 'add', { ...baseForm, primary: 'work' });
     const wire = JSON.parse(JSON.stringify(lastCreateBody()));
     expect('category_id' in wire).toBe(false);
+  });
+});
+
+// ── AF-11 — the task/habit split shape (direction L1 + intentions L2) ──────────
+
+describe('taskTagPayload — the AF-11 split (array semantics)', () => {
+  it('tags = [primary]; intentions land in secondary_tags', () => {
+    expect(taskTagPayload({ primary: 'work', intentions: ['deep', 'errand'] })).toEqual({
+      tags: ['work'],
+      secondary_tags: ['deep', 'errand'],
+    });
+  });
+  it('no primary → tags: [] (the array IS the clearing value)', () => {
+    expect(taskTagPayload({ primary: '', intentions: ['deep'] })).toEqual({ tags: [], secondary_tags: ['deep'] });
+  });
+  it('dedupes chips and never repeats the primary among the secondaries', () => {
+    expect(taskTagPayload({ primary: 'work', intentions: ['Deep', 'deep', 'work', 'ops'] })).toEqual({
+      tags: ['work'],
+      secondary_tags: ['Deep', 'ops'],
+    });
+  });
+  it('category-name collisions are dropped from both slots', () => {
+    const cats = new Set(['meetings']);
+    expect(taskTagPayload({ primary: 'meetings', intentions: ['meetings', 'deep'] }, cats)).toEqual({
+      tags: [],
+      secondary_tags: ['deep'],
+    });
+  });
+});
+
+describe('saveElement(task/habit) — split POST body shape', () => {
+  const taskForm = { title: 'Ship it', intentions: [] as string[], scheduledFor: '', taskTime: '', priority: 3 };
+
+  it('create sends tags: [primary] + secondary_tags: [...intentions] — no flat folding', async () => {
+    await saveElement('task', 'add', { ...taskForm, primary: 'work', intentions: ['deep', 'errand'] });
+    const body = lastTaskCreateBody();
+    expect(body.tags).toEqual(['work']);                    // NOT ['work','deep','errand']
+    expect(body.secondary_tags).toEqual(['deep', 'errand']);
+  });
+
+  it('create with no direction sends tags: [] on the wire (arrays survive serialization)', async () => {
+    await saveElement('task', 'add', { ...taskForm, primary: '', intentions: ['deep'] });
+    const wire = JSON.parse(JSON.stringify(lastTaskCreateBody()));
+    expect(wire.tags).toEqual([]);
+    expect(wire.secondary_tags).toEqual(['deep']);
+  });
+
+  it('edit with the direction CLEARED sends tags: [] — the server empties level 1 (parity with block tag: null)', async () => {
+    await saveElement('task', 'edit', { ...taskForm, primary: '', intentions: ['deep'] }, 'task-1');
+    expect(tasksUpdate.mock.calls.at(-1)![0]).toBe('task-1');
+    const wire = JSON.parse(JSON.stringify(lastTaskUpdateBody()));
+    expect(wire.tags).toEqual([]);                          // present + empty → clears L1
+    expect(wire.secondary_tags).toEqual(['deep']);          // chips preserved at L2
+  });
+
+  it('edit ALWAYS sends secondary_tags — an emptied chip set clears level 2', async () => {
+    await saveElement('task', 'edit', { ...taskForm, primary: 'work', intentions: [] }, 'task-2');
+    const wire = JSON.parse(JSON.stringify(lastTaskUpdateBody()));
+    expect(wire.tags).toEqual(['work']);
+    expect(wire.secondary_tags).toEqual([]);
+  });
+
+  it('habit saves use the same split shape', async () => {
+    await saveElement('habit', 'add', { ...taskForm, primary: 'home', intentions: ['errand'] });
+    const body = lastTaskCreateBody();
+    expect(body.tags).toEqual(['home']);
+    expect(body.secondary_tags).toEqual(['errand']);
+    expect(body.is_habit).toBe(true);
+  });
+
+  it('a category-name primary never lands in tags (same guard as blocks)', async () => {
+    await saveElement('task', 'add', { ...taskForm, primary: 'meetings', intentions: ['deep'] });
+    const body = lastTaskCreateBody();
+    expect(body.tags).toEqual([]);
+    expect(body.secondary_tags).toEqual(['deep']);
   });
 });

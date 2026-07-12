@@ -23,7 +23,7 @@ import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, 
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
-import { pickNextUp, segmentExtentPx, dragDeltaMin } from '../lib/planner.js';
+import { pickNextUp, segmentExtentPx, dragDeltaMin, inheritedBlockTag } from '../lib/planner.js';
 import { computeBands, type Band } from '../lib/day-windows.js';
 import { localISODate } from '../lib/dates.js';
 import { splitTagNames } from '../lib/multi-tag.js';
@@ -803,7 +803,9 @@ export function Planner() {
     // segmented click lands at the intended time.
     const startMin = minuteAtGridY(clientY);
     const span = spanAtY(day(), startMin * PX_PER_MIN, task?.estimated_minutes ?? DEFAULT_BLOCK_MIN);
-    const tag = task ? taskOf(task.task_id)?.tags?.[0] : undefined;
+    // AF-11: inherit the task's PRIMARY (level-1 direction) tag — tags[] is L1-only
+    // post-split, so this is the direction, never an intention chip.
+    const tag = task ? inheritedBlockTag(taskOf(task.task_id)) : undefined;
     try {
       const { block } = await api.blocks.create({
         title: task?.title ?? 'New block',

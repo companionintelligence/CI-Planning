@@ -105,6 +105,29 @@ export function timeblockTagPayload(
   return { tag, secondary_tags };
 }
 
+/**
+ * AF-11 save shape for a task/habit — the array-semantics mirror of
+ * `timeblockTagPayload`: `tags` (level 1) carries ONLY the single primary
+ * direction, `secondary_tags` (level 2) the intention chips, deduped
+ * case-insensitively, minus the primary itself and category-name collisions.
+ * Both arrays are ALWAYS sent (create and edit): the server treats a present
+ * array as authoritative for its level (applyTaskTagLevels), so `tags: []` on
+ * an edit actively CLEARS a removed direction — the task-side equivalent of
+ * the block path's `tag: null` (blocks need null because their scalar is
+ * JSON-dropped when undefined; an array survives serialization as `[]`).
+ */
+export function taskTagPayload(
+  form: Pick<ElementForm, 'primary' | 'intentions'>,
+  categoryNames: Set<string> = new Set(),
+): { tags: string[]; secondary_tags: string[] } {
+  const primary = form.primary.trim();
+  const tags = primary && !categoryNames.has(primary.toLowerCase()) ? [primary] : [];
+  const secondary_tags = mergeTagNames(form.intentions).filter(
+    (n) => n.toLowerCase() !== primary.toLowerCase() && !categoryNames.has(n.toLowerCase()),
+  );
+  return { tags, secondary_tags };
+}
+
 // ── Date helpers (client-local) ─────────────────────────────────────────────────
 function isoAt(dateStr: string, hhmm: string): string {
   const [y, mo, d] = dateStr.split('-').map(Number);
@@ -184,7 +207,8 @@ export async function saveElement(
   // Category tags are NEVER task/direction tags — keep them out of an entity's tag list
   // (a typed intention name that collides with a category must not attach the category).
   const categoryNames = new Set((tags() ?? []).filter((t) => t.kind === 'category').map((t) => t.name.toLowerCase()));
-  const tagList = [form.primary, ...form.intentions].filter(Boolean).filter((n) => !categoryNames.has(n.toLowerCase()));
+  // (The old flat `tagList` is gone: tasks/habits use taskTagPayload's split shape,
+  // routines author no tags at all — AF-11.)
   await ensureIntentionTags(form.primary, form.intentions);
 
   if (kind === 'task' || kind === 'habit') {
@@ -196,9 +220,13 @@ export async function saveElement(
     // Scoped out: habits and recurring series (their instances come from the recurrence
     // engine), someday (no time), and edits.
     const placeOnSave = mode === 'add' && kind === 'task' && !sd && !rule && !!form.scheduledFor;
+    // AF-11: split shape — tags (L1) = [primary direction], secondary_tags (L2) =
+    // intention chips. No more flat [primary, ...intentions] at level 1.
+    const { tags: taskTags, secondary_tags } = taskTagPayload(form, categoryNames);
     const body: TaskInput = {
       title: form.title.trim() || 'Untitled',
-      tags: tagList,
+      tags: taskTags,
+      secondary_tags,
       notes: form.note || undefined,
       parent_id: form.parentId,
       // Someday = capture title/tags only (no schedule) → lands in TBD.

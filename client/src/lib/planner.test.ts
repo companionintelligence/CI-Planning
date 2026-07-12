@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickNextUp, segmentExtentPx, dragDeltaMin } from './planner.js';
+import { pickNextUp, segmentExtentPx, dragDeltaMin, inheritedBlockTag } from './planner.js';
 import { instantFor } from './grid.js';
 import {
   type AxisState,
@@ -111,5 +111,17 @@ describe('dragDeltaMin — segmented pixel→minute delta', () => {
     expect(dragDeltaMin(startY, 0, BOTH_COLLAPSED, PX)).toBe(0);
     // The collapsed bar height is fixed; sanity that the constant is present.
     expect(COLLAPSED_BAR_PX).toBeGreaterThan(0);
+  });
+});
+
+describe('inheritedBlockTag — AF-11 grid-created block inherits the task PRIMARY', () => {
+  it('returns the level-1 direction (tags[] is L1-only post-split)', () => {
+    expect(inheritedBlockTag({ tags: ['work'] })).toBe('work');
+  });
+  it('a direction-less task (intentions only live in secondary_tags) yields undefined — block is untagged', () => {
+    expect(inheritedBlockTag({ tags: [] })).toBeUndefined();
+  });
+  it('unknown task yields undefined', () => {
+    expect(inheritedBlockTag(undefined)).toBeUndefined();
   });
 });

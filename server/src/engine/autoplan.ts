@@ -21,12 +21,11 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
-import { taskTagNames, inheritContainerDirection, removeEntityTags } from '../services/tags.js';
+import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
 import { mirrorEnginePlacement, revertTaskPlacementStatus, applyTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from '../services/block-task-sync.js';
-import { entityTagLevels, splitTagString } from '../services/tags.js';
 import { getPatternBlocks } from '../services/pattern-blocks.js';
 import { resolveDayType } from '../services/day-types.js';
 import { getPatternPrefs } from '../services/pattern-prefs.js';
@@ -74,8 +73,25 @@ interface PlanRow {
   catch_all: number;
 }
 
+/**
+ * AF-11 Slice 1 (D1: preserve intention-driven matching) — the task-side MATCH set
+ * is level 1 ∪ level 2. Post-0121 a task's intentions live at level 2 (direction
+ * stays the sole level-1 primary), so an L1-only read here would silently stop
+ * intention tags from pulling tasks into same-named tagged Plans (Pass 1 / the
+ * single-Plan path), NL hint windows, and orderForPlan's overlap/plan scoring.
+ * L1 ∪ L2 is exactly the pre-split flat set, so those consumers are byte-identical.
+ *
+ * Direction-only passes are UNAFFECTED by the widening because they never consume
+ * `StagedTask.tags` raw — they map names through kind='direction' lookups:
+ *  - Pass 2a maps via dirNameToId (built from tags WHERE kind='direction');
+ *  - categoryCandidates' opt-out check maps via patNameToId (kind='direction');
+ *  - placeStartAnchoredTask queries entity_tags level=1 AND kind='direction' in SQL.
+ * An intention name in the set resolves to no direction id and drops out.
+ * (A tag exists at exactly ONE level — the entity_tags PK excludes level — so the
+ * union has no duplicates.)
+ */
 function tagsOf(taskId: string): string[] {
-  return taskTagNames(taskId);
+  return entityTagLevels('task', taskId).map((t) => t.name);
 }
 
 /**
@@ -185,8 +201,11 @@ function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlan
  * Staged tasks eligible for a category Plan (0069): a SECONDARY tag (entity_tags
  * level>1) that is a member of the category, AND a direction that is NOT fully opted
  * out for the category. Preserves `staged` order (deterministic — id-keyed, no clock/
- * randomness). NB: `staged.tags` is level-1 only, so category matching MUST read
- * entity_tags level>1 directly. A direction-less task is included on the tag match alone.
+ * randomness). NB: category matching reads entity_tags level>1 directly (the canonical
+ * secondary-tag store); `staged.tags` (L1 ∪ L2 since AF-11) is used only for the
+ * direction opt-out check below, where non-direction names drop out via patNameToId.
+ * A direction-less task is included on the tag match alone. Post-0121 (intentions →
+ * L2) this pass matches tasks for the first time — the AF-11 latent-bug fix (R4).
  */
 function categoryCandidates(staged: StagedTask[], categoryId: string, owner: string): StagedTask[] {
   const candIds = new Set(
