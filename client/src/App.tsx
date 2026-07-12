@@ -1,4 +1,4 @@
-import { Navigate, Route, Router, useLocation, useNavigate } from '@solidjs/router';
+import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
 import { Plus, Cpu, Loader2 } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
@@ -13,7 +13,6 @@ import { Today }    from './views/Today.js';
 import { Calendar } from './views/Calendar.js';
 import { Inbox }    from './views/Inbox.js';
 import { AllTasks } from './views/AllTasks.js';
-import { Objectives } from './views/Objectives.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
@@ -156,6 +155,19 @@ function Shell(props: { children?: any }) {
 }
 
 /**
+ * AF-1 — Objectives now lives at `/tasks?tab=objectives`; stale `/objectives`
+ * deep-links redirect there, FORWARDING the `?focus=<id>` param (§K task-star
+ * links) so the tree still auto-expands/scrolls to the target node.
+ */
+function ObjectivesRedirect() {
+  const [params] = useSearchParams();
+  const focus = typeof params.focus === 'string' && params.focus
+    ? `&focus=${encodeURIComponent(params.focus)}`
+    : '';
+  return <Navigate href={`/tasks?tab=objectives${focus}`} />;
+}
+
+/**
  * U3 — auth gate. Fetches `GET /api/auth/config` ONCE at boot:
  *   - test / standalone (or config unreachable) → render the app unchanged. Zero
  *     behavioral change for existing dev/Docker/api-key deployments — the guard is
@@ -223,7 +235,8 @@ export function App() {
             <Route path="/calendar" component={Calendar} />
             <Route path="/inbox"    component={Inbox} />
             <Route path="/tasks"       component={AllTasks} />
-            <Route path="/objectives"  component={Objectives} />
+            {/* AF-1: Objectives is a Tasks tab now; redirect preserves ?focus=. */}
+            <Route path="/objectives"  component={ObjectivesRedirect} />
             <Route path="/patterns" component={() => <Navigate href="/tasks" />} />
             <Route path="/tags"     component={Tags} />
             <Route path="/settings" component={Settings} />
@@ -243,7 +256,8 @@ function UngatedRouter() {
       <Route path="/calendar" component={Calendar} />
       <Route path="/inbox"    component={Inbox} />
       <Route path="/tasks"       component={AllTasks} />
-      <Route path="/objectives"  component={Objectives} />
+      {/* AF-1: Objectives is a Tasks tab now; redirect preserves ?focus=. */}
+      <Route path="/objectives"  component={ObjectivesRedirect} />
       {/* Routines moved into the Tasks screen as tabs (T-TASKS-1); redirect stale deep-links. */}
       <Route path="/patterns" component={() => <Navigate href="/tasks" />} />
       <Route path="/tags"     component={Tags} />

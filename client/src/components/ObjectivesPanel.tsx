@@ -7,7 +7,7 @@ import {
 import { STAR_GOLD } from '../lib/stars.js';
 import { api, type Objective } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
-import { ObjectiveModal } from '../components/ObjectiveModal.js';
+import { ObjectiveModal } from './ObjectiveModal.js';
 
 /** Whether `id` is `o` or anywhere in its subtree — used to auto-expand to a focused node. */
 function subtreeHas(o: Objective, id: string): boolean {
@@ -36,11 +36,14 @@ const STATUS_CLASSES: Record<string, string> = {
 };
 
 /**
- * Phase N1 — /objectives view: tree default.
+ * The Objectives tree — lifted out of the retired /objectives view (AF-1) so it can
+ * mount as the Tasks-screen **Objectives** tab (`/tasks?tab=objectives`).
  * Each row shows: level icon · progress track · title · next_action chip.
  * Rot = amber dot when progress_cache IS NULL or (cadence!=none AND no next_action).
+ * Deep-links (`?focus=<id>`, §K — a task's objective star) still auto-expand and
+ * scroll to the focused node; the param now lives on the /tasks URL.
  */
-export function Objectives() {
+export function ObjectivesPanel() {
   const [data, { refetch }] = createResource(() => api.objectives.list());
   const [params] = useSearchParams();
   const focusId = () => (typeof params.focus === 'string' ? params.focus : undefined); // §K: clicking a task's star deep-links here
@@ -60,13 +63,10 @@ export function Objectives() {
   }
 
   return (
-    <div class="flex flex-col gap-4 p-4 md:p-6 page-enter min-h-full">
-      {/* Header */}
+    <div class="flex flex-col gap-4">
+      {/* Panel header — the page-level header belongs to the Tasks view. */}
       <div class="flex items-center justify-between">
-        <div>
-          <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary mb-0.5">Objectives</div>
-          <h1 class="text-xl font-semibold text-foreground">Goals · Projects · Objectives</h1>
-        </div>
+        <h2 class="text-sm font-semibold text-foreground">Goals · Projects · Objectives</h2>
         <button
           class="btn-primary text-xs px-3 py-1.5"
           onClick={() => setModal({ mode: 'create' })}

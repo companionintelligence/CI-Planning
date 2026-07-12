@@ -1,4 +1,5 @@
 import { createSignal, createResource, Show, For } from 'solid-js';
+import { useSearchParams } from '@solidjs/router';
 import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight } from 'lucide-solid';
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
@@ -11,6 +12,8 @@ import { SortControl, type SortOrder } from '../components/SortControl.js';
 import { byPriority, byDueDateAsc } from '../lib/sort.js';
 import { RoutinesPanel } from '../components/RoutinesPanel.js';
 import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
+import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
+import { parseTasksTab, type TasksTab } from '../lib/tasks-tabs.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -48,15 +51,17 @@ export function AllTasks() {
   // non-routine, non-scheduled backlog) so the header number and the "Open ⟨n⟩" section agree.
   const activeTaskCount = () => openList().length;
 
-  // Tasks/Habits/Routines/Time-Blocks tabs. Tasks & Habits list the backlog (both
-  // exclude subtasks + recurrence instances — a series collapses to its template);
-  // Routines & Time Blocks mount the panels lifted out of the Patterns view.
-  type Tab = 'tasks' | 'habits' | 'routines' | 'timeblocks';
-  const [view, setView] = createSignal<Tab>('tasks');
+  // Tasks/Objectives/Habits/Routines/Timeblock tabs. Tasks & Habits list the backlog
+  // (both exclude subtasks + recurrence instances — a series collapses to its template);
+  // Objectives, Routines & Timeblock mount extracted panels. AF-1: the active tab is
+  // URL-driven (`/tasks?tab=…`) so deep-links and reloads land on the same tab.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = () => parseTasksTab(searchParams.tab);
   const isTaskTab = () => view() === 'tasks' || view() === 'habits';
-  // Switching to a panel tab drops the Tasks-only archive/filter state.
-  const selectTab = (v: Tab) => {
-    setView(v);
+  // Switching to a panel tab drops the Tasks-only archive/filter state; the
+  // objectives deep-link focus (`?focus=`) is cleared on any explicit tab change.
+  const selectTab = (v: TasksTab) => {
+    setSearchParams({ tab: v, focus: undefined });
     if (v !== 'tasks' && v !== 'habits') { setShowArchive(false); setShowFilters(false); }
   };
   const isTopLevel = (t: Task) => !t.parent_id && !t.recurrence_parent_id;
@@ -194,19 +199,16 @@ export function AllTasks() {
 
       {/* Tabs — always visible; sort sits to the right on the Task/Habit tabs. */}
       <div class="flex items-center justify-between gap-2 mb-3 flex-wrap">
-        <div class="flex gap-2">
-          <For each={[['tasks', 'Tasks'], ['habits', 'Habits']] as const}>
-            {([v, label]) => (
-              <button
-                onClick={() => selectTab(v)}
-                class="px-3 py-1 text-sm rounded-md transition-colors"
-                classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
-              >
-                {label} <span class="opacity-60 tabular-nums">{tabCount(v)}</span>
-              </button>
-            )}
-          </For>
-          <For each={[['routines', 'Routines'], ['timeblocks', 'Time Blocks']] as const}>
+        <div class="flex gap-2 flex-wrap">
+          {/* AF-1 order: Tasks · Objectives · Habits · Routines · Timeblock; only the
+              backlog tabs (tasks/habits) carry a count badge. */}
+          <For each={[
+            ['tasks', 'Tasks'],
+            ['objectives', 'Objectives'],
+            ['habits', 'Habits'],
+            ['routines', 'Routines'],
+            ['timeblocks', 'Timeblock'],
+          ] as const}>
             {([v, label]) => (
               <button
                 onClick={() => selectTab(v)}
@@ -214,6 +216,9 @@ export function AllTasks() {
                 classList={{ 'bg-primary text-primary-foreground': view() === v, 'text-muted-foreground hover:text-foreground': view() !== v }}
               >
                 {label}
+                <Show when={v === 'tasks' || v === 'habits'}>
+                  {' '}<span class="opacity-60 tabular-nums">{tabCount(v as 'tasks' | 'habits')}</span>
+                </Show>
               </button>
             )}
           </For>
@@ -325,7 +330,10 @@ export function AllTasks() {
         </Show>
       </Show>
 
-      {/* ── Routines / Time Blocks — panels lifted from the Patterns view ── */}
+      {/* ── Objectives — tree panel lifted from the retired /objectives view (AF-1) ── */}
+      <Show when={view() === 'objectives'}><ObjectivesPanel /></Show>
+
+      {/* ── Routines / Timeblock — panels lifted from the Patterns view ── */}
       <Show when={view() === 'routines'}><RoutinesPanel /></Show>
       <Show when={view() === 'timeblocks'}><TimeBlocksPanel /></Show>
     </div>
