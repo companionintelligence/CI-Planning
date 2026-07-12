@@ -170,6 +170,19 @@ describe('saveElement(timeblock) — edit round-trip', () => {
     expect(body.secondary_tags).toEqual([]);
   });
 
+  it('edit with the direction CLEARED sends tag: null on the wire (omitted tag would be JSON-dropped and server-preserved)', async () => {
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: '', intentions: ['deep'] }, 'blk-4');
+    const wire = JSON.parse(JSON.stringify(lastUpdateBody()));
+    expect(wire.tag).toBeNull();                   // survives serialization → server clears level 1 + nulls the column
+    expect(wire.secondary_tags).toEqual(['deep']);
+  });
+
+  it('create with no direction still OMITS tag from the wire body (nothing to clear)', async () => {
+    await saveElement('timeblock', 'add', { ...baseForm, primary: '' });
+    const wire = JSON.parse(JSON.stringify(lastCreateBody()));
+    expect('tag' in wire).toBe(false);
+  });
+
   it('preserved-but-not-round-tripped secondaryTags still survive an edit (union path)', async () => {
     await saveElement('timeblock', 'edit', { ...baseForm, primary: 'home', intentions: ['deep'], secondaryTags: ['ops'] }, 'blk-3');
     const body = lastUpdateBody();

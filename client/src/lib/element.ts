@@ -253,13 +253,18 @@ export async function saveElement(
   const { tag, secondary_tags } = timeblockTagPayload(form, categoryNames);
   const extra: Record<string, unknown> = {};
   if (mode === 'edit' || secondary_tags.length) extra.secondary_tags = secondary_tags;
+  // An EDIT that cleared the direction must actively clear it server-side:
+  // JSON.stringify drops `tag: undefined` and the server's partial-PATCH
+  // semantics preserve an omitted `tag`, so send the documented clearing value
+  // (null → empties level 1 + nulls the column). Create keeps omitting.
+  const tagOut = tag !== undefined ? tag : mode === 'edit' ? null : undefined;
   let body: Record<string, unknown>;
   if (form.someday) {
     const goal = form.goalDay || localISODate();
     const start = isoAtMidnight(goal);
     body = {
       title: form.title.trim() || 'Time Block', block_kind: 'timeblock', block_type: 'someday',
-      tag, goal_start_date: goal, duration_minutes: durMin, all_day: true,
+      tag: tagOut, goal_start_date: goal, duration_minutes: durMin, all_day: true,
       note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...(form.categoryId ? { category_id: form.categoryId } : {}),
@@ -269,7 +274,7 @@ export async function saveElement(
     const start = isoAt(form.day || localISODate(), form.start || nextHalfHour());
     body = {
       title: form.title.trim() || 'Time Block', block_kind: 'timeblock', block_type: 'scheduled',
-      tag, note: form.note || undefined, start_at: start,
+      tag: tagOut, note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...(form.recurrenceRule !== undefined ? { recurrence_rule: form.recurrenceRule } : {}),
       ...(form.categoryId ? { category_id: form.categoryId } : {}),
