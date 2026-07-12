@@ -20,6 +20,43 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function ownerRouter() {
   const router = new Router();
 
+  // PATCH /api/owner/profile — { name?: string, email?: string | null }
+  // The owner's display identity. Omitted fields are preserved; email accepts
+  // null/'' to clear. This is the only writer of owners.name/email post-provision —
+  // without it a self-hosted (test/standalone-mode) owner is stuck as the seeded
+  // 'System' identity forever.
+  router.patch('/api/owner/profile', (ctx) => {
+    const { name, email } = (ctx.request.body ?? {}) as { name?: unknown; email?: unknown };
+
+    const sets: string[] = [];
+    const values: (string | null)[] = [];
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim() || name.trim().length > 120) {
+        throw httpError(400, 'name must be a non-empty string (max 120 chars)');
+      }
+      sets.push('name = ?');
+      values.push(name.trim());
+    }
+    if (email !== undefined) {
+      if (email === null || email === '') {
+        sets.push('email = NULL');
+      } else if (typeof email === 'string' && EMAIL_RE.test(email.trim())) {
+        sets.push('email = ?');
+        values.push(email.trim());
+      } else {
+        throw httpError(400, 'email must be a valid address (or null to clear)');
+      }
+    }
+    if (sets.length === 0) throw httpError(400, 'nothing to update — provide name and/or email');
+
+    const ownerId = currentOwnerId();
+    sqlite.prepare(`UPDATE owners SET ${sets.join(', ')} WHERE id = ?`).run(...values, ownerId);
+    const row = sqlite
+      .prepare(`SELECT name, email FROM owners WHERE id = ?`)
+      .get(ownerId) as { name: string; email: string | null };
+    ctx.body = { ok: true, name: row.name, email: row.email };
+  });
+
   // PATCH /api/owner/backup-email  — { backup_email: string | null }
   // A null/empty value clears it. Scoped to the current owner (never the sentinel).
   router.patch('/api/owner/backup-email', (ctx) => {

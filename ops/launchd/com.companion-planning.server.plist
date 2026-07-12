@@ -25,11 +25,13 @@
   <key>WorkingDirectory</key>
   <string>REPO_PATH/server</string>
 
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>NODE_ENV</key>
-    <string>production</string>
-  </dict>
+  <!-- Personal single-user install (Tailscale laptop): deliberately NO
+       NODE_ENV=production here — the production fail-closed guards forbid the
+       credential-free AUTH_MODE=test default, so with it set and no AUTH_MODE the
+       server exits at boot and KeepAlive crash-loops it every 10s. For a hardened
+       deployment, add an EnvironmentVariables dict with NODE_ENV=production AND a
+       real auth mode (AUTH_MODE=sso + SESSION_SECRET + DISABLE_OIDC=true +
+       AUTH_DEFAULT_USERNAME/AUTH_DEFAULT_PASSWORD), per README "First run". -->
 
   <key>RunAtLoad</key>
   <true/>
