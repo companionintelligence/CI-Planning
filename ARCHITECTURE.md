@@ -272,7 +272,7 @@ sequenceDiagram
     Cron->>DB: snapshot_db (02:00) — point-in-time SQLite backup
     Cron->>Mem: push_memory (02:00) — one-way push of completed/habit/reflection events
     Cron->>DB: auto_schedule (03:00) — re-place tomorrow's flight-plan
-    Cron->>LLM: nightly_grooming — embedding dedupe + priority refresh
+    Cron->>LLM: nightly_grooming (02:00) — embedding dedupe + overdue bump + straggler promote
 
     Note over Cron,DB: Weekly ─────────────────────────────────────
     Cron->>DB: calibrate_estimates (Sun 04:00) — compute bias ratio
@@ -292,8 +292,8 @@ sequenceDiagram
 | `reset_routines` | daily 00:00 | Reopen completed Routine checklist tasks for the new day (AC) |
 | `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `daily_recap` (owner-tz day; idempotent, first-freeze-wins on `frozen_at`) |
 | `review_day` | daily 01:00 | Defer / surface missed planned tasks |
-| `promote_possibles` | daily 02:00 | Auto-promote high-confidence inbox items into Tasks |
-| `nightly_grooming` | daily 02:00 | Dedupe near-identical tasks with embeddings |
+| `promote_possibles` | — (manual only) | Unconditionally promote any pending inbox stragglers into Tasks, then hands-off auto-block — cron row retired by 0118 (AF-3: producers auto-promote at ingestion; `nightly_grooming` subsumes the sweep) |
+| `nightly_grooming` | daily 02:00 | Per owner: embedding-dedupe pending possibles · bump overdue open-task priority · unconditionally promote pending stragglers · hands-off auto-block the newly promoted |
 | `snapshot_db` | daily 02:00 | Write a point-in-time SQLite backup |
 | `push_memory` | daily 02:00 | One-way push of completed tasks / habit occurrences / reflections to CI-Server as `POST /v1/events` (AA4; gated by `memory_sync_enabled` + per-entity scope toggles; watermarked by `memory_last_synced_at`) |
 | `generate_recurrences` | daily 02:45 | Materialize recurring Task/Habit instances; flag missed habits |

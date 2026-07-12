@@ -25,22 +25,38 @@ export interface PromoteResult {
  * route / batch path again. Per-item poison isolation (no wrapping transaction): a row
  * whose promote throws (e.g. the 0027 partial UNIQUE(source_kind, source_ref) on tasks)
  * is logged and left pending; the rest of the sweep proceeds.
+ *
+ * AF-CU1 — OWNER-SCOPED: the nightly_grooming / promote_possibles jobs fan out once
+ * per owner (jobs/index.ts OWNER_SCOPED_KINDS), so each run must sweep only `owner`'s
+ * rows or the first fan-out iteration would process (and get job_runs credit for)
+ * every owner's stragglers. NULL-owner legacy rows (hand-inserted before owner
+ * scoping) are swept only when `opts.claimLegacy` is set: the job dispatcher
+ * (jobs/index.ts, the layer allowed to know about the default-owner sentinel) sets it
+ * solely for the DEFAULT owner's run, so legacy rows are claimed deterministically by
+ * the fixed pre-multi-tenant owner they implicitly belonged to — previously whichever
+ * owner's fan-out iteration ran first backfilled and grabbed them. The claiming run
+ * backfills proposed_owner_id before promoting (the same fallback the old inline
+ * INSERT applied at task-creation time). Single-tenant is byte-identical: the sole
+ * owner IS the default owner, so the same rows (theirs + NULL) are processed.
  */
-export async function promotePossibles(): Promise<PromoteResult> {
+export async function promotePossibles(
+  owner: string = currentOwnerId(),
+  opts: { claimLegacy?: boolean } = {},
+): Promise<PromoteResult> {
   const pending = sqlite
-    .prepare("SELECT id, proposed_owner_id FROM possible_tasks WHERE status = 'pending'")
-    .all() as { id: string; proposed_owner_id: string | null }[];
+    .prepare(
+      `SELECT id, proposed_owner_id FROM possible_tasks
+        WHERE status = 'pending' AND (proposed_owner_id = ?${opts.claimLegacy ? ' OR proposed_owner_id IS NULL' : ''})`,
+    )
+    .all(owner) as { id: string; proposed_owner_id: string | null }[];
 
   let promoted = 0;
   let failed = 0;
 
   for (const p of pending) {
-    // Legacy/hand-inserted rows may lack an owner; promotePossible is owner-scoped
-    // (matches by proposed_owner_id), so backfill to the current owner first — the
-    // same fallback the old inline INSERT applied at task-creation time.
-    let owner = p.proposed_owner_id;
-    if (!owner) {
-      owner = currentOwnerId();
+    // Legacy row (only ever selected under claimLegacy — see docstring): promotePossible
+    // is owner-scoped (matches by proposed_owner_id), so backfill to this run's owner first.
+    if (!p.proposed_owner_id) {
       sqlite.prepare(`UPDATE possible_tasks SET proposed_owner_id = ? WHERE id = ?`).run(owner, p.id);
     }
     try {
@@ -49,13 +65,14 @@ export async function promotePossibles(): Promise<PromoteResult> {
     } catch (err) {
       failed++;
       logger.error('promotePossibles: promote failed for possible — leaving pending', {
+        owner,
         possibleId: p.id,
         err: (err as Error).message,
       });
     }
   }
 
-  logger.info('promotePossibles done', { promoted, failed });
+  logger.info('promotePossibles done', { owner, promoted, failed });
   return { promoted, failed };
 }
 
@@ -127,8 +144,9 @@ export interface DedupeResult {
  *
  * AF-3: `opts.owner` scopes the pass to one owner's pending rows (by
  * `proposed_owner_id`, the table's owner key) — the inline post-ingest dedupe uses it
- * so one owner's batch never compares against (or marks) another owner's rows. The
- * nightly grooming call stays unscoped (its historical whole-table sweep).
+ * so one owner's batch never compares against (or marks) another owner's rows.
+ * AF-CU1: the nightly grooming call is owner-scoped too (the job fans out per owner);
+ * omitting `opts.owner` keeps the historical whole-table sweep for ad-hoc use.
  */
 export async function dedupePossibles(
   opts: { threshold?: number; embedFn?: (text: string) => Promise<number[]>; owner?: string } = {},
@@ -192,13 +210,15 @@ export async function dedupePossibles(
   return { compared, duplicates, available: true };
 }
 
-/** Bump priority of overdue open tasks so they surface. Returns count updated. */
-export function surfaceOverdue(asOf = new Date().toISOString()): number {
+/** Bump priority of `owner`'s overdue open tasks so they surface. Returns count updated.
+ *  AF-CU1: owner-scoped — nightly_grooming fans out per owner, so an unscoped UPDATE
+ *  would let the first owner's run bump (and count) every owner's tasks. */
+export function surfaceOverdue(owner: string = currentOwnerId(), asOf = new Date().toISOString()): number {
   const res = sqlite
     .prepare(
       `UPDATE tasks SET priority = MAX(1, priority - 1)
-       WHERE status = 'open' AND due_at IS NOT NULL AND due_at < ? AND priority > 1`
+       WHERE owner_id = ? AND status = 'open' AND due_at IS NOT NULL AND due_at < ? AND priority > 1`
     )
-    .run(asOf);
+    .run(owner, asOf);
   return res.changes;
 }

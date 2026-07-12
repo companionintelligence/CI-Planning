@@ -17,10 +17,13 @@ export interface IngestResult {
   promoted: number;
   /** AF-3: possibles the inline semantic dedupe marked 'duplicate' this batch. */
   duplicates: number;
+  /** AF-CU1: possibles whose promote threw (poison isolation) — left pending for the
+   *  nightly sweeper / manual triage. */
+  failed: number;
 }
 
 function emptyResult(): IngestResult {
-  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0 };
+  return { itemsProcessed: 0, possiblesCreated: 0, possiblesUpdated: 0, blocksCreated: 0, promoted: 0, duplicates: 0, failed: 0 };
 }
 
 /**
@@ -33,6 +36,7 @@ async function promoteBatch(result: IngestResult): Promise<void> {
   const r = await promoteAllPending(currentOwnerId());
   result.promoted += r.promoted;
   result.duplicates += r.duplicates;
+  result.failed += r.failed;
 }
 
 /** Normalize a tag name the same way the tasks route does. */

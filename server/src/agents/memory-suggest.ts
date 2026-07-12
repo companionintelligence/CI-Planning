@@ -58,6 +58,12 @@ export interface MemorySuggestResult {
   skippedCap: number;
   /** AF-3: pending possibles auto-promoted into tasks at the end of this run. */
   promoted: number;
+  /** AF-CU1: possibles the batch's inline semantic dedupe marked 'duplicate' — count
+   *  parity with IngestResult so `created > promoted` runs are explainable. */
+  duplicates: number;
+  /** AF-CU1: possibles whose promote threw (poison isolation) — left pending for the
+   *  nightly sweeper / manual triage. */
+  failed: number;
 }
 
 interface EventCandidate {
@@ -74,7 +80,7 @@ export type PolishFn = (
 ) => Promise<Map<string, Partial<ExtractedTask>>>;
 
 function skipped(status: 'flag_off' | 'unavailable'): MemorySuggestResult {
-  return { status, pulled: 0, created: 0, updated: 0, skippedDismissed: 0, skippedCap: 0, promoted: 0 };
+  return { status, pulled: 0, created: 0, updated: 0, skippedDismissed: 0, skippedCap: 0, promoted: 0, duplicates: 0, failed: 0 };
 }
 
 function pullEnabled(owner: string): boolean {
@@ -284,6 +290,8 @@ export async function suggestFromMemory(
     skippedDismissed: 0,
     skippedCap: 0,
     promoted: 0,
+    duplicates: 0,
+    failed: 0,
   };
   if (candidates.length === 0) return result;
 
@@ -359,6 +367,8 @@ export async function suggestFromMemory(
   // start intent places its block at the event time via the AB1 hook inside.
   const batch = await promoteAllPending(owner, { embedFn: opts.embedFn });
   result.promoted = batch.promoted;
+  result.duplicates = batch.duplicates;
+  result.failed = batch.failed;
 
   logger.info('memory suggest done', { ...result });
   return result;
