@@ -6,7 +6,7 @@ import {
 } from '../stores/index.js';
 import {
   ELEMENT_KINDS, patternTagList, patternDefaultMinutes, rankedSecondaryTags,
-  nextHalfHour, saveElement, type ElementForm,
+  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { localISODate } from '../lib/dates.js';
@@ -60,12 +60,12 @@ export function ElementWizard() {
   const [editScope, setEditScope] = createSignal<'instance' | 'series'>('instance');
   const [wasRecurring, setWasRecurring] = createSignal(false);
   const [showMore, setShowMore] = createSignal(false);
-  // time-block: note + recurrence + preserved secondary tags
+  // time-block: note + recurrence (AF-9: secondary tags round-trip through the
+  // shared `intentions` chips — no separate blind-preserve signal anymore)
   const [note, setNote] = createSignal('');
   const [tbRepeat, setTbRepeat] = createSignal<RepeatPreset>('none');
   const [tbWeekdays, setTbWeekdays] = createSignal<string[]>([]);
   const [tbCustomRule, setTbCustomRule] = createSignal('');
-  const [secondaryTags, setSecondaryTags] = createSignal<string[]>([]);
   const [categoryId, setCategoryId] = createSignal('');
   const [depDraft, setDepDraft] = createSignal('');
   const [saving, setSaving] = createSignal(false);
@@ -186,7 +186,7 @@ export function ElementWizard() {
       setEstimate(30); setDueAt(pf.day || localISODate()); setDueEdited(false); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false); setShowMore(false);
-      setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setSecondaryTags([]); setCategoryId(''); setMakeHabit(false);
+      setNote(''); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryId(''); setMakeHabit(false);
       setAttachDraft(''); setAttachItems([]); setRemovedMemberIds([]);
       if (st.mode === 'edit' && st.editTarget) loadForEdit(st.editTarget.kind, st.editTarget.id);
     }
@@ -198,11 +198,15 @@ export function ElementWizard() {
       const b = (blocks() ?? []).find((x) => x.id === id) ?? (concepts() ?? []).find((x) => x.id === id);
       if (!b) return;
       setTitle(b.title);
-      const tagNames = (b.tag ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-      seedTags(tagNames);
+      // AF-9: primary = FIRST segment of the stored tag (legacy rows may be
+      // comma-joined); remaining segments + the block's existing level-2
+      // secondary_tags round-trip into the chips. Write-time normalization:
+      // the next save sends tag=primary + secondary_tags (no data migration).
+      const { primary: prim, secondary } = splitBlockTag(b.tag);
+      setPrimary(prim);
+      setIntentions(mergeTagNames(secondary, b.secondary_tags).filter((n) => n.toLowerCase() !== prim.toLowerCase()));
       setNote(b.note ?? '');
       setCategoryId(b.category_id ?? '');
-      setSecondaryTags(b.secondary_tags ?? []);
       const ps = rulePreset(b.recurrence_rule);
       setTbRepeat(TB_REPEAT.includes(ps.preset) ? ps.preset : 'custom');
       setTbWeekdays(ps.weekdays);
@@ -295,7 +299,8 @@ export function ElementWizard() {
         title: title(), primary: primary(), intentions: intentions(),
         note: note() || undefined,
         day: day(), start: start(), durationMin: durMin(), someday: someday(), goalDay: goalDay(),
-        secondaryTags: secondaryTags().length ? secondaryTags() : undefined,
+        // AF-9: time-block secondary tags live in `intentions` (round-tripped on
+        // edit), so no separate blind-preserve set is passed.
         categoryId: categoryId() || undefined,
         scheduledFor: scheduledFor(), taskTime: taskTime() || undefined, estimatedMinutes: estimate(),
         dueAt: dueAt() || undefined, priority: priority(),
@@ -318,33 +323,39 @@ export function ElementWizard() {
   }
 
   // ── Shared sub-views ──────────────────────────────────────────────────────
-  const TagSection = () => (
-    <>
-      <div>
-        <div class="text-[11px] text-muted-foreground mb-1">Pattern</div>
-        <div class="flex flex-wrap gap-1.5">
-          <For each={patternTagList()}>
-            {(pt) => (
-              <button type="button" onClick={() => pickPrimary(pt.name)}
-                class="text-xs px-2 py-1 rounded-full border transition-colors capitalize"
-                classList={{
-                  'border-primary text-primary bg-primary/10': primary().toLowerCase() === pt.name.toLowerCase(),
-                  'border-border text-muted-foreground hover:text-foreground': primary().toLowerCase() !== pt.name.toLowerCase(),
-                }}>
-                {pt.name}
-              </button>
-            )}
-          </For>
-          <Show when={patternTagList().length === 0}>
-            <span class="text-xs text-muted-foreground">No pattern tags yet.</span>
-          </Show>
-        </div>
+  // AF-9: TagSection is split so the timeblock branch can reuse both halves —
+  // the primary picker (relabelled "Direction" there) and the secondary chip UI.
+  const PrimaryPicker = (p: { label: string; empty: string }) => (
+    <div>
+      <div class="text-[11px] text-muted-foreground mb-1">{p.label}</div>
+      <div class="flex flex-wrap gap-1.5">
+        <For each={patternTagList()}>
+          {(pt) => (
+            <button type="button" onClick={() => pickPrimary(pt.name)}
+              class="text-xs px-2 py-1 rounded-full border transition-colors capitalize"
+              classList={{
+                'border-primary text-primary bg-primary/10': primary().toLowerCase() === pt.name.toLowerCase(),
+                'border-border text-muted-foreground hover:text-foreground': primary().toLowerCase() !== pt.name.toLowerCase(),
+              }}>
+              {pt.name}
+            </button>
+          )}
+        </For>
+        <Show when={patternTagList().length === 0}>
+          <span class="text-xs text-muted-foreground">{p.empty}</span>
+        </Show>
       </div>
+    </div>
+  );
 
-      <Show when={primary()}>
-        {/* Selected tags */}
+  const SecondaryTagSection = () => (
+    <>
+      {/* Selected tags */}
+      <Show when={primary() || intentions().length > 0}>
         <div class="flex flex-wrap items-center gap-1.5 rounded-md border border-border p-2 min-h-[2.25rem]">
-          <span class="text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/40 capitalize">{primary()}</span>
+          <Show when={primary()}>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/40 capitalize">{primary()}</span>
+          </Show>
           <For each={intentions()}>
             {(name) => (
               <span class="text-xs px-2 py-0.5 rounded-full border border-border text-foreground inline-flex items-center gap-1">
@@ -354,43 +365,50 @@ export function ElementWizard() {
             )}
           </For>
         </div>
+      </Show>
 
-        {/* Ranked "most likely" intention suggestions for this title + pattern */}
-        <Show when={secondarySuggestions().length > 0}>
-          <div>
-            <div class="text-[11px] text-muted-foreground mb-1">Likely tags</div>
-            <div class="flex flex-wrap gap-1.5">
-              <For each={secondarySuggestions().slice(0, 6)}>
-                {(t) => (
-                  <button type="button" onClick={() => addIntention(t.name)}
-                    class="text-xs px-2 py-1 rounded-full border border-border text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1">
-                    <Plus size={11} /> {t.name}
-                  </button>
-                )}
-              </For>
-            </div>
+      {/* Ranked "most likely" intention suggestions for this title + pattern */}
+      <Show when={secondarySuggestions().length > 0}>
+        <div>
+          <div class="text-[11px] text-muted-foreground mb-1">Likely tags</div>
+          <div class="flex flex-wrap gap-1.5">
+            <For each={secondarySuggestions().slice(0, 6)}>
+              {(t) => (
+                <button type="button" onClick={() => addIntention(t.name)}
+                  class="text-xs px-2 py-1 rounded-full border border-border text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1">
+                  <Plus size={11} /> {t.name}
+                </button>
+              )}
+            </For>
           </div>
-        </Show>
-
-        {/* Add a tag — autocomplete over existing intentions (no dupes) */}
-        <div class="relative">
-          <input class="input py-1 text-sm" placeholder="Add a tag…" value={tagDraft()}
-            onInput={(e) => setTagDraft(e.currentTarget.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && tagDraft().trim()) { e.preventDefault(); addIntention(tagDraft()); } }} />
-          <Show when={tagSuggestions().length > 0}>
-            <div class="absolute z-50 left-0 right-0 mt-1 rounded-md border border-border bg-popover shadow-xl max-h-40 overflow-y-auto">
-              <For each={tagSuggestions()}>
-                {(t) => (
-                  <button type="button" onClick={() => addIntention(t.name)}
-                    class="w-full text-left px-3 py-1.5 text-sm text-foreground hover:bg-sidebar-accent">
-                    {t.name}
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
         </div>
       </Show>
+
+      {/* Add a tag — autocomplete over existing intentions (no dupes) */}
+      <div class="relative">
+        <input class="input py-1 text-sm" placeholder="Add a tag…" value={tagDraft()}
+          onInput={(e) => setTagDraft(e.currentTarget.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && tagDraft().trim()) { e.preventDefault(); addIntention(tagDraft()); } }} />
+        <Show when={tagSuggestions().length > 0}>
+          <div class="absolute z-50 left-0 right-0 mt-1 rounded-md border border-border bg-popover shadow-xl max-h-40 overflow-y-auto">
+            <For each={tagSuggestions()}>
+              {(t) => (
+                <button type="button" onClick={() => addIntention(t.name)}
+                  class="w-full text-left px-3 py-1.5 text-sm text-foreground hover:bg-sidebar-accent">
+                  {t.name}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </>
+  );
+
+  const TagSection = () => (
+    <>
+      <PrimaryPicker label="Pattern" empty="No pattern tags yet." />
+      <Show when={primary()}><SecondaryTagSection /></Show>
     </>
   );
 
@@ -443,30 +461,17 @@ export function ElementWizard() {
 
               {/* ── Time-Block fields ── */}
               <Show when={kind() === 'timeblock'}>
-                {/* AD4 — Direction primary tag (Work/Home/Community). COEXISTS with the
-                    Category picker below (a block may carry both time_blocks.tag=direction
-                    and category_id). Reuses patternTagList() = tags with kind==='direction'.
-                    Selecting sets form.primary; clicking the active one clears it. */}
-                <div>
-                  <div class="text-[11px] text-muted-foreground mb-1">Direction</div>
-                  <div class="flex flex-wrap gap-1.5">
-                    <For each={patternTagList()}>
-                      {(pt) => (
-                        <button type="button" onClick={() => pickPrimary(pt.name)}
-                          class="text-xs px-2 py-1 rounded-full border transition-colors capitalize"
-                          classList={{
-                            'border-primary text-primary bg-primary/10': primary().toLowerCase() === pt.name.toLowerCase(),
-                            'border-border text-muted-foreground hover:text-foreground': primary().toLowerCase() !== pt.name.toLowerCase(),
-                          }}>
-                          {pt.name}
-                        </button>
-                      )}
-                    </For>
-                    <Show when={patternTagList().length === 0}>
-                      <span class="text-xs text-muted-foreground">No direction tags yet.</span>
-                    </Show>
-                  </div>
-                </div>
+                {/* AD4/AF-9 — Direction = the PRIMARY tag (Work/Home/Community),
+                    first-class. COEXISTS with the Category picker below (AF-4: a block
+                    may carry both time_blocks.tag=direction and category_id). Reuses
+                    patternTagList() = tags with kind==='direction'. Selecting sets
+                    form.primary; clicking the active one clears it. */}
+                <PrimaryPicker label="Direction" empty="No direction tags yet." />
+                {/* AF-9 — secondary tags, authored via the shared chip UI. Saved to
+                    secondary_tags (entity_tags level 2), no longer folded into the
+                    level-1 tag string. Ungated on primary() so a legacy block's
+                    round-tripped chips stay visible even without a direction. */}
+                <SecondaryTagSection />
                 {/* Category (0069) — coexists with the direction picker above. */}
                 <div>
                   <div class="text-[11px] text-muted-foreground mb-1">Category</div>
