@@ -1,5 +1,5 @@
 import { sqlite } from '../db/index.js';
-import { currentOwnerId, SYSTEM_OWNER } from '../lib/context.js';
+import { currentOwnerId } from '../lib/context.js';
 import { logger } from '../lib/logger.js';
 
 /**

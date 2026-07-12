@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { logger } from '../lib/logger.js';
-import { McpGoogleSession, McpUnavailable, type McpConnectionFactory } from './client.js';
+import { McpGoogleSession, type McpConnectionFactory } from './client.js';
 import { config } from '../lib/config.js';
 
 /** Normalized Gmail message — shape the ingestion agent consumes. */

@@ -24,8 +24,8 @@ function stage(over: Partial<LoopStage<Cand>> = {}): LoopStage<Cand> {
 
 /** Capture every revision the harness records, in order. */
 function recorder() {
-  const seen: Revision<Cand>[] = [];
-  return { record: (_o: string, _s: string, rev: Revision<Cand>) => seen.push(rev), seen };
+  const seen: Revision[] = [];
+  return { record: (_o: string, _s: string, rev: Revision) => seen.push(rev), seen };
 }
 
 describe('runLoop — §A0 harness contract', () => {

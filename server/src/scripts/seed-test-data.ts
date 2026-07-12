@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sqlite } from '../db/index.js';
-import { extractTasks, type ExtractedTask, type ExtractSource } from '../agents/extract.js';
+import { extractTasks, type ExtractedTask } from '../agents/extract.js';
 import { upsertPossible } from '../agents/ingest.js';
 import { promotePossibles } from '../agents/groom.js';
 import { createFixtureGoogleClient, type EmailMessage, type CalendarEvent } from '../mcp/google.js';
