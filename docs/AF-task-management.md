@@ -306,3 +306,18 @@ Wave 3:             AF-9 (4; isolated ElementWizard churn)
 ```
 
 Known collision points if waves are violated: `AllTasks.tsx` + `Nav/BottomNav` (AF-1 vs AF-7), `TaskCard.tsx` (AF-1 vs AF-6), `ElementWizard.tsx`/`lib/element.ts` (AF-9 vs anything), migration number 0118 (AF-3 vs other in-flight lanes — renumber at merge if taken).
+
+## Post-phase follow-ups (2026-07-12 audit)
+
+Items surfaced by the Phase AF consistency audit that are **deliberately not** part of
+the AF-CU2 cleanup PR:
+
+1. **Tag-shape unification — deferred to its own ticket (owner decision).** The three
+   entity families still send three different tag wire-shapes: tasks send a flat
+   `tags[]` (treating intentions as level-1), routines comma-join into `patterns.tag`,
+   and time blocks split `tag` (primary) + `secondary_tags` (level 2, AF-9). Owner
+   chose to defer the unification rather than bundle it into the audit cleanup.
+2. **M:N objective-link surfacing on task cards** — being built as **AF-10** (a task
+   card shows which leaf Objective(s) it is linked to).
+3. **Already chipped as separate background tasks:** owner-scoping the migration-0027
+   index, and the objective progress recompute pass.

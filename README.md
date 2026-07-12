@@ -57,40 +57,35 @@ Schedule Day controls and the overlays filter.
 |-------|------|
 | ![Companion Planning — Calendar view, light theme](docs/ui/planning-calendar-light.png) | ![Companion Planning — Calendar view, dark theme](docs/ui/planning-calendar-dark.png) |
 
-### Inbox
-
-The review queue of AI-proposed tasks — promote (`P`) or dismiss (`D`). Shown here
-at inbox-zero: the deterministic seed auto-promotes every extracted suggestion, so
-there are no pending items. Populated cards appear once the Gmail/Calendar
-ingestion jobs surface new suggestions.
-
-| Light | Dark |
-|-------|------|
-| ![Companion Planning — Inbox view, light theme](docs/ui/planning-inbox-light.png) | ![Companion Planning — Inbox view, dark theme](docs/ui/planning-inbox-dark.png) |
-
 ### Tasks
 
 The full backlog — priority chips (P1–P3 · Later), tags, direction filter, and the
 Tasks / Habits / Routines / Time Blocks tabs. Rendered against ~74 seeded tasks.
+Every task created today — manual, quick-add, or auto-promoted suggestion — sits
+in a **New Today** section at the top and flows into the normal sections at the
+owner-local midnight rollover (the standalone Inbox view was retired in Phase AF:
+suggestions now auto-promote, so there is nothing left to triage).
 
 | Light | Dark |
 |-------|------|
 | ![Companion Planning — Tasks view, light theme](docs/ui/planning-tasks-light.png) | ![Companion Planning — Tasks view, dark theme](docs/ui/planning-tasks-dark.png) |
 
-### Objectives
+### Objectives (a Tasks tab)
 
 Hierarchical life goals — Goal → Project → Objective — with task linkage and
-progress roll-up. Shown at its empty state (the seed creates no objectives); the
+progress roll-up. Since Phase AF the tree lives as the **Objectives tab of the
+Tasks view** (`/tasks?tab=objectives`); the standalone `/objectives` view is
+retired. Shown at its empty state (the seed creates no objectives); the
 **New Objective** / **Create your first objective** affordances open the editor.
 
 | Light | Dark |
 |-------|------|
-| ![Companion Planning — Objectives view, light theme](docs/ui/planning-objectives-light.png) | ![Companion Planning — Objectives view, dark theme](docs/ui/planning-objectives-dark.png) |
+| ![Companion Planning — Objectives tab, light theme](docs/ui/planning-objectives-light.png) | ![Companion Planning — Objectives tab, dark theme](docs/ui/planning-objectives-dark.png) |
 
 > **Regenerating these:** build the client (`pnpm --filter client build`), seed a
 > throwaway DB (`NODE_ENV=test DB_PATH=/tmp/shots.db pnpm --filter server seed -- --no-llm --target=70`),
 > start the server against it (`DB_PATH=/tmp/shots.db PORT=8842 pnpm --filter server start`),
-> then screenshot each route (`/`, `/calendar`, `/inbox`, `/tasks`, `/objectives`)
+> then screenshot each route (`/`, `/calendar`, `/tasks`, `/tasks?tab=objectives`)
 > in both themes into `docs/ui/planning-<screen>-<theme>.png`. The **Routines**,
 > **Tags**, **Jobs**, and **Settings** screens live in the annotated
 > [Screenshots](#screenshots) tour below.
@@ -100,7 +95,7 @@ progress roll-up. Shown at its empty state (the seed creates no objectives); the
 ```mermaid
 graph TB
     subgraph Browser["Browser (SolidJS PWA)"]
-        UI[Nine Views<br/>Today · Calendar · Inbox · Tasks<br/>Routines · Objectives · Tags · Jobs · Settings]
+        UI[Seven Views<br/>Today · Calendar · Tasks incl. Objectives tab<br/>Routines · Tags · Jobs · Settings]
         Store[Reactive Stores<br/>createResource / createSignal]
         SW[Service Worker<br/>Web Push + installable PWA]
         BN[Reminders<br/>in-app toast + Web Push]
@@ -193,11 +188,11 @@ Migrations (current head: `0110_entity_tags_created_at`) produce the following t
 | `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support |
 | `block_templates` | Reusable Time-Block templates with saved task lists |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` |
-| `possible_tasks` | Inbox queue — AI-proposed items pending promote / dismiss |
+| `possible_tasks` | Staged AI-proposed items — auto-promoted into tasks at the end of each ingestion run (kept as the audit/dedup trail, Phase AF) |
 | `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community) or `intention` |
 | `tag_directions` | Many-to-many: intention tags grouped under direction tags (0043 briefly renamed this to `tag_patterns`; reverted in 0105) |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3); carries `created_at` (`NOT NULL DEFAULT CURRENT_TIMESTAMP`, table rebuilt in 0110) backing GraphQL `EntityTagType.taggedAt` |
-| `possible_task_tags` | Tags proposed alongside an inbox item |
+| `possible_task_tags` | Tags proposed alongside a staged suggestion |
 | `patterns` | Routines — typed, reusable task collections with optional recurrence |
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
@@ -254,15 +249,15 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 | [![Today view](docs/screenshots/today.png)](docs/screenshots/today.png) | [![Calendar view](docs/screenshots/calendar.png)](docs/screenshots/calendar.png) |
 | FOCUS card (today/weekly focus + Today's Brief pop-up) · day note · single-select count buckets · day-stars tally · PLANNER · Flight-plan | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (capacity · calibration · objectives) |
 
-| Inbox | Tasks |
-|---|---|
-| [![Inbox view](docs/screenshots/inbox.png)](docs/screenshots/inbox.png) | [![Tasks view](docs/screenshots/tasks.png)](docs/screenshots/tasks.png) |
-| Review queue of AI-proposed tasks with source + confidence; promote or dismiss | The full backlog with priorities, tags, and notes — filter by status, tag, or text |
+| Tasks |
+|---|
+| [![Tasks view](docs/screenshots/tasks.png)](docs/screenshots/tasks.png) |
+| The full backlog with priorities, tags, and notes — filter by status, tag, or text; today's arrivals (including auto-promoted suggestions) sit in the **New Today** section on top (Phase AF) |
 
-| Routines | Objectives |
+| Routines | Objectives (Tasks tab) |
 |---|---|
-| [![Routines view](docs/screenshots/routines.png)](docs/screenshots/routines.png) | [![Objectives view](docs/screenshots/objectives.png)](docs/screenshots/objectives.png) |
-| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress |
+| [![Routines view](docs/screenshots/routines.png)](docs/screenshots/routines.png) | [![Objectives tab](docs/screenshots/objectives.png)](docs/screenshots/objectives.png) |
+| Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress; lives at `/tasks?tab=objectives` since Phase AF |
 
 > 📸 Routines and Objectives screenshots coming soon.
 
@@ -278,7 +273,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 
 ## What you get
 
-- **Nine views** — Today · Calendar · Inbox · Tasks · Routines · Objectives · Tags · Jobs · Settings
+- **Seven views** — Today · Calendar · Tasks (with the Objectives tab and a New Today section) · Routines · Tags · Jobs · Settings
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
   hours, pattern-block windows, locked meetings, and break preferences. Placement is always
@@ -299,9 +294,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   staging area; Ritual △ is feature-flagged
 - **Flight-plan staging** — two-step Auto: build a staged list, then schedule; lets you
   curate before committing
-- **Inbox / review queue** — ingestion jobs propose "possible tasks" from email and
-  calendar; each shows its source and a confidence score, and nothing becomes a real
-  task until you promote it (one keystroke: `P` to add, `D` to dismiss)
+- **Auto-promoted suggestions** — ingestion jobs propose "possible tasks" from email and
+  calendar; each carries its source and a confidence score. Suggestions are deduplicated
+  inline (embedding-based when available) and **auto-promoted into real tasks** at the
+  end of each run (Phase AF); they land in the **New Today** section at the top of the
+  Tasks view, and the staging rows are kept as an audit/dedup trail
 - **Background jobs** — Gmail / Calendar ingest, possible-task promotion, nightly
   grooming (embedding-based dedupe), and auto-schedule; all visible and manually
   runnable from the Jobs view
@@ -328,16 +325,19 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 ## How it works
 
 Companion Planning is a small pipeline that turns raw inputs into a planned day,
-with you in the loop at the one step that matters — what actually becomes a task.
+with a full audit trail at every step — you steer by dismissing what you don't
+want and by deciding when the plan runs.
 
 1. **Ingest** — scheduled jobs read your sources (Gmail + Calendar; fixtures by
    default). Unstructured email/event text is mined by a local LLM for action items,
    with a deterministic fallback if Ollama is down. Calendar **meeting blocks** are
    mirrored by the dedicated calendar sync path (one canonical inbound reconciler keyed
    on event identity + etag), not by ingest — `ingest_gcal` now only extracts tasks.
-2. **Review** — extracted items land in the **Inbox** as *possible tasks*, each
-   tagged with its source and a confidence score. You promote the good ones and
-   dismiss the noise. Nothing reaches your task list without your say-so.
+2. **Review** — extracted items are staged as *possible tasks*, each tagged with
+   its source and a confidence score, deduplicated inline, and **auto-promoted
+   into real tasks** at the end of the run (Phase AF). Everything a run creates
+   surfaces in the **New Today** section at the top of the Tasks view, so you
+   see exactly what arrived today; the staging rows remain as an audit trail.
 3. **Plan** — build a **flight-plan** staging list, then run **Auto** to pack open
    tasks into the open gaps of your workday, honoring work hours, pattern-block
    windows, locked meetings, focus-block limits, and minimum breaks. Deterministic —
@@ -452,7 +452,7 @@ consistent snapshot.
 - **Calendar reliability** (Phase AD) — `task_time` honored uniformly (quick-add places on save; flight-plan pins timed tasks and packs flexible work around them); tasks inherit their container's direction tag; Alt-drag drops a block anywhere (overlap allowed)
 - **Reflow correctness** (Phase AE) — the reactive reflow is snapshot-based (clear set == re-place set), so editing one placed task can never wipe the other auto-placed blocks; placement status parity (`open`↔`scheduled`), a not-before-now clamp, and locked-block guards across reschedule/review/sweep
 - **Today + Tasks UI** (Phase AC) — Today's single header row (Brief · Focus · Note popovers + FAB, collapsible DUE); Tasks task-chip redesign, Routine grouping with end-of-day archive and a midnight `reset_routines` job
-- **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as Inbox suggestions, the Daily Brief folds in a memory excerpt, autoplan ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
+- **Memory integration** (Phase AA, opt-in) — a pull-first, read-only link to the CI-Server `companion-memory` graph behind `memory_pull_enabled`: the `memory_suggest` job stages upcoming events as task suggestions (auto-promoted since Phase AF), the Daily Brief folds in a memory excerpt, autoplan ordering favors memory-related tasks, and memory-drafted tasks get a history-based default estimate; a one-way `push_memory` job (behind `memory_sync_enabled`) mirrors completions/habits/reflections back
 
 **Intentionally partial:**
 
@@ -615,7 +615,7 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET/POST/DELETE | `/api/block-templates` | Reusable Time-Block templates |
 | GET/POST | `/api/tags` | Tags with usage counts |
 | PATCH/DELETE | `/api/tags/:id` | Update or delete a tag |
-| GET | `/api/possible-tasks` | Inbox review queue |
+| GET | `/api/possible-tasks` | Staged suggestions (audit trail; auto-promoted since Phase AF) |
 | POST | `/api/possible-tasks/:id/promote` \| `/dismiss` | Accept/reject a proposal |
 | GET | `/api/summary?date=YYYY-MM-DD` | Day briefing (LLM or deterministic) |
 | GET | `/api/summary/top-tasks?date=YYYY-MM-DD` | Today's Brief top tasks (excludes habits + routines; 422 on a malformed date) |

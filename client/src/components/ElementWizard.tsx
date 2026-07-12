@@ -90,8 +90,12 @@ export function ElementWizard() {
   // Time Block Category picker (0069): single-select; picking one prefills the block length.
   const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
   function pickCategory(id: string) {
-    setCategoryId(id);
-    const p = id ? categoryPrefs()?.prefs?.[id] : undefined;
+    // AF-CU2: clicking the active category clears it (same toggle idiom as
+    // pickPrimary) — pairs with the explicit "None" chip. Edit-mode saves send
+    // category_id: null so the clear actually reaches the server (lib/element.ts).
+    const next = id && categoryId() === id ? '' : id;
+    setCategoryId(next);
+    const p = next ? categoryPrefs()?.prefs?.[next] : undefined;
     if (p?.default_minutes) setDurMin(p.default_minutes);
   }
   const candidateTasks = () => (tasks() ?? []).filter((t) => t.status === 'open' && t.id !== m().editTarget?.id);
@@ -324,7 +328,8 @@ export function ElementWizard() {
 
   // ── Shared sub-views ──────────────────────────────────────────────────────
   // AF-9: TagSection is split so the timeblock branch can reuse both halves —
-  // the primary picker (relabelled "Direction" there) and the secondary chip UI.
+  // the primary picker (labelled "Direction" everywhere, AF-CU2) and the
+  // secondary chip UI.
   const PrimaryPicker = (p: { label: string; empty: string }) => (
     <div>
       <div class="text-[11px] text-muted-foreground mb-1">{p.label}</div>
@@ -407,7 +412,8 @@ export function ElementWizard() {
 
   const TagSection = () => (
     <>
-      <PrimaryPicker label="Pattern" empty="No pattern tags yet." />
+      {/* AF-CU2: same tags.kind='direction' axis as the timeblock branch — one label. */}
+      <PrimaryPicker label="Direction" empty="No direction tags yet." />
       <Show when={primary()}><SecondaryTagSection /></Show>
     </>
   );
