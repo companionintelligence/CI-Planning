@@ -8,11 +8,17 @@ import { logger } from './lib/logger.js';
 import { requireAuth } from './lib/auth/requireAuth.js';
 import { mountRoutes } from './routes/index.js';
 import { mountGraphql } from './graphql/index.js';
+import { hydrateGoogleConfig } from './services/google-config.js';
 
 /** Build the Koa app (routes + middleware) without listening or starting cron.
  * Async because the GraphQL (Apollo) server must `start()` before it can be mounted. */
 export async function buildApp(): Promise<Koa> {
   const app = new Koa();
+
+  // Apply the operator-saved in-app Google client (app_config) to the config
+  // singleton. Runs after migrations (the db module migrated on import above) and is
+  // a no-op when GOOGLE_MODE is env-pinned.
+  hydrateGoogleConfig();
 
   // Behind a trusted TLS-terminating proxy (CI-Hub tunnel): honor X-Forwarded-Proto
   // (⇒ ctx.protocol='https' ⇒ Secure session cookie) and X-Forwarded-For (⇒ ctx.ip is

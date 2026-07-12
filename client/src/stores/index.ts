@@ -283,6 +283,27 @@ export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
   api.prefs.get().then((r) => r.prefs)
 );
 
+// ── Timezone auto-adopt (FTUE) ───────────────────────────────────────────────
+// A Docker install seeds scheduling_prefs.timezone from the container clock — UTC —
+// which silently shifts what counts as "today" for the planner and the nightly jobs.
+// When the server still sits on that un-chosen UTC default and this browser knows a
+// real zone, adopt the browser zone once. The localStorage marker makes it once per
+// browser, so a user who deliberately sets UTC in Settings afterwards is respected.
+const TZ_ADOPT_KEY = 'cp-tz-auto-adopted';
+createEffect(() => {
+  const p = prefs();
+  if (!p) return;
+  let browserTz = '';
+  try { browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''; } catch { /* keep '' */ }
+  if (!browserTz || browserTz === 'UTC') return;
+  if (p.timezone !== 'UTC') return; // a real zone is set — nothing to adopt
+  try {
+    if (localStorage.getItem(TZ_ADOPT_KEY)) return;
+    localStorage.setItem(TZ_ADOPT_KEY, browserTz);
+  } catch { /* storage unavailable → still adopt, just without the once-guard */ }
+  void api.prefs.update({ timezone: browserTz }).then(() => refetchPrefs()).catch(() => {});
+});
+
 // ── Calendar view-state persistence (0111) ─────────────────────────────────────
 // HYDRATE the overlay filter + night-hour collapse from the server once prefs
 // resolve (arrays → Sets), then PERSIST every subsequent change back via PATCH

@@ -1,6 +1,6 @@
 # Phase AF — Task-management consolidation
 
-**Status: PLANNED (owner decisions locked 2026-07-11). Tickets below are written to be fanned out in waves.**
+**Status: SHIPPED (all tickets AF-1 … AF-11 + AF-CU1/AF-CU2 merged to main by 2026-07-12; migrations 0118–0121). The ticket text below is preserved as the as-planned record.**
 
 Owner asks (verbatim numbering from the request):
 

@@ -78,6 +78,26 @@ export function Settings() {
   const [backupEmail, setBackupEmail] = createSignal('');
   const [backupSaving, setBackupSaving] = createSignal(false);
   createEffect(() => { if (me()) setBackupEmail(me()!.backupEmail ?? ''); });
+  // Profile (all auth modes): display name + primary email. Without this editor a
+  // self-hosted owner is stuck as the seeded 'System' identity forever.
+  const [profileName, setProfileName] = createSignal('');
+  const [profileEmail, setProfileEmail] = createSignal('');
+  const [profileSaving, setProfileSaving] = createSignal(false);
+  createEffect(() => { if (me()) { setProfileName(me()!.name ?? ''); setProfileEmail(me()!.email ?? ''); } });
+  const profileDirty = () =>
+    profileName().trim() !== (me()?.name ?? '') || profileEmail().trim() !== (me()?.email ?? '');
+  async function saveProfile() {
+    setProfileSaving(true);
+    try {
+      await api.owner.updateProfile({ name: profileName().trim(), email: profileEmail().trim() || null });
+      await refetchMe();
+      showToast('Profile saved', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setProfileSaving(false);
+    }
+  }
   async function saveBackupEmail() {
     setBackupSaving(true);
     try {
@@ -342,6 +362,33 @@ export function Settings() {
 
 
   const [integrations, { refetch: refetchIntegrations }] = createResource(() => api.llm.integrations());
+
+  // In-app Google connection setup (admin-gated — a 403 resolves to null and the
+  // config form simply doesn't render for non-admin credentials).
+  const [gcfg, { refetch: refetchGcfg }] = createResource(() => api.googleConfig.get().catch(() => null));
+  const [gClientId, setGClientId] = createSignal('');
+  const [gClientSecret, setGClientSecret] = createSignal('');
+  const [gSaving, setGSaving] = createSignal(false);
+  createEffect(() => { const c = gcfg(); if (c) setGClientId(c.clientId ?? ''); });
+  async function saveGoogleConfig(enabled: boolean) {
+    setGSaving(true);
+    try {
+      const secret = gClientSecret().trim();
+      await api.googleConfig.save({
+        client_id: gClientId().trim(),
+        // Blank input = keep the stored secret; the field is write-only by design.
+        ...(secret ? { client_secret: secret } : {}),
+        enabled,
+      });
+      setGClientSecret('');
+      await Promise.all([refetchGcfg(), refetchIntegrations()]);
+      showToast(enabled ? 'Google connection enabled — you can now connect an account' : 'Google connection disabled', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setGSaving(false);
+    }
+  }
   const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
   const [importBusy, setImportBusy] = createSignal(false);
 
@@ -517,13 +564,56 @@ export function Settings() {
         {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'preferences'}>
 
+          {/* Profile — all auth modes: the owner's display name + primary email. */}
+          <Show when={me()}>
+            <section class="card">
+              <div class="section-label mb-1">Profile</div>
+              <p class="text-xs text-muted-foreground mb-3">
+                Your name and email. The email is also where password-reset links go on
+                local-login deployments.
+              </p>
+              <div class="flex flex-col gap-2">
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] text-muted-foreground">Name</span>
+                  <input
+                    type="text"
+                    class="input py-1 text-sm"
+                    placeholder="Your name"
+                    value={profileName()}
+                    onInput={(e) => setProfileName(e.currentTarget.value)}
+                  />
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] text-muted-foreground">Email</span>
+                  <input
+                    type="email"
+                    class="input py-1 text-sm"
+                    placeholder="you@example.com"
+                    value={profileEmail()}
+                    onInput={(e) => setProfileEmail(e.currentTarget.value)}
+                  />
+                </label>
+                <div class="flex justify-end">
+                  <button
+                    type="button"
+                    class="btn-primary text-sm px-3 py-1.5"
+                    onClick={saveProfile}
+                    disabled={profileSaving() || !profileDirty() || !profileName().trim()}
+                  >
+                    {profileSaving() ? 'Saving…' : 'Save profile'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </Show>
+
           {/* V8 — Account (local sign-in only): backup password-reset email. */}
           <Show when={localAuth()}>
             <section class="card">
               <div class="section-label mb-1">Account</div>
               <p class="text-xs text-muted-foreground mb-3">
-                Your password-reset link is emailed to your account address. Add a backup address as a fallback in case
-                the primary is unavailable.
+                Your password-reset link is emailed to your account address (set in Profile above). Add a backup
+                address as a fallback in case the primary is unavailable.
               </p>
               <Show when={me()?.username}>
                 <div class="flex items-center justify-between gap-3 mb-2">
@@ -531,10 +621,6 @@ export function Settings() {
                   <span class="text-sm text-muted-foreground font-mono">{me()!.username}</span>
                 </div>
               </Show>
-              <div class="flex items-center justify-between gap-3 mb-3">
-                <span class="text-sm text-foreground">Account email</span>
-                <span class="text-sm text-muted-foreground">{me()?.email ?? 'none set'}</span>
-              </div>
               <label class="flex flex-col gap-1">
                 <span class="text-[11px] text-muted-foreground">Backup email</span>
                 <div class="flex items-center gap-2">
@@ -1227,9 +1313,75 @@ export function Settings() {
                       <div class="text-sm text-slate-200 font-medium">Google MCP</div>
                       <div class="text-xs text-slate-500 mt-0.5 capitalize">
                         Mode: {i().google.mode} · Gmail + Google Calendar
+                        {i().google.source === 'env' ? ' · configured via server environment' : ''}
+                        {i().google.source === 'app' ? ' · configured in-app' : ''}
                       </div>
                     </div>
                   </div>
+
+                  {/* In-app Google OAuth client setup (admin only; hidden when GOOGLE_MODE
+                      is pinned by the server environment). Saving hot-applies — the
+                      Connect button below goes live without a restart. */}
+                  <Show when={gcfg() && !gcfg()!.envPinned}>
+                    <div class="flex flex-col gap-2 pl-7">
+                      <span class="section-label">Google OAuth client</span>
+                      <p class="text-xs text-slate-500">
+                        Paste a Google OAuth client to enable Calendar sync — create one in the
+                        Google Cloud console (APIs &amp; Services → Credentials) with the redirect
+                        URI below. A Desktop-type client needs no secret.
+                      </p>
+                      <Show when={!gcfg()!.kekAvailable}>
+                        <div class="flex items-center gap-1.5 text-[11px] text-amber-400">
+                          <AlertTriangle size={11} /> Set CP_KEK_B64 on the server first (openssl rand -base64 32) — it encrypts the stored secret and OAuth tokens.
+                        </div>
+                      </Show>
+                      <label class="flex flex-col gap-1">
+                        <span class="text-[11px] text-muted-foreground">Client ID</span>
+                        <input
+                          type="text"
+                          class="input py-1 text-sm font-mono"
+                          placeholder="…apps.googleusercontent.com"
+                          value={gClientId()}
+                          onInput={(e) => setGClientId(e.currentTarget.value)}
+                        />
+                      </label>
+                      <label class="flex flex-col gap-1">
+                        <span class="text-[11px] text-muted-foreground">Client secret (optional)</span>
+                        <input
+                          type="password"
+                          class="input py-1 text-sm font-mono"
+                          placeholder={gcfg()!.hasClientSecret ? '(unchanged — enter to replace)' : 'GOCSPX-…'}
+                          value={gClientSecret()}
+                          onInput={(e) => setGClientSecret(e.currentTarget.value)}
+                          autocomplete="off"
+                        />
+                      </label>
+                      <div class="text-[11px] text-slate-500">
+                        Redirect URI to register: <span class="font-mono select-all">{gcfg()!.redirectUri}</span>
+                      </div>
+                      <div class="flex items-center justify-end gap-2">
+                        <Show when={gcfg()!.enabled}>
+                          <button
+                            type="button"
+                            class="btn-ghost text-xs px-3 py-1.5"
+                            onClick={() => saveGoogleConfig(false)}
+                            disabled={gSaving()}
+                          >
+                            Disable
+                          </button>
+                        </Show>
+                        <button
+                          type="button"
+                          class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                          onClick={() => saveGoogleConfig(true)}
+                          disabled={gSaving() || !gClientId().trim() || !gcfg()!.kekAvailable}
+                          title={gcfg()!.kekAvailable ? 'Save the client and switch Google to live mode' : 'CP_KEK_B64 must be set on the server first'}
+                        >
+                          {gSaving() ? 'Saving…' : gcfg()!.enabled ? 'Save changes' : 'Save & enable'}
+                        </button>
+                      </div>
+                    </div>
+                  </Show>
 
                   {/* WP7: read-only Google connection health, live-updated on sync. */}
                   <div class="flex flex-col gap-2 pl-7">
@@ -1244,8 +1396,8 @@ export function Settings() {
                             i().google.liveEnabled
                               ? 'Connect a Google account'
                               : i().google.mode === 'off'
-                                ? 'Google integration is not configured on this server — set GOOGLE_MODE=live to enable it'
-                                : 'Fixture mode serves sample data only — set GOOGLE_MODE=live to connect a real Google account'
+                                ? 'Save a Google OAuth client above (or set GOOGLE_MODE=live on the server) to enable connecting'
+                                : 'Fixture mode serves sample data only — no real account can be connected'
                           }
                           class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
@@ -1259,7 +1411,9 @@ export function Settings() {
                       fallback={
                         <div class="text-xs text-slate-500">
                           {i().google.mode === 'off'
-                            ? 'Google integration is not configured on this server.'
+                            ? (gcfg() && !gcfg()!.envPinned
+                                ? 'Not configured yet — save a Google OAuth client above to enable connecting.'
+                                : 'Google integration is not configured on this server.')
                             : i().google.mode === 'fixture'
                               ? 'Fixture mode — sample data only; no real account can be connected.'
                               : 'No Google accounts connected.'}
