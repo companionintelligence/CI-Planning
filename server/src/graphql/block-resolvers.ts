@@ -133,7 +133,6 @@ export const blockResolvers = {
       const res = await createBlockService(owner, toSvcCreate(args.input));
       if (!res.ok) {
         if (res.error === 'missing_fields') throw new GraphQLError('title, startAt, and endAt are required', { extensions: { code: 'BAD_USER_INPUT' } });
-        if (res.error === 'tag_and_category') throw new GraphQLError('a time block may set a tag or a category, not both', { extensions: { code: 'BAD_USER_INPUT' } });
         throw new GraphQLError('categoryId must reference a category tag', { extensions: { code: 'BAD_USER_INPUT' } });
       }
       broadcast(owner, 'block:created', res.api);
@@ -148,7 +147,6 @@ export const blockResolvers = {
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('block not found', { extensions: { code: 'NOT_FOUND' } });
         if (res.error === 'inbound_readonly') throw new GraphQLError('Calendar meeting blocks are read-only — edit the event in Google Calendar', { extensions: { code: 'CONFLICT' } });
-        if (res.error === 'tag_and_category') throw new GraphQLError('a time block may set a tag or a category, not both', { extensions: { code: 'BAD_USER_INPUT' } });
         throw new GraphQLError('categoryId must reference a category tag', { extensions: { code: 'BAD_USER_INPUT' } });
       }
       // stampRow already fired inside updateBlock (W3.3c commit 1).

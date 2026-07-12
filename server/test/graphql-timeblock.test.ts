@@ -204,10 +204,26 @@ describe('W3.3c — TimeBlockType mutations reuse the REST services + fire SSE',
     expect(syncEventCount(OWNER, 'block:created')).toBe(1);
   });
 
-  it('createTimeBlock rejects tag + category together', async () => {
+  it('AF-4: createTimeBlock accepts tag + category together; both read back', async () => {
     const catId = makeCategory(OWNER, 'Work');
-    const m = await gql(`mutation { createTimeBlock(input: { title: "X", startAt: "${at(T0, '13:00')}", endAt: "${at(T0, '14:00')}", tag: "work", categoryId: "${catId}" }) { success } }`);
-    expect(m.body.errors?.[0]?.message).toMatch(/not both/i);
+    const m = await gql(`mutation { createTimeBlock(input: { title: "X", startAt: "${at(T0, '13:00')}", endAt: "${at(T0, '14:00')}", tag: "work", categoryId: "${catId}" }) { success timeBlock { id } } }`);
+    expect(m.body.errors).toBeUndefined();
+    expect(m.body.data.createTimeBlock.success).toBe(true);
+    const id = m.body.data.createTimeBlock.timeBlock.id;
+    const q = await gql(`{ timeBlock(id: "${id}") { category { id } tags { label } } }`);
+    expect(q.body.errors).toBeUndefined();
+    expect(q.body.data.timeBlock.category).toEqual({ id: catId });
+    expect((q.body.data.timeBlock.tags as { label: string }[]).map((t) => t.label)).toEqual(['work']);
+  });
+
+  it('AF-4: updateTimeBlock may add a category to a tagged block (merged row carries both)', async () => {
+    const catId = makeCategory(OWNER, 'Work');
+    const id = await seed({ title: 'Tag first', tag: 'work' });
+    const m = await gql(`mutation { updateTimeBlock(input: { id: "${id}", categoryId: "${catId}" }) { success timeBlock { category { id } tags { label } } } }`);
+    expect(m.body.errors).toBeUndefined();
+    expect(m.body.data.updateTimeBlock.success).toBe(true);
+    expect(m.body.data.updateTimeBlock.timeBlock.category).toEqual({ id: catId });
+    expect((m.body.data.updateTimeBlock.timeBlock.tags as { label: string }[]).map((t) => t.label)).toEqual(['work']);
   });
 
   it('updateTimeBlock edits columns + versions (stampRow now in service) + broadcasts', async () => {

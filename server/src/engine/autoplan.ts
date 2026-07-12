@@ -161,9 +161,10 @@ interface CategoryPlanRow { id: string; start_at: string; end_at: string; catego
 
 /**
  * Category-tagged, timed Plan containers on `date`, earliest first (0069). Disjoint
- * from dayPlans by the tag XOR category_id invariant (a category container has tag
- * NULL; a tag-Plan has category_id NULL — enforced in routes/blocks.ts), so no block
- * is ever filled by both passes.
+ * from dayPlans by the SQL filters themselves: dayPlans requires category_id IS NULL,
+ * this pass requires category_id IS NOT NULL — so no block is ever filled by both
+ * passes, even now that AF-4 lets a block carry a tag AND a category (a both-set
+ * container is filled by THIS pass, keyed on its category).
  */
 function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlanRow[] {
   const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
@@ -748,7 +749,8 @@ export function placeFlightPlan(
     blocksCreated += r.blocksCreated;
   }
 
-  // Pass 1.5 — category Plans (0069). Disjoint from Pass 1 (tag XOR category_id), so no
+  // Pass 1.5 — category Plans (0069). Disjoint from Pass 1 (dayPlans excludes rows with a
+  // category_id; dayCategoryPlans requires one — see dayCategoryPlans doc), so no
   // block is filled twice. Each is filled with its category candidates (secondary-tag
   // match + direction opt-out filter), preserving staged order. Runs immediately after
   // Pass 1 and before the direction-window pass, so category blocks supersede pattern
