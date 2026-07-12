@@ -353,7 +353,7 @@ flowchart LR
     MCP -->|"inject access token"| Gmail["Gmail"]
 ```
 
-The `McpGoogleSession` owns the MCP child process and injects the per-account access token (fetched from `connection_tokens`, refreshed if needed) into each MCP call — the child never persists credentials of its own. `GOOGLE_MODE=fixture` (default) uses committed sample data with no network calls. Set `GOOGLE_MODE=live` to activate the real connector.
+The `McpGoogleSession` owns the MCP child process and injects the per-account access token (fetched from `connection_tokens`, refreshed if needed) into each MCP call — the child never persists credentials of its own. With `GOOGLE_MODE` unset (the default) the Google integration is **off** — ingest and connect are no-ops. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that uses committed sample data with no network calls (refused under `NODE_ENV=production` unless `CP_ALLOW_FIXTURE=true`). Set `GOOGLE_MODE=live` to activate the real connector; each user then connects their own account in Settings → Connections, and the ingest jobs run only for owners with an active connection.
 
 **Circuit breaker:** 5 consecutive MCP failures open the breaker for 30s; retries get 3 attempts with a `CP_MCP_TIMEOUT_MS` deadline.
 
@@ -361,7 +361,7 @@ The `McpGoogleSession` owns the MCP child process and injects the per-account ac
 
 ## 10a. CI-Server memory connector (Phase AA)
 
-A **pull-first** integration with the CI-Server `companion-memory` graph. Two independent flags, both default off (⇒ byte-identical): **`memory_pull_enabled`** gates the read-only pull (suggestions, brief, ordering, estimate), and **`memory_sync_enabled`** separately gates the one-way `push_memory` sync — push can run with pull off, and vice-versa. Creds are per-owner in `connection_tokens` (`provider='ci_memory'`, KEK-sealed) — either a manually pasted key/bearer, or a **CI-Portal OAuth** grant (AA0b: OAuth 2.1 + PKCE with `offline_access`; the connector self-refreshes the bearer). `MEMORY_MODE=fixture` (default) reads a committed sample graph with no network; `MEMORY_MODE=live` calls the real graph API. Every transport/4xx/5xx failure surfaces as `MemoryUnavailable`, so all consumers degrade deterministically.
+A **pull-first** integration with the CI-Server `companion-memory` graph. Two independent flags, both default off (⇒ byte-identical): **`memory_pull_enabled`** gates the read-only pull (suggestions, brief, ordering, estimate), and **`memory_sync_enabled`** separately gates the one-way `push_memory` sync — push can run with pull off, and vice-versa. Creds are per-owner in `connection_tokens` (`provider='ci_memory'`, KEK-sealed) — either a manually pasted key/bearer, or a **CI-Portal OAuth** grant (AA0b: OAuth 2.1 + PKCE with `offline_access`; the connector self-refreshes the bearer). With `MEMORY_MODE` unset (the default) the transport is **off** and every consumer sees "not connected"; `MEMORY_MODE=fixture` is a dev/demo opt-in that reads a committed sample graph with no network; `MEMORY_MODE=live` calls the real graph API. Every transport/4xx/5xx failure surfaces as `MemoryUnavailable`, so all consumers degrade deterministically.
 
 ```mermaid
 flowchart LR
@@ -468,8 +468,8 @@ On CI Hub, install from the marketplace — the Hub mounts `${APP_DATA_DIR}/data
 | `DB_PATH` | `~/Library/…/companion.db` | SQLite path |
 | `AUTH_MODE` | `test` | `test` / `standalone` / `sso` |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama endpoint |
-| `GOOGLE_MODE` | `fixture` | `fixture` (offline) or `live` (real OAuth) |
-| `MEMORY_MODE` | `fixture` | CI-Server memory transport: `fixture` (offline sample graph) or `live` |
+| `GOOGLE_MODE` | (unset ⇒ off) | `live` (real OAuth) or `fixture` (offline sample data — dev/demo opt-in) |
+| `MEMORY_MODE` | (unset ⇒ off) | CI-Server memory transport: `live` or `fixture` (offline sample graph — dev/demo opt-in) |
 | `CI_SERVER_URL` | (unset) | CI-Server memory API base — the single-tenant fallback base, and required by the CI-Portal memory connect flow even under SSO |
 | `CI_SERVER_API_KEY` | (unset) | Shared fallback API key — **ignored under multi-tenant SSO** (per-owner creds come from `connection_tokens`) |
 | `CP_KEK_B64` | (unset) | 32-byte AES key for token sealing |

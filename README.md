@@ -11,8 +11,10 @@ fully local and usable today. A **standalone Google OAuth 2.1 flow** (Authorizat
 Code + PKCE/S256, implemented in the app — not the macOS Keychain) and **two-way
 Google Calendar sync** are built in, gated behind `GOOGLE_MODE=live` plus
 `CP_GOOGLE_CLIENT_ID` / `CP_GOOGLE_CLIENT_SECRET` and a 32-byte `CP_KEK_B64` key that
-encrypts stored tokens. With `GOOGLE_MODE=fixture` (the default) the app runs fully
-offline on committed sample data. Outbound calendar write-back stays behind a second
+encrypts stored tokens. With `GOOGLE_MODE` unset (the default) Google integration is
+**off** — no ingest, no sync. `GOOGLE_MODE=fixture` is an explicit dev/demo opt-in that
+runs fully offline on committed sample data (refused in production unless
+`CP_ALLOW_FIXTURE=true`). Outbound calendar write-back stays behind a second
 flag, `CP_SYNC_WRITEBACK` (off by default — inbound read-only is the safe posture).
 See **[docs/google-cloud-setup.md](docs/google-cloud-setup.md)** to provision a Google
 client and turn live mode on.
@@ -458,8 +460,9 @@ consistent snapshot.
 
 - Google `live` mode (standalone OAuth + two-way calendar sync) is implemented but
   **opt-in**: it stays dormant until you set `GOOGLE_MODE=live`, `CP_GOOGLE_CLIENT_ID` /
-  `CP_GOOGLE_CLIENT_SECRET`, and `CP_KEK_B64`. The default `GOOGLE_MODE=fixture` runs on
-  committed sample data with no network calls. See
+  `CP_GOOGLE_CLIENT_SECRET`, and `CP_KEK_B64`. With `GOOGLE_MODE` unset (the default)
+  Google integration is off entirely; `GOOGLE_MODE=fixture` is an explicit dev/demo
+  opt-in that runs on committed sample data with no network calls. See
   [docs/google-cloud-setup.md](docs/google-cloud-setup.md).
 - Calendar write-back (pushing local blocks to Google) is behind `CP_SYNC_WRITEBACK`,
   **off by default** — until you flip it on, sync is inbound read-only. `CP_SYNC_DISABLED`
@@ -468,7 +471,8 @@ consistent snapshot.
   dormant but in-app SSE reminders still fire
 - CI-Server **memory integration** (Phase AA) is **off by default** (`memory_pull_enabled` /
   `memory_sync_enabled` both start `0`) and, in `live` mode, needs a reachable CI-Server plus
-  per-owner creds; `MEMORY_MODE=fixture` (the default) runs against a committed sample graph
+  per-owner creds; with `MEMORY_MODE` unset (the default) the transport is off entirely, and
+  `MEMORY_MODE=fixture` is a dev/demo opt-in that runs against a committed sample graph
   with no network. Flag-off is byte-identical — the memory layer ships dark.
 - **Time-Sense** (Phase Z — Focus Ritual + estimate-calibration loop) is behind the
   `time_sense_enabled` master flag (flag-off = behavior-neutral)
@@ -522,7 +526,8 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CIPORTAL_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` | Must match the URI registered with CI-Portal. |
 | `CIPORTAL_SCOPES` | `openid profile email` | Scopes requested at authorize. |
 | `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | (unset) | Advanced: set **all three** to bypass discovery (air-gapped / no discovery doc). When overriding, `CIPORTAL_ISSUER` must equal the token's actual `iss`. |
-| `GOOGLE_MODE` | `fixture` | `fixture` (committed sample data, fully offline) or `live` (real Google OAuth + Calendar sync). `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
+| `GOOGLE_MODE` | (unset ⇒ off) | `live` (real Google OAuth + Calendar sync; each user connects their own account in Settings → Connections) or `fixture` (committed sample data, fully offline — dev/demo opt-in, refused in production unless `CP_ALLOW_FIXTURE=true`). Unset ⇒ Google integration is off. `live` is hard-required to also supply `CP_GOOGLE_CLIENT_ID` and a redirect URI, or the server refuses to boot. |
+| `CP_ALLOW_FIXTURE` | (unset) | Escape hatch: allows `GOOGLE_MODE=fixture` under `NODE_ENV=production` (demo appliances only — fixture data looks like real tasks). |
 | `CP_GOOGLE_CLIENT_ID` | (unset) | Google OAuth client ID. Required when `GOOGLE_MODE=live`. See [docs/google-cloud-setup.md](docs/google-cloud-setup.md). |
 | `CP_GOOGLE_CLIENT_SECRET` | (unset) | Google OAuth client secret. Needed for a **Web** client (ts.net HTTPS deploy); a **Desktop/installed** client with a loopback redirect can run without one. Never commit it. |
 | `PUBLIC_BASE_URL` | `http://localhost:3848` | Externally reachable base URL. Used to derive the default OAuth redirect URI. |
@@ -543,7 +548,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CP_MCP_RETRIES` | `3` | Retry budget for MCP requests. |
 | `CP_MCP_BREAKER_THRESHOLD` | `5` | Consecutive MCP failures before the circuit breaker opens. |
 | `CP_MCP_BREAKER_COOLDOWN_MS` | `30000` | How long the MCP circuit breaker stays open before it half-opens and retries. |
-| `MEMORY_MODE` | `fixture` | CI-Server memory transport (Phase AA): `fixture` (committed sample graph, fully offline) or `live` (real graph API). Availability is still creds-driven in both modes. |
+| `MEMORY_MODE` | (unset ⇒ off) | CI-Server memory transport (Phase AA): `live` (real graph API) or `fixture` (committed sample graph, fully offline — dev/demo opt-in). Unset ⇒ the memory transport is off and every consumer degrades to its "not connected" no-op. Availability is still creds-driven in live mode. |
 | `CI_SERVER_URL` | (unset) | CI-Server memory API base URL. Serves double duty: single-tenant dev/standalone fallback base, **and** required (503 if unset) by the CI-Portal memory connect flow (`/api/memory/ciportal/start`) even under multi-tenant SSO. Not ignored under SSO — see `CI_SERVER_API_KEY`. |
 | `CI_SERVER_API_KEY` | (unset) | Shared API key paired with `CI_SERVER_URL` for the single-tenant fallback creds. **This is what's ignored under multi-tenant SSO** (a shared key would map every owner to one CI-Server identity); per-owner creds then come from `connection_tokens`, connected in Settings. |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |

@@ -57,9 +57,10 @@ export interface MailConfig {
 
 /**
  * Google connector config (Wave 0). The SINGLE source of truth for OAuth endpoints,
- * scopes, MCP transport, and live/fixture mode — later WPs consume this block; they
- * do NOT re-derive these values from env. `mode: 'fixture'` (the default) keeps the
- * test suite + local dev fully offline.
+ * scopes, MCP transport, and live/fixture/off mode — later WPs consume this block; they
+ * do NOT re-derive these values from env. `mode: 'off'` (the default) means no Google
+ * integration at all; `fixture` is an explicit dev/demo opt-in that serves committed
+ * sample data; `live` is the real per-owner OAuth connector.
  */
 export interface GoogleConfig {
   clientId?: string;
@@ -73,7 +74,7 @@ export interface GoogleConfig {
   /** When true, /start requests the Gmail scope in addition to Calendar. */
   enableGmail: boolean;
   mcp: { command: string; timeoutMs: number; retries: number };
-  mode: 'live' | 'fixture';
+  mode: 'live' | 'fixture' | 'off';
 }
 
 /**
@@ -167,7 +168,13 @@ mkdirSync(dirname(dbPath), { recursive: true });
 
 // Derived once so the redirect-uri default can reference it.
 const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3848';
-const googleMode: 'live' | 'fixture' = process.env.GOOGLE_MODE === 'live' ? 'live' : 'fixture';
+// Fail-closed default: unset (or unrecognized) GOOGLE_MODE means NO Google integration.
+// Fixture mode — canned sample emails/events — must be an explicit opt-in, never a
+// default a real deployment can hit by omission.
+const googleMode: 'live' | 'fixture' | 'off' =
+  process.env.GOOGLE_MODE === 'live' ? 'live'
+  : process.env.GOOGLE_MODE === 'fixture' ? 'fixture'
+  : 'off';
 
 export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
@@ -345,9 +352,24 @@ if (
   );
 }
 
+// Fail closed: fixture mode serves committed sample emails/events as if they were the
+// user's own data. In production that is fake data leaking into a real task list, so
+// refuse to boot unless the operator explicitly accepts it (CP_ALLOW_FIXTURE=true).
+if (
+  config.google.mode === 'fixture' &&
+  process.env.NODE_ENV === 'production' &&
+  process.env.CP_ALLOW_FIXTURE !== 'true'
+) {
+  throw new Error(
+    'GOOGLE_MODE=fixture is forbidden in production — it ingests committed sample data as real tasks. ' +
+      'Set GOOGLE_MODE=live (with OAuth credentials), unset it to disable Google integration, ' +
+      'or set CP_ALLOW_FIXTURE=true to explicitly allow fixtures (demo appliances only).',
+  );
+}
+
 // Fail closed (Wave 0): GOOGLE_MODE=live without OAuth credentials would silently fall
 // back to broken auth flows. Require the client id + redirect uri up front. These guards
-// never fire under the test harness (default mode is 'fixture').
+// never fire under the test harness (test env sets GOOGLE_MODE=fixture explicitly).
 if (config.google.mode === 'live' && (!config.google.clientId || !config.google.redirectUri)) {
   throw new Error(
     'GOOGLE_MODE=live requires CP_GOOGLE_CLIENT_ID and a redirect URI (CP_OAUTH_REDIRECT_URI or PUBLIC_BASE_URL)',

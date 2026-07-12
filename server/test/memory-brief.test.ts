@@ -70,7 +70,7 @@ describe('AA2 — memoryBriefExcerpt', () => {
     resetDb(); // pins memory_pull_enabled = 0, timezone = 'UTC', clears connection_tokens
     delete process.env.CI_SERVER_URL;
     delete process.env.CI_SERVER_API_KEY;
-    delete process.env.MEMORY_MODE; // default fixture
+    process.env.MEMORY_MODE = 'fixture'; // explicit fixture opt-in (unset = off)
   });
 
   it('returns a memory-derived event phrase when the flag is ON and the connector resolves', async () => {
@@ -124,7 +124,7 @@ describe('AA2 — brief fold-in / byte-identical discipline', () => {
     resetDb();
     delete process.env.CI_SERVER_URL;
     delete process.env.CI_SERVER_API_KEY;
-    delete process.env.MEMORY_MODE;
+    process.env.MEMORY_MODE = 'fixture';
     // A single deterministic task so the fallback prose is stable and non-empty.
     sqlite
       .prepare(`INSERT INTO tasks (id, title, due_at, priority, owner_id, status) VALUES (uuid7(), ?, NULL, 3, ?, 'open')`)
@@ -195,7 +195,7 @@ describe('AA2 — day-aware prefix + participant hardening (custom fixture)', ()
     resetDb();
     delete process.env.CI_SERVER_URL;
     delete process.env.CI_SERVER_API_KEY;
-    delete process.env.MEMORY_MODE; // fixture transport
+    process.env.MEMORY_MODE = 'fixture'; // fixture transport
     dir = mkdtempSync(join(tmpdir(), 'aa2-fx-'));
     created.push(dir);
     process.env.CP_MEMORY_FIXTURES_DIR = dir;
