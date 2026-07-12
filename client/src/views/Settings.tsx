@@ -78,6 +78,26 @@ export function Settings() {
   const [backupEmail, setBackupEmail] = createSignal('');
   const [backupSaving, setBackupSaving] = createSignal(false);
   createEffect(() => { if (me()) setBackupEmail(me()!.backupEmail ?? ''); });
+  // Profile (all auth modes): display name + primary email. Without this editor a
+  // self-hosted owner is stuck as the seeded 'System' identity forever.
+  const [profileName, setProfileName] = createSignal('');
+  const [profileEmail, setProfileEmail] = createSignal('');
+  const [profileSaving, setProfileSaving] = createSignal(false);
+  createEffect(() => { if (me()) { setProfileName(me()!.name ?? ''); setProfileEmail(me()!.email ?? ''); } });
+  const profileDirty = () =>
+    profileName().trim() !== (me()?.name ?? '') || profileEmail().trim() !== (me()?.email ?? '');
+  async function saveProfile() {
+    setProfileSaving(true);
+    try {
+      await api.owner.updateProfile({ name: profileName().trim(), email: profileEmail().trim() || null });
+      await refetchMe();
+      showToast('Profile saved', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setProfileSaving(false);
+    }
+  }
   async function saveBackupEmail() {
     setBackupSaving(true);
     try {
@@ -517,13 +537,56 @@ export function Settings() {
         {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
         <Show when={activeTab() === 'preferences'}>
 
+          {/* Profile — all auth modes: the owner's display name + primary email. */}
+          <Show when={me()}>
+            <section class="card">
+              <div class="section-label mb-1">Profile</div>
+              <p class="text-xs text-muted-foreground mb-3">
+                Your name and email. The email is also where password-reset links go on
+                local-login deployments.
+              </p>
+              <div class="flex flex-col gap-2">
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] text-muted-foreground">Name</span>
+                  <input
+                    type="text"
+                    class="input py-1 text-sm"
+                    placeholder="Your name"
+                    value={profileName()}
+                    onInput={(e) => setProfileName(e.currentTarget.value)}
+                  />
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-[11px] text-muted-foreground">Email</span>
+                  <input
+                    type="email"
+                    class="input py-1 text-sm"
+                    placeholder="you@example.com"
+                    value={profileEmail()}
+                    onInput={(e) => setProfileEmail(e.currentTarget.value)}
+                  />
+                </label>
+                <div class="flex justify-end">
+                  <button
+                    type="button"
+                    class="btn-primary text-sm px-3 py-1.5"
+                    onClick={saveProfile}
+                    disabled={profileSaving() || !profileDirty() || !profileName().trim()}
+                  >
+                    {profileSaving() ? 'Saving…' : 'Save profile'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </Show>
+
           {/* V8 — Account (local sign-in only): backup password-reset email. */}
           <Show when={localAuth()}>
             <section class="card">
               <div class="section-label mb-1">Account</div>
               <p class="text-xs text-muted-foreground mb-3">
-                Your password-reset link is emailed to your account address. Add a backup address as a fallback in case
-                the primary is unavailable.
+                Your password-reset link is emailed to your account address (set in Profile above). Add a backup
+                address as a fallback in case the primary is unavailable.
               </p>
               <Show when={me()?.username}>
                 <div class="flex items-center justify-between gap-3 mb-2">
@@ -531,10 +594,6 @@ export function Settings() {
                   <span class="text-sm text-muted-foreground font-mono">{me()!.username}</span>
                 </div>
               </Show>
-              <div class="flex items-center justify-between gap-3 mb-3">
-                <span class="text-sm text-foreground">Account email</span>
-                <span class="text-sm text-muted-foreground">{me()?.email ?? 'none set'}</span>
-              </div>
               <label class="flex flex-col gap-1">
                 <span class="text-[11px] text-muted-foreground">Backup email</span>
                 <div class="flex items-center gap-2">

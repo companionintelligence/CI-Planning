@@ -475,10 +475,12 @@ export const api = {
       request<{ ok: boolean }>('POST', '/auth/reset', { token, newPassword }),
   },
 
-  // V — the authenticated owner's own account settings (backup reset-email).
+  // V — the authenticated owner's own account settings (backup reset-email + profile).
   owner: {
     setBackupEmail: (backupEmail: string | null) =>
       request<{ ok: boolean; backup_email: string | null }>('PATCH', '/owner/backup-email', { backup_email: backupEmail }),
+    updateProfile: (body: { name?: string; email?: string | null }) =>
+      request<{ ok: boolean; name: string; email: string | null }>('PATCH', '/owner/profile', body),
   },
 };
 

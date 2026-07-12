@@ -321,3 +321,53 @@ describe('V — PATCH /api/owner/backup-email', () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ── profile endpoint ──────────────────────────────────────────────────────────────
+
+describe('PATCH /api/owner/profile', () => {
+  async function patchProfile(cookie: string, body: unknown) {
+    return fetch(`${srv.url}/api/owner/profile`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('updates name and email for the authenticated owner', async () => {
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+    const res = await patchProfile(cookie, { name: '  Alex Hartman  ', email: 'alex@example.com' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, name: 'Alex Hartman', email: 'alex@example.com' });
+    const ownerId = findOwnerByUsername(USER)!.id;
+    const row = sqlite.prepare(`SELECT name, email FROM owners WHERE id = ?`).get(ownerId) as { name: string; email: string | null };
+    expect(row).toEqual({ name: 'Alex Hartman', email: 'alex@example.com' });
+  });
+
+  it('a partial PATCH preserves the omitted field; null clears the email', async () => {
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+    await patchProfile(cookie, { name: 'Alex', email: 'alex@example.com' });
+    const r1 = await patchProfile(cookie, { name: 'Alexandra' });
+    expect(await r1.json()).toEqual({ ok: true, name: 'Alexandra', email: 'alex@example.com' });
+    const r2 = await patchProfile(cookie, { email: null });
+    expect(await r2.json()).toEqual({ ok: true, name: 'Alexandra', email: null });
+  });
+
+  it('rejects an empty name, a malformed email, and an empty PATCH with 400', async () => {
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+    expect((await patchProfile(cookie, { name: '   ' })).status).toBe(400);
+    expect((await patchProfile(cookie, { email: 'nope' })).status).toBe(400);
+    expect((await patchProfile(cookie, {})).status).toBe(400);
+  });
+
+  it('requires authentication (401 without a session)', async () => {
+    const res = await fetch(`${srv.url}/api/owner/profile`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'X' }),
+    });
+    expect(res.status).toBe(401);
+  });
+});

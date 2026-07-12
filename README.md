@@ -109,7 +109,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>18 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0117 on boot]
+        Migrate[Migration runner<br/>0001 → 0123 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -124,7 +124,7 @@ graph TB
         Embed["nomic-embed-text<br/>dedupe embeddings"]
     end
 
-    subgraph Sources["External Sources — fixture by default"]
+    subgraph Sources["External Sources — off until connected"]
         Gmail[Gmail ingest]
         GCal[Google Calendar ingest]
         Mem["CI-Server memory<br/>pull graph · push events"]
@@ -169,7 +169,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0117 ordered list
+                                    // migrations from the 0001–0123 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -180,7 +180,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0110_entity_tags_created_at`) produce the following tables:
+Migrations (current head: `0123_drop_auto_mode`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -412,7 +412,7 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0117): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0123): tasks, subtasks, time blocks, tags,
   entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
   block_templates, scheduled_jobs, reminders, push_subscriptions,
@@ -480,15 +480,44 @@ consistent snapshot.
 
 ## Run with Docker (CI Hub)
 
-The published image is public and multi-arch (amd64 + arm64):
+The published image is public and multi-arch (amd64 + arm64). The image bakes
+`NODE_ENV=production`, and production **refuses the credential-free `test` auth mode at
+boot** — so you must pick a real auth mode or the container exits immediately.
+
+**Recommended: local username/password login.** One env-seeded account, sign in from any
+browser:
 
 ```bash
 docker run -d --name ci-planning \
   -p 3848:3848 \
   -v ci-planning-data:/data \
+  -e TZ=America/Los_Angeles \
+  -e AUTH_MODE=sso \
+  -e DISABLE_OIDC=true \
+  -e SESSION_SECRET="$(openssl rand -hex 32)" \
+  -e AUTH_DEFAULT_USERNAME=you \
+  -e AUTH_DEFAULT_PASSWORD='pick-a-strong-password' \
   ghcr.io/companionintelligence/ci-planning:latest
-# open http://localhost:3848
+# open http://localhost:3848 → sign in with the username/password you set above
 ```
+
+First-run notes:
+
+- **Set `TZ` to your IANA timezone** (e.g. `Europe/Berlin`). The container defaults to
+  UTC, which shifts what counts as "today" for the planner and the nightly jobs.
+- The username/password pair seeds **one** local owner on first boot only; afterwards it
+  is just your login (changing the env later doesn't rewrite the account — use the
+  in-app password reset, which needs `SMTP_*` configured to actually email links).
+- `SESSION_SECRET` signs the login cookie — keep it stable across container recreations
+  or every device gets signed out.
+- **Quick trial without auth** (single machine, no real data): add
+  `-e NODE_ENV=development` instead of the five auth vars. This runs the dev
+  `AUTH_MODE=test` identity — do not expose it beyond localhost.
+- **API-only alternative** (`-e AUTH_MODE=standalone`): authenticates by hashed
+  `x-api-key` header. Mint the first key with
+  `docker exec ci-planning node_modules/.bin/tsx src/cli/issue-key.ts` (or
+  `pnpm key:issue` from `server/` in a source checkout) — note the **browser UI does not
+  attach API keys**, so this mode is for REST/GraphQL clients and agents, not the PWA.
 
 On a CI Hub appliance, install **Companion Planning** from the marketplace — the Hub
 mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
@@ -505,7 +534,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `OLLAMA_SMALL` | `qwen2.5:0.5b` | Fast model for extraction/triage. Must be pulled (`ollama pull`) or set to an installed model. |
 | `OLLAMA_MEDIUM` | `gemma3n:e4b` | Better model for briefings. Must be pulled (`ollama pull`) or set to an installed model. |
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
-| `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day |
+| `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day. Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
 | `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (CI-Portal OIDC login or local username/password — mints a signed session cookie). |
 | `AUTH_JWKS_URL` | (unset) | **Currently unused.** Predates the CI-Portal OIDC (`CIPORTAL_*`) vars from Phase U; parsed into `config.auth` but that field is consumed by no code path. SSO derives the JWKS endpoint from CI-Portal discovery (`CIPORTAL_ISSUER`). Retained pending a repoint-or-retire decision. |
 | `AUTH_ISSUER` | (unset) | **Currently unused** (see `AUTH_JWKS_URL`). Parsed into `config.auth` but that field is consumed by no code path — the expected token `iss` comes from the discovered CI-Portal document. |
@@ -570,7 +599,7 @@ volume at `/data` (as above) and your tasks survive container recreation.
 
 Runtime requirements:
 
-- Node.js `>=26 <27`
+- Node.js `>=22` (developed on 26; the Docker image ships Node 26)
 - pnpm `>=11 <12`
 
 ```bash
@@ -667,7 +696,9 @@ cd tests/container && npm i && APP_URL=http://localhost:3848 npx playwright test
 
 ## License
 
-MIT.
+Commercial — **CI-Commercial-1.0** (the same Commercial Standard License as CI-Server and CI-Hub).
+See [LICENSE.md](LICENSE.md). Copyright © 2019-2026 LifeScope INC, DBA Companion Intelligence.
+All rights reserved; use requires a purchased or subscribed license.
 
 ## Author
 
