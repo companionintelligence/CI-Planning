@@ -367,6 +367,15 @@ export async function updateTask(
     }
   }
 
+  // Capture pre-edit done-state so a completion flip (done⇄not-done) can refresh the
+  // progress_cache of every objective this task rolls up into. recomputeProgress keys
+  // on t.status === 'done', and updateTask is the ONLY mutator that flips it — yet,
+  // unlike delete/link/unlink, it never recomputed. Query only when the write can
+  // change status; undefined means "no status change, so no transition to react to".
+  const wasDone = update.status !== undefined
+    ? ((sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { status: string } | undefined)?.status === 'done')
+    : undefined;
+
   // Only issue an UPDATE when there are column changes; a tags/depends-only
   // PATCH still resolves the task (drizzle rejects an empty .set()). Both branches
   // are owner-scoped (W3.1a): a cross-owner id matches no row → not_found (404),
@@ -443,6 +452,14 @@ export async function updateTask(
   if (task.status === 'done') {
     const completedAt = typeof input.completed_at === 'string' && input.completed_at ? input.completed_at : new Date().toISOString();
     stampTaskCompletionReflection(ownerId, targetId, completedAt);
+  }
+
+  // AF-5: a done⇄not-done flip changes how much of every linked objective is complete,
+  // so refresh their progress_cache rollup here too (mirrors deleteTask, which already
+  // recomputes on cancel). Guarded on an actual transition — a non-status edit, or a
+  // status change that doesn't cross the done boundary, leaves the rollup untouched.
+  if (wasDone !== undefined && wasDone !== (task.status === 'done')) {
+    recomputeObjectivesForTask(targetId);
   }
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `task:${targetId}` });
