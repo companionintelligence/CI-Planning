@@ -1,7 +1,8 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
 import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId } from '../stores/index.js';
+import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { directionColorForTask, directionShapeForTask, colorVar } from '../lib/pattern-meta.js';
 import { textureStyle } from '../lib/textures.js';
 import { ShapeIcon } from './ShapeIcon.js';
@@ -106,6 +107,108 @@ function DateField(props: {
   );
 }
 
+// AF-6 · Assign-to-objective dropdown (mirrors the add-to-routine menu idiom).
+// Mounted only while open, so the objectives tree is fetched lazily on first
+// open (fresh on each open) — deliberately NOT a global store resource.
+// Leaf-only filtering + row building live in lib/objective-picker.ts: the
+// server rejects links to non-leaf objectives (422 non_leaf), so goals and
+// projects never appear here.
+function ObjectiveMenu(props: { task: Task; close: () => void }) {
+  // Fetch errors are caught HERE (toast + empty tree) so the menu stays usable and a
+  // failed request is never mistaken for the "No objectives yet" empty state below.
+  const [loadFailed, setLoadFailed] = createSignal(false);
+  const [objectivesTree] = createResource(async () => {
+    try {
+      const r = await api.objectives.list();
+      setLoadFailed(false);
+      return r.objectives;
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+      setLoadFailed(true);
+      return [];
+    }
+  });
+  const [query, setQuery] = createSignal('');
+  const leafCount = () => leafObjectives(objectivesTree() ?? []).length;
+  const rows = () => buildPickerRows(objectivesTree() ?? [], query(), props.task.objective_id);
+
+  async function link(id: string, title: string) {
+    try {
+      await api.objectives.linkTask(id, props.task.id);
+      showToast(`Linked to "${title}"`, 'success');
+      refetchTasks(); // SSE also broadcasts; explicit refetch keeps the star snappy
+    } catch (err) {
+      // Defensive: 422 non_leaf (list filtering should prevent it) and any other failure.
+      showToast((err as Error).message, 'error');
+    }
+    props.close();
+  }
+  async function unlink(objectiveId: string) {
+    try {
+      await api.objectives.unlinkTask(objectiveId, props.task.id);
+      showToast('Removed from objective', 'default');
+      refetchTasks();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    props.close();
+  }
+
+  return (
+    <div class="absolute z-20 right-0 top-full mt-1 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
+      <Show when={!objectivesTree.loading} fallback={<p class="px-3 py-1.5 text-xs text-muted-foreground animate-pulse2">Loading objectives…</p>}>
+        <Show when={leafCount() > PICKER_SEARCH_THRESHOLD}>
+          <div class="px-2 pb-1">
+            <input
+              type="text"
+              class="w-full bg-input border border-border rounded px-2 py-1 text-xs"
+              placeholder="Search objectives…"
+              aria-label="Search objectives"
+              value={query()}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+              ref={(el) => setTimeout(() => el.focus())}
+            />
+          </div>
+        </Show>
+        <div class="max-h-56 overflow-y-auto">
+          <For each={rows()}>
+            {(o) => (
+              <button
+                onClick={() => (o.checked ? unlink(o.id) : link(o.id, o.title))}
+                class="w-full text-left pr-3 py-1.5 text-sm hover:bg-sidebar-accent flex items-center gap-1.5"
+                style={{ 'padding-left': `${12 + o.depth * 10}px` }}
+                title={o.path ? `${o.path} › ${o.title}` : o.title}
+                aria-checked={o.checked}
+                role="menuitemcheckbox"
+              >
+                <span class="w-3.5 flex-shrink-0">
+                  <Show when={o.checked}><Check size={13} class="text-primary" /></Show>
+                </span>
+                <span class="truncate" classList={{ 'text-primary font-medium': o.checked }}>{o.title}</span>
+              </button>
+            )}
+          </For>
+          <Show when={loadFailed()}>
+            <p class="px-3 py-1.5 text-xs text-red-400">Couldn't load objectives — close and retry.</p>
+          </Show>
+          <Show when={leafCount() === 0 && !loadFailed()}>
+            <p class="px-3 py-1.5 text-xs text-muted-foreground">No objectives yet — create one on the Objectives tab.</p>
+          </Show>
+          <Show when={leafCount() > 0 && rows().length === 0}>
+            <p class="px-3 py-1.5 text-xs text-muted-foreground">No match</p>
+          </Show>
+        </div>
+        <Show when={props.task.objective_id}>
+          <button
+            onClick={() => unlink(props.task.objective_id!)}
+            class="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"
+          >
+            <X size={12} /> Remove from objective
+          </button>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
 interface Props {
   task: Task;
   depth?: number;
@@ -199,6 +302,9 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // AF-6: assign-to-objective menu open state (menu component fetches lazily).
+  const [objectiveMenu, setObjectiveMenu] = createSignal(false);
+
   // Add-to-routine: pick an existing Routine-type pattern, or create one with this task.
   const [routineMenu, setRoutineMenu] = createSignal(false);
   const routineTypeId = () => (patternTypes() ?? []).find((t) => t.name === 'Routine')?.id;
@@ -262,7 +368,16 @@ export function TaskCard(props: Props) {
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
-        class={`card group flex gap-3 relative isolate ${dimmed() ? 'opacity-40' : ''}`}
+        class="card group flex gap-3 relative isolate"
+        // While a dropdown is open, lift this card above its siblings: each card is
+        // `isolate`, so a z-20 popover inside it would otherwise paint UNDER later
+        // sibling cards (DOM order wins at equal z) and they'd swallow menu clicks.
+        // Also suspend the §D dim (opacity-40 multiplies the whole subtree — a 40%-
+        // opaque menu over neighbouring cards is unreadable) until the menu closes.
+        classList={{
+          'opacity-40': dimmed() && !objectiveMenu() && !routineMenu(),
+          'z-30': objectiveMenu() || routineMenu(),
+        }}
         style={{
           'margin-bottom': '6px',
           // Uniform 3px left accent for every card (no relative shift); coloured by
@@ -432,16 +547,33 @@ export function TaskCard(props: Props) {
         <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
           <div class="relative flex items-center justify-end min-h-[22px] w-full">
             <span class="group-hover:opacity-0 transition-opacity">{est()}</span>
-            <div class="absolute right-0 top-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+            <div
+              class="absolute right-0 top-0 flex items-center gap-0.5 transition-opacity duration-100"
+              // Hover-reveal, EXCEPT while a dropdown is open: an open menu must not
+              // fade out (or worse, stay clickable at opacity-0) when the pointer
+              // leaves the card mid-pick (e.g. while typing in the objective search).
+              classList={{
+                'opacity-0 group-hover:opacity-100': !objectiveMenu() && !routineMenu(),
+                'opacity-100': objectiveMenu() || routineMenu(),
+              }}
+            >
               <Show when={!inFlightPlan()}>
                 <button onClick={sendToFlightPlan} class="btn-icon hover:text-primary" title="Send to Flight-plan"><Rocket size={13} /></button>
               </Show>
               <Show when={isInstance()}>
                 <button onClick={skip} class="btn-icon" title="Skip this occurrence"><SkipForward size={13} /></button>
               </Show>
+              {/* AF-6: assign to / remove from an objective — leaf objectives only. */}
+              <div class="relative">
+                {/* The two dropdowns are mutually exclusive — opening one closes the other. */}
+                <button onClick={() => { setRoutineMenu(false); setObjectiveMenu((v) => !v); }} class="btn-icon hover:text-primary" title="Assign to objective"><Target size={13} /></button>
+                <Show when={objectiveMenu()}>
+                  <ObjectiveMenu task={props.task} close={() => setObjectiveMenu(false)} />
+                </Show>
+              </div>
               {/* Add to a routine — pick an existing one or create a new routine with this task. */}
               <div class="relative">
-                <button onClick={() => setRoutineMenu((v) => !v)} class="btn-icon hover:text-primary" title="Add to a routine"><Shapes size={13} /></button>
+                <button onClick={() => { setObjectiveMenu(false); setRoutineMenu((v) => !v); }} class="btn-icon hover:text-primary" title="Add to a routine"><Shapes size={13} /></button>
                 <Show when={routineMenu()}>
                   <div class="absolute z-20 right-0 top-full mt-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
                     <For each={routines()}>
