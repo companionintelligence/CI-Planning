@@ -16,6 +16,7 @@ import { sqlite } from '../db/index.js';
 import { logger } from '../lib/logger.js';
 import {
   memoryCreds,
+  memoryMode,
   postEvents,
   MemoryUnavailable,
   type MemoryEvent,
@@ -137,7 +138,15 @@ export interface SyncCounts {
 }
 
 export type SyncResult =
-  | { ok: true; syncedAt: string; counts: SyncCounts }
+  | {
+      ok: true;
+      syncedAt: string;
+      counts: SyncCounts;
+      /** Which transport handled the push. 'fixture' = no network — the counts are
+       *  simulated (offline-by-default posture); callers MUST NOT log a fixture pass
+       *  as if events reached CI-Server. */
+      transport: 'live' | 'fixture';
+    }
   | { ok: false; reason: 'disabled' | 'not_connected' | 'unavailable' };
 
 /** If no prior sync, only push entities completed/updated within this recent window. */
@@ -300,6 +309,7 @@ export async function syncToMemory(owner: string): Promise<SyncResult> {
     duplicate: ingest.duplicate,
     rejected: ingest.rejected,
   };
-  logger.info('memory sync done', { owner, ...counts });
-  return { ok: true, syncedAt, counts };
+  const transport = memoryMode();
+  logger.info('memory sync done', { owner, transport, ...counts });
+  return { ok: true, syncedAt, counts, transport };
 }

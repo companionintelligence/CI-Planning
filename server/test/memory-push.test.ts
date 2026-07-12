@@ -147,6 +147,9 @@ describe('event building + push (fixture, no network)', () => {
     expect(r.counts.ingested).toBe(4);
     expect(r.counts.duplicate).toBe(0);
     expect(r.counts.rejected).toBe(0);
+    // Honesty seam: a fixture pass identifies itself so callers (the push_memory job
+    // log) never report a simulated push as a real one.
+    expect(r.transport).toBe('fixture');
     expect(lastSyncedAt()).toBe(r.syncedAt);
   });
 
@@ -306,7 +309,9 @@ describe('scheduled job (push_memory)', () => {
       .get() as { status: string; items_updated: number; log: string };
     expect(jr.status).toBe('done');
     expect(jr.items_updated).toBe(1);
-    expect(jr.log).toContain('Pushed 1 event');
+    // Fixture mode (the test posture) must NOT log a real push — it says so explicitly.
+    expect(jr.log).toContain('Fixture mode — simulated push of 1 event');
+    expect(jr.log).toContain('nothing sent');
     // The job path stamps the watermark for the owner.
     expect(lastSyncedAt()).not.toBeNull();
   });
