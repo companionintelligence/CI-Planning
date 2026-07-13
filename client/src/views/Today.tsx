@@ -1,6 +1,6 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter } from 'lucide-solid';
-import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
+import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, refetchTasks, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
 import { dueFilterActive, passesDueFilter } from '../lib/due-filter.js';
 import { dueFilter, toggleDirection, setHideHabits, setHideRoutines } from '../stores/due-filter.js';
 import { FocusRitual } from '../components/FocusRitual.js';
@@ -14,7 +14,6 @@ import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
-import { MissedReview } from '../components/MissedReview.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
 
@@ -266,8 +265,6 @@ export function Today() {
 
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
       <ReplanBanner />
-      {/* Missed-task review — surfaced by the nightly review (hidden when empty) */}
-      <MissedReview />
 
       {/* Stacked workspace: Planner on top, Flight-plan below it (full width).
           Someday Time Blocks render on their goal day in the Planner header lane
@@ -353,10 +350,23 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
   const fmtDay = (iso: string) =>
     new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
+  // Overdue defer — pushes the DEADLINE out from today (AB: due_at is the deadline
+  // axis, so this is what clears the debt; engine reschedule moves scheduled_for
+  // and would leave the row overdue forever).
+  const DEFER_STEPS = [{ days: 1, label: '+1d' }, { days: 3, label: '+3d' }, { days: 7, label: '+1w' }] as const;
+  async function deferDue(t: Task, days: number, label: string) {
+    try {
+      await api.tasks.update(t.id, { due_at: addDays(localISODate(), days) });
+      refetchTasks();
+      showToast(`"${t.title}" due ${label}`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   const Row = (p: { task: Task; when: string; danger?: boolean }) => (
-    <li>
+    <li class="flex items-center">
       <button
-        class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-primary/5 transition-colors"
+        class="flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-primary/5 transition-colors"
+        classList={{ 'text-xs': !!p.danger, 'text-sm': !p.danger }}
         onClick={() => props.onOpen(p.task)}
         title="Open task"
       >
@@ -369,6 +379,21 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
           <span class="text-[10px] text-muted-foreground flex-shrink-0">P{p.task.priority}</span>
         </Show>
       </button>
+      {/* Defer chips — overdue rows only: push the due date out from today. */}
+      <Show when={p.danger}>
+        <div class="flex items-center gap-1 pr-2 flex-shrink-0">
+          <For each={DEFER_STEPS}>
+            {(s) => (
+              <button
+                type="button"
+                onClick={() => deferDue(p.task, s.days, s.label)}
+                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                title={`Defer due date ${s.label}`}
+              >{s.label}</button>
+            )}
+          </For>
+        </div>
+      </Show>
     </li>
   );
 

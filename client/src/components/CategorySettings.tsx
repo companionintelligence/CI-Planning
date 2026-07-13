@@ -1,26 +1,26 @@
 import { For, Show, createSignal } from 'solid-js';
-import { Check, X, Pencil, Trash2, Lock, Plus, Hash } from 'lucide-solid';
+import { Check, X, Pencil, Trash2, Plus, Hash } from 'lucide-solid';
 import { tags, refetchTags, categoryPrefs, refetchCategoryPrefs, showToast } from '../stores/index.js';
 import { api, type Tag } from '../lib/api.js';
 import { PATTERN_COLORS, colorVar } from '../lib/pattern-meta.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
 
 /**
- * Time Block Category catalog (0069). The same `tags.kind='category'` tags shown on
- * the Tags "Time Block Categories" tab, managed here with their per-category color +
- * default block length (category_prefs). Clones the RoutineTypeSettings CRUD-with-
- * locked-defaults shape; base categories (family/social/me) are rename/recolor-only.
+ * Time Block Category catalog (0069/0126). The same `tags.kind='category'` tags shown
+ * on the Tags "Time Block Categories" tab, managed here as expandable rows with a
+ * per-category color. Duration defaults live on Pattern Tags, not here (owner ruling
+ * 2026-07-12); the stored category default_minutes is left untouched. Base categories
+ * (personal/professional/social) are rename/recolor-only — no delete, no badge.
  */
 
 interface EditState {
   name: string;
   color_token: string;
-  default_minutes: number;
 }
 
 export function CategorySettings() {
   const [editingId, setEditingId] = createSignal<string | null>(null);
-  const [editForm, setEditForm] = createSignal<EditState>({ name: '', color_token: 'primary', default_minutes: 60 });
+  const [editForm, setEditForm] = createSignal<EditState>({ name: '', color_token: 'primary' });
   const [confirmDelete, setConfirmDelete] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [newName, setNewName] = createSignal('');
@@ -30,7 +30,7 @@ export function CategorySettings() {
 
   function startEdit(c: Tag) {
     const p = prefsOf(c.id);
-    setEditForm({ name: c.name, color_token: p.color_token, default_minutes: p.default_minutes });
+    setEditForm({ name: c.name, color_token: p.color_token });
     setEditingId(c.id);
     setConfirmDelete(null);
   }
@@ -45,8 +45,9 @@ export function CategorySettings() {
     setSaving(true);
     try {
       // Rename only when changed — the server normalizes + 409s on a name clash.
+      // default_minutes is deliberately untouched (duration lives on Pattern Tags).
       if (cat && f.name.trim() !== cat.name) await api.tags.update(id, { name: f.name.trim() });
-      await api.categoryPrefs.set(id, { color_token: f.color_token, default_minutes: f.default_minutes || 60 });
+      await api.categoryPrefs.set(id, { color_token: f.color_token });
       refetchTags(); refetchCategoryPrefs();
       setEditingId(null);
       showToast('Category saved', 'success');
@@ -98,10 +99,6 @@ export function CategorySettings() {
               <div class="flex items-center gap-2.5 px-3 py-2.5">
                 <span class="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ 'background-color': colorVar(p().color_token) }} />
                 <span class="text-sm font-medium text-foreground flex-1">{displayTag(c.name)}</span>
-                <span class="text-[11px] text-muted-foreground">{p().default_minutes}m</span>
-                <Show when={c.is_base}>
-                  <span class="badge-neutral text-[10px] flex items-center gap-0.5 select-none"><Lock size={8} /> default</span>
-                </Show>
                 <button
                   type="button"
                   title={editingId() === c.id ? 'Cancel edit' : 'Edit'}
@@ -155,13 +152,6 @@ export function CategorySettings() {
                         )}
                       </For>
                     </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-[11px] text-muted-foreground w-14 flex-shrink-0">Default</span>
-                    <input type="number" min="5" step="5" class="input text-sm w-20"
-                      value={editForm().default_minutes}
-                      onInput={(e) => setEditForm({ ...editForm(), default_minutes: Number(e.currentTarget.value) || 0 })} />
-                    <span class="text-[11px] text-muted-foreground">min — default block length</span>
                   </div>
                   <div class="flex items-center justify-end gap-2 pt-1 border-t border-border/50">
                     <button type="button" onClick={cancelEdit}
