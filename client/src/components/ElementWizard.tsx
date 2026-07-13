@@ -494,8 +494,12 @@ export function ElementWizard() {
     const v = minToHHMM(clampDay(min));
     if (tab() === 'timeblock') setStart(v); else setTaskTime(v);
   };
+  // Time blocks are clamped to a 15-minute floor on save (saveElement); tasks
+  // (estimated_minutes) are not, so their floor is 5. Enforce the same floor HERE
+  // so the displayed value never disagrees with what persists.
+  const minDur = () => (tab() === 'timeblock' ? 15 : 5);
   const setBarDur = (min: number) => {
-    const v = Math.max(5, min);
+    const v = Math.max(minDur(), min);
     if (tab() === 'timeblock') setDurMin(v); else setEstimate(v);
   };
   const nudgeTime = (delta: number) => setBarStart((barStartMin() ?? hhmmToMin(nextHalfHour())!) + delta);
@@ -819,7 +823,7 @@ export function ElementWizard() {
             </For>
             <label class="flex items-center gap-2 border-t border-border mt-1 pt-1.5 px-2 pb-0.5 text-xs text-muted-foreground">
               Custom
-              <input type="number" min="5" step="5" class="input py-0.5 text-xs w-16"
+              <input type="number" min={minDur()} step="5" class="input py-0.5 text-xs w-16"
                 value={barDurMin()}
                 onInput={(e) => { const v = Number(e.currentTarget.value); if (v > 0) setBarDur(v); }} />
               <span>min</span>
