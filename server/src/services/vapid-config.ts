@@ -76,33 +76,67 @@ type ReadPrivateResult =
   | { status: 'absent' }
   | { status: 'unreadable' }; // stored, but the sealing KEK is gone/rotated — do NOT regenerate
 
-/** Decode the stored private key envelope. */
+/**
+ * A corrupt/incomplete envelope has no recoverable key material, so regenerating is the
+ * only route back to a working state — treat it as absent. This is deliberately distinct
+ * from a well-formed sealed blob we merely can't decrypt right now (KEK gone/rotated),
+ * which stays 'unreadable'/dormant to avoid rotating the keypair.
+ */
+function malformedPrivate(why: string): ReadPrivateResult {
+  logger.warn(`vapid-config: stored VAPID private key envelope is malformed (${why}) — will regenerate`);
+  return { status: 'absent' };
+}
+
+/** Decode + validate the stored private key envelope. */
 function readStoredPrivate(): ReadPrivateResult {
   const raw = readValue(KEY_PRIVATE);
   if (!raw) return { status: 'absent' };
-  let env: StoredPrivate;
+
+  let env: Record<string, unknown>;
   try {
-    env = JSON.parse(raw) as StoredPrivate;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return malformedPrivate('not an object');
+    env = parsed as Record<string, unknown>;
   } catch {
-    // Corrupt row — there is no usable pair, so treat as absent (safe to regenerate).
-    logger.warn('vapid-config: stored VAPID private key row is malformed — will regenerate');
-    return { status: 'absent' };
+    return malformedPrivate('not valid JSON');
   }
-  if (!env.sealed) return { status: 'ok', key: env.key, sealed: false };
-  try {
-    const key = open(
-      { iv: env.iv, authTag: env.authTag, ciphertext: env.ciphertext },
-      loadKek(env.key_version),
-    );
-    return { status: 'ok', key, sealed: true };
-  } catch (err) {
-    // Sealed, but the KEK is missing or rotated away. Regenerating here would silently
-    // rotate the keypair and kill every push subscription — refuse, stay dormant.
-    logger.warn('vapid-config: cannot open the sealed VAPID private key', {
-      err: (err as Error).message,
-    });
-    return { status: 'unreadable' };
+
+  if (env.sealed === false) {
+    // Unsealed envelope — must carry a non-empty string key.
+    if (typeof env.key !== 'string' || !env.key) return malformedPrivate('unsealed key missing');
+    return { status: 'ok', key: env.key, sealed: false };
   }
+
+  if (env.sealed === true) {
+    // Sealed envelope — must carry the hex fields + a numeric key_version before we can even
+    // attempt to open it. An incomplete blob is corrupt (regenerate); a complete-but-
+    // undecryptable one falls to the catch below and stays dormant.
+    if (
+      typeof env.iv !== 'string' ||
+      typeof env.authTag !== 'string' ||
+      typeof env.ciphertext !== 'string' ||
+      typeof env.key_version !== 'number'
+    ) {
+      return malformedPrivate('sealed blob incomplete');
+    }
+    try {
+      const key = open(
+        { iv: env.iv, authTag: env.authTag, ciphertext: env.ciphertext },
+        loadKek(env.key_version),
+      );
+      return { status: 'ok', key, sealed: true };
+    } catch (err) {
+      // Sealed, but the KEK is missing or rotated away. Regenerating here would silently
+      // rotate the keypair and kill every push subscription — refuse, stay dormant.
+      logger.warn('vapid-config: cannot open the sealed VAPID private key', {
+        err: (err as Error).message,
+      });
+      return { status: 'unreadable' };
+    }
+  }
+
+  // `sealed` is missing or not a boolean — unrecognized shape.
+  return malformedPrivate('unrecognized envelope shape');
 }
 
 /** Generate a fresh keypair and persist it (private sealed when a KEK is available). */
@@ -181,8 +215,8 @@ export function hydrateVapidConfig(): void {
     logger.info('vapid-config: generated a Web Push VAPID keypair', { sealed: gen.sealed });
     if (!gen.sealed) {
       logger.warn(
-        'vapid-config: CP_KEK_B64 is not set — the VAPID private key is stored UNSEALED (plaintext) in app_config. ' +
-          'Set CP_KEK_B64 to seal it at rest.',
+        'vapid-config: no usable CP_KEK_B64 (unset or invalid) — the VAPID private key is stored UNSEALED (plaintext) ' +
+          'in app_config. Set a valid 32-byte base64 CP_KEK_B64 to seal it at rest.',
       );
     }
   }
