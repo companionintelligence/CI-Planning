@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { newId, SYSTEM_OWNER_ID } from './ids.js';
+import type { OwnerRole } from './auth/scopes.js';
 
 /**
  * Production owner provisioning (U2, completed in U1). The app previously created
@@ -41,6 +42,10 @@ export interface ProvisionOwnerFields {
   username?: string;
   passwordHash?: string;
   externalSubject?: string;
+  /** Phase AG role (operator/member/viewer). Defaults to 'member' — provisioning
+   * must never mint an admin unless the caller (boot bootstrap, accounts API)
+   * explicitly says so. */
+  role?: OwnerRole;
 }
 
 const BASE_PATTERN_TAGS = ['home', 'work', 'community'] as const;
@@ -81,8 +86,8 @@ export function provisionOwner(fields: ProvisionOwnerFields): string {
   const tx = sqlite.transaction(() => {
     sqlite
       .prepare(
-        `INSERT INTO owners (id, name, email, username, password_hash, external_subject)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO owners (id, name, email, username, password_hash, external_subject, role)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -91,6 +96,7 @@ export function provisionOwner(fields: ProvisionOwnerFields): string {
         fields.username ?? null,
         fields.passwordHash ?? null,
         fields.externalSubject ?? null,
+        fields.role ?? 'member',
       );
 
     // scheduling_prefs: clone the sentinel's baseline row (fresh PK, new owner_id).
@@ -272,4 +278,47 @@ export function deleteOwner(ownerId: string): void {
     }
     sqlite.prepare('DELETE FROM owners WHERE id = ?').run(ownerId);
   })();
+}
+
+// ── Phase AG — account enumeration for the operator accounts API ─────────────
+
+export interface OwnerAccount {
+  id: string;
+  name: string;
+  username: string | null;
+  email: string | null;
+  role: string;
+  /** Whether local username/password login can work for this account (vs OIDC-only). */
+  hasPassword: boolean;
+}
+
+/**
+ * All real owners (the SYSTEM sentinel excluded — it is auth-inert and not an
+ * account). Ordered by id: owner ids are UUIDv7, so this is creation order.
+ * Never exposes password_hash/external_subject — only whether a password exists.
+ */
+export function listOwners(): OwnerAccount[] {
+  const rows = sqlite
+    .prepare(
+      `SELECT id, name, username, email, role, password_hash IS NOT NULL AS has_password
+         FROM owners WHERE id <> ? ORDER BY id`,
+    )
+    .all(SYSTEM_OWNER_ID) as {
+    id: string; name: string; username: string | null; email: string | null;
+    role: string; has_password: number;
+  }[];
+  return rows.map((r) => ({
+    id: r.id, name: r.name, username: r.username, email: r.email,
+    role: r.role, hasPassword: r.has_password === 1,
+  }));
+}
+
+/** How many operators exist — the accounts API's lockout guard (never demote or
+ * delete the last one). Sentinel excluded: it can't log in, so it can't operate. */
+export function operatorCount(): number {
+  return (
+    sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM owners WHERE role = 'operator' AND id <> ?`)
+      .get(SYSTEM_OWNER_ID) as { n: number }
+  ).n;
 }

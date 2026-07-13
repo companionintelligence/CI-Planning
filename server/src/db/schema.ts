@@ -23,6 +23,9 @@ export const owners = sqliteTable('owners', {
   // Auth epoch (V; 0103): the session cookie carries `${id}.${epoch}`; a password reset
   // bumps this to invalidate every existing cookie (the stateless session's revocation).
   sessionEpoch: integer('session_epoch').notNull().default(0),
+  // Phase AG (0125): operator/member/viewer — verifySession derives the session's
+  // scopes from this via roleToScopes. Existing owners were backfilled to 'operator'.
+  role: text('role').notNull().default('member'),
 });
 
 // Phase I (0049): standalone API keys. SHA-256 at rest; the raw key is shown once

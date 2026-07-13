@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, Hash, Check, X, Pencil, Database, AlertTriangle } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, Hash, Check, X, Pencil, Database, AlertTriangle, Users, KeyRound } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
@@ -389,6 +389,66 @@ export function Settings() {
       setGSaving(false);
     }
   }
+  // Phase AG — operator account management. The card is gated on /auth/me's
+  // isOperator (no probe needed); the list fetch still degrades to null on a 403
+  // so a race with a mid-session demotion can't crash the view.
+  const [accounts, { refetch: refetchAccounts }] = createResource(() =>
+    api.accounts.list().then((r) => r.accounts).catch(() => null),
+  );
+  const [acctUsername, setAcctUsername] = createSignal('');
+  const [acctPassword, setAcctPassword] = createSignal('');
+  const [acctRole, setAcctRole] = createSignal<import('../lib/api.js').OwnerRole>('member');
+  const [acctBusy, setAcctBusy] = createSignal(false);
+  const [acctFormOpen, setAcctFormOpen] = createSignal(false);
+  // Inline reset-password editor: which account it is open for + the new password.
+  const [resetFor, setResetFor] = createSignal<string | null>(null);
+  const [resetPw, setResetPw] = createSignal('');
+  async function createAccount() {
+    setAcctBusy(true);
+    try {
+      await api.accounts.create({ username: acctUsername().trim(), password: acctPassword(), role: acctRole() });
+      setAcctUsername(''); setAcctPassword(''); setAcctRole('member'); setAcctFormOpen(false);
+      await refetchAccounts();
+      showToast('Account created — hand the password to the user; it is not shown again', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setAcctBusy(false);
+    }
+  }
+  async function changeRole(id: string, role: import('../lib/api.js').OwnerRole) {
+    try {
+      await api.accounts.update(id, { role });
+      await refetchAccounts();
+      showToast('Role updated — the user is signed out and gets the new role on next login', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+      await refetchAccounts(); // restore the select to the server's value
+    }
+  }
+  async function resetAccountPassword(id: string) {
+    setAcctBusy(true);
+    try {
+      await api.accounts.resetPassword(id, resetPw());
+      setResetFor(null); setResetPw('');
+      showToast('Password reset — hand it to the user; it is not shown again', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setAcctBusy(false);
+    }
+  }
+  async function deleteAccount(a: import('../lib/api.js').OwnerAccount) {
+    if (!window.confirm(`Delete the account "${a.name}" and ALL of its data? This cannot be undone.`)) return;
+    try {
+      await api.accounts.delete(a.id);
+      await refetchAccounts();
+      showToast('Account deleted', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
   const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
   const [importBusy, setImportBusy] = createSignal(false);
 
@@ -1466,6 +1526,122 @@ export function Settings() {
               )}
             </Show>
           </section>
+
+          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
+              and the server 403s them anyway). Only rendered behind the auth gate:
+              test/standalone deployments have no login accounts to manage. */}
+          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator && accounts()}>
+            <section class="card">
+              <div class="flex items-center justify-between mb-3">
+                <div class="section-label flex items-center gap-1.5"><Users size={12} /> Accounts</div>
+                <Show when={localAuth() && !acctFormOpen()}>
+                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
+                    <Plus size={12} /> New account
+                  </button>
+                </Show>
+              </div>
+              <p class="text-xs text-muted-foreground mb-3">
+                Operators manage accounts, system jobs, and the Google connection. Members plan their own days.
+                Viewers are read-only. Role changes sign the user out everywhere.
+              </p>
+
+              {/* Create form (local login only — SSO users are provisioned on first portal sign-in) */}
+              <Show when={acctFormOpen()}>
+                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Username</span>
+                      <input class="input py-1 text-sm" type="text" autocomplete="off"
+                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Initial password <span class="opacity-70">· min 8 chars</span></span>
+                      <input class="input py-1 text-sm" type="password" autocomplete="new-password"
+                        value={acctPassword()} onInput={(e) => setAcctPassword(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Role</span>
+                      <select class="input py-1 text-sm" value={acctRole()}
+                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                        <option value="operator">Operator</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    Hand the password to the user — it is shown only here, never again. They can change it after signing in.
+                  </p>
+                  <div class="flex items-center gap-2 justify-end">
+                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                    <button type="button" onClick={createAccount}
+                      disabled={acctBusy() || !acctUsername().trim() || acctPassword().length < 8}
+                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create account'}
+                    </button>
+                  </div>
+                </div>
+              </Show>
+
+              <div class="flex flex-col gap-2">
+                <For each={accounts() ?? []}>
+                  {(a) => (
+                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div class="min-w-0">
+                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
+                          <span class="text-[11px] text-muted-foreground ml-2">
+                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
+                            {!a.hasPassword ? ' · signs in via CI-Portal' : ''}
+                          </span>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <select
+                            class="input py-0.5 text-xs w-auto"
+                            value={a.role}
+                            disabled={a.id === me()!.ownerId}
+                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
+                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
+                          >
+                            <option value="operator">Operator</option>
+                            <option value="member">Member</option>
+                            <option value="viewer">Viewer</option>
+                          </select>
+                          <Show when={a.hasPassword && a.username}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1"
+                              title="Set a new password (signs them out everywhere)"
+                              onClick={() => { setResetFor(resetFor() === a.id ? null : a.id); setResetPw(''); }}>
+                              <KeyRound size={12} /> Reset
+                            </button>
+                          </Show>
+                          <Show when={a.id !== me()!.ownerId}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
+                              title="Delete this account and all of its data"
+                              onClick={() => deleteAccount(a)}>
+                              <Trash2 size={12} />
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+                      <Show when={resetFor() === a.id}>
+                        <div class="flex items-center gap-2">
+                          <input class="input py-1 text-sm flex-1" type="password" autocomplete="new-password"
+                            placeholder="New password (min 8 chars) — shown only here"
+                            value={resetPw()} onInput={(e) => setResetPw(e.currentTarget.value)} />
+                          <button type="button" onClick={() => resetAccountPassword(a.id)}
+                            disabled={acctBusy() || resetPw().length < 8}
+                            class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                            {acctBusy() ? 'Saving…' : 'Set password'}
+                          </button>
+                          <button type="button" onClick={() => setResetFor(null)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                        </div>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </section>
+          </Show>
 
           {/* Backup / Restore / Export */}
           <section class="card">

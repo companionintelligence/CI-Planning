@@ -1,7 +1,8 @@
 import type Koa from 'koa';
 import { sqlite } from '../../db/index.js';
 import { SYSTEM_OWNER_ID } from '../ids.js';
-import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN, type VerifiedClaims } from './types.js';
+import type { VerifiedClaims } from './types.js';
+import { roleToScopes } from './scopes.js';
 
 /**
  * Local-login session (U2). The session mechanism decided for `sso + DISABLE_OIDC`
@@ -89,10 +90,13 @@ export function consumeLoginState(ctx: Koa.Context): string | null {
 
 /**
  * Resolve the session cookie to owner claims, or null if absent/tampered/stale.
- * A full-owner session (SSO or local login) carries read+write AND admin (W12): a
- * logged-in owner is the operator of their own instance, so they may run/inspect the
- * system job surfaces. Re-checks that the owner still exists (and is not the sentinel)
- * so a cookie for a since-deleted owner can't resurrect a dangling identity.
+ * Scopes are derived from `owners.role` (Phase AG, roleToScopes): an `operator`
+ * session carries read+write+admin, a `member` read+write, a `viewer` read-only —
+ * this is the one choke point where a role becomes a scope set, so the whole
+ * operator/tenant split flips here. Re-checks that the owner still exists (and is
+ * not the sentinel) so a cookie for a since-deleted owner can't resurrect a
+ * dangling identity. A role change bumps the target's session epoch, so live
+ * sessions re-derive on their next request.
  */
 export function verifySession(ctx: Koa.Context): VerifiedClaims | null {
   const raw = ctx.cookies.get(SESSION_COOKIE, { signed: true });
@@ -105,11 +109,11 @@ export function verifySession(ctx: Koa.Context): VerifiedClaims | null {
   const ownerId = dot === -1 ? raw : raw.slice(0, dot);
   const epoch = dot === -1 ? 0 : Number(raw.slice(dot + 1));
   const row = sqlite
-    .prepare(`SELECT session_epoch FROM owners WHERE id = ? AND id <> ? LIMIT 1`)
-    .get(ownerId, SYSTEM_OWNER_ID) as { session_epoch: number } | undefined;
+    .prepare(`SELECT session_epoch, role FROM owners WHERE id = ? AND id <> ? LIMIT 1`)
+    .get(ownerId, SYSTEM_OWNER_ID) as { session_epoch: number; role: string } | undefined;
   if (!row) return null;
   // Reject a cookie whose epoch doesn't match the owner's current one — a password reset
   // bumped it, so every pre-reset cookie is now invalid. Fail closed on a malformed epoch.
   if (!Number.isInteger(epoch) || epoch !== row.session_epoch) return null;
-  return { ownerId, scopes: [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN] };
+  return { ownerId, scopes: roleToScopes(row.role) };
 }

@@ -489,6 +489,18 @@ export const api = {
     save: (body: { client_id?: string; client_secret?: string | null; enabled: boolean }) =>
       request<GoogleConfigState>('PUT', '/google-config', body),
   },
+
+  // Phase AG — operator account management (operator-gated; 403s for everyone else).
+  accounts: {
+    list: () => request<{ accounts: OwnerAccount[] }>('GET', '/accounts'),
+    create: (body: { username: string; password: string; name?: string; email?: string; role?: OwnerRole }) =>
+      request<{ account: OwnerAccount }>('POST', '/accounts', body),
+    update: (id: string, body: { role?: OwnerRole; name?: string }) =>
+      request<{ account: OwnerAccount }>('PATCH', `/accounts/${id}`, body),
+    resetPassword: (id: string, password: string) =>
+      request<{ ok: boolean }>('POST', `/accounts/${id}/reset-password`, { password }),
+    delete: (id: string) => request<{ ok: boolean }>('DELETE', `/accounts/${id}`),
+  },
 };
 
 export interface GoogleConfigState {
@@ -513,6 +525,18 @@ export interface AuthMe {
   email: string | null;
   username: string | null;
   backupEmail: string | null; // V — fallback password-reset destination
+  role: OwnerRole; // Phase AG — operator/member/viewer
+  isOperator: boolean; // derived server-side: role === 'operator'
+}
+// Phase AG — the operator/tenant role split (docs/AG-multitenant-rbac.md).
+export type OwnerRole = 'operator' | 'member' | 'viewer';
+export interface OwnerAccount {
+  id: string;
+  name: string;
+  username: string | null;
+  email: string | null;
+  role: OwnerRole;
+  hasPassword: boolean; // false ⇒ OIDC-only (signs in via CI-Portal)
 }
 /** True when this deployment gates the SPA behind a login screen (U3). */
 export function authGateActive(cfg: AuthConfigResponse): boolean {
