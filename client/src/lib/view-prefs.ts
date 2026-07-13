@@ -47,16 +47,29 @@ export function deserializePrio(saved: ViewPrefs['calendar'] | undefined): numbe
  * Persisted collapse flags → AxisState; missing/non-boolean falls back to defaults.
  * Accepts either the `calendar` or `planner` blob — both carry the same two flags.
  */
-export function deserializeAxisState(saved: { topExpanded?: boolean; bottomExpanded?: boolean } | undefined): AxisState {
-  return {
+export function deserializeAxisState(
+  saved: { topExpanded?: boolean; bottomExpanded?: boolean; topEndMin?: number; bottomStartMin?: number } | undefined,
+): AxisState {
+  const state: AxisState = {
     topExpanded: typeof saved?.topExpanded === 'boolean' ? saved.topExpanded : DEFAULT_AXIS_STATE.topExpanded,
     bottomExpanded: typeof saved?.bottomExpanded === 'boolean' ? saved.bottomExpanded : DEFAULT_AXIS_STATE.bottomExpanded,
   };
+  // Optional configurable collapse boundaries (only the planner blob writes these; the
+  // calendar blob never carries them). Non-numbers are dropped — day-axis clamps range.
+  if (typeof saved?.topEndMin === 'number' && Number.isFinite(saved.topEndMin)) state.topEndMin = saved.topEndMin;
+  if (typeof saved?.bottomStartMin === 'number' && Number.isFinite(saved.bottomStartMin)) state.bottomStartMin = saved.bottomStartMin;
+  return state;
 }
 
-/** Build the `view_prefs.planner` blob (night-hour collapse flags only). */
+/** Build the `view_prefs.planner` blob (collapse flags + configurable boundaries). */
 export function buildPlannerViewPrefs(axisState: AxisState): NonNullable<ViewPrefs['planner']> {
-  return { topExpanded: axisState.topExpanded, bottomExpanded: axisState.bottomExpanded };
+  const out: NonNullable<ViewPrefs['planner']> = {
+    topExpanded: axisState.topExpanded,
+    bottomExpanded: axisState.bottomExpanded,
+  };
+  if (typeof axisState.topEndMin === 'number') out.topEndMin = axisState.topEndMin;
+  if (typeof axisState.bottomStartMin === 'number') out.bottomStartMin = axisState.bottomStartMin;
+  return out;
 }
 
 /** Build the full `view_prefs.calendar` blob from current live state. */

@@ -1,7 +1,8 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds } from '../stores/index.js';
 import { api } from '../lib/api.js';
+import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
@@ -708,11 +709,70 @@ export function Settings() {
             </div>
           </section>
 
+          {/* Planner display — appearance + configurable night-collapse boundaries.
+              These write straight through (view_prefs; no migration) and apply live. */}
+          <section class="card">
+            <div class="section-label mb-1">Planner display</div>
+            <p class="text-xs text-muted-foreground mb-3">
+              Visual options for the Today planner. Changes apply immediately.
+            </p>
+            {/* Direction textures (view_prefs.appearance.direction_textures) */}
+            <label class="flex items-start gap-2 cursor-pointer select-none">
+              <button type="button" role="switch" aria-checked={texturesEnabled()}
+                onClick={() => setTexturesEnabled(!texturesEnabled())}
+                class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                classList={{ 'bg-primary': texturesEnabled(), 'bg-muted border border-border': !texturesEnabled() }}>
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform"
+                  classList={{ 'translate-x-4': texturesEnabled() }} />
+              </button>
+              <div>
+                <div class="text-sm text-foreground leading-tight">Direction textures</div>
+                <div class="text-[11px] text-muted-foreground">Paint the subtle Home / Work / Community routine texture behind task cards and planner chips.</div>
+              </div>
+            </label>
+            {/* Night-collapse boundaries (view_prefs.planner.topEndMin / bottomStartMin) */}
+            <div class="mt-4 pt-3 border-t border-border flex flex-col gap-3">
+              <label class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-sm text-foreground leading-tight">Collapse night until</div>
+                  <div class="text-[11px] text-muted-foreground">Morning end of the planner's collapsed midnight bar (default 7 AM).</div>
+                </div>
+                <select class="input py-1 text-sm w-24 flex-shrink-0"
+                  value={topCollapseEnd(plannerAxisState())}
+                  onChange={(e) => setPlannerCollapseBounds(Number(e.currentTarget.value), bottomCollapseStart(plannerAxisState()))}>
+                  <For each={Array.from({ length: 12 }, (_, i) => (i + 1) * 60)}>
+                    {(m) => <option value={m}>{m === 720 ? '12 PM' : `${m / 60} AM`}</option>}
+                  </For>
+                </select>
+              </label>
+              <label class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-sm text-foreground leading-tight">Collapse night from</div>
+                  <div class="text-[11px] text-muted-foreground">Evening start of the collapsed bar that runs to midnight (default 9 PM).</div>
+                </div>
+                <select class="input py-1 text-sm w-24 flex-shrink-0"
+                  value={bottomCollapseStart(plannerAxisState())}
+                  onChange={(e) => setPlannerCollapseBounds(topCollapseEnd(plannerAxisState()), Number(e.currentTarget.value))}>
+                  <For each={Array.from({ length: 12 }, (_, i) => 720 + i * 60)}>
+                    {(m) => <option value={m}>{m === 720 ? '12 PM' : `${(m - 720) / 60} PM`}</option>}
+                  </For>
+                </select>
+              </label>
+            </div>
+          </section>
+
           {/* Pattern Tags — expandable rows (shape, colour, default minutes per direction tag) */}
           <section class="card">
             <div class="section-label flex items-center gap-1.5 mb-1"><Shapes size={12} /> Pattern Tags</div>
             <p class="text-xs text-muted-foreground mb-3">Shape, colour, and default estimate for each direction tag. The default time is used when a task has no intention tag.</p>
             <PatternBlockSettings />
+          </section>
+
+          {/* Time Block Categories — the kind='category' catalog (0069/0126): colour + name (duration lives on Pattern Tags) */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
+            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
+            <CategorySettings />
           </section>
 
           {/* Time-Block settings — Plan | Concept */}
@@ -871,13 +931,6 @@ export function Settings() {
                 </label>
               </div>
             </div>
-          </section>
-
-          {/* Time Block Categories — the kind='category' catalog (0069/0126): colour + name (duration lives on Pattern Tags) */}
-          <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
-            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
-            <CategorySettings />
           </section>
 
           {/* Routine Settings — recall behaviour + Time-Sense + AI ordering */}

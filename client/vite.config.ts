@@ -4,10 +4,10 @@ import solid from 'vite-plugin-solid';
 export default defineConfig({
   plugins: [solid()],
   server: {
-    port: 5173,
+    port: Number(process.env.VITE_PORT ?? 5173),
     proxy: {
       '/api': {
-        target: 'http://localhost:3848',
+        target: process.env.VITE_API_TARGET ?? 'http://localhost:3848',
         changeOrigin: true,
       },
     },

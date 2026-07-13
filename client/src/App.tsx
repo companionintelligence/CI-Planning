@@ -10,6 +10,7 @@ import { ToastContainer } from './components/Toast.js';
 import { ConflictBanner } from './components/ConflictBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
 import { Today }    from './views/Today.js';
+import { Focus }    from './views/Focus.js';
 import { Calendar } from './views/Calendar.js';
 import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
@@ -236,6 +237,8 @@ export function App() {
           <Route path="/reset-password" component={ResetPassword} />
           <Route path="/" component={SessionGate}>
             <Route path="/"         component={Today} />
+            {/* FOCUS — the simple day-list + Time-Sense surface, sits before Today in the nav. */}
+            <Route path="/focus"    component={Focus} />
             <Route path="/calendar" component={Calendar} />
             {/* AF-7: the Inbox is gone — created-today tasks surface in the Tasks tab's
                 "New Today" section; redirect stale /inbox deep-links there. */}
@@ -259,6 +262,7 @@ function UngatedRouter() {
   return (
     <Router root={Shell}>
       <Route path="/"         component={Today} />
+      <Route path="/focus"    component={Focus} />
       <Route path="/calendar" component={Calendar} />
       {/* AF-7: Inbox removed; /inbox redirects to the Tasks tab ("New Today"). */}
       <Route path="/inbox"    component={() => <Navigate href="/tasks" />} />

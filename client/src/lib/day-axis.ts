@@ -48,6 +48,30 @@ export interface AxisState {
   topExpanded: boolean;
   /** bottom region (21:00–24:00) expanded? default false (collapsed). */
   bottomExpanded: boolean;
+  /** Configurable end of the top collapse region (minute-of-day). Absent →
+   *  TOP_COLLAPSE_END (07:00). Persisted per-view in view_prefs (planner). */
+  topEndMin?: number;
+  /** Configurable start of the bottom collapse region (minute-of-day). Absent →
+   *  BOTTOM_COLLAPSE_START (21:00). */
+  bottomStartMin?: number;
+}
+
+/**
+ * The effective collapse boundaries for a state — the user-configurable fields
+ * clamped to sane halves of the day (top ends by noon, bottom starts from noon)
+ * so the middle segment can never invert or vanish. Every geometry consumer
+ * (segments/visibleExtent and the components' boundary checks) reads THESE, so a
+ * state without the optional fields behaves byte-identically to the old constants.
+ */
+export function topCollapseEnd(state: AxisState): number {
+  const v = state.topEndMin;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return TOP_COLLAPSE_END;
+  return Math.min(Math.max(Math.round(v), 0), 12 * 60);
+}
+export function bottomCollapseStart(state: AxisState): number {
+  const v = state.bottomStartMin;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return BOTTOM_COLLAPSE_START;
+  return Math.min(Math.max(Math.round(v), 12 * 60), MINUTES_PER_DAY);
 }
 
 /** Both regions collapsed — the calendar's default. */
@@ -75,10 +99,12 @@ export interface Segment {
  * simply has `heightPx === COLLAPSED_BAR_PX` instead of `minutes * pxPerMin`.
  */
 export function segments(state: AxisState, pxPerMin: number): Segment[] {
+  const topEnd = topCollapseEnd(state);
+  const bottomStart = bottomCollapseStart(state);
   const specs: { region: Region | null; startMin: number; endMin: number; collapsed: boolean }[] = [
-    { region: 'top', startMin: TOP_COLLAPSE_START, endMin: TOP_COLLAPSE_END, collapsed: !state.topExpanded },
-    { region: null, startMin: TOP_COLLAPSE_END, endMin: BOTTOM_COLLAPSE_START, collapsed: false },
-    { region: 'bottom', startMin: BOTTOM_COLLAPSE_START, endMin: BOTTOM_COLLAPSE_END, collapsed: !state.bottomExpanded },
+    { region: 'top', startMin: TOP_COLLAPSE_START, endMin: topEnd, collapsed: !state.topExpanded },
+    { region: null, startMin: topEnd, endMin: bottomStart, collapsed: false },
+    { region: 'bottom', startMin: bottomStart, endMin: BOTTOM_COLLAPSE_END, collapsed: !state.bottomExpanded },
   ];
 
   const out: Segment[] = [];
@@ -176,10 +202,12 @@ export function visibleExtent(
   endMin: number,
   state: AxisState,
 ): { startMin: number; endMin: number } | null {
-  // The union of currently-collapsed ranges.
+  // The union of currently-collapsed ranges (state-configurable boundaries).
+  const topEnd = topCollapseEnd(state);
+  const bottomStart = bottomCollapseStart(state);
   const collapsedRanges: [number, number][] = [];
-  if (!state.topExpanded) collapsedRanges.push([TOP_COLLAPSE_START, TOP_COLLAPSE_END]);
-  if (!state.bottomExpanded) collapsedRanges.push([BOTTOM_COLLAPSE_START, BOTTOM_COLLAPSE_END]);
+  if (!state.topExpanded) collapsedRanges.push([TOP_COLLAPSE_START, topEnd]);
+  if (!state.bottomExpanded) collapsedRanges.push([bottomStart, BOTTOM_COLLAPSE_END]);
 
   // Clamp into the day range so a block that runs past midnight (endMin > 1440)
   // is still trimmed/hidden correctly and never feeds out-of-range minutes to yOf.
