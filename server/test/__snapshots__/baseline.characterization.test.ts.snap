@@ -959,6 +959,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "password_hash",
       "backup_email",
       "session_epoch",
+      "role",
     ],
     "table": "owners",
   },

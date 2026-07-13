@@ -489,7 +489,24 @@ export const api = {
     save: (body: { client_id?: string; client_secret?: string | null; enabled: boolean }) =>
       request<GoogleConfigState>('PUT', '/google-config', body),
   },
+
+  // Phase AG — operator account management (operator-gated; 403s for everyone else).
+  // Onboarding is by email invite: create mints a password-less account and sends a
+  // set-your-password link; with no SMTP the link comes back for the operator to
+  // forward. `invite` (re)sends it — a fresh invite or a reset link, by state.
+  accounts: {
+    list: () => request<{ accounts: OwnerAccount[] }>('GET', '/accounts'),
+    create: (body: { username: string; email: string; name?: string; role?: OwnerRole }) =>
+      request<{ account: OwnerAccount; invite: InviteResult }>('POST', '/accounts', body),
+    invite: (id: string) => request<{ ok: boolean; invite: InviteResult }>('POST', `/accounts/${id}/invite`),
+    update: (id: string, body: { role?: OwnerRole; name?: string; email?: string | null }) =>
+      request<{ account: OwnerAccount }>('PATCH', `/accounts/${id}`, body),
+    delete: (id: string) => request<{ ok: boolean }>('DELETE', `/accounts/${id}`),
+  },
 };
+
+/** How an account invite went out: emailed, or handed back as a link (no SMTP). */
+export type InviteResult = { delivery: 'email'; to: string } | { delivery: 'link'; link: string };
 
 export interface GoogleConfigState {
   source: 'env' | 'app' | 'off';
@@ -513,6 +530,20 @@ export interface AuthMe {
   email: string | null;
   username: string | null;
   backupEmail: string | null; // V — fallback password-reset destination
+  role: OwnerRole; // Phase AG — operator/member/viewer
+  isOperator: boolean; // derived server-side: role === 'operator'
+}
+// Phase AG — the operator/tenant role split (docs/AG-multitenant-rbac.md).
+export type OwnerRole = 'operator' | 'member' | 'viewer';
+export interface OwnerAccount {
+  id: string;
+  name: string;
+  username: string | null;
+  email: string | null;
+  role: OwnerRole;
+  // false ⇒ either OIDC-only (no username; signs in via CI-Portal) OR a local
+  // account whose invite hasn't been accepted yet ("invite pending" in the UI).
+  hasPassword: boolean;
 }
 /** True when this deployment gates the SPA behind a login screen (U3). */
 export function authGateActive(cfg: AuthConfigResponse): boolean {

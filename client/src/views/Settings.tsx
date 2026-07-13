@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, Hash, Check, X, Pencil, Database, AlertTriangle } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, Hash, Check, X, Pencil, Database, AlertTriangle, Users, KeyRound } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
@@ -389,6 +389,74 @@ export function Settings() {
       setGSaving(false);
     }
   }
+  // Phase AG — operator account management. The card is gated on /auth/me's
+  // isOperator (no probe needed); the list fetch still degrades to null on a 403
+  // so a race with a mid-session demotion can't crash the view.
+  const [accounts, { refetch: refetchAccounts }] = createResource(() =>
+    api.accounts.list().then((r) => r.accounts).catch(() => null),
+  );
+  const [acctUsername, setAcctUsername] = createSignal('');
+  const [acctEmail, setAcctEmail] = createSignal('');
+  const [acctRole, setAcctRole] = createSignal<import('../lib/api.js').OwnerRole>('member');
+  const [acctBusy, setAcctBusy] = createSignal(false);
+  const [acctFormOpen, setAcctFormOpen] = createSignal(false);
+  // With no SMTP the server hands the invite link back instead of emailing it —
+  // shown once so the operator can forward it out-of-band.
+  const [inviteLink, setInviteLink] = createSignal<{ username: string; link: string } | null>(null);
+  function handleInvite(username: string, invite: import('../lib/api.js').InviteResult) {
+    if (invite.delivery === 'email') {
+      setInviteLink(null);
+      showToast(`Invite link emailed to ${invite.to}`, 'success');
+    } else {
+      setInviteLink({ username, link: invite.link });
+      showToast('No outgoing email configured — copy the link below and send it to them', 'default');
+    }
+  }
+  async function createAccount() {
+    setAcctBusy(true);
+    try {
+      const r = await api.accounts.create({ username: acctUsername().trim(), email: acctEmail().trim(), role: acctRole() });
+      setAcctUsername(''); setAcctEmail(''); setAcctRole('member'); setAcctFormOpen(false);
+      await refetchAccounts();
+      handleInvite(r.account.username ?? '', r.invite);
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setAcctBusy(false);
+    }
+  }
+  async function sendInvite(a: import('../lib/api.js').OwnerAccount) {
+    setAcctBusy(true);
+    try {
+      const r = await api.accounts.invite(a.id);
+      handleInvite(a.username ?? '', r.invite);
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setAcctBusy(false);
+    }
+  }
+  async function changeRole(id: string, role: import('../lib/api.js').OwnerRole) {
+    try {
+      await api.accounts.update(id, { role });
+      await refetchAccounts();
+      showToast('Role updated — the user is signed out and gets the new role on next login', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+      await refetchAccounts(); // restore the select to the server's value
+    }
+  }
+  async function deleteAccount(a: import('../lib/api.js').OwnerAccount) {
+    if (!window.confirm(`Delete the account "${a.name}" and ALL of its data? This cannot be undone.`)) return;
+    try {
+      await api.accounts.delete(a.id);
+      await refetchAccounts();
+      showToast('Account deleted', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
   const [memStatus, { refetch: refetchMem }] = createResource(() => api.memory.status());
   const [importBusy, setImportBusy] = createSignal(false);
 
@@ -1466,6 +1534,128 @@ export function Settings() {
               )}
             </Show>
           </section>
+
+          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
+              and the server 403s them anyway). Only rendered behind the auth gate:
+              test/standalone deployments have no login accounts to manage. */}
+          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator && accounts()}>
+            <section class="card">
+              <div class="flex items-center justify-between mb-3">
+                <div class="section-label flex items-center gap-1.5"><Users size={12} /> Accounts</div>
+                <Show when={localAuth() && !acctFormOpen()}>
+                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
+                    <Plus size={12} /> New account
+                  </button>
+                </Show>
+              </div>
+              <p class="text-xs text-muted-foreground mb-3">
+                Operators manage accounts, system jobs, and the Google connection. Members plan their own days.
+                Viewers are read-only. Role changes sign the user out everywhere.
+              </p>
+
+              {/* Create form (local login only — SSO users are provisioned on first portal sign-in) */}
+              <Show when={acctFormOpen()}>
+                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Username</span>
+                      <input class="input py-1 text-sm" type="text" autocomplete="off"
+                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
+                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
+                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Role</span>
+                      <select class="input py-1 text-sm" value={acctRole()}
+                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                        <option value="operator">Operator</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
+                  </p>
+                  <div class="flex items-center gap-2 justify-end">
+                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                    <button type="button" onClick={createAccount}
+                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
+                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
+                    </button>
+                  </div>
+                </div>
+              </Show>
+
+              {/* SMTP-free fallback: the server handed the link back — shown once. */}
+              <Show when={inviteLink()}>
+                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-foreground font-medium">
+                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
+                    </span>
+                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                  </div>
+                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
+                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
+                </div>
+              </Show>
+
+              <div class="flex flex-col gap-2">
+                <For each={accounts() ?? []}>
+                  {(a) => (
+                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div class="min-w-0">
+                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
+                          <span class="text-[11px] text-muted-foreground ml-2">
+                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
+                            {!a.username ? ' · signs in via CI-Portal' : ''}
+                          </span>
+                          <Show when={a.username && !a.hasPassword}>
+                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-full bg-amber-500/15 text-amber-400">invite pending</span>
+                          </Show>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <select
+                            class="input py-0.5 text-xs w-auto"
+                            value={a.role}
+                            disabled={a.id === me()!.ownerId}
+                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
+                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
+                          >
+                            <option value="operator">Operator</option>
+                            <option value="member">Member</option>
+                            <option value="viewer">Viewer</option>
+                          </select>
+                          <Show when={a.username}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
+                              title={a.hasPassword
+                                ? 'Email them a single-use password-reset link'
+                                : 'Send the set-password invite again (replaces the previous link)'}
+                              onClick={() => sendInvite(a)}>
+                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
+                            </button>
+                          </Show>
+                          <Show when={a.id !== me()!.ownerId}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
+                              title="Delete this account and all of its data"
+                              onClick={() => deleteAccount(a)}>
+                              <Trash2 size={12} />
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </section>
+          </Show>
 
           {/* Backup / Restore / Export */}
           <section class="card">

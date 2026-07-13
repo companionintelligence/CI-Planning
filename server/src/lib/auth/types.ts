@@ -19,10 +19,11 @@ export const SCOPE_WRITE = 'planning:write';
 /**
  * Admin access — system-global maintenance surfaces that are NOT owner-scoped
  * (Phase W · W12: the `scheduled_jobs`/`job_runs` operator tables, exposed by the REST
- * `/api/jobs` route + the GraphQL `scheduledJobs`/`runScheduledJob` resolvers). NOT
- * implied by write: a normal owner mutating their own data does not, by that alone, get
- * to run/inspect the instance's system jobs. A full-owner session (SSO or local login)
- * carries admin because a logged-in owner IS the operator of their instance; an API key
- * gets admin ONLY if it was explicitly issued with it.
+ * `/api/jobs` route + the GraphQL `scheduledJobs`/`runScheduledJob` resolvers; Phase
+ * AG adds `/api/google-config` and `/api/accounts`). NOT implied by write: a normal
+ * owner mutating their own data does not, by that alone, get to run/inspect the
+ * instance's system surfaces. Since Phase AG a session's scopes are derived from
+ * `owners.role` (roleToScopes in scopes.ts) — only an `operator` session carries
+ * admin; an API key gets admin ONLY if it was explicitly issued with it.
  */
 export const SCOPE_ADMIN = 'planning:admin';
