@@ -9,6 +9,7 @@ import { requireAuth } from './lib/auth/requireAuth.js';
 import { mountRoutes } from './routes/index.js';
 import { mountGraphql } from './graphql/index.js';
 import { hydrateGoogleConfig } from './services/google-config.js';
+import { hydrateVapidConfig } from './services/vapid-config.js';
 
 /** Build the Koa app (routes + middleware) without listening or starting cron.
  * Async because the GraphQL (Apollo) server must `start()` before it can be mounted. */
@@ -19,6 +20,10 @@ export async function buildApp(): Promise<Koa> {
   // singleton. Runs after migrations (the db module migrated on import above) and is
   // a no-op when GOOGLE_MODE is env-pinned.
   hydrateGoogleConfig();
+
+  // Provision the Web Push VAPID keypair (generate + persist to app_config on first boot,
+  // reuse thereafter). A no-op when an env keypair pins the config. Runs after migrations.
+  hydrateVapidConfig();
 
   // Behind a trusted TLS-terminating proxy (CI-Hub tunnel): honor X-Forwarded-Proto
   // (⇒ ctx.protocol='https' ⇒ Secure session cookie) and X-Forwarded-For (⇒ ctx.ip is

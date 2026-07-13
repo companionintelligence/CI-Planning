@@ -63,9 +63,9 @@ describe('GET /api/integrations — WP7 google connections', () => {
     expect(typeof r.body.ollama.smallModel).toBe('string');
     expect(typeof r.body.ollama.mediumModel).toBe('string');
     expect(typeof r.body.ollama.embedModel).toBe('string');
-    // push (Phase H) — unchanged
+    // push (Phase H) — VAPID keys now auto-provisioned on boot, so push reports configured
     expect(typeof r.body.push.configured).toBe('boolean');
-    expect(r.body.push.configured).toBe(false);
+    expect(r.body.push.configured).toBe(true);
   });
 
   it('NO-LEAK GUARD: response body contains no token material', async () => {

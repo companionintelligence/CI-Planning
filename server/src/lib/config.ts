@@ -148,6 +148,9 @@ export interface Config {
   vapidPublicKey: string;
   vapidPrivateKey: string;
   vapidSubject: string;
+  /** True when BOTH VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are set — env pins the keypair
+   *  and the auto-generation in services/vapid-config.ts is a no-op. */
+  vapidEnvPinned: boolean;
   snapshotRetain: number;
   auth: AuthConfig;
   ciportal: CiPortalConfig;
@@ -195,11 +198,14 @@ export const config: Config = {
   ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'gemma3n:e4b',
   ollamaEmbedModel: process.env.OLLAMA_EMBED ?? 'nomic-embed-text',
   staticDir: join(packageRoot, 'public'),
-  // Web Push (Phase H). Generate once: `npx web-push generate-vapid-keys`.
-  // Absent keys ⇒ push disabled (in-app SSE still delivers). Never commit real keys.
+  // Web Push (Phase H). Keys are AUTO-GENERATED on first boot and persisted to app_config
+  // (services/vapid-config.ts hydrates them into this singleton after migrations), so push
+  // works out of the box — no manual `npx web-push generate-vapid-keys` needed. Setting
+  // BOTH env vars pins an explicit keypair and takes precedence. Never commit real keys.
   vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? '',
   vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? '',
   vapidSubject: process.env.VAPID_SUBJECT ?? 'mailto:admin@companion.local',
+  vapidEnvPinned: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
   snapshotRetain: Number(process.env.SNAPSHOT_RETAIN ?? 7),
   auth: {
     mode: (process.env.AUTH_MODE as AuthMode) ?? 'test',
