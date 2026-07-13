@@ -873,10 +873,10 @@ export function Settings() {
             </div>
           </section>
 
-          {/* Time Block Categories — the kind='category' catalog (0069/0126): colour + default block length */}
+          {/* Time Block Categories — the kind='category' catalog (0069/0126): colour + name (duration lives on Pattern Tags) */}
           <section class="card">
             <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
-            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour and a default length; the defaults can be edited but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
+            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
             <CategorySettings />
           </section>
 
