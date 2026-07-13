@@ -10,6 +10,7 @@ import { provisionOwner } from '../lib/owners.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
 import { verifyOidcIdToken } from '../lib/auth/verifyOidcIdToken.js';
 import { discoverOidc, type OidcDiscoveryDoc } from '../lib/auth/oidcDiscovery.js';
+import { normalizeRole } from '../lib/auth/scopes.js';
 import { findOwnerByUsername, verifyLoginPassword, hashPassword } from '../lib/auth/password.js';
 import { setSession, clearSession, setLoginState, consumeLoginState, bumpSessionEpoch, SESSION_COOKIE } from '../lib/auth/session.js';
 import { issueResetToken, consumeResetToken } from '../lib/auth/resetToken.js';
@@ -133,9 +134,13 @@ export function authRouter() {
     if (!row) throw httpError(401, 'unknown owner');
     // Phase AG: `role` + derived `isOperator` let the client show/hide the operator
     // surfaces (Settings → Accounts, the Jobs nav entry) without probing an admin GET.
+    // normalizeRole keeps the payload on the operator/member/viewer union the client
+    // types promise — an unrecognized DB value reads as 'viewer', matching the
+    // read-only scopes roleToScopes actually grants it.
+    const role = normalizeRole(row.role);
     ctx.body = {
       ownerId: row.id, name: row.name, email: row.email, username: row.username,
-      backupEmail: row.backup_email, role: row.role, isOperator: row.role === 'operator',
+      backupEmail: row.backup_email, role, isOperator: role === 'operator',
     };
   });
 

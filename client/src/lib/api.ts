@@ -541,7 +541,9 @@ export interface OwnerAccount {
   username: string | null;
   email: string | null;
   role: OwnerRole;
-  hasPassword: boolean; // false ⇒ OIDC-only (signs in via CI-Portal)
+  // false ⇒ either OIDC-only (no username; signs in via CI-Portal) OR a local
+  // account whose invite hasn't been accepted yet ("invite pending" in the UI).
+  hasPassword: boolean;
 }
 /** True when this deployment gates the SPA behind a login screen (U3). */
 export function authGateActive(cfg: AuthConfigResponse): boolean {
