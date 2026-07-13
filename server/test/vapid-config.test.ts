@@ -119,6 +119,27 @@ describe('env-pinned', () => {
   });
 });
 
+describe('malformed stored envelope', () => {
+  it('regenerates when the unsealed envelope has no usable key (corrupt row)', () => {
+    // A row that parses but is missing the key — must not be applied as an undefined key.
+    sqlite
+      .prepare(`INSERT INTO app_config (key, value) VALUES ('vapid_private_key', ?)`)
+      .run(JSON.stringify({ sealed: false }));
+    sqlite
+      .prepare(`INSERT INTO app_config (key, value) VALUES ('vapid_public_key', 'stale-pub')`)
+      .run();
+
+    hydrateVapidConfig();
+
+    // Regenerated into a real string pair, and the corrupt row was overwritten.
+    expect(typeof config.vapidPrivateKey).toBe('string');
+    expect(config.vapidPrivateKey).toBeTruthy();
+    const env = JSON.parse(readRow('vapid_private_key')!);
+    expect(env.sealed).toBe(true); // KEK present in this block → freshly sealed
+    expect(vapidConfigState().configured).toBe(true);
+  });
+});
+
 describe('sealed key becomes unreadable (KEK removed/rotated)', () => {
   it('stays dormant instead of regenerating — existing subscriptions survive', () => {
     hydrateVapidConfig(); // seals under KEY
