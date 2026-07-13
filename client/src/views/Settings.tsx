@@ -396,20 +396,40 @@ export function Settings() {
     api.accounts.list().then((r) => r.accounts).catch(() => null),
   );
   const [acctUsername, setAcctUsername] = createSignal('');
-  const [acctPassword, setAcctPassword] = createSignal('');
+  const [acctEmail, setAcctEmail] = createSignal('');
   const [acctRole, setAcctRole] = createSignal<import('../lib/api.js').OwnerRole>('member');
   const [acctBusy, setAcctBusy] = createSignal(false);
   const [acctFormOpen, setAcctFormOpen] = createSignal(false);
-  // Inline reset-password editor: which account it is open for + the new password.
-  const [resetFor, setResetFor] = createSignal<string | null>(null);
-  const [resetPw, setResetPw] = createSignal('');
+  // With no SMTP the server hands the invite link back instead of emailing it —
+  // shown once so the operator can forward it out-of-band.
+  const [inviteLink, setInviteLink] = createSignal<{ username: string; link: string } | null>(null);
+  function handleInvite(username: string, invite: import('../lib/api.js').InviteResult) {
+    if (invite.delivery === 'email') {
+      setInviteLink(null);
+      showToast(`Invite link emailed to ${invite.to}`, 'success');
+    } else {
+      setInviteLink({ username, link: invite.link });
+      showToast('No outgoing email configured — copy the link below and send it to them', 'default');
+    }
+  }
   async function createAccount() {
     setAcctBusy(true);
     try {
-      await api.accounts.create({ username: acctUsername().trim(), password: acctPassword(), role: acctRole() });
-      setAcctUsername(''); setAcctPassword(''); setAcctRole('member'); setAcctFormOpen(false);
+      const r = await api.accounts.create({ username: acctUsername().trim(), email: acctEmail().trim(), role: acctRole() });
+      setAcctUsername(''); setAcctEmail(''); setAcctRole('member'); setAcctFormOpen(false);
       await refetchAccounts();
-      showToast('Account created — hand the password to the user; it is not shown again', 'success');
+      handleInvite(r.account.username ?? '', r.invite);
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setAcctBusy(false);
+    }
+  }
+  async function sendInvite(a: import('../lib/api.js').OwnerAccount) {
+    setAcctBusy(true);
+    try {
+      const r = await api.accounts.invite(a.id);
+      handleInvite(a.username ?? '', r.invite);
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
@@ -424,18 +444,6 @@ export function Settings() {
     } catch (err) {
       showToast((err as Error).message, 'error');
       await refetchAccounts(); // restore the select to the server's value
-    }
-  }
-  async function resetAccountPassword(id: string) {
-    setAcctBusy(true);
-    try {
-      await api.accounts.resetPassword(id, resetPw());
-      setResetFor(null); setResetPw('');
-      showToast('Password reset — hand it to the user; it is not shown again', 'success');
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setAcctBusy(false);
     }
   }
   async function deleteAccount(a: import('../lib/api.js').OwnerAccount) {
@@ -1555,9 +1563,9 @@ export function Settings() {
                         value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
                     </label>
                     <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Initial password <span class="opacity-70">· min 8 chars</span></span>
-                      <input class="input py-1 text-sm" type="password" autocomplete="new-password"
-                        value={acctPassword()} onInput={(e) => setAcctPassword(e.currentTarget.value)} />
+                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
+                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
+                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
                     </label>
                     <label class="flex flex-col gap-1">
                       <span class="text-[11px] text-muted-foreground">Role</span>
@@ -1570,16 +1578,30 @@ export function Settings() {
                     </label>
                   </div>
                   <p class="text-[11px] text-muted-foreground">
-                    Hand the password to the user — it is shown only here, never again. They can change it after signing in.
+                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
                   </p>
                   <div class="flex items-center gap-2 justify-end">
                     <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
                     <button type="button" onClick={createAccount}
-                      disabled={acctBusy() || !acctUsername().trim() || acctPassword().length < 8}
+                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
                       class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create account'}
+                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
                     </button>
                   </div>
+                </div>
+              </Show>
+
+              {/* SMTP-free fallback: the server handed the link back — shown once. */}
+              <Show when={inviteLink()}>
+                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-foreground font-medium">
+                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
+                    </span>
+                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                  </div>
+                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
+                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
                 </div>
               </Show>
 
@@ -1592,8 +1614,11 @@ export function Settings() {
                           <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
                           <span class="text-[11px] text-muted-foreground ml-2">
                             {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
-                            {!a.hasPassword ? ' · signs in via CI-Portal' : ''}
+                            {!a.username ? ' · signs in via CI-Portal' : ''}
                           </span>
+                          <Show when={a.username && !a.hasPassword}>
+                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-full bg-amber-500/15 text-amber-400">invite pending</span>
+                          </Show>
                         </div>
                         <div class="flex items-center gap-1.5 shrink-0">
                           <select
@@ -1607,11 +1632,13 @@ export function Settings() {
                             <option value="member">Member</option>
                             <option value="viewer">Viewer</option>
                           </select>
-                          <Show when={a.hasPassword && a.username}>
-                            <button type="button" class="btn-ghost text-xs px-2 py-1"
-                              title="Set a new password (signs them out everywhere)"
-                              onClick={() => { setResetFor(resetFor() === a.id ? null : a.id); setResetPw(''); }}>
-                              <KeyRound size={12} /> Reset
+                          <Show when={a.username}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
+                              title={a.hasPassword
+                                ? 'Email them a single-use password-reset link'
+                                : 'Send the set-password invite again (replaces the previous link)'}
+                              onClick={() => sendInvite(a)}>
+                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
                             </button>
                           </Show>
                           <Show when={a.id !== me()!.ownerId}>
@@ -1623,19 +1650,6 @@ export function Settings() {
                           </Show>
                         </div>
                       </div>
-                      <Show when={resetFor() === a.id}>
-                        <div class="flex items-center gap-2">
-                          <input class="input py-1 text-sm flex-1" type="password" autocomplete="new-password"
-                            placeholder="New password (min 8 chars) — shown only here"
-                            value={resetPw()} onInput={(e) => setResetPw(e.currentTarget.value)} />
-                          <button type="button" onClick={() => resetAccountPassword(a.id)}
-                            disabled={acctBusy() || resetPw().length < 8}
-                            class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                            {acctBusy() ? 'Saving…' : 'Set password'}
-                          </button>
-                          <button type="button" onClick={() => setResetFor(null)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
-                        </div>
-                      </Show>
                     </div>
                   )}
                 </For>

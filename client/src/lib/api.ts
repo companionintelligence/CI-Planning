@@ -491,17 +491,22 @@ export const api = {
   },
 
   // Phase AG — operator account management (operator-gated; 403s for everyone else).
+  // Onboarding is by email invite: create mints a password-less account and sends a
+  // set-your-password link; with no SMTP the link comes back for the operator to
+  // forward. `invite` (re)sends it — a fresh invite or a reset link, by state.
   accounts: {
     list: () => request<{ accounts: OwnerAccount[] }>('GET', '/accounts'),
-    create: (body: { username: string; password: string; name?: string; email?: string; role?: OwnerRole }) =>
-      request<{ account: OwnerAccount }>('POST', '/accounts', body),
-    update: (id: string, body: { role?: OwnerRole; name?: string }) =>
+    create: (body: { username: string; email: string; name?: string; role?: OwnerRole }) =>
+      request<{ account: OwnerAccount; invite: InviteResult }>('POST', '/accounts', body),
+    invite: (id: string) => request<{ ok: boolean; invite: InviteResult }>('POST', `/accounts/${id}/invite`),
+    update: (id: string, body: { role?: OwnerRole; name?: string; email?: string | null }) =>
       request<{ account: OwnerAccount }>('PATCH', `/accounts/${id}`, body),
-    resetPassword: (id: string, password: string) =>
-      request<{ ok: boolean }>('POST', `/accounts/${id}/reset-password`, { password }),
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/accounts/${id}`),
   },
 };
+
+/** How an account invite went out: emailed, or handed back as a link (no SMTP). */
+export type InviteResult = { delivery: 'email'; to: string } | { delivery: 'link'; link: string };
 
 export interface GoogleConfigState {
   source: 'env' | 'app' | 'off';

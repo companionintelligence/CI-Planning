@@ -166,26 +166,68 @@ describe('AG — /api/accounts CRUD (operator-gated)', () => {
     opCookie = await login('op');
   });
 
-  it('creates a member account the new user can immediately log in with (member-scoped)', async () => {
+  it('invite onboarding end-to-end: create → set-password link → user sets own password → member-scoped login', async () => {
     const r = await req('/api/accounts', opCookie, {
       method: 'POST',
-      json: { username: 'newbie', password: 'first-password-1', name: 'New Person' },
+      json: { username: 'newbie', email: 'newbie@test.local', name: 'New Person' },
     });
     expect(r.status).toBe(201);
-    expect(r.body.account).toMatchObject({ username: 'newbie', name: 'New Person', role: 'member', hasPassword: true });
+    // Password-less until the invite is accepted; no SMTP in tests → the link
+    // comes back to the operator (the honest out-of-band fallback).
+    expect(r.body.account).toMatchObject({ username: 'newbie', name: 'New Person', role: 'member', hasPassword: false });
+    expect(r.body.invite.delivery).toBe('link');
 
-    const cookie = await login('newbie', 'first-password-1');
+    // An invited account cannot log in yet (no password ≙ decoy verify).
+    const early = await fetch(`${srv.url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'newbie', password: 'anything-at-all' }),
+    });
+    expect(early.status).toBe(401);
+
+    // The user follows the link and sets their OWN password (V reset flow).
+    const token = new URL(r.body.invite.link).searchParams.get('token')!;
+    const set = await req('/api/auth/reset', '', { method: 'POST', json: { token, newPassword: 'my-own-password-1' } });
+    expect(set.status).toBe(200);
+
+    const cookie = await login('newbie', 'my-own-password-1');
     expect((await req('/api/tasks', cookie)).status).toBe(200);
     expect((await req('/api/accounts', cookie)).status).toBe(403); // member, not operator
+    expect((await req('/api/accounts', opCookie)).body.accounts.find((a: any) => a.username === 'newbie').hasPassword).toBe(true);
   });
 
-  it('validates input: missing username 400, short password 400, bogus role 400, duplicate username 409', async () => {
+  it('validates input: missing username 400, missing/bogus email 400, bogus role 400, duplicate username 409', async () => {
     const post = (json: unknown) => req('/api/accounts', opCookie, { method: 'POST', json });
-    expect((await post({ password: 'long-enough-pw' })).status).toBe(400);
-    expect((await post({ username: 'x', password: 'short' })).status).toBe(400);
-    expect((await post({ username: 'x', password: 'long-enough-pw', role: 'admin' })).status).toBe(400);
-    expect((await post({ username: 'dup', password: 'long-enough-pw' })).status).toBe(201);
-    expect((await post({ username: 'dup', password: 'long-enough-pw' })).status).toBe(409);
+    expect((await post({ email: 'a@b.c' })).status).toBe(400);
+    expect((await post({ username: 'x' })).status).toBe(400);
+    expect((await post({ username: 'x', email: 'not-an-email' })).status).toBe(400);
+    expect((await post({ username: 'x', email: 'a@b.c', role: 'admin' })).status).toBe(400);
+    expect((await post({ username: 'dup', email: 'a@b.c' })).status).toBe(201);
+    expect((await post({ username: 'dup', email: 'a@b.c' })).status).toBe(409);
+  });
+
+  it('re-sending an invite supersedes the previous link; guards: OIDC-only 409, no-email 409, unknown 404', async () => {
+    const created = await req('/api/accounts', opCookie, {
+      method: 'POST',
+      json: { username: 'slow', email: 'slow@test.local' },
+    });
+    const id = created.body.account.id;
+    const firstToken = new URL(created.body.invite.link).searchParams.get('token')!;
+
+    const again = await req(`/api/accounts/${id}/invite`, opCookie, { method: 'POST' });
+    expect(again.status).toBe(200);
+    const secondToken = new URL(again.body.invite.link).searchParams.get('token')!;
+    expect(secondToken).not.toBe(firstToken);
+
+    // Only the newest link works (issueResetToken drops the owner's older tokens).
+    expect((await req('/api/auth/reset', '', { method: 'POST', json: { token: firstToken, newPassword: 'long-enough-pw' } })).status).toBe(400);
+    expect((await req('/api/auth/reset', '', { method: 'POST', json: { token: secondToken, newPassword: 'long-enough-pw' } })).status).toBe(200);
+
+    const oidcId = provisionOwner({ name: 'portal', externalSubject: 'sub-inv' });
+    expect((await req(`/api/accounts/${oidcId}/invite`, opCookie, { method: 'POST' })).status).toBe(409);
+    const noMailId = provisionOwner({ name: 'nomail', username: 'nomail' });
+    expect((await req(`/api/accounts/${noMailId}/invite`, opCookie, { method: 'POST' })).status).toBe(409);
+    expect((await req(`/api/accounts/00000000-0000-7000-8000-00000000dead/invite`, opCookie, { method: 'POST' })).status).toBe(404);
   });
 
   it('changing a role bumps the target session epoch: old cookie dies, next login has the new scopes', async () => {
@@ -221,16 +263,21 @@ describe('AG — /api/accounts CRUD (operator-gated)', () => {
     expect((await req(`/api/accounts/${opId}`, opCookie, { method: 'PATCH', json: {} })).status).toBe(400);
   });
 
-  it('reset-password sets a new hash, signs the target out everywhere, and refuses OIDC-only accounts', async () => {
-    const memId = await seedUser('mem', 'member');
+  it('an operator-sent reset link lets an active user replace a lost password and signs them out everywhere', async () => {
+    // seedUser sets no email — give mem one so the link has a destination.
+    const memId = provisionOwner({ name: 'mem', username: 'mem', email: 'mem@test.local', passwordHash: await hashPassword(PW), role: 'member' });
     const oldCookie = await login('mem');
 
-    const short = await req(`/api/accounts/${memId}/reset-password`, opCookie, { method: 'POST', json: { password: 'short' } });
-    expect(short.status).toBe(400);
-
-    const r = await req(`/api/accounts/${memId}/reset-password`, opCookie, { method: 'POST', json: { password: 'brand-new-pw-9' } });
+    const r = await req(`/api/accounts/${memId}/invite`, opCookie, { method: 'POST' });
     expect(r.status).toBe(200);
-    expect((await req('/api/tasks', oldCookie)).status).toBe(401); // signed out everywhere
+    expect(r.body.invite.delivery).toBe('link'); // no SMTP in tests
+    // Sending the link alone does NOT sign the user out (they may not use it)…
+    expect((await req('/api/tasks', oldCookie)).status).toBe(200);
+
+    // …but completing it does (the V reset flow bumps the session epoch).
+    const token = new URL(r.body.invite.link).searchParams.get('token')!;
+    expect((await req('/api/auth/reset', '', { method: 'POST', json: { token, newPassword: 'brand-new-pw-9' } })).status).toBe(200);
+    expect((await req('/api/tasks', oldCookie)).status).toBe(401);
 
     // Old password no longer works; the new one does.
     const bad = await fetch(`${srv.url}/api/auth/login`, {
@@ -240,9 +287,23 @@ describe('AG — /api/accounts CRUD (operator-gated)', () => {
     });
     expect(bad.status).toBe(401);
     expect((await req('/api/tasks', await login('mem', 'brand-new-pw-9'))).status).toBe(200);
+  });
 
-    const oidcId = provisionOwner({ name: 'portal', externalSubject: 'sub-p' });
-    expect((await req(`/api/accounts/${oidcId}/reset-password`, opCookie, { method: 'POST', json: { password: 'brand-new-pw-9' } })).status).toBe(409);
+  it('PATCH can fix an email (so a mistyped invite can be re-sent) and clear it', async () => {
+    const created = await req('/api/accounts', opCookie, {
+      method: 'POST',
+      json: { username: 'typo', email: 'wrong@test.local' },
+    });
+    const id = created.body.account.id;
+    const fixed = await req(`/api/accounts/${id}`, opCookie, { method: 'PATCH', json: { email: 'right@test.local' } });
+    expect(fixed.status).toBe(200);
+    expect(fixed.body.account.email).toBe('right@test.local');
+    expect((await req(`/api/accounts/${id}`, opCookie, { method: 'PATCH', json: { email: 'nope' } })).status).toBe(400);
+    const cleared = await req(`/api/accounts/${id}`, opCookie, { method: 'PATCH', json: { email: null } });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.account.email).toBeNull();
+    // No email on file again → invite refuses honestly.
+    expect((await req(`/api/accounts/${id}/invite`, opCookie, { method: 'POST' })).status).toBe(409);
   });
 
   it('delete guards: yourself 409, the last operator 409, unknown 404; a member deletes cleanly', async () => {

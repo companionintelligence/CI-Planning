@@ -25,11 +25,14 @@ function hashToken(raw: string): string {
  * only its hash is stored. Any earlier outstanding tokens for this owner are dropped
  * first, so a fresh request always supersedes stale ones. Opportunistically prunes
  * globally-expired rows (they're never consumed, so they must not accumulate).
+ *
+ * `ttlMs` defaults to the reset lifetime (60 min); Phase AG account invites pass a
+ * longer one — an invite waits in an inbox, a reset is used within minutes.
  */
-export function issueResetToken(ownerId: string): string {
+export function issueResetToken(ownerId: string, ttlMs: number = config.auth.resetTokenTtlMs): string {
   const raw = randomBytes(32).toString('base64url');
   const now = Date.now();
-  const expiresAt = new Date(now + config.auth.resetTokenTtlMs).toISOString();
+  const expiresAt = new Date(now + ttlMs).toISOString();
 
   const tx = sqlite.transaction(() => {
     sqlite.prepare(`DELETE FROM password_reset_tokens WHERE expires_at <= ?`).run(new Date(now).toISOString());
