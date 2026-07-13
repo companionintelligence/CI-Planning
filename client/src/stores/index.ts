@@ -114,6 +114,11 @@ export function togglePlannerTop() {
 export function togglePlannerBottom() {
   setPlannerAxisState((s) => ({ ...s, bottomExpanded: !s.bottomExpanded }));
 }
+/** Set the planner's configurable night-collapse boundaries (minutes-of-day; the
+ *  Settings selects call this). Persistence rides the view_prefs effect below. */
+export function setPlannerCollapseBounds(topEndMin: number, bottomStartMin: number) {
+  setPlannerAxisState((s) => ({ ...s, topEndMin, bottomStartMin }));
+}
 
 /** Toggle one chip on an axis (deselect if selected, re-select if deselected). */
 export function toggleAxisTag(axis: TagAxis, name: string) {
@@ -282,6 +287,19 @@ export function isRoutineTask(taskId?: string): boolean {
 export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
   api.prefs.get().then((r) => r.prefs)
 );
+
+// ── Appearance: direction/routine background textures (view_prefs.appearance) ──
+// Reactive getter — absent/malformed blob = ON (the pre-toggle behavior). The
+// setter writes straight through (merge-over-existing so calendar/planner blobs
+// survive) and refetches so every card re-renders from the server truth.
+export const texturesEnabled = () => prefs()?.view_prefs?.appearance?.direction_textures !== false;
+export function setTexturesEnabled(v: boolean) {
+  const existing = prefs()?.view_prefs ?? {};
+  const appearance = { ...(existing.appearance ?? {}), direction_textures: v };
+  void api.prefs.update({ view_prefs: { ...existing, appearance } })
+    .then(() => refetchPrefs())
+    .catch((err) => showToast((err as Error).message, 'error'));
+}
 
 // ── Timezone auto-adopt (FTUE) ───────────────────────────────────────────────
 // A Docker install seeds scheduling_prefs.timezone from the container clock — UTC —

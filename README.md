@@ -99,7 +99,7 @@ retired. Shown at its empty state (the seed creates no objectives); the
 ```mermaid
 graph TB
     subgraph Browser["Browser (SolidJS PWA)"]
-        UI[Seven Views<br/>Today · Calendar · Tasks incl. Objectives tab<br/>Routines · Tags · Jobs · Settings]
+        UI[Six Views<br/>Today · Calendar · Tasks incl. Objectives + Routines tabs<br/>Tags · Jobs · Settings]
         Store[Reactive Stores<br/>createResource / createSignal]
         SW[Service Worker<br/>Web Push + installable PWA]
         BN[Reminders<br/>in-app toast + Web Push]
@@ -110,8 +110,8 @@ graph TB
         GQL[GraphQL /api/graphql<br/>Apollo, alongside REST — Phase W]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>18 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0123 on boot]
+        Cron[Croner Jobs<br/>17 scheduled jobs]
+        Migrate[Migration runner<br/>0001 → 0126 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -182,7 +182,7 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0123_drop_auto_mode`) produce the following tables:
+Migrations (current head: `0126_default_categories`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
@@ -193,7 +193,7 @@ Migrations (current head: `0123_drop_auto_mode`) produce the following tables:
 | `block_templates` | Reusable Time-Block templates with saved task lists |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` |
 | `possible_tasks` | Staged AI-proposed items — auto-promoted into tasks at the end of each ingestion run (kept as the audit/dedup trail, Phase AF) |
-| `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community) or `intention` |
+| `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community), `intention`, or `category` (base: Personal / Professional / Social, mig 0126) |
 | `tag_directions` | Many-to-many: intention tags grouped under direction tags (0043 briefly renamed this to `tag_patterns`; reverted in 0105) |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3); carries `created_at` (`NOT NULL DEFAULT CURRENT_TIMESTAMP`, table rebuilt in 0110) backing GraphQL `EntityTagType.taggedAt` |
 | `possible_task_tags` | Tags proposed alongside a staged suggestion |
@@ -277,7 +277,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 
 ## What you get
 
-- **Seven views** — Today · Calendar · Tasks (with the Objectives tab and a New Today section) · Routines · Tags · Jobs · Settings
+- **Six routed views** — Today · Calendar · Tasks (hosts the Objectives + Routines tabs and a New Today section) · Tags · Jobs · Settings. The Inbox surface was retired in Phase AF (`possible_tasks` auto-promote); `/inbox`, `/objectives`, `/routines`, `/patterns` redirect into their host.
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
   hours, pattern-block windows, locked meetings, and break preferences. Placement is always
@@ -421,7 +421,7 @@ consistent snapshot.
   replan_suggestions, audit_log, sync_events, reflections, objectives,
   objective_tasks, estimate_calibration, connection_tokens, external_events,
   copy_history
-- All nine SolidJS views, with full task CRUD (tags, notes, priorities, due
+- All six routed SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
   and break preferences; per-pattern auto-fill gating
@@ -443,7 +443,7 @@ consistent snapshot.
   grooming/dedupe, place-patterns, auto-schedule, and fire_reminders
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
-- Tag taxonomy: pattern (direction) / intention hierarchy with many-to-many grouping
+- Tag taxonomy: direction / intention hierarchy with many-to-many grouping
 - **Objectives** — life-planning hierarchy (Goal → Project → Objective) with task linkage, progress roll-up, and the `advance_objectives` job that auto-stages tasks for active objectives into the flight plan
 - **Reflections / FOCUS card** — today focus + up to 3 weekly goals per ISO week, each optionally linked (`source_kind`/`source_ref`) to a Task or Objective, with category color stripes and done/undone toggling; a **Today's Brief** pop-up carries the AI/deterministic prose + capacity + top tasks that used to be the standalone Morning Briefing section
 - **Day note + five-star day** (Phase O) — one note per day (`reflections.kind='day_note'`, PK-enforced uniqueness); `computeStars()` derives 5 booleans (intention/habits/tasks/bonus/reflection) with zero manual toggles, cached in `daily_recap` and frozen permanently by the nightly `freeze_stars` job; `GET /api/stars` serves the frozen row over a live recompute
@@ -697,6 +697,12 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
+| GET/POST/PATCH/DELETE | `/api/accounts` · POST `/api/accounts/:id/invite` | Multi-tenant account management — **operator-only** (Phase AG); invite creates a password-less owner + reset-token link |
+| PATCH | `/api/owner/profile` · `/api/owner/backup-email` | Edit the signed-in owner's display name / backup email (Phase ship-readiness) |
+| GET/PUT | `/api/google-config` | Read/save the in-app Google OAuth client (admin; flips connector to live at runtime, mig 0124) |
+| GET/POST/PATCH/DELETE | `/api/day-types` · `/resolve/:date` · `/week-map` · `/assignments/:date` | Day-type CRUD + per-date resolution |
+| GET/PUT | `/api/category-prefs` | Base **category** tag prefs (Personal / Professional / Social) |
+| GET | `/api/health` | Liveness probe (`{"ok":true}`) |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
 | POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, done) |
 

@@ -9,8 +9,8 @@ import {
   yOf as axisYOf,
   minAt as axisMinAt,
   visibleExtent,
-  TOP_COLLAPSE_END,
-  BOTTOM_COLLAPSE_START,
+  topCollapseEnd,
+  bottomCollapseStart,
 } from '../lib/day-axis.js';
 import { HANDLE_PX, type GestureMode, type Neighbour, isImmovable, resolveGesture, commitDrag, clampLiveDelta, isAltFreeDrag, neighboursForDrag } from '../lib/drag.js';
 import { resolveGroup, containerAt, clampGroupDelta } from '../lib/group-move.js';
@@ -19,7 +19,7 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled } from '../stores/index.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
@@ -232,10 +232,18 @@ function useBlockDrag(opts: {
 // ── Time gutter (hour labels) ─────────────────────────────────────────────────
 // Only hours in an EXPANDED region (plus the boundary hours 07:00 / 21:00, which sit
 // on an expanded edge) draw a label; a collapsed region shows only its expander bar.
+/** Compact hour label for the expander bars — 420 → "7am", 1260 → "9pm", 0/1440 → "12am". */
+function fmtHourMin(min: number): string {
+  const h = Math.floor(((min % 1440) + 1440) % 1440 / 60);
+  const ampm = h < 12 ? 'am' : 'pm';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}${ampm}`;
+}
+
 function visibleHours(state: AxisState): number[] {
   return Array.from({ length: 24 }, (_, h) => h).filter((h) => {
     const m = h * 60;
-    if (m === TOP_COLLAPSE_END || m === BOTTOM_COLLAPSE_START) return true;
+    if (m === topCollapseEnd(state) || m === bottomCollapseStart(state)) return true;
     return visibleExtent(m, m + 1, state) !== null;
   });
 }
@@ -516,8 +524,9 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         if (locked()) { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setActiveBlock(b().id); }
       }}
     >
-      {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper. */}
-      <Show when={pat()}>
+      {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper.
+          Gated on the Settings "Direction textures" appearance toggle. */}
+      <Show when={texturesEnabled() && pat()}>
         {/* AF-11: routines no longer author a tag — seed the texture from the routine's
             first DERIVED direction (pattern.tag stays as a legacy fallback). */}
         {(p) => <div style={textureStyle(p().type?.icon_shape, p().pattern.directions?.[0] ?? p().pattern.tag ?? tag() ?? null)} />}
@@ -1010,9 +1019,10 @@ export function Planner() {
               {(p) => <PlannerChip placed={p} day={day()} state={axisState} gridY={gridY} isNextUp={p.block.id === nextUp()?.id} nested={false} updateMode={updateMode()} group={groupCtx} />}
             </For>
             <Show when={isToday()}><NowLine day={day()} now={nowISO()} state={axisState} /></Show>
-            {/* Expander bars over the two night regions (grid column only). */}
-            <ExpanderBar region="top" label="12am – 7am" state={axisState} onToggle={togglePlannerTop} />
-            <ExpanderBar region="bottom" label="9pm – 12am" state={axisState} onToggle={togglePlannerBottom} />
+            {/* Expander bars over the two night regions (grid column only). Labels track
+                the configurable collapse boundaries (Settings → Planner display). */}
+            <ExpanderBar region="top" label={`12am – ${fmtHourMin(topCollapseEnd(axisState()))}`} state={axisState} onToggle={togglePlannerTop} />
+            <ExpanderBar region="bottom" label={`${fmtHourMin(bottomCollapseStart(axisState()))} – 12am`} state={axisState} onToggle={togglePlannerBottom} />
             {/* Expanded entity card — overlays the grid at the selected entity's slot. */}
             <PlannerEntityCard day={day()} state={axisState} onRequestDeletePlan={requestDeletePlan} />
             <Show when={chips().length === 0 && containers().length === 0}>

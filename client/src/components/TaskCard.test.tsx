@@ -45,6 +45,7 @@ vi.mock('../stores/index.js', () => ({
   isRoutineTask: () => false,
   flightPlanTaskIds: () => new Set<string>(),
   scheduledByTaskId: () => new Set<string>(),
+  texturesEnabled: () => true,
 }));
 
 vi.mock('@solidjs/router', () => ({ useNavigate: () => () => {} }));

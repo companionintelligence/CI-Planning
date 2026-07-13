@@ -99,8 +99,11 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   **direction** (top-level category — brand-set **Home / Work / Community**,
   `is_base` & undeletable, plus user-added; canonical DB value: `tags.kind = 'direction'`) ·
   **intention** (every other tag, grouped under one or more directions via the
-  `tag_directions` junction table; ungrouped = *Unsorted*). A tag may be **muted**
-  (a per-tag state, not a noun). directions/intentions are Tag sub-levels,
+  `tag_directions` junction table; ungrouped = *Unsorted*) ·
+  **category** (a third `tags.kind` axis; base set **Personal / Professional / Social**
+  seeded `is_base` per owner — mig 0126 / owner ruling 2026-07-12; exposed via
+  `/api/category-prefs`, grouped through `tag_categories`). A tag may be **muted**
+  (a per-tag state, not a noun). directions/intentions/categories are Tag sub-levels,
   **not** new nouns.
 
   > **Naming note (Phase Z / W2):** three unrelated concepts once all read "pattern"; they are
