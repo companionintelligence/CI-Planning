@@ -13,8 +13,9 @@ import { normalizeRole, type OwnerRole } from './auth/scopes.js';
  *
  *   - `scheduling_prefs`   — cloned from the sentinel's baseline row (schema-drift-
  *                            proof via PRAGMA table_info, same as test createOwner).
- *   - base `tags`          — home/work/community (kind='direction') + family/social/me
- *                            (kind='category'), is_base=1 (mirrors 0036 + 0069).
+ *   - base `tags`          — home/work/community (kind='direction') + personal/
+ *                            professional/social (kind='category'), is_base=1
+ *                            (mirrors 0036 + 0069-as-amended-by-0126).
  *                            Without direction tags, Auto silently places nothing.
  *   - `pattern_blocks`     — default availability windows per direction × day type
  *                            (mirrors 0037's DEFAULTS). Auto's direction-window pass
@@ -63,11 +64,11 @@ const DEFAULT_PATTERN_BLOCKS: Record<string, Record<string, readonly (readonly [
     community: [['08:00', '22:00']],
   },
 };
-// name → 0069's per-owner category_prefs color token.
+// name → per-owner category tag_prefs color token (0126's base set).
 const BASE_CATEGORY_TAGS: readonly (readonly [string, string])[] = [
-  ['family', 'chart-1'],
+  ['personal', 'chart-5'],
+  ['professional', 'chart-2'],
   ['social', 'chart-3'],
-  ['me', 'chart-5'],
 ];
 // name → icon_shape (0013); Community additionally carries catch_all=1 (0054).
 const BUILTIN_PATTERN_TYPES: readonly (readonly [string, string, number])[] = [

@@ -7,7 +7,7 @@
  */
 import { api, type TaskInput, type Tag } from './api.js';
 import {
-  tags, patternTypes, patternPrefs,
+  tags, patterns, patternTypes, patternPrefs,
   refetchTasks, refetchBlocks, refetchConcepts, refetchPatterns, refetchTags,
   type ElementKind,
 } from '../stores/index.js';
@@ -158,6 +158,8 @@ export interface ElementForm {
   durationMin?: number;
   someday?: boolean;          // time-block as a someday goal
   goalDay?: string;           // YYYY-MM-DD (someday)
+  locked?: boolean;           // time-block: is_locked (user-fixed; reflow won't move it)
+  allDay?: boolean;           // time-block: all-day lane (scheduled, no start time)
   recurrenceRule?: string | null;  // time-block RRULE ('' / null clears)
   categoryId?: string;             // time-block: the Time Block Category (0069); direction implied
   // time-block membership (scheduled only): existing tasks/habits to scatter inside,
@@ -175,6 +177,10 @@ export interface ElementForm {
   dependsOn?: string[];
   editScope?: 'instance' | 'series';  // recurring-task edits
   parentId?: string;          // subtask parent
+  // Routine membership (modal redesign): single-select "Routine" chip. Applied
+  // after the task exists (works for add + edit); undefined = leave membership alone.
+  routineAddId?: string;
+  routineRemoveId?: string;
 }
 
 /** Create intention tags that don't exist yet, attached to the chosen primary so
@@ -241,13 +247,28 @@ export async function saveElement(
     };
     if (kind === 'habit') body.is_habit = true;
     if (rule) body.recurrence_rule = rule;
+    let taskId = editId;
     if (mode === 'add') {
-      await api.tasks.create(body);
+      taskId = (await api.tasks.create(body)).task.id;
     } else if (form.editScope === 'series') {
       // Series edit → applies to the template; a rule change regenerates the window.
       await api.tasks.update(editId!, { ...body, recurrence_rule: rule ?? null, is_habit: kind === 'habit' }, 'series');
     } else {
       await api.tasks.update(editId!, body);
+    }
+    // Routine chip — membership is a patterns.task_ids replacement, so read the
+    // current list from the store and add/remove this task. Remove first so a
+    // switch (old → new routine) never leaves the task in both.
+    if (taskId && (form.routineAddId || form.routineRemoveId)) {
+      const pats = patterns() ?? [];
+      const rm = pats.find((p) => p.id === form.routineRemoveId);
+      if (rm?.task_ids.includes(taskId)) {
+        await api.patterns.update(rm.id, { task_ids: rm.task_ids.filter((t) => t !== taskId) });
+      }
+      const add = pats.find((p) => p.id === form.routineAddId);
+      if (add && !add.task_ids.includes(taskId)) {
+        await api.patterns.update(add.id, { task_ids: [...add.task_ids, taskId] });
+      }
     }
     refetchTasks(); refetchTags(); refetchPatterns();
     if (placeOnSave) refetchBlocks(); // the placed start-anchored block shows on the Planner
@@ -305,11 +326,16 @@ export async function saveElement(
       ...extra,
     };
   } else {
-    const start = isoAt(form.day || localISODate(), form.start || nextHalfHour());
+    // All-day blocks pin to the day's midnight (the all_day flag drives the header
+    // lane); timed blocks anchor at the chosen start.
+    const start = form.allDay
+      ? isoAtMidnight(form.day || localISODate())
+      : isoAt(form.day || localISODate(), form.start || nextHalfHour());
     body = {
       title: form.title.trim() || 'Time Block', block_kind: 'timeblock', block_type: 'scheduled',
       tag: tagOut, note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
+      is_locked: !!form.locked, all_day: !!form.allDay,
       ...(form.recurrenceRule !== undefined ? { recurrence_rule: form.recurrenceRule } : {}),
       ...categoryOut,
       ...extra,

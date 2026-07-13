@@ -6,8 +6,6 @@ import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib
 import { directionColorForTask, directionShapeForTask, colorVar } from '../lib/pattern-meta.js';
 import { textureStyle } from '../lib/textures.js';
 import { ShapeIcon } from './ShapeIcon.js';
-import { EightPointStar } from './EightPointStar.js';
-import { useNavigate } from '@solidjs/router';
 
 const statusClass: Record<string, string> = {
   open:      'text-slate-200',
@@ -157,7 +155,7 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
   }
 
   return (
-    <div class="absolute z-20 right-0 top-full mt-1 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
+    <div class="absolute z-20 left-full top-0 ml-1 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
       <Show when={!objectivesTree.loading} fallback={<p class="px-3 py-1.5 text-xs text-muted-foreground animate-pulse2">Loading objectives…</p>}>
         <Show when={leafCount() > PICKER_SEARCH_THRESHOLD}>
           <div class="px-2 pb-1">
@@ -213,7 +211,7 @@ interface Props {
 }
 
 export function TaskCard(props: Props) {
-  const navigate = useNavigate();
+
   const depth = () => props.depth ?? 0;
   const p = () => Math.min(Math.max(props.task.priority, 1), 5);
   const [showSubs, setShowSubs] = createSignal(false);
@@ -302,6 +300,9 @@ export function TaskCard(props: Props) {
 
   // AF-6: assign-to-objective menu open state (menu component fetches lazily).
   const [objectiveMenu, setObjectiveMenu] = createSignal(false);
+  // Membership for the sorting rail's accent state (objective_id fallback covers
+  // payloads from before objective_ids shipped).
+  const inObjective = () => !!(props.task.objective_ids?.length || props.task.objective_id);
 
   // Add-to-routine: pick an existing Routine-type pattern, or create one with this task.
   const [routineMenu, setRoutineMenu] = createSignal(false);
@@ -366,7 +367,10 @@ export function TaskCard(props: Props) {
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
-        class="card group flex gap-3 relative isolate"
+        // 2-row grid: row 1 is the title line (toggle · title · right rail spans both
+        // rows), row 2 is everything below it — so the sorting rail's top icon lines
+        // up with the description/label text no matter how many lines the title wraps.
+        class="card group grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 relative isolate"
         // While a dropdown is open, lift this card above its siblings: each card is
         // `isolate`, so a z-20 popover inside it would otherwise paint UNDER later
         // sibling cards (DOM order wins at equal z) and they'd swallow menu clicks.
@@ -403,11 +407,11 @@ export function TaskCard(props: Props) {
           )}
         </Show>
 
-        {/* Left gutter: the merged direction-icon / done toggle — a SQUARE button showing
-            the task's direction shape; clicking it checks the task off (filled + check when
-            done). Habits keep the non-clickable Repeat marker (done on the planner). The
-            8-pointed objective star stacks below. Actions live in the right rail. */}
-        <div class="flex flex-col items-center gap-1 flex-shrink-0">
+        {/* Left gutter, row 1: the merged direction-icon / done toggle — a SQUARE button
+            showing the task's direction shape; clicking it checks the task off (filled +
+            check when done). Habits keep the non-clickable Repeat marker (done on the
+            planner). The sorting rail sits below in row 2. */}
+        <div class="col-start-1 row-start-1 flex justify-center">
           <Show
             when={!props.task.is_habit}
             fallback={
@@ -437,21 +441,71 @@ export function TaskCard(props: Props) {
               </Show>
             </button>
           </Show>
-          <Show when={props.task.objective_id}>
-            <button
-              onClick={() => navigate(`/tasks?tab=objectives&focus=${props.task.objective_id}`)}
-              class="btn-icon text-primary/70 hover:text-primary p-0"
-              title="Part of an objective — view it"
-            >
-              <EightPointStar size={13} />
-            </button>
-          </Show>
         </div>
 
-        {/* Content — title, routine label, description, tags, streak; all flush-left now
-            that the direction icon lives in the toggle (no leading status dot). */}
-        <div class="flex-1 min-w-0">
-          <div class="flex items-start gap-2">
+        {/* Left gutter, row 2: the sorting rail — the three group memberships stacked
+            under the check-off. Accent = the task is in that group; dull = it isn't.
+            pt-1 mirrors the description's mt-1 so the top icon's top edge lands on
+            the text line below the title. */}
+        <div class="col-start-1 row-start-2 pt-1 flex flex-col items-center gap-1.5">
+          <div class="relative">
+            <button
+              onClick={() => { setRoutineMenu(false); setObjectiveMenu((v) => !v); }}
+              class="flex p-0 transition-colors"
+              classList={{
+                'text-primary': inObjective(),
+                'text-muted-foreground/40 hover:text-foreground': !inObjective(),
+              }}
+              title={inObjective() ? 'In an objective — manage' : 'Add to objective'}
+            >
+              <Target size={13} />
+            </button>
+            <Show when={objectiveMenu()}>
+              <ObjectiveMenu task={props.task} close={() => setObjectiveMenu(false)} />
+            </Show>
+          </div>
+          <div class="relative">
+            <button
+              onClick={() => { setObjectiveMenu(false); setRoutineMenu((v) => !v); }}
+              class="flex p-0 transition-colors"
+              classList={{
+                'text-primary': isRoutineTask(props.task.id),
+                'text-muted-foreground/40 hover:text-foreground': !isRoutineTask(props.task.id),
+              }}
+              title={isRoutineTask(props.task.id) ? 'In a routine' : 'Add to a routine'}
+            >
+              <Shapes size={13} />
+            </button>
+            <Show when={routineMenu()}>
+              <div class="absolute z-20 left-full top-0 ml-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
+                <For each={routines()}>
+                  {(r) => (
+                    <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
+                  )}
+                </For>
+                <Show when={routines().length === 0}>
+                  <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
+                </Show>
+                <button onClick={newRoutineWithTask} class="w-full text-left px-3 py-1.5 text-sm text-primary hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
+              </div>
+            </Show>
+          </div>
+          <button
+            onClick={sendToFlightPlan}
+            class="flex p-0 transition-colors"
+            classList={{
+              'text-primary': inFlightPlan(),
+              'text-muted-foreground/40 hover:text-foreground': !inFlightPlan(),
+            }}
+            title={inFlightPlan() ? 'In the Flight-plan' : 'Send to Flight-plan'}
+          >
+            <Rocket size={13} />
+          </button>
+        </div>
+
+        {/* Content, row 1 — the title line (row 1's height IS this line, which is what
+            keeps the sorting rail aligned to whatever renders below the title). */}
+        <div class="col-start-2 row-start-1 min-w-0 flex items-start gap-2">
             <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
               {props.task.title}
             </span>
@@ -472,8 +526,10 @@ export function TaskCard(props: Props) {
             <Show when={isInstance() && !props.task.is_habit}>
               <Repeat size={11} class="text-muted-foreground flex-shrink-0 mt-1" />
             </Show>
-          </div>
+        </div>
 
+        {/* Content, row 2 — routine label, description, tags, streak. */}
+        <div class="col-start-2 row-start-2 min-w-0">
           {/* Routine label — the routine's icon + name, between title and description. */}
           <Show when={routine()}>
             {(r) => (
@@ -542,9 +598,9 @@ export function TaskCard(props: Props) {
           </Show>
         </div>
 
-        {/* Right rail: top slot shows the estimate, and swaps to the hover action
-            buttons (over the priority toggle); then priority + Due / Start. */}
-        <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
+        {/* Right rail (spans both grid rows): top slot shows the estimate, and swaps to
+            the hover action buttons (over the priority toggle); then priority + Due / Start. */}
+        <div class="col-start-3 row-start-1 row-span-2 flex flex-col items-end gap-1.5">
           <div class="relative flex items-center justify-end min-h-[22px] w-full">
             <span class="group-hover:opacity-0 transition-opacity">{est()}</span>
             <div
@@ -557,37 +613,9 @@ export function TaskCard(props: Props) {
                 'opacity-100': objectiveMenu() || routineMenu(),
               }}
             >
-              <Show when={!inFlightPlan()}>
-                <button onClick={sendToFlightPlan} class="btn-icon hover:text-primary" title="Send to Flight-plan"><Rocket size={13} /></button>
-              </Show>
               <Show when={isInstance()}>
                 <button onClick={skip} class="btn-icon" title="Skip this occurrence"><SkipForward size={13} /></button>
               </Show>
-              {/* AF-6: assign to / remove from an objective — leaf objectives only. */}
-              <div class="relative">
-                {/* The two dropdowns are mutually exclusive — opening one closes the other. */}
-                <button onClick={() => { setRoutineMenu(false); setObjectiveMenu((v) => !v); }} class="btn-icon hover:text-primary" title="Assign to objective"><Target size={13} /></button>
-                <Show when={objectiveMenu()}>
-                  <ObjectiveMenu task={props.task} close={() => setObjectiveMenu(false)} />
-                </Show>
-              </div>
-              {/* Add to a routine — pick an existing one or create a new routine with this task. */}
-              <div class="relative">
-                <button onClick={() => { setObjectiveMenu(false); setRoutineMenu((v) => !v); }} class="btn-icon hover:text-primary" title="Add to a routine"><Shapes size={13} /></button>
-                <Show when={routineMenu()}>
-                  <div class="absolute z-20 right-0 top-full mt-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
-                    <For each={routines()}>
-                      {(r) => (
-                        <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
-                      )}
-                    </For>
-                    <Show when={routines().length === 0}>
-                      <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
-                    </Show>
-                    <button onClick={newRoutineWithTask} class="w-full text-left px-3 py-1.5 text-sm text-primary hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
-                  </div>
-                </Show>
-              </div>
               <button class="btn-icon" title="Add subtask" onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}><Plus size={13} /></button>
               <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
               <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>

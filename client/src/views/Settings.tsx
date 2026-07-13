@@ -1,12 +1,10 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, Hash, Check, X, Pencil, Database, AlertTriangle, Users, KeyRound } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
-import { RoutineTypeSettings } from '../components/RoutineTypeSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
-import { DEFAULT_CONCEPT_TAGS, PATTERN_COLORS, colorVar, type ConceptTag } from '../lib/pattern-meta.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { on } from '../lib/sse.js';
 
@@ -25,7 +23,6 @@ interface SettingsForm {
   // Plan/Concept Time-Block config. Plan horizon = planning_horizon_days.
   plan_allday_always: boolean; plan_daylong_for_promoted: boolean; plan_autofill_gaps: boolean;
   concept_default_minutes: number; concept_autosurface: boolean; concept_horizon_days: number;
-  concept_tags: ConceptTag[];
   timezone: string; planning_horizon_days: number; recurrence_horizon_days: number;
   fast_model: string; quality_model: string; embed_model: string;
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
@@ -49,7 +46,6 @@ const DEFAULTS: SettingsForm = {
   default_time_block_minutes: 60,
   plan_allday_always: false, plan_daylong_for_promoted: false, plan_autofill_gaps: true,
   concept_default_minutes: 60, concept_autosurface: true, concept_horizon_days: 30,
-  concept_tags: DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
   timezone: BROWSER_TZ, planning_horizon_days: 3, recurrence_horizon_days: 7,
   fast_model: '', quality_model: '', embed_model: '',
   memory_sync_enabled: false, memory_sync_completed: true,
@@ -149,20 +145,9 @@ export function Settings() {
   // Schedule Patterns now live in <DayTypeManager /> (day types + week map + the
   // shared per-day-type window editor). T-SCHED-4 replaced the inline editor here.
 
-  // ── Pattern-tag default estimate (pattern_prefs.default_minutes) ──────────────
-  // The fallback minutes a pattern tag contributes when a task has no intention tag.
+  // Pattern-tag visual config + default estimate now live entirely inside
+  // <PatternBlockSettings /> (per-row expandable edit, own Save).
   const patternTagsList = () => (tags() ?? []).filter((t) => t.kind === 'direction');
-  const [patternMinutes, setPatternMinutes] = createSignal<Record<string, number>>({});
-  let pmInitialized = false;
-  createEffect(() => {
-    const pp = patternPrefs()?.prefs;
-    const ts = tags();
-    if (!pp || !ts || pmInitialized) return;
-    pmInitialized = true;
-    const init: Record<string, number> = {};
-    for (const t of ts.filter((x) => x.kind === 'direction')) init[t.id] = pp[t.id]?.default_minutes ?? 60;
-    setPatternMinutes(init);
-  });
 
   createEffect(() => {
     const p = prefs();
@@ -180,7 +165,6 @@ export function Settings() {
       concept_default_minutes:    p.concept_default_minutes ?? 60,
       concept_autosurface:        p.concept_autosurface ?? true,
       concept_horizon_days:       p.concept_horizon_days ?? 30,
-      concept_tags:               p.concept_tags?.length ? p.concept_tags.map((c) => ({ ...c })) : DEFAULT_CONCEPT_TAGS.map((c) => ({ ...c })),
       timezone:                   p.timezone ?? BROWSER_TZ,
       planning_horizon_days:      p.planning_horizon_days ?? 3,
       recurrence_horizon_days:    p.recurrence_horizon_days ?? 7,
@@ -282,64 +266,6 @@ export function Settings() {
   const cDays = () => Math.floor(cdm() / 1440);
   const cHrs = () => Math.floor((cdm() % 1440) / 60);
   const cMin = () => cdm() % 60;
-
-  // Canonical concept-tag list editor (the Block Wizard starts from this).
-  function updateCT(i: number, patch: Partial<ConceptTag>) {
-    setForm((f) => ({ ...f, concept_tags: f.concept_tags.map((c, idx) => (idx === i ? { ...c, ...patch } : c)) }));
-  }
-  function removeCT(i: number) {
-    setForm((f) => ({ ...f, concept_tags: f.concept_tags.filter((_, idx) => idx !== i) }));
-  }
-
-  // Intention Tags inline-edit state (mirrors CategorySettings UX)
-  const [ctEditIdx, setCtEditIdx] = createSignal<number | null>(null);
-  const [ctEditForm, setCtEditForm] = createSignal<{ name: string; minutes: number; color_token: string }>({ name: '', minutes: 60, color_token: 'primary' });
-  const [ctConfirmDelete, setCtConfirmDelete] = createSignal<number | null>(null);
-  const [newCtName, setNewCtName] = createSignal('');
-  const [ctSaving, setCtSaving] = createSignal(false);
-
-  function startCtEdit(idx: number) {
-    const ct = form().concept_tags[idx];
-    setCtEditForm({ name: ct.name, minutes: ct.minutes, color_token: ct.color_token ?? 'primary' });
-    setCtEditIdx(idx);
-    setCtConfirmDelete(null);
-  }
-  function cancelCtEdit() { setCtEditIdx(null); setCtConfirmDelete(null); }
-
-  async function saveCtEdit() {
-    const idx = ctEditIdx();
-    if (idx === null) return;
-    const f = ctEditForm();
-    if (!f.name.trim()) { showToast('Name is required', 'error'); return; }
-    setCtSaving(true);
-    try {
-      updateCT(idx, { name: f.name.trim(), minutes: f.minutes || 60, color_token: f.color_token });
-      await doSave();
-      setCtEditIdx(null);
-    } finally { setCtSaving(false); }
-  }
-
-  async function doCtDelete(idx: number) {
-    setCtSaving(true);
-    try {
-      removeCT(idx);
-      setCtConfirmDelete(null);
-      await doSave();
-    } finally { setCtSaving(false); }
-  }
-
-  async function addCtFromInput(e: Event) {
-    e.preventDefault();
-    if (!newCtName().trim()) return;
-    setCtSaving(true);
-    try {
-      setForm((f) => ({ ...f, concept_tags: [...f.concept_tags, { name: newCtName().trim(), minutes: 60, color_token: 'primary' }] }));
-      setNewCtName('');
-      await doSave();
-    } finally { setCtSaving(false); }
-  }
-
-  let savePatternPrefs: () => Promise<void> = async () => {};
 
   async function doSave() {
     try {
@@ -782,55 +708,11 @@ export function Settings() {
             </div>
           </section>
 
-          {/* Phase P · P2 — Clear Date Range: bulk-clear the planner from a date (optionally through a date). */}
+          {/* Pattern Tags — expandable rows (shape, colour, default minutes per direction tag) */}
           <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-2"><Trash2 size={12} /> Clear Date Range</div>
-            <div class="text-[11px] text-muted-foreground mb-3">
-              Remove planner blocks from a start date (optionally through an end date) and stop repeats from regenerating.
-              Open-ended (no end) stops repeats <b>forever</b> from the start; a range skips <b>just that window</b>.
-              A backup snapshot is taken before anything is deleted.
-            </div>
-            <div class="flex items-end gap-3 flex-wrap">
-              <label class="flex flex-col gap-1">
-                <span class="text-[11px] text-muted-foreground">Start (required)</span>
-                <input type="date" class="input py-1 text-sm" value={clearStart()} onInput={(e) => { setClearStart(e.currentTarget.value); setClearPreview(null); }} />
-              </label>
-              <label class="flex flex-col gap-1">
-                <span class="text-[11px] text-muted-foreground">End (optional)</span>
-                <input type="date" class="input py-1 text-sm" value={clearEnd()} onInput={(e) => { setClearEnd(e.currentTarget.value); setClearPreview(null); }} />
-              </label>
-              <button type="button" class="btn-secondary text-sm" disabled={clearBusy() || !clearStart()} onClick={previewClear}>Preview</button>
-            </div>
-            <Show when={clearPreview()}>
-              {(p) => (
-                <div class="mt-3 text-sm">
-                  <div class="flex items-start gap-1.5 text-muted-foreground">
-                    <AlertTriangle size={13} class="mt-0.5 flex-shrink-0" />
-                    <span>
-                      Will delete <b>{p().blocksDeleted}</b> block(s)
-                      {p().dailyPlanDeleted ? <> + <b>{p().dailyPlanDeleted}</b> day-plan row(s)</> : null} and suppress{' '}
-                      <b>{p().generators.length}</b> recurring generator(s) —{' '}
-                      <b>{p().mode === 'open-ended' ? 'stops repeats forever from the start' : 'skips only this window'}</b>.
-                    </span>
-                  </div>
-                  <button type="button" class="btn-danger text-sm mt-2" disabled={clearBusy()} onClick={applyClear}>Clear now</button>
-                </div>
-              )}
-            </Show>
-          </section>
-
-          {/* Pattern Tags — unified: shape, colour, and default minutes per direction tag */}
-          <section class="card">
-            <div class="flex items-center justify-between mb-3">
-              <div class="section-label flex items-center gap-1.5"><Shapes size={12} /> Pattern Tags</div>
-              <button type="button" onClick={() => savePatternPrefs()} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-            </div>
+            <div class="section-label flex items-center gap-1.5 mb-1"><Shapes size={12} /> Pattern Tags</div>
             <p class="text-xs text-muted-foreground mb-3">Shape, colour, and default estimate for each direction tag. The default time is used when a task has no intention tag.</p>
-            <PatternBlockSettings
-              minutes={patternMinutes}
-              onMinutesChange={(id, val) => setPatternMinutes((m) => ({ ...m, [id]: val }))}
-              onReady={(fn) => { savePatternPrefs = fn; }}
-            />
+            <PatternBlockSettings />
           </section>
 
           {/* Time-Block settings — Plan | Concept */}
@@ -991,115 +873,14 @@ export function Settings() {
             </div>
           </section>
 
-          {/* Time Block Categories — the kind='category' catalog (0069): colour + default block length */}
+          {/* Time Block Categories — the kind='category' catalog (0069/0126): colour + name (duration lives on Pattern Tags) */}
           <section class="card">
             <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
-            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Family Time, Social Time, Me Time + your own). Pick a colour and a default length; the defaults can be edited but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
+            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
             <CategorySettings />
           </section>
 
-          {/* Tag Settings — Intention Tags (editable), mirrors CategorySettings UX */}
-          <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Tag Settings</div>
-            <p class="text-xs text-muted-foreground mb-3">Default intention tags for the Block Wizard. Each has a name, default estimate, and colour.</p>
-
-            <div class="flex flex-col gap-2">
-              <For each={form().concept_tags}>
-                {(ct, localIdx) => (
-                  <div class="rounded-lg border border-border bg-card overflow-hidden">
-                    {/* Summary row */}
-                    <div class="flex items-center gap-2.5 px-3 py-2.5">
-                      <span class="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ 'background-color': colorVar(ct.color_token ?? 'primary') }} />
-                      <span class="text-sm font-medium text-foreground flex-1">{ct.name}</span>
-                      <span class="text-[11px] text-muted-foreground">{ct.minutes}m</span>
-                      <button
-                        type="button"
-                        title={ctEditIdx() === localIdx() ? 'Cancel edit' : 'Edit'}
-                        onClick={() => (ctEditIdx() === localIdx() ? cancelCtEdit() : startCtEdit(localIdx()))}
-                        class="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
-                      ><Pencil size={12} /></button>
-                      <button
-                        type="button"
-                        title="Delete"
-                        onClick={() => setCtConfirmDelete(ctConfirmDelete() === localIdx() ? null : localIdx())}
-                        class="p-1 rounded text-muted-foreground hover:text-destructive transition-colors"
-                      ><Trash2 size={12} /></button>
-                    </div>
-
-                    {/* Inline delete confirmation */}
-                    <Show when={ctConfirmDelete() === localIdx()}>
-                      <div class="border-t border-border bg-destructive/5 px-3 py-2 flex items-center justify-between">
-                        <span class="text-xs text-destructive">Delete "{ct.name}"?</span>
-                        <div class="flex items-center gap-1.5 ml-3 flex-shrink-0">
-                          <button type="button" onClick={() => setCtConfirmDelete(null)}
-                            class="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded border border-border transition-colors">Cancel</button>
-                          <button type="button" onClick={() => doCtDelete(localIdx())} disabled={ctSaving()}
-                            class="text-xs text-destructive hover:text-destructive/80 px-2 py-1 rounded border border-destructive/40 disabled:opacity-50 transition-colors">Delete</button>
-                        </div>
-                      </div>
-                    </Show>
-
-                    {/* Inline edit form */}
-                    <Show when={ctEditIdx() === localIdx()}>
-                      <div class="border-t border-border px-3 py-3 flex flex-col gap-3">
-                        <div class="flex items-center gap-2">
-                          <span class="text-[11px] text-muted-foreground w-14 flex-shrink-0">Name</span>
-                          <input type="text" maxlength="40" class="input text-sm flex-1"
-                            value={ctEditForm().name}
-                            onInput={(e) => setCtEditForm({ ...ctEditForm(), name: e.currentTarget.value })}
-                            placeholder="Tag name" />
-                        </div>
-                        <div class="flex items-start gap-2">
-                          <span class="text-[11px] text-muted-foreground w-14 flex-shrink-0 mt-0.5">Color</span>
-                          <div class="flex flex-wrap gap-1.5">
-                            <For each={PATTERN_COLORS}>
-                              {(col) => (
-                                <button type="button" title={col.label}
-                                  onClick={() => setCtEditForm({ ...ctEditForm(), color_token: col.token })}
-                                  class="w-5 h-5 rounded-full border-2 transition-all"
-                                  classList={{
-                                    'border-foreground scale-110': ctEditForm().color_token === col.token,
-                                    'border-transparent hover:scale-105': ctEditForm().color_token !== col.token,
-                                  }}
-                                  style={{ 'background-color': colorVar(col.token) }} />
-                              )}
-                            </For>
-                          </div>
-                        </div>
-                        <div class="flex items-center gap-2">
-                          <span class="text-[11px] text-muted-foreground w-14 flex-shrink-0">Default</span>
-                          <input type="number" min="5" step="5" class="input text-sm w-20"
-                            value={ctEditForm().minutes}
-                            onInput={(e) => setCtEditForm({ ...ctEditForm(), minutes: Number(e.currentTarget.value) || 0 })} />
-                          <span class="text-[11px] text-muted-foreground">min — default block length</span>
-                        </div>
-                        <div class="flex items-center justify-end gap-2 pt-1 border-t border-border/50">
-                          <button type="button" onClick={cancelCtEdit}
-                            class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded border border-border transition-colors"><X size={11} /> Cancel</button>
-                          <button type="button" onClick={saveCtEdit} disabled={ctSaving()}
-                            class="flex items-center gap-1 text-xs text-primary hover:text-primary/80 px-2 py-1 rounded border border-primary/40 disabled:opacity-50 transition-colors"><Check size={11} /> {ctSaving() ? 'Saving…' : 'Save'}</button>
-                        </div>
-                      </div>
-                    </Show>
-                  </div>
-                )}
-              </For>
-              <Show when={form().concept_tags.length === 0}>
-                <p class="text-sm text-muted-foreground">No intention tags yet.</p>
-              </Show>
-
-              {/* Add a tag */}
-              <form onSubmit={addCtFromInput} class="flex gap-2 mt-1">
-                <div class="relative flex-1">
-                  <Hash size={12} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                  <input class="input text-sm pl-7" placeholder="New tag…" value={newCtName()} onInput={(e) => setNewCtName(e.currentTarget.value)} />
-                </div>
-                <button type="submit" disabled={ctSaving() || !newCtName().trim()} class="btn-secondary text-xs px-2.5 py-1 disabled:opacity-50"><Plus size={12} /> Add</button>
-              </form>
-            </div>
-          </section>
-
-          {/* Routine Settings — recall behaviour + the pattern-type taxonomy */}
+          {/* Routine Settings — recall behaviour + Time-Sense + AI ordering */}
           <section class="card">
             <div class="flex items-center justify-between mb-3">
               <div class="section-label">Routine Settings</div>
@@ -1168,13 +949,43 @@ export function Settings() {
             })()}
 
             {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
+          </section>
 
-            {/* Routine Types — edit the built-in pattern-type taxonomy (creation removed, T-SET-1) */}
-            <div class="border-t border-border pt-4 mt-4">
-              <div class="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Routine Types</div>
-              <p class="text-xs text-muted-foreground mb-3">The built-in categories your Routines and Habits belong to. You can edit their shape, colour, and defaults — they can't be created or deleted.</p>
-              <RoutineTypeSettings />
+          {/* Phase P · P2 — Clear Date Range: bulk-clear the planner from a date (optionally through a date). */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-2"><Trash2 size={12} /> Clear Date Range</div>
+            <div class="text-[11px] text-muted-foreground mb-3">
+              Remove planner blocks from a start date (optionally through an end date) and stop repeats from regenerating.
+              Open-ended (no end) stops repeats <b>forever</b> from the start; a range skips <b>just that window</b>.
+              A backup snapshot is taken before anything is deleted.
             </div>
+            <div class="flex items-end gap-3 flex-wrap">
+              <label class="flex flex-col gap-1">
+                <span class="text-[11px] text-muted-foreground">Start (required)</span>
+                <input type="date" class="input py-1 text-sm" value={clearStart()} onInput={(e) => { setClearStart(e.currentTarget.value); setClearPreview(null); }} />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-[11px] text-muted-foreground">End (optional)</span>
+                <input type="date" class="input py-1 text-sm" value={clearEnd()} onInput={(e) => { setClearEnd(e.currentTarget.value); setClearPreview(null); }} />
+              </label>
+              <button type="button" class="btn-secondary text-sm" disabled={clearBusy() || !clearStart()} onClick={previewClear}>Preview</button>
+            </div>
+            <Show when={clearPreview()}>
+              {(p) => (
+                <div class="mt-3 text-sm">
+                  <div class="flex items-start gap-1.5 text-muted-foreground">
+                    <AlertTriangle size={13} class="mt-0.5 flex-shrink-0" />
+                    <span>
+                      Will delete <b>{p().blocksDeleted}</b> block(s)
+                      {p().dailyPlanDeleted ? <> + <b>{p().dailyPlanDeleted}</b> day-plan row(s)</> : null} and suppress{' '}
+                      <b>{p().generators.length}</b> recurring generator(s) —{' '}
+                      <b>{p().mode === 'open-ended' ? 'stops repeats forever from the start' : 'skips only this window'}</b>.
+                    </span>
+                  </div>
+                  <button type="button" class="btn-danger text-sm mt-2" disabled={clearBusy()} onClick={applyClear}>Clear now</button>
+                </div>
+              )}
+            </Show>
           </section>
 
           <button type="submit" class="btn-primary self-start px-5">
