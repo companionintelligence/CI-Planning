@@ -4,7 +4,7 @@ import { sqlite } from '../db/index.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { currentScopes, currentOwnerId } from '../lib/context.js';
-import { hasAdminScope, OWNER_ROLES, type OwnerRole } from '../lib/auth/scopes.js';
+import { hasAdminScope, normalizeRole, OWNER_ROLES, type OwnerRole } from '../lib/auth/scopes.js';
 import { issueResetToken } from '../lib/auth/resetToken.js';
 import { bumpSessionEpoch } from '../lib/auth/session.js';
 import { provisionOwner, deleteOwner, listOwners, operatorCount, type OwnerAccount } from '../lib/owners.js';
@@ -64,9 +64,11 @@ async function sendInvite(target: OwnerAccount): Promise<InviteResult> {
     : `An operator sent you a password reset for your Companion Planning account.`;
   const ttlText = fresh ? '7 days' : `${Math.round(config.auth.resetTokenTtlMs / 60000)} minutes`;
   const text = `${intro}\n\nSet your password: ${link}\n\nThis link expires in ${ttlText} and can be used once.`;
+  // The token is base64url, but appBaseUrl is operator config — escape the whole
+  // URL so an unusual base (query string, quotes) can't malform the attribute.
   const html =
     `<p>${escapeHtml(intro)}</p>` +
-    `<p><a href="${link}">Set your password</a></p>` +
+    `<p><a href="${escapeHtml(link)}">Set your password</a></p>` +
     `<p>This link expires in ${ttlText} and can be used once.</p>`;
   try {
     await sendMail({ to: target.email!, subject: fresh ? "You're invited to Companion Planning" : 'Reset your Companion Planning password', text, html });
@@ -91,7 +93,9 @@ function getAccount(id: string): OwnerAccount | undefined {
     | { id: string; name: string; username: string | null; email: string | null; role: string; has_password: number }
     | undefined;
   if (!r) return undefined;
-  return { id: r.id, name: r.name, username: r.username, email: r.email, role: r.role, hasPassword: r.has_password === 1 };
+  // normalizeRole: a hand-edited role string leaves the union the client types
+  // expect — read it as 'viewer', the role whose scopes it effectively grants.
+  return { id: r.id, name: r.name, username: r.username, email: r.email, role: normalizeRole(r.role), hasPassword: r.has_password === 1 };
 }
 
 export function accountsRouter() {
@@ -188,12 +192,23 @@ export function accountsRouter() {
     if (!target) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const roleChanged = body.role !== undefined && body.role !== target.role;
-    if (roleChanged && target.role === 'operator' && operatorCount() <= 1) {
-      ctx.status = 409; ctx.body = { error: 'cannot demote the last operator' }; return;
-    }
-
     if (roleChanged) {
-      sqlite.prepare(`UPDATE owners SET role = ? WHERE id = ?`).run(body.role, target.id);
+      // Guard + write in ONE statement so the last-operator check is atomic even
+      // under concurrent PATCHes (a check-then-write pair could let two demotions
+      // both pass the count and leave zero operators). The UPDATE refuses to fire
+      // when the target is the final operator and the new role isn't operator.
+      const res = sqlite
+        .prepare(
+          `UPDATE owners SET role = @role
+             WHERE id = @id AND NOT (
+               role = 'operator' AND @role <> 'operator'
+               AND (SELECT COUNT(*) FROM owners WHERE role = 'operator' AND id <> @sentinel) <= 1
+             )`,
+        )
+        .run({ role: body.role, id: target.id, sentinel: SYSTEM_OWNER_ID });
+      if (res.changes === 0) {
+        ctx.status = 409; ctx.body = { error: 'cannot demote the last operator' }; return;
+      }
       // Live sessions carry scopes derived at verify time from the OLD role; the
       // epoch bump forces every outstanding cookie to re-login → new scopes.
       bumpSessionEpoch(target.id);
@@ -217,6 +232,10 @@ export function accountsRouter() {
     if (target.id === currentOwnerId()) {
       ctx.status = 409; ctx.body = { error: 'cannot delete your own account' }; return;
     }
+    // Check-then-delete is safe from interleaving here: better-sqlite3 is
+    // synchronous and this handler has no await between the count and the delete,
+    // so no other request can run in between. (deleteOwner opens its own
+    // transaction, so the pair can't be wrapped in an outer one — no nesting.)
     if (target.role === 'operator' && operatorCount() <= 1) {
       ctx.status = 409; ctx.body = { error: 'cannot delete the last operator' }; return;
     }

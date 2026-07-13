@@ -1,6 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { newId, SYSTEM_OWNER_ID } from './ids.js';
-import type { OwnerRole } from './auth/scopes.js';
+import { normalizeRole, type OwnerRole } from './auth/scopes.js';
 
 /**
  * Production owner provisioning (U2, completed in U1). The app previously created
@@ -287,8 +287,12 @@ export interface OwnerAccount {
   name: string;
   username: string | null;
   email: string | null;
-  role: string;
-  /** Whether local username/password login can work for this account (vs OIDC-only). */
+  /** Normalized onto the operator/member/viewer union (normalizeRole) — an
+   * unrecognized DB value reads as 'viewer', matching the scopes it grants. */
+  role: OwnerRole;
+  /** password_hash is set. False for OIDC-only accounts AND for local accounts
+   * whose invite hasn't been accepted yet (created password-less; the user sets
+   * their own via the invite link) — `username` tells the two apart. */
   hasPassword: boolean;
 }
 
@@ -309,7 +313,7 @@ export function listOwners(): OwnerAccount[] {
   }[];
   return rows.map((r) => ({
     id: r.id, name: r.name, username: r.username, email: r.email,
-    role: r.role, hasPassword: r.has_password === 1,
+    role: normalizeRole(r.role), hasPassword: r.has_password === 1,
   }));
 }
 

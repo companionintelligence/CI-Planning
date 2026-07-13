@@ -5,7 +5,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 import { provisionOwner, listOwners, operatorCount } from '../src/lib/owners.js';
 import { hashPassword } from '../src/lib/auth/password.js';
-import { roleToScopes } from '../src/lib/auth/scopes.js';
+import { roleToScopes, normalizeRole } from '../src/lib/auth/scopes.js';
 import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN } from '../src/lib/auth/types.js';
 import { __resetAuthRateLimit } from '../src/routes/auth.js';
 
@@ -91,6 +91,13 @@ describe('roleToScopes — the single role→scope map', () => {
     expect(roleToScopes(null)).toEqual([SCOPE_READ]);
     expect(roleToScopes(undefined)).toEqual([SCOPE_READ]);
   });
+
+  it('normalizeRole keeps the API on the 3-role union — unknown reads as viewer, matching its scopes', () => {
+    expect(normalizeRole('operator')).toBe('operator');
+    expect(normalizeRole('member')).toBe('member');
+    expect(normalizeRole('admin')).toBe('viewer'); // hand-edited row
+    expect(normalizeRole(null)).toBe('viewer');
+  });
 });
 
 describe('AG — session scopes derive from owners.role (the choke point)', () => {
@@ -156,6 +163,20 @@ describe('AG — provisioning defaults', () => {
     } finally {
       sqlite.prepare(`UPDATE owners SET role = 'member' WHERE id = ?`).run(SYSTEM_OWNER_ID);
     }
+  });
+
+  it('a hand-edited (unrecognized) role reads back as viewer everywhere, matching its granted scopes', async () => {
+    const id = await seedUser('weird', 'member');
+    sqlite.prepare(`UPDATE owners SET role = 'admin' WHERE id = ?`).run(id);
+    expect(listOwners().find((a) => a.id === id)!.role).toBe('viewer');
+    // The session for that owner is read-only (roleToScopes fail-closed)…
+    const cookie = await login('weird');
+    expect((await req('/api/tasks', cookie)).status).toBe(200);
+    expect((await req('/api/tasks', cookie, { method: 'POST', json: { title: 'nope' } })).status).toBe(403);
+    // …and /api/auth/me reports the same effective role.
+    const me = (await req('/api/auth/me', cookie)).body;
+    expect(me.role).toBe('viewer');
+    expect(me.isOperator).toBe(false);
   });
 });
 

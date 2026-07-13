@@ -49,3 +49,14 @@ export function roleToScopes(role: string | null | undefined): string[] {
     default:         return [SCOPE_READ]; // 'viewer' + anything unrecognized
   }
 }
+
+/**
+ * The display-layer companion to roleToScopes: collapse whatever string is in the
+ * DB onto the OwnerRole union the API contract promises. An unrecognized value
+ * (hand-edited row, role from a newer schema) maps to 'viewer' — the role whose
+ * scopes roleToScopes actually grants it — so what the client shows always matches
+ * what the session can do.
+ */
+export function normalizeRole(role: string | null | undefined): OwnerRole {
+  return OWNER_ROLES.includes(role as OwnerRole) ? (role as OwnerRole) : 'viewer';
+}
