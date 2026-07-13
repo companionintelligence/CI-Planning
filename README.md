@@ -309,8 +309,8 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **AI day briefing** — Ollama-authored when available, deterministic template
   otherwise; the UI labels it honestly ("AI Briefing" vs. "Day Overview")
 - **Reminders & Web Push** — per-pattern reminder offsets generate reminders that a
-  1-minute dispatcher fires **exactly once**: in-app via SSE (always) and, when VAPID
-  keys are set, via **Web Push** to subscribed devices (service worker + VAPID). Opt in
+  1-minute dispatcher fires **exactly once**: in-app via SSE (always) and via **Web Push**
+  to subscribed devices (service worker + VAPID; keys auto-provisioned on first boot). Opt in
   from Settings; snooze reschedules; completed / cancelled tasks never fire
 - **Live updates** — Server-Sent Events push task / block / job changes to every open
   client, so the UI stays in sync without polling
@@ -469,8 +469,9 @@ consistent snapshot.
 - Calendar write-back (pushing local blocks to Google) is behind `CP_SYNC_WRITEBACK`,
   **off by default** — until you flip it on, sync is inbound read-only. `CP_SYNC_DISABLED`
   is a master kill switch for the whole sync agent.
-- Web Push delivery needs VAPID keys set in the env (see below); without them push is
-  dormant but in-app SSE reminders still fire
+- Web Push delivery uses a VAPID keypair that is **auto-generated on first boot** and
+  persisted (see below); setting the env keys pins an explicit pair. In-app SSE reminders
+  fire regardless
 - CI-Server **memory integration** (Phase AA) is **off by default** (`memory_pull_enabled` /
   `memory_sync_enabled` both start `0`) and, in `live` mode, needs a reachable CI-Server plus
   per-owner creds; with `MEMORY_MODE` unset (the default) the transport is off entirely, and
@@ -518,6 +519,12 @@ First-run notes:
   client** and hit *Save & enable* — no other env vars, no restart. Each user then
   connects their own Google account with the Connect button. See
   [docs/google-cloud-setup.md](docs/google-cloud-setup.md) for creating the client.
+- **Web Push notifications work automatically** — the server generates a VAPID keypair on
+  first boot and persists it (stable across restarts), so background push is live out of the
+  box with no `npx web-push generate-vapid-keys` step. If `CP_KEK_B64` is set, the private
+  key is sealed at rest; without it the key is stored unsealed (a low-stakes secret that only
+  authorizes pushing to this app's own subscribers). Setting both `VAPID_PUBLIC_KEY` and
+  `VAPID_PRIVATE_KEY` pins an explicit keypair instead.
 - **Quick trial without auth** (single machine, no real data): add
   `-e NODE_ENV=development` instead of the five auth vars. This runs the dev
   `AUTH_MODE=test` identity — do not expose it beyond localhost.
@@ -589,7 +596,7 @@ mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 | `CI_SERVER_URL` | (unset) | CI-Server memory API base URL. Serves double duty: single-tenant dev/standalone fallback base, **and** required (503 if unset) by the CI-Portal memory connect flow (`/api/memory/ciportal/start`) even under multi-tenant SSO. Not ignored under SSO — see `CI_SERVER_API_KEY`. |
 | `CI_SERVER_API_KEY` | (unset) | Shared API key paired with `CI_SERVER_URL` for the single-tenant fallback creds. **This is what's ignored under multi-tenant SSO** (a shared key would map every owner to one CI-Server identity); per-owner creds then come from `connection_tokens`, connected in Settings. |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (unset) | Web Push keys — generate once with `npx web-push generate-vapid-keys`. Unset ⇒ push disabled (in-app reminders still fire). Never commit them. |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | auto-generated | Web Push keys. **Auto-generated on first boot and persisted** to `app_config` (sealed with `CP_KEK_B64` when set, else stored unsealed), so push works out of the box. Set **both** to pin an explicit keypair; a lone half keeps push dormant. Never commit them. |
 | `VAPID_SUBJECT` | `mailto:admin@companion.local` | VAPID contact (`mailto:` or URL) sent with each push |
 | `SMTP_HOST` | (unset) | Outbound SMTP host for local-login password-reset email (meaningful only with `AUTH_MODE=sso` + `DISABLE_OIDC=true` — SSO owners reset in CI-Portal). **Unset ⇒ a console transport logs the message instead of sending**, so dev/CI/offline need no SMTP; a production local-login deploy without it boots with a warning (links only logged). |
 | `SMTP_PORT` | `587` | `587` (STARTTLS) or `465` (implicit TLS). |
