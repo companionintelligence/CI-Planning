@@ -724,6 +724,14 @@ export interface ViewPrefs {
   planner?: {
     topExpanded?: boolean;
     bottomExpanded?: boolean;
+    /** Configurable night-collapse boundaries (minute-of-day). Absent = 07:00 / 21:00. */
+    topEndMin?: number;
+    bottomStartMin?: number;
+  };
+  /** Cross-view appearance switches. */
+  appearance?: {
+    /** Routine/direction background textures on cards & planner chips. Absent = on. */
+    direction_textures?: boolean;
   };
 }
 

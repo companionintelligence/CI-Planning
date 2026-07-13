@@ -1,5 +1,7 @@
 # Handoff — codebase audit → ship-readiness → multi-tenant RBAC (2026-07-12)
 
+> **⚠️ Point-in-time snapshot (superseded).** Written when RBAC was design-only at migration head 0124. Since then **Phase AG RBAC shipped** (mig `0125_owner_roles`; `routes/accounts.ts` mounted with full `/api/accounts` CRUD + `/:id/invite`) and mig `0126_default_categories` landed. **Current migration head is 0126.** Treat the "Implementation not started" / "head 0124" statements below as historical.
+
 A single working session that audited the app end-to-end, fixed the ship-blockers, made it installable, hardened multi-tenant isolation, and produced the design for the operator/tenant role split. This is the cold-start summary: what shipped, what's open, and where to pick up.
 
 ## TL;DR

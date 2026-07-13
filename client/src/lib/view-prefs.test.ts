@@ -106,4 +106,39 @@ describe('view-prefs (de)serialization', () => {
       expect(deserializeAxisState(buildPlannerViewPrefs(state))).toEqual(state);
     });
   });
+
+  describe('configurable collapse boundaries (topEndMin / bottomStartMin)', () => {
+    it('deserializes numeric boundaries alongside the flags', () => {
+      expect(
+        deserializeAxisState({ topExpanded: false, bottomExpanded: true, topEndMin: 540, bottomStartMin: 1200 }),
+      ).toEqual({ topExpanded: false, bottomExpanded: true, topEndMin: 540, bottomStartMin: 1200 });
+    });
+
+    it('drops malformed boundaries (no key added), keeping the flags', () => {
+      // Non-numbers / NaN are ignored so the day-axis clamp falls back to the defaults.
+      expect(
+        deserializeAxisState({
+          topExpanded: true,
+          bottomExpanded: false,
+          topEndMin: 'nope' as unknown as number,
+          bottomStartMin: Number.NaN,
+        }),
+      ).toEqual({ topExpanded: true, bottomExpanded: false });
+    });
+
+    it('buildPlannerViewPrefs emits boundaries only when present', () => {
+      expect(buildPlannerViewPrefs({ topExpanded: false, bottomExpanded: false })).toEqual({
+        topExpanded: false,
+        bottomExpanded: false,
+      });
+      expect(
+        buildPlannerViewPrefs({ topExpanded: false, bottomExpanded: false, topEndMin: 480, bottomStartMin: 1320 }),
+      ).toEqual({ topExpanded: false, bottomExpanded: false, topEndMin: 480, bottomStartMin: 1320 });
+    });
+
+    it('round-trips boundaries through build → deserialize', () => {
+      const state = { topExpanded: true, bottomExpanded: true, topEndMin: 600, bottomStartMin: 1260 };
+      expect(deserializeAxisState(buildPlannerViewPrefs(state))).toEqual(state);
+    });
+  });
 });

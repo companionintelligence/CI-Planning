@@ -2,13 +2,14 @@ import { A, useNavigate } from '@solidjs/router';
 import { Show, createResource } from 'solid-js';
 import {
   CheckSquare, Tag, Settings, Activity,
-  Sun, Cpu, CalendarDays, LogOut,
+  Sun, Cpu, CalendarDays, LogOut, Crosshair,
 } from 'lucide-solid';
 import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
 import { ThemeToggle } from './ThemeToggle.js';
 
 const links = [
+  { href: '/focus',      label: 'Focus',      Icon: Crosshair },
   { href: '/',            label: 'Today',      Icon: Sun },
   { href: '/calendar',   label: 'Calendar',   Icon: CalendarDays },
   { href: '/tasks',      label: 'Tasks',      Icon: CheckSquare },
