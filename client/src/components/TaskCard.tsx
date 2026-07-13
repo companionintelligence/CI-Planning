@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId } from '../stores/index.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { directionColorForTask, directionShapeForTask, colorVar } from '../lib/pattern-meta.js';
 import { textureStyle } from '../lib/textures.js';
@@ -28,13 +28,13 @@ const PRIO: { label: string; value: number; bg: string; fg: string }[] = [
 function PriorityToggle(props: { value: number; onPick: (v: number) => void }) {
   const isSel = (optVal: number) => (optVal === 4 ? props.value >= 4 : props.value === optVal);
   return (
-    <div class="inline-flex rounded-md border border-border overflow-hidden text-[10px] font-semibold flex-shrink-0" role="group" title="Priority">
+    <div class="inline-flex h-8 rounded-lg border border-border overflow-hidden text-[10px] font-semibold flex-shrink-0" role="group" title="Priority">
       <For each={PRIO}>
         {(o) => (
           <button
             type="button"
             onClick={() => props.onPick(o.value)}
-            class="px-1.5 py-0.5 transition-colors"
+            class="px-2 h-full flex items-center transition-colors"
             classList={{ 'text-muted-foreground hover:text-foreground': !isSel(o.value) }}
             style={isSel(o.value) ? { background: o.bg, color: o.fg } : {}}
           >
@@ -72,25 +72,31 @@ function DateField(props: {
   };
   const labelClass = () =>
     props.overdue ? 'text-red-400'
-    : props.highlight ? 'text-primary font-medium'
+    : props.highlight ? 'text-accent-hi font-medium'
     : 'text-muted-foreground';
   return (
-    <div class="relative flex items-center gap-1 text-[11px]">
+    // A uniform-height pill (matches the footer's 32px controls); the clear (×) lives
+    // INSIDE the bordered pill (nesting a real button in a button is invalid, so the
+    // pill container is a div holding two sibling buttons).
+    <div
+      class="relative flex items-center h-8 rounded-lg border border-border/70 bg-muted/30 text-[11px] flex-shrink-0"
+      classList={{
+        'bg-accent-hi/10 border-accent-hi/40': props.highlight === 'accent',
+        'bg-accent-hi/20 border-accent-hi/60': props.highlight === 'routine',
+      }}
+    >
       <button
         type="button"
-        class="flex items-center gap-1 rounded hover:text-foreground"
-        classList={{
-          'px-1 -mx-1 bg-primary/10': props.highlight === 'accent',
-          'px-1.5 -mx-1 bg-primary/20 ring-1 ring-primary/40': props.highlight === 'routine',
-        }}
+        class="flex items-center gap-1 h-full pl-2.5 rounded-lg hover:text-foreground"
+        classList={{ 'pr-1.5': !ymd(), 'pr-1': !!ymd() }}
         title={`Set ${props.label.toLowerCase()} date`}
         onClick={openPicker}
       >
-        <CalendarDays size={11} class={`flex-shrink-0 ${props.highlight ? 'text-primary' : 'text-muted-foreground'}`} />
+        <CalendarDays size={11} class={`flex-shrink-0 ${props.highlight ? 'text-accent-hi' : 'text-muted-foreground'}`} />
         <span class={labelClass()}>{props.label} {display()}</span>
       </button>
       <Show when={ymd()}>
-        <button type="button" class="text-muted-foreground hover:text-red-400" title={`Clear ${props.label.toLowerCase()} date`} onClick={() => props.onSet('')}>
+        <button type="button" class="flex items-center h-full pr-2 text-muted-foreground hover:text-red-400" title={`Clear ${props.label.toLowerCase()} date`} onClick={() => props.onSet('')}>
           <X size={11} />
         </button>
       </Show>
@@ -155,7 +161,8 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
   }
 
   return (
-    <div class="absolute z-20 left-full top-0 ml-1 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
+    // Opens ABOVE the footer button (the sorting actions now live in the card footer).
+    <div class="absolute z-20 bottom-full left-0 mb-1 w-56 rounded-md border border-border bg-popover shadow-lg py-1">
       <Show when={!objectivesTree.loading} fallback={<p class="px-3 py-1.5 text-xs text-muted-foreground animate-pulse2">Loading objectives…</p>}>
         <Show when={leafCount() > PICKER_SEARCH_THRESHOLD}>
           <div class="px-2 pb-1">
@@ -328,6 +335,22 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // Habit toggle — promote a standard task into a habit (server also ensures its Habit
+  // pattern) or demote it back to standard. Confirmed like the other footer mutations.
+  async function toggleHabit() {
+    const makeHabit = !props.task.is_habit;
+    if (!confirm(makeHabit
+      ? 'Make this a habit? It will recur and be checked off on the planner.'
+      : 'Stop tracking this as a habit?')) return;
+    try {
+      if (makeHabit) await api.tasks.promoteHabit(props.task.id);
+      else await api.tasks.update(props.task.id, { is_habit: false });
+      showToast(makeHabit ? 'Now a habit' : 'No longer a habit', 'default');
+      refetchTasks();
+      refetchStreak();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
   const dueOverdue = () =>
     !!props.task.due_at && new Date(props.task.due_at) < new Date() && props.task.status !== 'done';
 
@@ -355,22 +378,26 @@ export function TaskCard(props: Props) {
     ? <span class="text-xs font-mono text-slate-600">{props.task.estimated_minutes}m</span>
     : null;
 
-  // §D: a task already staged in the flight-plan is dimmed + loses its "send" button.
+  // §D: a task already staged in the flight-plan is dimmed; its flight-plan button stays
+  // rendered but reads as "in the flight-plan" (subtle accent tint) instead of the filled
+  // "send" CTA — see the button's classList below.
   const inFlightPlan = () => flightPlanTaskIds().has(props.task.id);
   const dimmed = () => props.task.status === 'cancelled' || inFlightPlan();
   // §C: a routine member paints its Routine's texture as the card background — but not
-  // when the card is dimmed (opacity-40 × the 6% texture ≈ invisible mud; skip it).
-  const routineTex = () => (!dimmed() && isRoutineTask(props.task.id) ? patternForTask(props.task.id) : undefined);
+  // when the card is dimmed (opacity-40 × the 6% texture ≈ invisible mud; skip it), and
+  // only while the Settings "Direction textures" appearance toggle is on.
+  const routineTex = () =>
+    (texturesEnabled() && !dimmed() && isRoutineTask(props.task.id) ? patternForTask(props.task.id) : undefined);
 
   return (
     <div class={depth() > 0 ? 'pl-6 relative' : ''}>
       {depth() > 0 && <div class="absolute left-4 top-0 bottom-0 w-px bg-surface-600/60" />}
 
       <div
-        // 2-row grid: row 1 is the title line (toggle · title · right rail spans both
-        // rows), row 2 is everything below it — so the sorting rail's top icon lines
-        // up with the description/label text no matter how many lines the title wraps.
-        class="card group grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 relative isolate"
+        // Balanced layout (chips redesign): a vertical stack — title row, description,
+        // full-width tags, then a single compact footer that collapses the former
+        // left sorting-rail and right priority/date rail into one hairline-topped row.
+        class="card group relative isolate flex flex-col"
         // While a dropdown is open, lift this card above its siblings: each card is
         // `isolate`, so a z-20 popover inside it would otherwise paint UNDER later
         // sibling cards (DOM order wins at equal z) and they'd swallow menu clicks.
@@ -407,201 +434,54 @@ export function TaskCard(props: Props) {
           )}
         </Show>
 
-        {/* Left gutter, row 1: the merged direction-icon / done toggle — a SQUARE button
-            showing the task's direction shape; clicking it checks the task off (filled +
-            check when done). Habits keep the non-clickable Repeat marker (done on the
-            planner). The sorting rail sits below in row 2. */}
-        <div class="col-start-1 row-start-1 flex justify-center">
-          <Show
-            when={!props.task.is_habit}
-            fallback={
-              <span class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border border-border flex items-center justify-center cursor-default opacity-60"
-                title="Habit — mark occurrences done on the planner, not here">
-                <Repeat size={11} class="text-muted-foreground" />
-              </span>
-            }
-          >
-            <button
-              onClick={toggleDone}
-              class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border flex items-center justify-center transition-colors hover:border-primary"
-              classList={{ 'border-border': props.task.status !== 'done' }}
-              style={props.task.status === 'done'
-                ? { background: dirColor(), 'border-color': dirColor() }
-                : { 'border-color': dirColor() }}
-              title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
-              aria-pressed={props.task.status === 'done'}
+        {/* Row A — merged direction-icon / done toggle · title · habit/instance markers ·
+            estimate (swaps to edit / delete / skip on hover). */}
+        <div class="flex items-start gap-2">
+          <div class="flex-shrink-0 flex justify-center">
+            <Show
+              when={!props.task.is_habit}
+              fallback={
+                <span class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border border-border flex items-center justify-center cursor-default opacity-60"
+                  title="Habit — mark occurrences done on the planner, not here">
+                  <Repeat size={11} class="text-muted-foreground" />
+                </span>
+              }
             >
-              <Show
-                when={props.task.status === 'done'}
-                fallback={<span class="inline-flex" style={{ color: dirColor() }}><ShapeIcon shape={dirShape()} size={12} strokeWidth={1.75} /></span>}
-              >
-                <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
-                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </Show>
-            </button>
-          </Show>
-        </div>
-
-        {/* Left gutter, row 2: the sorting rail — the three group memberships stacked
-            under the check-off. Accent = the task is in that group; dull = it isn't.
-            pt-1 mirrors the description's mt-1 so the top icon's top edge lands on
-            the text line below the title. */}
-        <div class="col-start-1 row-start-2 pt-1 flex flex-col items-center gap-1.5">
-          <div class="relative">
-            <button
-              onClick={() => { setRoutineMenu(false); setObjectiveMenu((v) => !v); }}
-              class="flex p-0 transition-colors"
-              classList={{
-                'text-primary': inObjective(),
-                'text-muted-foreground/40 hover:text-foreground': !inObjective(),
-              }}
-              title={inObjective() ? 'In an objective — manage' : 'Add to objective'}
-            >
-              <Target size={13} />
-            </button>
-            <Show when={objectiveMenu()}>
-              <ObjectiveMenu task={props.task} close={() => setObjectiveMenu(false)} />
-            </Show>
-          </div>
-          <div class="relative">
-            <button
-              onClick={() => { setObjectiveMenu(false); setRoutineMenu((v) => !v); }}
-              class="flex p-0 transition-colors"
-              classList={{
-                'text-primary': isRoutineTask(props.task.id),
-                'text-muted-foreground/40 hover:text-foreground': !isRoutineTask(props.task.id),
-              }}
-              title={isRoutineTask(props.task.id) ? 'In a routine' : 'Add to a routine'}
-            >
-              <Shapes size={13} />
-            </button>
-            <Show when={routineMenu()}>
-              <div class="absolute z-20 left-full top-0 ml-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
-                <For each={routines()}>
-                  {(r) => (
-                    <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
-                  )}
-                </For>
-                <Show when={routines().length === 0}>
-                  <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
-                </Show>
-                <button onClick={newRoutineWithTask} class="w-full text-left px-3 py-1.5 text-sm text-primary hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
-              </div>
-            </Show>
-          </div>
-          <button
-            onClick={sendToFlightPlan}
-            class="flex p-0 transition-colors"
-            classList={{
-              'text-primary': inFlightPlan(),
-              'text-muted-foreground/40 hover:text-foreground': !inFlightPlan(),
-            }}
-            title={inFlightPlan() ? 'In the Flight-plan' : 'Send to Flight-plan'}
-          >
-            <Rocket size={13} />
-          </button>
-        </div>
-
-        {/* Content, row 1 — the title line (row 1's height IS this line, which is what
-            keeps the sorting rail aligned to whatever renders below the title). */}
-        <div class="col-start-2 row-start-1 min-w-0 flex items-start gap-2">
-            <span class={`flex-1 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
-              {props.task.title}
-            </span>
-            {/* Linked-subtask count — visible at a glance; click to expand. */}
-            <Show when={subtaskCount() > 0}>
               <button
-                onClick={toggleSubs}
-                class="badge-neutral text-[10px] flex-shrink-0 inline-flex items-center gap-0.5 mt-0.5 hover:text-foreground"
-                title={`${subtaskCount()} subtask${subtaskCount() === 1 ? '' : 's'}`}
+                onClick={toggleDone}
+                class="mt-0.5 w-[18px] h-[18px] rounded-[4px] border flex items-center justify-center transition-colors hover:border-primary"
+                classList={{ 'border-border': props.task.status !== 'done' }}
+                style={props.task.status === 'done'
+                  ? { background: dirColor(), 'border-color': dirColor() }
+                  : { 'border-color': dirColor() }}
+                title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
+                aria-pressed={props.task.status === 'done'}
               >
-                <Show when={showSubs()} fallback={<ChevronRight size={10} />}><ChevronDown size={10} /></Show>
-                {subtaskCount()}
+                <Show
+                  when={props.task.status === 'done'}
+                  fallback={<span class="inline-flex" style={{ color: dirColor() }}><ShapeIcon shape={dirShape()} size={12} strokeWidth={1.75} /></span>}
+                >
+                  <svg viewBox="0 0 10 10" class="w-full h-full p-0.5" fill="none">
+                    <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </Show>
               </button>
             </Show>
-            <Show when={props.task.is_habit}>
-              <span class="badge-neutral text-[10px] flex-shrink-0 inline-flex items-center gap-0.5"><Repeat size={9} /> habit</span>
-            </Show>
-            <Show when={isInstance() && !props.task.is_habit}>
-              <Repeat size={11} class="text-muted-foreground flex-shrink-0 mt-1" />
-            </Show>
-        </div>
+          </div>
 
-        {/* Content, row 2 — routine label, description, tags, streak. */}
-        <div class="col-start-2 row-start-2 min-w-0">
-          {/* Routine label — the routine's icon + name, between title and description. */}
-          <Show when={routine()}>
-            {(r) => (
-              <div class="flex items-center gap-1 mt-0.5 text-[11px] text-muted-foreground" title={`In the "${r().pattern.name}" routine`}>
-                <span class="inline-flex" style={{ color: colorVar(r().type?.color_token) }}>
-                  <ShapeIcon shape={r().type?.icon_shape ?? 'circle'} size={11} strokeWidth={1.75} />
-                </span>
-                <span class="truncate">{r().pattern.name}</span>
-              </div>
-            )}
+          <span class={`flex-1 min-w-0 text-sm leading-snug ${statusClass[props.task.status] ?? 'text-slate-200'}`}>
+            {props.task.title}
+          </span>
+
+          <Show when={props.task.is_habit}>
+            <span class="badge-neutral text-[10px] flex-shrink-0 inline-flex items-center gap-0.5 mt-0.5"><Repeat size={9} /> habit</span>
+          </Show>
+          <Show when={isInstance() && !props.task.is_habit}>
+            <Repeat size={11} class="text-muted-foreground flex-shrink-0 mt-1" />
           </Show>
 
-          <Show when={props.task.notes || props.task.description}>
-            <p class="text-xs text-slate-500 mt-1 line-clamp-2">
-              {props.task.notes ?? props.task.description}
-            </p>
-          </Show>
-
-          <Show when={props.task.tags.length > 0 || (props.task.secondary_tags?.length ?? 0) > 0}>
-            <div class="flex flex-wrap gap-1 mt-1.5">
-              {/* Primary tags (level 1) — solid badge; includes the home/work/community direction. */}
-              <For each={props.task.tags}>
-                {(t) => <span class="badge-neutral text-[11px]">#{t}</span>}
-              </For>
-              {/* Secondary tags (level>1) — ghost/outline badge to read as secondary. */}
-              <For each={props.task.secondary_tags ?? []}>
-                {(t) => (
-                  <span
-                    class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80"
-                    title="secondary tag"
-                  >
-                    {t}
-                  </span>
-                )}
-              </For>
-            </div>
-          </Show>
-
-          {/* Habit streak strip */}
-          <Show when={props.task.is_habit && streak()}>
-            {(s) => (
-              <div class="flex items-center gap-1.5 mt-1.5">
-                <div class="flex gap-0.5">
-                  <For each={s().recent}>
-                    {(r) => (
-                      <span
-                        class="w-2 h-2 rounded-full"
-                        classList={{
-                          'bg-primary': r.status === 'done',
-                          'border border-border': r.status === 'open',
-                          'bg-muted-foreground/40': r.status === 'missed',
-                          'border border-muted-foreground': r.status === 'skipped',
-                        }}
-                        title={`${r.date}: ${r.status}`}
-                      />
-                    )}
-                  </For>
-                </div>
-                <Show when={s().current > 0}>
-                  <span class="flex items-center gap-0.5 text-[11px] text-primary font-medium">
-                    <Flame size={10} /> {s().current}
-                  </span>
-                </Show>
-              </div>
-            )}
-          </Show>
-        </div>
-
-        {/* Right rail (spans both grid rows): top slot shows the estimate, and swaps to
-            the hover action buttons (over the priority toggle); then priority + Due / Start. */}
-        <div class="col-start-3 row-start-1 row-span-2 flex flex-col items-end gap-1.5">
-          <div class="relative flex items-center justify-end min-h-[22px] w-full">
+          {/* estimate → hover actions (edit / delete / skip) */}
+          <div class="relative flex items-center justify-end min-h-[20px] flex-shrink-0 self-start">
             <span class="group-hover:opacity-0 transition-opacity">{est()}</span>
             <div
               class="absolute right-0 top-0 flex items-center gap-0.5 transition-opacity duration-100"
@@ -616,14 +496,182 @@ export function TaskCard(props: Props) {
               <Show when={isInstance()}>
                 <button onClick={skip} class="btn-icon" title="Skip this occurrence"><SkipForward size={13} /></button>
               </Show>
-              <button class="btn-icon" title="Add subtask" onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}><Plus size={13} /></button>
               <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
               <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>
             </div>
           </div>
-          <PriorityToggle value={p()} onPick={setPriority} />
-          <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
-          <DateField label="Start" value={props.task.scheduled_for} highlight={startHighlight()} onSet={setStart} />
+        </div>
+
+        {/* Row B — routine label + description. */}
+        <Show when={routine()}>
+          {(r) => (
+            <div class="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground" title={`In the "${r().pattern.name}" routine`}>
+              <span class="inline-flex" style={{ color: colorVar(r().type?.color_token) }}>
+                <ShapeIcon shape={r().type?.icon_shape ?? 'circle'} size={11} strokeWidth={1.75} />
+              </span>
+              <span class="truncate">{r().pattern.name}</span>
+            </div>
+          )}
+        </Show>
+
+        <Show when={props.task.notes || props.task.description}>
+          <p class="text-xs text-slate-500 mt-1 line-clamp-2">
+            {props.task.notes ?? props.task.description}
+          </p>
+        </Show>
+
+        {/* Row C — tags, full width. */}
+        <Show when={props.task.tags.length > 0 || (props.task.secondary_tags?.length ?? 0) > 0}>
+          <div class="flex flex-wrap gap-1.5 mt-2">
+            {/* Primary tags (level 1) — solid badge; includes the home/work/community direction. */}
+            <For each={props.task.tags}>
+              {(t) => <span class="badge-neutral text-[11px]">#{t}</span>}
+            </For>
+            {/* Secondary tags (level>1) — ghost/outline badge to read as secondary. */}
+            <For each={props.task.secondary_tags ?? []}>
+              {(t) => (
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80"
+                  title="secondary tag"
+                >
+                  {t}
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
+
+        {/* Habit streak strip */}
+        <Show when={props.task.is_habit && streak()}>
+          {(s) => (
+            <div class="flex items-center gap-1.5 mt-2">
+              <div class="flex gap-0.5">
+                <For each={s().recent}>
+                  {(r) => (
+                    <span
+                      class="w-2 h-2 rounded-full"
+                      classList={{
+                        'bg-primary': r.status === 'done',
+                        'border border-border': r.status === 'open',
+                        'bg-muted-foreground/40': r.status === 'missed',
+                        'border border-muted-foreground': r.status === 'skipped',
+                      }}
+                      title={`${r.date}: ${r.status}`}
+                    />
+                  )}
+                </For>
+              </div>
+              <Show when={s().current > 0}>
+                <span class="flex items-center gap-0.5 text-[11px] text-primary font-medium">
+                  <Flame size={10} /> {s().current}
+                </span>
+              </Show>
+            </div>
+          )}
+        </Show>
+
+        {/* Row D — footer: [sub · add · objective · habit · routine] ··· [due · start · priority · flight].
+            One row of uniform 32px (h-8) controls, hairline-separated. Accent = the
+            reference mint (accent-hi / --mint #58ebbf), the same teal the P3 chip uses. */}
+        <div class="flex items-center gap-2 flex-wrap mt-2.5 pt-2.5 border-t border-border/60">
+          {/* subtask count (expand) — only when there are subtasks */}
+          <Show when={subtaskCount() > 0}>
+            <button
+              onClick={toggleSubs}
+              class="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[10px] font-semibold text-accent-hi bg-accent-hi/10 hover:bg-accent-hi/20 transition-colors flex-shrink-0"
+              title={`${subtaskCount()} subtask${subtaskCount() === 1 ? '' : 's'}`}
+            >
+              <Show when={showSubs()} fallback={<ChevronRight size={11} />}><ChevronDown size={11} /></Show>
+              {subtaskCount()} sub
+            </button>
+          </Show>
+          {/* add subtask */}
+          <button
+            class="flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground bg-muted/40 border border-border hover:text-foreground transition-colors flex-shrink-0"
+            title="Add subtask"
+            onClick={() => setElementModal({ open: true, mode: 'add', kind: 'task', parentId: props.task.id })}
+          >
+            <Plus size={15} />
+          </button>
+
+          {/* type toggles — objective · habit · routine (accent when the task belongs) */}
+          <div class="flex items-center gap-1.5 flex-shrink-0 ml-1">
+            <div class="relative">
+              <button
+                onClick={() => { setRoutineMenu(false); setObjectiveMenu((v) => !v); }}
+                class="flex items-center justify-center h-8 w-8 rounded-lg border transition-colors"
+                classList={{
+                  'text-accent-hi border-accent-hi/50 bg-accent-hi/10': inObjective(),
+                  'text-muted-foreground/50 border-border hover:text-foreground': !inObjective(),
+                }}
+                title={inObjective() ? 'In an objective — manage' : 'Add to objective'}
+              >
+                <Target size={15} />
+              </button>
+              <Show when={objectiveMenu()}>
+                <ObjectiveMenu task={props.task} close={() => setObjectiveMenu(false)} />
+              </Show>
+            </div>
+            <button
+              onClick={toggleHabit}
+              class="flex items-center justify-center h-8 w-8 rounded-lg border transition-colors"
+              classList={{
+                'text-accent-hi border-accent-hi/50 bg-accent-hi/10': props.task.is_habit,
+                'text-muted-foreground/50 border-border hover:text-foreground': !props.task.is_habit,
+              }}
+              title={props.task.is_habit ? 'A habit — click to stop tracking' : 'Make this a habit'}
+              aria-pressed={props.task.is_habit}
+            >
+              <Repeat size={15} />
+            </button>
+            <div class="relative">
+              <button
+                onClick={() => { setObjectiveMenu(false); setRoutineMenu((v) => !v); }}
+                class="flex items-center justify-center h-8 w-8 rounded-lg border transition-colors"
+                classList={{
+                  'text-accent-hi border-accent-hi/50 bg-accent-hi/10': isRoutineTask(props.task.id),
+                  'text-muted-foreground/50 border-border hover:text-foreground': !isRoutineTask(props.task.id),
+                }}
+                title={isRoutineTask(props.task.id) ? 'In a routine' : 'Add to a routine'}
+              >
+                <Shapes size={15} />
+              </button>
+              <Show when={routineMenu()}>
+                <div class="absolute z-20 bottom-full left-0 mb-1 w-44 rounded-md border border-border bg-popover shadow-lg max-h-56 overflow-y-auto py-1">
+                  <For each={routines()}>
+                    {(r) => (
+                      <button onClick={() => addToRoutine(r.id, r.name)} class="w-full text-left px-3 py-1.5 text-sm hover:bg-sidebar-accent truncate">{r.name}</button>
+                    )}
+                  </For>
+                  <Show when={routines().length === 0}>
+                    <p class="px-3 py-1.5 text-xs text-muted-foreground">No routines yet</p>
+                  </Show>
+                  <button onClick={newRoutineWithTask} class="w-full text-left px-3 py-1.5 text-sm text-accent-hi hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New routine</button>
+                </div>
+              </Show>
+            </div>
+          </div>
+
+          {/* spacer — pushes dates/priority/flight to the right, balancing the two clusters */}
+          <div class="flex-1 min-w-[8px]" />
+
+          {/* dates · priority · send-to-flight-plan */}
+          <div class="flex items-center gap-1.5 flex-shrink-0">
+            <DateField label="Due" value={props.task.due_at} overdue={dueOverdue()} onSet={setDue} />
+            <DateField label="Start" value={props.task.scheduled_for} highlight={startHighlight()} onSet={setStart} />
+            <PriorityToggle value={p()} onPick={setPriority} />
+            <button
+              onClick={sendToFlightPlan}
+              class="flex items-center justify-center h-8 w-8 rounded-full flex-shrink-0 transition-all"
+              classList={{
+                'bg-accent-hi/20 text-accent-hi': inFlightPlan(),
+                'bg-accent-hi text-[#041620] hover:brightness-110': !inFlightPlan(),
+              }}
+              title={inFlightPlan() ? 'In the Flight-plan' : 'Send to Flight-plan'}
+            >
+              <Rocket size={15} />
+            </button>
+          </div>
         </div>
       </div>
 

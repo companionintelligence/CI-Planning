@@ -11,7 +11,7 @@ import { blockColorVar } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { splitTagNames } from '../lib/multi-tag.js';
 import { PX_PER_MIN, minutesIntoDay } from '../lib/grid.js';
-import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, TOP_COLLAPSE_END, BOTTOM_COLLAPSE_START } from '../lib/day-axis.js';
+import { type AxisState, yOf as axisYOf, axisHeightPx, visibleExtent, topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { isImmovable } from '../lib/drag.js';
 import { ShapeIcon } from './ShapeIcon.js';
 
@@ -131,7 +131,7 @@ export function PlannerEntityCard(props: {
     // Wholly-collapsed start → anchor to the region's expanded-facing edge (07:00 for
     // the top bar, 21:00 for the bottom), not inside the thin bar. This mirrors
     // day-axis minAt's collapsed clamp (top→endMin, bottom→startMin).
-    const edgeMin = startMin < TOP_COLLAPSE_END ? TOP_COLLAPSE_END : BOTTOM_COLLAPSE_START;
+    const edgeMin = startMin < topCollapseEnd(st) ? topCollapseEnd(st) : bottomCollapseStart(st);
     const y = axisYOf(ext ? ext.startMin : edgeMin, st, PX_PER_MIN);
     return Math.max(lo, Math.min(y, hi));
   };

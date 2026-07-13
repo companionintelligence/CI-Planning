@@ -28,7 +28,9 @@ export interface AuthConfig {
   audience: string;        // LEGACY/unused — live aud check uses the OIDC client_id, not this value
   contractVersion: string; // RESERVED — populated but NOT asserted; no JWT contract-version check is wired
   autoProvision: boolean;  // first unknown SSO `sub` → provision owner row vs 403
-  kekB64?: string;         // 32-byte base64 KEK for the connection-token store (PR4)
+  kekB64?: string;         // DEPRECATED/unused — parsed from CP_KEK_B64 but never read; the KEK
+                           //   consumer (lib/crypto loadKek/rotateKek) reads process.env.CP_KEK_B64
+                           //   directly. Retained for parity with the sibling AUTH_* fields.
   rateLimit: { windowMs: number; max: number; issueMax: number };
   // U2 — local username/password mode (only when mode === 'sso' && disableOidc):
   disableOidc: boolean;    // true ⇒ local login instead of JWKS Bearer verification
