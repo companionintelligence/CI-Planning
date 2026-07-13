@@ -27,9 +27,13 @@ const server = app.listen(config.port, () => {
 
 startCronJobs();
 
-// Phase H: surface that push is dormant so an operator knows it's unconfigured, not broken.
+// Phase H: VAPID keys are now auto-provisioned at boot (services/vapid-config.ts), so push
+// is normally live out of the box. It only stays dormant in two deliberate cases: a
+// half-set env keypair (one of VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY), or a stored private key
+// whose sealing KEK was removed/rotated. Surface that so an operator knows it's
+// unconfigured, not broken — the vapid-config warning above says which case applies.
 if (!pushEnabled()) {
-  logger.warn('Web Push disabled — VAPID keys not set (in-app reminders still work). Set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY to enable; see server/.env.example.');
+  logger.warn('Web Push disabled — no usable VAPID keypair (in-app reminders still work). See the vapid-config warning above; set both VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY, or unset both to auto-generate.');
 }
 
 // Graceful shutdown: docker stop / Hub restarts send SIGTERM. Exit 0 so the
