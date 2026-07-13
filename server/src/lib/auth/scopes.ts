@@ -25,3 +25,27 @@ export function hasScope(scopes: string[], method: string): boolean {
 export function hasAdminScope(scopes: string[]): boolean {
   return scopes.includes(SCOPE_ADMIN);
 }
+
+/**
+ * Phase AG — the role→scopes map, the single place an `owners.role` becomes a scope
+ * set (verifySession + any future path). Three roles map 1:1 onto the existing
+ * scopes, so no per-feature permission table exists:
+ *
+ *   operator → [read, write, admin]  (account management, system jobs, Google config)
+ *   member   → [read, write]         (a normal tenant — full access to their own data)
+ *   viewer   → [read]                (read-only tenant)
+ *
+ * An unrecognized value (a hand-edited row, a role from a newer schema) degrades to
+ * read-only — the fail-closed direction, matching verifySession's malformed-epoch
+ * handling: never grant write/admin on input we don't understand.
+ */
+export const OWNER_ROLES = ['operator', 'member', 'viewer'] as const;
+export type OwnerRole = (typeof OWNER_ROLES)[number];
+
+export function roleToScopes(role: string | null | undefined): string[] {
+  switch (role) {
+    case 'operator': return [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
+    case 'member':   return [SCOPE_READ, SCOPE_WRITE];
+    default:         return [SCOPE_READ]; // 'viewer' + anything unrecognized
+  }
+}

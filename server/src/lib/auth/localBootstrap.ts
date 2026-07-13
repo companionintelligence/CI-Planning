@@ -31,6 +31,8 @@ export async function ensureLocalAuthBootstrap(): Promise<void> {
 
   const username = config.auth.defaultUsername ?? 'admin';
   const passwordHash = await hashPassword(config.auth.defaultPassword);
-  provisionOwner({ name: username, username, passwordHash });
+  // The founding admin (Phase AG): the first seeded owner is the operator — every
+  // later account is created BY an operator via /api/accounts and defaults to member.
+  provisionOwner({ name: username, username, passwordHash, role: 'operator' });
   logger.info(`Seeded default local owner '${username}' (AUTH_DEFAULT_USERNAME). Change its password after first login.`);
 }

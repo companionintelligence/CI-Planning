@@ -1,6 +1,6 @@
 # Phase AG — Multi-tenant RBAC (operator/tenant role split)
 
-**Status: DESIGN — approved, implementation not yet started (2026-07-12).**
+**Status: IMPLEMENTED (2026-07-12) — migration 0125, role-derived session scopes, `/api/accounts`, Settings → Accounts UI. See `server/test/accounts.test.ts` for the behavioral contract.**
 
 ## Why
 

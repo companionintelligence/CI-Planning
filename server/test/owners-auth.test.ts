@@ -3,6 +3,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
 import { runMigrations } from '../src/db/migrate.js';
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
+import * as m0125 from '../src/db/migrations/0125_owner_roles.js';
 
 /**
  * U0 (= Phase T's "T5") — `owners` auth-identity columns (migration 0101).
@@ -101,6 +102,42 @@ describe('U0 — owners auth-identity columns (0101)', () => {
       .prepare(`SELECT id FROM owners WHERE username = ? AND id <> ?`)
       .get('admin', SYSTEM_OWNER_ID) as { id: string } | undefined;
     expect(found?.id).toBe(OWNER_A);
+    db.close();
+  });
+});
+
+describe('AG — owners.role (0125)', () => {
+  it('adds role NOT NULL DEFAULT member; a fresh insert defaults to member', () => {
+    const db = fresh();
+    const col = info(db).find((c) => c.name === 'role');
+    expect(col).toBeTruthy();
+    expect(col!.notnull).toBe(1);
+    addOwner(db, { id: OWNER_A });
+    expect((db.prepare(`SELECT role FROM owners WHERE id = ?`).get(OWNER_A) as { role: string }).role).toBe('member');
+    db.close();
+  });
+
+  it('backfills owners that PRE-EXIST the migration to operator (no lockout), sentinel excluded', () => {
+    const db = fresh();
+    // Recreate the pre-0125 shape: drop the column, add a "pre-existing" owner, replay.
+    db.exec(`ALTER TABLE owners DROP COLUMN role`);
+    addOwner(db, { id: OWNER_A, username: 'existing' });
+    m0125.up(db);
+    const roleOf = (id: string) =>
+      (db.prepare(`SELECT role FROM owners WHERE id = ?`).get(id) as { role: string }).role;
+    expect(roleOf(OWNER_A)).toBe('operator'); // existing install keeps admin
+    expect(roleOf(SYSTEM_OWNER_ID)).toBe('member'); // auth-inert sentinel is not backfilled
+    // Owners created AFTER the migration still default to member.
+    addOwner(db, { id: OWNER_B });
+    expect(roleOf(OWNER_B)).toBe('member');
+    db.close();
+  });
+
+  it('is idempotent — a re-run neither throws nor re-backfills', () => {
+    const db = fresh();
+    addOwner(db, { id: OWNER_A }); // post-migration owner, role member
+    expect(() => m0125.up(db)).not.toThrow();
+    expect((db.prepare(`SELECT role FROM owners WHERE id = ?`).get(OWNER_A) as { role: string }).role).toBe('member');
     db.close();
   });
 });
