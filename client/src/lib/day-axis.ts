@@ -56,12 +56,17 @@ export interface AxisState {
   bottomStartMin?: number;
 }
 
+/** Smallest always-expanded middle we guarantee between the two collapse regions. */
+export const MIN_MIDDLE_MIN = 60;
+
 /**
  * The effective collapse boundaries for a state — the user-configurable fields
- * clamped to sane halves of the day (top ends by noon, bottom starts from noon)
- * so the middle segment can never invert or vanish. Every geometry consumer
- * (segments/visibleExtent and the components' boundary checks) reads THESE, so a
- * state without the optional fields behaves byte-identically to the old constants.
+ * clamped to sane halves of the day (top ends by noon, bottom starts from noon).
+ * The bottom start is additionally kept at least `MIN_MIDDLE_MIN` after the top end,
+ * so the always-expanded middle segment can never invert or vanish — even at the
+ * extreme where both are set to noon. Every geometry consumer (segments/visibleExtent
+ * and the components' boundary checks) reads THESE, so a state without the optional
+ * fields behaves byte-identically to the old constants.
  */
 export function topCollapseEnd(state: AxisState): number {
   const v = state.topEndMin;
@@ -70,8 +75,13 @@ export function topCollapseEnd(state: AxisState): number {
 }
 export function bottomCollapseStart(state: AxisState): number {
   const v = state.bottomStartMin;
-  if (typeof v !== 'number' || !Number.isFinite(v)) return BOTTOM_COLLAPSE_START;
-  return Math.min(Math.max(Math.round(v), 12 * 60), MINUTES_PER_DAY);
+  const raw =
+    typeof v !== 'number' || !Number.isFinite(v)
+      ? BOTTOM_COLLAPSE_START
+      : Math.min(Math.max(Math.round(v), 12 * 60), MINUTES_PER_DAY);
+  // Keep a non-empty middle: never let the bottom region start before topEnd + MIN.
+  // topEnd ≤ 720, so this floor stays ≤ 780 — well within the day.
+  return Math.min(Math.max(raw, topCollapseEnd(state) + MIN_MIDDLE_MIN), MINUTES_PER_DAY);
 }
 
 /** Both regions collapsed — the calendar's default. */
