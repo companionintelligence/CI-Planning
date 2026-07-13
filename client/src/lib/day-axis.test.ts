@@ -4,6 +4,7 @@ import {
   BOTTOM_COLLAPSE_START,
   BOTTOM_COLLAPSE_END,
   MINUTES_PER_DAY,
+  MIN_MIDDLE_MIN,
   COLLAPSED_BAR_PX,
   DEFAULT_AXIS_STATE,
   type AxisState,
@@ -12,6 +13,8 @@ import {
   yOf,
   minAt,
   visibleExtent,
+  topCollapseEnd,
+  bottomCollapseStart,
 } from './day-axis.js';
 
 // The calendar renders expanded minutes at the app's PX_PER_MIN scale; the pure
@@ -29,6 +32,34 @@ const ALL_STATES: [string, AxisState][] = [
   ['top only', TOP_ONLY],
   ['bottom only', BOTTOM_ONLY],
 ];
+
+describe('day-axis — configurable collapse boundaries', () => {
+  it('falls back to the constants when the optional fields are absent/malformed', () => {
+    expect(topCollapseEnd(BOTH_COLLAPSED)).toBe(TOP_COLLAPSE_END);
+    expect(bottomCollapseStart(BOTH_COLLAPSED)).toBe(BOTTOM_COLLAPSE_START);
+    expect(topCollapseEnd({ ...BOTH_COLLAPSED, topEndMin: Number.NaN })).toBe(TOP_COLLAPSE_END);
+    expect(bottomCollapseStart({ ...BOTH_COLLAPSED, bottomStartMin: undefined })).toBe(BOTTOM_COLLAPSE_START);
+  });
+
+  it('honors configured boundaries and clamps them to sane halves of the day', () => {
+    const s: AxisState = { ...BOTH_COLLAPSED, topEndMin: 540, bottomStartMin: 1200 };
+    expect(topCollapseEnd(s)).toBe(540); // 9am
+    expect(bottomCollapseStart(s)).toBe(1200); // 8pm
+    // top can't run past noon; bottom can't start before noon.
+    expect(topCollapseEnd({ ...BOTH_COLLAPSED, topEndMin: 2000 })).toBe(12 * 60);
+    expect(bottomCollapseStart({ ...BOTH_COLLAPSED, bottomStartMin: 60 })).toBe(12 * 60);
+  });
+
+  it('never lets the always-expanded middle vanish, even when both are set to noon', () => {
+    const noon: AxisState = { ...BOTH_COLLAPSED, topEndMin: 720, bottomStartMin: 720 };
+    expect(bottomCollapseStart(noon) - topCollapseEnd(noon)).toBeGreaterThanOrEqual(MIN_MIDDLE_MIN);
+    // segments stay ordered + the middle keeps real height at any zoom.
+    const segs = segments(noon, PX);
+    expect(segs[1]!.region).toBeNull();
+    expect(segs[1]!.endMin - segs[1]!.startMin).toBeGreaterThanOrEqual(MIN_MIDDLE_MIN);
+    expect(axisHeightPx({ ...noon, topExpanded: true, bottomExpanded: true }, PX)).toBeGreaterThan(0);
+  });
+});
 
 describe('day-axis — default state', () => {
   it('defaults to both regions collapsed', () => {

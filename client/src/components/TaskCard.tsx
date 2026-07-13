@@ -378,7 +378,9 @@ export function TaskCard(props: Props) {
     ? <span class="text-xs font-mono text-slate-600">{props.task.estimated_minutes}m</span>
     : null;
 
-  // §D: a task already staged in the flight-plan is dimmed + loses its "send" button.
+  // §D: a task already staged in the flight-plan is dimmed; its flight-plan button stays
+  // rendered but reads as "in the flight-plan" (subtle accent tint) instead of the filled
+  // "send" CTA — see the button's classList below.
   const inFlightPlan = () => flightPlanTaskIds().has(props.task.id);
   const dimmed = () => props.task.status === 'cancelled' || inFlightPlan();
   // §C: a routine member paints its Routine's texture as the card background — but not
