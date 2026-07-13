@@ -352,11 +352,14 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     expect(res.setCookies.every((c) => /httponly/i.test(c))).toBe(true);
 
     const owner = sqlite
-      .prepare(`SELECT id, name, email FROM owners WHERE external_subject = 'sub-new'`)
-      .get() as { id: string; name: string; email: string };
+      .prepare(`SELECT id, name, email, role FROM owners WHERE external_subject = 'sub-new'`)
+      .get() as { id: string; name: string; email: string; role: string };
     expect(owner).toBeTruthy();
     expect(owner.name).toBe('Ada Portal');
     expect(owner.email).toBe('ada@ci.test');
+    // Phase AG: an auto-provisioned portal user is a member, never an operator —
+    // the fix for "every SSO tenant is an admin".
+    expect(owner.role).toBe('member');
 
     const tags = sqlite
       .prepare(`SELECT name, kind, is_base FROM tags WHERE owner_id = ? ORDER BY kind, name`)
@@ -380,6 +383,8 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     const cookie = cookieHeader(res.setCookies);
 
     expect((await realFetch(`${srv.url}/api/tasks`, { headers: { Cookie: cookie } })).status).toBe(200);
+    // Phase AG: the auto-provisioned member's session carries no admin scope.
+    expect((await realFetch(`${srv.url}/api/jobs`, { headers: { Cookie: cookie } })).status).toBe(403);
     const me = await realFetch(`${srv.url}/api/auth/me`, { headers: { Cookie: cookie } });
     expect(me.status).toBe(200);
     const identity = (await me.json()) as { name: string; email: string };

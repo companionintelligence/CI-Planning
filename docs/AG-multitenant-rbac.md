@@ -1,6 +1,6 @@
 # Phase AG — Multi-tenant RBAC (operator/tenant role split)
 
-**Status: DESIGN — approved, implementation not yet started (2026-07-12).**
+**Status: IMPLEMENTED (2026-07-12) — migration 0125, role-derived session scopes, `/api/accounts` with email-invite onboarding, Settings → Accounts UI. See `server/test/accounts.test.ts` for the behavioral contract.**
 
 ## Why
 
@@ -31,7 +31,7 @@ The gap: no `role` column, no endpoint/CLI creates a second local account, no ow
   | `member` | `[READ, WRITE]` | Normal tenant; full access to their own data only |
   | `viewer` | `[READ]` | Read-only tenant |
   "Set permissions per account" = assign one of these roles. Three roles map 1:1 onto `planning:read/write/admin`, so **no new permission table** is needed.
-- **New local accounts:** the operator sets an initial password, shown once (mirroring the `key:issue` mint flow); the user changes it after first login. Works with **no SMTP** configured — the right default for self-hosted.
+- **New local accounts: email invites (owner ruling, 2026-07-12 — supersedes the earlier operator-set-password default).** Creating an account mints it with **no password** and sends the user a single-use set-your-password link (the existing V reset-token machinery: `password_reset_tokens` + `/reset-password`; invite links live 7 days, reset links keep the V TTL). The operator never handles anyone's password. With **no SMTP** configured (or a failed send) the link is returned to the operator once, to forward out-of-band — same honesty rule as reset-request's "written to the server log" message.
 - **At least one operator, always.** Guard against demoting or deleting the last operator (lockout prevention).
 - **API-key mode is unchanged** — per-credential scopes already cover it.
 
@@ -52,10 +52,10 @@ New migration `0125_owner_roles.ts` (additive + idempotent, following `0101_owne
 
 ### 4. Admin accounts API — new `routes/accounts.ts`, operator-gated
 Copy the `requireAdmin(ctx)` helper; register in `routes/index.ts` (one import + one array entry, after `googleConfigRouter()`). Every route below is `requireAdmin`-gated:
-- `GET /api/accounts` — list all owners (new `listOwners()` in `owners.ts`, excluding the sentinel): id, name, username, email, role, hasPassword, createdAt.
-- `POST /api/accounts` — create a local account: `hashPassword(initialPassword)` → `provisionOwner({ name, username, passwordHash, role })`. The initial password is **not** echoed back. Duplicate username → 409 (DB partial-unique already enforces it, per `owners-auth.test.ts`).
-- `PATCH /api/accounts/:id` — set `role` (and/or `name`). **Guard: refuse to demote the last operator** (409). A role change calls `bumpSessionEpoch(id)` so the target's live sessions re-derive scopes on their next request.
-- `POST /api/accounts/:id/reset-password` — operator sets a new initial password (shown once) + `bumpSessionEpoch`.
+- `GET /api/accounts` — list all owners (new `listOwners()` in `owners.ts`, excluding the sentinel): id, name, username, email, role, hasPassword. (`owners` has no created_at column — ids are UUIDv7, so ordering by id is creation order.)
+- `POST /api/accounts` — create a local account and send its invite: `provisionOwner({ name, username, email, role })` (password-less) → `issueResetToken(id, 7d)` → invite email, or the link back to the operator when SMTP is absent. Duplicate username → 409 (DB partial-unique already enforces it, per `owners-auth.test.ts`).
+- `POST /api/accounts/:id/invite` — (re)send the set-password link: a fresh invite for a password-less account, a reset link for an active one. The newest link supersedes older ones. 409 for OIDC-only (no username) or email-less accounts.
+- `PATCH /api/accounts/:id` — set `role`, `name`, and/or `email` (so a mistyped invite address can be fixed). **Guard: refuse to demote the last operator** (409). A role change calls `bumpSessionEpoch(id)` so the target's live sessions re-derive scopes on their next request. (Completing an invite/reset already bumps the epoch inside `/api/auth/reset`.)
 - `DELETE /api/accounts/:id` — `deleteOwner(id)`. **Guards: refuse to delete the last operator, and refuse to delete yourself** (409); the sentinel is already refused inside `deleteOwner`.
 
 ### 5. Surface role to the client
@@ -81,5 +81,5 @@ Copy the `requireAdmin(ctx)` helper; register in `routes/index.ts` (one import +
 
 ## Out of scope (deliberate)
 - Per-feature permissions (calendar vs objectives vs memory) — the coarse read/write/admin model is sufficient for the stated goal; revisit only if finer control is required.
-- Email invite / reset-link account onboarding — depends on SMTP, which is optional; operator-set initial password is the SMTP-free path.
+- ~~Email invite / reset-link account onboarding~~ — **now the ratified default** (see Decisions); the SMTP-free path is the returned-link fallback, not operator-set passwords.
 - Rate-limiter shared state across horizontally-scaled instances (flagged in the audit) — a separate scaling concern, not part of the role split.

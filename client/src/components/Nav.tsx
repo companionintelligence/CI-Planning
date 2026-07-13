@@ -23,6 +23,15 @@ export function Nav() {
   // test/standalone have no session to end, so the affordance stays hidden.
   const [cfg] = createResource(() => api.auth.config().catch(() => null));
   const showSignOut = () => { const c = cfg(); return !!c && authGateActive(c); };
+  // Phase AG: Jobs is an operator surface (server 403s non-operators anyway) — hide
+  // its nav entry for member/viewer sessions. Only applies behind the auth gate;
+  // test/standalone dev deployments carry full scopes and keep the entry.
+  const [me] = createResource(() => api.auth.me().catch(() => null));
+  const showLink = (href: string) => {
+    if (href !== '/jobs') return true;
+    const c = cfg();
+    return !c || !authGateActive(c) || me()?.isOperator === true;
+  };
   async function signOut() {
     try {
       await api.auth.logout();
@@ -56,15 +65,17 @@ export function Nav() {
 
       {links.map((l) => (
         <>
-          <A
-            href={l.href}
-            end={l.href === '/'}
-            class="nav-item"
-            activeClass="nav-item-active"
-          >
-            <l.Icon size={15} class="flex-shrink-0" />
-            <span class="flex-1">{l.label}</span>
-          </A>
+          <Show when={showLink(l.href)}>
+            <A
+              href={l.href}
+              end={l.href === '/'}
+              class="nav-item"
+              activeClass="nav-item-active"
+            >
+              <l.Icon size={15} class="flex-shrink-0" />
+              <span class="flex-1">{l.label}</span>
+            </A>
+          </Show>
           {/* Stroke line under Calendar — separates capture (Today/Calendar) from
               planning (Tasks/Tags/…). */}
           <Show when={l.href === '/calendar'}>

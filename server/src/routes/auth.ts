@@ -10,6 +10,7 @@ import { provisionOwner } from '../lib/owners.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
 import { verifyOidcIdToken } from '../lib/auth/verifyOidcIdToken.js';
 import { discoverOidc, type OidcDiscoveryDoc } from '../lib/auth/oidcDiscovery.js';
+import { normalizeRole } from '../lib/auth/scopes.js';
 import { findOwnerByUsername, verifyLoginPassword, hashPassword } from '../lib/auth/password.js';
 import { setSession, clearSession, setLoginState, consumeLoginState, bumpSessionEpoch, SESSION_COOKIE } from '../lib/auth/session.js';
 import { issueResetToken, consumeResetToken } from '../lib/auth/resetToken.js';
@@ -126,12 +127,21 @@ export function authRouter() {
   router.get('/api/auth/me', (ctx) => {
     const ownerId = currentOwnerId();
     const row = sqlite
-      .prepare(`SELECT id, name, email, username, backup_email FROM owners WHERE id = ?`)
+      .prepare(`SELECT id, name, email, username, backup_email, role FROM owners WHERE id = ?`)
       .get(ownerId) as
-      | { id: string; name: string; email: string | null; username: string | null; backup_email: string | null }
+      | { id: string; name: string; email: string | null; username: string | null; backup_email: string | null; role: string }
       | undefined;
     if (!row) throw httpError(401, 'unknown owner');
-    ctx.body = { ownerId: row.id, name: row.name, email: row.email, username: row.username, backupEmail: row.backup_email };
+    // Phase AG: `role` + derived `isOperator` let the client show/hide the operator
+    // surfaces (Settings → Accounts, the Jobs nav entry) without probing an admin GET.
+    // normalizeRole keeps the payload on the operator/member/viewer union the client
+    // types promise — an unrecognized DB value reads as 'viewer', matching the
+    // read-only scopes roleToScopes actually grants it.
+    const role = normalizeRole(row.role);
+    ctx.body = {
+      ownerId: row.id, name: row.name, email: row.email, username: row.username,
+      backupEmail: row.backup_email, role, isOperator: role === 'operator',
+    };
   });
 
   // ── U2: local username/password ─────────────────────────────────────────────
@@ -500,7 +510,10 @@ export function authRouter() {
         'Portal user';
       const email = typeof claims.email === 'string' ? claims.email : undefined;
       try {
-        owner = { id: provisionOwner({ name, email, externalSubject: claims.sub }) };
+        // Phase AG: an auto-provisioned portal user is a 'member', never an operator —
+        // this is what closes the "every SSO tenant is an admin" hole. An operator
+        // promotes them via /api/accounts if they should run the instance.
+        owner = { id: provisionOwner({ name, email, externalSubject: claims.sub, role: 'member' }) };
         logger.info('CI-Portal auto-provisioned a new owner', { owner: owner.id });
       } catch (err) {
         // Two concurrent first-logins for the same sub: the UNIQUE(external_subject)
