@@ -12,6 +12,8 @@ import { ElementWizard } from './components/ElementWizard.js';
 import { Today }    from './views/Today.js';
 import { Focus }    from './views/Focus.js';
 import { Calendar } from './views/Calendar.js';
+import { PrioritiesWizard } from './views/PrioritiesWizard.js';
+import { Balance } from './views/Balance.js';
 import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
@@ -248,6 +250,8 @@ export function App() {
             <Route path="/objectives"  component={ObjectivesRedirect} />
             <Route path="/patterns" component={() => <Navigate href="/tasks" />} />
             <Route path="/tags"     component={Tags} />
+            <Route path="/priorities" component={PrioritiesWizard} />
+            <Route path="/balance"    component={Balance} />
             <Route path="/settings" component={Settings} />
             <Route path="/jobs"     component={Jobs} />
           </Route>
@@ -272,6 +276,8 @@ function UngatedRouter() {
       {/* Routines moved into the Tasks screen as tabs (T-TASKS-1); redirect stale deep-links. */}
       <Route path="/patterns" component={() => <Navigate href="/tasks" />} />
       <Route path="/tags"     component={Tags} />
+      <Route path="/priorities" component={PrioritiesWizard} />
+      <Route path="/balance"    component={Balance} />
       <Route path="/settings" component={Settings} />
       <Route path="/jobs"     component={Jobs} />
     </Router>

@@ -286,6 +286,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // agentic surfaces (inbox suggestions). Default OFF — flag-off is byte-identical.
   // Distinct from memorySyncEnabled (the one-way PUSH toggle above, AA4).
   memoryPullEnabled: integer('memory_pull_enabled', { mode: 'boolean' }).default(false),
+  // Onboarding Priorities Wizard (0128): weekly hours reserved for SLEEP — unschedulable,
+  // attributed to Health. Default 63 = 9h/night × 7; the wizard's schedulable pool = 168 − this.
+  sleepHoursPerWeek: integer('sleep_hours_per_week').notNull().default(63),
 });
 
 export const tags = sqliteTable('tags', {
@@ -656,3 +659,17 @@ export const auditLog = sqliteTable('audit_log', {
   entity: text('entity').notNull(),  // 'task:<id>' | 'block:<id>' | 'import' | ...
   at: text('at').default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).notNull(),
 });
+
+// --- Life priorities (0127): a per-owner self-audit — satisfaction/importance/target
+// hours per life category. Upserted by (owner_id, category) via the Priorities Wizard;
+// the Balance view reads it. Category is a fixed client-side key, not a tags FK. ---
+export const lifePriorities = sqliteTable('life_priorities', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
+  category: text('category').notNull(), // health | career | relationships | growth | leisure | finance
+  satisfaction: integer('satisfaction').notNull().default(5),        // 1–10 (clamped in the service)
+  importance: integer('importance').notNull().default(5),            // 1–10
+  targetHoursPerWeek: integer('target_hours_per_week').notNull().default(0), // 0–168
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (t) => ({ ownerCategory: unique().on(t.ownerId, t.category) }));

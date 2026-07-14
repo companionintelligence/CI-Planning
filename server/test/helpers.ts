@@ -57,6 +57,7 @@ export function resetDb(): void {
     DELETE FROM estimate_calibration;
     DELETE FROM calibration_combo_pins;
     DELETE FROM copy_history;
+    DELETE FROM life_priorities;
   `);
   // Prune any extra owners a multi-tenant isolation test created, so they don't
   // leak across the shared pid-keyed DB into later files (resetDb kept only the
@@ -99,7 +100,8 @@ export function resetDb(): void {
       calibration_loop_enabled = 1,
       z_experiment_arm = NULL,
       view_prefs = NULL,
-      memory_pull_enabled = 0;
+      memory_pull_enabled = 0,
+      sleep_hours_per_week = 63;
   `);
 }
 

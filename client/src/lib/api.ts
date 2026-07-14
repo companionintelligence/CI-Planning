@@ -370,6 +370,11 @@ export const api = {
     integrations: () => request<Integrations>('GET', '/integrations'),
   },
 
+  priorities: {
+    list: () => request<{ priorities: Priority[] }>('GET', '/priorities'),
+    save: (priorities: Priority[]) => request<{ priorities: Priority[] }>('POST', '/priorities', { priorities }),
+  },
+
   patternBlocks: {
     list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
     forDay: (dayType: string) => request<{ windows: PatternWindows }>('GET', `/pattern-blocks/${dayType}`),
@@ -773,6 +778,9 @@ export interface Prefs {
   memory_account?: string | null; memory_last_synced_at?: string | null;
   // Companion Memory pull (Phase AA): feed the CI-Server memory graph into suggestions.
   memory_pull_enabled?: boolean;
+  // Onboarding Priorities Wizard (0128): weekly hours reserved for sleep (unschedulable,
+  // attributed to Health). Default 63 = 9h/night × 7; schedulable pool = 168 − this.
+  sleep_hours_per_week?: number;
   // Cross-device calendar view-state (0111); null/absent = use built-in defaults.
   view_prefs?: ViewPrefs | null;
 }
@@ -910,6 +918,15 @@ export interface ConnectionHealth {
   mappedEventCount: number;
   lastSyncAt: string | null;
   lastError: string | null;
+}
+
+/** A life-priority row (life_priorities, 0127). The wizard sends the four core fields;
+ *  GET returns them plus id/owner/timestamps, which the client ignores. */
+export interface Priority {
+  category: string;
+  satisfaction: number;
+  importance: number;
+  target_hours_per_week: number;
 }
 
 export interface Integrations {

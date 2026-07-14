@@ -33,6 +33,7 @@ import { plannerRouter } from './planner.js';
 import { calibrationRouter } from './calibration.js';
 import { googleConfigRouter } from './google-config.js';
 import { accountsRouter } from './accounts.js';
+import { prioritiesRouter } from './priorities.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -70,6 +71,7 @@ export function mountRoutes(app: Koa) {
     calibrationRouter(),
     googleConfigRouter(),
     accountsRouter(),
+    prioritiesRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }
