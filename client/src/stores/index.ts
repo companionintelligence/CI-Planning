@@ -301,6 +301,11 @@ export const [integrations, { refetch: refetchIntegrations }] = createResource((
 /** True when a reachable Ollama makes the AI features usable. Everything AI gates on this. */
 export const aiAvailable = () => integrations()?.ollama.available ?? false;
 
+// ── Life priorities (0127) — the Priorities Wizard writes; the Balance view reads. ──
+export const [priorities, { refetch: refetchPriorities }] = createResource(() =>
+  api.priorities.list().then((r) => r.priorities)
+);
+
 // ── Prefs ────────────────────────────────────────────────────────────────────
 export const [prefs, { refetch: refetchPrefs }] = createResource(() =>
   api.prefs.get().then((r) => r.prefs)

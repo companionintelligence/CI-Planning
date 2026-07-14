@@ -2,7 +2,7 @@ import { A, useNavigate } from '@solidjs/router';
 import { Show, createResource } from 'solid-js';
 import {
   CheckSquare, Tag, Settings, Activity,
-  Sun, Cpu, CalendarDays, LogOut, Crosshair,
+  Sun, Cpu, CalendarDays, LogOut, Crosshair, Scale,
 } from 'lucide-solid';
 import { showToast } from '../stores/index.js';
 import { api, authGateActive } from '../lib/api.js';
@@ -13,6 +13,7 @@ const links = [
   { href: '/',            label: 'Today',      Icon: Sun },
   { href: '/calendar',   label: 'Calendar',   Icon: CalendarDays },
   { href: '/tasks',      label: 'Tasks',      Icon: CheckSquare },
+  { href: '/balance',    label: 'Balance',    Icon: Scale },
   { href: '/tags',       label: 'Tags',       Icon: Tag },
   { href: '/jobs',       label: 'Jobs',       Icon: Activity },
   { href: '/settings',   label: 'Settings',   Icon: Settings },

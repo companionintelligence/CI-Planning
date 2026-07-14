@@ -1,0 +1,213 @@
+import { For, Show } from 'solid-js';
+import { A } from '@solidjs/router';
+import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target } from 'lucide-solid';
+import { priorities } from '../stores/index.js';
+import type { Priority } from '../lib/api.js';
+
+interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
+
+const CATEGORIES: CategoryConfig[] = [
+  { key: 'health',        name: 'Health',          icon: Heart,      colorClass: 'text-red-500' },
+  { key: 'career',        name: 'Career',          icon: Briefcase,  colorClass: 'text-blue-500' },
+  { key: 'relationships', name: 'Relationships',   icon: Users,      colorClass: 'text-pink-500' },
+  { key: 'growth',        name: 'Personal Growth', icon: Brain,      colorClass: 'text-purple-500' },
+  { key: 'leisure',       name: 'Leisure',         icon: Smile,      colorClass: 'text-amber-500' },
+  { key: 'finance',       name: 'Finance',         icon: DollarSign, colorClass: 'text-emerald-500' },
+];
+
+const FALLBACK: Omit<Priority, 'category'> = { satisfaction: 5, importance: 5, target_hours_per_week: 0 };
+
+export function Balance() {
+  const byCategory = (key: string): Priority =>
+    priorities()?.find((p) => p.category === key) ?? { category: key, ...FALLBACK };
+  const hasData = () => (priorities()?.length ?? 0) > 0;
+
+  // Balance Index: how well current satisfaction tracks stated importance across categories.
+  // Per category alignment = 1 − |importance − satisfaction| / 9; averaged, ×100.
+  const balanceIndex = () => {
+    const list = priorities() ?? [];
+    if (list.length === 0) return 0;
+    const sum = list.reduce((acc, p) => acc + (1 - Math.abs(p.importance - p.satisfaction) / 9), 0);
+    return Math.max(0, Math.min(100, Math.round((sum / list.length) * 100)));
+  };
+  const targetTotal = () => (priorities() ?? []).reduce((s, p) => s + p.target_hours_per_week, 0);
+  const avgSatisfaction = () => {
+    const list = priorities() ?? [];
+    return list.length ? Math.round((list.reduce((s, p) => s + p.satisfaction, 0) / list.length) * 10) / 10 : 0;
+  };
+
+  // Focus areas: high importance but a meaningful satisfaction gap (importance − satisfaction ≥ 3).
+  const focusAreas = () =>
+    CATEGORIES
+      .map((c) => ({ cat: c, p: byCategory(c.key) }))
+      .filter(({ p }) => p.importance - p.satisfaction >= 3)
+      .sort((a, b) => (b.p.importance - b.p.satisfaction) - (a.p.importance - a.p.satisfaction));
+
+  return (
+    <div class="flex-1 overflow-auto p-6 page-enter max-w-5xl mx-auto w-full">
+      {/* Header */}
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div>
+          <h1 class="text-3xl font-extrabold text-foreground tracking-wide mb-1">Life Balance</h1>
+          <p class="text-xs text-muted-foreground">
+            How your current satisfaction lines up with what you say matters most, and your target weekly focus.
+          </p>
+        </div>
+        <A href="/priorities" class="btn-secondary self-start"><Edit class="w-4 h-4 mr-1.5" /> Priorities Wizard</A>
+      </div>
+
+      <Show
+        when={hasData()}
+        fallback={
+          <div class="card p-8 text-center flex flex-col items-center gap-3">
+            <Target class="w-8 h-8 text-accent" />
+            <div class="text-sm text-foreground font-medium">No priorities set yet</div>
+            <p class="text-xs text-muted-foreground max-w-sm">
+              Run the Priorities Wizard to audit your satisfaction, importance, and target weekly hours across the six life areas.
+            </p>
+            <A href="/priorities" class="btn-primary mt-2">Start the wizard</A>
+          </div>
+        }
+      >
+        {/* KPI cards */}
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+          <div class="card p-5 flex flex-col justify-between">
+            <div class="text-xs text-accent font-semibold tracking-wider uppercase mb-1">Balance Index</div>
+            <div class="flex items-baseline gap-2">
+              <div class="text-4xl font-mono font-extrabold text-foreground">{balanceIndex()}%</div>
+              <div class="text-xs text-muted-foreground font-semibold">alignment</div>
+            </div>
+            <div class="text-[10px] text-muted-foreground mt-3 leading-snug">
+              How closely current satisfaction tracks stated importance across all areas.
+            </div>
+          </div>
+          <div class="card p-5 flex flex-col justify-between">
+            <div class="text-xs text-muted-foreground font-semibold tracking-wider uppercase mb-1">Weekly Target</div>
+            <div class="flex items-baseline gap-2">
+              <div class="text-4xl font-mono font-extrabold text-foreground">{targetTotal()}h</div>
+              <div class="text-xs text-muted-foreground">total focus</div>
+            </div>
+            <div class="text-[10px] text-muted-foreground mt-3 leading-snug">Target hours per week you allocated across categories.</div>
+          </div>
+          <div class="card p-5 flex flex-col justify-between">
+            <div class="text-xs text-muted-foreground font-semibold tracking-wider uppercase mb-1">Avg Satisfaction</div>
+            <div class="flex items-baseline gap-2">
+              <div class="text-4xl font-mono font-extrabold text-foreground">{avgSatisfaction()}</div>
+              <div class="text-xs text-muted-foreground">/ 10</div>
+            </div>
+            <div class="text-[10px] text-muted-foreground mt-3 leading-snug">Mean current-satisfaction score across the six areas.</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Per-category */}
+          <div class="lg:col-span-2 flex flex-col gap-4">
+            <h2 class="text-lg font-bold text-foreground flex items-center gap-2">📊 Core Dimensions</h2>
+            <div class="flex flex-col gap-4">
+              <For each={CATEGORIES}>
+                {(cat) => {
+                  const p = () => byCategory(cat.key);
+                  const gap = () => p().importance - p().satisfaction;
+                  const Icon = cat.icon;
+                  return (
+                    <div class="card p-5">
+                      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                        <div class="flex items-center gap-3">
+                          <div class={`p-2 rounded-xl bg-muted ${cat.colorClass}`}><Icon class="w-5 h-5" /></div>
+                          <div>
+                            <h3 class="font-bold text-foreground text-base leading-none">{cat.name}</h3>
+                            <span class="text-[10px] text-muted-foreground font-mono uppercase mt-1 inline-block">
+                              {p().target_hours_per_week}h/wk target
+                            </span>
+                          </div>
+                        </div>
+                        <div class="flex gap-3 items-center">
+                          <div class="flex flex-col items-center bg-muted/50 px-2.5 py-1 rounded-xl border border-border">
+                            <span class="text-[9px] text-muted-foreground uppercase font-mono">Satisfy</span>
+                            <span class="text-sm font-mono font-bold text-accent">{p().satisfaction}/10</span>
+                          </div>
+                          <div class="flex flex-col items-center bg-muted/50 px-2.5 py-1 rounded-xl border border-border">
+                            <span class="text-[9px] text-muted-foreground uppercase font-mono">Matters</span>
+                            <span class="text-sm font-mono font-bold text-foreground">{p().importance}/10</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* satisfaction vs importance bars */}
+                      <div class="space-y-2">
+                        <div class="flex items-center gap-2">
+                          <span class="text-[10px] text-muted-foreground font-mono w-14 flex-shrink-0">satisfy</span>
+                          <div class="h-2 flex-1 bg-muted rounded-full overflow-hidden">
+                            <div class="h-full rounded-full bg-accent transition-all duration-300" style={{ width: `${p().satisfaction * 10}%` }} />
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-[10px] text-muted-foreground font-mono w-14 flex-shrink-0">matters</span>
+                          <div class="h-2 flex-1 bg-muted rounded-full overflow-hidden">
+                            <div class="h-full rounded-full bg-foreground/40 transition-all duration-300" style={{ width: `${p().importance * 10}%` }} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <Show when={gap() >= 3}>
+                        <div class="mt-3 inline-flex items-center gap-1.5 text-[11px] text-amber-500 font-medium">
+                          <AlertCircle class="w-3.5 h-3.5" /> Matters more than it satisfies — a focus area.
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          {/* Focus areas / tips */}
+          <div class="flex flex-col gap-5">
+            <h2 class="text-lg font-bold text-foreground flex items-center gap-2">💡 Focus Areas</h2>
+            <div class="flex flex-col gap-4">
+              <Show
+                when={focusAreas().length > 0}
+                fallback={
+                  <div class="card p-4 flex gap-3.5 items-start">
+                    <div class="p-2 rounded-xl bg-muted text-accent flex-shrink-0 mt-0.5"><Sparkles class="w-4 h-4" /></div>
+                    <div class="space-y-1">
+                      <h4 class="text-xs font-bold text-foreground">Well aligned</h4>
+                      <p class="text-[11px] text-muted-foreground leading-snug">
+                        Your satisfaction tracks what matters to you across every area. Keep it up.
+                      </p>
+                    </div>
+                  </div>
+                }
+              >
+                <For each={focusAreas()}>
+                  {({ cat, p }) => {
+                    const Icon = cat.icon;
+                    return (
+                      <div class="card p-4 flex gap-3.5 items-start">
+                        <div class={`p-2 rounded-xl bg-muted ${cat.colorClass} flex-shrink-0 mt-0.5`}><Icon class="w-4 h-4" /></div>
+                        <div class="space-y-1">
+                          <h4 class="text-xs font-bold text-foreground">{cat.name} needs attention</h4>
+                          <p class="text-[11px] text-muted-foreground leading-snug">
+                            You rate it {p.importance}/10 important but only {p.satisfaction}/10 satisfying — the biggest gaps are worth a plan.
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }}
+                </For>
+              </Show>
+
+              <div class="card p-4 flex flex-col gap-2">
+                <h3 class="text-xs font-bold text-foreground flex items-center gap-1.5"><AlertCircle class="w-3.5 h-3.5 text-accent" /> About this view</h3>
+                <p class="text-[10px] text-muted-foreground leading-relaxed">
+                  Focus areas are where importance outruns satisfaction by 3+ points. Weekly-target vs actual-scheduled
+                  time tracking arrives with the scheduling integration.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+}
