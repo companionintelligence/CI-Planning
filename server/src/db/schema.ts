@@ -662,7 +662,7 @@ export const auditLog = sqliteTable('audit_log', {
 // the Balance view reads it. Category is a fixed client-side key, not a tags FK. ---
 export const lifePriorities = sqliteTable('life_priorities', {
   id: text('id').primaryKey().$defaultFn(newId),
-  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  ownerId: text('owner_id').references(() => owners.id, { onDelete: 'cascade' }).notNull(),
   category: text('category').notNull(), // health | career | relationships | growth | leisure | finance
   satisfaction: integer('satisfaction').notNull().default(5),        // 1–10 (clamped in the service)
   importance: integer('importance').notNull().default(5),            // 1–10

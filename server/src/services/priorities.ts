@@ -67,10 +67,15 @@ export function listPriorities(): LifePriorityRow[] {
  * keep the existing row's value (or the column default on insert). Returns the full
  * current list so the client can replace its store in one shot.
  */
-export function upsertPriorities(items: PriorityInput[]): LifePriorityRow[] {
+export function upsertPriorities(items: unknown[]): LifePriorityRow[] {
   const owner = currentOwnerId();
-  const tx = sqlite.transaction((rows: PriorityInput[]) => {
-    for (const p of rows) {
+  const rows = Array.isArray(items) ? items : [];
+  const tx = sqlite.transaction((list: unknown[]) => {
+    for (const raw of list) {
+      // Defend against malformed elements (null / non-object) so a bad payload skips
+      // the row rather than throwing a 500.
+      if (raw == null || typeof raw !== 'object') continue;
+      const p = raw as PriorityInput;
       const category = typeof p.category === 'string' ? p.category.trim() : '';
       if (!category) continue;
       const existing = getStmt.get(owner, category) as LifePriorityRow | undefined;
@@ -84,6 +89,6 @@ export function upsertPriorities(items: PriorityInput[]): LifePriorityRow[] {
       });
     }
   });
-  tx(Array.isArray(items) ? items : []);
+  tx(rows);
   return listPriorities();
 }

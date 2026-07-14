@@ -24,8 +24,9 @@ export function up(db: Database): void {
       target_hours_per_week INTEGER NOT NULL DEFAULT 0,
       created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      -- The UNIQUE(owner_id, category) index also serves owner-scoped lookups
+      -- (owner_id is its leftmost column), so no separate owner index is needed.
       UNIQUE(owner_id, category)
     );
-    CREATE INDEX IF NOT EXISTS ix_life_priorities_owner ON life_priorities (owner_id);
   `);
 }

@@ -73,7 +73,7 @@ export function PrioritiesWizard() {
     }
   }
 
-  const Slider = (props: { cat: CategoryConfig; value: () => number; onInput: (v: number) => void }) => {
+  const Slider = (props: { cat: CategoryConfig; label: string; value: () => number; onInput: (v: number) => void }) => {
     const Icon = props.cat.icon;
     return (
       <div class={`p-4 rounded-2xl border ${props.cat.bgClass} flex flex-col gap-3`}>
@@ -86,6 +86,7 @@ export function PrioritiesWizard() {
         </div>
         <div class="flex items-center gap-4 mt-1">
           <input type="range" min="1" max="10" value={props.value()}
+            aria-label={`${props.cat.name} ${props.label} (1 to 10)`}
             onInput={(e) => props.onInput(Number(e.currentTarget.value))}
             class="flex-1 accent-accent" />
           <span class="text-sm font-mono font-bold text-accent min-w-[20px] text-right">{props.value()}</span>
@@ -134,7 +135,7 @@ export function PrioritiesWizard() {
             Rate your current satisfaction in each area (1 = not fulfilled, 10 = fully thriving).
           </p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <For each={CATEGORIES}>{(cat) => <Slider cat={cat} value={() => satisfactions()[cat.key] ?? 5} onInput={(v) => setSat(cat.key, v)} />}</For>
+            <For each={CATEGORIES}>{(cat) => <Slider cat={cat} label="satisfaction" value={() => satisfactions()[cat.key] ?? 5} onInput={(v) => setSat(cat.key, v)} />}</For>
           </div>
           <div class="flex justify-end gap-3 mt-8">
             <button onClick={() => setStep(2)} class="btn-primary">Next: Desired Focus <ChevronRight class="w-4 h-4 ml-1" /></button>
@@ -148,7 +149,7 @@ export function PrioritiesWizard() {
             Rate how important each area is to your vision of a balanced life (1 = low, 10 = essential).
           </p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <For each={CATEGORIES}>{(cat) => <Slider cat={cat} value={() => importances()[cat.key] ?? 5} onInput={(v) => setImp(cat.key, v)} />}</For>
+            <For each={CATEGORIES}>{(cat) => <Slider cat={cat} label="importance" value={() => importances()[cat.key] ?? 5} onInput={(v) => setImp(cat.key, v)} />}</For>
           </div>
           <div class="flex justify-between gap-3 mt-8">
             <button onClick={() => setStep(1)} class="btn-secondary"><ChevronLeft class="w-4 h-4 mr-1" /> Back</button>
@@ -189,9 +190,11 @@ export function PrioritiesWizard() {
                     </div>
                     <div class="flex items-center gap-4 mt-2">
                       <input type="range" min="0" max="80" step="1" value={val()}
+                        aria-label={`${cat.name} target hours per week`}
                         onInput={(e) => setHrs(cat.key, Number(e.currentTarget.value))} class="flex-1 accent-accent" />
                       <div class="flex items-center gap-1">
                         <input type="number" min="0" max="168" value={val()}
+                          aria-label={`${cat.name} target hours per week (exact)`}
                           onChange={(e) => setHrs(cat.key, Math.max(0, Math.min(168, Number(e.currentTarget.value))))}
                           class="bg-muted border border-border rounded px-1.5 py-0.5 text-xs text-center text-foreground font-mono w-12" />
                         <span class="text-xs text-muted-foreground font-mono">h/wk</span>
