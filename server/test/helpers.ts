@@ -100,7 +100,8 @@ export function resetDb(): void {
       calibration_loop_enabled = 1,
       z_experiment_arm = NULL,
       view_prefs = NULL,
-      memory_pull_enabled = 0;
+      memory_pull_enabled = 0,
+      sleep_hours_per_week = 63;
   `);
 }
 

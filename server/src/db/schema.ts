@@ -286,6 +286,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // agentic surfaces (inbox suggestions). Default OFF — flag-off is byte-identical.
   // Distinct from memorySyncEnabled (the one-way PUSH toggle above, AA4).
   memoryPullEnabled: integer('memory_pull_enabled', { mode: 'boolean' }).default(false),
+  // Onboarding Priorities Wizard (0128): weekly hours reserved for SLEEP — unschedulable,
+  // attributed to Health. Default 63 = 9h/night × 7; the wizard's schedulable pool = 168 − this.
+  sleepHoursPerWeek: integer('sleep_hours_per_week').notNull().default(63),
 });
 
 export const tags = sqliteTable('tags', {

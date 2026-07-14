@@ -72,3 +72,16 @@ describe('priorities', () => {
     expect(bList.body.priorities[0]).toMatchObject({ category: 'finance', satisfaction: 9 });
   });
 });
+
+describe('sleep reservation (scheduling_prefs.sleep_hours_per_week)', () => {
+  it('defaults to 63 (9h/night) and round-trips via /api/prefs', async () => {
+    const g1 = await api<{ prefs: { sleep_hours_per_week: number } }>(srv.url, '/api/prefs');
+    expect(g1.body.prefs.sleep_hours_per_week).toBe(63);
+
+    const patch = await api(srv.url, '/api/prefs', { method: 'PATCH', json: { sleep_hours_per_week: 56 } });
+    expect(patch.status).toBe(200);
+
+    const g2 = await api<{ prefs: { sleep_hours_per_week: number } }>(srv.url, '/api/prefs');
+    expect(g2.body.prefs.sleep_hours_per_week).toBe(56);
+  });
+});
