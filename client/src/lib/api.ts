@@ -370,6 +370,11 @@ export const api = {
     integrations: () => request<Integrations>('GET', '/integrations'),
   },
 
+  priorities: {
+    list: () => request<{ priorities: Priority[] }>('GET', '/priorities'),
+    save: (priorities: Priority[]) => request<{ priorities: Priority[] }>('POST', '/priorities', { priorities }),
+  },
+
   patternBlocks: {
     list: () => request<{ workday: PatternWindows; weekend: PatternWindows }>('GET', '/pattern-blocks'),
     forDay: (dayType: string) => request<{ windows: PatternWindows }>('GET', `/pattern-blocks/${dayType}`),
@@ -910,6 +915,15 @@ export interface ConnectionHealth {
   mappedEventCount: number;
   lastSyncAt: string | null;
   lastError: string | null;
+}
+
+/** A life-priority row (life_priorities, 0127). The wizard sends the four core fields;
+ *  GET returns them plus id/owner/timestamps, which the client ignores. */
+export interface Priority {
+  category: string;
+  satisfaction: number;
+  importance: number;
+  target_hours_per_week: number;
 }
 
 export interface Integrations {
