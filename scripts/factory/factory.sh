@@ -39,9 +39,14 @@ owner() {
 # Resolve the Projects-v2 number for FACTORY_PROJECT under the owner.
 # Prints the number, or empty string if not found.
 project_number() {
-  local o; o="$(owner)"
+  # Best-effort: must NEVER abort the script under `set -euo pipefail` (e.g. a token
+  # missing the read:project scope makes `gh project list` fail). A failure here just
+  # means "no board found", which the caller handles by WARNing — the issue is still
+  # created and its number/url still printed. `|| return 0` / `|| true` neutralize
+  # both `set -e` and `pipefail` for this optional lookup.
+  local o; o="$(owner)" || return 0
   gh project list --owner "$o" --format json \
-    --jq ".projects[] | select(.title==\"$FACTORY_PROJECT\") | .number" 2>/dev/null | head -n1
+    --jq ".projects[] | select(.title==\"$FACTORY_PROJECT\") | .number" 2>/dev/null | head -n1 || true
 }
 
 cmd_create() {

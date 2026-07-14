@@ -2,7 +2,7 @@
 > **Phase:** FTUE / Weekly Planning Assistant — Wave 5 · Multi-user (DEFERRED)
 > **Branch:** `feat/event-comments`
 > **Commit style:** `feat(comments): cross-owner event comments`
-> **Design:** this ticket is the spec (STUB — full commit-recipe to be drafted when Wave 5 starts). See memory `project_ftue_weekly_assistant`.
+> **Design:** this ticket is the spec (STUB — full commit-recipe to be drafted when Wave 5 starts). See [docs/ftue-plan.md](../../ftue-plan.md).
 > **Dependencies:** M1 (a shared external event must exist)
 
 ## Goal
