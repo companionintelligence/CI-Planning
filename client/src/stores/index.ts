@@ -61,6 +61,10 @@ on('schedule:done', (data) => {
 export const [replanSuggestion, setReplanSuggestion] = createSignal<ReplanSuggestion | null>(null);
 
 on('replan:suggested', (data) => {
+  // The banner's only action is an AI re-author (api.plan.reauthor → Ollama). With no
+  // reachable Ollama that offer is a dead end — the server already reflowed
+  // deterministically — so drop the nudge entirely rather than dangle a failing button.
+  if (!aiAvailable()) return;
   const s = data as ReplanSuggestion;
   setReplanSuggestion(s);
   showToast(s.summary ? `${s.summary} — re-plan with AI?` : 'Re-plan your day with AI?', 'default', 8000, {
@@ -282,6 +286,20 @@ export function patternForTask(taskId?: string): { pattern: Pattern; type?: Patt
 export function isRoutineTask(taskId?: string): boolean {
   return patternForTask(taskId)?.type?.name === 'Routine';
 }
+
+// ── Integrations / AI availability ─────────────────────────────────────────────
+// GET /api/integrations aggregates per-integration availability (Ollama, Google, push).
+// It's the single source of truth for whether the "intelligent half" of the app is
+// usable: every AI surface gates on `aiAvailable()`. Fail-closed — while the resource
+// loads or if it errors, `aiAvailable()` is false, so AI controls stay hidden rather
+// than dangling as no-ops. Ollama can come up AFTER boot, so `refetchIntegrations` is
+// exposed for a "recheck" affordance (Settings → Integrations) without a full reload.
+export const [integrations, { refetch: refetchIntegrations }] = createResource(() =>
+  api.llm.integrations()
+);
+
+/** True when a reachable Ollama makes the AI features usable. Everything AI gates on this. */
+export const aiAvailable = () => integrations()?.ollama.available ?? false;
 
 // ── Prefs ────────────────────────────────────────────────────────────────────
 export const [prefs, { refetch: refetchPrefs }] = createResource(() =>

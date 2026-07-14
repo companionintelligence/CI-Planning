@@ -302,6 +302,19 @@ export const config: Config = {
   },
 };
 
+// Fail closed: an unrecognized AUTH_MODE (a typo like `ssoo`) otherwise casts through
+// unchecked at config.ts and boots a running-but-unloggable service — the request auth
+// safely defaults to the standalone api-key path, but every login route 404s and no owner
+// is seeded, with no signal to the operator. Reject it at boot instead, matching the
+// fail-fast the other AUTH_MODE guards use. (An UNSET AUTH_MODE became 'test' above and is
+// handled by the production guard below.)
+const VALID_AUTH_MODES: AuthMode[] = ['test', 'standalone', 'sso'];
+if (!VALID_AUTH_MODES.includes(config.auth.mode)) {
+  throw new Error(
+    `AUTH_MODE='${config.auth.mode}' is not a valid mode — set AUTH_MODE to one of: test, standalone, sso`,
+  );
+}
+
 // Fail closed: the credential-free `test` owner path must never run in production.
 // A misconfigured prod image is a silent auth bypass, so refuse to boot instead.
 if (config.auth.mode === 'test' && process.env.NODE_ENV === 'production') {

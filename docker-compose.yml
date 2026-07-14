@@ -1,0 +1,88 @@
+# Standalone / self-host stack for Companion Planning (ci-planning) + a bundled Ollama.
+#
+# This file is for running the app on your own machine or server. It is NOT used by
+# the CI-Hub marketplace install — on a Hub appliance the Hub mounts /data and wires
+# OLLAMA_URL automatically, so the Hub path is unchanged and ignores this file.
+#
+# Quick start:
+#   cp .env.example .env                                   # set SESSION_SECRET + login
+#   docker compose up -d                                   # app + ollama
+#   docker compose --profile pull run --rm ollama-pull     # pull default models once
+#   # open http://localhost:3848 and sign in with AUTH_DEFAULT_USERNAME/PASSWORD
+#
+# Without the models pulled, the app still runs — AI features simply stay hidden until
+# a reachable Ollama has the models installed.
+
+services:
+  app:
+    image: ghcr.io/companionintelligence/ci-planning:latest
+    # To build locally instead of pulling the published image, comment `image` above
+    # and uncomment the next line:
+    # build: .
+    restart: unless-stopped
+    ports:
+      - "3848:3848"
+    volumes:
+      - ci-planning-data:/data
+    environment:
+      TZ: ${TZ:-America/Los_Angeles}
+      AUTH_MODE: sso
+      DISABLE_OIDC: "true"
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env (openssl rand -hex 32)}
+      AUTH_DEFAULT_USERNAME: ${AUTH_DEFAULT_USERNAME:?set AUTH_DEFAULT_USERNAME in .env}
+      AUTH_DEFAULT_PASSWORD: ${AUTH_DEFAULT_PASSWORD:?set AUTH_DEFAULT_PASSWORD in .env}
+      # In-network service name — the app reaches the ollama service over the compose network.
+      OLLAMA_URL: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    # Liveness comes from the Dockerfile HEALTHCHECK (hits /api/health).
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama # persists pulled models across restarts
+    # The app reaches Ollama in-network; no host port is needed. Uncomment to reach it
+    # from the host (e.g. `ollama list` against localhost) for debugging:
+    # ports:
+    #   - "11434:11434"
+    # GPU passthrough (NVIDIA + nvidia-container-toolkit) — uncomment to accelerate:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      # `ollama list` answers only once the daemon is up → marks the service healthy,
+      # which gates the app's depends_on.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # One-shot helper to pull the default models (config.ts defaults). Behind the `pull`
+  # profile so a plain `docker compose up` never triggers multi-GB downloads. Run once:
+  #   docker compose --profile pull run --rm ollama-pull
+  # Bringing your own models? Skip this and set OLLAMA_SMALL / OLLAMA_MEDIUM / OLLAMA_EMBED
+  # on the app service to any name already in `ollama list`.
+  ollama-pull:
+    image: ollama/ollama:latest
+    profiles: ["pull"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "ollama pull qwen2.5:0.5b &&
+       ollama pull gemma3n:e4b &&
+       ollama pull nomic-embed-text"
+
+volumes:
+  ci-planning-data:
+  ollama-data:
