@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable } from '../stores/index.js';
 import { api } from '../lib/api.js';
 import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
@@ -288,7 +288,10 @@ export function Settings() {
   }
 
 
-  const [integrations, { refetch: refetchIntegrations }] = createResource(() => api.llm.integrations());
+  // `integrations` / `refetchIntegrations` / `aiAvailable` come from the shared store
+  // (single source of truth for AI availability — see stores/index.ts). This view drives
+  // the "Re-check" button and the model/memory gating off the same signal every AI
+  // surface uses, so there's one fetch and one truth.
 
   // In-app Google connection setup (admin-gated — a 403 resolves to null and the
   // config form simply doesn't render for non-admin credentials).
@@ -969,7 +972,18 @@ export function Settings() {
               </div>
             </Show>
 
-            {/* AI day ordering toggle — saved immediately, not via the Save button */}
+            {/* AI day ordering toggle — saved immediately, not via the Save button. Hidden
+                when Ollama is unreachable (the toggle would be a no-op — the server falls
+                back to basic order); the note points to the Connections tab to enable it.
+                planning_mode is NOT reset, so the choice returns when Ollama does. */}
+            <Show
+              when={aiAvailable()}
+              fallback={
+                <div class="text-[11px] text-muted-foreground">
+                  AI day ordering needs Ollama — start it, then re-check under Connections → Integrations.
+                </div>
+              }
+            >
             {(() => {
               const smartMode = () => prefs()?.planning_mode === 'smart';
               const togglePlanningMode = async () => {
@@ -992,14 +1006,12 @@ export function Settings() {
                     <div class="text-sm text-foreground leading-tight">AI day ordering</div>
                     <div class="text-[11px] text-muted-foreground">
                       AI orders your plan; placement stays deterministic.
-                      <Show when={smartMode() && !ollamaUp()}>
-                        {' '}Requires Ollama — falls back to basic order when unavailable.
-                      </Show>
                     </div>
                   </div>
                 </label>
               );
             })()}
+            </Show>
 
             {/* The Suggest / Schedule toggle lives in the Day Overview header (Today view). */}
           </section>
@@ -1146,7 +1158,10 @@ export function Settings() {
               </Show>
             </div>
 
-            {/* Pull toggle (Phase AA) */}
+            {/* Pull toggle (Phase AA) — memory suggestions are enriched through Ollama, so
+                hide the control when AI is unavailable (the connection + push sync below
+                stay, since backup doesn't depend on Ollama). */}
+            <Show when={aiAvailable()}>
             <label class="flex items-start gap-3 cursor-pointer select-none mb-4">
               <button
                 type="button"
@@ -1167,6 +1182,7 @@ export function Settings() {
                 </div>
               </div>
             </label>
+            </Show>
 
             {/* Master toggle (one-way push) */}
             <label class="flex items-start gap-3 cursor-pointer select-none">
@@ -1219,7 +1235,14 @@ export function Settings() {
 
           {/* Integrations */}
           <section class="card">
-            <div class="section-label mb-3">Integrations</div>
+            <div class="flex items-center justify-between mb-3">
+              <div class="section-label">Integrations</div>
+              {/* Ollama can come up after the app — let an operator re-check without a reload. */}
+              <button type="button" onClick={() => refetchIntegrations()} disabled={integrations.loading}
+                class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+                <RefreshCw size={11} class={integrations.loading ? 'animate-spin' : undefined} /> Re-check
+              </button>
+            </div>
             <Show when={integrations()} fallback={<div class="text-xs text-slate-500 animate-pulse2">Checking…</div>}>
               {(i) => (
                 <div class="flex flex-col gap-3">

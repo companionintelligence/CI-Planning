@@ -537,6 +537,26 @@ First-run notes:
 On a CI Hub appliance, install **Companion Planning** from the marketplace — the Hub
 mounts `${APP_DATA_DIR}/data` at `/data` and wires `OLLAMA_URL` automatically.
 
+### Run with Docker Compose (standalone + bundled Ollama)
+
+For a self-host stack that bundles Ollama so the AI features work out of the box, use the
+[`docker-compose.yml`](docker-compose.yml) at the repo root. It runs the app + an `ollama`
+service wired together over the compose network (`OLLAMA_URL=http://ollama:11434`), with
+model data persisted in a named volume.
+
+```bash
+cp .env.example .env                                   # set SESSION_SECRET + login
+docker compose up -d                                   # app + ollama
+docker compose --profile pull run --rm ollama-pull     # pull default models once
+# open http://localhost:3848 → sign in with the username/password from .env
+```
+
+The model pull sits behind the `pull` profile so a plain `docker compose up` never triggers
+multi-GB downloads — run it once (or skip it and set `OLLAMA_SMALL` / `OLLAMA_MEDIUM` /
+`OLLAMA_EMBED` to models you already have). Until a reachable Ollama has the models, the app
+runs fine and simply hides the AI features. This file is for the self-host path only; the
+**CI-Hub marketplace install ignores it** (the Hub provides its own Ollama).
+
 ### Environment variables
 
 | Var | Default | Purpose |

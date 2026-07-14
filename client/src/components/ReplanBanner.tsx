@@ -1,7 +1,7 @@
 import { Show, onMount } from 'solid-js';
 import { Sparkles } from 'lucide-solid';
 import { api } from '../lib/api.js';
-import { replanSuggestion, setReplanSuggestion, showToast, refetchBlocks } from '../stores/index.js';
+import { replanSuggestion, setReplanSuggestion, showToast, refetchBlocks, aiAvailable } from '../stores/index.js';
 
 /**
  * Phase M B4 — the reactive-reflow escalation banner (MissedReview-style, but a
@@ -42,7 +42,7 @@ export function ReplanBanner() {
   }
 
   return (
-    <Show when={replanSuggestion()}>
+    <Show when={aiAvailable() && replanSuggestion()}>
       {(s) => (
         <div class="rounded-xl border border-primary/40 bg-primary/5 p-3">
           <div class="flex items-center gap-2">
