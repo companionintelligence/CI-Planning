@@ -3,7 +3,7 @@ import { Check, X, Link as LinkIcon, Target, Cpu, RefreshCw, Circle, Moon } from
 import { api, type WeeklyGoal, type ReflectionWrite, type DaySummary, type TopTask } from '../lib/api.js';
 import { isoWeekKey } from '../lib/dates.js';
 import { flattenObjectives, matchObjectives, type FlatObjective } from '../lib/objectives.js';
-import { showToast, setElementModal, refetchTasks, type ToastAction } from '../stores/index.js';
+import { showToast, setElementModal, refetchTasks, aiAvailable, type ToastAction } from '../stores/index.js';
 
 type Tab = 'today' | 'week';
 
@@ -471,9 +471,13 @@ export function BriefMenu(props: { date: string }) {
               <Cpu size={14} class="text-primary" /> Today's Brief
               <Show when={summary()?.llm}><span class="text-[10px] text-muted-foreground font-normal ml-0.5">(AI)</span></Show>
             </span>
-            <button class="btn-icon opacity-50 hover:opacity-100" onClick={refresh} disabled={refreshing()} title="Regenerate briefing">
-              <RefreshCw size={13} classList={{ 'animate-spin': refreshing() }} />
-            </button>
+            {/* Regenerate re-authors the brief via Ollama — hide it when AI is unavailable
+                (the brief still renders from the deterministic template). */}
+            <Show when={aiAvailable()}>
+              <button class="btn-icon opacity-50 hover:opacity-100" onClick={refresh} disabled={refreshing()} title="Regenerate briefing">
+                <RefreshCw size={13} classList={{ 'animate-spin': refreshing() }} />
+              </button>
+            </Show>
           </div>
 
         <div class="p-4 flex flex-col gap-3 max-h-[70vh] overflow-auto">

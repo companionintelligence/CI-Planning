@@ -31,6 +31,12 @@ ENV NODE_ENV=production \
 RUN mkdir -p /data
 EXPOSE 3848
 
+# Liveness probe for orchestrators (docker/compose/k8s). Node 26 ships a global
+# fetch, so the slim image needs no curl/wget. Hits the public /api/health endpoint
+# on the configured PORT; start-period covers first-boot migrations.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3848)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 WORKDIR /app/server
 # Exec tsx directly (not via pnpm) so node is PID 1 and receives SIGTERM —
 # otherwise docker stop kills pnpm before the server can shut down gracefully.
