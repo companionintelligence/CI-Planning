@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { listPriorities, upsertPriorities, type PriorityInput } from '../services/priorities.js';
+import { listPriorities, upsertPriorities } from '../services/priorities.js';
 
 /**
  * Thin transport over services/priorities.ts. Owner-scoping + validation + clamping
@@ -23,7 +23,7 @@ export function prioritiesRouter() {
       ctx.body = { error: 'Invalid payload: priorities array is required' };
       return;
     }
-    ctx.body = { priorities: upsertPriorities(body.priorities as PriorityInput[]) };
+    ctx.body = { priorities: upsertPriorities(body.priorities) };
   });
 
   return router;
