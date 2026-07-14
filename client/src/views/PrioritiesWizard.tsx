@@ -1,7 +1,7 @@
 import { createSignal, createEffect, For, Show } from 'solid-js';
 import { A } from '@solidjs/router';
-import { Heart, Briefcase, Users, Brain, Smile, DollarSign, ChevronLeft, ChevronRight, Check, Save } from 'lucide-solid';
-import { priorities, refetchPriorities, showToast } from '../stores/index.js';
+import { Heart, Briefcase, Users, Brain, Smile, DollarSign, ChevronLeft, ChevronRight, Check, Save, Moon } from 'lucide-solid';
+import { priorities, refetchPriorities, prefs, refetchPrefs, showToast } from '../stores/index.js';
 import { api, type Priority } from '../lib/api.js';
 
 interface CategoryConfig {
@@ -32,6 +32,11 @@ export function PrioritiesWizard() {
   const [satisfactions, setSatisfactions] = createSignal<Record<string, number>>(seed(5));
   const [importances, setImportances] = createSignal<Record<string, number>>(seed(5));
   const [targetHours, setTargetHours] = createSignal<Record<string, number>>({ ...DEFAULT_HOURS });
+  // Sleep is reserved, unschedulable time attributed to Health. Default 9h/night (63h/wk),
+  // leaving 105h of the 168-hour week to schedule.
+  const [sleepPerNight, setSleepPerNight] = createSignal(9);
+  const sleepWeek = () => Math.round(sleepPerNight() * 7);
+  const schedulablePool = () => 168 - sleepWeek();
 
   // Pre-load from the store once priorities resolve (edit-in-place for a returning user).
   createEffect(() => {
@@ -49,8 +54,14 @@ export function PrioritiesWizard() {
     }
   });
 
+  // Hydrate the sleep reservation from prefs (rounded to the nearest half-hour/night).
+  createEffect(() => {
+    const wk = prefs()?.sleep_hours_per_week;
+    if (wk != null) setSleepPerNight(Math.round((wk / 7) * 2) / 2);
+  });
+
   const totalAllocatedHours = () => Object.values(targetHours()).reduce((sum, h) => sum + h, 0);
-  const remainingHours = () => 168 - totalAllocatedHours();
+  const remainingHours = () => schedulablePool() - totalAllocatedHours();
 
   const setSat = (k: string, v: number) => setSatisfactions((p) => ({ ...p, [k]: v }));
   const setImp = (k: string, v: number) => setImportances((p) => ({ ...p, [k]: v }));
@@ -65,7 +76,9 @@ export function PrioritiesWizard() {
         target_hours_per_week: targetHours()[c.key] ?? 0,
       }));
       await api.priorities.save(payload);
+      await api.prefs.update({ sleep_hours_per_week: sleepWeek() });
       refetchPriorities();
+      refetchPrefs();
       showToast('Life priorities saved', 'success');
       setStep(4);
     } catch (e) {
@@ -160,18 +173,43 @@ export function PrioritiesWizard() {
         {/* Step 3 — target hours */}
         <Show when={step() === 3}>
           <h2 class="text-xl font-bold text-foreground mb-2">Step 3: Weekly Hours Target</h2>
-          <p class="text-xs text-muted-foreground mb-4">Allocate target hours per week for each category (168 hours in a week).</p>
+          <p class="text-xs text-muted-foreground mb-4">First reserve sleep, then allocate the rest of the week across categories.</p>
+
+          {/* Sleep — reserved, unschedulable time attributed to Health. */}
+          <div class="bg-muted/50 p-4 rounded-2xl border border-border mb-4 flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2 flex-wrap">
+                <Moon class="w-4 h-4 text-accent flex-shrink-0" />
+                <span class="text-sm font-bold text-foreground">Sleep</span>
+                <span class="text-[11px] text-muted-foreground">reserved for Health · unschedulable</span>
+              </div>
+              <button type="button" onClick={() => setSleepPerNight(9)} class="text-[11px] text-muted-foreground hover:text-foreground flex-shrink-0">Reset to 9h</button>
+            </div>
+            <div class="flex items-center gap-4">
+              <input type="range" min="4" max="12" step="0.5" value={sleepPerNight()}
+                aria-label="Sleep hours per night"
+                onInput={(e) => setSleepPerNight(Number(e.currentTarget.value))} class="flex-1 accent-accent" />
+              <span class="text-sm font-mono font-bold text-accent whitespace-nowrap min-w-[128px] text-right">
+                {sleepPerNight()}h/night · {sleepWeek()}h/wk
+              </span>
+            </div>
+            <div class="text-[11px] text-muted-foreground font-mono">
+              {sleepWeek()}h reserved → <b class="text-foreground">{schedulablePool()}h</b> left to schedule this week
+            </div>
+          </div>
+
+          {/* Schedulable budget = 168 − sleep. */}
           <div class="bg-muted/50 p-4 rounded-2xl border border-border mb-6 flex flex-col gap-2">
             <div class="flex justify-between items-center text-xs font-mono">
-              <span class="text-muted-foreground">Allocated: <b class="text-accent">{totalAllocatedHours()}h</b></span>
+              <span class="text-muted-foreground">Allocated: <b class="text-accent">{totalAllocatedHours()}h</b> / {schedulablePool()}h</span>
               <span classList={{ 'text-red-500': remainingHours() < 0, 'text-muted-foreground': remainingHours() >= 0 }}>
-                {remainingHours() >= 0 ? `${remainingHours()}h remaining` : `${Math.abs(remainingHours())}h over allocated!`}
+                {remainingHours() >= 0 ? `${remainingHours()}h remaining` : `${Math.abs(remainingHours())}h over!`}
               </span>
             </div>
             <div class="h-2 w-full bg-muted rounded-full overflow-hidden">
               <div class="h-full rounded-full transition-all duration-300"
                 classList={{ 'bg-red-500': remainingHours() < 0, 'bg-accent': remainingHours() >= 0 }}
-                style={{ width: `${Math.min(100, (totalAllocatedHours() / 168) * 100)}%` }} />
+                style={{ width: `${Math.min(100, schedulablePool() > 0 ? (totalAllocatedHours() / schedulablePool()) * 100 : 0)}%` }} />
             </div>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -184,7 +222,12 @@ export function PrioritiesWizard() {
                     <div class="flex justify-between items-start gap-3">
                       <div class="flex gap-3 items-center">
                         <div class={`p-1.5 rounded-lg bg-muted ${cat.colorClass}`}><Icon class="w-4 h-4" /></div>
-                        <h3 class="text-sm font-bold text-foreground leading-none">{cat.name}</h3>
+                        <div>
+                          <h3 class="text-sm font-bold text-foreground leading-none">{cat.name}</h3>
+                          <Show when={cat.key === 'health'}>
+                            <span class="text-[10px] text-accent font-mono">+ {sleepWeek()}h sleep reserved</span>
+                          </Show>
+                        </div>
                       </div>
                       <span class="text-xs text-muted-foreground font-mono">Focus: {importances()[cat.key] ?? 5}/10</span>
                     </div>

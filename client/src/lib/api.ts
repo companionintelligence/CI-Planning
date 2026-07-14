@@ -778,6 +778,9 @@ export interface Prefs {
   memory_account?: string | null; memory_last_synced_at?: string | null;
   // Companion Memory pull (Phase AA): feed the CI-Server memory graph into suggestions.
   memory_pull_enabled?: boolean;
+  // Onboarding Priorities Wizard (0128): weekly hours reserved for sleep (unschedulable,
+  // attributed to Health). Default 63 = 9h/night × 7; schedulable pool = 168 − this.
+  sleep_hours_per_week?: number;
   // Cross-device calendar view-state (0111); null/absent = use built-in defaults.
   view_prefs?: ViewPrefs | null;
 }

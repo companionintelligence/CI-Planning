@@ -1,7 +1,7 @@
 import { For, Show } from 'solid-js';
 import { A } from '@solidjs/router';
 import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target } from 'lucide-solid';
-import { priorities } from '../stores/index.js';
+import { priorities, prefs } from '../stores/index.js';
 import type { Priority } from '../lib/api.js';
 
 interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
@@ -21,6 +21,7 @@ export function Balance() {
   const byCategory = (key: string): Priority =>
     priorities()?.find((p) => p.category === key) ?? { category: key, ...FALLBACK };
   const hasData = () => (priorities()?.length ?? 0) > 0;
+  const sleepWeek = () => prefs()?.sleep_hours_per_week ?? 63;
 
   // Balance Index: how well current satisfaction tracks stated importance across categories.
   // Per category alignment = 1 − |importance − satisfaction| / 9; averaged, ×100.
@@ -117,7 +118,7 @@ export function Balance() {
                           <div>
                             <h3 class="font-bold text-foreground text-base leading-none">{cat.name}</h3>
                             <span class="text-[10px] text-muted-foreground font-mono uppercase mt-1 inline-block">
-                              {p().target_hours_per_week}h/wk target
+                              {p().target_hours_per_week}h/wk target{cat.key === 'health' ? ` · +${sleepWeek()}h sleep` : ''}
                             </span>
                           </div>
                         </div>
