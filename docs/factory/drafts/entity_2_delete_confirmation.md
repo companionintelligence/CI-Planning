@@ -1,54 +1,63 @@
-> **Type:** fix · **Phase:** ENTITY · **Branch:** `fix/confirm-destructive-deletes` · **Commit style:** `fix(planner): confirm before deleting tasks and blocks` · **Design:** user feedback 2026-07-15 · **Dependencies:** none
+> **Type:** fix · **Phase:** ENTITY · **Branch:** `fix/confirm-destructive-deletes` · **Commit style:** `fix: confirm before destructive deletes` · **Design:** user feedback 2026-07-15 · **Dependencies:** none
+
+> ### ⚠️ Ticket revised 2026-07-15 — the original body was wrong
+> It claimed **4** unguarded paths; there are **5**, and it proposed copy that made a promise the code does not keep. Corrections, all verified against `main`:
+> - **Missed:** `RoutinesPanel.tsx:68` (deletes a Routine) and `Tags.tsx:37` (deletes a Tag) are both silent. Now in scope (owner: "global means global").
+> - **Not a gap:** `CategorySettings.tsx:63` already has its own inline `confirmDelete` state.
+> - **Exempted (owner decision):** `PlannerEntityCard.tsx:231` is an *unschedule*, not a delete — see below.
+> - **Copy corrected:** the original said *"You can restore it from Archive."* There is **no restore affordance** — do not promise one.
+> - **New finding:** deleting a Routine **hard-deletes** its `quick` member tasks. This is the only irreversible path in the set.
 
 ## Goal
 
-Close the **four delete paths that destroy work with no confirmation**. Today the codebase confirms *trivial, reversible* edits (changing a task's priority) but silently deletes tasks and blocks on a single click.
+Close the delete paths that destroy work with no confirmation. Today the codebase confirms *trivial, reversible* edits (changing a task's priority — `TaskCard.tsx:283`) while silently deleting tasks, blocks, routines, and tags on a single click.
 
-The user asked for this on the Planner (Today + Calendar) and then chose **global** scope: every delete action confirms.
+## Verified semantics — the copy must match these, do not guess
+
+| # | Site | What actually happens | Reversible? |
+|---|------|----------------------|-------------|
+| 1 | `TaskCard.tsx:272` | `deleteTask` sets `status:'cancelled'` (`services/tasks.ts:515-528`) — a **soft cancel**. Lands in the Archive (`AllTasks.tsx:36`). | Visible in Archive, but **no restore UI exists**. `toggleDone` only un-does a `done` task. |
+| 2 | `Planner.tsx:848` | Hard-deletes a **childless** plan block. | No — but no task is lost. |
+| 3 | `Planner.tsx:904` | Hard-deletes a someday/concept block. | No — but no task is lost. |
+| 4 | `RoutinesPanel.tsx:68` | **`DELETE FROM tasks WHERE subtype='quick'`** for members (`services/patterns.ts:351-366`). Quick member tasks are **destroyed**; standard/habit members survive (membership rows cascade only). | **NO — irreversible.** The only true data loss in this ticket. |
+| 5 | `Tags.tsx:37` | Hard-deletes a tag. Affordance is already hidden for `is_base` or `used` tags (`Tags.tsx:83,124`), so only user-created unused tags are reachable. | No. |
+
+Blocks: `DELETE /api/blocks/:id` (`routes/blocks.ts:335`) destroys the block but reverts its task to the open backlog (`revertedTaskIds`, REQ2) — so no task is lost.
 
 ## Non-goals
 
-- **Do not introduce a new modal/dialog system.** Every confirm in this repo is native `window.confirm()` (10 sites). Adding a branded `<ConfirmDialog>` is a separate, larger refactor — out of scope here.
-- **Do not touch the 7 paths that already confirm** (listed below). This ticket only closes gaps.
-- **Do not remove the existing edit-confirms** at `TaskCard.tsx:283/288/294` (priority/due/start). They are arguably over-confirmation, but removing them is a separate UX decision the owner has not made.
-- No soft-delete, trash bin, or undo.
-- No server change. No audit-logging change.
+- **Do not introduce a new modal/dialog system.** Every confirm in this repo is native `confirm()` / `window.confirm()`. A branded `<ConfirmDialog>` is a separate refactor.
+- **`PlannerEntityCard.tsx:231` is exempt (owner decision).** Removing a non-container block **unschedules** it — the task is re-staged to the flight-plan (`api.flightPlan.addTask`, toast *"Removed — sent back to the flight-plan"*). Nothing is destroyed, and it is the most frequent Planner gesture. Adding a prompt here was explicitly rejected. Its **container** branch delegates to `requestDeletePlan` and is covered by #2.
+- **Do not touch the paths that already confirm:** `ObjectivesPanel.tsx:98` · `TimeBlocksPanel.tsx:38` · `FlightPlan.tsx:289` · `DayTypeManager.tsx:43` · `Settings.tsx:380` · `Planner.tsx:858` (clear-day) · `PlannerEntityCard.tsx:212` · `CategorySettings.tsx:63` · `Planner.tsx:590` `DeletePlanDialog`.
+- **Do not remove** the existing edit-confirms at `TaskCard.tsx:283/288/294`. Over-confirmation, but removing them is a separate decision.
+- `api.flightPlan.remove()` (`FlightPlan.tsx:132,192`, `Planner.tsx:829`) is unstaging, not deleting — out of scope.
+- No soft-delete, trash bin, or undo. No server change.
 
 ## Pinned conventions
 
-Branch `claude/local-backend-frontend-setup-77dae0`.
-
-- **Confirm style:** bare `confirm(\`…\`)` in components, `window.confirm(\`…\`)` in views. Guard shape is uniform:
-  `if (!confirm(\`…\`)) return;` as the **first statement** of the handler, before the `try`.
-- **Copy style:** state the object by name and the consequence. Existing examples:
-  - `TimeBlocksPanel.tsx:38` — ``Delete the "${t.name}" Time Block? Saved tasks won't come back.``
-  - `FlightPlan.tsx:289` — ``Delete the "${props.t.name}" saved block? Its embedded tasks won't come back.``
-  - `DayTypeManager.tsx:43` — ``Delete the "${t.name}" day type? Days using it fall back to the default.``
+- **Guard shape:** `if (!confirm(\`…\`)) return;` as the **first statement**, before the `try`.
+- **Copy style:** name the object, state the consequence. Existing: `TimeBlocksPanel.tsx:38` — ``Delete the "${t.name}" Time Block? Saved tasks won't come back.``
 - **Error style:** `catch (err) { showToast((err as Error).message, 'error'); }` — unchanged.
-- **Already confirming — DO NOT MODIFY:** `ObjectivesPanel.tsx:98` · `TimeBlocksPanel.tsx:38` · `FlightPlan.tsx:289` · `DayTypeManager.tsx:43` · `Settings.tsx:380` · `Planner.tsx:858` (clear-day) · `PlannerEntityCard.tsx:212` (template replace) · `Planner.tsx:590` `DeletePlanDialog` (a branded dialog — already a confirmation, reached from `requestDeletePlan` when `childCount > 0`).
-
-### Semantics that must shape the copy (verified, do not guess)
-
-- **`TaskCard.tsx:270`** — `api.tasks.delete()` toasts **"Task cancelled"**: the server maps DELETE to `status='cancelled'`, recoverable from Archive. Copy must say **cancel**, not "delete forever".
-- **`PlannerEntityCard.tsx:228`** — deleting a **non-container** block **re-stages its task to the flight-plan** (`api.flightPlan.addTask(b.task_id)`; toast *"Removed — sent back to the flight-plan"*). This is an **unschedule**, not a destroy. Copy must reflect that; a task-bearing block losing its slot is not the same as losing the task.
-- **`PlannerEntityCard.tsx:228`** — a **container** block does **not** delete here; it delegates to `props.onRequestDeletePlan(b)` → `Planner.requestDeletePlan`. Do **not** add a confirm on the container branch; it would double-prompt in front of `DeletePlanDialog`.
+- **`Tags.tsx` gotcha:** `run(p, ok)` takes an **already-constructed Promise** — `run(api.tags.remove(id), …)` fires the request eagerly. The guard **must** sit in `del` *before* the `run(...)` call; putting it inside `run` would confirm after deleting.
+- **`Planner.tsx:845` gotcha:** only the `childCount === 0` branch is unguarded. The `childCount > 0` branch opens `DeletePlanDialog` — adding a prompt there would double-prompt.
 
 ## Before implementation
 
-1. `client/src/components/TaskCard.tsx:270-276` — the unguarded `remove()`.
-2. `client/src/components/Planner.tsx:845-853` — `requestDeletePlan`; note the `childCount === 0` fast path is the only unguarded branch.
-3. `client/src/components/Planner.tsx:902-906` — `del()` for a someday/concept block.
-4. `client/src/components/PlannerEntityCard.tsx:222-236` — `remove()`; note the container delegation at `:228`.
-5. `client/src/components/TimeBlocksPanel.tsx:38` — the copy template to imitate.
+1. `server/src/services/patterns.ts:351-366` — the quick-task hard delete. This is why #4's copy matters most.
+2. `server/src/services/tasks.ts:515-528` — `deleteTask` is a soft cancel.
+3. `client/src/components/Planner.tsx:845-853` — the two branches of `requestDeletePlan`.
+4. `client/src/views/Tags.tsx:25-37` — the eager `run` helper.
+5. `client/src/components/TimeBlocksPanel.tsx:38` — the copy template.
 
 ## Files impacted
 
 **Changed:**
 - `client/src/components/TaskCard.tsx` — guard `remove()` (`:270`).
-- `client/src/components/Planner.tsx` — guard the `childCount === 0` branch of `requestDeletePlan` (`:847`); guard `del()` (`:902`).
-- `client/src/components/PlannerEntityCard.tsx` — guard the **non-container** branch of `remove()` (after `:228`).
+- `client/src/components/Planner.tsx` — guard the `childCount === 0` branch (`:847`); guard `del()` (`:902`).
+- `client/src/components/RoutinesPanel.tsx` — guard `deletePattern()` (`:67`).
+- `client/src/views/Tags.tsx` — guard `del()` (`:37`).
 
-**New:** none.
+**New:** none. **Server:** untouched.
 
 ## Schema required
 
@@ -56,18 +65,18 @@ Branch `claude/local-backend-frontend-setup-77dae0`.
 
 ## Definition of Done
 
-- [ ] `TaskCard.remove()` prompts, e.g. ``Cancel "${props.task.title}"? You can restore it from Archive.`` — cancelling the prompt makes no API call.
-- [ ] `Planner.requestDeletePlan()` prompts on the `childCount === 0` branch only, e.g. ``Delete "${plan.title}"?`` — the `childCount > 0` branch still opens `DeletePlanDialog` with **no** extra prompt.
-- [ ] `Planner.del()` (someday block) prompts, e.g. ``Delete "${props.block.title}"?``
-- [ ] `PlannerEntityCard.remove()` prompts on the **non-container** branch only, e.g. ``Remove "${title}" from the day? The task returns to the flight-plan.`` — the container branch still delegates with no prompt.
-- [ ] Every guard is `if (!confirm(…)) return;` placed before the `try`.
+- [ ] `TaskCard.remove()` prompts — e.g. ``Cancel "${title}"? It moves to the Archive.`` (must **not** promise restore).
+- [ ] `Planner.requestDeletePlan()` prompts on the `childCount === 0` branch only — e.g. ``Delete "${plan.title}"?``
+- [ ] `Planner.del()` prompts — e.g. ``Delete "${props.block.title}"?``
+- [ ] `RoutinesPanel.deletePattern()` prompts and **names the irreversible consequence** — e.g. ``Delete the "${p.name}" routine? Its quick tasks are deleted permanently; other member tasks stay in your backlog.``
+- [ ] `Tags.del()` prompts, with the guard **before** `run(...)` — e.g. ``Delete the "${tag.name}" tag?``
+- [ ] Every guard is `if (!confirm(…)) return;` before the `try`.
 - [ ] Declining leaves state untouched — no API call, no toast, no refetch.
-- [ ] Accepting behaves exactly as today (same call, same toast, same refetch).
-- [ ] The 7 already-confirming sites are byte-unchanged.
+- [ ] Accepting behaves exactly as today.
+- [ ] `PlannerEntityCard.tsx:231` is **unchanged** (exempt).
+- [ ] The 9 already-confirming sites are byte-unchanged.
 
 ## Tests
-
-Verification commands (must pass):
 
 ```bash
 pnpm --filter client exec tsc --noEmit
@@ -75,32 +84,29 @@ pnpm --filter client build
 pnpm --filter client test
 ```
 
-Cases:
-
-- [ ] Tasks list → delete a task → prompt appears; **Cancel** → task still present, no toast.
-- [ ] Tasks list → delete a task → **OK** → task cancelled, "Task cancelled" toast (unchanged).
-- [ ] Planner → delete an empty plan (no children) → prompt; Cancel → block remains.
-- [ ] Planner → delete a plan **with** children → `DeletePlanDialog` opens directly, **no** native prompt first (double-prompt guard).
-- [ ] Planner → delete a someday/concept block → prompt; Cancel → block remains.
-- [ ] PlannerEntityCard → remove a **task** block → prompt; OK → block removed **and** task re-staged to the flight-plan (existing behavior preserved).
-- [ ] PlannerEntityCard → remove a **container** block → `DeletePlanDialog` opens, **no** native prompt first.
-- [ ] Grep proof: no `api.tasks.delete` / `api.blocks.delete` / `api.objectives.delete` call site remains without either a `confirm()` guard or a `DeletePlanDialog` path.
+- [ ] Tasks list → delete a task → prompt; Cancel → present, no toast; OK → cancelled + "Task cancelled" toast.
+- [ ] Planner → delete a childless plan → prompt; Cancel → remains.
+- [ ] Planner → delete a plan **with** children → `DeletePlanDialog` opens, **no** native prompt first.
+- [ ] Planner → delete a someday block → prompt; Cancel → remains.
+- [ ] Routines → delete a routine → prompt naming the quick-task loss; Cancel → routine + members intact.
+- [ ] Tags → delete a tag → prompt; Cancel → **no request fired** (guards the eager-`run` trap).
+- [ ] PlannerEntityCard → remove a task block → **no prompt**; task re-staged to the flight-plan (exemption holds).
+- [ ] Grep proof: every `api.*.delete` / `api.tags.remove` site is either guarded, an intentional exemption, or a pre-existing dialog.
 
 ## Acceptance Criteria
 
-- [ ] All four gap paths confirm before destroying work.
-- [ ] No double-prompting on either container path.
-- [ ] Copy matches real semantics (cancel vs. unschedule vs. delete).
-- [ ] `tsc`, client build, client tests clean.
-- [ ] No new console errors.
-- [ ] Screenshot proof of one prompt.
+- [ ] All 5 destructive paths confirm.
+- [ ] The unschedule path stays one click.
+- [ ] Copy matches verified semantics (cancel vs. hard delete vs. quick-task loss); nothing promises a restore that does not exist.
+- [ ] No double-prompt on the container path.
+- [ ] `tsc`, build, client tests clean. No new console errors.
 
 ## Subtasks
 
 1. Guard `TaskCard.remove()` with cancel-accurate copy.
 2. Guard the `childCount === 0` branch of `Planner.requestDeletePlan`.
-3. Guard `Planner.del()` for someday blocks.
-4. Guard the non-container branch of `PlannerEntityCard.remove()` with unschedule-accurate copy.
-5. Verify both container paths do not double-prompt.
-6. Re-grep every delete call site to prove coverage.
-7. Run tsc + build + tests; screenshot one prompt.
+3. Guard `Planner.del()`.
+4. Guard `RoutinesPanel.deletePattern()`, naming the quick-task deletion.
+5. Guard `Tags.del()` **before** the eager `run(...)`.
+6. Confirm `PlannerEntityCard.tsx:231` is untouched and the container path does not double-prompt.
+7. Re-grep every delete site; run tsc + build + tests.

@@ -578,6 +578,8 @@ export function ElementWizard() {
   // Progressive disclosure, add mode only: name the thing before configuring it.
   // Left pane needs a title; the right pane also needs a direction. Edit is exempt —
   // an existing task may legitimately have no direction, and gating would strand it.
+  // A gated pane sets `inert` (blocks focus + keyboard, drops it from the a11y tree);
+  // pointer-events-none is the mouse-only fallback for browsers without inert.
   const gateLeft = () => !isEdit() && tab() !== 'routine' && title().trim() === '';
   const gateRight = () => !isEdit() && tab() !== 'routine' && (title().trim() === '' || !primary());
 
@@ -894,6 +896,7 @@ export function ElementWizard() {
               {/* LEFT PANE — identity */}
               <div class="w-full md:w-[290px] flex-shrink-0 p-4 md:p-5 flex flex-col gap-3.5 md:border-r border-b md:border-b-0 border-border transition-opacity"
                 classList={{ 'opacity-50': gateLeft(), 'pointer-events-none': gateLeft() }}
+                inert={gateLeft()}
                 aria-disabled={gateLeft()}>
                 <PrimaryPicker label="Direction" empty="No direction tags yet." />
 
@@ -1185,6 +1188,7 @@ export function ElementWizard() {
               {/* RIGHT PANE — scheduling */}
               <div class="flex-1 min-w-0 p-4 md:p-5 flex flex-col gap-3 transition-opacity"
                 classList={{ 'opacity-50': dimRightPane() || gateRight(), 'pointer-events-none': gateRight() }}
+                inert={gateRight()}
                 aria-disabled={gateRight()}>
 
                 {/* Day chips + calendar + due flag */}
