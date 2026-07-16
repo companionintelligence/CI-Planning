@@ -64,7 +64,14 @@ export function objectivesRouter() {
   router.post('/api/objectives/:id/restore', async (ctx) => {
     const owner = currentOwnerId();
     const res = restoreObjective(owner, ctx.params.id);
-    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    if (!res.ok) {
+      if (res.error === 'subtree_member') {
+        ctx.status = 422;
+        ctx.body = { error: 'restore the objective this was archived with', archive_root_id: res.archiveRootId };
+        return;
+      }
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
     broadcast(owner, 'objective:created', { id: ctx.params.id }); // back in the tree
     ctx.body = { ok: true };
   });
@@ -76,6 +83,11 @@ export function objectivesRouter() {
     if (!res.ok) {
       if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (res.error === 'not_archived') { ctx.status = 422; ctx.body = { error: 'archive it first' }; return; }
+      if (res.error === 'subtree_member') {
+        ctx.status = 422;
+        ctx.body = { error: 'delete the objective this was archived with', archive_root_id: res.archiveRootId };
+        return;
+      }
       ctx.status = 422; ctx.body = { error: 'objective still has live children' }; return;
     }
     broadcast(owner, 'objective:updated', { id: ctx.params.id });
@@ -86,7 +98,14 @@ export function objectivesRouter() {
   router.delete('/api/objectives/:id/purge', async (ctx) => {
     const owner = currentOwnerId();
     const res = cancelPurge(owner, ctx.params.id);
-    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    if (!res.ok) {
+      if (res.error === 'subtree_member') {
+        ctx.status = 422;
+        ctx.body = { error: 'undo from the objective this was archived with', archive_root_id: res.archiveRootId };
+        return;
+      }
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
     broadcast(owner, 'objective:updated', { id: ctx.params.id });
     ctx.body = { ok: true };
   });

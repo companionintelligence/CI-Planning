@@ -712,3 +712,72 @@ describe('objective purge (48h reversal)', () => {
     await expect(runJob('purge_objectives')).resolves.toBeUndefined();
   });
 });
+
+// ── 0129 review: a cascaded member must be acted on from its root ──────────────
+
+describe('archive subtree members are root-only', () => {
+  const setup = async () => {
+    const goal = insertObjective({ title: 'Goal' });
+    const proj = insertObjective({ title: 'Project', parent_id: goal });
+    await api(srv.url, `/api/objectives/${goal}`, { method: 'DELETE' }); // cascades
+    return { goal, proj };
+  };
+
+  it('refuses to restore a member alone — it would resurface as a top-level root', async () => {
+    const { goal, proj } = await setup();
+    const res = await api(srv.url, `/api/objectives/${proj}/restore`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(res.body.archive_root_id).toBe(goal); // names the root to act on
+
+    // The member is untouched, so it never becomes an orphan root. buildTree roots any
+    // node whose parent is filtered out — that is the failure this guard prevents.
+    const row = sqlite.prepare(`SELECT archived_at FROM objectives WHERE id = ?`).get(proj) as { archived_at: string | null };
+    expect(row.archived_at).toBeTruthy();
+    const tree = (await api(srv.url, '/api/objectives', { method: 'GET' })).body.objectives as { id: string }[];
+    expect(tree.map((o) => o.id)).not.toContain(proj);
+  });
+
+  it('refuses to purge a member alone — the root could never restore it back', async () => {
+    const { goal, proj } = await setup();
+    const res = await api(srv.url, `/api/objectives/${proj}/purge`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(res.body.archive_root_id).toBe(goal);
+    const row = sqlite.prepare(`SELECT purge_after FROM objectives WHERE id = ?`).get(proj) as { purge_after: string | null };
+    expect(row.purge_after).toBeNull();
+  });
+
+  it('refuses to undo a purge from a member — the deadline is the subtree’s', async () => {
+    const { goal, proj } = await setup();
+    await api(srv.url, `/api/objectives/${goal}/purge`, { method: 'POST' });
+    const res = await api(srv.url, `/api/objectives/${proj}/purge`, { method: 'DELETE' });
+    expect(res.status).toBe(422);
+    expect(res.body.archive_root_id).toBe(goal);
+    // The member is still scheduled with the rest of the subtree — no partial state.
+    const row = sqlite.prepare(`SELECT purge_after FROM objectives WHERE id = ?`).get(proj) as { purge_after: string | null };
+    expect(row.purge_after).toBeTruthy();
+  });
+
+  it('the root still restores the whole subtree', async () => {
+    const { goal, proj } = await setup();
+    expect((await api(srv.url, `/api/objectives/${goal}/restore`, { method: 'POST' })).status).toBe(200);
+    const tree = (await api(srv.url, '/api/objectives', { method: 'GET' })).body.objectives as { id: string; children: { id: string }[] }[];
+    const root = tree.find((o) => o.id === goal)!;
+    expect(root.children.map((c) => c.id)).toContain(proj); // nested, not orphaned
+  });
+});
+
+describe('archive list shape', () => {
+  it('archived rows carry the same server-computed keys as the tree', async () => {
+    const id = insertObjective({ title: 'Shape' });
+    await api(srv.url, `/api/objectives/${id}`, { method: 'DELETE' });
+    const [row] = (await api(srv.url, '/api/objectives?archived=1', { method: 'GET' })).body.objectives as Record<string, unknown>[];
+    // The client's Objective type says these always exist; one endpoint must not return
+    // two shapes depending on which branch answered.
+    for (const k of ['next_action', 'effective_target', 'pace_expected', 'has_tasks', 'tasks', 'children']) {
+      expect(row).toHaveProperty(k);
+    }
+    expect(row.has_tasks).toBe(false);
+    expect(row.tasks).toEqual([]);
+    expect(row.children).toEqual([]);
+  });
+});
