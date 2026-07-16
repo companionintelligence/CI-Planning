@@ -302,7 +302,13 @@ export function tasksRouter() {
     // instance. Those must not spawn a strategic objective (services/task-promotion.ts).
     const objectiveId = ensureTaskPromoted(id, owner);
     if (!objectiveId) { ctx.status = 422; ctx.body = { error: 'not_promotable' }; return; }
-    ctx.body = { objective: sqlite.prepare('SELECT * FROM objectives WHERE id = ?').get(objectiveId) };
+    // Owner-scoped read even though ensureTaskPromoted only ever returns THIS owner's
+    // objective: the route shouldn't depend on the service's internal scoping for its
+    // own safety (matches every other raw read here), and an unscoped read would answer
+    // 200 with a silent `{}` if the row were unreadable. Unreachable today — by design.
+    const objective = sqlite.prepare('SELECT * FROM objectives WHERE id = ? AND owner_id = ?').get(objectiveId, owner);
+    if (!objective) { ctx.status = 500; ctx.body = { error: 'objective missing' }; return; }
+    ctx.body = { objective };
   });
 
   // POST /api/tasks/suggest-tags { title } → { tags } — best-effort LLM auto-tag for
