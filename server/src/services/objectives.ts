@@ -227,40 +227,59 @@ export function buildTree(owner: string) {
   for (const id of objIds) {
     const decorated = byId.get(id)!;
 
+    // Two rules on this walk, both matching the linkedTasks query above:
+    //
+    // 1. LIVE tree only (`archived_at IS NULL`) — the rule recomputeProgress's child
+    //    rollup and heightBelow already follow: an archived branch must not keep feeding
+    //    its live ancestor. Without it, archiving a sub-project leaves its tasks surfacing
+    //    as the parent's next action — work the owner just filed away. (The root `id` is a
+    //    live node by construction; only descendants need filtering.)
+    // 2. The OWNER's subtree only. `parent_id` is validated owner-side on write, but
+    //    sync/apply.ts and backup import write objectives rows directly, so a cross-owner
+    //    edge is the same "stray/dangling row" case linkedTasks defends against — and an
+    //    unconstrained descent would walk straight into another owner's branch. Scoped in
+    //    the recursive step AND on `t.owner_id`, so it is self-sufficiently owner-safe
+    //    whichever half is corrupt (a bad parent_id or a bad objective_tasks row).
     const nextAction = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
+            WHERE o.archived_at IS NULL AND o.owner_id = ?
          )
          SELECT t.id, t.title, t.status,
                 (SELECT MIN(start_at) FROM time_blocks tb WHERE tb.task_id = t.id AND tb.owner_id = t.owner_id AND DATE(tb.start_at) >= DATE('now')) AS scheduled_date
            FROM objective_tasks ot
            JOIN tasks t ON t.id = ot.task_id
            JOIN sub ON ot.objective_id = sub.id
-          WHERE ot.linked = 1 AND t.status NOT IN ('done', 'cancelled', 'deferred')
+          WHERE ot.linked = 1 AND t.owner_id = ? AND t.status NOT IN ('done', 'cancelled', 'deferred')
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`,
       )
-      .get(id) as { id: string; title: string; status: string; scheduled_date: string | null } | undefined;
+      .get(id, owner, owner) as { id: string; title: string; status: string; scheduled_date: string | null } | undefined;
 
     decorated.next_action = nextAction ?? null;
     decorated.has_tasks = withTasks.has(id);
 
+    // Live subtree, owner's subtree — same two reasons as next_action above. An archived
+    // branch's target_date must not keep setting its live ancestor's effective target, and
+    // a cross-owner branch must not set it at all (MAX() would happily take a stranger's
+    // date). Scoped in the recursive step and again in the final select.
     const effectiveTarget = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
+            WHERE o.archived_at IS NULL AND o.owner_id = ?
          )
          SELECT MAX(target_date) AS et
            FROM objectives
            JOIN sub ON objectives.id = sub.id
-          WHERE target_date IS NOT NULL`,
+          WHERE target_date IS NOT NULL AND objectives.owner_id = ?`,
       )
-      .get(id) as { et: string | null };
+      .get(id, owner, owner) as { et: string | null };
 
     decorated.effective_target = effectiveTarget.et ?? null;
 
@@ -405,10 +424,17 @@ export function objectiveChildrenRows(owner: string, parentId: string): Objectiv
 }
 
 /**
- * The FIRST objective a task is linked to (over objective_tasks, linked=1), owner-scoped —
- * backs GraphQL `TaskType.objective`. Deterministic pick: earliest-created, then id (a task
- * may be linked to several objectives). Undefined when none / the task isn't the owner's.
- * Owner-scoped via the objectives.owner_id join, so a cross-owner link can't leak.
+ * The FIRST LIVE objective a task is linked to (over objective_tasks, linked=1),
+ * owner-scoped — backs GraphQL `TaskType.objective`. Deterministic pick: earliest-created,
+ * then id (a task may be linked to several objectives). Undefined when none / the task
+ * isn't the owner's. Owner-scoped via the objectives.owner_id join, so a cross-owner link
+ * can't leak.
+ *
+ * Archived objectives are excluded (0129), which is what keeps the graph self-consistent:
+ * `task.objective` and `objective(id:)` reach the same node by two paths, so an archived
+ * objective reachable through this one would resolve to an object here and null there.
+ * Mirrors task-promotion.ts objectiveIdsByTaskIds (REST `objective_ids`) exactly — same
+ * filter, same order. Change one, change the other.
  */
 export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | undefined {
   return sqlite
@@ -420,6 +446,7 @@ export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | 
          JOIN objective_tasks ot ON ot.objective_id = o.id
          JOIN tasks t ON t.id = ot.task_id
         WHERE ot.task_id = ? AND ot.linked = 1 AND o.owner_id = ? AND t.owner_id = ?
+          AND o.archived_at IS NULL
         ORDER BY o.created_at, o.id LIMIT 1`,
     )
     .get(taskId, owner, owner) as ObjectiveRow | undefined;

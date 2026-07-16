@@ -9,8 +9,13 @@ import { logger } from '../lib/logger.js';
  * Anti-thrash rules (all must pass before nominating):
  *  - cadence !== 'none'
  *  - status === 'active'
+ *  - not archived (0129) — the archive is orthogonal to status, so an archived objective
+ *    keeps status 'active' (that is what makes restore lossless). Without an explicit
+ *    archived_at check this job would go on pushing a filed-away objective's tasks into
+ *    the owner's flight plan every period — the one place the archive has to hold, since
+ *    nothing here is user-initiated.
  *  - last_advanced_at is older than the cadence period (or NULL)
- *  - a next-action task exists (highest-priority open leaf task in the subtree)
+ *  - a next-action task exists (highest-priority open leaf task in the LIVE subtree)
  *  - the next-action task is not already staged, in_progress, done, or cancelled
  *
  * UPSERT semantics: if the next-action is already staged (e.g. from a pattern),
@@ -37,13 +42,14 @@ export function advanceObjectives(
     monthly: 30,
   };
 
-  // Fetch active objectives that have a cadence and are due for advancement.
+  // Fetch LIVE active objectives that have a cadence and are due for advancement.
   const objectives = sqlite
     .prepare(
       `SELECT id, cadence, last_advanced_at
          FROM objectives
         WHERE owner_id = ?
           AND status = 'active'
+          AND archived_at IS NULL
           AND cadence != 'none'`
     )
     .all(owner) as { id: string; cadence: string; last_advanced_at: string | null }[];
@@ -59,24 +65,29 @@ export function advanceObjectives(
       if (daysAgo < periodDays) { skipped++; continue; }
     }
 
-    // Find next-action: highest-priority open task across the full subtree
-    // (this objective + all descendants via recursive CTE).
+    // Find next-action: highest-priority open task across the owner's full LIVE subtree
+    // (this objective + all non-archived descendants via recursive CTE). Mirrors
+    // buildTree's next_action walk exactly — an archived branch must not nominate work,
+    // and the descent stays inside the owner. Owner-scoping matters most HERE: this is a
+    // WRITER, so an unconstrained walk over corrupt sync/import data would not just
+    // display another owner's task, it would stage it in this owner's flight plan.
     const nextAction = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
+            WHERE o.archived_at IS NULL AND o.owner_id = ?
          )
          SELECT t.id, t.status
            FROM objective_tasks ot
            JOIN tasks t ON t.id = ot.task_id
            JOIN sub ON ot.objective_id = sub.id
-          WHERE ot.linked = 1 AND t.status NOT IN ('done', 'cancelled', 'deferred', 'in_progress')
+          WHERE ot.linked = 1 AND t.owner_id = ? AND t.status NOT IN ('done', 'cancelled', 'deferred', 'in_progress')
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`
       )
-      .get(obj.id) as { id: string; status: string } | undefined;
+      .get(obj.id, owner, owner) as { id: string; status: string } | undefined;
 
     if (!nextAction) {
       // No next action (all done, or no tasks linked) — flag but don't nominate.

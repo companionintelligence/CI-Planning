@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 import { advanceObjectives } from '../src/jobs/advance-objectives.js';
 import { runJob } from '../src/jobs/index.js';
 
@@ -341,6 +341,184 @@ describe('DELETE /api/objectives/:id', () => {
   });
 });
 
+// ── The archive is invisible from the TASK side too ────────────────────────────
+
+/**
+ * 0129 filtered the objective-side reads (buildTree, listObjectiveRows, ...) but not the
+ * two TASK-side derivations, so an archived objective kept surfacing through the task
+ * payload. `archiveObjective` deliberately leaves `objective_tasks.linked = 1` (a restore
+ * must be lossless), which means "is this link live?" cannot be answered by the join row
+ * alone — every reader has to check the objective's `archived_at` as well.
+ *
+ * The rule these pin: **`objective_ids` is LIVE links only.** It is the same rule the
+ * `objective` query resolver already states ("the graph is the LIVE graph: an archived
+ * objective resolves to null"), applied from the other direction. The alternative —
+ * reporting archived links too — would make the star/accent mean "in an objective, or
+ * maybe in something you deleted", and TaskCard offers unlink only from a CHECKED picker
+ * row, so a link that no live row can match is one the owner cannot remove at all.
+ */
+describe('archived objectives do not surface through the task side', () => {
+  it('REST: a linked task drops the archived id from objective_ids / objective_id, and gets it back on restore', async () => {
+    const oId = insertObjective({ title: 'Ship the thing' });
+    const tId = insertTask('Draft the spec');
+    linkTask(oId, tId);
+
+    const before = (await api(srv.url, '/api/tasks')).body.tasks.find((t: { id: string }) => t.id === tId);
+    expect(before.objective_ids).toEqual([oId]);
+    expect(before.objective_id).toBe(oId);
+
+    await api(srv.url, `/api/objectives/${oId}`, { method: 'DELETE' }); // archives
+
+    const after = (await api(srv.url, '/api/tasks')).body.tasks.find((t: { id: string }) => t.id === tId);
+    expect(after.objective_ids).toEqual([]);
+    // The legacy decoration is objective_ids[0] — it must not resurrect the id either.
+    expect(after.objective_id).toBeNull();
+
+    await api(srv.url, `/api/objectives/${oId}/restore`, { method: 'POST' });
+
+    const restored = (await api(srv.url, '/api/tasks')).body.tasks.find((t: { id: string }) => t.id === tId);
+    expect(restored.objective_ids).toEqual([oId]); // the link was never destroyed
+    expect(restored.objective_id).toBe(oId);
+  });
+
+  it('REST: archiving ONE of two objectives leaves the live one — and promotes it to objective_id', async () => {
+    // Pins that the filter narrows rather than empties, and that the created_at,id
+    // ordering still decides objective_id once the archived head is gone.
+    const first = insertObjective({ title: 'Archived head' });
+    const second = insertObjective({ title: 'Live one' });
+    const tId = insertTask('Shared task');
+    linkTask(first, tId);
+    linkTask(second, tId);
+
+    await api(srv.url, `/api/objectives/${first}`, { method: 'DELETE' });
+
+    const after = (await api(srv.url, '/api/tasks')).body.tasks.find((t: { id: string }) => t.id === tId);
+    expect(after.objective_ids).toEqual([second]);
+    expect(after.objective_id).toBe(second);
+  });
+
+  // buildTree's next_action / effective_target walk the subtree recursively. 0129 taught
+  // recomputeProgress's child rollup and heightBelow that the tree is the LIVE tree
+  // ("an archived child must not keep dragging its parent's completion"); these two walks
+  // were left on the old rule, so an archived branch kept feeding its live parent.
+  it('a live parent stops taking next_action / effective_target from an archived child', async () => {
+    const goal = insertObjective({ title: 'Goal' });
+    const proj = insertObjective({ title: 'Sub-project', parent_id: goal, target_date: '2027-01-01' });
+    const tId = insertTask('Work in the sub-project');
+    linkTask(proj, tId);
+
+    const treeBefore = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    const goalBefore = treeBefore.find((o) => o.id === goal);
+    expect(goalBefore.next_action?.id).toBe(tId);
+    expect(goalBefore.effective_target).toBe('2027-01-01');
+
+    await api(srv.url, `/api/objectives/${proj}`, { method: 'DELETE' }); // archive the child only
+
+    const treeAfter = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    const goalAfter = treeAfter.find((o) => o.id === goal);
+    expect(goalAfter).toBeTruthy();               // the parent is still live
+    expect(goalAfter.next_action).toBeNull();     // …but the archived branch stops nominating
+    expect(goalAfter.effective_target).toBeNull();
+  });
+
+  it('REST: subtasks of a promoted parent also drop the archived id (GET /tasks/:id/subtasks)', async () => {
+    // The second objectiveIdsByTaskIds call site (routes/tasks.ts :233) — same payload
+    // decoration, different route; it regressed independently before this fix.
+    const parent = insertTask('Parent');
+    const sub = (sqlite.prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, priority, parent_id)
+       VALUES (uuid7(), 'Subtask', ?, 'open', 3, ?) RETURNING id`,
+    ).get(SYSTEM_OWNER, parent) as { id: string }).id;
+
+    const oId = insertObjective({ title: 'Parent objective' });
+    linkTask(oId, sub);
+
+    const before = (await api(srv.url, `/api/tasks/${parent}/subtasks`)).body.subtasks
+      .find((t: { id: string }) => t.id === sub);
+    expect(before.objective_ids).toEqual([oId]);
+
+    await api(srv.url, `/api/objectives/${oId}`, { method: 'DELETE' });
+
+    const after = (await api(srv.url, `/api/tasks/${parent}/subtasks`)).body.subtasks
+      .find((t: { id: string }) => t.id === sub);
+    expect(after.objective_ids).toEqual([]);
+  });
+});
+
+// ── Subtree walks are the OWNER's subtree ──────────────────────────────────────
+
+/**
+ * buildTree's next_action / effective_target and the cadence job walk `parent_id`
+ * recursively from one of the owner's own nodes. The walk itself was unconstrained, so a
+ * cross-owner `parent_id` pulled another owner's rows into the descent — and the task
+ * selection never checked `t.owner_id` either.
+ *
+ * The API cannot create that edge (createObjective/updateObjective both validate the
+ * parent with `owner_id = ?`), but sync/apply.ts and backup import write `objectives`
+ * rows directly, which is exactly the "stray/dangling row" case the sibling `linkedTasks`
+ * query in this same function already defends against by owner-scoping BOTH sides. These
+ * pin that the recursive walks hold to the same rule.
+ *
+ * Setup below writes the corrupt edge with raw SQL on purpose — it is unreachable
+ * through the routes, which is the point: the guard has to hold for data that arrived
+ * some other way.
+ */
+describe('subtree walks stay inside the owner (corrupt cross-owner parent_id)', () => {
+  /** Owner B's objective, parented under owner A's — the edge sync could deliver. */
+  function corruptChildOf(parentOfOwnerA: string, opts: { target_date?: string } = {}): string {
+    createOwner();
+    return (sqlite.prepare(`
+      INSERT INTO objectives (id, owner_id, parent_id, title, level, horizon, status,
+        cadence, target_date, progress_cache, created_at, updated_at)
+      VALUES (uuid7(), ?, ?, 'Owner B private', 'objective', 'none', 'active', 'none', ?, NULL, ?, ?)
+      RETURNING id
+    `).get(SECOND_OWNER_ID, parentOfOwnerA, opts.target_date ?? null, NOW, NOW) as { id: string }).id;
+  }
+  const insertOtherOwnerTask = (title: string): string => {
+    createOwner(); // idempotent (INSERT OR IGNORE); tasks.owner_id is an FK
+    return (sqlite.prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, priority) VALUES (uuid7(), ?, ?, 'open', 1) RETURNING id`,
+    ).get(title, SECOND_OWNER_ID) as { id: string }).id;
+  };
+
+  it('next_action never surfaces another owner\'s task', async () => {
+    const mine = insertObjective({ title: 'My goal' });
+    const theirs = corruptChildOf(mine);
+    linkTask(theirs, insertOtherOwnerTask('Owner B private task'));
+
+    const tree = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    const node = tree.find((o) => o.id === mine);
+    expect(node.next_action).toBeNull(); // priority 1 — it would win the ORDER BY if visible
+  });
+
+  it('effective_target never takes another owner\'s target_date', async () => {
+    const mine = insertObjective({ title: 'My goal' });
+    corruptChildOf(mine, { target_date: '2099-12-31' });
+
+    const tree = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    expect(tree.find((o) => o.id === mine).effective_target).toBeNull();
+  });
+
+  it('the cadence job never nominates another owner\'s task into my flight plan', async () => {
+    const mine = insertObjective({ title: 'My weekly goal', cadence: 'weekly', last_advanced_at: LONG_AGO });
+    const theirs = corruptChildOf(mine);
+    linkTask(theirs, insertOtherOwnerTask('Owner B private task'));
+
+    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+
+    expect(fpRows()).toHaveLength(0);
+  });
+
+  it('a task linked to MY objective but owned by someone else is not my next_action', async () => {
+    // The other half: the corrupt edge is on objective_tasks rather than parent_id.
+    const mine = insertObjective({ title: 'My goal' });
+    linkTask(mine, insertOtherOwnerTask('Owner B private task'));
+
+    const tree = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    expect(tree.find((o) => o.id === mine).next_action).toBeNull();
+  });
+});
+
 // ── Task linking ───────────────────────────────────────────────────────────────
 
 describe('POST /api/objectives/:id/tasks', () => {
@@ -506,6 +684,38 @@ describe('advance_objectives', () => {
     expect(rows[0].task_id).toBe(tId);
     expect(rows[0].source_kind).toBe('objective');
     expect(rows[0].source_ref).toBe(oId);
+  });
+
+  // 0129: the archive is orthogonal to status, so an archived objective keeps
+  // status='active'. This job is the only unattended writer here — left unfiltered it
+  // would push a filed-away objective's tasks back into the flight plan every period,
+  // and the owner would have to keep clearing work they had already archived.
+  it('does NOT nominate from an archived objective, and resumes once restored', async () => {
+    const oId = insertObjective({ title: 'Weekly obj', cadence: 'weekly', last_advanced_at: LONG_AGO });
+    const tId = insertTask('Write first draft');
+    linkTask(oId, tId);
+
+    await api(srv.url, `/api/objectives/${oId}`, { method: 'DELETE' }); // archives
+    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    expect(fpRows()).toHaveLength(0);
+
+    await api(srv.url, `/api/objectives/${oId}/restore`, { method: 'POST' });
+    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    expect(fpRows().map((r) => r.task_id)).toEqual([tId]); // the cadence survived the archive
+  });
+
+  it('does NOT nominate a task that lives in an archived CHILD of a live objective', async () => {
+    // The subtree walk must be the LIVE subtree: archiving the sub-project should stop
+    // its work being nominated, even though its parent still has the cadence.
+    const goal = insertObjective({ title: 'Live goal', cadence: 'weekly', last_advanced_at: LONG_AGO });
+    const proj = insertObjective({ title: 'Archived branch', parent_id: goal });
+    const tId = insertTask('Work in the archived branch');
+    linkTask(proj, tId);
+
+    await api(srv.url, `/api/objectives/${proj}`, { method: 'DELETE' });
+    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+
+    expect(fpRows()).toHaveLength(0);
   });
 
   it('UPSERT: repoints an already-staged task (was pattern, now objective)', async () => {
