@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipFor
 import { type Task, api } from '../lib/api.js';
 import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
+import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar } from '../lib/pattern-meta.js';
 import { textureStyle } from '../lib/textures.js';
 import { ShapeIcon } from './ShapeIcon.js';
@@ -139,6 +140,7 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
   const linkedIds = () =>
     props.task.objective_ids ?? (props.task.objective_id ? [props.task.objective_id] : []);
   const rows = () => buildPickerRows(objectivesTree() ?? [], query(), linkedIds());
+  const canPromote = () => isPromotableToObjective(props.task);
 
   async function link(id: string, title: string) {
     try {
@@ -158,6 +160,18 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
       refetchTasks();
     } catch (err) { showToast((err as Error).message, 'error'); }
     props.close();
+  }
+  // ENTITY-4 · Give the task its own leaf objective, named after it, and linked —
+  // the same one-click promotion the Planner card offers, so the two surfaces mean
+  // the same thing. No prompt: the objective WRAPS this task (source_task_id), so
+  // an independently-typed name would misdescribe it. Idempotent server-side.
+  async function newObjectiveFromTask() {
+    try {
+      await api.tasks.promoteObjective(props.task.id);
+      refetchTasks();
+      showToast(`"${props.task.title}" is now an objective`, 'success');
+      props.close();
+    } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
   return (
@@ -199,12 +213,23 @@ function ObjectiveMenu(props: { task: Task; close: () => void }) {
             <p class="px-3 py-1.5 text-xs text-red-400">Couldn't load objectives — close and retry.</p>
           </Show>
           <Show when={leafCount() === 0 && !loadFailed()}>
-            <p class="px-3 py-1.5 text-xs text-muted-foreground">No objectives yet — create one on the Objectives tab.</p>
+            {/* Only a dead end when the footer row below is hidden — otherwise the
+                way out is right there, so don't send the owner to another tab. */}
+            <p class="px-3 py-1.5 text-xs text-muted-foreground">
+              No objectives yet{canPromote() ? '.' : ' — create one on the Objectives tab.'}
+            </p>
           </Show>
           <Show when={leafCount() > 0 && rows().length === 0}>
             <p class="px-3 py-1.5 text-xs text-muted-foreground">No match</p>
           </Show>
         </div>
+        {/* ENTITY-4 · Pinned BELOW the scroll area (unlike the routine menu, whose
+            footer scrolls with its list) so it stays reachable at any list length.
+            Hidden for the tasks the server refuses — an owner should never click a
+            row we already know answers 422 not_promotable. */}
+        <Show when={canPromote()}>
+          <button onClick={newObjectiveFromTask} class="w-full text-left px-3 py-1.5 text-sm text-accent-hi hover:bg-sidebar-accent border-t border-border mt-1 flex items-center gap-1"><Plus size={12} /> New objective</button>
+        </Show>
         {/* AF-10: no "Remove from objective" footer — with M:N links a single
             footer is ambiguous; each CHECKED row toggles ITS OWN link off. */}
       </Show>
