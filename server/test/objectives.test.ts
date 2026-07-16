@@ -268,6 +268,86 @@ describe('PATCH /api/objectives/:id', () => {
   });
 });
 
+// ── An archived objective is not a parent ─────────────────────────────────────
+
+/**
+ * 0129's parent validators ask "does this row exist and is it mine?" but not "is it in the
+ * live tree?". An archived objective is absent from the graph every read path builds, so as
+ * a parent it does not exist — the answer has to be `parent_not_found` (422), the same as a
+ * made-up id.
+ *
+ * Accepting it silently corrupts the tree rather than nesting anything: buildTree filters
+ * archived rows out of `objs`, and its root-collection step roots any node whose parent
+ * isn't in the map — so the child reappears as a TOP-LEVEL goal. The write "succeeds" (200)
+ * and produces the opposite of what was asked for. That is the same hazard archiveObjective
+ * already calls out when it explains why its cascade must be atomic.
+ */
+describe('an archived objective cannot be used as a parent', () => {
+  it('PATCH re-parenting under an archived objective is 422, not a silent re-root', async () => {
+    const archived = insertObjective({ title: 'Filed away' });
+    const child = insertObjective({ title: 'Still live' });
+    await api(srv.url, `/api/objectives/${archived}`, { method: 'DELETE' }); // archives it
+
+    const res = await api(srv.url, `/api/objectives/${child}`, { method: 'PATCH', json: { parent_id: archived } });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/parent_id not found/);
+
+    // The write was rejected outright — no half-applied edge left behind.
+    const row = sqlite.prepare(`SELECT parent_id FROM objectives WHERE id = ?`).get(child) as { parent_id: string | null };
+    expect(row.parent_id).toBeNull();
+  });
+
+  it('POST creating under an archived parent is 422 (same validator, same gap)', async () => {
+    const archived = insertObjective({ title: 'Filed away' });
+    await api(srv.url, `/api/objectives/${archived}`, { method: 'DELETE' });
+
+    const res = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Orphan-to-be', parent_id: archived } });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/parent_id not found/);
+    // Nothing was created — a rejected create must not leave a row.
+    const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objectives WHERE title = 'Orphan-to-be'`).get() as { n: number }).n;
+    expect(n).toBe(0);
+  });
+
+  it('restoring the parent makes it a legal parent again', async () => {
+    // The rule is about the LIVE tree, not the row — so it lifts the moment it's restored.
+    const parent = insertObjective({ title: 'Comes back' });
+    const child = insertObjective({ title: 'Still live' });
+    await api(srv.url, `/api/objectives/${parent}`, { method: 'DELETE' });
+    expect((await api(srv.url, `/api/objectives/${child}`, { method: 'PATCH', json: { parent_id: parent } })).status).toBe(422);
+
+    await api(srv.url, `/api/objectives/${parent}/restore`, { method: 'POST' });
+    const ok = await api(srv.url, `/api/objectives/${child}`, { method: 'PATCH', json: { parent_id: parent } });
+    expect(ok.status).toBe(200);
+    expect(ok.body.objective.parent_id).toBe(parent);
+  });
+
+  /**
+   * The other half of the invariant, and the reason archiveObjective needs no new guard:
+   * its cascade already archives EVERY live descendant, so it cannot leave a live child
+   * pointing at an archived parent. With the validators above closing the "added
+   * afterwards" door, the corrupt edge has no reachable source through the API.
+   */
+  it('archiving cascades over every live descendant — no live child is left under an archived parent', async () => {
+    const goal = insertObjective({ title: 'Goal' });
+    const proj = insertObjective({ title: 'Project', parent_id: goal });
+    const leaf = insertObjective({ title: 'Deep leaf', parent_id: proj }); // 2 levels down
+
+    await api(srv.url, `/api/objectives/${goal}`, { method: 'DELETE' });
+
+    const orphans = sqlite.prepare(
+      `SELECT c.id FROM objectives c JOIN objectives p ON p.id = c.parent_id
+        WHERE c.archived_at IS NULL AND p.archived_at IS NOT NULL`,
+    ).all() as { id: string }[];
+    expect(orphans).toEqual([]);
+    // …and the deep one really was reached (guards against a vacuous pass above).
+    const deep = sqlite.prepare(`SELECT archived_at, archive_root_id FROM objectives WHERE id = ?`).get(leaf) as
+      { archived_at: string | null; archive_root_id: string | null };
+    expect(deep.archived_at).toBeTruthy();
+    expect(deep.archive_root_id).toBe(goal);
+  });
+});
+
 // ── DELETE /api/objectives/:id ─────────────────────────────────────────────────
 
 describe('DELETE /api/objectives/:id', () => {
