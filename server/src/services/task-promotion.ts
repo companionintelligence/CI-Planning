@@ -113,6 +113,11 @@ export function unpromoteIfEmpty(parentTaskId: string, ownerId: string): void {
     .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ? AND owner_id = ? AND status != 'cancelled' AND subtype != 'quick' AND recurrence_parent_id IS NULL`)
     .get(parentTaskId, ownerId) as { n: number }).n;
   if (activeSubs > 0 || !isPristine(obj.id)) return;
+  // Deliberately a HARD delete, not the archive (0129): isPristine guarantees this is
+  // auto-generated scaffolding the user never organized, so archiving it would fill
+  // their archive with rows they never chose to delete. This is only safe WHILE
+  // isPristine holds — relaxing it breaks owner-scoping (no owner_id below), leveling
+  // (no restampLevels) and rollups (no recomputeProgress) all at once.
   sqlite.prepare(`DELETE FROM objectives WHERE id = ?`).run(obj.id); // cascades objective_tasks
   broadcast(ownerId, 'objective:deleted', { id: obj.id });
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `objective:${obj.id}` });
@@ -125,6 +130,7 @@ export function dropSourceObjective(taskId: string, ownerId: string): void {
     .prepare(`SELECT id FROM objectives WHERE source_task_id = ? AND owner_id = ?`)
     .get(taskId, ownerId) as { id: string } | undefined;
   if (!obj || !isPristine(obj.id)) return;
+  // Hard delete, not the archive (0129) — same isPristine rationale as unpromoteIfEmpty.
   sqlite.prepare(`DELETE FROM objectives WHERE id = ?`).run(obj.id);
   broadcast(ownerId, 'objective:deleted', { id: obj.id });
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `objective:${obj.id}` });

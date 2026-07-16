@@ -452,10 +452,18 @@ export const api = {
 
   // ── Phase N1: objectives ──────────────────────────────────────────────────────
   objectives: {
-    list: () => request<{ objectives: Objective[] }>('GET', '/objectives'),
+    /** The live tree. `{ archived: '1' }` returns the archive instead — a FLAT list. */
+    list: (params?: { archived?: '1' }) =>
+      request<{ objectives: Objective[] }>('GET', `/objectives${params?.archived ? '?archived=1' : ''}`),
     create: (body: ObjectiveInput) => request<{ objective: Objective }>('POST', '/objectives', body),
     update: (id: string, body: Partial<ObjectiveInput>) => request<{ objective: Objective }>('PATCH', `/objectives/${id}`, body),
+    /** ARCHIVES (0129) — the objective is kept and restorable, not destroyed. */
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}`),
+    restore: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/restore`, {}),
+    /** Request permanent deletion — reversible until `purge_after`. */
+    purge: (id: string) => request<{ ok: boolean; purge_after: string }>('POST', `/objectives/${id}/purge`, {}),
+    /** The reversal — cancel a pending permanent deletion. */
+    cancelPurge: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/purge`),
     linkTask: (id: string, task_id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/tasks`, { task_id }),
     unlinkTask: (id: string, task_id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/tasks/${task_id}`),
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
@@ -1094,6 +1102,12 @@ export interface Objective {
   completed_at: string | null;
   /** Set when the objective was auto-promoted from a task (mig 0086); NULL for manual ones. */
   source_task_id: string | null;
+  /** 0129 — non-null ⇒ archived (absent from the live tree, kept indefinitely). */
+  archived_at?: string | null;
+  /** 0129 — the objective whose archiving cascaded to this row; NULL on the root. */
+  archive_root_id?: string | null;
+  /** 0129 — non-null ⇒ permanent deletion requested; restorable until this deadline. */
+  purge_after?: string | null;
   // Server-precomputed fields returned by GET /objectives:
   next_action: ObjectiveNextAction | null;
   effective_target: string | null;

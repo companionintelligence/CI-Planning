@@ -39,9 +39,16 @@ const BLOCK_FIELDS = new Set([
 
 // `level` and `progress_cache` are server-DERIVED (height-leveling + rollups) and
 // deliberately excluded — a client can't author them, so they never sync.
+// `archived_at`/`archive_root_id` merge like any other field so archiving works
+// offline. Deliberately NOT pinned in applyMonotonic — a pin would make archiving
+// irreversible through sync and defeat the 48h reversal; stampRow with the server
+// clock is the correct guard against a stale op un-archiving a row.
+// `purge_after` is absent on purpose: it is a server-owned deadline, same category
+// as level/progress_cache above — a client must not be able to author it.
 const OBJECTIVE_FIELDS = new Set([
   'title', 'description', 'parent_id', 'horizon', 'status', 'cadence',
   'target_date', 'category_id', 'priority', 'completed_at',
+  'archived_at', 'archive_root_id',
 ]);
 
 // A link is an addressable versioned row (migration 0087). Only `linked` is a
@@ -185,8 +192,10 @@ const OBJECTIVE_CAMEL_TO_SNAKE: Record<string, string> = {
   horizon: 'horizon', status: 'status', cadence: 'cadence',
   targetDate: 'target_date', categoryId: 'category_id', priority: 'priority',
   completedAt: 'completed_at',
+  archivedAt: 'archived_at', archiveRootId: 'archive_root_id',
   // server-derived meta — stamped (harmless) but not in the sync allowlist:
   level: 'level', progressCache: 'progress_cache', lastAdvancedAt: 'last_advanced_at',
+  purgeAfter: 'purge_after',
 };
 
 const OBJECTIVE_TASK_CAMEL_TO_SNAKE: Record<string, string> = {
