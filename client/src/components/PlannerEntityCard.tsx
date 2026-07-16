@@ -1,5 +1,5 @@
 import { Show, For, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
-import { Pencil, Repeat, Unlink, LockOpen, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate } from 'lucide-solid';
+import { Pencil, Repeat, Unlink, LockOpen, Lock, Trash2, X, Save, Star, Sparkles, Play, Plus, LayoutTemplate, Target } from 'lucide-solid';
 import {
   tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
   setElementModal, showToast, refetchBlocks, refetchFlightPlan, refetchTasks,
@@ -148,6 +148,20 @@ export function PlannerEntityCard(props: {
     try { await api.tasks.promoteHabit(t.id); showToast(`"${t.title}" is now a habit`, 'success'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
+  // Give the task its own leaf objective so subtasks can hang off it. Idempotent
+  // server-side, so a double-click reuses the objective instead of making a second.
+  async function promoteObjective() {
+    const t = task(); if (!t) return;
+    try { await api.tasks.promoteObjective(t.id); refetchTasks(); showToast(`"${t.title}" is now an objective`, 'success'); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  // Mirrors ensureTaskPromoted's no-op set (services/task-promotion.ts): a quick task
+  // or a recurrence instance is ephemeral and silently refuses to promote, so don't
+  // offer the action at all.
+  const promotable = () => {
+    const t = task();
+    return !!t && !t.is_habit && !isContainer() && t.subtype !== 'quick' && !t.recurrence_parent_id;
+  };
   async function detach() {
     const b = block(); if (!b) return;
     try { await api.blocks.update(b.id, { parent_block_id: null }); refetchBlocks(); showToast('Removed from Time Block', 'default'); }
@@ -367,6 +381,9 @@ export function PlannerEntityCard(props: {
           </Show>
           <Show when={task() && !task()!.is_habit && !isContainer()}>
             <button onClick={promoteHabit} class="btn-ghost text-xs px-2 py-1"><Repeat size={13} /> Promote to habit</button>
+          </Show>
+          <Show when={promotable()}>
+            <button onClick={promoteObjective} class="btn-ghost text-xs px-2 py-1"><Target size={13} /> Promote to objective</button>
           </Show>
           <Show when={block()?.parent_block_id != null}>
             <button onClick={detach} class="btn-ghost text-xs px-2 py-1"><Unlink size={13} /> Remove from Time Block</button>
