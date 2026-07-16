@@ -388,6 +388,8 @@ describe('stampRow', () => {
  * hold independently — whichever op lands first.
  */
 describe('sync cannot leave a live objective under an archived parent (0129)', () => {
+  beforeEach(() => { resetDb(); sqlite.exec(`DELETE FROM objective_tasks; DELETE FROM objectives;`); });
+
   const mkObj = (id: string, parent: string | null = null, owner = SYSTEM_OWNER): void => {
     const now = '2026-06-01T00:00:00.000Z';
     sqlite.prepare(
@@ -402,12 +404,21 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
     opId: `op-${entityId}-${Object.keys(fields)[0]}`, entity: 'objective', entityId,
     fields, baseVersion: 1, clientTs: ts,
   });
-  /** The invariant, asked of the whole table. Empty = well-formed. */
-  const liveChildrenOfArchivedParents = (): string[] =>
+  /**
+   * The invariant, asked of every one of the owner's rows rather than the row under test.
+   * Empty = well-formed.
+   *
+   * Scoped to ONE owner because that is the scope the invariant actually has: buildTree is
+   * owner-scoped, so a cross-owner parent is already invisible to both owners' trees and a
+   * stranger's child is not this cascade's to archive — refusing to touch it is the correct
+   * behaviour, not a violation (see the cross-owner test below).
+   */
+  const liveChildrenOfArchivedParents = (owner = SYSTEM_OWNER): string[] =>
     (sqlite.prepare(
       `SELECT c.id FROM objectives c JOIN objectives p ON p.id = c.parent_id
-        WHERE c.archived_at IS NULL AND p.archived_at IS NOT NULL`,
-    ).all() as { id: string }[]).map((r) => r.id);
+        WHERE c.archived_at IS NULL AND p.archived_at IS NOT NULL
+          AND c.owner_id = ? AND p.owner_id = ?`,
+    ).all(owner, owner) as { id: string }[]).map((r) => r.id);
 
   // ── (a) the incoming parent_id ──
   it('clamps parent_id to NULL when the proposed parent is archived — an explicit re-root, not a silent one', () => {
@@ -469,6 +480,39 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
     applyOp(sqlite, op('b2-goal', { archived_at: null }, '2026-06-03T10:00:00.000Z'), SYSTEM_OWNER);
     expect(() => applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: null })).not.toThrow();
     expect(getObjective('b2-goal').archived_at).toBeNull();
+  });
+
+  /**
+   * The archive cascade must not TOUCH another owner's row — not even its sync metadata.
+   *
+   * liveDescendantIds walks `parent_id` unscoped, so a corrupt cross-owner edge (the very
+   * thing the clamp above now prevents, but which older data may already carry) pulls a
+   * stranger's objective into the descendant list. The archiving UPDATE is owner-scoped and
+   * correctly matches 0 rows — but stampRow keys on `id` ALONE, so it would still bump their
+   * `version` and rewrite their `field_ts`.
+   *
+   * That is worse than a wasted write: stamping `archived_at`'s field_ts with the current
+   * clock makes that owner's own later archive/restore op LOSE the LWW comparison and get
+   * silently dropped. A cross-tenant write into someone else's merge state.
+   *
+   * Same class as the recursive-walk scoping in #369 — liveDescendantIds is the walk that
+   * pass missed.
+   */
+  it('never touches another owner\'s objective — not archived, not even stamped', () => {
+    createOwner();
+    mkObj('x-mine');
+    mkObj('x-theirs', 'x-mine', SECOND_OWNER_ID); // corrupt cross-owner edge (pre-existing data)
+    const before = getObjective('x-theirs');
+
+    applyOp(sqlite, op('x-mine', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
+    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'x-mine', { archived_at: '2026-06-02T10:00:00.000Z' });
+
+    const after = getObjective('x-theirs');
+    expect(after.archived_at).toBeNull();        // owner-scoped UPDATE already got this right
+    expect(after.archive_root_id).toBeNull();
+    // …and the sync metadata must be untouched, or their next archive op loses LWW silently.
+    expect(after.version).toBe(before.version);
+    expect(after.field_ts).toBe(before.field_ts);
   });
 
   // ── order independence: LWW guarantees no arrival order ──
