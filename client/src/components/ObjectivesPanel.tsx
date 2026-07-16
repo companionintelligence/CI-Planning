@@ -4,7 +4,7 @@ import { on } from '../lib/sse.js';
 import {
   Plus, ChevronRight, ChevronDown, Circle, Square, Diamond,
   AlertTriangle, Clock, ArrowRight, Pencil, Trash2, Star,
-  CheckCircle2, ListPlus,
+  CheckCircle2, ListPlus, Archive, RotateCcw,
 } from 'lucide-solid';
 import { STAR_GOLD } from '../lib/stars.js';
 import { api, type Objective, type ObjectiveTaskSummary } from '../lib/api.js';
@@ -47,6 +47,19 @@ const STATUS_CLASSES: Record<string, string> = {
  * Deep-links (`?focus=<id>`, §K — a task's objective star) still auto-expand and
  * scroll to the focused node; the param now lives on the /tasks URL.
  */
+/** Mirrors PURGE_WINDOW_HOURS in server/src/services/objectives.ts — display only;
+ *  the authoritative deadline is the absolute `purge_after` the server stamped. */
+const PURGE_WINDOW_HOURS = 48;
+
+/** "deletes in ~47h" / "deletes in ~12m". The hourly purge job keeps this honest to
+ *  within an hour; a nightly job would make it wrong by up to a day. */
+function purgeCountdown(purgeAfter: string): string {
+  const ms = Date.parse(purgeAfter) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return 'deleting…';
+  const mins = Math.round(ms / 60000);
+  return mins >= 60 ? `deletes in ~${Math.round(mins / 60)}h` : `deletes in ~${mins}m`;
+}
+
 export function ObjectivesPanel() {
   const [data, { refetch }] = createResource(() => api.objectives.list());
   // AF-5: refetch() recreates every ObjectiveNode, which used to reset each node's
@@ -94,15 +107,54 @@ export function ObjectivesPanel() {
     for (const off of unsubscribes) off();
   });
 
+  // ── Archive (0129) ──────────────────────────────────────────────────────────
+  // Its own surface: the Tasks archive is structurally unreachable from this tab
+  // (AllTasks gates its showArchive flag on isTaskTab() and force-clears it on tab
+  // change), and its ArchiveSection is hard-typed to Task[].
+  const [showArchive, setShowArchive] = createSignal(false);
+  const [archived, { refetch: refetchArchive }] = createResource(
+    showArchive, // only fetches once opened
+    () => api.objectives.list({ archived: '1' }).then((r) => r.objectives),
+  );
+  const refetchBoth = () => { refetch(); if (showArchive()) refetchArchive(); };
+  /** The archive is flat, so a member names the root it follows rather than nesting. */
+  const rootTitle = (rootId: string) =>
+    (archived() ?? []).find((o) => o.id === rootId)?.title ?? 'its parent';
+
   async function deleteObjective(obj: Objective) {
-    if (!confirm(`Delete "${obj.title}"?`)) return;
+    if (!confirm(`Archive "${obj.title}"? You can restore it from the archive.`)) return;
     try {
       await api.objectives.delete(obj.id);
-      refetch();
-      showToast('Objective deleted', 'default');
+      refetchBoth();
+      showToast('Moved to the archive', 'default');
     } catch (err) {
       showToast((err as Error).message, 'error');
     }
+  }
+
+  async function restore(obj: Objective) {
+    try {
+      await api.objectives.restore(obj.id);
+      refetchBoth();
+      showToast(`"${obj.title}" restored`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  async function purge(obj: Objective) {
+    if (!confirm(`Delete "${obj.title}" permanently? You can undo this for ${PURGE_WINDOW_HOURS} hours.`)) return;
+    try {
+      await api.objectives.purge(obj.id);
+      refetchArchive();
+      showToast('Will be deleted permanently — undo available', 'default');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  async function undoPurge(obj: Objective) {
+    try {
+      await api.objectives.cancelPurge(obj.id);
+      refetchArchive();
+      showToast('Permanent deletion cancelled', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
   return (
@@ -110,13 +162,71 @@ export function ObjectivesPanel() {
       {/* Panel header — the page-level header belongs to the Tasks view. */}
       <div class="flex items-center justify-between">
         <h2 class="text-sm font-semibold text-foreground">Goals · Projects · Objectives</h2>
-        <button
-          class="btn-primary text-xs px-3 py-1.5"
-          onClick={() => setModal({ mode: 'create' })}
-        >
-          <Plus size={13} /> New Objective
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            class="btn-ghost text-xs px-2 py-1"
+            classList={{ 'text-primary': showArchive() }}
+            onClick={() => setShowArchive((v) => !v)}
+            title={showArchive() ? 'Hide the archive' : 'Show archived objectives'}
+          >
+            <Archive size={13} /> Archive
+          </button>
+          <button
+            class="btn-primary text-xs px-3 py-1.5"
+            onClick={() => setModal({ mode: 'create' })}
+          >
+            <Plus size={13} /> New Objective
+          </button>
+        </div>
       </div>
+
+      {/* Archive — a FLAT list: an archived subtree is not a tree worth rendering.
+          Restore is free (the row never left the table); permanent deletion is a
+          deadline that stays undoable until the hourly purge job passes it. */}
+      <Show when={showArchive()}>
+        <div class="rounded-xl border border-border bg-card/50 p-3 flex flex-col gap-1.5">
+          <Show
+            when={(archived()?.length ?? 0) > 0}
+            fallback={<p class="text-xs text-muted-foreground px-1 py-2">Nothing archived.</p>}
+          >
+            <For each={archived() ?? []}>
+              {(obj) => (
+                <div class="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5">
+                  <span class="flex-1 text-sm text-muted-foreground truncate" title={obj.title}>{obj.title}</span>
+                  {/* A cascaded member has no actions of its own: restoring or purging it
+                      apart from its root would strand it (a live node under an archived
+                      parent renders as a top-level root) or split the subtree. The server
+                      refuses with 422 archive_root_id; don't offer what it won't do. */}
+                  <Show when={obj.archive_root_id} fallback={
+                    <Show when={obj.purge_after} fallback={
+                      <>
+                        <button class="btn-ghost text-[11px] px-2 py-0.5" onClick={() => restore(obj)}>
+                          <RotateCcw size={11} /> Restore
+                        </button>
+                        <button class="btn-ghost text-[11px] px-2 py-0.5 hover:text-destructive" onClick={() => purge(obj)}>
+                          <Trash2 size={11} /> Delete permanently
+                        </button>
+                      </>
+                    }>
+                      <span class="text-[11px] text-red-400 flex-shrink-0">{purgeCountdown(obj.purge_after!)}</span>
+                      <button class="btn-ghost text-[11px] px-2 py-0.5 text-primary" onClick={() => undoPurge(obj)}>
+                        <RotateCcw size={11} /> Undo
+                      </button>
+                    </Show>
+                  }>
+                    <span class="text-[11px] text-muted-foreground/80 flex-shrink-0 italic">
+                      follows {rootTitle(obj.archive_root_id!)}
+                    </span>
+                    <Show when={obj.purge_after}>
+                      <span class="text-[11px] text-red-400 flex-shrink-0">{purgeCountdown(obj.purge_after!)}</span>
+                    </Show>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </Show>
+        </div>
+      </Show>
 
       {/* Tree */}
       <Show

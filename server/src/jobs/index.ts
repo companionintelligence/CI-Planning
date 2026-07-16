@@ -284,6 +284,24 @@ async function execute(kind: string): Promise<JobOutcome> {
         .run();
       return { itemsCreated: 0, itemsUpdated: changes, log: `Pruned ${changes} sync_event row(s) older than 30 days` };
     }
+    case 'purge_objectives': {
+      // Reap objectives whose 48h "delete permanently" window has expired (0129/0130).
+      // GLOBAL, not per-owner: purge_after is an absolute UTC deadline with no owner-tz
+      // dependency, so this is the prune_sync_events shape — owner-scoping this kind of
+      // age-based retention was a bug there, and would be here.
+      //
+      // The whole archived subtree shares a purge_after (requestPurge stamps across
+      // archive_root_id), so it goes atomically. That matters: objectives.parent_id is
+      // ON DELETE SET NULL, so purging a parent while a child survived would silently
+      // re-root the child at top level, 48h later, with no user action.
+      //
+      // Zero rows is the normal case and must NOT throw — runJob would mark the run
+      // red. Deletions are reported in itemsUpdated (prune_sync_events precedent).
+      const { changes } = sqlite
+        .prepare(`DELETE FROM objectives WHERE purge_after IS NOT NULL AND purge_after < ?`)
+        .run(new Date().toISOString());
+      return { itemsCreated: 0, itemsUpdated: changes, log: `Purged ${changes} objective(s) past the reversal window` };
+    }
     case 'advance_objectives': {
       const r = advanceObjectives();
       return {

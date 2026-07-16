@@ -470,3 +470,54 @@ describe('POST /api/sync', () => {
     expect(result.error).toBeDefined();
   });
 });
+
+// ── 0129: archiving through sync ──────────────────────────────────────────────
+
+describe('objective archive via sync (0129)', () => {
+  it('archives a DONE objective — the regression the archived_at column exists to prevent', () => {
+    insertObjective('o-arch-1');
+    sqlite.prepare(`UPDATE objectives SET status = 'done' WHERE id = ?`).run('o-arch-1');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-arch-1', entity: 'objective', entityId: 'o-arch-1',
+      fields: { archived_at: '2026-06-02T10:00:00.000Z' },
+      baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+    }, SYSTEM_OWNER);
+
+    expect(result.applied).toEqual({ archived_at: '2026-06-02T10:00:00.000Z' });
+    const row = sqlite.prepare('SELECT archived_at, status FROM objectives WHERE id = ?').get('o-arch-1') as
+      { archived_at: string | null; status: string };
+    expect(row.archived_at).toBe('2026-06-02T10:00:00.000Z');
+    // Had we routed archiving through `status`, applyMonotonic's done-pin
+    // (apply.ts: status==='done' && value!=='done' ⇒ 'done') would have silently
+    // clamped this back and the objective could never be archived through sync.
+    expect(row.status).toBe('done'); // status is preserved — restore is lossless
+  });
+
+  it('un-archives through sync — archived_at is NOT monotonically pinned', () => {
+    insertObjective('o-arch-2');
+    sqlite.prepare(`UPDATE objectives SET archived_at = '2026-06-01T00:00:00.000Z' WHERE id = ?`).run('o-arch-2');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-arch-2', entity: 'objective', entityId: 'o-arch-2',
+      fields: { archived_at: null }, baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+    }, SYSTEM_OWNER);
+
+    expect(result.applied).toEqual({ archived_at: null });
+    const row = sqlite.prepare('SELECT archived_at FROM objectives WHERE id = ?').get('o-arch-2') as { archived_at: string | null };
+    expect(row.archived_at).toBeNull(); // a pin here would defeat the 48h reversal
+  });
+
+  it('purge_after is server-owned — a client op cannot author it', () => {
+    insertObjective('o-arch-3');
+    const result = applyOp(sqlite, {
+      opId: 'op-arch-3', entity: 'objective', entityId: 'o-arch-3',
+      fields: { purge_after: '2020-01-01T00:00:00.000Z' },
+      baseVersion: 1, clientTs: '2026-06-02T10:00:00.000Z',
+    }, SYSTEM_OWNER);
+
+    expect(result.applied).toEqual({}); // dropped: absent from OBJECTIVE_FIELDS
+    const row = sqlite.prepare('SELECT purge_after FROM objectives WHERE id = ?').get('o-arch-3') as { purge_after: string | null };
+    expect(row.purge_after).toBeNull(); // else a peer could schedule a purge behind the server's back
+  });
+});

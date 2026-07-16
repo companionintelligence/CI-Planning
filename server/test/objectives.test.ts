@@ -8,6 +8,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { advanceObjectives } from '../src/jobs/advance-objectives.js';
+import { runJob } from '../src/jobs/index.js';
 
 // Pinned dates — 2026-06-15 is Monday W25.
 const NOW = '2026-06-15T12:00:00.000Z';
@@ -270,19 +271,68 @@ describe('PATCH /api/objectives/:id', () => {
 // ── DELETE /api/objectives/:id ─────────────────────────────────────────────────
 
 describe('DELETE /api/objectives/:id', () => {
-  it('deletes the objective and cascades to objective_tasks', async () => {
-    const id = insertObjective({ title: 'To delete' });
+  // 0129: DELETE now ARCHIVES. This test previously pinned the hard delete
+  // (expect(objCount).toBe(0)); the row must now survive, keep its links, and simply
+  // leave the tree. Permanent deletion is the purge suite below.
+  it('archives the objective — row + links survive, but it leaves the tree', async () => {
+    const id = insertObjective({ title: 'To archive' });
     const t = insertTask('linked task');
     linkTask(id, t);
-    const countBefore = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objective_tasks WHERE objective_id = ?`).get(id) as { n: number }).n;
-    expect(countBefore).toBe(1);
 
     const res = await api(srv.url, `/api/objectives/${id}`, { method: 'DELETE' });
     expect(res.status).toBe(200);
-    const objCount = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objectives WHERE id = ?`).get(id) as { n: number }).n;
+
+    const row = sqlite.prepare(`SELECT archived_at, status FROM objectives WHERE id = ?`).get(id) as
+      | { archived_at: string | null; status: string } | undefined;
+    expect(row).toBeTruthy();
+    expect(row!.archived_at).toBeTruthy();
+    // The archive is ORTHOGONAL to status — status is preserved so restore is lossless.
+    expect(row!.status).toBe('active');
+    // Links are intact (nothing cascaded, because nothing was deleted).
     const linkCount = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objective_tasks WHERE objective_id = ?`).get(id) as { n: number }).n;
-    expect(objCount).toBe(0);
-    expect(linkCount).toBe(0);
+    expect(linkCount).toBe(1);
+
+    // Gone from the live tree, present in the archive.
+    const tree = (await api(srv.url, '/api/objectives', { method: 'GET' })).body.objectives as { id: string }[];
+    expect(tree.find((o) => o.id === id)).toBeUndefined();
+    const arch = (await api(srv.url, '/api/objectives?archived=1', { method: 'GET' })).body.objectives as { id: string }[];
+    expect(arch.map((o) => o.id)).toContain(id);
+  });
+
+  it('archiving a parent cascades to its subtree, and restore brings it back as a unit', async () => {
+    const goal = insertObjective({ title: 'Goal' });
+    const proj = insertObjective({ title: 'Project', parent_id: goal });
+
+    await api(srv.url, `/api/objectives/${goal}`, { method: 'DELETE' });
+    const child = sqlite.prepare(`SELECT archived_at, archive_root_id, parent_id FROM objectives WHERE id = ?`).get(proj) as
+      { archived_at: string | null; archive_root_id: string | null; parent_id: string | null };
+    expect(child.archived_at).toBeTruthy();
+    expect(child.archive_root_id).toBe(goal);
+    // parent_id is untouched — the old hard delete would have SET NULL'd it, scattering
+    // the child to top level irreversibly.
+    expect(child.parent_id).toBe(goal);
+
+    await api(srv.url, `/api/objectives/${goal}/restore`, { method: 'POST' });
+    const back = sqlite.prepare(`SELECT archived_at, archive_root_id FROM objectives WHERE id = ?`).get(proj) as
+      { archived_at: string | null; archive_root_id: string | null };
+    expect(back.archived_at).toBeNull();
+    expect(back.archive_root_id).toBeNull();
+    const tree = (await api(srv.url, '/api/objectives', { method: 'GET' })).body.objectives as { id: string }[];
+    expect(tree.map((o) => o.id)).toContain(goal);
+  });
+
+  it('restoring a parent does NOT resurrect a descendant archived independently earlier', async () => {
+    const goal = insertObjective({ title: 'Goal' });
+    const proj = insertObjective({ title: 'Project', parent_id: goal });
+
+    await api(srv.url, `/api/objectives/${proj}`, { method: 'DELETE' }); // archived on its own
+    await api(srv.url, `/api/objectives/${goal}`, { method: 'DELETE' }); // cascade skips it
+    await api(srv.url, `/api/objectives/${goal}/restore`, { method: 'POST' });
+
+    const child = sqlite.prepare(`SELECT archived_at, archive_root_id FROM objectives WHERE id = ?`).get(proj) as
+      { archived_at: string | null; archive_root_id: string | null };
+    expect(child.archived_at).toBeTruthy();      // still archived — it was never part of the cascade
+    expect(child.archive_root_id).toBeNull();
   });
 
   it('404 for unknown id', async () => {
@@ -577,5 +627,157 @@ describe('flight_plan source rework', () => {
     const rows = fpRows();
     expect(rows[0].source_kind).toBe('manual');
     expect(rows[0].source_ref).toBeNull();
+  });
+});
+
+// ── 0129: permanent deletion with a 48h reversal ──────────────────────────────
+
+describe('objective purge (48h reversal)', () => {
+  const purgeAfterOf = (id: string) =>
+    (sqlite.prepare(`SELECT purge_after FROM objectives WHERE id = ?`).get(id) as { purge_after: string | null } | undefined)?.purge_after ?? null;
+  const exists = (id: string) => !!sqlite.prepare(`SELECT 1 FROM objectives WHERE id = ?`).get(id);
+
+  it('purge must be requested from the archive — 422 while the objective is live', async () => {
+    const id = insertObjective({ title: 'Live' });
+    const res = await api(srv.url, `/api/objectives/${id}/purge`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(purgeAfterOf(id)).toBeNull();
+  });
+
+  it('stamps a deadline ~48h out and leaves the row fully intact', async () => {
+    const id = insertObjective({ title: 'Bye' });
+    await api(srv.url, `/api/objectives/${id}`, { method: 'DELETE' });
+    const res = await api(srv.url, `/api/objectives/${id}/purge`, { method: 'POST' });
+    expect(res.status).toBe(200);
+
+    const hoursOut = (Date.parse(purgeAfterOf(id)!) - Date.now()) / 3600_000;
+    expect(hoursOut).toBeGreaterThan(47.9);
+    expect(hoursOut).toBeLessThan(48.1);
+    expect(exists(id)).toBe(true); // the reversal is free precisely because the row stays
+  });
+
+  it('the job does NOT purge before the deadline, and DOES after it', async () => {
+    const id = insertObjective({ title: 'Ticking' });
+    await api(srv.url, `/api/objectives/${id}`, { method: 'DELETE' });
+    await api(srv.url, `/api/objectives/${id}/purge`, { method: 'POST' });
+
+    await runJob('purge_objectives');
+    expect(exists(id)).toBe(true); // still inside the window
+
+    // Wind the deadline into the past — the job compares an absolute ISO string.
+    sqlite.prepare(`UPDATE objectives SET purge_after = ? WHERE id = ?`).run('2020-01-01T00:00:00.000Z', id);
+    await runJob('purge_objectives');
+    expect(exists(id)).toBe(false);
+  });
+
+  it('cancelPurge inside the window is the reversal — the row survives the job', async () => {
+    const id = insertObjective({ title: 'Saved' });
+    await api(srv.url, `/api/objectives/${id}`, { method: 'DELETE' });
+    await api(srv.url, `/api/objectives/${id}/purge`, { method: 'POST' });
+    const cancel = await api(srv.url, `/api/objectives/${id}/purge`, { method: 'DELETE' });
+    expect(cancel.status).toBe(200);
+    expect(purgeAfterOf(id)).toBeNull();
+
+    await runJob('purge_objectives');
+    expect(exists(id)).toBe(true);
+  });
+
+  it('purges an archived subtree atomically — no child is left to be re-rooted', async () => {
+    const goal = insertObjective({ title: 'Goal' });
+    const proj = insertObjective({ title: 'Project', parent_id: goal });
+    await api(srv.url, `/api/objectives/${goal}`, { method: 'DELETE' }); // cascades
+    await api(srv.url, `/api/objectives/${goal}/purge`, { method: 'POST' });
+    // The deadline is stamped across the subtree, not just the root.
+    expect(purgeAfterOf(proj)).toBeTruthy();
+
+    sqlite.prepare(`UPDATE objectives SET purge_after = '2020-01-01T00:00:00.000Z' WHERE purge_after IS NOT NULL`).run();
+    await runJob('purge_objectives');
+    // Both gone. If only the parent had purged, ON DELETE SET NULL would have silently
+    // re-rooted the child to top level 48h after the user's last action.
+    expect(exists(goal)).toBe(false);
+    expect(exists(proj)).toBe(false);
+  });
+
+  it('restore also clears a pending purge', async () => {
+    const id = insertObjective({ title: 'Rescued' });
+    await api(srv.url, `/api/objectives/${id}`, { method: 'DELETE' });
+    await api(srv.url, `/api/objectives/${id}/purge`, { method: 'POST' });
+    await api(srv.url, `/api/objectives/${id}/restore`, { method: 'POST' });
+    expect(purgeAfterOf(id)).toBeNull();
+    await runJob('purge_objectives');
+    expect(exists(id)).toBe(true);
+  });
+
+  it('the purge job is a clean no-op when nothing is pending', async () => {
+    await expect(runJob('purge_objectives')).resolves.toBeUndefined();
+  });
+});
+
+// ── 0129 review: a cascaded member must be acted on from its root ──────────────
+
+describe('archive subtree members are root-only', () => {
+  const setup = async () => {
+    const goal = insertObjective({ title: 'Goal' });
+    const proj = insertObjective({ title: 'Project', parent_id: goal });
+    await api(srv.url, `/api/objectives/${goal}`, { method: 'DELETE' }); // cascades
+    return { goal, proj };
+  };
+
+  it('refuses to restore a member alone — it would resurface as a top-level root', async () => {
+    const { goal, proj } = await setup();
+    const res = await api(srv.url, `/api/objectives/${proj}/restore`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(res.body.archive_root_id).toBe(goal); // names the root to act on
+
+    // The member is untouched, so it never becomes an orphan root. buildTree roots any
+    // node whose parent is filtered out — that is the failure this guard prevents.
+    const row = sqlite.prepare(`SELECT archived_at FROM objectives WHERE id = ?`).get(proj) as { archived_at: string | null };
+    expect(row.archived_at).toBeTruthy();
+    const tree = (await api(srv.url, '/api/objectives', { method: 'GET' })).body.objectives as { id: string }[];
+    expect(tree.map((o) => o.id)).not.toContain(proj);
+  });
+
+  it('refuses to purge a member alone — the root could never restore it back', async () => {
+    const { goal, proj } = await setup();
+    const res = await api(srv.url, `/api/objectives/${proj}/purge`, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(res.body.archive_root_id).toBe(goal);
+    const row = sqlite.prepare(`SELECT purge_after FROM objectives WHERE id = ?`).get(proj) as { purge_after: string | null };
+    expect(row.purge_after).toBeNull();
+  });
+
+  it('refuses to undo a purge from a member — the deadline is the subtree’s', async () => {
+    const { goal, proj } = await setup();
+    await api(srv.url, `/api/objectives/${goal}/purge`, { method: 'POST' });
+    const res = await api(srv.url, `/api/objectives/${proj}/purge`, { method: 'DELETE' });
+    expect(res.status).toBe(422);
+    expect(res.body.archive_root_id).toBe(goal);
+    // The member is still scheduled with the rest of the subtree — no partial state.
+    const row = sqlite.prepare(`SELECT purge_after FROM objectives WHERE id = ?`).get(proj) as { purge_after: string | null };
+    expect(row.purge_after).toBeTruthy();
+  });
+
+  it('the root still restores the whole subtree', async () => {
+    const { goal, proj } = await setup();
+    expect((await api(srv.url, `/api/objectives/${goal}/restore`, { method: 'POST' })).status).toBe(200);
+    const tree = (await api(srv.url, '/api/objectives', { method: 'GET' })).body.objectives as { id: string; children: { id: string }[] }[];
+    const root = tree.find((o) => o.id === goal)!;
+    expect(root.children.map((c) => c.id)).toContain(proj); // nested, not orphaned
+  });
+});
+
+describe('archive list shape', () => {
+  it('archived rows carry the same server-computed keys as the tree', async () => {
+    const id = insertObjective({ title: 'Shape' });
+    await api(srv.url, `/api/objectives/${id}`, { method: 'DELETE' });
+    const [row] = (await api(srv.url, '/api/objectives?archived=1', { method: 'GET' })).body.objectives as Record<string, unknown>[];
+    // The client's Objective type says these always exist; one endpoint must not return
+    // two shapes depending on which branch answered.
+    for (const k of ['next_action', 'effective_target', 'pace_expected', 'has_tasks', 'tasks', 'children']) {
+      expect(row).toHaveProperty(k);
+    }
+    expect(row.has_tasks).toBe(false);
+    expect(row.tasks).toEqual([]);
+    expect(row.children).toEqual([]);
   });
 });

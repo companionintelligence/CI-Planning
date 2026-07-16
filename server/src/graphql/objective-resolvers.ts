@@ -5,7 +5,7 @@ import { getTask } from '../services/tasks.js';
 import { getOwnedTag } from '../services/tags.js';
 import {
   listObjectiveRows, getObjectiveRow, objectiveChildrenRows, objectiveTaskIds,
-  createObjective, updateObjective, deleteObjective, linkTaskToObjective, unlinkTaskFromObjective,
+  createObjective, updateObjective, archiveObjective, linkTaskToObjective, unlinkTaskFromObjective,
   type ObjectiveRow, type CreateObjectiveInput, type UpdateObjectiveInput,
 } from '../services/objectives.js';
 import { toNode } from './tag-resolvers.js';
@@ -55,7 +55,14 @@ function toUpdate(input: Record<string, unknown>): UpdateObjectiveInput {
 export const objectiveResolvers = {
   Query: {
     objectives: () => listObjectiveRows(currentOwnerId()),
-    objective: (_p: unknown, args: { id: string }) => getObjectiveRow(currentOwnerId(), args.id) ?? null,
+    // The graph is the LIVE graph: an archived objective resolves to null, matching
+    // `objectives` (which filters) and what deleteObjective reports. The archive is
+    // reachable via REST GET /api/objectives?archived=1; a GraphQL archive surface is
+    // deliberately out of scope for 0129.
+    objective: (_p: unknown, args: { id: string }) => {
+      const row = getObjectiveRow(currentOwnerId(), args.id);
+      return row && !row.archived_at ? row : null;
+    },
   },
 
   Mutation: {
@@ -84,9 +91,11 @@ export const objectiveResolvers = {
       return { objective: res.row, success: true };
     },
 
+    // Archives rather than destroys, matching DELETE /api/objectives/:id — the two
+    // surfaces share the service, so they must not disagree about what "delete" means.
     deleteObjective: (_p: unknown, args: { input: { id: string } }) => {
       const owner = currentOwnerId();
-      const res = deleteObjective(owner, args.input.id);
+      const res = archiveObjective(owner, args.input.id);
       if (!res.ok) throw new GraphQLError('objective not found', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'objective:deleted', { id: args.input.id });
       return { deletedId: args.input.id, success: true };
