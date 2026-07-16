@@ -646,6 +646,64 @@ function liveDescendantIds(id: string): string[] {
 }
 
 /**
+ * Archive `id`'s live descendants, stamping each with `archive_root_id` so the subtree
+ * restores as a unit. Assumes the ROOT's own `archived_at` is already written; this is
+ * only the fan-out.
+ *
+ * THE INVARIANT IT KEEPS: no live objective may have an archived parent. buildTree filters
+ * archived rows out and roots any node whose parent is missing from the map, so a live
+ * child left under an archived parent doesn't nest — it silently resurfaces as a top-level
+ * goal.
+ *
+ * Shared with the sync path (routes/sync.ts → applySyncedObjectiveUpkeep): applyOp writes
+ * `archived_at` raw and never calls archiveObjective, so without this a synced archive
+ * would leave its whole live subtree orphaned. Call it inside a transaction.
+ */
+export function cascadeArchiveToDescendants(owner: string, id: string, archivedAt: string): string[] {
+  const descendants = liveDescendantIds(id);
+  for (const child of descendants) {
+    sqlite
+      .prepare(`UPDATE objectives SET archived_at = ?, archive_root_id = ? WHERE id = ? AND owner_id = ?`)
+      .run(archivedAt, id, child, owner);
+    stampRow(sqlite, 'objective', child, ['archivedAt', 'archiveRootId']);
+  }
+  return descendants;
+}
+
+/**
+ * Objective upkeep after a RAW sync write. applyOp writes columns directly and never goes
+ * through these services, so the invariants they maintain have to be re-established here —
+ * the same reason routes/sync.ts already re-runs the task→block done-state mirror by hand.
+ *
+ * Two things sync can break that the API cannot (as of #371):
+ *  - `archived_at` set ⇒ the live subtree must follow, exactly as archiveObjective does.
+ *    Without it, archiving offline orphans every child. This is the LIKELIER corruption
+ *    path — it needs no parent_id op at all.
+ *  - `parent_id` moved ⇒ `level` is height-derived, so both the old and new ancestor chains
+ *    can change. (An un-archive is deliberately NOT cascaded: restoreObjective is root-only
+ *    by design, and a member archived independently earlier must stay archived.)
+ *
+ * Idempotent and safe to call for any applied field set; a no-op unless one of those two
+ * fields actually landed.
+ */
+export function applySyncedObjectiveUpkeep(owner: string, id: string, applied: Record<string, unknown>): void {
+  const touchedParent = 'parent_id' in applied;
+  const touchedArchive = 'archived_at' in applied;
+  if (!touchedParent && !touchedArchive) return;
+
+  const row = getObjectiveRow(owner, id);
+  if (!row) return;
+
+  if (touchedArchive && applied['archived_at'] != null) {
+    cascadeArchiveToDescendants(owner, id, String(applied['archived_at']));
+  }
+  // Height-from-bottom: a re-parent or an archive can change levels above the node (it
+  // gained/lost a descendant) and at the node itself.
+  restampLevels(row.parent_id);
+  restampLevels(id);
+}
+
+/**
  * Archive an objective and its live subtree. Replaces the old hard delete.
  *
  * The row is kept indefinitely — only an explicit purge request (requestPurge) starts
@@ -668,15 +726,9 @@ export function archiveObjective(owner: string, id: string): DeleteObjectiveResu
   // would silently resurface as a top-level goal. "Cascade as a unit" has to be atomic
   // to be true.
   sqlite.transaction(() => {
-    const descendants = liveDescendantIds(id);
     sqlite.prepare(`UPDATE objectives SET archived_at = ? WHERE id = ? AND owner_id = ?`).run(now, id, owner);
     stampRow(sqlite, 'objective', id, ['archivedAt']);
-    for (const child of descendants) {
-      sqlite
-        .prepare(`UPDATE objectives SET archived_at = ?, archive_root_id = ? WHERE id = ? AND owner_id = ?`)
-        .run(now, id, child, owner);
-      stampRow(sqlite, 'objective', child, ['archivedAt', 'archiveRootId']);
-    }
+    cascadeArchiveToDescendants(owner, id, now);
     // The parent just lost a live child: its height (and so its level) may drop, and its
     // rollup must stop counting the archived branch. recomputeProgress is new here — the
     // old deleteObjective omitted it, leaving a stale progress_cache behind.
