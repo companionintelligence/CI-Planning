@@ -286,6 +286,46 @@ export function buildTree(owner: string) {
   return roots;
 }
 
+// ── The rollup's task-status vocabulary ───────────────────────────────────────
+//
+// recomputeProgress reads a linked task's `status` in exactly TWO ways, and nothing
+// else about it matters to a rollup. Both live here, next to the query that uses them,
+// so a caller deciding "should I recompute?" can ask THIS module instead of re-deriving
+// the rule. updateTask once hardcoded its own answer ("was it done?") and silently
+// missed the cancelled boundary, freezing an objective at its cancel-time percentage
+// when the task was restored — see [[rollupStatusFacet]].
+
+/**
+ * Task statuses the rollup EXCLUDES outright: cancelled work is abandoned, so it leaves
+ * the denominator rather than counting as incomplete forever. Add a status here and both
+ * the query below AND every recompute trigger widen together — that is the point.
+ */
+export const ROLLUP_EXCLUDED_TASK_STATUSES = ['cancelled'] as const;
+/** SQL list literal for `t.status NOT IN (${ROLLUP_EXCLUDED_TASK_STATUS_SQL})`. */
+export const ROLLUP_EXCLUDED_TASK_STATUS_SQL = ROLLUP_EXCLUDED_TASK_STATUSES.map((s) => `'${s}'`).join(',');
+/** The one status the rollup counts as complete (the numerator). */
+export const ROLLUP_DONE_TASK_STATUS = 'done';
+
+/** What a rollup sees when it looks at one task's status. Anything not listed is just
+ *  "outstanding work" — the rollup cannot tell 'open' from 'scheduled'. */
+export type RollupStatusFacet = 'done' | 'counted' | 'excluded' | 'absent';
+
+/**
+ * Project a task status onto everything the rollup can perceive about it. Two statuses
+ * with the same facet are interchangeable to `progress_cache`; two with different facets
+ * mean the rollup is now stale.
+ *
+ * This is the trigger predicate for callers that mutate `tasks.status`: recompute iff the
+ * facet changed. Derived from the constants above rather than a second hardcoded list, so
+ * a new excluded status can't leave a mutator behind (which is exactly how the
+ * cancelled→open restore path came to be missed).
+ */
+export function rollupStatusFacet(status: string | null | undefined): RollupStatusFacet {
+  if (status == null) return 'absent';
+  if ((ROLLUP_EXCLUDED_TASK_STATUSES as readonly string[]).includes(status)) return 'excluded';
+  return status === ROLLUP_DONE_TASK_STATUS ? 'done' : 'counted';
+}
+
 /**
  * Recompute progress_cache for an objective and all its ancestors (bounded upward walk).
  * Called after task links change or explicitly via recompute.
@@ -304,7 +344,8 @@ export function recomputeProgress(objectiveId: string): void {
       .prepare(
         `SELECT t.estimated_minutes, t.status
            FROM objective_tasks ot JOIN tasks t ON t.id = ot.task_id
-          WHERE ot.objective_id = ? AND ot.linked = 1 AND t.status != 'cancelled'`,
+          WHERE ot.objective_id = ? AND ot.linked = 1
+            AND t.status NOT IN (${ROLLUP_EXCLUDED_TASK_STATUS_SQL})`,
       )
       .all(obj.id) as { estimated_minutes: number | null; status: string }[];
 
@@ -324,7 +365,7 @@ export function recomputeProgress(objectiveId: string): void {
         for (const t of tasks) {
           const w = t.estimated_minutes ?? 0;
           total += w;
-          if (t.status === 'done') done += w;
+          if (t.status === ROLLUP_DONE_TASK_STATUS) done += w;
         }
         for (const c of children) {
           if (c.progress_cache !== null) {
@@ -334,7 +375,7 @@ export function recomputeProgress(objectiveId: string): void {
         }
         progress = total > 0 ? done / total : null;
       } else {
-        const doneCount = tasks.filter((t) => t.status === 'done').length;
+        const doneCount = tasks.filter((t) => t.status === ROLLUP_DONE_TASK_STATUS).length;
         const totalTasks = tasks.length + children.filter((c) => c.progress_cache !== null).length;
         const childDone = children.reduce((s, c) => s + (c.progress_cache ?? 0), 0);
         progress = totalTasks > 0 ? (doneCount + childDone) / totalTasks : null;

@@ -489,6 +489,70 @@ describe('progress_cache rollup', () => {
     obj = (await api(srv.url, '/api/objectives')).body.objectives.find((o: any) => o.id === id);
     expect(obj.progress_cache).toBeCloseTo(0, 2); // back to 0/60, recomputed on reopen
   });
+
+  /**
+   * The AF-5 guard keyed on "was it done?", but the rollup ALSO drops cancelled tasks
+   * from the denominator — so the cancelled boundary changes progress without ever
+   * crossing the done one. Cancel recomputed (via deleteTask); restore did not, leaving
+   * the objective frozen at its cancel-time percentage until some unrelated event
+   * happened to recompute it.
+   *
+   * Reachable in one click since #367: the Archive → "Thrown away" list renders full
+   * TaskCards whose checkbox restores to open.
+   */
+  const progressOf = async (id: string): Promise<number | null> =>
+    (await api(srv.url, '/api/objectives')).body.objectives.find((o: any) => o.id === id)?.progress_cache;
+
+  it('cancel → restore returns progress to its pre-cancel value', async () => {
+    const id = insertObjective({ title: 'Cancel/restore rollup' });
+    const kept = insertTask('Task A', 60, 'done');   // done
+    const tossed = insertTask('Task B', 60, 'open'); // open → 1 of 2 done = 0.5
+    linkTask(id, kept);
+    linkTask(id, tossed);
+    await api(srv.url, `/api/objectives/${id}/recompute`, { method: 'POST' });
+    expect(await progressOf(id)).toBeCloseTo(0.5, 2);
+
+    // Throw it away: the rollup drops it from the denominator → 1 of 1 done.
+    expect((await api(srv.url, `/api/tasks/${tossed}`, { method: 'DELETE' })).status).toBe(200);
+    expect(await progressOf(id)).toBeCloseTo(1, 2);
+
+    // Restore it (what the Archive checkbox sends) → back into the denominator.
+    const restored = await api(srv.url, `/api/tasks/${tossed}`, { method: 'PATCH', json: { status: 'open', completed_at: null } });
+    expect(restored.status).toBe(200);
+    expect(await progressOf(id)).toBeCloseTo(0.5, 2); // the pre-cancel value, not the frozen 1
+  });
+
+  it('cancelling via PATCH recomputes too, not just via DELETE', async () => {
+    // The mirror image of the same guard bug: deleteTask recomputed by hand, so only the
+    // PATCH route was exposed. Both reach the rollup through updateTask now.
+    const id = insertObjective({ title: 'PATCH cancel rollup' });
+    const kept = insertTask('Task A', 60, 'done');
+    const tossed = insertTask('Task B', 60, 'open');
+    linkTask(id, kept);
+    linkTask(id, tossed);
+    await api(srv.url, `/api/objectives/${id}/recompute`, { method: 'POST' });
+    expect(await progressOf(id)).toBeCloseTo(0.5, 2);
+
+    const cancelled = await api(srv.url, `/api/tasks/${tossed}`, { method: 'PATCH', json: { status: 'cancelled' } });
+    expect(cancelled.status).toBe(200);
+    expect(await progressOf(id)).toBeCloseTo(1, 2); // dropped from the denominator
+  });
+
+  it('a status move the rollup cannot perceive (open→scheduled) leaves progress alone', async () => {
+    // The widened trigger must not become "recompute on any status write" — the rollup
+    // sees only counted/done/excluded, so open→scheduled is genuinely nothing to react to.
+    const id = insertObjective({ title: 'Inert move' });
+    const t = insertTask('Task A', 60, 'open');
+    linkTask(id, t);
+    await api(srv.url, `/api/objectives/${id}/recompute`, { method: 'POST' });
+
+    // Freeze a deliberately WRONG cache, then make the inert move: a recompute would
+    // correct it, so its survival is the proof that none ran.
+    sqlite.prepare(`UPDATE objectives SET progress_cache = 0.42 WHERE id = ?`).run(id);
+    const moved = await api(srv.url, `/api/tasks/${t}`, { method: 'PATCH', json: { status: 'scheduled' } });
+    expect(moved.status).toBe(200);
+    expect(await progressOf(id)).toBeCloseTo(0.42, 2);
+  });
 });
 
 // ── advance_objectives job ─────────────────────────────────────────────────────
