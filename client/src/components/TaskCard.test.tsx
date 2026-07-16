@@ -21,10 +21,14 @@ vi.mock('../lib/api.js', () => ({
       update: vi.fn(async () => ({})),
       delete: vi.fn(async () => ({})),
       skip: vi.fn(async () => ({})),
+      promoteObjective: vi.fn(async () => ({})),
+      // Never called by TaskCard — mocked so ENTITY-4 can ASSERT it stays that way
+      // (the reversed prompt→create({parent_id}) placeholder design must not return).
+      create: vi.fn(async () => ({})),
     },
     flightPlan: { addTask: vi.fn(async () => ({ added: true })) },
     patterns: { create: vi.fn(async () => ({})), addTask: vi.fn(async () => ({})) },
-    objectives: {},
+    objectives: { list: vi.fn(async () => ({ objectives: [] })) },
   },
 }));
 
@@ -143,5 +147,54 @@ describe('TaskCard — archive checkbox un-does both archive states', () => {
     box.click();
     await Promise.resolve();
     expect(api.tasks.update).toHaveBeenCalledWith('tc-3', { completed: true });
+  });
+});
+
+/**
+ * ENTITY-4 — the assign-to-objective picker's "New objective" footer row. The row
+ * promotes directly (no prompt), so it must be withheld from exactly the tasks the
+ * server refuses with 422 not_promotable — otherwise the owner clicks and gets an
+ * error we could have predicted. Guard lives in lib/objective-promote.ts; these
+ * cases pin it to the RENDERED picker, which is what the owner actually touches.
+ */
+describe('TaskCard — "New objective" row in the objective picker (ENTITY-4)', () => {
+  const openPicker = async (t: Task) => {
+    const r = render(() => <TaskCard task={t} />);
+    (r.getByTitle('Add to objective') as HTMLButtonElement).click();
+    // The tree resource is fetched lazily on open; wait for the loading state to clear.
+    // Match the stem only — the sentence finishes differently per promotability.
+    await r.findByText(/No objectives yet/);
+    return r;
+  };
+  const rowOf = (c: HTMLElement) =>
+    [...c.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New objective');
+
+  it('offers the row on a standard task, and drops the "Objectives tab" dead end', async () => {
+    const { container, queryByText } = await openPicker({ ...baseTask, id: 'p1' } as Task);
+    expect(rowOf(container)).toBeTruthy();
+    // The way out is the row itself now — don't send the owner to another tab.
+    expect(queryByText(/create one on the Objectives tab/)).toBeNull();
+  });
+
+  it('hides the row on a quick task, keeping the Objectives-tab pointer (the only way out left)', async () => {
+    const { container, queryByText } = await openPicker({ ...baseTask, id: 'p2', subtype: 'quick' } as Task);
+    expect(rowOf(container)).toBeUndefined();
+    expect(queryByText(/create one on the Objectives tab/)).toBeTruthy();
+  });
+
+  it('hides the row on a recurrence instance', async () => {
+    const t = { ...baseTask, id: 'p3', recurrence_parent_id: 'r1' } as unknown as Task;
+    const { container } = await openPicker(t);
+    expect(rowOf(container)).toBeUndefined();
+  });
+
+  it('promotes via the task route (no prompt, no placeholder subtask) and closes the menu', async () => {
+    vi.mocked(api.tasks.promoteObjective).mockClear();
+    const { container } = await openPicker({ ...baseTask, id: 'p4' } as Task);
+    rowOf(container)!.click();
+    await vi.waitFor(() => expect(api.tasks.promoteObjective).toHaveBeenCalledWith('p4'));
+    // Direct promotion: never the ENTITY-3-era prompt → tasks.create({parent_id}) path.
+    expect(api.tasks.create).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(rowOf(container)).toBeUndefined()); // menu unmounted
   });
 });

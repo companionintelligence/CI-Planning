@@ -7,6 +7,7 @@ import {
 import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
 import { api, type Block, type Task } from '../lib/api.js';
 import { directionColorForTask, BASE_TAG_DEFAULTS } from '../lib/pattern-meta.js';
+import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { blockColorVar } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { splitTagNames } from '../lib/multi-tag.js';
@@ -155,12 +156,13 @@ export function PlannerEntityCard(props: {
     try { await api.tasks.promoteObjective(t.id); refetchTasks(); showToast(`"${t.title}" is now an objective`, 'success'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
-  // Mirrors ensureTaskPromoted's no-op set (services/task-promotion.ts): a quick task
-  // or a recurrence instance is ephemeral and silently refuses to promote, so don't
-  // offer the action at all.
+  // The server's no-op set (quick / recurrence instance) is shared with the TaskCard
+  // picker, which offers the same promotion. On TOP of it, the Planner also withholds
+  // the action from a habit (its row already reads "Promote to habit") and from a Time
+  // Block container (not a task at all) — surface-local, hence not in the helper.
   const promotable = () => {
     const t = task();
-    return !!t && !t.is_habit && !isContainer() && t.subtype !== 'quick' && !t.recurrence_parent_id;
+    return !!t && !t.is_habit && !isContainer() && isPromotableToObjective(t);
   };
   async function detach() {
     const b = block(); if (!b) return;
