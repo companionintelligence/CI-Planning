@@ -628,21 +628,27 @@ export type DeleteObjectiveResult = { ok: true; parentId: string | null } | { ok
  *  configurable (mirrors the hardcoded 30-day sync_events retention). */
 export const PURGE_WINDOW_HOURS = 48;
 
-/** The live (non-archived) descendants of `id`, deepest-last. Used to cascade an
+/** The owner's live (non-archived) descendants of `id`, deepest-last. Used to cascade an
  *  archive over a subtree: already-archived nodes are skipped so restoring the root
- *  never resurrects something archived independently earlier. */
-function liveDescendantIds(id: string): string[] {
+ *  never resurrects something archived independently earlier.
+ *
+ *  Owner-scoped in the recursive step, like buildTree's and advance-objectives' walks
+ *  (#369): `parent_id` is validated owner-side on write, but sync/import write rows
+ *  directly, so an unscoped descent can wander into ANOTHER owner's branch. Their row must
+ *  not even be considered here — see [[cascadeArchiveToDescendants]] for what stamping one
+ *  would cost. This is the walk #369 missed. */
+function liveDescendantIds(owner: string, id: string): string[] {
   return (sqlite
     .prepare(
       `WITH RECURSIVE down(id) AS (
          SELECT id FROM objectives WHERE id = ?
          UNION ALL
          SELECT o.id FROM objectives o JOIN down ON o.parent_id = down.id
-          WHERE o.archived_at IS NULL
+          WHERE o.archived_at IS NULL AND o.owner_id = ?
        )
        SELECT id FROM down WHERE id != ?`,
     )
-    .all(id, id) as { id: string }[]).map((r) => r.id);
+    .all(id, owner, id) as { id: string }[]).map((r) => r.id);
 }
 
 /**
@@ -658,16 +664,25 @@ function liveDescendantIds(id: string): string[] {
  * Shared with the sync path (routes/sync.ts → applySyncedObjectiveUpkeep): applyOp writes
  * `archived_at` raw and never calls archiveObjective, so without this a synced archive
  * would leave its whole live subtree orphaned. Call it inside a transaction.
+ *
+ * Owner safety is enforced TWICE, because stamping a stranger's row is worse than a wasted
+ * write: `stampRow` keys on `id` alone, so rewriting their `field_ts` for archivedAt would
+ * make that owner's own later archive/restore op lose the LWW comparison and be dropped —
+ * a cross-tenant write into someone else's merge state. So the walk is owner-scoped (no
+ * stranger is ever a candidate) AND the stamp is gated on the owner-scoped UPDATE actually
+ * landing, which keeps this correct even if a future caller hands it a foreign id.
  */
 export function cascadeArchiveToDescendants(owner: string, id: string, archivedAt: string): string[] {
-  const descendants = liveDescendantIds(id);
-  for (const child of descendants) {
-    sqlite
+  const archived: string[] = [];
+  for (const child of liveDescendantIds(owner, id)) {
+    const info = sqlite
       .prepare(`UPDATE objectives SET archived_at = ?, archive_root_id = ? WHERE id = ? AND owner_id = ?`)
       .run(archivedAt, id, child, owner);
+    if (info.changes === 0) continue; // not ours after all — do not stamp it
     stampRow(sqlite, 'objective', child, ['archivedAt', 'archiveRootId']);
+    archived.push(child);
   }
-  return descendants;
+  return archived;
 }
 
 /**
