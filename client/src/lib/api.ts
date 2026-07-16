@@ -120,6 +120,10 @@ export const api = {
     streak: (id: string) => request<Streak>('GET', `/tasks/${id}/streak`),
     // Make a (possibly ritual-local) task a habit — flags it + ensures its Habit pattern.
     promoteHabit: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/promote-habit`, {}),
+    // Surface a task in the objectives tree as its own leaf objective. Idempotent —
+    // promoting twice reuses the task's objective. 422 when the task is ephemeral
+    // (quick / recurrence instance) and so can't carry one.
+    promoteObjective: (id: string) => request<{ objective: Objective }>('POST', `/tasks/${id}/promote-objective`, {}),
     // Reschedule a missed/planned task `days` out from today (the +1/+3/+7 buttons).
     reschedule: (id: string, days: number) =>
       request<{ task: Task; scheduled_for: string }>('POST', `/tasks/${id}/reschedule`, { days }),

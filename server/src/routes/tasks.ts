@@ -15,7 +15,7 @@ import { rescheduleTask } from '../engine/review.js';
 import { requestReplan } from '../engine/auto-defense.js';
 import { placeStartAnchoredTask, type StartAnchoredOutcome } from '../engine/autoplan.js';
 import { computeStreak } from '../engine/recurrence-ops.js';
-import { objectiveIdsByTaskIds } from '../services/task-promotion.js';
+import { objectiveIdsByTaskIds, ensureTaskPromoted } from '../services/task-promotion.js';
 import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, splitNamesByDirection } from '../services/tags.js';
 import {
   createTask, createRecurringTask, updateTask, deleteTask,
@@ -284,6 +284,31 @@ export function tasksRouter() {
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
+  });
+
+  // POST /api/tasks/:id/promote-objective — surface a task in the objectives tree as
+  // its own leaf objective (title copied), linking the task + any subtasks it already
+  // has. The same machinery that fires automatically when a task gains a subtask; this
+  // is the manual trigger. Idempotent per task via objectives.source_task_id, so
+  // promoting twice reuses the objective rather than making a second.
+  // ensureTaskPromoted broadcasts and audits, so this route only maps its outcome.
+  router.post('/api/tasks/:id/promote-objective', async (ctx) => {
+    const id = ctx.params.id;
+    const owner = currentOwnerId();
+    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+    // The task exists but is ephemeral — a quick task or a materialized recurrence
+    // instance. Those must not spawn a strategic objective (services/task-promotion.ts).
+    const objectiveId = ensureTaskPromoted(id, owner);
+    if (!objectiveId) { ctx.status = 422; ctx.body = { error: 'not_promotable' }; return; }
+    // Owner-scoped read even though ensureTaskPromoted only ever returns THIS owner's
+    // objective: the route shouldn't depend on the service's internal scoping for its
+    // own safety (matches every other raw read here), and an unscoped read would answer
+    // 200 with a silent `{}` if the row were unreadable. Unreachable today — by design.
+    const objective = sqlite.prepare('SELECT * FROM objectives WHERE id = ? AND owner_id = ?').get(objectiveId, owner);
+    if (!objective) { ctx.status = 500; ctx.body = { error: 'objective missing' }; return; }
+    ctx.body = { objective };
   });
 
   // POST /api/tasks/suggest-tags { title } → { tags } — best-effort LLM auto-tag for

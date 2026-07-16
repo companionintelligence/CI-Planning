@@ -231,3 +231,82 @@ describe('AF-10 — objective_ids on task payloads', () => {
     expect(rest.objective_id).toBe(gqlObjective?.id ?? null); // REST ↔ GraphQL same first pick
   });
 });
+
+/**
+ * ENTITY-3 — the MANUAL trigger for the same promotion machinery.
+ *
+ * Direct promotion (no placeholder subtask) is deliberate: `unpromoteIfEmpty` only
+ * ever runs against the parent of a task being deleted or re-parented, so a task that
+ * never has subtasks can never be GC'd. Creating a first subtask to "protect" the
+ * objective would instead ARM that trigger — cancelling the placeholder would delete
+ * the objective. See docs/factory/drafts/entity_3_promote_objective.md.
+ */
+describe('POST /api/tasks/:id/promote-objective (manual promotion)', () => {
+  it('promotes a subtask-less task to its own leaf objective', async () => {
+    const taskId = await createTask('Learn Rust');
+    expect(objectivesOf(taskId)).toHaveLength(0);
+
+    const r = await api(srv.url, `/api/tasks/${taskId}/promote-objective`, { method: 'POST', json: {} });
+    expect(r.status).toBe(200);
+    expect(r.body.objective.title).toBe('Learn Rust');
+    expect(r.body.objective.level).toBe('objective');       // a leaf
+    expect(r.body.objective.source_task_id).toBe(taskId);   // keyed for idempotency
+    expect(objectivesOf(taskId)).toEqual([r.body.objective.id]);
+  });
+
+  it('is idempotent — promoting twice reuses the same objective', async () => {
+    const taskId = await createTask('Learn Rust');
+    const a = await api(srv.url, `/api/tasks/${taskId}/promote-objective`, { method: 'POST', json: {} });
+    const b = await api(srv.url, `/api/tasks/${taskId}/promote-objective`, { method: 'POST', json: {} });
+    expect(b.status).toBe(200);
+    expect(b.body.objective.id).toBe(a.body.objective.id);
+    expect(objectivesOf(taskId)).toHaveLength(1);
+  });
+
+  it('the promoted task stays top-level and keeps subtasks below it', async () => {
+    const parent = await createTask('Learn Rust');
+    await api(srv.url, `/api/tasks/${parent}/promote-objective`, { method: 'POST', json: {} });
+    const sub = await createTask('Read the book', parent);
+
+    const row = sqlite.prepare(`SELECT parent_id FROM tasks WHERE id = ?`).get(parent) as { parent_id: string | null };
+    expect(row.parent_id).toBeNull();                       // NOT turned into a subtask
+    expect(objectivesOf(parent)).toEqual(objectivesOf(sub)); // both on the same leaf
+  });
+
+  it('survives its only subtask being completed, but is GC-able once none remain', async () => {
+    const parent = await createTask('Learn Rust');
+    const { body } = await api(srv.url, `/api/tasks/${parent}/promote-objective`, { method: 'POST', json: {} });
+    const objId = body.objective.id;
+    const sub = await createTask('Read the book', parent);
+
+    await api(srv.url, `/api/tasks/${sub}`, { method: 'PATCH', json: { completed: true } });
+    expect(objectivesOf(parent)).toContain(objId); // done != cancelled → still counted
+
+    await api(srv.url, `/api/tasks/${sub}`, { method: 'DELETE' });
+    // Documented, deliberate: cancelling the last subtask empties the objective, so the
+    // pristine auto-objective is collected. Direct promotion avoids ARMING this by not
+    // inventing a placeholder subtask in the first place.
+    expect(sqlite.prepare(`SELECT 1 FROM objectives WHERE id = ?`).get(objId)).toBeUndefined();
+  });
+
+  it('refuses ephemeral tasks (422) and unknown tasks (404)', async () => {
+    const quick = await createTask('Grab milk');
+    sqlite.prepare(`UPDATE tasks SET subtype = 'quick' WHERE id = ?`).run(quick);
+    const q = await api(srv.url, `/api/tasks/${quick}/promote-objective`, { method: 'POST', json: {} });
+    expect(q.status).toBe(422);
+    expect(q.body.error).toBe('not_promotable');
+    expect(objectivesOf(quick)).toHaveLength(0);
+
+    const missing = await api(srv.url, `/api/tasks/00000000-0000-0000-0000-000000000000/promote-objective`, { method: 'POST', json: {} });
+    expect(missing.status).toBe(404);
+  });
+
+  it("is owner-scoped — another owner's task is not found", async () => {
+    createOwner(SECOND_OWNER_ID); // resetDb() drops owner B; tasks.owner_id is an FK
+    const taskId = await createTask('Learn Rust');
+    sqlite.prepare(`UPDATE tasks SET owner_id = ? WHERE id = ?`).run(SECOND_OWNER_ID, taskId);
+    const r = await api(srv.url, `/api/tasks/${taskId}/promote-objective`, { method: 'POST', json: {} });
+    expect(r.status).toBe(404);
+    expect(objectivesOf(taskId)).toHaveLength(0);
+  });
+});
