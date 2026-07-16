@@ -575,6 +575,12 @@ export function ElementWizard() {
   const dimRightPane = () => taskIsSomeday() || taskDeferred() || (tab() === 'timeblock' && someday());
   const blockAllDayView = () => tab() === 'timeblock' && allDay() && !someday();
 
+  // Progressive disclosure, add mode only: name the thing before configuring it.
+  // Left pane needs a title; the right pane also needs a direction. Edit is exempt —
+  // an existing task may legitimately have no direction, and gating would strand it.
+  const gateLeft = () => !isEdit() && tab() !== 'routine' && title().trim() === '';
+  const gateRight = () => !isEdit() && tab() !== 'routine' && (title().trim() === '' || !primary());
+
   // ── Summary line ────────────────────────────────────────────────────────────
   const summaryText = () => {
     if (tab() === 'routine') return 'A named, reusable bundle of tasks';
@@ -886,7 +892,9 @@ export function ElementWizard() {
 
             <Show when={tab() !== 'routine'}>
               {/* LEFT PANE — identity */}
-              <div class="w-full md:w-[290px] flex-shrink-0 p-4 md:p-5 flex flex-col gap-3.5 md:border-r border-b md:border-b-0 border-border">
+              <div class="w-full md:w-[290px] flex-shrink-0 p-4 md:p-5 flex flex-col gap-3.5 md:border-r border-b md:border-b-0 border-border transition-opacity"
+                classList={{ 'opacity-50': gateLeft(), 'pointer-events-none': gateLeft() }}
+                aria-disabled={gateLeft()}>
                 <PrimaryPicker label="Direction" empty="No direction tags yet." />
 
                 {/* Category dropdown — blocks only (0069; coexists with direction) */}
@@ -1176,7 +1184,8 @@ export function ElementWizard() {
 
               {/* RIGHT PANE — scheduling */}
               <div class="flex-1 min-w-0 p-4 md:p-5 flex flex-col gap-3 transition-opacity"
-                classList={{ 'opacity-50': dimRightPane() }}>
+                classList={{ 'opacity-50': dimRightPane() || gateRight(), 'pointer-events-none': gateRight() }}
+                aria-disabled={gateRight()}>
 
                 {/* Day chips + calendar + due flag */}
                 <div ref={dayEl} class="flex flex-col gap-1.5">
