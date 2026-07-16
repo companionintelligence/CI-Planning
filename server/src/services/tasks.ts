@@ -8,6 +8,7 @@ import { skipInstance, resolveTemplateId, deleteFutureOpenInstances } from '../e
 import { syncTaskReminders } from '../engine/reminders.js';
 import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus, mirrorTaskStatusToBlocks, applyTaskPlacementStatus } from './block-task-sync.js';
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
+import { rollupStatusFacet } from './objectives.js';
 import { ensureHabitPattern } from './patterns.js';
 import { entityTagLevels, syncLeveledEntityTags } from './tags.js';
 import { utcDayBounds, localDateInTZ } from '../lib/tz.js';
@@ -374,14 +375,14 @@ export async function updateTask(
     }
   }
 
-  // Capture pre-edit done-state so a completion flip (done⇄not-done) can refresh the
-  // progress_cache of every objective this task rolls up into. recomputeProgress keys
-  // on t.status === 'done', and updateTask is the ONLY mutator that flips it — yet,
-  // unlike delete/link/unlink, it never recomputed. Query only when the write can
-  // change status; undefined means "no status change, so no transition to react to".
-  const wasDone = update.status !== undefined
-    ? ((sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { status: string } | undefined)?.status === 'done')
+  // Capture the pre-edit status so a transition the rollup or the Planner blocks care
+  // about can be reacted to below. Query only when the write can change status;
+  // `undefined` means "not queried — no status change, so no transition to react to",
+  // while `null` means "queried, no such row" (the UPDATE then 404s before we use it).
+  const priorStatus: string | null | undefined = update.status !== undefined
+    ? ((sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { status: string } | undefined)?.status ?? null)
     : undefined;
+  const wasDone = priorStatus !== undefined ? priorStatus === 'done' : undefined;
 
   // Refine the `completed` shortcut against the pre-edit state:
   //  - re-completing an already-done task must not clobber its original completed_at;
@@ -471,17 +472,32 @@ export async function updateTask(
     stampTaskCompletionReflection(ownerId, targetId, completedAt);
   }
 
-  // AF-5: a done⇄not-done flip changes how much of every linked objective is complete,
-  // so refresh their progress_cache rollup here too (mirrors deleteTask, which already
-  // recomputes on cancel). Guarded on an actual transition — a non-status edit, or a
-  // status change that doesn't cross the done boundary, leaves the rollup untouched.
+  // AF-5: a status change that alters how a linked objective's rollup sees this task
+  // must refresh their progress_cache (mirrors deleteTask, which already recomputes on
+  // cancel). The trigger is [[rollupStatusFacet]] — the rollup's OWN vocabulary — rather
+  // than a second list maintained here: ask "can progress_cache still be right?", not
+  // "was it done?". Guarded on an actual transition, so a non-status edit or a move the
+  // rollup can't perceive (open→scheduled) leaves it untouched.
+  //
+  // Keying on "was it done?" is what broke restore: cancelled→open is not a done flip,
+  // so the recompute was skipped and the objective stayed frozen at the percentage it
+  // had when the task was thrown away. (Its mirror image — open→cancelled via PATCH
+  // rather than deleteTask — was skipped for the same reason.)
+  if (priorStatus !== undefined && rollupStatusFacet(priorStatus) !== rollupStatusFacet(task.status)) {
+    recomputeObjectivesForTask(targetId);
+  }
+
+  // Task→block done-state mirror (the inverse of mirrorBlockStatusToTask): checking
+  // a task off completes its Planner block(s); reopening it revives them. Instance
+  // scope only, and only toward a LIVE reopen status — a done→cancelled flip must
+  // not resurrect planned blocks.
+  //
+  // Deliberately still keyed on the DONE boundary, not the rollup facet above: this
+  // mirror is about completion, and the two triggers only coincided until 'cancelled'
+  // was folded into the rollup's. Whether restoring a thrown-away task should revive
+  // its blocks is a separate question from whether its objective's maths is right.
   let mirroredBlockIds: string[] = [];
   if (wasDone !== undefined && wasDone !== (task.status === 'done')) {
-    recomputeObjectivesForTask(targetId);
-    // Task→block done-state mirror (the inverse of mirrorBlockStatusToTask): checking
-    // a task off completes its Planner block(s); reopening it revives them. Instance
-    // scope only, and only toward a LIVE reopen status — a done→cancelled flip must
-    // not resurrect planned blocks.
     if (scope === 'instance' && (task.status === 'done' || ['open', 'scheduled', 'in_progress'].includes(task.status ?? ''))) {
       mirroredBlockIds = mirrorTaskStatusToBlocks(targetId, ownerId);
       // Reviving a placement re-schedules an open task (same parity rule every other
