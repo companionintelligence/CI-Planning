@@ -257,7 +257,10 @@ export function TaskCard(props: Props) {
 
   async function toggleDone() {
     try {
-      if (props.task.status === 'done') {
+      // Both archive states un-do to open: 'done' un-completes, 'cancelled' restores.
+      // 'cancelled' used to fall through to the else branch, so clicking the checkbox
+      // on a Thrown-away card marked it DONE instead of bringing it back.
+      if (props.task.status === 'done' || props.task.status === 'cancelled') {
         await api.tasks.update(props.task.id, { status: 'open', completed_at: null });
       } else {
         await api.tasks.update(props.task.id, { completed: true });
@@ -454,7 +457,9 @@ export function TaskCard(props: Props) {
                 style={props.task.status === 'done'
                   ? { background: dirColor(), 'border-color': dirColor() }
                   : { 'border-color': dirColor() }}
-                title={props.task.status === 'done' ? 'Mark open' : 'Mark done'}
+                title={props.task.status === 'done' ? 'Mark open'
+                  : props.task.status === 'cancelled' ? 'Restore to open'
+                  : 'Mark done'}
                 aria-pressed={props.task.status === 'done'}
               >
                 <Show
