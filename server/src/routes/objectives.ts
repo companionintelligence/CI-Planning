@@ -2,7 +2,8 @@ import Router from '@koa/router';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import {
-  buildTree, createObjective, updateObjective, deleteObjective,
+  buildTree, createObjective, updateObjective,
+  archiveObjective, restoreObjective, requestPurge, cancelPurge, listArchivedObjectiveRows,
   linkTaskToObjective, unlinkTaskFromObjective, recomputeObjective,
 } from '../services/objectives.js';
 
@@ -15,8 +16,12 @@ import {
 export function objectivesRouter() {
   const router = new Router();
 
+  // ?archived=1 returns the ARCHIVE: a flat list (an archived subtree is not a tree
+  // the panel can render meaningfully). The default tree excludes archived rows.
   router.get('/api/objectives', async (ctx) => {
-    ctx.body = { objectives: buildTree(currentOwnerId()) };
+    const owner = currentOwnerId();
+    if (ctx.query.archived === '1') { ctx.body = { objectives: listArchivedObjectiveRows(owner) }; return; }
+    ctx.body = { objectives: buildTree(owner) };
   });
 
   router.post('/api/objectives', async (ctx) => {
@@ -44,11 +49,45 @@ export function objectivesRouter() {
     ctx.body = { objective: res.row };
   });
 
+  // DELETE now ARCHIVES (owner request 2026-07-15) — the row is kept indefinitely and
+  // is restorable. Permanent deletion is the explicit purge route below.
+  // Still broadcasts objective:deleted: to every live client the objective has left
+  // the tree, which is exactly what that event means to them.
   router.delete('/api/objectives/:id', async (ctx) => {
     const owner = currentOwnerId();
-    const res = deleteObjective(owner, ctx.params.id);
+    const res = archiveObjective(owner, ctx.params.id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     broadcast(owner, 'objective:deleted', { id: ctx.params.id });
+    ctx.body = { ok: true };
+  });
+
+  router.post('/api/objectives/:id/restore', async (ctx) => {
+    const owner = currentOwnerId();
+    const res = restoreObjective(owner, ctx.params.id);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    broadcast(owner, 'objective:created', { id: ctx.params.id }); // back in the tree
+    ctx.body = { ok: true };
+  });
+
+  // Request permanent deletion — reversible until the deadline (PURGE_WINDOW_HOURS).
+  router.post('/api/objectives/:id/purge', async (ctx) => {
+    const owner = currentOwnerId();
+    const res = requestPurge(owner, ctx.params.id);
+    if (!res.ok) {
+      if (res.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+      if (res.error === 'not_archived') { ctx.status = 422; ctx.body = { error: 'archive it first' }; return; }
+      ctx.status = 422; ctx.body = { error: 'objective still has live children' }; return;
+    }
+    broadcast(owner, 'objective:updated', { id: ctx.params.id });
+    ctx.body = { ok: true, purge_after: res.purgeAfter };
+  });
+
+  // The reversal — cancel a pending permanent deletion.
+  router.delete('/api/objectives/:id/purge', async (ctx) => {
+    const owner = currentOwnerId();
+    const res = cancelPurge(owner, ctx.params.id);
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+    broadcast(owner, 'objective:updated', { id: ctx.params.id });
     ctx.body = { ok: true };
   });
 

@@ -35,16 +35,27 @@ export interface ObjectiveRow {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /** 0129 — non-null ⇒ archived: kept indefinitely, absent from the live tree. */
+  archived_at: string | null;
+  /** 0129 — the objective whose archiving cascaded to this row; NULL on the root. */
+  archive_root_id: string | null;
+  /** 0129 — non-null ⇒ permanent deletion requested; the hourly purge_objectives job
+   *  reaps it past this absolute deadline. Restorable until then. */
+  purge_after: string | null;
 }
 
 // ── Hierarchy leveling (height-from-bottom) ───────────────────────────────────
 function heightBelow(id: string): number {
   const row = sqlite
     .prepare(
+      // Level is a function of the LIVE tree, so archived descendants stop propping
+      // their ancestors up. Consequence: archiving the last child of a project
+      // demotes it project → objective (owner-accepted, 2026-07-15).
       `WITH RECURSIVE down(id, depth) AS (
          SELECT id, 0 FROM objectives WHERE id = ?
          UNION ALL
          SELECT o.id, down.depth + 1 FROM objectives o JOIN down ON o.parent_id = down.id
+          WHERE o.archived_at IS NULL
        )
        SELECT MAX(depth) AS d FROM down`,
     )
@@ -164,7 +175,7 @@ export function buildTree(owner: string) {
   const now = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
   const objs = sqlite
-    .prepare(`SELECT * FROM objectives WHERE owner_id = ? ORDER BY created_at`)
+    .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND archived_at IS NULL ORDER BY created_at`)
     .all(owner) as ObjectiveRow[];
 
   if (objs.length === 0) return [];
@@ -297,8 +308,9 @@ export function recomputeProgress(objectiveId: string): void {
       )
       .all(obj.id) as { estimated_minutes: number | null; status: string }[];
 
+    // An archived child must not keep dragging its parent's completion.
     const children = sqlite
-      .prepare(`SELECT progress_cache FROM objectives WHERE parent_id = ?`)
+      .prepare(`SELECT progress_cache FROM objectives WHERE parent_id = ? AND archived_at IS NULL`)
       .all(obj.id) as { progress_cache: number | null }[];
 
     const allNull = tasks.length === 0 && children.every((c) => c.progress_cache === null);
@@ -355,12 +367,24 @@ export function getObjectiveRow(owner: string, id: string): ObjectiveRow | undef
 /** All of the owner's objectives (flat, created_at order) — GraphQL navigates the tree
  *  via the parent/children field resolvers. */
 export function listObjectiveRows(owner: string): ObjectiveRow[] {
-  return sqlite.prepare(`SELECT * FROM objectives WHERE owner_id = ? ORDER BY created_at, id`).all(owner) as ObjectiveRow[];
+  return sqlite
+    .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND archived_at IS NULL ORDER BY created_at, id`)
+    .all(owner) as ObjectiveRow[];
+}
+
+/** The owner's ARCHIVED objectives — a flat list (an archived subtree is not a tree
+ *  the panel can render). Newest first: the archive reads as a history. */
+export function listArchivedObjectiveRows(owner: string): ObjectiveRow[] {
+  return sqlite
+    .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC, id`)
+    .all(owner) as ObjectiveRow[];
 }
 
 /** The owner's objectives whose parent is `parentId` (children of a node). */
 export function objectiveChildrenRows(owner: string, parentId: string): ObjectiveRow[] {
-  return sqlite.prepare(`SELECT * FROM objectives WHERE owner_id = ? AND parent_id = ? ORDER BY created_at, id`).all(owner, parentId) as ObjectiveRow[];
+  return sqlite
+    .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND parent_id = ? AND archived_at IS NULL ORDER BY created_at, id`)
+    .all(owner, parentId) as ObjectiveRow[];
 }
 
 /**
@@ -488,15 +512,135 @@ export function updateObjective(owner: string, id: string, body: UpdateObjective
 
 export type DeleteObjectiveResult = { ok: true; parentId: string | null } | { ok: false; error: 'not_found' };
 
-export function deleteObjective(owner: string, id: string): DeleteObjectiveResult {
-  const existing = sqlite.prepare(`SELECT id, parent_id FROM objectives WHERE id = ? AND owner_id = ?`).get(id, owner) as
-    | { id: string; parent_id: string | null }
-    | undefined;
+/** How long a "delete permanently" stays reversible. One constant — deliberately not
+ *  configurable (mirrors the hardcoded 30-day sync_events retention). */
+export const PURGE_WINDOW_HOURS = 48;
+
+/** The live (non-archived) descendants of `id`, deepest-last. Used to cascade an
+ *  archive over a subtree: already-archived nodes are skipped so restoring the root
+ *  never resurrects something archived independently earlier. */
+function liveDescendantIds(id: string): string[] {
+  return (sqlite
+    .prepare(
+      `WITH RECURSIVE down(id) AS (
+         SELECT id FROM objectives WHERE id = ?
+         UNION ALL
+         SELECT o.id FROM objectives o JOIN down ON o.parent_id = down.id
+          WHERE o.archived_at IS NULL
+       )
+       SELECT id FROM down WHERE id != ?`,
+    )
+    .all(id, id) as { id: string }[]).map((r) => r.id);
+}
+
+/**
+ * Archive an objective and its live subtree. Replaces the old hard delete.
+ *
+ * The row is kept indefinitely — only an explicit purge request (requestPurge) starts
+ * the 48h reversal clock. Descendants are stamped with `archive_root_id` so the
+ * subtree restores as a unit; without the cascade, `parent_id`'s ON DELETE SET NULL
+ * would silently re-root the children at purge time.
+ */
+export function archiveObjective(owner: string, id: string): DeleteObjectiveResult {
+  const existing = sqlite
+    .prepare(`SELECT id, parent_id, archived_at FROM objectives WHERE id = ? AND owner_id = ?`)
+    .get(id, owner) as { id: string; parent_id: string | null; archived_at: string | null } | undefined;
   if (!existing) return { ok: false, error: 'not_found' };
-  sqlite.prepare(`DELETE FROM objectives WHERE id = ? AND owner_id = ?`).run(id, owner);
+  if (existing.archived_at) return { ok: true, parentId: existing.parent_id }; // idempotent
+
+  const now = new Date().toISOString(); // NEVER CURRENT_TIMESTAMP — format must string-compare
+  const descendants = liveDescendantIds(id);
+
+  sqlite.prepare(`UPDATE objectives SET archived_at = ? WHERE id = ? AND owner_id = ?`).run(now, id, owner);
+  stampRow(sqlite, 'objective', id, ['archivedAt']);
+  for (const child of descendants) {
+    sqlite
+      .prepare(`UPDATE objectives SET archived_at = ?, archive_root_id = ? WHERE id = ? AND owner_id = ?`)
+      .run(now, id, child, owner);
+    stampRow(sqlite, 'objective', child, ['archivedAt', 'archiveRootId']);
+  }
+
+  // The parent just lost a live child: its height (and so its level) may drop, and its
+  // rollup must stop counting the archived branch. recomputeProgress is new here — the
+  // old deleteObjective omitted it, leaving a stale progress_cache behind.
   restampLevels(existing.parent_id);
-  writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `objective:${id}` });
+  if (existing.parent_id) recomputeProgress(existing.parent_id);
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'archive', entity: `objective:${id}` });
   return { ok: true, parentId: existing.parent_id };
+}
+
+/**
+ * Restore an archived objective and everything archived alongside it, clearing any
+ * pending purge. THIS is the reversal: the row never left the table, so it is one
+ * UPDATE — no id is re-minted and no FK or link tombstone was ever destroyed.
+ */
+export function restoreObjective(owner: string, id: string): DeleteObjectiveResult {
+  const existing = sqlite
+    .prepare(`SELECT id, parent_id, archived_at FROM objectives WHERE id = ? AND owner_id = ?`)
+    .get(id, owner) as { id: string; parent_id: string | null; archived_at: string | null } | undefined;
+  if (!existing) return { ok: false, error: 'not_found' };
+
+  const subtree = (sqlite
+    .prepare(`SELECT id FROM objectives WHERE owner_id = ? AND archive_root_id = ?`)
+    .all(owner, id) as { id: string }[]).map((r) => r.id);
+
+  for (const rowId of [id, ...subtree]) {
+    sqlite
+      .prepare(`UPDATE objectives SET archived_at = NULL, archive_root_id = NULL, purge_after = NULL WHERE id = ? AND owner_id = ?`)
+      .run(rowId, owner);
+    stampRow(sqlite, 'objective', rowId, ['archivedAt', 'archiveRootId']);
+  }
+
+  restampLevels(existing.parent_id);
+  restampLevels(id);
+  if (existing.parent_id) recomputeProgress(existing.parent_id);
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'restore', entity: `objective:${id}` });
+  return { ok: true, parentId: existing.parent_id };
+}
+
+export type PurgeResult =
+  | { ok: true; purgeAfter: string | null }
+  | { ok: false; error: 'not_found' | 'not_archived' | 'live_children' };
+
+/**
+ * Request permanent deletion: stamp an absolute deadline across the archived subtree
+ * so it purges atomically. Storing the ABSOLUTE deadline (rather than a requested_at
+ * the job adds 48h to) means changing PURGE_WINDOW_HOURS later cannot retroactively
+ * vaporize rows already in the window.
+ *
+ * `purge_after` is intentionally NOT stamped for sync — it is a server-owned deadline
+ * (like level/progress_cache), so a client cannot author it.
+ */
+export function requestPurge(owner: string, id: string): PurgeResult {
+  const row = sqlite
+    .prepare(`SELECT id, archived_at FROM objectives WHERE id = ? AND owner_id = ?`)
+    .get(id, owner) as { id: string; archived_at: string | null } | undefined;
+  if (!row) return { ok: false, error: 'not_found' };
+  if (!row.archived_at) return { ok: false, error: 'not_archived' };
+  // A live child would be silently re-rooted by ON DELETE SET NULL when the job fires.
+  // The cascade means this should be unreachable; it is a guard, not a workflow.
+  const live = sqlite
+    .prepare(`SELECT 1 FROM objectives WHERE parent_id = ? AND archived_at IS NULL LIMIT 1`)
+    .get(id);
+  if (live) return { ok: false, error: 'live_children' };
+
+  const deadline = new Date(Date.now() + PURGE_WINDOW_HOURS * 3600_000).toISOString();
+  sqlite
+    .prepare(`UPDATE objectives SET purge_after = ? WHERE owner_id = ? AND (id = ? OR archive_root_id = ?)`)
+    .run(deadline, owner, id, id);
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'purge:request', entity: `objective:${id}` });
+  return { ok: true, purgeAfter: deadline };
+}
+
+/** Cancel a pending permanent deletion — the reversal itself. */
+export function cancelPurge(owner: string, id: string): PurgeResult {
+  const row = sqlite.prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(id, owner);
+  if (!row) return { ok: false, error: 'not_found' };
+  sqlite
+    .prepare(`UPDATE objectives SET purge_after = NULL WHERE owner_id = ? AND (id = ? OR archive_root_id = ?)`)
+    .run(owner, id, id);
+  writeAudit({ ownerId: owner, actor: 'owner', action: 'purge:cancel', entity: `objective:${id}` });
+  return { ok: true, purgeAfter: null };
 }
 
 export type LinkTaskResult =
