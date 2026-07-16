@@ -530,7 +530,13 @@ function liveParentExists(owner: string, parentId: string): boolean {
 
 export function createObjective(owner: string, body: CreateObjectiveInput): CreateObjectiveResult {
   if (!body.title?.trim()) return { ok: false, error: 'title_required' };
-  if (body.parent_id) {
+  // `!= null`, not truthiness: '' is a PROVIDED parent that no objective can satisfy, so it
+  // must be refused like any other unknown id. Under a truthy check it skipped validation
+  // and reached the INSERT, where `parent_id REFERENCES objectives(id)` rejected it — a 500
+  // leaking "FOREIGN KEY constraint failed" where a 422 belongs. (No row was ever written:
+  // the FK is what caught it, so this was a wrong-answer bug, not silent corruption.)
+  // updateObjective already guards with `!= null`; this makes the two agree.
+  if (body.parent_id != null) {
     if (!liveParentExists(owner, body.parent_id)) return { ok: false, error: 'parent_not_found' };
   }
   const id = newId();
