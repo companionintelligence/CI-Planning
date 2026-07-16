@@ -227,12 +227,18 @@ export function buildTree(owner: string) {
   for (const id of objIds) {
     const decorated = byId.get(id)!;
 
+    // The subtree walk is over the LIVE tree (`archived_at IS NULL`), the same rule
+    // recomputeProgress's child rollup and heightBelow already follow: an archived branch
+    // must not keep feeding its live ancestor. Without it, archiving a sub-project leaves
+    // its tasks surfacing as the parent's next action — work the owner just filed away.
+    // (The root `id` is a live node by construction; only descendants need filtering.)
     const nextAction = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
+            WHERE o.archived_at IS NULL
          )
          SELECT t.id, t.title, t.status,
                 (SELECT MIN(start_at) FROM time_blocks tb WHERE tb.task_id = t.id AND tb.owner_id = t.owner_id AND DATE(tb.start_at) >= DATE('now')) AS scheduled_date
@@ -248,12 +254,15 @@ export function buildTree(owner: string) {
     decorated.next_action = nextAction ?? null;
     decorated.has_tasks = withTasks.has(id);
 
+    // Live subtree only — same reason as next_action above: an archived branch's
+    // target_date must not keep setting its live ancestor's effective target.
     const effectiveTarget = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
+            WHERE o.archived_at IS NULL
          )
          SELECT MAX(target_date) AS et
            FROM objectives
@@ -405,10 +414,17 @@ export function objectiveChildrenRows(owner: string, parentId: string): Objectiv
 }
 
 /**
- * The FIRST objective a task is linked to (over objective_tasks, linked=1), owner-scoped —
- * backs GraphQL `TaskType.objective`. Deterministic pick: earliest-created, then id (a task
- * may be linked to several objectives). Undefined when none / the task isn't the owner's.
- * Owner-scoped via the objectives.owner_id join, so a cross-owner link can't leak.
+ * The FIRST LIVE objective a task is linked to (over objective_tasks, linked=1),
+ * owner-scoped — backs GraphQL `TaskType.objective`. Deterministic pick: earliest-created,
+ * then id (a task may be linked to several objectives). Undefined when none / the task
+ * isn't the owner's. Owner-scoped via the objectives.owner_id join, so a cross-owner link
+ * can't leak.
+ *
+ * Archived objectives are excluded (0129), which is what keeps the graph self-consistent:
+ * `task.objective` and `objective(id:)` reach the same node by two paths, so an archived
+ * objective reachable through this one would resolve to an object here and null there.
+ * Mirrors task-promotion.ts objectiveIdsByTaskIds (REST `objective_ids`) exactly — same
+ * filter, same order. Change one, change the other.
  */
 export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | undefined {
   return sqlite
@@ -420,6 +436,7 @@ export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | 
          JOIN objective_tasks ot ON ot.objective_id = o.id
          JOIN tasks t ON t.id = ot.task_id
         WHERE ot.task_id = ? AND ot.linked = 1 AND o.owner_id = ? AND t.owner_id = ?
+          AND o.archived_at IS NULL
         ORDER BY o.created_at, o.id LIMIT 1`,
     )
     .get(taskId, owner, owner) as ObjectiveRow | undefined;
