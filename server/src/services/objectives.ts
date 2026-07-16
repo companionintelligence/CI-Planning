@@ -227,49 +227,59 @@ export function buildTree(owner: string) {
   for (const id of objIds) {
     const decorated = byId.get(id)!;
 
-    // The subtree walk is over the LIVE tree (`archived_at IS NULL`), the same rule
-    // recomputeProgress's child rollup and heightBelow already follow: an archived branch
-    // must not keep feeding its live ancestor. Without it, archiving a sub-project leaves
-    // its tasks surfacing as the parent's next action — work the owner just filed away.
-    // (The root `id` is a live node by construction; only descendants need filtering.)
+    // Two rules on this walk, both matching the linkedTasks query above:
+    //
+    // 1. LIVE tree only (`archived_at IS NULL`) — the rule recomputeProgress's child
+    //    rollup and heightBelow already follow: an archived branch must not keep feeding
+    //    its live ancestor. Without it, archiving a sub-project leaves its tasks surfacing
+    //    as the parent's next action — work the owner just filed away. (The root `id` is a
+    //    live node by construction; only descendants need filtering.)
+    // 2. The OWNER's subtree only. `parent_id` is validated owner-side on write, but
+    //    sync/apply.ts and backup import write objectives rows directly, so a cross-owner
+    //    edge is the same "stray/dangling row" case linkedTasks defends against — and an
+    //    unconstrained descent would walk straight into another owner's branch. Scoped in
+    //    the recursive step AND on `t.owner_id`, so it is self-sufficiently owner-safe
+    //    whichever half is corrupt (a bad parent_id or a bad objective_tasks row).
     const nextAction = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
-            WHERE o.archived_at IS NULL
+            WHERE o.archived_at IS NULL AND o.owner_id = ?
          )
          SELECT t.id, t.title, t.status,
                 (SELECT MIN(start_at) FROM time_blocks tb WHERE tb.task_id = t.id AND tb.owner_id = t.owner_id AND DATE(tb.start_at) >= DATE('now')) AS scheduled_date
            FROM objective_tasks ot
            JOIN tasks t ON t.id = ot.task_id
            JOIN sub ON ot.objective_id = sub.id
-          WHERE ot.linked = 1 AND t.status NOT IN ('done', 'cancelled', 'deferred')
+          WHERE ot.linked = 1 AND t.owner_id = ? AND t.status NOT IN ('done', 'cancelled', 'deferred')
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`,
       )
-      .get(id) as { id: string; title: string; status: string; scheduled_date: string | null } | undefined;
+      .get(id, owner, owner) as { id: string; title: string; status: string; scheduled_date: string | null } | undefined;
 
     decorated.next_action = nextAction ?? null;
     decorated.has_tasks = withTasks.has(id);
 
-    // Live subtree only — same reason as next_action above: an archived branch's
-    // target_date must not keep setting its live ancestor's effective target.
+    // Live subtree, owner's subtree — same two reasons as next_action above. An archived
+    // branch's target_date must not keep setting its live ancestor's effective target, and
+    // a cross-owner branch must not set it at all (MAX() would happily take a stranger's
+    // date). Scoped in the recursive step and again in the final select.
     const effectiveTarget = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
-            WHERE o.archived_at IS NULL
+            WHERE o.archived_at IS NULL AND o.owner_id = ?
          )
          SELECT MAX(target_date) AS et
            FROM objectives
            JOIN sub ON objectives.id = sub.id
-          WHERE target_date IS NOT NULL`,
+          WHERE target_date IS NOT NULL AND objectives.owner_id = ?`,
       )
-      .get(id) as { et: string | null };
+      .get(id, owner, owner) as { et: string | null };
 
     decorated.effective_target = effectiveTarget.et ?? null;
 

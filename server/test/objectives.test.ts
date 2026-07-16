@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
+import { resetDb, startTestServer, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 import { advanceObjectives } from '../src/jobs/advance-objectives.js';
 import { runJob } from '../src/jobs/index.js';
 
@@ -442,6 +442,80 @@ describe('archived objectives do not surface through the task side', () => {
     const after = (await api(srv.url, `/api/tasks/${parent}/subtasks`)).body.subtasks
       .find((t: { id: string }) => t.id === sub);
     expect(after.objective_ids).toEqual([]);
+  });
+});
+
+// ── Subtree walks are the OWNER's subtree ──────────────────────────────────────
+
+/**
+ * buildTree's next_action / effective_target and the cadence job walk `parent_id`
+ * recursively from one of the owner's own nodes. The walk itself was unconstrained, so a
+ * cross-owner `parent_id` pulled another owner's rows into the descent — and the task
+ * selection never checked `t.owner_id` either.
+ *
+ * The API cannot create that edge (createObjective/updateObjective both validate the
+ * parent with `owner_id = ?`), but sync/apply.ts and backup import write `objectives`
+ * rows directly, which is exactly the "stray/dangling row" case the sibling `linkedTasks`
+ * query in this same function already defends against by owner-scoping BOTH sides. These
+ * pin that the recursive walks hold to the same rule.
+ *
+ * Setup below writes the corrupt edge with raw SQL on purpose — it is unreachable
+ * through the routes, which is the point: the guard has to hold for data that arrived
+ * some other way.
+ */
+describe('subtree walks stay inside the owner (corrupt cross-owner parent_id)', () => {
+  /** Owner B's objective, parented under owner A's — the edge sync could deliver. */
+  function corruptChildOf(parentOfOwnerA: string, opts: { target_date?: string } = {}): string {
+    createOwner();
+    return (sqlite.prepare(`
+      INSERT INTO objectives (id, owner_id, parent_id, title, level, horizon, status,
+        cadence, target_date, progress_cache, created_at, updated_at)
+      VALUES (uuid7(), ?, ?, 'Owner B private', 'objective', 'none', 'active', 'none', ?, NULL, ?, ?)
+      RETURNING id
+    `).get(SECOND_OWNER_ID, parentOfOwnerA, opts.target_date ?? null, NOW, NOW) as { id: string }).id;
+  }
+  const insertOtherOwnerTask = (title: string): string => {
+    createOwner(); // idempotent (INSERT OR IGNORE); tasks.owner_id is an FK
+    return (sqlite.prepare(
+      `INSERT INTO tasks (id, title, owner_id, status, priority) VALUES (uuid7(), ?, ?, 'open', 1) RETURNING id`,
+    ).get(title, SECOND_OWNER_ID) as { id: string }).id;
+  };
+
+  it('next_action never surfaces another owner\'s task', async () => {
+    const mine = insertObjective({ title: 'My goal' });
+    const theirs = corruptChildOf(mine);
+    linkTask(theirs, insertOtherOwnerTask('Owner B private task'));
+
+    const tree = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    const node = tree.find((o) => o.id === mine);
+    expect(node.next_action).toBeNull(); // priority 1 — it would win the ORDER BY if visible
+  });
+
+  it('effective_target never takes another owner\'s target_date', async () => {
+    const mine = insertObjective({ title: 'My goal' });
+    corruptChildOf(mine, { target_date: '2099-12-31' });
+
+    const tree = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    expect(tree.find((o) => o.id === mine).effective_target).toBeNull();
+  });
+
+  it('the cadence job never nominates another owner\'s task into my flight plan', async () => {
+    const mine = insertObjective({ title: 'My weekly goal', cadence: 'weekly', last_advanced_at: LONG_AGO });
+    const theirs = corruptChildOf(mine);
+    linkTask(theirs, insertOtherOwnerTask('Owner B private task'));
+
+    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+
+    expect(fpRows()).toHaveLength(0);
+  });
+
+  it('a task linked to MY objective but owned by someone else is not my next_action', async () => {
+    // The other half: the corrupt edge is on objective_tasks rather than parent_id.
+    const mine = insertObjective({ title: 'My goal' });
+    linkTask(mine, insertOtherOwnerTask('Owner B private task'));
+
+    const tree = (await api(srv.url, '/api/objectives')).body.objectives as any[];
+    expect(tree.find((o) => o.id === mine).next_action).toBeNull();
   });
 });
 
