@@ -137,22 +137,41 @@ export function dropSourceObjective(taskId: string, ownerId: string): void {
 }
 
 /** Recompute progress for every objective a task is linked to (e.g. after the task is
- * cancelled, so a lingering link's rollup reflects the drop). */
+ * cancelled, so a lingering link's rollup reflects the drop).
+ *
+ * Deliberately NOT filtered by `archived_at` (0129), unlike the read paths below. This
+ * writes `progress_cache` rather than showing it, and archiving must be losslessly
+ * reversible: skipping archived objectives would freeze their rollup at archive-time, so
+ * a restore months later would surface a number that silently ignores everything the
+ * owner did to its tasks in between. The upward walk stays correct either way —
+ * recomputeProgress's child rollup already excludes archived children, so a live ancestor
+ * never counts this branch. Cost is a rollup nobody is currently looking at; the archive
+ * list does render progress_cache, so it isn't even wasted. */
 export function recomputeObjectivesForTask(taskId: string): void {
   const objs = sqlite.prepare(`SELECT objective_id FROM objective_tasks WHERE task_id = ? AND linked = 1`).all(taskId) as { objective_id: string }[];
   for (const o of objs) recomputeProgress(o.objective_id);
 }
 
 /**
- * ALL linked objective ids per task id (M:N over objective_tasks, linked=1 only —
+ * ALL LIVE linked objective ids per task id (M:N over objective_tasks, linked=1 only —
  * tombstoned links excluded). Batched to avoid N+1. AF-10: backs the task payload's
  * `objective_ids`; its first element backs the legacy `objective_id` decoration.
  *
+ * `objective_ids` means LIVE links only — archived objectives are excluded (0129). The
+ * join row alone cannot answer "is this link live?": archiveObjective is a SOFT delete
+ * that deliberately leaves `linked = 1` so a restore is lossless, so every reader must
+ * check `o.archived_at` too. Reporting archived links here would make the task card's
+ * star mean "in an objective, or maybe in one you deleted", and the card's picker offers
+ * unlink only from a CHECKED row — a link matching no live row is one the owner cannot
+ * remove at all. Same rule the `objective` query resolver states from the other side:
+ * the graph is the LIVE graph.
+ *
  * Ordering + scoping deliberately mirror services/objectives.ts objectiveForTask
- * (which backs GraphQL TaskType.objective): ORDER BY o.created_at, o.id, and BOTH
- * sides owner-scoped (objective + task) so a stray/dangling objective_tasks row
- * pointing at another owner's row can never surface here. That keeps REST's
- * objective_id and GraphQL's objective agreeing on the same first objective.
+ * (which backs GraphQL TaskType.objective): ORDER BY o.created_at, o.id, BOTH sides
+ * owner-scoped (objective + task) so a stray/dangling objective_tasks row pointing at
+ * another owner's row can never surface here, and the SAME archived_at filter. That
+ * keeps REST's objective_id and GraphQL's objective agreeing on the same first
+ * objective. Change one, change the other.
  */
 export function objectiveIdsByTaskIds(ownerId: string, taskIds: string[]): Map<string, string[]> {
   const map = new Map<string, string[]>();
@@ -163,6 +182,7 @@ export function objectiveIdsByTaskIds(ownerId: string, taskIds: string[]): Map<s
          JOIN objectives o ON o.id = ot.objective_id
          JOIN tasks t ON t.id = ot.task_id
         WHERE ot.linked = 1 AND o.owner_id = ? AND t.owner_id = ?
+          AND o.archived_at IS NULL
           AND ot.task_id IN (${taskIds.map(() => '?').join(',')})
         ORDER BY o.created_at, o.id`,
     )

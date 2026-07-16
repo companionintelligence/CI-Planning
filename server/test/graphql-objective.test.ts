@@ -86,6 +86,31 @@ describe('W8a — mutations reuse the REST services', () => {
     expect(row?.archived_at).toBeTruthy();
   });
 
+  // The LIVE-graph invariant above, checked from the TASK side. `task.objective` and
+  // `objective(id:)` read the same node by two paths, so they must agree — an archived
+  // objective that stays reachable through `task.objective` makes the graph contradict
+  // itself: the same id is null via one field and an object via the other.
+  it('task.objective goes null when the objective is archived, and returns on restore', async () => {
+    const id = await create('title: "Ship v1"');
+    const t = insertTask('Do the work');
+    await gql(`mutation { linkObjectiveTask(input: { objectiveId: "${id}", taskId: "${t}" }) { success } }`);
+
+    const taskObjective = async () =>
+      (await gql(`{ task(id: "${t}") { objective { id } } }`)).body.data.task.objective;
+    expect(await taskObjective()).toEqual({ id });
+
+    await gql(`mutation { deleteObjective(input: { id: "${id}" }) { success } }`);
+
+    // Both paths to the same node must now agree on null.
+    expect((await gql(`{ objective(id: "${id}") { id } }`)).body.data.objective).toBeNull();
+    expect(await taskObjective()).toBeNull();
+
+    // Restore is REST-only (0129 shipped no restoreObjective mutation), but both surfaces
+    // share archiveObjective/restoreObjective — so a REST restore must show up here.
+    await api(srv.url, `/api/objectives/${id}/restore`, { method: 'POST' });
+    expect(await taskObjective()).toEqual({ id }); // the link survived the archive
+  });
+
   it('rejects a title-less create, an unknown parent, and a cycle', async () => {
     expect((await gql('mutation { createObjective(input: { title: "  " }) { success } }')).body.errors?.[0]?.message).toMatch(/title is required/i);
     expect((await gql('mutation { createObjective(input: { title: "x", parentId: "nope" }) { success } }')).body.errors?.[0]?.message).toMatch(/parent_id not found/i);
