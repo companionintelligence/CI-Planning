@@ -65,26 +65,29 @@ export function advanceObjectives(
       if (daysAgo < periodDays) { skipped++; continue; }
     }
 
-    // Find next-action: highest-priority open task across the full LIVE subtree
+    // Find next-action: highest-priority open task across the owner's full LIVE subtree
     // (this objective + all non-archived descendants via recursive CTE). Mirrors
-    // buildTree's next_action walk — an archived branch must not nominate work.
+    // buildTree's next_action walk exactly — an archived branch must not nominate work,
+    // and the descent stays inside the owner. Owner-scoping matters most HERE: this is a
+    // WRITER, so an unconstrained walk over corrupt sync/import data would not just
+    // display another owner's task, it would stage it in this owner's flight plan.
     const nextAction = sqlite
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
            UNION ALL
            SELECT o.id FROM objectives o JOIN sub ON o.parent_id = sub.id
-            WHERE o.archived_at IS NULL
+            WHERE o.archived_at IS NULL AND o.owner_id = ?
          )
          SELECT t.id, t.status
            FROM objective_tasks ot
            JOIN tasks t ON t.id = ot.task_id
            JOIN sub ON ot.objective_id = sub.id
-          WHERE ot.linked = 1 AND t.status NOT IN ('done', 'cancelled', 'deferred', 'in_progress')
+          WHERE ot.linked = 1 AND t.owner_id = ? AND t.status NOT IN ('done', 'cancelled', 'deferred', 'in_progress')
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`
       )
-      .get(obj.id) as { id: string; status: string } | undefined;
+      .get(obj.id, owner, owner) as { id: string; status: string } | undefined;
 
     if (!nextAction) {
       // No next action (all done, or no tasks linked) — flag but don't nominate.
