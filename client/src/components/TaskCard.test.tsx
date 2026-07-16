@@ -188,6 +188,15 @@ describe('TaskCard — "New objective" row in the objective picker (ENTITY-4)', 
     expect(rowOf(container)).toBeUndefined();
   });
 
+  // Archive → "Thrown away" renders full TaskCards (views/AllTasks.tsx), so this row is
+  // live on cancelled cards. Cancelling hard-deletes the task's pristine objective
+  // (dropSourceObjective); the promote route would happily rebuild it — 200, not 422.
+  it('hides the row on a thrown-away task, so the picker cannot undo dropSourceObjective', async () => {
+    const t = { ...baseTask, id: 'p5', status: 'cancelled' } as unknown as Task;
+    const { container } = await openPicker(t);
+    expect(rowOf(container)).toBeUndefined();
+  });
+
   it('promotes via the task route (no prompt, no placeholder subtask) and closes the menu', async () => {
     vi.mocked(api.tasks.promoteObjective).mockClear();
     const { container } = await openPicker({ ...baseTask, id: 'p4' } as Task);
