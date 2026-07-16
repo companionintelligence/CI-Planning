@@ -507,11 +507,37 @@ export function objectiveTaskIds(objectiveId: string): string[] {
 
 export type CreateObjectiveResult = { ok: true; row: ObjectiveRow } | { ok: false; error: 'title_required' | 'parent_not_found' };
 
+/**
+ * Can `parentId` be used as a parent by `owner`? It must exist, be theirs, and be LIVE.
+ *
+ * An archived objective is not a parent: it is absent from the tree every read path builds,
+ * so `parent_not_found` is the honest answer — the same one a made-up id gets. Accepting it
+ * would not nest anything, it would CORRUPT the tree: buildTree filters archived rows out of
+ * `objs` and then roots any node whose parent isn't in the map, so the child silently
+ * resurfaces as a top-level goal — a 200 doing the opposite of what was asked. That is the
+ * same hazard [[archiveObjective]] cites when explaining why its cascade must be atomic.
+ *
+ * The rule lifts on restore, because it is about the live tree rather than the row.
+ *
+ * Shared by create + update so the two can't drift — they were byte-identical, and both
+ * missed `archived_at` when 0129 landed.
+ */
+function liveParentExists(owner: string, parentId: string): boolean {
+  return sqlite
+    .prepare(`SELECT 1 FROM objectives WHERE id = ? AND owner_id = ? AND archived_at IS NULL LIMIT 1`)
+    .get(parentId, owner) !== undefined;
+}
+
 export function createObjective(owner: string, body: CreateObjectiveInput): CreateObjectiveResult {
   if (!body.title?.trim()) return { ok: false, error: 'title_required' };
-  if (body.parent_id) {
-    const parent = sqlite.prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(body.parent_id, owner);
-    if (!parent) return { ok: false, error: 'parent_not_found' };
+  // `!= null`, not truthiness: '' is a PROVIDED parent that no objective can satisfy, so it
+  // must be refused like any other unknown id. Under a truthy check it skipped validation
+  // and reached the INSERT, where `parent_id REFERENCES objectives(id)` rejected it — a 500
+  // leaking "FOREIGN KEY constraint failed" where a 422 belongs. (No row was ever written:
+  // the FK is what caught it, so this was a wrong-answer bug, not silent corruption.)
+  // updateObjective already guards with `!= null`; this makes the two agree.
+  if (body.parent_id != null) {
+    if (!liveParentExists(owner, body.parent_id)) return { ok: false, error: 'parent_not_found' };
   }
   const id = newId();
   const now = new Date().toISOString();
@@ -545,10 +571,11 @@ export function updateObjective(owner: string, id: string, body: UpdateObjective
   if (!existing) return { ok: false, error: 'not_found' };
 
   if ('parent_id' in body && body.parent_id != null) {
-    const parent = sqlite.prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(body.parent_id, owner);
-    if (!parent) return { ok: false, error: 'parent_not_found' };
+    if (!liveParentExists(owner, body.parent_id)) return { ok: false, error: 'parent_not_found' };
     if (wouldCycle(id, body.parent_id)) return { ok: false, error: 'cycle' };
-    // Containment: a node may not nest under a task-bearing objective.
+    // Containment: a node may not nest under a task-bearing objective. No archived_at
+    // check needed here — liveParentExists above has already refused an archived parent,
+    // so by this line the parent is live and this asks only about its tasks.
     const parentHasTasks = sqlite.prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? AND linked = 1 LIMIT 1`).get(body.parent_id);
     if (parentHasTasks) return { ok: false, error: 'parent_has_tasks' };
   }
