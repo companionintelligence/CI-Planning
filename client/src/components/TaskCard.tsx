@@ -268,6 +268,9 @@ export function TaskCard(props: Props) {
   }
 
   async function remove() {
+    // DELETE is a soft cancel (services/tasks.ts: status → 'cancelled'), so the task
+    // lands in the Archive — but nothing restores it from there, so don't imply it.
+    if (!confirm(`Cancel "${props.task.title}"? It moves to the Archive.`)) return;
     try {
       await api.tasks.delete(props.task.id);
       showToast('Task cancelled', 'default');
