@@ -72,13 +72,18 @@ describe('W8a — ObjectiveType queries + leveling', () => {
 });
 
 describe('W8a — mutations reuse the REST services', () => {
-  it('updateObjective renames; deleteObjective removes', async () => {
+  it('updateObjective renames; deleteObjective archives (0129) — gone from the graph, row kept', async () => {
     const id = await create('title: "Old"');
     const u = await gql(`mutation { updateObjective(input: { id: "${id}", title: "New", status: "paused" }) { objective { title status } } }`);
     expect(u.body.data.updateObjective.objective).toEqual({ title: 'New', status: 'paused' });
     const d = await gql(`mutation { deleteObjective(input: { id: "${id}" }) { success deletedId } }`);
     expect(d.body.data.deleteObjective).toEqual({ success: true, deletedId: id });
+    // The graph is the LIVE graph, so it resolves to null exactly as before…
     expect((await gql(`{ objective(id: "${id}") { id } }`)).body.data.objective).toBeNull();
+    // …but the row survives and is restorable: GraphQL delete now means archive, the
+    // same as REST DELETE, because both go through archiveObjective.
+    const row = sqlite.prepare(`SELECT archived_at FROM objectives WHERE id = ?`).get(id) as { archived_at: string | null } | undefined;
+    expect(row?.archived_at).toBeTruthy();
   });
 
   it('rejects a title-less create, an unknown parent, and a cycle', async () => {
