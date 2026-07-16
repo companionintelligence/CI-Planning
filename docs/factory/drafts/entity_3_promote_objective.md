@@ -47,7 +47,8 @@ Branch `claude/local-backend-frontend-setup-77dae0`.
   }
   ```
 - **API to call:** `api.tasks.create(body: TaskInput)` (`client/src/lib/api.ts:97`); `TaskInput.parent_id?: string`.
-- **Icon:** `EightPointStar` (`client/src/components/EightPointStar.js`) — already the objective marker on task cards (`TaskCard.tsx`, star → `/objectives?focus=…`). Use it, do not invent a new glyph.
+- **Icon:** `Target` from `lucide-solid` — the objective marker actually in use on this branch (`TaskCard.tsx:609`, `<Target size={15} />`, title *"Add to objective"* / *"In an objective — manage"*). Use it, do not invent a new glyph.
+  > ⚠️ **Do not use `EightPointStar`.** `client/src/components/EightPointStar.tsx` exists but is **imported nowhere** — it is dead code from an earlier design (only `DayStarsRow.tsx:16` mentions it, in a comment contrasting the 5-point day star). An earlier revision of this draft pinned it, and pinned it as `.js`; both were wrong. Reviving it here would reintroduce a retired glyph and diverge from the task card.
 - **Prompt style:** `prompt('…')?.trim()` then early-return on empty — matches `TaskCard.newRoutineWithTask` (`const name = prompt('New routine name')?.trim(); if (!name) return;`).
 - **Refetch:** `refetchTasks()` / `refetchBlocks()` per the surrounding handlers.
 
@@ -70,7 +71,7 @@ So the button **must be hidden** for `quick`-subtype tasks and recurrence instan
 ## Files impacted
 
 **Changed:**
-- `client/src/components/PlannerEntityCard.tsx` — add `promoteObjective()` handler + its button; import `EightPointStar`.
+- `client/src/components/PlannerEntityCard.tsx` — add `promoteObjective()` handler + its button; import `Target` from `lucide-solid`.
 
 **New:** none. **Server:** untouched.
 
@@ -83,9 +84,9 @@ So the button **must be hidden** for `quick`-subtype tasks and recurrence instan
 - [ ] `promoteObjective()` added to `PlannerEntityCard.tsx`, mirroring `promoteHabit`'s shape:
       prompt for the first subtask title → `api.tasks.create({ title, parent_id: t.id })` → `refetchTasks()` → success toast.
 - [ ] Empty/cancelled prompt → no API call, no toast.
-- [ ] Button rendered in the action row at `:368-370` with `<EightPointStar size={13} /> Promote to objective`.
+- [ ] Button rendered in the action row at `:368-370` with `<Target size={13} /> Promote to objective`.
 - [ ] Button hidden when: the entity is a container, the task is a habit, `subtype === 'quick'`, or `recurrence_parent_id` is set (the `ensureTaskPromoted` no-op set).
-- [ ] After promotion, the task shows the 8-pointed objective star and the new Objective appears in **Tasks → Objectives** (`ObjectivesPanel`) titled with the task's title.
+- [ ] After promotion, the task’s objective marker (`Target`) reads as linked and the new Objective appears in **Tasks → Objectives** (`ObjectivesPanel`) titled with the task's title.
 - [ ] The promoted task remains **top-level** (its `parent_id` is unchanged/null) with the new subtask **below** it.
 - [ ] Promoting twice reuses the same Objective (`source_task_id` idempotency) — it does not create a second.
 - [ ] Errors surface via `showToast((err as Error).message, 'error')`.
@@ -105,7 +106,7 @@ pnpm --filter server test
 Cases:
 
 - [ ] Planner → select a plain task block → "Promote to objective" is visible.
-- [ ] Click → prompt → enter a subtask title → Objective created, task starred, subtask nested under the task.
+- [ ] Click → prompt → enter a subtask title → Objective created, task marked as in-an-objective, subtask nested under the task.
 - [ ] Click → prompt → Cancel → nothing created, no toast.
 - [ ] Objectives tab shows the new Objective with the parent + subtask linked.
 - [ ] Promote the same task again → same Objective reused (count of objectives unchanged).
@@ -128,7 +129,7 @@ Cases:
 1. Read `task-promotion.ts` and `services/tasks.ts:193` to internalize the contract.
 2. Add `promoteObjective()` to `PlannerEntityCard.tsx` beside `promoteHabit` (`~:146`).
 3. Add the button to the action row (`~:368`) with the promotability guard.
-4. Import `EightPointStar`.
+4. Import `Target` from `lucide-solid` (NOT `EightPointStar` — dead code, see Pinned conventions).
 5. Verify idempotency + the four hidden cases by hand.
-6. Verify the Objective appears in `ObjectivesPanel` and the star appears on the task.
+6. Verify the Objective appears in `ObjectivesPanel` and the task’s `Target` marker reads as linked.
 7. Run tsc + builds + both test suites; capture screenshots.

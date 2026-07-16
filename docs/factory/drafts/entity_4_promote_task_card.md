@@ -98,7 +98,7 @@ Cases:
 - [ ] Unit: `promoteTaskToObjective` returns `false` and makes no call when the prompt is cancelled/blank.
 - [ ] Unit: `promoteTaskToObjective` calls `api.tasks.create` with `{ title, parent_id }`.
 - [ ] Tasks list → open the objective picker on a task with **no** objectives → "New objective" row is present (empty-state dead end gone).
-- [ ] Click it → prompt → confirm → Objective created, menu closed, success toast, task starred.
+- [ ] Click it → prompt → confirm → Objective created, menu closed, success toast, task marked as in-an-objective.
 - [ ] Reopen the picker → the new Objective is listed and **checked**.
 - [ ] Cancel the prompt → nothing created, menu still open.
 - [ ] Row hidden for a `quick` task and for a recurrence instance.
