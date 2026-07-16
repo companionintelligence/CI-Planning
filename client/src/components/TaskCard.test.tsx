@@ -51,6 +51,7 @@ vi.mock('../stores/index.js', () => ({
 vi.mock('@solidjs/router', () => ({ useNavigate: () => () => {} }));
 
 const { TaskCard } = await import('./TaskCard.js');
+const { api } = await import('../lib/api.js'); // the mocked instance, for payload assertions
 
 const baseTask = {
   id: 't1',
@@ -87,5 +88,60 @@ describe('TaskCard — split tag rendering (AF-11)', () => {
     const { container } = render(() => <TaskCard task={t} />);
     expect(container.querySelectorAll('.badge-neutral').length).toBe(0);
     expect(container.querySelectorAll('[title="secondary tag"]').length).toBe(0);
+  });
+});
+
+/**
+ * The Archive checkbox. Both archive sections un-do to open: a Completed card
+ * un-completes, a Thrown-away card restores. 'cancelled' previously fell through
+ * to the else branch, so clicking the checkbox on a thrown-away card marked it
+ * DONE — destroying the record that it had been thrown away.
+ */
+describe('TaskCard — archive checkbox un-does both archive states', () => {
+  const checkbox = (c: HTMLElement) =>
+    [...c.querySelectorAll('button')].find((b) => /Mark done|Mark open|Restore to open/.test(b.title))!;
+
+  it('restores a CANCELLED task to open — never marks it done', async () => {
+    vi.mocked(api.tasks.update).mockClear();
+    const t = { ...baseTask, id: 'tc-1', status: 'cancelled' } as unknown as Task;
+    const { container } = render(() => <TaskCard task={t} />);
+
+    const box = checkbox(container);
+    expect(box.title).toBe('Restore to open'); // not the misleading "Mark done"
+    box.click();
+    await Promise.resolve();
+
+    expect(api.tasks.update).toHaveBeenCalledWith('tc-1', { status: 'open', completed_at: null });
+    // The regression: it must NEVER send completed:true for a thrown-away task.
+    // objectContaining, not a literal — toHaveBeenCalledWith deep-equals, so a literal
+    // passes when a regression sends `completed` alongside anything else, or as a second
+    // call. Verified: with a literal, a stray `{completed:true, ...}` call slipped through.
+    expect(api.tasks.update).not.toHaveBeenCalledWith('tc-1', expect.objectContaining({ completed: true }));
+    // …and exactly one call, closing the same hole from the other side.
+    expect(api.tasks.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('still un-completes a DONE task (unchanged)', async () => {
+    vi.mocked(api.tasks.update).mockClear();
+    const t = { ...baseTask, id: 'tc-2', status: 'done' } as unknown as Task;
+    const { container } = render(() => <TaskCard task={t} />);
+
+    const box = checkbox(container);
+    expect(box.title).toBe('Mark open');
+    box.click();
+    await Promise.resolve();
+    expect(api.tasks.update).toHaveBeenCalledWith('tc-2', { status: 'open', completed_at: null });
+  });
+
+  it('still completes an OPEN task (unchanged)', async () => {
+    vi.mocked(api.tasks.update).mockClear();
+    const t = { ...baseTask, id: 'tc-3', status: 'open' } as unknown as Task;
+    const { container } = render(() => <TaskCard task={t} />);
+
+    const box = checkbox(container);
+    expect(box.title).toBe('Mark done');
+    box.click();
+    await Promise.resolve();
+    expect(api.tasks.update).toHaveBeenCalledWith('tc-3', { completed: true });
   });
 });
