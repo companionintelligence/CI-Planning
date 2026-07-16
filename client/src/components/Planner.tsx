@@ -845,6 +845,8 @@ export function Planner() {
   function requestDeletePlan(plan: Block) {
     const childCount = (blocks() ?? []).filter((b) => b.parent_block_id === plan.id).length;
     if (childCount === 0) {
+      // Childless plan — no DeletePlanDialog to ask about member tasks, so ask here.
+      if (!confirm(`Delete "${plan.title}"?`)) return;
       api.blocks.delete(plan.id).then(() => { refetchBlocks(); showToast('Plan removed', 'default'); })
         .catch((err) => showToast((err as Error).message, 'error'));
       return;
@@ -900,6 +902,8 @@ export function Planner() {
       } catch (err) { showToast((err as Error).message, 'error'); }
     }
     async function del() {
+      // Ask before closing the menu, so declining is a true no-op.
+      if (!confirm(`Delete "${props.block.title}"?`)) return;
       setOpen(false);
       try { await api.blocks.delete(props.block.id); refetchConcepts(); refetchBlocks(); showToast(`Deleted "${props.block.title}"`, 'default'); }
       catch (err) { showToast((err as Error).message, 'error'); }

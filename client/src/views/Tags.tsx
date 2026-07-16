@@ -34,7 +34,12 @@ export function Tags() {
     run(api.tags.update(tag.id, { categories: to ? [to] : [] }), to ? `Filed under ${displayTag(to)}` : 'Moved to Unsorted');
   const toggleMute = (tag: Tag) =>
     run(api.tags.update(tag.id, { muted: !tag.muted }), tag.muted ? 'Unmuted' : 'Muted');
-  const del = (tag: Tag) => run(api.tags.remove(tag.id), 'Tag deleted');
+  // Guard BEFORE run(): run() takes an already-constructed Promise, so building the
+  // argument would fire the delete regardless of the answer.
+  const del = (tag: Tag) => {
+    if (!confirm(`Delete the "${displayTag(tag.name)}" tag?`)) return;
+    run(api.tags.remove(tag.id), 'Tag deleted');
+  };
   // Flip a direction's scope for a category (opt-out polarity; enabled=true clears the opt-out).
   const toggleDir = (cat: Tag, dir: Tag, enabled: boolean) =>
     run(api.tags.update(cat.id, { direction_toggle: { directionTagId: dir.id, enabled } }),

@@ -65,6 +65,10 @@ export function RoutinesPanel() {
 
   // ── Pattern create + membership ops (closure over refetch) ────────────────────
   async function deletePattern(p: Pattern) {
+    // The server hard-deletes quick member tasks with the routine (services/patterns.ts);
+    // shared standard/habit members only lose their membership row. Say so — this is the
+    // one path here that destroys work outright.
+    if (!confirm(`Delete the "${p.name}" routine? Its quick tasks are deleted permanently; other member tasks stay in your backlog.`)) return;
     try { await api.patterns.delete(p.id); refetchPatterns(); showToast(`Deleted "${p.name}"`, 'default'); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
