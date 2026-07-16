@@ -113,7 +113,12 @@ describe('TaskCard — archive checkbox un-does both archive states', () => {
 
     expect(api.tasks.update).toHaveBeenCalledWith('tc-1', { status: 'open', completed_at: null });
     // The regression: it must NEVER send completed:true for a thrown-away task.
-    expect(api.tasks.update).not.toHaveBeenCalledWith('tc-1', { completed: true });
+    // objectContaining, not a literal — toHaveBeenCalledWith deep-equals, so a literal
+    // passes when a regression sends `completed` alongside anything else, or as a second
+    // call. Verified: with a literal, a stray `{completed:true, ...}` call slipped through.
+    expect(api.tasks.update).not.toHaveBeenCalledWith('tc-1', expect.objectContaining({ completed: true }));
+    // …and exactly one call, closing the same hole from the other side.
+    expect(api.tasks.update).toHaveBeenCalledTimes(1);
   });
 
   it('still un-completes a DONE task (unchanged)', async () => {
