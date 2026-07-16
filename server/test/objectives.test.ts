@@ -323,6 +323,43 @@ describe('an archived objective cannot be used as a parent', () => {
   });
 
   /**
+   * '' is a PROVIDED parent that nothing can satisfy, so it belongs with the unknown ids —
+   * but createObjective guarded on truthiness (`if (body.parent_id)`), so '' skipped
+   * validation entirely and fell through to the INSERT. `parent_id REFERENCES objectives(id)`
+   * then rejected it, surfacing a 500 with a raw "FOREIGN KEY constraint failed" where a 422
+   * belongs. No row was ever written — the FK caught it — so this is a wrong-answer bug
+   * rather than corruption; but a 500 tells the client "the server broke" for what is
+   * plainly a bad request, and updateObjective (`!= null`) already answered 422.
+   */
+  it('POST with an empty-string parent_id is 422, not a 500 from the FK', async () => {
+    const res = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Empty parent', parent_id: '' } });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/parent_id not found/);
+    expect(res.body.error).not.toMatch(/FOREIGN KEY/); // no raw sqlite error leaking out
+    const n = (sqlite.prepare(`SELECT COUNT(*) AS n FROM objectives WHERE title = 'Empty parent'`).get() as { n: number }).n;
+    expect(n).toBe(0);
+  });
+
+  it('PATCH with an empty-string parent_id is 422 too — create and update agree', async () => {
+    const id = insertObjective({ title: 'Target' });
+    const res = await api(srv.url, `/api/objectives/${id}`, { method: 'PATCH', json: { parent_id: '' } });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/parent_id not found/);
+  });
+
+  it('null / omitted parent_id still means top-level (the `!= null` guard must not over-reach)', async () => {
+    // The counterweight: tightening '' must not turn "no parent" into an error, since that
+    // is how every root objective is made.
+    const explicit = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Explicit root', parent_id: null } });
+    expect(explicit.status).toBe(201);
+    expect(explicit.body.objective.parent_id).toBeNull();
+
+    const omitted = await api(srv.url, '/api/objectives', { method: 'POST', json: { title: 'Implicit root' } });
+    expect(omitted.status).toBe(201);
+    expect(omitted.body.objective.parent_id).toBeNull();
+  });
+
+  /**
    * The other half of the invariant, and the reason archiveObjective needs no new guard:
    * its cascade already archives EVERY live descendant, so it cannot leave a live child
    * pointing at an archived parent. With the validators above closing the "added
