@@ -117,6 +117,9 @@ export function ObjectivesPanel() {
     () => api.objectives.list({ archived: '1' }).then((r) => r.objectives),
   );
   const refetchBoth = () => { refetch(); if (showArchive()) refetchArchive(); };
+  /** The archive is flat, so a member names the root it follows rather than nesting. */
+  const rootTitle = (rootId: string) =>
+    (archived() ?? []).find((o) => o.id === rootId)?.title ?? 'its parent';
 
   async function deleteObjective(obj: Objective) {
     if (!confirm(`Archive "${obj.title}"? You can restore it from the archive.`)) return;
@@ -190,23 +193,33 @@ export function ObjectivesPanel() {
               {(obj) => (
                 <div class="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5">
                   <span class="flex-1 text-sm text-muted-foreground truncate" title={obj.title}>{obj.title}</span>
-                  <Show when={obj.archive_root_id}>
-                    <span class="badge-neutral text-[10px] flex-shrink-0" title="Archived together with its parent">in subtree</span>
-                  </Show>
-                  <Show when={obj.purge_after} fallback={
-                    <>
-                      <button class="btn-ghost text-[11px] px-2 py-0.5" onClick={() => restore(obj)}>
-                        <RotateCcw size={11} /> Restore
+                  {/* A cascaded member has no actions of its own: restoring or purging it
+                      apart from its root would strand it (a live node under an archived
+                      parent renders as a top-level root) or split the subtree. The server
+                      refuses with 422 archive_root_id; don't offer what it won't do. */}
+                  <Show when={obj.archive_root_id} fallback={
+                    <Show when={obj.purge_after} fallback={
+                      <>
+                        <button class="btn-ghost text-[11px] px-2 py-0.5" onClick={() => restore(obj)}>
+                          <RotateCcw size={11} /> Restore
+                        </button>
+                        <button class="btn-ghost text-[11px] px-2 py-0.5 hover:text-destructive" onClick={() => purge(obj)}>
+                          <Trash2 size={11} /> Delete permanently
+                        </button>
+                      </>
+                    }>
+                      <span class="text-[11px] text-red-400 flex-shrink-0">{purgeCountdown(obj.purge_after!)}</span>
+                      <button class="btn-ghost text-[11px] px-2 py-0.5 text-primary" onClick={() => undoPurge(obj)}>
+                        <RotateCcw size={11} /> Undo
                       </button>
-                      <button class="btn-ghost text-[11px] px-2 py-0.5 hover:text-destructive" onClick={() => purge(obj)}>
-                        <Trash2 size={11} /> Delete permanently
-                      </button>
-                    </>
+                    </Show>
                   }>
-                    <span class="text-[11px] text-red-400 flex-shrink-0">{purgeCountdown(obj.purge_after!)}</span>
-                    <button class="btn-ghost text-[11px] px-2 py-0.5 text-primary" onClick={() => undoPurge(obj)}>
-                      <RotateCcw size={11} /> Undo
-                    </button>
+                    <span class="text-[11px] text-muted-foreground/80 flex-shrink-0 italic">
+                      follows {rootTitle(obj.archive_root_id!)}
+                    </span>
+                    <Show when={obj.purge_after}>
+                      <span class="text-[11px] text-red-400 flex-shrink-0">{purgeCountdown(obj.purge_after!)}</span>
+                    </Show>
                   </Show>
                 </div>
               )}
