@@ -15,11 +15,11 @@
 
 ## ⚠️ The finding that dictates the design — read this first
 
-**`status = 'archived'` is silently broken.** `server/src/sync/apply.ts:85-87`:
-```ts
-if (field === 'status' && row['status'] === 'done' && value !== 'done') return 'done';
-```
-`applyMonotonic` keys on **field name only** — no entity scoping (`:84`) — and runs for **every** entity (`:137`). So archiving a **completed** objective through sync is silently clamped back to `'done'`. Archiving a finished objective is the common case. Online PATCH bypasses `applyMonotonic` entirely (raw UPDATE), so **REST and sync would disagree** — works in dev, corrupts on reconnect. The inverse is test-pinned at `server/test/sync-apply.test.ts:58`.
+**`status = 'archived'` is silently broken.** The `applyMonotonic()` clamp in `server/src/sync/apply.ts`:
+
+    if (field === 'status' && row['status'] === 'done' && value !== 'done') return 'done';
+
+`applyMonotonic` keys on **field name only** — no entity scoping — and is invoked from the generic sync merge path, so archiving a **completed** objective through sync is silently clamped back to `'done'`. Archiving a finished objective is the common case. Online PATCH bypasses `applyMonotonic` entirely (raw UPDATE), so **REST and sync would disagree** — works in dev, corrupts on reconnect. The inverse is test-pinned at `server/test/sync-apply.test.ts:58`.
 
 Independently: `status` is single-valued, so `'archived'` would erase whether the objective was `done` or `dropped`, making restore lossy.
 
