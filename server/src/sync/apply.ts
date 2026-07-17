@@ -103,6 +103,35 @@ export function applyMonotonic(field: string, row: Record<string, unknown>, valu
 }
 
 /**
+ * Clamp an incoming `objective.parent_id` to a parent that actually exists in the owner's
+ * LIVE tree; anything else becomes NULL — an EXPLICIT re-root instead of a silent one.
+ *
+ * A clamp rather than a rejected op, for the same reason applyMonotonic clamps: the op
+ * still wins its LWW comparison and the client is told what landed (`applied.parent_id`
+ * comes back null), so the two sides converge. Rejecting would need a heal channel sync
+ * doesn't have, and the client would sit on a value the server never took.
+ *
+ * NULL is the honest landing spot because it is where the node ends up anyway: buildTree
+ * roots any node whose parent isn't in the live map. The difference is that the DB now
+ * SAYS so, so `level` can be restamped and the tree is well-formed rather than merely
+ * rendering as if it were.
+ *
+ * Three cases collapse to the same answer — "not a live parent of yours":
+ *  - ARCHIVED: exists, so the FK passes; this is the corrupt edge #371 closed on the API
+ *    side, and the one sync could still deliver.
+ *  - MISSING: `parent_id REFERENCES objectives(id)` would throw FOREIGN KEY out of applyOp
+ *    and roll back every other op in the batch with it. One bad ref must not do that.
+ *  - ANOTHER OWNER'S: live, but not yours — a sync op must not graft your tree onto theirs.
+ */
+function clampToLiveParent(sqlite: Database, ownerId: string, value: unknown): unknown {
+  if (value == null || value === '') return null; // '' is not a parent; normalize (the FK would reject it)
+  const live = sqlite
+    .prepare(`SELECT 1 FROM objectives WHERE id = ? AND owner_id = ? AND archived_at IS NULL LIMIT 1`)
+    .get(value, ownerId);
+  return live ? value : null;
+}
+
+/**
  * Apply one op to a row using field-level LWW + monotonic completion.
  * Runs synchronously on the raw better-sqlite3 `Database` so it can be
  * called inside a `sqlite.transaction()` callback.
@@ -141,7 +170,11 @@ export function applyOp(sqlite: Database, op: Op, ownerId: string): ApplyResult 
   for (const [field, value] of Object.entries(op.fields)) {
     if (!allowed.has(field)) continue; // silently drop disallowed fields
     if (op.clientTs >= (fieldTs[field] ?? '')) {
-      merged[field] = applyMonotonic(field, row, value);
+      // The tree-shape clamp needs the DB (is the proposed parent live and mine?), which
+      // applyMonotonic's (field, row, value) signature can't see — hence the separate step.
+      merged[field] = op.entity === 'objective' && field === 'parent_id'
+        ? clampToLiveParent(sqlite, ownerId, value)
+        : applyMonotonic(field, row, value);
       fieldTs[field] = op.clientTs;
     } else {
       dropped.push(field);
