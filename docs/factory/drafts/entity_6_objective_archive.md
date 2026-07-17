@@ -2,7 +2,7 @@
 
 ## Goal
 
-1. **Objectives go to an archive instead of being destroyed.** Today `DELETE /api/objectives/:id` hard-deletes the row (`server/src/services/objectives.ts:496`).
+1. **Objectives go to an archive instead of being destroyed.** Previously `DELETE /api/objectives/:id` hard-deleted the row (see `server/src/routes/objectives.ts` / `server/src/services/objectives.ts`).
 2. **The archive gets a "Delete permanently" action, reversible for 48 hours.** The row stays fully intact for the window; one click restores it; a job reaps it after the deadline.
 
 ### Owner decisions (2026-07-15) — locked
