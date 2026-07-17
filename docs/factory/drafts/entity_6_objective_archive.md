@@ -1,8 +1,20 @@
 > **Type:** feature · **Phase:** ENTITY · **Branch:** `feat/objective-archive-purge` · **Commit style:** `feat(objectives): archive instead of delete, with a 48h purge window` · **Design:** owner request 2026-07-15 · **Dependencies:** none
 
+> ### 📓 HISTORICAL — this is the pre-implementation draft, and it SHIPPED
+> It drove **PR #366** (merged 2026-07-16, migrations `0129`/`0130`). It is kept as the
+> **decision record**: the *why* behind the design, which the diff cannot explain.
+>
+> **It describes the codebase as it was BEFORE #366 — read it in the past tense.** Every
+> `file:line` below is a snapshot from 2026-07-15 authoring and has already drifted (the
+> done-pin moved from `apply.ts:85` to `:92` within a day). For current behavior read the
+> code; the durable pointers here are the *file + symbol* names.
+>
+> Superseded since: **#367** fixed the TaskCard follow-up; **#370** added rollup recompute;
+> **#372** closed the sync-path cascade hole this draft's guard did not cover.
+
 ## Goal
 
-1. **Objectives go to an archive instead of being destroyed.** Previously `DELETE /api/objectives/:id` hard-deleted the row (see `server/src/routes/objectives.ts` / `server/src/services/objectives.ts`).
+1. **Objectives go to an archive instead of being destroyed.** At authoring time `DELETE /api/objectives/:id` (`server/src/routes/objectives.ts`) hard-deleted the row via `deleteObjective` (`server/src/services/objectives.ts`). It now calls `archiveObjective`.
 2. **The archive gets a "Delete permanently" action, reversible for 48 hours.** The row stays fully intact for the window; one click restores it; a job reaps it after the deadline.
 
 ### Owner decisions (2026-07-15) — locked
@@ -16,10 +28,10 @@
 ## ⚠️ The finding that dictates the design — read this first
 
 **`status = 'archived'` is silently broken.** The `applyMonotonic()` clamp in `server/src/sync/apply.ts`:
-
-    if (field === 'status' && row['status'] === 'done' && value !== 'done') return 'done';
-
-`applyMonotonic` keys on **field name only** — no entity scoping — and is invoked from the generic sync merge path, so archiving a **completed** objective through sync is silently clamped back to `'done'`. Archiving a finished objective is the common case. Online PATCH bypasses `applyMonotonic` entirely (raw UPDATE), so **REST and sync would disagree** — works in dev, corrupts on reconnect. The inverse is test-pinned at `server/test/sync-apply.test.ts:58`.
+```ts
+if (field === 'status' && row['status'] === 'done' && value !== 'done') return 'done';
+```
+`applyMonotonic` keys on **field name only** — no entity scoping — and `applyOp` invokes it from the generic merge path for **every** entity. So archiving a **completed** objective through sync is silently clamped back to `'done'`. Archiving a finished objective is the common case. Online PATCH bypasses `applyMonotonic` entirely (raw UPDATE), so **REST and sync would disagree** — works in dev, corrupts on reconnect. The inverse is test-pinned in `server/test/sync-apply.test.ts` ("monotonic" cases).
 
 Independently: `status` is single-valued, so `'archived'` would erase whether the objective was `done` or `dropped`, making restore lossy.
 
@@ -181,9 +193,11 @@ pnpm --filter client test
 9. Rewrite `objectives.test.ts:273-286`; add sync/cascade/job/idempotency tests.
 10. Run both suites; browser-verify.
 
-## Follow-ups (out of scope — file separately)
+## Follow-ups — status as of 2026-07-16
 
-- **Tasks archive + hard delete** (owner deferred).
-- **LIVE BUG — `TaskCard.tsx:258-268`**: `toggleDone`'s else branch sends `{ completed: true }` for a **cancelled** task, so clicking the checkbox on a "Thrown away" card marks it **done** instead of restoring it. There is no un-cancel path anywhere.
-- **LIVE BUG — `deleteTask` never calls `stampRow`** (`tasks.ts:515-528`), so a queued offline op carrying `status='open'` can resurrect a cancelled task (`apply.ts:136`).
-- `deleteObjective` never called `recomputeProgress` (`:497`) — fixed incidentally here; the same omission may exist elsewhere.
+> Found while writing this draft. Verified against `main` after #366 merged; two are closed.
+
+- ⬜ **Tasks archive + hard delete** (owner deferred). Still open.
+- ✅ **~~TaskCard `toggleDone` marked a cancelled task done instead of restoring it~~** — **fixed in PR #367**. `toggleDone` now treats `'cancelled'` like `'done'` and restores to open, and the checkbox reads *"Restore to open"*. Kept here because it was this draft's discovery, not because it is outstanding.
+- ⬜ **STILL LIVE — `deleteTask` never calls `stampRow`** (`server/src/services/tasks.ts`): it flips `status` to `'cancelled'` via Drizzle and returns without stamping, so `field_ts['status']` keeps its old value. Since `applyOp` merges when `op.clientTs >= (fieldTs[field] ?? '')`, a queued offline op carrying `status='open'` can **resurrect a cancelled task**. Re-verify before acting.
+- ✅ **~~`deleteObjective` never called `recomputeProgress`~~** — fixed here (`archiveObjective` recomputes the parent); **#370** then generalized rollup recompute for tasks entering/leaving.
