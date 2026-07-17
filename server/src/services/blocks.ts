@@ -185,6 +185,25 @@ export async function listBlockPage(
   return { rows: afterFiltered.slice(0, query.limit), totalCount: ordered.length };
 }
 
+/**
+ * A block may only hang off a REAL container of YOURS. The self-referential FK
+ * (`0023_block_parent`) proves only that the row EXISTS — it does not prove you own it
+ * (a cross-owner id would graft your block onto someone else's tree) and it does not
+ * prove it can hold children (the Plan-as-container model gives that role to
+ * `block_kind = 'timeblock'` alone — `containerAt`/`resolveGroup` only ever treat a
+ * timeblock as a parent, so a chip parented to a chip is a state the UI cannot render).
+ *
+ * `self` excludes a block from parenting itself (only reachable on update; on create the
+ * id does not exist yet). Shared by createBlock + updateBlock so create and attach, REST
+ * and GraphQL, all answer identically — the create path used to answer nothing at all.
+ */
+function isValidParent(ownerId: string, parentId: string, self?: string): boolean {
+  if (!parentId || parentId === self) return false;
+  return !!sqlite
+    .prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ? AND block_kind = 'timeblock' LIMIT 1`)
+    .get(parentId, ownerId);
+}
+
 /** The POST /api/blocks body shape (snake_case API convention). */
 export type CreateBlockInput = {
   task_id?: string;
@@ -200,6 +219,8 @@ export type CreateBlockInput = {
   end_at: string;
   is_locked?: boolean;
   all_day?: boolean;
+  /** Attach to a Plan container in the same call (PR-C). null/absent = loose. */
+  parent_block_id?: string | null;
   recurrence_rule?: string;
   recurrence_dtstart?: string;
   category_id?: string;
@@ -209,7 +230,8 @@ export type CreateBlockInput = {
 export type CreateBlockResult =
   | { ok: true; block: BlockRow; api: Record<string, unknown>; syncedTaskId: string | null }
   | { ok: false; error: 'missing_fields' }
-  | { ok: false; error: 'invalid_category' };
+  | { ok: false; error: 'invalid_category' }
+  | { ok: false; error: 'invalid_parent' };
 
 /**
  * Create a time block: insert + tag-level sync + (for a task placement) the REQ2
@@ -233,12 +255,20 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
     ? (input.color_token ?? getCategoryPrefs(ownerId)[input.category_id!]?.color_token ?? 'primary')
     : undefined;
 
+  // Attach-at-create (PR-C): validated BEFORE the insert, so a bad parent yields a clean
+  // `invalid_parent` and no row — rather than the FK throwing mid-insert (a 500), or, as
+  // before, the field being silently dropped and the caller told 201 with a null parent.
+  if (input.parent_block_id != null && !isValidParent(ownerId, input.parent_block_id)) {
+    return { ok: false, error: 'invalid_parent' };
+  }
+
   const [block] = await db
     .insert(timeBlocks)
     .values({
       taskId: input.task_id,
       ownerId,
       title: input.title,
+      parentBlockId: input.parent_block_id ?? null,
       blockKind: input.block_kind ?? 'task',
       tag: input.tag,
       categoryId: input.category_id,
@@ -317,7 +347,8 @@ export type UpdateBlockResult =
     }
   | { ok: false; error: 'not_found' }
   | { ok: false; error: 'inbound_readonly' }
-  | { ok: false; error: 'invalid_category' };
+  | { ok: false; error: 'invalid_category' }
+  | { ok: false; error: 'invalid_parent' };
 
 /**
  * Update a block. Carries the full PATCH pipeline extracted from the route: the I10
@@ -357,6 +388,14 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   if (input.category_id != null && input.category_id !== '') {
     const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
     if (!ok) return { ok: false, error: 'invalid_category' };
+  }
+
+  // Attach (PR-C): the same parent rule the create path uses. This closes a real hole —
+  // the FK alone let a PATCH point one of your blocks at ANOTHER owner's block (the row
+  // exists, so the constraint passed), grafting your tree onto theirs. `null` still
+  // detaches, so the Alt-drag pull-out is untouched.
+  if (input.parent_block_id != null && !isValidParent(ownerId, input.parent_block_id, id)) {
+    return { ok: false, error: 'invalid_parent' };
   }
 
   const update: Partial<typeof timeBlocks.$inferInsert> = {};
