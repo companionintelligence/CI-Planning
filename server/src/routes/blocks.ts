@@ -69,6 +69,7 @@ export function blocksRouter() {
       end_at: string;
       is_locked?: boolean;
       all_day?: boolean;
+      parent_block_id?: string | null;
       recurrence_rule?: string;
       recurrence_dtstart?: string;
       category_id?: string;
@@ -84,6 +85,7 @@ export function blocksRouter() {
     const result = await createBlock(currentOwnerId(), body);
     if (!result.ok) {
       if (result.error === 'missing_fields') { ctx.status = 400; ctx.body = { error: 'title, start_at, and end_at are required' }; return; }
+      if (result.error === 'invalid_parent') { ctx.status = 422; ctx.body = { error: 'parent_block_id must reference one of your Time Blocks' }; return; }
       ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return;
     }
 
@@ -127,6 +129,7 @@ export function blocksRouter() {
         ctx.body = { error: 'Calendar meeting blocks are read-only — edit the event in Google Calendar' };
         return;
       }
+      if (result.error === 'invalid_parent') { ctx.status = 422; ctx.body = { error: 'parent_block_id must reference one of your Time Blocks' }; return; }
       ctx.status = 422; ctx.body = { error: 'category_id must reference a category tag' }; return;
     }
 

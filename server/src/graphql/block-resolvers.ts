@@ -51,6 +51,7 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
     end_at: input.endAt as string,
     is_locked: input.isLocked == null ? undefined : (input.isLocked as boolean),
     all_day: input.allDay == null ? undefined : (input.allDay as boolean),
+    parent_block_id: input.parentBlockId == null ? undefined : (input.parentBlockId as string),
     recurrence_rule: input.recurrenceRule == null ? undefined : (input.recurrenceRule as string),
     recurrence_dtstart: input.recurrenceDtstart == null ? undefined : (input.recurrenceDtstart as string),
     category_id: input.categoryId == null ? undefined : (input.categoryId as string),
@@ -133,6 +134,7 @@ export const blockResolvers = {
       const res = await createBlockService(owner, toSvcCreate(args.input));
       if (!res.ok) {
         if (res.error === 'missing_fields') throw new GraphQLError('title, startAt, and endAt are required', { extensions: { code: 'BAD_USER_INPUT' } });
+        if (res.error === 'invalid_parent') throw new GraphQLError('parentBlockId must reference one of your Time Blocks', { extensions: { code: 'BAD_USER_INPUT' } });
         throw new GraphQLError('categoryId must reference a category tag', { extensions: { code: 'BAD_USER_INPUT' } });
       }
       broadcast(owner, 'block:created', res.api);
@@ -147,6 +149,7 @@ export const blockResolvers = {
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('block not found', { extensions: { code: 'NOT_FOUND' } });
         if (res.error === 'inbound_readonly') throw new GraphQLError('Calendar meeting blocks are read-only — edit the event in Google Calendar', { extensions: { code: 'CONFLICT' } });
+        if (res.error === 'invalid_parent') throw new GraphQLError('parentBlockId must reference one of your Time Blocks', { extensions: { code: 'BAD_USER_INPUT' } });
         throw new GraphQLError('categoryId must reference a category tag', { extensions: { code: 'BAD_USER_INPUT' } });
       }
       // stampRow already fired inside updateBlock (W3.3c commit 1).

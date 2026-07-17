@@ -61,6 +61,8 @@ input CreateTimeBlockInput {
   endAt: DateTime!
   isLocked: Boolean
   allDay: Boolean
+  "Attach to a Plan container (block_kind='timeblock') you own, in the same call. Null/absent = loose."
+  parentBlockId: ID
   recurrenceRule: String
   recurrenceDtstart: String
   categoryId: ID
