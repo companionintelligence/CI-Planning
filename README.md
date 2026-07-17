@@ -287,8 +287,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   click restores the lot. Permanent deletion is a separate, explicit request with a **48-hour
   window** to change your mind — reaped hourly only once that deadline passes
 - **Life priorities + balance** — a Priorities wizard rates each life category on satisfaction
-  and importance and sets a target hours/week (sleep is reserved first, so the pool is real),
-  and the Balance dashboard shows where the week actually went
+  and importance and sets a target hours/week (sleep is reserved first, so the pool is real).
+  The Balance dashboard reads that self-audit back: a **Balance Index** of how far your
+  satisfaction tracks what you said matters most, plus your allocated weekly targets per
+  category. It reports **stated intent, not measured time** — actual-vs-target tracking
+  doesn't exist yet
 - **Accounts + auth** — CI-Portal OIDC (OAuth 2.1 + PKCE) or local username/password, with
   role-based scopes: **operator** (read/write/admin) · **member** (read/write) · **viewer**
   (read-only). An unrecognized role degrades to read-only rather than escalating

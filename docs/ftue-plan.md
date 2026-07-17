@@ -15,7 +15,7 @@
 >
 > | §1 / §2 claim | Reality at head 0130 |
 > |---|---|
-> | "`createLiveGoogleClient()` … is a placeholder. Even with `GOOGLE_MODE=live` it logs a warning and falls back to fixture" | **False.** It builds a real `McpGoogleSession` (`server/src/mcp/google.ts:96`); `getGoogleClient` dispatches live/fixture/off (`:138`). Gap 1 is **closed**. |
+> | "`createLiveGoogleClient()` … is a placeholder. Even with `GOOGLE_MODE=live` it logs a warning and falls back to fixture" | **False.** It builds a real `McpGoogleSession` (`server/src/mcp/google.ts:96`); `createGoogleClient` dispatches live/fixture/off (`:137`). Gap 1 is **closed**. |
 > | "There is no way inside the app to connect an account … no OAuth flow, no token store" | **False.** In-app Google setup ships (`routes/google-config.ts`, `app_config` mig 0124); tokens are sealed AES-256-GCM in `connection_tokens` (0050). Gap 2 is **closed**. |
 > | "A default owner … is seeded … hardcoded to 'Liam' / liam.broza@gmail.com" | **False.** Scrubbed by `0122_scrub_seed_owner.ts`. |
 > | "Timezone defaults to UTC in Docker" (gap 7) | **Stale.** TZ auto-adopt + a Settings profile card shipped (#327). |
