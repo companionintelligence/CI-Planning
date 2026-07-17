@@ -7,9 +7,29 @@
 > that gets a new user from zero to a planned day with as little input as
 > possible.
 
+> ## ⚠️ §1 and §2 are STALE (re-verified 2026-07-16 at migration head 0130)
+>
+> This doc's framing still holds and the **T1–T14 tickets it produced are live**
+> (#337–#350). But its "honest current state" was written at head ~0100 and **four of
+> its load-bearing claims are now false** — verified against the code, not assumed:
+>
+> | §1 / §2 claim | Reality at head 0130 |
+> |---|---|
+> | "`createLiveGoogleClient()` … is a placeholder. Even with `GOOGLE_MODE=live` it logs a warning and falls back to fixture" | **False.** It builds a real `McpGoogleSession` (`server/src/mcp/google.ts:96`); `createGoogleClient` dispatches live/fixture/off (`:137`). Gap 1 is **closed**. |
+> | "There is no way inside the app to connect an account … no OAuth flow, no token store" | **False.** In-app Google setup ships (`routes/google-config.ts`, `app_config` mig 0124); tokens are sealed AES-256-GCM in `connection_tokens` (0050). Gap 2 is **closed**. |
+> | "A default owner … is seeded … hardcoded to 'Liam' / REDACTED-DEV-EMAIL@example.invalid" | **False.** Scrubbed by `0122_scrub_seed_owner.ts`. |
+> | "Timezone defaults to UTC in Docker" (gap 7) | **Stale.** TZ auto-adopt + a Settings profile card shipped (#327). |
+>
+> Gaps **4–6** (auto-schedule click count, auto-promote/trust dial, auto-block policy) were
+> since addressed by Phase AF (`possible_tasks` auto-promote, Inbox retired) and `trust_mode`
+> (mig 0123, Schedule ⇔ `hands_off`). **Gap 3 (no FTUE) is the one that stands** — and it is
+> what T1–T14 exist to build. Gap 8 (multi-account) also stands.
+>
+> Treat §3 (the proposed FTUE) as the live part of this document.
+
 ---
 
-## 1. The honest current state
+## 1. The honest current state *(STALE — see the box above)*
 
 The pipeline is real and tested, but it runs on a closed loop. Ingest, extract,
 review, groom, and schedule all work, yet the data source is stubbed and the path

@@ -99,7 +99,7 @@ retired. Shown at its empty state (the seed creates no objectives); the
 ```mermaid
 graph TB
     subgraph Browser["Browser (SolidJS PWA)"]
-        UI[Six Views<br/>Today · Calendar · Tasks incl. Objectives + Routines tabs<br/>Tags · Jobs · Settings]
+        UI[Nine Views<br/>Today · Focus · Calendar · Tasks incl. Objectives + Routines tabs<br/>Tags · Priorities · Balance · Jobs · Settings]
         Store[Reactive Stores<br/>createResource / createSignal]
         SW[Service Worker<br/>Web Push + installable PWA]
         BN[Reminders<br/>in-app toast + Web Push]
@@ -110,8 +110,8 @@ graph TB
         GQL[GraphQL /api/graphql<br/>Apollo, alongside REST — Phase W]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>17 scheduled jobs]
-        Migrate[Migration runner<br/>0001 → 0126 on boot]
+        Cron[Croner Jobs<br/>18 cron jobs · 19 kinds]
+        Migrate[Migration runner<br/>0001 → 0130 on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -171,7 +171,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0123 ordered list
+                                    // migrations from the 0001–0130 ordered list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -182,11 +182,11 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0126_default_categories`) produce the following tables:
+Migrations (current head: `0130_purge_objectives_job`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
-| `owners` | User identity (single-owner in v0.3) |
+| `owners` | User identity — `role` drives scopes (0125): `operator` (R+W+A) · `member` (R+W) · `viewer` (R) |
 | `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype |
 | `task_dependencies` | Blocked-by edges between tasks |
 | `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support |
@@ -203,7 +203,9 @@ Migrations (current head: `0126_default_categories`) produce the following table
 | `pattern_blocks` | Direction-scoped scheduling windows (`workday` / `weekend` time ranges) |
 | `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091) |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128) |
+| `app_config` | Server-owned singleton config set in-app rather than via env — Google connection setup + the auto-provisioned Web Push VAPID keypair (0124) |
+| `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
 | `job_runs` | Execution log per job run (status, items created/updated, log text) |
 | `reminders` | Scheduled reminders (`fire_at`, task XOR block target, `source` manual/auto) fired by the 1-min dispatcher (Phase H, 0044/0045) |
@@ -222,7 +224,7 @@ Migrations (current head: `0126_default_categories`) produce the following table
 | `daily_recap` | One row per `(owner, date)` — the day-briefing cache (`prose`/`stats`/`focus`, keyed by `inputs_hash`) **and** the frozen five-star score (`star_*`/`total`/`frozen_at`); merged from `daily_summaries` + `day_stars` (0096) |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
-| `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087) |
+| `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087). **Archive (0129):** `archived_at` soft-delete + `archive_root_id` (cascade unit) + `purge_after` (48h reap deadline) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083; scope columns 0107) |
 | `copy_history` | Time-Sense voice-loop anti-repetition log — not included in owner export (0109) |
@@ -260,7 +262,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 
 | Routines | Objectives (Tasks tab) |
 |---|---|
-| [![Routines view](docs/screenshots/routines.png)](docs/screenshots/routines.png) | [![Objectives tab](docs/screenshots/objectives.png)](docs/screenshots/objectives.png) |
+| *(screenshot pending)* | *(screenshot pending)* |
 | Habit ◯ and Routine ▢ collections with per-pattern fill + reminder config | Hierarchical life goals — Goal → Project → Objective — with task linkage and progress; lives at `/tasks?tab=objectives` since Phase AF |
 
 > 📸 Routines and Objectives screenshots coming soon.
@@ -277,8 +279,22 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 
 ## What you get
 
-- **Six routed views** — Today · Calendar · Tasks (hosts the Objectives + Routines tabs and a New Today section) · Tags · Jobs · Settings. The Inbox surface was retired in Phase AF (`possible_tasks` auto-promote); `/inbox`, `/objectives`, `/routines`, `/patterns` redirect into their host.
+- **Nine routed views** — Today · **Focus** · Calendar · Tasks (hosts the Objectives + Routines tabs and a New Today section) · Tags · **Priorities** · **Balance** · Jobs · Settings, plus the unauthenticated `/login` and `/reset-password`. The Inbox surface was retired in Phase AF (`possible_tasks` auto-promote); `/inbox`, `/objectives`, `/patterns` redirect into their host. (`/routines` is **not** a route — it 404s.)
 - **Full task CRUD** — priorities P1–P5, due date + time, estimates, notes, tags, and subtasks
+- **Objectives you can undo** — hierarchical life goals (Goal → Project → Objective) with task
+  linkage and progress roll-up. **Deleting an objective archives it rather than destroying it:**
+  the row is kept indefinitely, its whole live subtree is archived with it as a unit, and one
+  click restores the lot. Permanent deletion is a separate, explicit request with a **48-hour
+  window** to change your mind — reaped hourly only once that deadline passes
+- **Life priorities + balance** — a Priorities wizard rates each life category on satisfaction
+  and importance and sets a target hours/week (sleep is reserved first, so the pool is real).
+  The Balance dashboard reads that self-audit back: a **Balance Index** of how far your
+  satisfaction tracks what you said matters most, plus your allocated weekly targets per
+  category. It reports **stated intent, not measured time** — actual-vs-target tracking
+  doesn't exist yet
+- **Accounts + auth** — CI-Portal OIDC (OAuth 2.1 + PKCE) or local username/password, with
+  role-based scopes: **operator** (read/write/admin) · **member** (read/write) · **viewer**
+  (read-only). An unrecognized role degrades to read-only rather than escalating
 - **Deterministic auto-scheduler** — packs open tasks into time blocks around your work
   hours, pattern-block windows, locked meetings, and break preferences. Placement is always
   deterministic and reproducible
@@ -303,9 +319,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   inline (embedding-based when available) and **auto-promoted into real tasks** at the
   end of each run (Phase AF); they land in the **New Today** section at the top of the
   Tasks view, and the staging rows are kept as an audit/dedup trail
-- **Background jobs** — Gmail / Calendar ingest, possible-task promotion, nightly
-  grooming (embedding-based dedupe), and auto-schedule; all visible and manually
-  runnable from the Jobs view
+- **Background jobs** — Gmail / Calendar ingest, nightly grooming (embedding-based
+  dedupe), auto-schedule, and the hourly `purge_objectives` reaper; all visible and
+  manually runnable from the Jobs view. (Possible-task promotion no longer has a
+  scheduled row — Phase AF made ingestion auto-promote; `nightly_grooming` subsumes
+  the sweep. The kind stays runnable programmatically.)
 - **AI day briefing** — Ollama-authored when available, deterministic template
   otherwise; the UI labels it honestly ("AI Briefing" vs. "Day Overview")
 - **Reminders & Web Push** — per-pattern reminder offsets generate reminders that a
@@ -414,14 +432,14 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0123): tasks, subtasks, time blocks, tags,
+- SQLite schema (migrations 0001–0130): tasks, subtasks, time blocks, tags,
   entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
   daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
   block_templates, scheduled_jobs, reminders, push_subscriptions,
   replan_suggestions, audit_log, sync_events, reflections, objectives,
   objective_tasks, estimate_calibration, connection_tokens, external_events,
   copy_history
-- All six routed SolidJS views, with full task CRUD (tags, notes, priorities, due
+- All nine routed SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
   and break preferences; per-pattern auto-fill gating
@@ -439,8 +457,9 @@ consistent snapshot.
 - Notifications: a `reminders` store + 1-minute `fire_reminders` dispatcher (exactly-once),
   delivered in-app via SSE and via Web Push (VAPID) to subscribed devices; reminders are
   auto-derived from per-pattern reminder offsets, with a Settings opt-in toggle and snooze
-- Croner jobs: Gmail ingest, Calendar ingest, possible-task promotion, nightly
-  grooming/dedupe, place-patterns, auto-schedule, and fire_reminders
+- Croner jobs: 18 cron-scheduled kinds — Gmail ingest, Calendar ingest, nightly
+  grooming/dedupe, auto-schedule, fire_reminders, purge_objectives, and the rest
+  (`promote_possibles` and `place_patterns` were retired by 0118 / 0026)
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: direction / intention hierarchy with many-to-many grouping
@@ -479,7 +498,7 @@ consistent snapshot.
   with no network. Flag-off is byte-identical — the memory layer ships dark.
 - **Time-Sense** (Phase Z — Focus Ritual + estimate-calibration loop) is behind the
   `time_sense_enabled` master flag (flag-off = behavior-neutral)
-- Later phases (auth, multi-device sync) in [docs/ROADMAP.md](docs/ROADMAP.md)
+- Later phases in [docs/ROADMAP.md](docs/ROADMAP.md) — auth and multi-device sync have since **shipped** (see *Working today*)
 
 ## Run with Docker (CI Hub)
 
@@ -626,6 +645,9 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `MAIL_FROM` | `Companion Planning <no-reply@companion.local>` | `From:` header on reset emails. |
 | `APP_BASE_URL` | `${PUBLIC_BASE_URL}` | Base URL the reset link is built against (`${APP_BASE_URL}/reset-password?token=…`). Set when the externally reachable URL differs from `PUBLIC_BASE_URL`. |
 | `SNAPSHOT_RETAIN` | `7` | Number of daily snapshots to keep in `<DB_DIR>/backups/` |
+| `GRAPHQL_MAX_COMPLEXITY` | `1000` | Rejects a GraphQL query whose estimated cost (fields selected) exceeds this. |
+| `GRAPHQL_SANDBOX` | (unset) | `1` serves the self-hosted GraphiQL IDE at `GET /api/graphql/sandbox`. On by default outside production; in production it is **opt-in** via this flag. |
+| `CIPORTAL_MEMORY_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/memory/ciportal/callback` | The memory connector's own OAuth callback (AA0b) — distinct from the login callback. |
 
 **Persistence**: everything lives in the single SQLite file at `DB_PATH`. Mount a
 volume at `/data` (as above) and your tasks survive container recreation.
@@ -711,7 +733,11 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | PUT | `/api/reflections/note` | Upsert the day's note; empty body deletes (Phase O) |
 | GET | `/api/reflections/notes?from&to` | Dates in range with a non-empty day note — backs the calendar's note dots (Phase O) |
 | GET | `/api/stars?from&to` | Five-star day score per date in range; frozen row if present, else computed live (Phase O) |
-| GET/POST/PATCH/DELETE | `/api/objectives` | Objectives CRUD (Phase N) |
+| GET/POST/PATCH | `/api/objectives` | Objectives CRUD (Phase N). `?archived=1` lists the archive (flat) |
+| DELETE | `/api/objectives/:id` | **Archives** — a soft delete, not a removal. Cascades over the live subtree; restorable indefinitely |
+| POST | `/api/objectives/:id/restore` | Un-archive (root-only — a cascaded member restores from its root) |
+| POST/DELETE | `/api/objectives/:id/purge` | Request / cancel permanent deletion. 48h window, reaped hourly by `purge_objectives` |
+| GET/POST | `/api/priorities` | Life-priorities self-audit — backs `/priorities` + `/balance` |
 | GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
 | GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
