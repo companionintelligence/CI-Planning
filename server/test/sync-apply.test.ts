@@ -9,7 +9,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { applyMonotonic, applyOp, stampRow, type Op } from '../src/sync/apply.js';
-import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
+import { applySyncedObjectiveUpkeep } from '../src/services/objectives.js';
+import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -364,6 +365,177 @@ describe('stampRow', () => {
   it('is a no-op for unknown entity', () => {
     // Should not throw — silently does nothing
     expect(() => stampRow(sqlite, 'task', 'no-exist', ['title'])).not.toThrow();
+  });
+});
+
+// ── 0129 · sync must keep the live tree well-formed ───────────────────────────
+
+/**
+ * THE INVARIANT: no LIVE objective may have an ARCHIVED parent.
+ *
+ * It matters because buildTree filters archived rows out of `objs` and then roots any node
+ * whose parent isn't in the map — so a live child under an archived parent doesn't nest,
+ * it silently RESURFACES AS A TOP-LEVEL GOAL. #371 closed the API doors (createObjective /
+ * updateObjective refuse an archived parent), but applyOp writes columns raw and never goes
+ * through services/objectives.ts, so sync could still deliver the corrupt edge two ways:
+ *
+ *   (a) an op setting `parent_id` to an already-archived objective;
+ *   (b) an op setting `archived_at` on a parent that still has live children — the API's
+ *       archiveObjective cascades to its live subtree, but a synced archive never did.
+ *
+ * (b) needs no parent_id op at all, and archiving offline is an ordinary action, so it is
+ * the likelier path to the same corruption. LWW gives no ordering guarantee, so BOTH must
+ * hold independently — whichever op lands first.
+ */
+describe('sync cannot leave a live objective under an archived parent (0129)', () => {
+  beforeEach(() => { resetDb(); sqlite.exec(`DELETE FROM objective_tasks; DELETE FROM objectives;`); });
+
+  const mkObj = (id: string, parent: string | null = null, owner = SYSTEM_OWNER): void => {
+    const now = '2026-06-01T00:00:00.000Z';
+    sqlite.prepare(
+      `INSERT INTO objectives (id, owner_id, parent_id, title, level, horizon, status, cadence, priority, created_at, updated_at, version)
+       VALUES (?, ?, ?, ?, 'objective', 'none', 'active', 'none', 3, ?, ?, 1)`,
+    ).run(id, owner, parent, `T-${id}`, now, now);
+  };
+  const archiveRaw = (id: string): void => {
+    sqlite.prepare(`UPDATE objectives SET archived_at = '2026-06-01T12:00:00.000Z' WHERE id = ?`).run(id);
+  };
+  const op = (entityId: string, fields: Record<string, unknown>, ts = '2026-06-02T10:00:00.000Z'): Op => ({
+    opId: `op-${entityId}-${Object.keys(fields)[0]}`, entity: 'objective', entityId,
+    fields, baseVersion: 1, clientTs: ts,
+  });
+  /**
+   * The invariant, asked of every one of the owner's rows rather than the row under test.
+   * Empty = well-formed.
+   *
+   * Scoped to ONE owner because that is the scope the invariant actually has: buildTree is
+   * owner-scoped, so a cross-owner parent is already invisible to both owners' trees and a
+   * stranger's child is not this cascade's to archive — refusing to touch it is the correct
+   * behaviour, not a violation (see the cross-owner test below).
+   */
+  const liveChildrenOfArchivedParents = (owner = SYSTEM_OWNER): string[] =>
+    (sqlite.prepare(
+      `SELECT c.id FROM objectives c JOIN objectives p ON p.id = c.parent_id
+        WHERE c.archived_at IS NULL AND p.archived_at IS NOT NULL
+          AND c.owner_id = ? AND p.owner_id = ?`,
+    ).all(owner, owner) as { id: string }[]).map((r) => r.id);
+
+  // ── (a) the incoming parent_id ──
+  it('clamps parent_id to NULL when the proposed parent is archived — an explicit re-root, not a silent one', () => {
+    mkObj('a-arch'); mkObj('a-child');
+    archiveRaw('a-arch');
+
+    const res = applyOp(sqlite, op('a-child', { parent_id: 'a-arch' }), SYSTEM_OWNER);
+
+    // The op still WINS its LWW comparison — only the value is clamped (mirrors
+    // applyMonotonic's status pins). The client is told what actually landed.
+    expect(res.applied).toEqual({ parent_id: null });
+    expect(getObjective('a-child').parent_id).toBeNull();
+    expect(liveChildrenOfArchivedParents()).toEqual([]);
+  });
+
+  it('accepts parent_id when the parent is LIVE (the clamp must not over-reach)', () => {
+    mkObj('a-live'); mkObj('a-kid');
+    const res = applyOp(sqlite, op('a-kid', { parent_id: 'a-live' }), SYSTEM_OWNER);
+    expect(res.applied).toEqual({ parent_id: 'a-live' });
+    expect(getObjective('a-kid').parent_id).toBe('a-live');
+  });
+
+  it('clamps a parent_id that does not exist at all — a bad ref must not crash the whole batch', () => {
+    // parent_id REFERENCES objectives(id), so an unknown id used to throw a FOREIGN KEY
+    // error out of applyOp, rolling back every other op in the transaction with it.
+    mkObj('a-orphan');
+    expect(() => applyOp(sqlite, op('a-orphan', { parent_id: 'no-such-objective' }), SYSTEM_OWNER)).not.toThrow();
+    expect(getObjective('a-orphan').parent_id).toBeNull();
+  });
+
+  it('clamps a parent_id pointing at ANOTHER owner\'s objective', () => {
+    createOwner();
+    mkObj('a-mine'); mkObj('a-theirs', null, SECOND_OWNER_ID);
+    const res = applyOp(sqlite, op('a-mine', { parent_id: 'a-theirs' }), SYSTEM_OWNER);
+    expect(res.applied).toEqual({ parent_id: null }); // live, but not mine
+    expect(getObjective('a-mine').parent_id).toBeNull();
+  });
+
+  // ── (b) the incoming archived_at ──
+  it('cascades a synced archive over the live subtree, exactly as archiveObjective does', () => {
+    mkObj('b-goal'); mkObj('b-proj', 'b-goal'); mkObj('b-leaf', 'b-proj'); // 2 levels deep
+
+    applyOp(sqlite, op('b-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
+    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
+
+    expect(liveChildrenOfArchivedParents()).toEqual([]);
+    for (const id of ['b-proj', 'b-leaf']) {
+      const row = getObjective(id);
+      expect(row.archived_at).toBeTruthy();
+      expect(row.archive_root_id).toBe('b-goal'); // restores as a unit
+    }
+  });
+
+  it('a synced UN-archive does not cascade — restore stays root-only (0129 subtree rule)', () => {
+    mkObj('b2-goal'); mkObj('b2-kid', 'b2-goal');
+    applyOp(sqlite, op('b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
+    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
+    // Clearing archived_at must not fan out — restoreObjective owns that path.
+    applyOp(sqlite, op('b2-goal', { archived_at: null }, '2026-06-03T10:00:00.000Z'), SYSTEM_OWNER);
+    expect(() => applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: null })).not.toThrow();
+    expect(getObjective('b2-goal').archived_at).toBeNull();
+  });
+
+  /**
+   * The archive cascade must not TOUCH another owner's row — not even its sync metadata.
+   *
+   * liveDescendantIds walks `parent_id` unscoped, so a corrupt cross-owner edge (the very
+   * thing the clamp above now prevents, but which older data may already carry) pulls a
+   * stranger's objective into the descendant list. The archiving UPDATE is owner-scoped and
+   * correctly matches 0 rows — but stampRow keys on `id` ALONE, so it would still bump their
+   * `version` and rewrite their `field_ts`.
+   *
+   * That is worse than a wasted write: stamping `archived_at`'s field_ts with the current
+   * clock makes that owner's own later archive/restore op LOSE the LWW comparison and get
+   * silently dropped. A cross-tenant write into someone else's merge state.
+   *
+   * Same class as the recursive-walk scoping in #369 — liveDescendantIds is the walk that
+   * pass missed.
+   */
+  it('never touches another owner\'s objective — not archived, not even stamped', () => {
+    createOwner();
+    mkObj('x-mine');
+    mkObj('x-theirs', 'x-mine', SECOND_OWNER_ID); // corrupt cross-owner edge (pre-existing data)
+    const before = getObjective('x-theirs');
+
+    applyOp(sqlite, op('x-mine', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
+    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'x-mine', { archived_at: '2026-06-02T10:00:00.000Z' });
+
+    const after = getObjective('x-theirs');
+    expect(after.archived_at).toBeNull();        // owner-scoped UPDATE already got this right
+    expect(after.archive_root_id).toBeNull();
+    // …and the sync metadata must be untouched, or their next archive op loses LWW silently.
+    expect(after.version).toBe(before.version);
+    expect(after.field_ts).toBe(before.field_ts);
+  });
+
+  // ── order independence: LWW guarantees no arrival order ──
+  it('holds whichever order the two ops arrive in', () => {
+    // Order 1: re-parent first, THEN archive the parent → the cascade must catch the child.
+    mkObj('o1-p'); mkObj('o1-c');
+    applyOp(sqlite, op('o1-c', { parent_id: 'o1-p' }), SYSTEM_OWNER);
+    applyOp(sqlite, op('o1-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
+    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o1-p', { archived_at: '2026-06-02T11:00:00.000Z' });
+    expect(liveChildrenOfArchivedParents()).toEqual([]);
+    expect(getObjective('o1-c').archived_at).toBeTruthy(); // archived WITH its parent
+
+    // Order 2: archive first, THEN the re-parent op arrives → the clamp must catch it.
+    mkObj('o2-p'); mkObj('o2-c');
+    applyOp(sqlite, op('o2-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
+    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o2-p', { archived_at: '2026-06-02T11:00:00.000Z' });
+    applyOp(sqlite, op('o2-c', { parent_id: 'o2-p' }), SYSTEM_OWNER);
+    expect(liveChildrenOfArchivedParents()).toEqual([]);
+    expect(getObjective('o2-c').parent_id).toBeNull();     // re-rooted, explicitly
+    expect(getObjective('o2-c').archived_at).toBeNull();   // …and still live
+
+    // Different end states — LWW is order-sensitive by nature — but BOTH well-formed,
+    // which is the property that matters: the server never holds a corrupt tree.
   });
 });
 

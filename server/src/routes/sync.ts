@@ -3,6 +3,7 @@ import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { applyOp, type Op, type ApplyResult } from '../sync/apply.js';
 import { mirrorTaskStatusToBlocks } from '../services/block-task-sync.js';
+import { applySyncedObjectiveUpkeep } from '../services/objectives.js';
 import { logSyncEvent, emitToClients } from './sse.js';
 
 /** Maximum ops in a single batch — prevents runaway requests. */
@@ -67,6 +68,14 @@ export function syncRouter() {
               const blockSeq = logSyncEvent(ownerId, 'block:updated', blockPayload);
               toEmit.push({ seq: blockSeq, event: 'block:updated', payload: blockPayload });
             }
+          }
+          // Same reason as the mirror above — applyOp writes columns directly and never
+          // goes through services/objectives.ts, so the tree invariants it maintains have
+          // to be re-established by hand. Chiefly: a synced `archived_at` must cascade over
+          // the live subtree the way archiveObjective does, or archiving offline silently
+          // orphans every child (buildTree then re-roots them to top level).
+          if (op.entity === 'objective') {
+            applySyncedObjectiveUpkeep(ownerId, op.entityId, result.applied);
           }
           // An objective_task link change surfaces as an objective update (the
           // client re-derives the tree from the objective's links).
