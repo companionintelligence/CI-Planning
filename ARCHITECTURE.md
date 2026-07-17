@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-12 · migration head `0126`
+**Status:** Living document · last updated 2026-07-16 · migration head `0130`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,7 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → AG; migration head 0126):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`) · **Phase T — multi-tenant owner-scoping** (every table + route + service scoped to `owner_id`; owner-less rows retired) · **Phase U — CI-Portal OIDC + local auth** (session-cookie login: OAuth 2.1 + PKCE relying-party, or `DISABLE_OIDC` local username/password) · **Phase V — password reset** (single-use tokens; `session_epoch` invalidation) · **Phase W — GraphQL CRUD layer alongside REST** (complete; see §6a) · **Phase X — MCP intent vocabulary** · **Phase Y — env-config** (every env var documented; `server/.env.example`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
+**Shipped phases (A → AG, plus the post-AG work in §1.1; migration head 0130):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`) · **Phase T — multi-tenant owner-scoping** (every table + route + service scoped to `owner_id`; owner-less rows retired) · **Phase U — CI-Portal OIDC + local auth** (session-cookie login: OAuth 2.1 + PKCE relying-party, or `DISABLE_OIDC` local username/password) · **Phase V — password reset** (single-use tokens; `session_epoch` invalidation) · **Phase W — GraphQL CRUD layer alongside REST** (complete; see §6a) · **Phase X — MCP intent vocabulary** · **Phase Y — env-config** (every env var documented; `server/.env.example`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
 
 **Phase Z Time-Sense** (a Focus Ritual + estimate-calibration loop — EOD alignment, daily-brief fold-in, "Keep working"/"Schedule again", focus-cue reminders + vibrate, per-cue prefs, suggest-only estimate chip, voice loop) has **landed behind the `time_sense_enabled` master flag** (flag-off = behavior-neutral; migs 0106–0109). The **calendar / UI feedback waves** have also landed (QuickAdd mounted in Today, Planner de-scroll, Flight-Plan tabs + saved-blocks + search, three-axis calendar tag filter, container-outlines + click-to-add, select-date → day-type picker, collapsed night hours).
 
@@ -21,10 +21,25 @@ Companion Planning is a **local-first, AI-assisted personal planning system**. I
 - **AD — Calendar reliability** (`task_time` honored across quick-add + flight-plan; container→task direction inheritance; Alt-drag free placement).
 - **AE — Reflow correctness** (snapshot-based reactive reflow: the clear set equals the re-place set, so a task edit can no longer wipe other auto-placed blocks; placement status parity; not-before-now clamp; locked-block guards). See §6.
 
-**Phases AF–AG + ship-readiness** (2026-07, migs 0118–0126) close out the line to the current head:
+**Phases AF–AG + ship-readiness** (2026-07, migs 0118–0126) — note 0119 is an intentional gap (see `migrations/index.ts`); the line continues past AG in §1.1:
 - **AF — Task management** (migs 0120/0121): Objectives surface as a **tab inside `/tasks`** (URL-synced `?focus`), tree API returns tasks-per-leaf, quick-add subtask, assign-to-objective on the task card. **The Inbox surface is retired** — ingested `possible_tasks` are deduplicated inline and **auto-promoted** into Tasks (no manual triage), surfacing in a date-derived **New Today** section until owner-local midnight; `/inbox`, `/objectives`, `/patterns`, `/routines` are now redirects/tabs, not standalone views. Includes **AF-11 tag unification** (routine-tag cleanup 0120, task-intention level move 0121).
 - **AG — Multi-tenant RBAC** (mig 0125): `owners.role` drives scopes at one choke point (`lib/auth/scopes.ts` `roleToScopes`, unknown role → read-only), replacing the hardcoded `[READ, WRITE, ADMIN]` triple. Three roles — `operator` (R+W+A) · `member` (R+W) · `viewer` (R); existing owners backfill to `operator`, OIDC auto-provision defaults to `member` (closes the auto-admin hole). Operator-gated `routes/accounts.ts` (`GET/POST/PATCH/DELETE /api/accounts` + `/:id/invite`) creates/manages accounts via password-less invite + reset-token link.
 - **Ship-readiness + hardening** (migs 0122–0124, 0126): seeded developer identity scrubbed (0122); dead `auto_mode` column dropped, top-bar Suggest/Schedule toggle repointed to `trust_mode` (0123); in-app Google connection setup + auto-provisioned Web Push VAPID keys via the `app_config` table (0124); base **category** tags (Personal / Professional / Social) seeded (0126). License corrected to **CI-Commercial-1.0** (not MIT).
+
+## 1.1 Post-AG work (2026-07-14 → 07-16, migs 0127–0130)
+
+Two tracks landed after the AG close-out. Neither has a phase letter; both are current head.
+
+**Life priorities + the Priorities Wizard** (migs 0127/0128, #356). A `life_priorities` row per `(owner, category)` captures a self-audit — `satisfaction` (1–10), `importance` (1–10), `target_hours_per_week`. It backs two routed views: **`/priorities`** (the wizard) and **`/balance`** (the dashboard). `scheduling_prefs.sleep_hours_per_week` (0128, default 63 = 9h × 7) reserves sleep as unschedulable, so the wizard's weekly pool is `168 − sleep_hours_per_week`. Self-contained: no `task.category`, and no scheduling boosts yet.
+
+**Objectives archive + 48h purge** (migs 0129/0130, #366 and follow-ups #367–#372). **`DELETE /api/objectives/:id` no longer hard-deletes — it archives.** This is the single most load-bearing behavioral change in this window, and the invariant it rests on is easy to break:
+
+- **Soft delete.** `archived_at` is stamped; the row is kept indefinitely. `status` is untouched — the archive is **orthogonal to status**, which is what makes restore lossless (and why a cadence job must check `archived_at`, not just `status='active'`).
+- **The cascade.** Archiving fans out over the **live** subtree in one transaction, stamping each descendant's `archive_root_id` so the subtree restores as a unit (`cascadeArchiveToDescendants`). Atomicity is required, not nice-to-have: **`buildTree` roots any node whose parent is filtered out**, so a live child left under an archived parent silently resurfaces as a top-level goal.
+- **THE INVARIANT: no live objective may have an archived parent.** Every read path filters `archived_at IS NULL`; every write path refuses an archived parent (`liveParentExists` → `parent_not_found`); the sync path clamps to it (§12).
+- **Purge is separate and explicit.** `PURGE_WINDOW_HOURS = 48`. `POST /:id/purge` stamps an absolute `purge_after` deadline across the subtree; `DELETE /:id/purge` cancels it. The hourly `purge_objectives` job (0130) reaps rows past the deadline — the only path to permanent removal.
+- **Routes:** `GET /api/objectives?archived=1` (flat archive list — an archived subtree is not a renderable tree), `POST /:id/restore` (root-only; a cascaded member must restore from its root), `POST /:id/purge`, `DELETE /:id/purge`.
+- **Exception — auto-generated scaffolding is still hard-deleted.** `unpromoteIfEmpty` / `dropSourceObjective` (`services/task-promotion.ts`) `DELETE` a *pristine* auto-promoted objective rather than archiving it, so the archive doesn't fill with rows the owner never chose to create. Guarded by `isPristine` (top-level, no sub-objectives).
 
 ---
 
@@ -64,8 +79,8 @@ graph TB
             GQL["GraphQL<br/>/api/graphql (Apollo, alongside REST)"]
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
-            Cron["Croner Jobs<br/>17 scheduled jobs"]
-            Migrate["Migration runner<br/>0001–0123 on boot"]
+            Cron["Croner Jobs<br/>18 cron jobs (19 kinds)"]
+            Migrate["Migration runner<br/>0001–0130 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -117,21 +132,29 @@ Companion-Planning/
 ├── client/                   SolidJS PWA
 │   └── src/
 │       ├── components/       Shared UI components
-│       ├── views/            One file per route (Today, Calendar, …)
-│       └── lib/              api.ts · dates.ts · stores
+│       ├── views/            One file per route (Today, Focus, Calendar, Priorities, Balance, …)
+│       ├── stores/           Solid signals/resources shared across views
+│       ├── sw/               Service-worker source (Web Push + offline shell)
+│       └── lib/              api.ts · dates.ts · objective-promote.ts
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0123_drop_auto_mode
+│       │   ├── migrations/   0001_baseline → 0130_purge_objectives_job (0119 is an
+│       │   │                 intentional gap — see index.ts; do not "fix" it)
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow (auto-defense) · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
 │       ├── graphql/          Apollo schema-first SDL + resolvers (Phase W, alongside routes/)
-│       ├── jobs/             Croner job definitions
-│       ├── services/         tags · tasks · blocks · flight-plan · patterns · objectives · notifications · prefs · jobs · engine-ops · memory · weekly-review (extracted so REST + GraphQL share one owner-scoped impl)
+│       ├── sync/             apply.ts — the field-LWW merge engine (§12)
+│       ├── jobs/             Croner job definitions (19 kinds; 18 cron-scheduled)
+│       ├── services/         ~27 modules — the shared owner-scoped layer REST + GraphQL
+│       │                     both call (tasks · blocks · objectives · task-promotion ·
+│       │                     priorities · stars · timer · vapid-config · …)
 │       ├── connectors/       Google OAuth 2.1 + Calendar/Gmail MCP bridge · CI-Server companion-memory (memory.ts)
+│       ├── mcp/              MCP client/session for the Google tool surface (Phase X)
 │       ├── agents/           ingest · groom · sync reconciler · memory-suggest · plan (authoring)
-│       └── lib/              config · crypto · dates · tz · logger · ids
+│       ├── cli/              operator scripts (clear-range, …)
+│       └── lib/              config · crypto · dates · tz · logger · ids · auth/scopes
 ├── docs/                     ROADMAP · GLOSSARY · phase specs · diagrams
 └── ops/                      litestream.yml · launchd plist
 ```
@@ -162,7 +185,12 @@ erDiagram
     OWNERS ||--o{ REMINDERS : scheduled_for
     OWNERS ||--o{ ESTIMATE_CALIBRATION : calibrated_by
     OWNERS ||--o{ DAILY_RECAP : recapped_in
+    OWNERS ||--o{ LIFE_PRIORITIES : audits
 ```
+
+> `OBJECTIVES ||--o{ OBJECTIVES : parent_of` is the **live** tree only. An archived node
+> (`archived_at` set) keeps its `parent_id` and its `objective_tasks` links — nothing is
+> severed — but every read path filters it out. See §1.1.
 
 ### 5.2 Key tables
 
@@ -186,7 +214,7 @@ erDiagram
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
 | `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
 | `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs` | 0039, 0069, 0097 |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113) | 0001, 0091, 0106, 0108, 0111, 0113 |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this) | 0001, 0091, 0106, 0108, 0111, 0113, 0128 |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
 | `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
 | `reminders` | Scheduled reminders — fired exactly once by the 1-min dispatcher | 0044 |
@@ -202,8 +230,10 @@ erDiagram
 | `auth_states` | Pre-login OIDC PKCE state (issued at `/login`, consumed at the callback) | 0102 |
 | `password_reset_tokens` | Single-use local-owner password-reset tokens (Phase V) | 0104 |
 | `copy_history` | Time-Sense voice-loop anti-repetition log (NOT in owner export) | 0109 |
+| `app_config` | Server-owned singleton config rows set from inside the app rather than env — in-app Google connection setup + the auto-provisioned Web Push VAPID keypair (generated + persisted on first boot; env pins win) | 0124 |
+| `life_priorities` | Self-audit per `(owner, category)` — `satisfaction` 1–10, `importance` 1–10, `target_hours_per_week`. Backs `/priorities` (wizard) + `/balance` (dashboard); `UNIQUE(owner_id, category)` | 0127 |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | 0080, 0088 |
-| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync | 0081, 0085, 0086, 0087 |
+| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync. **Archive (0129):** `archived_at` (non-null ⇒ soft-deleted, absent from the live tree, `status` untouched), `archive_root_id` (the node whose archiving cascaded to this row; NULL on the root), `purge_after` (absolute reap deadline; server-owned — never client-authored) + `ix_objectives_purge_after`. See §1.1 | 0081, 0085, 0086, 0087, 0129 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107) | 0083, 0107 |
 | `daily_recap` | One row per `(owner, date)`: the day-briefing cache (`prose`/`stats`/`focus`/`inputs_hash`) + the frozen five-star score (`star_*`/`total`/`frozen_at`); today lives, past days permanent once frozen. Merged `daily_summaries` + `day_stars` | 0089, 0094, 0096 |
@@ -279,6 +309,8 @@ sequenceDiagram
     Cron->>DB: auto_schedule (03:00) — re-place tomorrow's flight-plan
     Cron->>LLM: nightly_grooming (02:00) — embedding dedupe + overdue bump + straggler promote
 
+    Cron->>DB: purge_objectives (hourly) — reap archived objectives past purge_after
+
     Note over Cron,DB: Weekly ─────────────────────────────────────
     Cron->>DB: calibrate_estimates (Sun 04:00) — compute bias ratio
     Cron->>DB: advance_objectives (Mon 05:00) — stage objective tasks
@@ -294,6 +326,7 @@ sequenceDiagram
 | `ingest_gcal` | every 30m | Extract possible-task candidates from Calendar events |
 | `memory_suggest` | every 6h | Pull the next-48h CI-Server memory graph, stage events as Inbox suggestions (AA1; no-op unless `memory_pull_enabled` + connector creds) |
 | `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
+| `purge_objectives` | hourly | Reap archived objectives past their `purge_after` deadline — the ONLY path to permanent removal (0130). **Global, not per-owner** — deliberately absent from `OWNER_SCOPED_KINDS`, since a purge deadline is an absolute wall-clock instant, not an owner-local one |
 | `reset_routines` | daily 00:00 | Reopen completed Routine checklist tasks for the new day (AC) |
 | `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `daily_recap` (owner-tz day; idempotent, first-freeze-wins on `frozen_at`) |
 | `review_day` | daily 01:00 | Defer / surface missed planned tasks |
@@ -320,7 +353,7 @@ sequenceDiagram
 | **Jobs** | `/jobs` | Scheduled job registry; run any job on demand; execution log |
 | **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · Google/CI-memory connections · Profile · Accounts (operator-only, AG) · export/import · recurrence duration · Clear Date Range |
 
-The six routed views are `/`, `/calendar`, `/tasks`, `/tags`, `/jobs`, `/settings` (`client/src/App.tsx`). Legacy paths `/inbox`, `/objectives`, `/patterns`, `/routines` **redirect** into their host tab — the Inbox surface was retired in Phase AF (ingested `possible_tasks` auto-promote, no manual triage), and Objectives/Routines became Tasks-view tabs.
+The nine routed views are `/`, `/focus`, `/calendar`, `/tasks`, `/tags`, `/priorities`, `/balance`, `/settings`, `/jobs` (`client/src/App.tsx`), plus the unauthenticated `/login` and `/reset-password`. Legacy paths `/inbox`, `/objectives`, `/patterns` **redirect** into their host tab — the Inbox surface was retired in Phase AF (ingested `possible_tasks` auto-promote, no manual triage), and Objectives/Routines became Tasks-view tabs. (`/routines` is **not** a route and never redirected — it 404s.) `/priorities` (wizard) and `/balance` (dashboard) are the life-priorities layer, §1.1.
 
 SSE drives live updates across all views — task / block / job / reminder events are broadcast owner-scoped.
 
@@ -337,6 +370,16 @@ SSE drives live updates across all views — task / block / job / reminder event
 | `sso` | CI Hub appliance | Login mints a signed, httpOnly `cp_session` cookie (Koa `app.keys` from `SESSION_SECRET`); every request is authenticated by that cookie, never a Bearer token. Two login sub-modes: CI-Portal OIDC (OAuth 2.1 + PKCE RP; id_token JWKS-verified once at the callback, endpoints discovered via `CIPORTAL_ISSUER`) or, with `DISABLE_OIDC=true`, local username/password (argon2id). |
 
 Sessions are stateless signed cookies stamped with `owners.session_epoch`; bumping that epoch (logout-all / Phase V password reset) instantly invalidates every outstanding cookie for that owner. The older generic `AUTH_JWKS_URL` / `AUTH_ISSUER` / `AUTH_AUDIENCE` / `AUTH_CONTRACT_VERSION` vars predate the CI-Portal OIDC flow: they are still parsed into `config.auth`, but those fields are consumed by no code path.
+
+**Authorization — roles → scopes (Phase AG, mig 0125).** *Authentication* answers who you are; `owners.role` answers what you may do. One choke point converts role → scopes: `roleToScopes` (`lib/auth/scopes.ts`), replacing a hardcoded `[READ, WRITE, ADMIN]` triple that made every authenticated owner an admin.
+
+| Role | Scopes | Notes |
+|---|---|---|
+| `operator` | read · write · admin | Existing owners backfilled to this |
+| `member` | read · write | **OIDC auto-provision defaults here** — closes the auto-admin hole |
+| `viewer` | read | Read-only |
+
+**An unknown/unrecognized role degrades to read-only, never to admin** — the failure mode is a locked door, not an open one. Account management (`routes/accounts.ts`: `GET/POST/PATCH/DELETE /api/accounts` + `/:id/invite`) is operator-gated; onboarding is a password-less invite plus a reset-token link.
 
 **Token crypto:** OAuth access/refresh tokens are sealed with AES-256-GCM in `connection_tokens`. The 32-byte key-encryption key is supplied as `CP_KEK_B64` — never committed; never in a log. Each row stores a `key_version` so keys can be rotated without re-authenticating.
 
@@ -439,6 +482,15 @@ sequenceDiagram
 **Monotonic completions:** a concurrent edit on another device can never un-complete a task — the `done_at` field is monotonically forward-only in the merge. The same guard pins task **placement**: a stale offline op carrying `status:'open'` can't revert a server-side `scheduled` (mirrors the `done` pin), so placement isn't lost across devices.
 
 **Conflict surface:** a genuine conflict (two devices edited the same field in the same version window) shows a persistent banner — not a toast — so the user can review.
+
+**Clamp, never reject.** The merge has no channel to tell a client "your op was refused", so a rejected op would leave the two sides permanently divergent. Instead `applyOp` **accepts the op and clamps the value** — it still wins its LWW comparison, and the client is told what actually landed via `applied`. The `done`/`scheduled` pins above are one instance; the objective tree-shape guard is the other:
+
+- **`clampToLiveParent`** (`sync/apply.ts`) forces an incoming `objective.parent_id` to a parent that exists in the owner's **live** tree, else `NULL`. Three cases collapse to "not a live parent of yours": **archived** (it exists, so the FK passes — this is the corrupt edge the API refuses via `liveParentExists`), **missing** (the FK would otherwise throw `FOREIGN KEY` out of `applyOp` and roll back *every other op in the batch*), and **another owner's**. NULL is the honest landing spot: it is where `buildTree` puts the node anyway, but now the DB says so, so `level` can be restamped. It is a separate step from `applyMonotonic`, whose `(field, row, value)` signature cannot reach the DB.
+- **`applySyncedObjectiveUpkeep`** (`routes/sync.ts` → `services/objectives.ts`) re-runs the service-level upkeep `applyOp` bypasses — chiefly, a synced `archived_at` must **cascade over the live subtree** exactly as `archiveObjective` does, or archiving offline orphans every child (and `buildTree` then re-roots them to top level). This is the same seam, and the same reason, as the task→block done-state mirror alongside it: *`applyOp` writes columns directly and never goes through the services.* An un-archive deliberately does **not** cascade — restore is root-only.
+
+`archived_at`/`archive_root_id` are ordinary mergeable fields (so archiving works offline) and are deliberately **not** pinned in `applyMonotonic` — a pin would make archiving irreversible through sync and defeat the 48h window. `purge_after` and `level`/`progress_cache` are server-owned and absent from the allowlist entirely.
+
+Because LWW guarantees no arrival order, both orders converge on a well-formed tree: *re-parent then archive* → the cascade catches the child; *archive then re-parent* → the clamp catches the op. The end states differ (LWW is order-sensitive by nature); the invariant holds either way.
 
 ---
 
