@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 
 /**
@@ -18,14 +17,13 @@ import { resetDb, startTestServer, api, createOwner, SECOND_OWNER_ID, type TestS
  * it's a `timeblock`. Both are checked in the service so REST and GraphQL share one answer.
  */
 
-const OWNER = SYSTEM_OWNER;
 const at = (h: string) => `2026-06-20T${h}:00.000Z`;
 const row = (id: string) =>
   sqlite.prepare(`SELECT parent_block_id, owner_id FROM time_blocks WHERE id = ?`).get(id) as
     | { parent_block_id: string | null; owner_id: string }
     | undefined;
 
-/** A raw insert so a block can be planted for ANOTHER owner (the API only ever acts as OWNER). */
+/** A raw insert so a block can be planted for ANOTHER owner (the API only ever acts as the test owner). */
 function insertBlock(ownerId: string, over: Record<string, unknown> = {}): string {
   const r: Record<string, unknown> = {
     owner_id: ownerId, title: 'Foreign plan', block_kind: 'timeblock',
@@ -38,7 +36,7 @@ function insertBlock(ownerId: string, over: Record<string, unknown> = {}): strin
     .get(...keys.map((k) => r[k])) as { id: string }).id;
 }
 
-/** A Plan container owned by OWNER, via the public route. */
+/** A Plan container owned by the test owner, via the public route. */
 async function makePlan(srv: TestServer): Promise<string> {
   const res = await api(srv.url, '/api/blocks', {
     method: 'POST',
