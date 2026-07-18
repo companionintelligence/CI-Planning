@@ -5,6 +5,11 @@
 > **Design:** this ticket is the spec (STUB — full commit-recipe to be drafted when Wave 5 starts).
 > **Dependencies:** M1 (share backend), T13 (per-account connection list)
 
+> ### 🚧 OPEN but DEFERRED — issue #352. A stub, not a commit recipe.
+> Nothing here has been built, and the full recipe is still to be drafted (see the Design line
+> above). Treat this as intent only: it is a snapshot from 2026-07-14 authoring, taken before the
+> migration head moved **0126 → 0130** and the ENTITY wave (#357–#375) landed.
+
 ## Goal
 
 UI to **tag an event with a connected account** to share it: a chip/picker on the event (reusing the tag-chip idiom) over the owner's connected accounts (from T13), showing share status; plus a **read-only "shared" badge** on events a recipient received via the shared account (they can't edit — they can comment via M3–M5).

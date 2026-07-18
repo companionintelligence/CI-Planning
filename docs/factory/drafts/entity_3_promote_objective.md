@@ -1,5 +1,17 @@
 > **Type:** feature · **Phase:** ENTITY · **Branch:** `feat/promote-task-to-objective` · **Commit style:** `feat(planner): promote a task to an objective` · **Design:** user feedback 2026-07-15 · **Dependencies:** none (ENTITY-4 depends on this)
 
+> ### 📓 HISTORICAL — this is the pre-implementation draft, and it SHIPPED
+> It drove **PR #365** (merged 2026-07-16, no migration), closing issue **#359**. It is kept
+> as the **decision record**: the *why* behind the design, which the diff cannot explain.
+>
+> **It describes the codebase as it was BEFORE #365 — read it in the past tense.** Every
+> `file:line` below is a snapshot from 2026-07-15 authoring and has drifted. For current
+> behavior read the code; the durable pointers here are the *file + symbol* names.
+>
+> The revision notice below is the most load-bearing thing in this file: the shipped design
+> is **direct promote**, and the placeholder-subtask plan it overturns was never built. The
+> ENTITY-4 draft was written against that abandoned design and inherited the error.
+
 > ### ⚠️ Ticket revised 2026-07-15 — the original design was based on a wrong analysis
 > The original said manual promotion must **create a first subtask**, because a subtask-less objective would be garbage-collected. **That was wrong, and it was backwards.**
 >

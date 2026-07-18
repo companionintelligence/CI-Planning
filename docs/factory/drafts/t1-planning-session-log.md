@@ -5,6 +5,17 @@
 > **Design:** this ticket is the spec (see also docs/ftue-plan.md)
 > **Dependencies:** None
 
+> ### 🚧 LIVE — issue #337, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+>
+> ⚠️ **Its migration slot is TAKEN — this one will actually break.** The ticket hardcodes
+> `0127_planning_sessions` in five places, but `0127` is now `life_priorities` (PR #356) and the
+> head is `0130`. Claim the next free slot at implementation time (today: `0131`) and rename the
+> file, the `id` export, the `index.ts` import, and the `MIGRATIONS` append to match.
+
 ## Goal
 
 Persist each "Plan my week" session at the **session level only** — one `planning_sessions` row per session that stores the entire chat as a single transcript blob — behind an owner-scoped service and a REST CRUD API. This is the foundation the assistant shell (T2) and the per-branch flows write to, and the Logs tab (T6) reads. No per-turn event rows: the whole conversation is one JSON array on the session row.

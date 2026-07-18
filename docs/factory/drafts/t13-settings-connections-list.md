@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (FTUE framing: `docs/ftue-plan.md`)
 > **Dependencies:** None (supports T12 + Wave-5 sharing)
 
+> ### 🚧 LIVE — issue #349, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Give the Settings → **Connections** tab a provider-agnostic **per-account connection list**: one row per `connection_tokens` record the current owner holds, showing **provider + account + status**, with **Connect** (Google) and **Disconnect** controls. Back it with a new leak-safe read endpoint `GET /api/connections` → `{ connections: [{ provider, account, status, createdAt }] }` (it selects only those four columns — **never** any token material), and a generic `DELETE /api/connections/:provider/:account` that best-effort revokes (Google) and hard-deletes the stored connection. This is the stable connection surface T12 and Wave-5 sharing build on.

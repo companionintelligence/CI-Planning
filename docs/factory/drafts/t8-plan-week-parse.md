@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (see also `docs/ftue-plan.md` — the Weekly Planning Assistant sits on the FTUE "fewest clicks" goal)
 > **Dependencies:** T3, T4, T5 (the plan-week backend + transcript state and the `PlanWeekAssistant` shell from T2 that this hangs off of)
 
+> ### 🚧 LIVE — issue #344, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 When the Weekly Planning Assistant asks a question, let the user answer in **free text** (not just the option chips) and turn that answer into a **structured scheduling intent** — the same `{ pins, hints }` shape the deterministic planner already understands — by reusing the existing `parseInstruction` seam. The parse is **parse-only** (no side effects): it returns the structured intent and the assistant records it in the transcript; execution/authoring happens elsewhere (T9). Because `parseInstruction` is Ollama-required with **no deterministic fallback**, the free-text box is **hidden** whenever `aiAvailable()` is false — in that mode only the option chips work.

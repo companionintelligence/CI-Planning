@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec; see `docs/ftue-plan.md` §5 (the FTUE flow) and §6 ("fewest clicks" steady state) for the weekly-planning framing.
 > **Dependencies:** **T2** (the Weekly Planning Assistant shell — `client/src/components/PlanWeekAssistant.tsx`, its session transcript, and the branch dispatcher that routes to "Schedule tasks"). All task / flight-plan / Auto APIs this ticket calls already exist on `main`.
 
+> ### 🚧 LIVE — issue #340, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Build the **"Schedule tasks"** branch of the Weekly Planning Assistant as a purely **deterministic** flow: list the owner's undated, unscheduled open tasks, let the user pick one, and place it either **manually** (give it a day, optionally a time) or by **letting Auto place it** (stage → run the two-step Auto). Every successful (and failed) action appends an honest line to T2's session transcript. No new endpoint, no LLM — this branch reuses the existing task/placement APIs only.

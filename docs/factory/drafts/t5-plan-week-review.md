@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (see `docs/ftue-plan.md` §5 for the weekly-planning-assistant framing)
 > **Dependencies:** T1 (`plan_week_sessions` table + `GET /api/plan-week/sessions` + `api.planWeek.session.list`), T2 (`client/src/components/PlanWeekAssistant.tsx` assistant shell with branch routing)
 
+> ### 🚧 LIVE — issue #341, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Fill in the assistant's **"Review past data"** branch as a fully deterministic, read-only weekly recap — no LLM. It composes the week that just ended from surfaces that already exist and are already tested — `weeklyReview()` (tasks done/overdue, block density, weekly intentions, rotting objectives), the global estimate-calibration readout, the five-star day rows, and day-note dates — **plus** the new planning-session history from T1. The composition is served by ONE thin aggregation endpoint, `GET /api/plan-week/review`, so the branch mounts a single resource with a single loading/error state instead of fanning out 4–5 parallel client fetches and re-deriving the ISO-week date range in the browser.
