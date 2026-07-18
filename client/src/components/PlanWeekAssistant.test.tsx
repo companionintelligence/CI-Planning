@@ -37,9 +37,16 @@ vi.mock('../stores/index.js', () => ({
   showToast: (...a: unknown[]) => toastMock(...a),
 }));
 
+// The shell test is about the SHELL. T3's branch component has its own test file, and
+// stubbing it here keeps this file from needing the branch's api/store seams.
+vi.mock('./PlanWeekFill.js', () => ({ PlanWeekFill: () => <div>fill-branch</div> }));
+
 const { PlanWeekAssistant, PromptStep } = await import('./PlanWeekAssistant.js');
 
 const LABELS = ['Fill next week', 'Schedule tasks', 'Review past data'];
+/** Menu buttons render label + subtitle, so match on containment, not equality. */
+const menuLabels = (root: ParentNode) =>
+  LABELS.filter((l) => [...root.querySelectorAll('button')].some((b) => b.textContent?.includes(l)));
 
 describe('PlanWeekAssistant — the shell', () => {
   beforeEach(() => {
@@ -58,9 +65,7 @@ describe('PlanWeekAssistant — the shell', () => {
     await waitFor(() => expect(container.querySelector('.modal-backdrop')).not.toBeNull());
 
     // Exactly these three, in this order.
-    const buttons = [...container.querySelectorAll('button')].map((b) => b.textContent?.trim());
-    expect(LABELS.every((l) => buttons.includes(l))).toBe(true);
-    expect(buttons.filter((b) => LABELS.includes(b!))).toEqual(LABELS);
+    expect(menuLabels(container)).toEqual(LABELS);
 
     // No session until a branch is chosen — the menu itself has no entry_branch to send.
     expect(openMock).not.toHaveBeenCalled();
@@ -69,17 +74,29 @@ describe('PlanWeekAssistant — the shell', () => {
   it('picking a branch opens the session with that entry_branch and advances the step', async () => {
     render(() => <PlanWeekAssistant />);
     setPlanWeekModal({ open: true });
+    await screen.findByText('Schedule tasks');
+
+    fireEvent.click(screen.getByText('Schedule tasks'));
+
+    await waitFor(() => expect(openMock).toHaveBeenCalledTimes(1));
+    expect(openMock).toHaveBeenCalledWith('schedule_tasks');
+    // The branch question replaced the menu.
+    await screen.findByText('Which tasks should I find time for?');
+    expect(screen.queryByText('Fill next week')).toBeNull();
+    // The choice is logged to the transcript.
+    await waitFor(() => expect(appendMock).toHaveBeenCalledWith('sess-1', { role: 'user', text: 'Schedule tasks', kind: 'plan_week:schedule_tasks' }));
+  });
+
+  it('a branch with a component renders it instead of a PromptStep (T3 slot)', async () => {
+    render(() => <PlanWeekAssistant />);
+    setPlanWeekModal({ open: true });
     await screen.findByText('Fill next week');
 
     fireEvent.click(screen.getByText('Fill next week'));
 
-    await waitFor(() => expect(openMock).toHaveBeenCalledTimes(1));
+    await screen.findByText('fill-branch');      // the registered component, not a stub
     expect(openMock).toHaveBeenCalledWith('fill_week');
-    // The branch question replaced the menu.
-    await screen.findByText('Which days next week should I fill?');
-    expect(screen.queryByText('Schedule tasks')).toBeNull();
-    // The choice is logged to the transcript.
-    await waitFor(() => expect(appendMock).toHaveBeenCalledWith('sess-1', { role: 'user', text: 'Fill next week' }));
+    expect(screen.queryByText('Or type your answer…')).toBeNull(); // no PromptStep input
   });
 
   it('Back returns to the menu', async () => {
@@ -146,21 +163,21 @@ describe('PlanWeekAssistant — the shell', () => {
     openMock.mockRejectedValueOnce(new Error('offline'));
     render(() => <PlanWeekAssistant />);
     setPlanWeekModal({ open: true });
-    await screen.findByText('Fill next week');
+    await screen.findByText('Schedule tasks');
 
-    fireEvent.click(screen.getByText('Fill next week'));
+    fireEvent.click(screen.getByText('Schedule tasks'));
 
     // The user is not stranded on the menu by a failed log write.
-    await screen.findByText('Which days next week should I fill?');
+    await screen.findByText('Which tasks should I find time for?');
     await waitFor(() => expect(toastMock).toHaveBeenCalledWith('offline', 'error'));
   });
 
   it('reopening resets to the menu and drops the previous session id', async () => {
     render(() => <PlanWeekAssistant />);
     setPlanWeekModal({ open: true });
-    await screen.findByText('Fill next week');
-    fireEvent.click(screen.getByText('Fill next week'));
-    await screen.findByText('Which days next week should I fill?');
+    await screen.findByText('Schedule tasks');
+    fireEvent.click(screen.getByText('Schedule tasks'));
+    await screen.findByText('Which tasks should I find time for?');
 
     fireEvent.click(screen.getByText('Done'));
     await waitFor(() => expect(planWeekModal().open).toBe(false));

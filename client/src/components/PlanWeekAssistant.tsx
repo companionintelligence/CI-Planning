@@ -1,7 +1,8 @@
-import { createSignal, createEffect, For, Show } from 'solid-js';
+import { createSignal, createEffect, For, Show, type JSX } from 'solid-js';
 import { X, ChevronLeft } from 'lucide-solid';
 import { api, type PlanWeekEntryBranch } from '../lib/api.js';
 import { planWeekModal, setPlanWeekModal, showToast } from '../stores/index.js';
+import { PlanWeekFill } from './PlanWeekFill.js';
 
 /**
  * PlanWeekAssistant (FTUE · T2, #338) — the "Plan my week" shell.
@@ -24,10 +25,31 @@ import { planWeekModal, setPlanWeekModal, showToast } from '../stores/index.js';
  */
 
 type Step = 'menu' | PlanWeekEntryBranch;
+type BranchKey = Extract<Step, PlanWeekEntryBranch>;
 
-/** The fixed top-3 menu. Keys are T1 `entry_branch` values, so a pick maps straight through. */
-const BRANCHES: { key: Extract<Step, PlanWeekEntryBranch>; label: string; question: string }[] = [
-  { key: 'fill_week', label: 'Fill next week', question: 'Which days next week should I fill?' },
+/**
+ * What a branch component receives from the shell. `append` is the T1 transcript seam:
+ * it resolves the pending session first, so a branch may log from its very first render
+ * without racing `session.open()` (see `sessionP` below).
+ */
+export interface BranchProps {
+  append: (text: string, kind?: string) => Promise<void>;
+  onBack: () => void;
+}
+
+/**
+ * The fixed top-3 menu. Keys are T1 `entry_branch` values so a pick maps straight to the
+ * column — T3's draft proposed `fill-next-week`, which would 422 against T1's enum.
+ * A branch either supplies a `component` (real behavior) or just a `question` (stub).
+ */
+const BRANCHES: {
+  key: BranchKey;
+  label: string;
+  subtitle?: string;
+  question?: string;
+  component?: (props: BranchProps) => JSX.Element;
+}[] = [
+  { key: 'fill_week', label: 'Fill next week', subtitle: 'Deterministic — no AI', component: (p) => <PlanWeekFill {...p} /> },
   { key: 'schedule_tasks', label: 'Schedule tasks', question: 'Which tasks should I find time for?' },
   { key: 'review', label: 'Review past data', question: 'What would you like to review?' },
 ];
@@ -92,28 +114,34 @@ export function PlanWeekAssistant() {
 
   // Reset on every open so a reopened shell never inherits the last run's branch or id.
   createEffect(() => {
-    if (open()) { setStep('menu'); setSessionId(null); }
+    if (open()) { setStep('menu'); setSessionId(null); sessionP = Promise.resolve(null); }
   });
 
   const branch = () => BRANCHES.find((b) => b.key === step());
 
+  /**
+   * The in-flight `session.open()`. A branch component mounts the instant its key is
+   * selected — before the POST resolves — so `append` awaits THIS rather than reading the
+   * `sessionId` signal. Reading the signal would silently drop any entry logged in that
+   * window, which is exactly the first step of a multi-step branch (T3 logs on entry).
+   */
+  let sessionP: Promise<string | null> = Promise.resolve(null);
+
   /** Session open/close/append are best-effort: the log must never block the UI. */
-  const pickBranch = async (key: Extract<Step, PlanWeekEntryBranch>, label: string) => {
+  const pickBranch = (key: BranchKey, label: string) => {
     setStep(key); // advance first — a failed log must not strand the user on the menu
-    try {
-      const { session } = await api.planWeek.session.open(key);
-      setSessionId(session.id);
-      await api.planWeek.session.append(session.id, { role: 'user', text: label });
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    }
+    sessionP = api.planWeek.session
+      .open(key)
+      .then(({ session }) => { setSessionId(session.id); return session.id; })
+      .catch((err: Error) => { showToast(err.message, 'error'); return null; });
+    void append(label, `plan_week:${key}`);
   };
 
-  const logAnswer = async (text: string) => {
-    const id = sessionId();
-    if (!id) return;
+  const append = async (text: string, kind?: string) => {
+    const id = await sessionP;
+    if (!id) return; // open() failed — already toasted; the branch keeps working
     try {
-      await api.planWeek.session.append(id, { role: 'user', text });
+      await api.planWeek.session.append(id, { role: 'user', text, ...(kind ? { kind } : {}) });
     } catch (err) {
       showToast((err as Error).message, 'error');
     }
@@ -126,7 +154,7 @@ export function PlanWeekAssistant() {
    * rows that never resolve. The modal always closes locally, even if the close call fails.
    */
   const close = async (status: 'completed' | 'abandoned') => {
-    const id = sessionId();
+    const id = await sessionP; // may still be in flight if the user is quick
     if (id) {
       try {
         await api.planWeek.session.close(id, { status });
@@ -161,10 +189,13 @@ export function PlanWeekAssistant() {
                       {(b) => (
                         <button
                           type="button"
-                          class="btn-ghost text-sm justify-start"
-                          onClick={() => void pickBranch(b.key, b.label)}
+                          class="btn-ghost text-sm justify-start flex-col items-start gap-0.5 py-2"
+                          onClick={() => pickBranch(b.key, b.label)}
                         >
-                          {b.label}
+                          <span>{b.label}</span>
+                          <Show when={b.subtitle}>
+                            <span class="text-[11px] text-muted-foreground font-normal">{b.subtitle}</span>
+                          </Show>
                         </button>
                       )}
                     </For>
@@ -173,11 +204,18 @@ export function PlanWeekAssistant() {
               }
             >
               {(b) => (
-                <PromptStep
-                  question={b().question}
-                  onSubmit={(text) => void logAnswer(text)}
-                  onBack={() => setStep('menu')}
-                />
+                <Show
+                  when={b().component}
+                  fallback={
+                    <PromptStep
+                      question={b().question!}
+                      onSubmit={(text) => void append(text)}
+                      onBack={() => setStep('menu')}
+                    />
+                  }
+                >
+                  {(Comp) => Comp()({ append, onBack: () => setStep('menu') })}
+                </Show>
               )}
             </Show>
           </div>

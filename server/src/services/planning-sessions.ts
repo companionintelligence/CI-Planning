@@ -30,6 +30,13 @@ export interface TranscriptMessage {
   role: 'system' | 'user';
   text: string;
   ts: string;
+  /**
+   * Optional machine tag for the step that produced this entry (T3+ use
+   * `plan_week:horizon`, `plan_week:sources`, …). Free-form on purpose: branches own
+   * their own vocabulary, and `transcript` is a JSON blob, so new kinds need no
+   * migration. Absent on plain conversational turns.
+   */
+  kind?: string;
 }
 
 export const ENTRY_BRANCHES: ReadonlySet<string> = new Set<PlanWeekEntryBranch>([
@@ -134,7 +141,7 @@ export function openSession(entryBranch: string): SessionResult<PlanningSession>
  */
 export function appendTranscript(
   id: string,
-  message: { role: string; text: string; ts?: string },
+  message: { role: string; text: string; ts?: string; kind?: string },
 ): SessionResult<PlanningSession> | undefined {
   const owner = currentOwnerId();
   const row = rawById(id, owner);
@@ -146,6 +153,8 @@ export function appendTranscript(
     role: message.role as TranscriptMessage['role'],
     text: String(message.text ?? ''),
     ts: message.ts ?? new Date().toISOString(),
+    // Only carried when supplied, so plain turns stay {role,text,ts} as before.
+    ...(message.kind ? { kind: String(message.kind) } : {}),
   };
   const next = [...hydrate(row).transcript, entry];
   sqlite
@@ -199,6 +208,95 @@ export function listSessions(): PlanningSession[] {
 export function getSession(id: string): PlanningSession | undefined {
   const row = rawById(id, currentOwnerId());
   return row ? hydrate(row) : undefined;
+}
+
+// ── T3: read-only candidate preview ───────────────────────────────────────────
+
+export interface CandidateTask { id: string; title: string; priority: number | null; due_at: string | null }
+
+export interface PlanWeekCandidates {
+  horizon: number;
+  start: string;
+  open_tasks: { count: number; will_stage: number; items: CandidateTask[] };
+  flight_plan: { count: number };
+  objectives: { count: number };
+  recurring: { count: number };
+}
+
+/** `autoRun`'s clamp (services/engine-ops.ts:93), mirrored so the preview can't promise
+ *  a horizon the placement run would silently narrow. */
+const clampHorizon = (n: unknown): number => Math.max(1, Math.min(60, Math.floor(Number(n) || 1)));
+
+/**
+ * What "Fill next week" WOULD stage and place, without touching anything. Strictly
+ * read-only — no INSERT/UPDATE/DELETE — so the preview step is free to re-run.
+ *
+ * `open_tasks` mirrors `fillFlightPlanCandidates`'s SELECT (engine/autoplan.ts:600) clause
+ * for clause: open, non-habit, top-level, non-recurrence-child, unstaged, and either
+ * unscheduled or scheduled for the anchor day with no live block. It is deliberately a
+ * copy rather than a call — that function WRITES, and a preview must not. `count` is the
+ * untruncated eligible total; `will_stage` applies fill's CANDIDATE_LIMIT of 20.
+ *
+ * The other three are informational scoping only (per the ticket's non-goals): the
+ * Flight-plan / Objectives / Recurring toggles change what this summary shows, never what
+ * placement does.
+ */
+export function planWeekCandidates(horizonRaw: unknown, startRaw: unknown): PlanWeekCandidates {
+  const owner = currentOwnerId();
+  const horizon = clampHorizon(horizonRaw);
+  const start = typeof startRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(startRaw)
+    ? startRaw
+    : new Date().toISOString().slice(0, 10);
+
+  // Mirrors fillFlightPlanCandidates (autoplan.ts:600) — minus the write and the LIMIT.
+  const ELIGIBLE = `
+    FROM tasks
+     WHERE owner_id = ? AND status = 'open'
+       AND subtype IS NOT 'habit'
+       AND parent_id IS NULL
+       AND recurrence_parent_id IS NULL
+       AND (scheduled_for IS NULL
+            OR (scheduled_for = ? AND NOT EXISTS (
+                  SELECT 1 FROM time_blocks tb
+                   WHERE tb.task_id = tasks.id AND tb.block_kind = 'task'
+                     AND tb.status NOT IN ('completed','skipped','cancelled'))))
+       AND id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)`;
+
+  const { n: openCount } = sqlite
+    .prepare(`SELECT COUNT(*) AS n ${ELIGIBLE}`)
+    .get(owner, start, owner) as { n: number };
+
+  const items = sqlite
+    .prepare(`SELECT id, title, priority, due_at ${ELIGIBLE}
+              ORDER BY priority, COALESCE(due_at, '9999-12-31'), id LIMIT 20`)
+    .all(owner, start, owner) as CandidateTask[];
+
+  const { n: fpCount } = sqlite
+    .prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ? AND selected = 1`)
+    .get(owner) as { n: number };
+
+  // Open, unstaged tasks carrying a LIVE objective link — an informational subset of
+  // open_tasks. `linked = 1` is the active-link predicate (services/objectives.ts).
+  const { n: objCount } = sqlite
+    .prepare(`SELECT COUNT(DISTINCT t.id) AS n FROM tasks t
+                JOIN objective_tasks ot ON ot.task_id = t.id AND ot.linked = 1
+               WHERE t.owner_id = ? AND t.status = 'open'
+                 AND t.id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)`)
+    .get(owner, owner) as { n: number };
+
+  const { n: recCount } = sqlite
+    .prepare(`SELECT COUNT(*) AS n FROM tasks
+               WHERE owner_id = ? AND (recurrence_rule IS NOT NULL OR subtype = 'habit')`)
+    .get(owner) as { n: number };
+
+  return {
+    horizon,
+    start,
+    open_tasks: { count: openCount, will_stage: Math.min(openCount, 20), items },
+    flight_plan: { count: fpCount },
+    objectives: { count: objCount },
+    recurring: { count: recCount },
+  };
 }
 
 /** `false` when nothing was removed — unknown id or another owner's row alike. */
