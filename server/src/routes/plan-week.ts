@@ -1,7 +1,7 @@
 import Router from '@koa/router';
 import {
   openSession, appendTranscript, setTranscript, closeSession,
-  listSessions, getSession, deleteSession,
+  listSessions, getSession, deleteSession, planWeekCandidates,
   type TranscriptMessage,
 } from '../services/planning-sessions.js';
 
@@ -22,6 +22,15 @@ import {
  */
 export function planWeekRouter() {
   const router = new Router();
+
+  /**
+   * T3 — what "Fill next week" would stage/place, for the preview step. Read-only:
+   * a GET is auto-gated `planning:read` by the central guard, and the service runs
+   * no writes, so the preview can be re-run freely as the user changes the horizon.
+   */
+  router.get('/api/plan-week/candidates', async (ctx) => {
+    ctx.body = planWeekCandidates(ctx.query.horizon, ctx.query.start);
+  });
 
   router.post('/api/plan-week/sessions', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { entry_branch?: string };

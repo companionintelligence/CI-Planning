@@ -488,6 +488,9 @@ export const api = {
         request<{ session: PlanningSession }>('PATCH', `/plan-week/sessions/${id}`, patch),
       remove: (id: string) => request<{ ok: boolean }>('DELETE', `/plan-week/sessions/${id}`),
     },
+    /** T3 preview — read-only; writes nothing, so it is safe to re-run per horizon change. */
+    candidates: (params: { horizon: number; start: string }) =>
+      request<PlanWeekCandidates>('GET', `/plan-week/candidates?horizon=${params.horizon}&start=${params.start}`),
   },
 
   // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────
@@ -1143,8 +1146,12 @@ export interface Objective {
 export type PlanWeekEntryBranch = 'fill_week' | 'schedule_tasks' | 'review' | 'onboarding';
 export type PlanWeekSessionStatus = 'open' | 'completed' | 'abandoned';
 
-/** `ts` is optional on the way OUT (the server stamps it) and always present coming back. */
-export interface PlanWeekMessage { role: 'system' | 'user'; text: string; ts?: string }
+/**
+ * `ts` is optional on the way OUT (the server stamps it) and always present coming back.
+ * `kind` machine-tags the step that produced the entry (`plan_week:horizon`, …) so the
+ * Logs tab can render a flow structurally instead of parsing prose; absent on plain turns.
+ */
+export interface PlanWeekMessage { role: 'system' | 'user'; text: string; ts?: string; kind?: string }
 
 export interface PlanningSession {
   id: string;
@@ -1155,9 +1162,23 @@ export interface PlanningSession {
   entry_branch: PlanWeekEntryBranch;
   status: PlanWeekSessionStatus;
   llm_used: boolean;
-  transcript: Required<PlanWeekMessage>[];
+  /** `ts` is always stamped server-side; `kind` stays optional (plain turns have none). */
+  transcript: (PlanWeekMessage & { ts: string })[];
   summary: string | null;
   created_at: string;
+}
+
+/** T3 — the read-only "what would Fill do?" summary. */
+export interface PlanWeekCandidateTask { id: string; title: string; priority: number | null; due_at: string | null }
+export interface PlanWeekCandidates {
+  /** Server-clamped to 1..60, matching autoRun — may differ from what was requested. */
+  horizon: number;
+  start: string;
+  /** `count` is the untruncated eligible total; `will_stage` applies fill's cap of 20. */
+  open_tasks: { count: number; will_stage: number; items: PlanWeekCandidateTask[] };
+  flight_plan: { count: number };
+  objectives: { count: number };
+  recurring: { count: number };
 }
 
 export interface ObjectiveInput {
