@@ -473,6 +473,23 @@ export const api = {
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
   },
 
+  // ── FTUE · T1: plan-my-week session log ───────────────────────────────────────
+  planWeek: {
+    session: {
+      open: (entry_branch: PlanWeekEntryBranch) =>
+        request<{ session: PlanningSession }>('POST', '/plan-week/sessions', { entry_branch }),
+      /** Newest first — the order the Logs tab renders. */
+      list: () => request<{ sessions: PlanningSession[] }>('GET', '/plan-week/sessions'),
+      get: (id: string) => request<{ session: PlanningSession }>('GET', `/plan-week/sessions/${id}`),
+      /** `ts` is stamped server-side when omitted, so the log isn't ordered by a client clock. */
+      append: (id: string, message: PlanWeekMessage) =>
+        request<{ session: PlanningSession }>('PATCH', `/plan-week/sessions/${id}`, { message }),
+      close: (id: string, patch: { status: PlanWeekSessionStatus; summary?: string; llm_used?: boolean }) =>
+        request<{ session: PlanningSession }>('PATCH', `/plan-week/sessions/${id}`, patch),
+      remove: (id: string) => request<{ ok: boolean }>('DELETE', `/plan-week/sessions/${id}`),
+    },
+  },
+
   // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────
   // Session lives in an httpOnly cookie set by the server; same-origin fetch sends
   // it automatically, so these need no token handling. `config` is public (the
@@ -1120,6 +1137,27 @@ export interface Objective {
   /** AF-2: linked open/done-recent tasks — leaves populated, non-leaves always `[]`. */
   tasks: ObjectiveTaskSummary[];
   children: Objective[];
+}
+
+// ── FTUE · T1: plan-my-week session log (server: services/planning-sessions.ts) ──
+export type PlanWeekEntryBranch = 'fill_week' | 'schedule_tasks' | 'review' | 'onboarding';
+export type PlanWeekSessionStatus = 'open' | 'completed' | 'abandoned';
+
+/** `ts` is optional on the way OUT (the server stamps it) and always present coming back. */
+export interface PlanWeekMessage { role: 'system' | 'user'; text: string; ts?: string }
+
+export interface PlanningSession {
+  id: string;
+  owner_id: string;
+  started_at: string;
+  /** NULL until the session closes. */
+  ended_at: string | null;
+  entry_branch: PlanWeekEntryBranch;
+  status: PlanWeekSessionStatus;
+  llm_used: boolean;
+  transcript: Required<PlanWeekMessage>[];
+  summary: string | null;
+  created_at: string;
 }
 
 export interface ObjectiveInput {

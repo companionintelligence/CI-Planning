@@ -1061,6 +1061,21 @@ exports[`behavior baseline — schema shape > preserves every table and column n
   },
   {
     "columns": [
+      "id",
+      "owner_id",
+      "started_at",
+      "ended_at",
+      "entry_branch",
+      "status",
+      "llm_used",
+      "transcript",
+      "summary",
+      "created_at",
+    ],
+    "table": "planning_sessions",
+  },
+  {
+    "columns": [
       "possible_task_id",
       "tag_id",
     ],
