@@ -491,6 +491,9 @@ export const api = {
     /** T3 preview — read-only; writes nothing, so it is safe to re-run per horizon change. */
     candidates: (params: { horizon: number; start: string }) =>
       request<PlanWeekCandidates>('GET', `/plan-week/candidates?horizon=${params.horizon}&start=${params.start}`),
+    /** T5 recap — one request for the whole week. Omit `anchor` for the week that just ended. */
+    review: (anchor?: string) =>
+      request<PlanWeekReview>('GET', `/plan-week/review${anchor ? `?anchor=${anchor}` : ''}`),
   },
 
   // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────
@@ -1179,6 +1182,17 @@ export interface PlanWeekCandidates {
   flight_plan: { count: number };
   objectives: { count: number };
   recurring: { count: number };
+}
+
+/** T5 — the whole weekly recap in one payload (server composes it; see plan-week-review.ts). */
+export interface PlanWeekReview {
+  /** The anchor actually used — echoed so the client never recomputes the week math. */
+  anchor: string;
+  week: WeekReview;
+  calibration: Calibration;
+  stars: DayStar[];
+  note_dates: string[];
+  sessions: PlanningSession[];
 }
 
 export interface ObjectiveInput {

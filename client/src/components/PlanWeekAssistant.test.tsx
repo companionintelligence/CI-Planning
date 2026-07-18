@@ -41,6 +41,13 @@ vi.mock('../stores/index.js', () => ({
 // stubbing it here keeps this file from needing the branch's api/store seams.
 vi.mock('./PlanWeekFill.js', () => ({ PlanWeekFill: () => <div>fill-branch</div> }));
 vi.mock('./PlanWeekScheduleTasks.js', () => ({ PlanWeekScheduleTasks: () => <div>schedule-branch</div> }));
+// This stub exposes the shell's injected onBack, so "Back returns to the menu" still
+// proves something real now that each branch owns its own Back control.
+vi.mock('./PlanWeekReviewBranch.js', () => ({
+  PlanWeekReviewBranch: (p: { onBack: () => void }) => (
+    <div><span>review-branch</span><button onClick={() => p.onBack()}>Back</button></div>
+  ),
+}));
 
 const { PlanWeekAssistant, PromptStep } = await import('./PlanWeekAssistant.js');
 
@@ -81,8 +88,8 @@ describe('PlanWeekAssistant — the shell', () => {
 
     await waitFor(() => expect(openMock).toHaveBeenCalledTimes(1));
     expect(openMock).toHaveBeenCalledWith('review');
-    // The branch question replaced the menu.
-    await screen.findByText('What would you like to review?');
+    // The branch's component replaced the menu.
+    await screen.findByText('review-branch');
     expect(screen.queryByText('Fill next week')).toBeNull();
     // The choice is logged to the transcript.
     await waitFor(() => expect(appendMock).toHaveBeenCalledWith('sess-1', { role: 'user', text: 'Review past data', kind: 'plan_week:review' }));
@@ -106,8 +113,9 @@ describe('PlanWeekAssistant — the shell', () => {
     await screen.findByText('Review past data');
 
     fireEvent.click(screen.getByText('Review past data'));
-    await screen.findByText('What would you like to review?');
+    await screen.findByText('review-branch');
 
+    // Each branch component owns its own Back; the shell's onBack returns to the menu.
     fireEvent.click(screen.getByText('Back'));
     await screen.findByText('Schedule tasks'); // menu is back
   });
@@ -169,7 +177,7 @@ describe('PlanWeekAssistant — the shell', () => {
     fireEvent.click(screen.getByText('Review past data'));
 
     // The user is not stranded on the menu by a failed log write.
-    await screen.findByText('What would you like to review?');
+    await screen.findByText('review-branch');
     await waitFor(() => expect(toastMock).toHaveBeenCalledWith('offline', 'error'));
   });
 
@@ -178,7 +186,7 @@ describe('PlanWeekAssistant — the shell', () => {
     setPlanWeekModal({ open: true });
     await screen.findByText('Review past data');
     fireEvent.click(screen.getByText('Review past data'));
-    await screen.findByText('What would you like to review?');
+    await screen.findByText('review-branch');
 
     fireEvent.click(screen.getByText('Done'));
     await waitFor(() => expect(planWeekModal().open).toBe(false));
