@@ -681,12 +681,12 @@ export const lifePriorities = sqliteTable('life_priorities', {
 export const planningSessions = sqliteTable('planning_sessions', {
   id: text('id').primaryKey().$defaultFn(newId),
   ownerId: text('owner_id').references(() => owners.id).notNull(),
-  startedAt: text('started_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  startedAt: text('started_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   endedAt: text('ended_at'),
   entryBranch: text('entry_branch').notNull(),          // fill_week | schedule_tasks | review | onboarding
   status: text('status').notNull().default('open'),     // open | completed | abandoned
   llmUsed: integer('llm_used', { mode: 'boolean' }).notNull().default(false),
   transcript: text('transcript').notNull().default('[]'), // JSON array of { role, text, ts }
   summary: text('summary'),
-  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text('created_at').notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
 });

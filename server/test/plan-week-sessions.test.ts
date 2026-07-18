@@ -73,6 +73,29 @@ describe('/api/plan-week/sessions', () => {
       method: 'POST', json: { entry_branch }, ...(headers ? { headers } : {}),
     });
 
+  /**
+   * `started_at` must be true ISO-8601, not SQLite's `CURRENT_TIMESTAMP`
+   * (`YYYY-MM-DD HH:MM:SS`) — JS reads that space-separated form as LOCAL time while
+   * SQLite stored UTC, so the Logs tab would shift every session by the viewer's offset,
+   * and it would disagree with `ended_at`, which the service writes as real ISO.
+   */
+  it('stamps started_at and ended_at in the same ISO-8601 format', async () => {
+    const id = (await open()).body.session.id;
+    const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+    const created = (await api<{ session: PlanningSession }>(server.url, `/api/plan-week/sessions/${id}`)).body.session;
+    expect(created.started_at).toMatch(iso);
+    expect(created.created_at).toMatch(iso);
+    expect(Number.isNaN(Date.parse(created.started_at))).toBe(false);
+
+    const closed = await api<{ session: PlanningSession }>(server.url, `/api/plan-week/sessions/${id}`, {
+      method: 'PATCH', json: { status: 'completed' },
+    });
+    expect(closed.body.session.ended_at).toMatch(iso);
+    // Both ends of the session are comparable as plain strings.
+    expect(closed.body.session.ended_at! >= created.started_at).toBe(true);
+  });
+
   it('round-trips open → append → close → list → get → delete', async () => {
     const created = await open('fill_week');
     expect(created.status).toBe(201);
@@ -108,8 +131,8 @@ describe('/api/plan-week/sessions', () => {
 
   it('lists newest first', async () => {
     const a = (await open('review')).body.session.id;
-    // started_at defaults to CURRENT_TIMESTAMP (second granularity), so order by it alone
-    // is a coin flip for two rows created in the same tick — age the first explicitly.
+    // started_at now carries milliseconds, but two inserts can still land in the same one —
+    // age the first explicitly so the ordering assertion is deterministic, not merely likely.
     sqlite.prepare(`UPDATE planning_sessions SET started_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(a);
     const b = (await open('fill_week')).body.session.id;
 
