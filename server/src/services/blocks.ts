@@ -469,7 +469,14 @@ export async function moveBlockGroup(ownerId: string, id: string, deltaMinutes: 
   const shift = (iso: string) => new Date(Date.parse(iso) + deltaMs).toISOString();
   const upd = sqlite.prepare(`UPDATE time_blocks SET start_at = ?, end_at = ? WHERE id = ? AND owner_id = ?`);
   sqlite.transaction(() => {
-    for (const m of members) upd.run(shift(m.start_at), shift(m.end_at), m.id, ownerId);
+    for (const m of members) {
+      // Phase L: same stamp updateBlock does — a group drag is an owner edit, so a queued
+      // op holding the pre-drag times must lose LWW rather than snap the group back. Gated
+      // on the owner-scoped UPDATE landing (stampRow keys on id alone; see
+      // cascadeArchiveToDescendants) even though `members` is already owner-scoped.
+      const info = upd.run(shift(m.start_at), shift(m.end_at), m.id, ownerId);
+      if (info.changes > 0) stampRow(sqlite, 'block', m.id, ['startAt', 'endAt']);
+    }
   })();
 
   const ids = members.map((m) => m.id);
@@ -506,6 +513,10 @@ export async function promoteBlockToScheduled(ownerId: string, id: string, input
     .set({ blockType: 'scheduled', allDay: input.all_day ?? false, startAt: input.start_at, endAt, goalStartDate: null })
     .where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, ownerId)))
     .returning();
+  // Phase L: every field written here is mergeable, so without the stamp a queued op
+  // still holding block_type='concept' would win LWW and un-promote the Plan. The
+  // owner-scoped `existing` guard above means this row is ours.
+  stampRow(sqlite, 'block', id, ['blockType', 'allDay', 'startAt', 'endAt', 'goalStartDate']);
   const out = toApi(block);
   // REQ2: a promoted concept linked to a task gets concrete times — mirror them.
   const syncedTaskId = syncTaskFromBlock(id, ownerId);
