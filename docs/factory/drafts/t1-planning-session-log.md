@@ -11,10 +11,12 @@
 > **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
 > durable pointers here are the *file + symbol* names.
 >
-> ⚠️ **Its migration slot is TAKEN — this one will actually break.** The ticket hardcodes
-> `0127_planning_sessions` in five places, but `0127` is now `life_priorities` (PR #356) and the
-> head is `0130`. Claim the next free slot at implementation time (today: `0131`) and rename the
-> file, the `id` export, the `index.ts` import, and the `MIGRATIONS` append to match.
+> ⚠️ **Its migration slot is TAKEN.** `0127` is now `life_priorities` (PR #356) and the head is
+> `0130`, so the `0127_planning_sessions` name appears in five places below that all need
+> renumbering: the file, the `id` export, the `index.ts` import, the `MIGRATIONS` append, and the
+> DoD line. **Use `0131`** — verified free on 2026-07-18 with no open PRs claiming a slot.
+> (§Pinned conventions already anticipated this: *"the implementer confirms the next free integer
+> at implementation time and renumbers if `0127` is taken."* This banner is that confirmation.)
 
 ## Goal
 

@@ -673,3 +673,20 @@ export const lifePriorities = sqliteTable('life_priorities', {
   createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (t) => ({ ownerCategory: unique().on(t.ownerId, t.category) }));
+
+// --- FTUE · T1 (0131): the planning-session log. One row per "Plan my week" session;
+// the whole conversation is the `transcript` JSON array on the row — no per-turn events
+// table by design. `entry_branch`/`status` are code-enforced enums, not CHECK constraints.
+// The ix_planning_sessions_owner index lives in the migration DDL, per repo convention. ---
+export const planningSessions = sqliteTable('planning_sessions', {
+  id: text('id').primaryKey().$defaultFn(newId),
+  ownerId: text('owner_id').references(() => owners.id).notNull(),
+  startedAt: text('started_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  endedAt: text('ended_at'),
+  entryBranch: text('entry_branch').notNull(),          // fill_week | schedule_tasks | review | onboarding
+  status: text('status').notNull().default('open'),     // open | completed | abandoned
+  llmUsed: integer('llm_used', { mode: 'boolean' }).notNull().default(false),
+  transcript: text('transcript').notNull().default('[]'), // JSON array of { role, text, ts }
+  summary: text('summary'),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
