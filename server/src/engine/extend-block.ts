@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
+import { stampRow } from '../sync/apply.js';
 
 /**
  * Phase Z · Z3 (Time-Sense) — "Keep working" block extension (§1.1a).
@@ -159,13 +160,22 @@ export function extendBlock(
   if (fits && opts.commit) {
     const now = new Date().toISOString();
     sqlite.transaction(() => {
-      sqlite
+      // Phase L: an extend is an owner edit, so both the anchor and everything its
+      // cascade displaces must stamp — otherwise a queued op holding the pre-extend
+      // times wins LWW and the whole shift unwinds. Gated on the owner-scoped UPDATE
+      // landing: stampRow keys on id alone (see cascadeArchiveToDescendants).
+      // `last_moved_at` needs no stamp — it isn't in the sync allowlist.
+      const anchor = sqlite
         .prepare(`UPDATE time_blocks SET end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`)
         .run(newEndAt, now, blockId, owner);
+      if (anchor.changes > 0) stampRow(sqlite, 'block', blockId, ['endAt']);
       const upd = sqlite.prepare(
         `UPDATE time_blocks SET start_at = ?, end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`,
       );
-      for (const m of movedSet) upd.run(m.after.start_at, m.after.end_at, now, m.block_id, owner);
+      for (const m of movedSet) {
+        const info = upd.run(m.after.start_at, m.after.end_at, now, m.block_id, owner);
+        if (info.changes > 0) stampRow(sqlite, 'block', m.block_id, ['startAt', 'endAt']);
+      }
     })();
     committed = true;
   }
