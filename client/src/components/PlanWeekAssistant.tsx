@@ -3,6 +3,7 @@ import { X, ChevronLeft } from 'lucide-solid';
 import { api, type PlanWeekEntryBranch } from '../lib/api.js';
 import { planWeekModal, setPlanWeekModal, showToast } from '../stores/index.js';
 import { PlanWeekFill } from './PlanWeekFill.js';
+import { PlanWeekScheduleTasks } from './PlanWeekScheduleTasks.js';
 
 /**
  * PlanWeekAssistant (FTUE · T2, #338) — the "Plan my week" shell.
@@ -50,7 +51,7 @@ const BRANCHES: {
   component?: (props: BranchProps) => JSX.Element;
 }[] = [
   { key: 'fill_week', label: 'Fill next week', subtitle: 'Deterministic — no AI', component: (p) => <PlanWeekFill {...p} /> },
-  { key: 'schedule_tasks', label: 'Schedule tasks', question: 'Which tasks should I find time for?' },
+  { key: 'schedule_tasks', label: 'Schedule tasks', subtitle: 'One at a time — no AI', component: (p) => <PlanWeekScheduleTasks {...p} /> },
   { key: 'review', label: 'Review past data', question: 'What would you like to review?' },
 ];
 
