@@ -1,5 +1,21 @@
 > **Type:** feature · **Phase:** ENTITY · **Branch:** `feat/task-card-new-objective` · **Commit style:** `feat(tasks): create an objective from a task in the picker` · **Design:** user feedback 2026-07-15 · **Dependencies:** **blocked by ENTITY-3**
 
+> ### 📓 HISTORICAL — this is the pre-implementation draft, and it SHIPPED
+> It drove **PR #368** (merged 2026-07-16, no migration), closing issue **#360**. It is kept
+> as the **decision record**: the *why* behind the design, which the diff cannot explain.
+>
+> **It describes the codebase as it was BEFORE #368 — read it in the past tense.** Every
+> `file:line` below is a snapshot from 2026-07-15 authoring and has drifted. For current
+> behavior read the code; the durable pointers here are the *file + symbol* names.
+>
+> ⚠️ **This draft was stale before implementation even started, and it misled.** It was
+> written against ENTITY-3's *original* placeholder-subtask design, which was overturned as
+> backwards before either ticket shipped. So the "same mechanism as ENTITY-3: creating a
+> subtask auto-promotes the parent" claim under Non-goals describes code that was **never
+> written** — it sent the implementer looking for a promote path to extract that did not
+> exist. What shipped is direct promote plus a guard-only extraction
+> (`isPromotableToObjective`). Read ENTITY-3's revision notice before this file.
+
 ## Goal
 
 Let the owner create a **new Objective from a task** directly in the Tasks backlog, without leaving for the Objectives tab.

@@ -5,6 +5,11 @@
 > **Design:** this ticket is the spec (STUB — full commit-recipe to be drafted when Wave 5 starts). See [docs/ftue-plan.md](../../ftue-plan.md).
 > **Dependencies:** M1 (a shared external event must exist)
 
+> ### 🚧 OPEN but DEFERRED — issue #353. A stub, not a commit recipe.
+> Nothing here has been built, and the full recipe is still to be drafted (see the Design line
+> above). Treat this as intent only: it is a snapshot from 2026-07-14 authoring, taken before the
+> migration head moved **0126 → 0130** and the ENTITY wave (#357–#375) landed.
+
 ## Goal
 
 An internal **comment thread among co-owners of a shared account**, keyed by the **shared external event identity** `(provider, account, external_id)` — NOT a tenant-local `block_id`, because each co-owner ingests their own local copy. Any owner who connects that account (and thus has an `external_events` row for that `external_id`) may read/write the thread. This is the **FIRST cross-owner read path** in the codebase.

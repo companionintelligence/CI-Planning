@@ -1,5 +1,27 @@
 > **Type:** spike · **Phase:** ENTITY · **Branch:** `spike/objectives-in-planner` · **Commit style:** `docs(planner): decide how objectives render as block groupings` · **Design:** user feedback 2026-07-15 · **Dependencies:** none
 
+> ### 🚧 LIVE — issue #361, open and in work. But the pins below have drifted.
+> Unlike its ENTITY siblings this one has **not** shipped, so the design question it poses
+> still stands. It is still a **pre-implementation artifact**: the `file:line` pins are a
+> snapshot from 2026-07-15 authoring and were never corrected in-flight. Verified against
+> `main` at migration head `0130` on 2026-07-16:
+>
+> - ❌ **Blocker 1's citation is wrong — the conclusion is right.** `objectives` is **not in
+>   `server/src/db/schema.ts`** and never has been (`git log -S"objectives = sqliteTable"` is
+>   empty); the DDL is raw SQL in `server/src/db/migrations/0081_objectives.ts`. Lines
+>   `648-669` are `sync_events` / `audit_log`. **"Before implementation" step 5 sends you to
+>   the wrong file** — but the fact it asks you to confirm holds: there is no `start_at` /
+>   `end_at` on `objectives`.
+> - ⚠️ **`ObjectiveTaskSummary` moved** — `api.ts:1065-1075` → **`1078-1087`**.
+> - ⚠️ **The `Objective` type gained three fields** this draft predates: `archived_at`,
+>   `archive_root_id`, `purge_after` (migration `0129`, PR #366).
+> - ✅ **Blockers 2 and 4 still hold.** `Planner.tsx` has zero matches for `objective`, there
+>   is still no objectives store, and the container-box contract is still at `Planner.tsx:84`.
+> - ✅ **One DoD question is already answered.** PR #369 made `objective_ids` mean *live links
+>   only* and filtered `archived_at IS NULL` through both of `buildTree`'s CTEs, so an
+>   archived objective can never reach the tree API and can never render a phantom grouping.
+>   The spike does not need to design for that case — state it and move on.
+
 ## Why this is a spike and not a commit recipe
 
 The owner asked: *"Objectives happen across multiple sessions. They are similar to timeblocks. Represent Objectives in the same way as a Time Block"*, and chose: **render an Objective as a container that groups its tasks' blocks in the Planner**, with the span derived from those child blocks so no new time fields are needed.

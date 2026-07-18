@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (weekly-planning FTUE framing in `docs/ftue-plan.md` §5–§6)
 > **Dependencies:** T3 (the Fill-next-week branch component, its `POST /api/auto/run` call, and the assistant transcript surface)
 
+> ### 🚧 LIVE — issue #345, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 When the T3 Fill-next-week branch runs and the client's `aiAvailable()` gate is true, order **every day of the week horizon** with the smart `authorPlanOrder` loop — reusing the existing agent and the `POST /api/plan/reauthor` (`{ force: true }`) semantics — instead of the current "day 0 smart, future days deterministic" split. When AI is off / Ollama is down / a call fails mid-loop, `authorPlanOrder` already degrades to the deterministic order, so the week still gets planned. Surface an "(AI)" affordance **truthfully** from the returned `llm` flag (never from `aiAvailable()` alone) and record the AI-vs-deterministic outcome in the T3 assistant transcript.

@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (Weekly Planning Assistant context: `docs/ftue-plan.md`)
 > **Dependencies:** T1 — plan-week session store + `GET /api/plan-week/sessions`, `GET /api/plan-week/sessions/:id`, `DELETE /api/plan-week/sessions/:id`, and the client `api.planWeek.session.*` methods. **T6 consumes that contract; it does not define it.**
 
+> ### 🚧 LIVE — issue #342, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Add a third **Logs** tab to Settings that lists the user's Weekly-Planning-Assistant sessions recorded by T1, and lets them:
