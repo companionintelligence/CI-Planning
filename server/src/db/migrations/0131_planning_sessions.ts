@@ -19,20 +19,28 @@ export const id = '0131_planning_sessions';
  * Slot note: the T1 draft was authored at head 0126 and reserved `0127`, but that slot
  * went to `life_priorities` (#356) while this ticket sat. 0131 was the next free
  * integer with no open PR claiming it.
+ *
+ * Timestamps use the repo's ISO-8601 idiom (`strftime('%Y-%m-%dT%H:%M:%fZ','now')`, as in
+ * audit_log / sync_events), NOT `CURRENT_TIMESTAMP`. The draft asked for "ISO-8601
+ * timestamps via CURRENT_TIMESTAMP", but that yields `YYYY-MM-DD HH:MM:SS` — a space, no
+ * zone — which JS `new Date()` reads as LOCAL time even though SQLite stored UTC, so the
+ * Logs tab (T6) would shift every session by the viewer's offset. It also collides with
+ * `ended_at`, which the service writes as real ISO. `%f` additionally gives milliseconds,
+ * so newest-first ordering doesn't tie at one-second granularity.
  */
 export function up(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS planning_sessions (
       id            TEXT PRIMARY KEY,
       owner_id      TEXT NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
-      started_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       ended_at      TEXT,
       entry_branch  TEXT NOT NULL,
       status        TEXT NOT NULL DEFAULT 'open',
       llm_used      INTEGER NOT NULL DEFAULT 0,
       transcript    TEXT NOT NULL DEFAULT '[]',
       summary       TEXT,
-      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
     -- The Logs tab lists one owner's sessions newest-first; this index serves it.
     CREATE INDEX IF NOT EXISTS ix_planning_sessions_owner
