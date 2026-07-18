@@ -12,9 +12,11 @@
 > durable pointers here are the *file + symbol* names.
 >
 > ⚠️ **Its migration slot is TAKEN.** The ticket claims `0128_owner_onboarded`, but `0128` is now
-> `sleep_hours` and the head is `0130`; its "current head is `0126`" line is stale. The ticket's own
-> *"confirm the next free slot at implementation time"* caveat is the right instinct — the answer
-> today is `0131`+, and whichever of T1/T11 lands first takes `0131`.
+> `sleep_hours`; its "current head is `0126`" line is stale. The ticket's own *"confirm the next
+> free slot at implementation time"* caveat is the right instinct — and T1 has since taken `0131`,
+> so **use `0132`** (free as of 2026-07-18, no open PR claiming it) and rename the file, the `id`
+> export, the `index.ts` import, and the `MIGRATIONS` append to match. Re-confirm at start: this
+> answer moves every time a migration lands.
 
 ## Goal
 
