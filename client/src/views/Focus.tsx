@@ -1,7 +1,7 @@
 import { createSignal, createMemo, Show, For, onCleanup } from 'solid-js';
-import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw } from 'lucide-solid';
+import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, CalendarRange } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
-import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay } from '../stores/index.js';
+import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, setPlanWeekModal } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
@@ -262,6 +262,15 @@ export function Focus() {
         <span class="text-sm text-muted-foreground">
           {new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </span>
+        {/* T2: the persistent weekly-planning entry point. `self-center` because the row
+            is items-baseline, which would otherwise sit the button on the text baseline. */}
+        <div class="flex-1" />
+        <button
+          class="btn-ghost text-xs self-center inline-flex items-center gap-1.5"
+          onClick={() => setPlanWeekModal({ open: true })}
+        >
+          <CalendarRange size={14} /> Plan my week
+        </button>
       </div>
 
       {/* Time-Sense hero — the in-progress block, live countdown, Focus Ritual launcher. */}
@@ -332,8 +341,18 @@ export function Focus() {
       <div class="flex flex-col gap-1.5">
         <For each={upcoming()}>{(e) => <Row entry={e} />}</For>
         <Show when={upcoming().length === 0}>
-          <div class="text-sm text-muted-foreground text-center py-10">
-            {entries().length === 0 ? 'Nothing scheduled today — plan your day on Today.' : 'All done for today. 🎉'}
+          <div class="text-sm text-muted-foreground text-center py-10 flex flex-col items-center gap-3">
+            {/* T2: a truly-empty day is the strongest moment to offer planning, so the
+                copy now points at the assistant instead of sending the user to Today. */}
+            <Show when={entries().length === 0} fallback={<span>All done for today. 🎉</span>}>
+              <span>Nothing scheduled today.</span>
+              <button
+                class="btn-primary text-xs inline-flex items-center gap-1.5"
+                onClick={() => setPlanWeekModal({ open: true })}
+              >
+                <CalendarRange size={14} /> Plan my week
+              </button>
+            </Show>
           </div>
         </Show>
       </div>
