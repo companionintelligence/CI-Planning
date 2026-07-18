@@ -4,6 +4,7 @@ import { api, type PlanWeekEntryBranch } from '../lib/api.js';
 import { planWeekModal, setPlanWeekModal, showToast } from '../stores/index.js';
 import { PlanWeekFill } from './PlanWeekFill.js';
 import { PlanWeekScheduleTasks } from './PlanWeekScheduleTasks.js';
+import { PlanWeekReviewBranch } from './PlanWeekReviewBranch.js';
 
 /**
  * PlanWeekAssistant (FTUE · T2, #338) — the "Plan my week" shell.
@@ -52,7 +53,7 @@ const BRANCHES: {
 }[] = [
   { key: 'fill_week', label: 'Fill next week', subtitle: 'Deterministic — no AI', component: (p) => <PlanWeekFill {...p} /> },
   { key: 'schedule_tasks', label: 'Schedule tasks', subtitle: 'One at a time — no AI', component: (p) => <PlanWeekScheduleTasks {...p} /> },
-  { key: 'review', label: 'Review past data', question: 'What would you like to review?' },
+  { key: 'review', label: 'Review past data', subtitle: 'Last week — read-only', component: (p) => <PlanWeekReviewBranch {...p} /> },
 ];
 
 /**

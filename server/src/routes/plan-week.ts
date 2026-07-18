@@ -4,6 +4,8 @@ import {
   listSessions, getSession, deleteSession, planWeekCandidates,
   type TranscriptMessage,
 } from '../services/planning-sessions.js';
+import { planWeekReview, priorWeekAnchor } from '../services/plan-week-review.js';
+import { isValidISODate } from '../lib/dates.js';
 
 /**
  * Plan-my-week session log (FTUE · T1, #337) — thin transport over
@@ -22,6 +24,19 @@ import {
  */
 export function planWeekRouter() {
   const router = new Router();
+
+  /**
+   * T5 — the deterministic weekly recap. Defaults to the week that just ended, since
+   * reviewing "past data" from today's anchor would show the in-progress week.
+   * Read-only and LLM-free; auth is inherited (GET ⇒ planning:read).
+   */
+  router.get('/api/plan-week/review', async (ctx) => {
+    const raw = ctx.query.anchor;
+    if (raw !== undefined && !isValidISODate(raw)) {
+      ctx.status = 422; ctx.body = { error: 'anchor must be YYYY-MM-DD' }; return;
+    }
+    ctx.body = planWeekReview((raw as string | undefined) ?? priorWeekAnchor());
+  });
 
   /**
    * T3 — what "Fill next week" would stage/place, for the preview step. Read-only:

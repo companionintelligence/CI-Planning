@@ -2,6 +2,62 @@ import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { isoWeekKey } from '../lib/tz.js';
 
+/** The discriminated shape `GET /api/calibration` has always returned. */
+export type CalibrationReadout =
+  | { calibrated: false; sample_count: number }
+  | {
+      calibrated: true; sample_count: number; bias_ratio: number;
+      p25: number | null; p50: number | null; p75: number | null;
+      computed_at: string; label: string;
+    };
+
+/**
+ * The owner's global estimate-calibration readout.
+ *
+ * Lifted VERBATIM out of the `GET /api/calibration` handler (routes/review.ts) so the
+ * legacy endpoint and T5's weekly-review aggregation cannot drift apart. This is a
+ * source-of-truth dedup, not a behavior change: the endpoint's response must stay
+ * byte-identical, and a test pins that.
+ */
+export function globalCalibrationReadout(owner: string): CalibrationReadout {
+  const row = sqlite
+    .prepare(
+      // Z0 (0107) scope-keyed this table; this legacy surface reads the global
+      // row explicitly — without the filter it would grab an arbitrary scope.
+      `SELECT computed_at, sample_count, bias_ratio, p25, p50, p75
+       FROM estimate_calibration WHERE owner_id = ? AND scope_kind = 'global' AND scope_ref = ''`,
+    )
+    .get(owner) as {
+      computed_at: string;
+      sample_count: number;
+      bias_ratio: number | null;
+      p25: number | null;
+      p50: number | null;
+      p75: number | null;
+    } | undefined;
+
+  if (!row || row.bias_ratio == null) {
+    return { calibrated: false, sample_count: row?.sample_count ?? 0 };
+  }
+
+  const pct = Math.round(Math.abs(row.bias_ratio - 1) * 100);
+  const direction = row.bias_ratio > 1 ? 'longer' : 'shorter';
+  const label = row.bias_ratio === 1
+    ? 'Your estimates are accurate'
+    : `You tend to take ${pct}% ${direction} than estimated`;
+
+  return {
+    calibrated: true,
+    sample_count: row.sample_count,
+    bias_ratio: row.bias_ratio,
+    p25: row.p25,
+    p50: row.p50,
+    p75: row.p75,
+    computed_at: row.computed_at,
+    label,
+  };
+}
+
 export interface WeekReview {
   week_key: string;
   /** Mon→Sun (7 YYYY-MM-DD strings). */
