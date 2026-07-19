@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (see also `docs/ftue-plan.md` §5–§6 — the "fewest clicks" / trust-dial framing this branch operationalizes)
 > **Dependencies:** T2 (the `PlanWeekAssistant` shell this branch plugs into) — hard; T1 (the active-session transcript + its append seam) — hard
 
+> ### 🚧 LIVE — issue #339, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Ship the **"Fill next week"** branch of the weekly Planning Assistant: a **fully deterministic** (no LLM) flow that walks the user through **choose horizon → choose sources → preview candidates → confirm**, where confirm runs the EXISTING `POST /api/auto/fill` then `POST /api/auto/run { horizon_days }`. Every step appends one entry to the active session transcript (T1). No new placement engine — the branch is a thin driver over `/api/auto/*` plus one read-only preview endpoint.

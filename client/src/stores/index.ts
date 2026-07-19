@@ -477,3 +477,9 @@ export const [elementModal, setElementModal] = createSignal<{
   editTarget?: { kind: ElementKind; id: string };
   parentId?: string; // when adding a subtask
 }>({ open: false, mode: 'add', kind: null });
+
+// ── Plan-my-week assistant modal (FTUE · T2) ────────────────────────────────────
+// Same once-mounted, signal-self-driven idiom as elementModal above: the shell reads
+// this and renders nothing when closed. Minimal shape — the assistant owns its own
+// step state internally, so nothing but open/closed belongs here.
+export const [planWeekModal, setPlanWeekModal] = createSignal<{ open: boolean }>({ open: false });

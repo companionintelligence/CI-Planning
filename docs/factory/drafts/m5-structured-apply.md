@@ -5,6 +5,11 @@
 > **Design:** this ticket is the spec (STUB — full commit-recipe to be drafted when Wave 5 starts).
 > **Dependencies:** M3 (comments backend), M4 (comments UI)
 
+> ### 🚧 OPEN but DEFERRED — issue #355. A stub, not a commit recipe.
+> Nothing here has been built, and the full recipe is still to be drafted (see the Design line
+> above). Treat this as intent only: it is a snapshot from 2026-07-14 authoring, taken before the
+> migration head moved **0126 → 0130** and the ENTITY wave (#357–#375) landed.
+
 ## Goal
 
 Make a comment able to carry a **structured proposal** (e.g. reschedule to Fri, change estimate, retitle) that the **event creator applies to their local task in one click** — the comment then resolves (`status='applied'`). Turns the feedback thread into an actionable loop; only the creator (outbound-origin owner) can apply, executing via existing task/block update APIs.

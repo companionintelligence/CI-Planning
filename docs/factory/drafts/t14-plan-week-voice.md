@@ -5,6 +5,11 @@
 > **Design:** this ticket is the spec (STUB — full commit-recipe to be drafted when Wave 4 starts). See `docs/ftue-plan.md`.
 > **Dependencies:** T8 (parse free-text → intent — voice feeds the same text path)
 
+> ### 🚧 OPEN but DEFERRED — issue #350. A stub, not a commit recipe.
+> Nothing here has been built, and the full recipe is still to be drafted (see the Design line
+> above). Treat this as intent only: it is a snapshot from 2026-07-14 authoring, taken before the
+> migration head moved **0126 → 0130** and the ENTITY wave (#357–#375) landed.
+
 ## Goal
 
 Let the assistant's free-text prompt accept **talk** as well as type: a mic button captures speech via the browser **Web Speech API** (`SpeechRecognition` / `webkitSpeechRecognition`), transcribes to text locally, and feeds the existing text input → the T8 parse path. No cloud STT (local-first invariant). Degrades cleanly to typing when the API is unavailable or Ollama is down.

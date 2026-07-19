@@ -535,6 +535,11 @@ export async function deleteTask(ownerId: string, id: string): Promise<DeleteTas
     .where(and(eq(tasks.id, id), eq(tasks.ownerId, ownerId))) // W3.1a: owner-scoped
     .returning();
   if (!task) return { ok: false, error: 'not_found' };
+  // `cancelled` is not pinned in applyMonotonic (only done/scheduled are), and a pin
+  // would make cancelling irreversible through sync. So the server clock is the only
+  // thing stopping a queued op with an older clientTs from setting status back to
+  // 'open' and resurrecting this task — same guard the archive fields rely on.
+  stampRow(sqlite, 'task', id, ['status']);
   syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
   dropSourceObjective(id, ownerId);
   if (task.parentId) unpromoteIfEmpty(task.parentId, ownerId);
@@ -556,6 +561,10 @@ export async function promoteToHabit(ownerId: string, id: string): Promise<Promo
     .where(and(eq(tasks.id, id), eq(tasks.ownerId, ownerId))) // W3.1a: owner-scoped
     .returning();
   if (!task) return { ok: false, error: 'not_found' };
+  // `subtype` is mergeable and unpinned, so without the server clock a queued op
+  // carrying the old subtype would win LWW and silently demote the habit — same
+  // hole as the soft-delete's status write above.
+  stampRow(sqlite, 'task', id, ['subtype']);
   ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
   writeAudit({ ownerId, actor: 'owner', action: 'promote', entity: `task:${id}` });
   return { ok: true, task };
@@ -626,6 +635,12 @@ export async function skipRecurringInstance(ownerId: string, id: string): Promis
   }
   const res = skipInstance(id);
   if (!res.ok) return { ok: false, error: res.reason };
+  // Phase L: `skipped` is mergeable and unpinned, so the stamp is what stops a queued op
+  // from reviving this instance. It belongs here, not in the engine: skipInstance resolves
+  // by id alone with no owner to gate on, while the check above has already proven the row
+  // is ours. (The template's EXDATE write needs no stamp — recurrence_exdates isn't in the
+  // sync allowlist, so no op can race it.)
+  stampRow(sqlite, 'task', id, ['status']);
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   writeAudit({ ownerId, actor: 'owner', action: 'skip', entity: `task:${id}` });
   return { ok: true, task, skipped: res.date };

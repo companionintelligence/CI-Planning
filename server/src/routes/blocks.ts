@@ -9,6 +9,7 @@ import { blocksToICal, type ICalBlock } from '../lib/ical.js';
 // whats-next render below.
 import { serverTimezone, utcToZonedWallTime } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
+import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { syncTaskFromBlock, revertTaskPlacementStatus } from '../services/block-task-sync.js';
 import {
@@ -295,7 +296,11 @@ export function blocksRouter() {
       // Attempt 1 becomes history — skipped, not deleted. The partial time_entry is
       // left as-is: the task stays open, and calibration only reads DONE tasks, so
       // the partial never enters estimate_calibration (§1.1b / N L169) — no flag needed.
-      sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
+      // Phase L: `skipped` is mergeable and unpinned, so without the stamp a queued op
+      // still calling this block 'planned' would win LWW and resurrect the abandoned
+      // attempt. (revertTaskPlacementStatus stamps the task side itself.)
+      const info = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
+      if (info.changes > 0) stampRow(sqlite, 'block', id, ['status']);
       staged = sqlite
         .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
         .run(owner, block.task_id, nextPos).changes > 0;

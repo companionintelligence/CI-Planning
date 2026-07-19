@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (FTUE framing: `docs/ftue-plan.md`)
 > **Dependencies:** T1 (`planning_sessions` table + `services/planning-sessions.ts` + `routes/plan-week.ts`), T6 (Settings **Logs** tab)
 
+> ### 🚧 LIVE — issue #346, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Add a **"Consolidate (summarize)"** action to the Settings → **Logs** tab (T6) that collapses a user-selected set of planning sessions into ONE prose summary. A new endpoint `POST /api/plan-week/sessions/consolidate { ids: string[] }` returns `{ summary, source }`. When a reachable Ollama makes AI usable, the summary is generated through the `renderCopy` Voice loop (reusing the existing `weekly_review` surface); when Ollama is down, `renderCopy` degrades to a **deterministic digest** (session count, date range, branches used, and summed action / created-task counts) with **zero** raw model calls. The client shows an **"(AI)"** affordance on the result **only** when the returned `source === 'model'`.

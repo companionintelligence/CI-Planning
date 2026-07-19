@@ -1,5 +1,16 @@
 > **Type:** fix · **Phase:** ENTITY · **Branch:** `fix/confirm-destructive-deletes` · **Commit style:** `fix: confirm before destructive deletes` · **Design:** user feedback 2026-07-15 · **Dependencies:** none
 
+> ### 📓 HISTORICAL — this is the pre-implementation draft, and it SHIPPED
+> It drove **PR #364** (merged 2026-07-16, no migration), closing issue **#358**. It is kept
+> as the **decision record**: the *why* behind the design, which the diff cannot explain.
+>
+> **It describes the codebase as it was BEFORE #364 — read it in the past tense.** Every
+> `file:line` below is a snapshot from 2026-07-15 authoring and has drifted. For current
+> behavior read the code; the durable pointers here are the *file + symbol* names.
+>
+> The revision notice below is part of that history — it records a correction made while
+> the ticket was still open, not a live instruction.
+
 > ### ⚠️ Ticket revised 2026-07-15 — the original body was wrong
 > It claimed **4** unguarded paths; there are **5**, and it proposed copy that made a promise the code does not keep. Corrections, all verified against `main`:
 > - **Missed:** `RoutinesPanel.tsx:68` (deletes a Routine) and `Tags.tsx:37` (deletes a Tag) are both silent. Now in scope (owner: "global means global").

@@ -5,6 +5,11 @@
 > **Design:** this ticket is the spec (STUB — full commit-recipe to be drafted when Wave 5 starts). See [docs/ftue-plan.md](../../ftue-plan.md).
 > **Dependencies:** None (Wave 5 foundation). Related: T13 (connection list).
 
+> ### 🚧 OPEN but DEFERRED — issue #351. A stub, not a commit recipe.
+> Nothing here has been built, and the full recipe is still to be drafted (see the Design line
+> above). Treat this as intent only: it is a snapshot from 2026-07-14 authoring, taken before the
+> migration head moved **0126 → 0130** and the ENTITY wave (#357–#375) landed.
+
 ## Goal
 
 Let a user **share an event by tagging it with a connection's account**: mark a local `time_blocks` row to be pushed **outbound** to that external account's calendar, reusing the existing outbound-sync machinery (`external_events.direction='outbound'` + `outbound_queue`). Because co-owners who connect the same external account re-ingest the event, the shared external account is the multi-user link — **no cross-owner query hook is added here**.

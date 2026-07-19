@@ -1,5 +1,17 @@
 > **Type:** feature · **Phase:** ENTITY · **Branch:** `feat/wizard-progressive-gating` · **Commit style:** `feat(wizard): gate panes on title then direction` · **Design:** user feedback 2026-07-15 · **Dependencies:** none
 
+> ### 📓 HISTORICAL — this is the pre-implementation draft, and it SHIPPED
+> It drove **PR #362** (merged 2026-07-16, no migration), closing issue **#357**. It is kept
+> as the **decision record**: the *why* behind the design, which the diff cannot explain.
+>
+> **It describes the codebase as it was BEFORE #362 — read it in the past tense.** Every
+> `file:line` below is a snapshot from 2026-07-15 authoring and has drifted. For current
+> behavior read the code; the durable pointers here are the *file + symbol* names. Unlike
+> its siblings, this draft's pins were never corrected in-flight.
+>
+> Amended during implementation: gated panes were made **inert**, not merely styled as
+> locked — a gap this draft did not specify.
+
 ## Goal
 
 In the **Add** flow of the Element wizard, unlock the form progressively so the owner names the thing before configuring it:

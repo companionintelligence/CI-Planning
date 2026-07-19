@@ -473,6 +473,33 @@ export const api = {
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
   },
 
+  // ── FTUE · T1: plan-my-week session log ───────────────────────────────────────
+  planWeek: {
+    session: {
+      open: (entry_branch: PlanWeekEntryBranch) =>
+        request<{ session: PlanningSession }>('POST', '/plan-week/sessions', { entry_branch }),
+      /** Newest first — the order the Logs tab renders. */
+      list: () => request<{ sessions: PlanningSession[] }>('GET', '/plan-week/sessions'),
+      get: (id: string) => request<{ session: PlanningSession }>('GET', `/plan-week/sessions/${id}`),
+      /** `ts` is stamped server-side when omitted, so the log isn't ordered by a client clock. */
+      append: (id: string, message: PlanWeekMessage) =>
+        request<{ session: PlanningSession }>('PATCH', `/plan-week/sessions/${id}`, { message }),
+      close: (id: string, patch: { status: PlanWeekSessionStatus; summary?: string; llm_used?: boolean }) =>
+        request<{ session: PlanningSession }>('PATCH', `/plan-week/sessions/${id}`, patch),
+      remove: (id: string) => request<{ ok: boolean }>('DELETE', `/plan-week/sessions/${id}`),
+    },
+    /**
+     * T3 preview — read-only; writes nothing, so it is safe to re-run per horizon change.
+     * Takes no start date on purpose: `/api/auto/fill` always stages against the owner's
+     * today, so the preview anchors on the same day and echoes it back as `start`.
+     */
+    candidates: (params: { horizon: number }) =>
+      request<PlanWeekCandidates>('GET', `/plan-week/candidates?horizon=${params.horizon}`),
+    /** T5 recap — one request for the whole week. Omit `anchor` for the week that just ended. */
+    review: (anchor?: string) =>
+      request<PlanWeekReview>('GET', `/plan-week/review${anchor ? `?anchor=${anchor}` : ''}`),
+  },
+
   // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────
   // Session lives in an httpOnly cookie set by the server; same-origin fetch sends
   // it automatically, so these need no token handling. `config` is public (the
@@ -1120,6 +1147,56 @@ export interface Objective {
   /** AF-2: linked open/done-recent tasks — leaves populated, non-leaves always `[]`. */
   tasks: ObjectiveTaskSummary[];
   children: Objective[];
+}
+
+// ── FTUE · T1: plan-my-week session log (server: services/planning-sessions.ts) ──
+export type PlanWeekEntryBranch = 'fill_week' | 'schedule_tasks' | 'review' | 'onboarding';
+export type PlanWeekSessionStatus = 'open' | 'completed' | 'abandoned';
+
+/**
+ * `ts` is optional on the way OUT (the server stamps it) and always present coming back.
+ * `kind` machine-tags the step that produced the entry (`plan_week:horizon`, …) so the
+ * Logs tab can render a flow structurally instead of parsing prose; absent on plain turns.
+ */
+export interface PlanWeekMessage { role: 'system' | 'user'; text: string; ts?: string; kind?: string }
+
+export interface PlanningSession {
+  id: string;
+  owner_id: string;
+  started_at: string;
+  /** NULL until the session closes. */
+  ended_at: string | null;
+  entry_branch: PlanWeekEntryBranch;
+  status: PlanWeekSessionStatus;
+  llm_used: boolean;
+  /** `ts` is always stamped server-side; `kind` stays optional (plain turns have none). */
+  transcript: (PlanWeekMessage & { ts: string })[];
+  summary: string | null;
+  created_at: string;
+}
+
+/** T3 — the read-only "what would Fill do?" summary. */
+export interface PlanWeekCandidateTask { id: string; title: string; priority: number | null; due_at: string | null }
+export interface PlanWeekCandidates {
+  /** Server-clamped to 1..60, matching autoRun — may differ from what was requested. */
+  horizon: number;
+  start: string;
+  /** `count` is the untruncated eligible total; `will_stage` applies fill's cap of 20. */
+  open_tasks: { count: number; will_stage: number; items: PlanWeekCandidateTask[] };
+  flight_plan: { count: number };
+  objectives: { count: number };
+  recurring: { count: number };
+}
+
+/** T5 — the whole weekly recap in one payload (server composes it; see plan-week-review.ts). */
+export interface PlanWeekReview {
+  /** The anchor actually used — echoed so the client never recomputes the week math. */
+  anchor: string;
+  week: WeekReview;
+  calibration: Calibration;
+  stars: DayStar[];
+  note_dates: string[];
+  sessions: PlanningSession[];
 }
 
 export interface ObjectiveInput {

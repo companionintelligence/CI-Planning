@@ -9,6 +9,7 @@ import { BottomNav } from './components/BottomNav.js';
 import { ToastContainer } from './components/Toast.js';
 import { ConflictBanner } from './components/ConflictBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
+import { PlanWeekAssistant } from './components/PlanWeekAssistant.js';
 import { Today }    from './views/Today.js';
 import { Focus }    from './views/Focus.js';
 import { Calendar } from './views/Calendar.js';
@@ -154,6 +155,7 @@ function Shell(props: { children?: any }) {
 
       {/* Unified Add/Edit Element wizard — self-driven by the elementModal signal. */}
       <ElementWizard />
+      <PlanWeekAssistant />
 
       <BottomNav />
       <ToastContainer />

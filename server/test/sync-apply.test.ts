@@ -10,6 +10,10 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { applyMonotonic, applyOp, stampRow, type Op } from '../src/sync/apply.js';
 import { applySyncedObjectiveUpkeep } from '../src/services/objectives.js';
+import { deleteTask, promoteToHabit, skipRecurringInstance, updateTask } from '../src/services/tasks.js';
+import { rescheduleTask } from '../src/engine/review.js';
+import { moveBlockGroup, promoteBlockToScheduled } from '../src/services/blocks.js';
+import { extendBlock } from '../src/engine/extend-block.js';
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -25,6 +29,39 @@ function insertTask(id: string, title = 'Test task'): void {
 
 function getTask(id: string): Record<string, unknown> {
   return sqlite.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown>;
+}
+
+/**
+ * The server clock `stampRow` wrote for `field` — the value an arriving op's clientTs is
+ * compared against. Asserts the stamp exists, because that is the whole guard: with no
+ * `field_ts` entry the LWW compare in applyOp is `clientTs >= ''`, which every op wins.
+ */
+function fieldStamp(id: string, field: string, what = 'the service write', table: 'tasks' | 'time_blocks' = 'tasks'): string {
+  const row = sqlite.prepare(`SELECT field_ts FROM ${table} WHERE id = ?`).get(id) as { field_ts: string | null } | undefined;
+  const stamp = (JSON.parse(row?.field_ts ?? '{}') as Record<string, string>)[field];
+  expect(stamp, `${what} must stamp field_ts.${field}`).toBeTruthy();
+  return stamp;
+}
+
+function insertBlock(id: string, over: Record<string, unknown> = {}): void {
+  const row: Record<string, unknown> = {
+    id, owner_id: SYSTEM_OWNER, title: 'Test block', block_kind: 'task',
+    start_at: '2026-06-01T09:00:00.000Z', end_at: '2026-06-01T10:00:00.000Z',
+    status: 'planned', version: 1, ...over,
+  };
+  const keys = Object.keys(row);
+  sqlite
+    .prepare(`INSERT INTO time_blocks (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`)
+    .run(...keys.map((k) => row[k]));
+}
+
+function getBlock(id: string): Record<string, unknown> {
+  return sqlite.prepare('SELECT * FROM time_blocks WHERE id = ?').get(id) as Record<string, unknown>;
+}
+
+/** Offset a stamp by whole seconds — keeps the stamping tests off the wall clock. */
+function shift(ts: string, seconds: number): string {
+  return new Date(Date.parse(ts) + seconds * 1000).toISOString();
 }
 
 function insertObjective(id: string, title = 'Test objective'): void {
@@ -263,6 +300,311 @@ describe('applyOp — scheduled status guard', () => {
 
     expect(result.applied['status']).toBe('scheduled');
     expect(getTask('t-sched-2')['status']).toBe('scheduled');
+  });
+});
+
+// ── cancelled status guard (soft-delete stamping) ─────────────────────────────
+
+/**
+ * `applyMonotonic` pins only done/scheduled, so nothing clamps cancelled→open — a
+ * pin there would make cancelling irreversible through sync and break the restore
+ * path. The soft-delete's `stampRow` is therefore the only thing standing between a
+ * queued offline op and a resurrected task.
+ */
+describe('applyOp — cancelled status guard', () => {
+  beforeEach(() => resetDb());
+
+  it('does NOT revert cancelled→open for a stale queued op (older clientTs)', async () => {
+    insertTask('t-del-1'); // 'open', no field_ts at all
+    await deleteTask(SYSTEM_OWNER, 't-del-1');
+    expect(getTask('t-del-1')['status']).toBe('cancelled');
+
+    // The op a client queued while offline, before the cancel reached the server.
+    const result = applyOp(sqlite, {
+      opId: 'op-del-1', entity: 'task', entityId: 't-del-1',
+      fields: { status: 'open' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-del-1', 'status', 'soft-delete'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('status');
+    expect(getTask('t-del-1')['status']).toBe('cancelled');
+  });
+
+  it('a genuinely newer op still un-cancels (the stamp must not pin the restore path)', async () => {
+    insertTask('t-del-2');
+    await deleteTask(SYSTEM_OWNER, 't-del-2');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-del-2', entity: 'task', entityId: 't-del-2',
+      fields: { status: 'open' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-del-2', 'status', 'soft-delete'), +1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).not.toContain('status');
+    expect(getTask('t-del-2')['status']).toBe('open');
+  });
+});
+
+// ── subtype guard (habit promotion stamping) ──────────────────────────────────
+
+/**
+ * `subtype` is mergeable (allowlisted + camel-mapped) and `applyMonotonic` does not pin
+ * it, so promoteToHabit's `stampRow` is the only thing stopping a queued op that still
+ * carries the old subtype from demoting the habit on reconnect.
+ */
+describe('applyOp — subtype guard', () => {
+  beforeEach(() => resetDb());
+
+  it('does NOT revert habit→standard for a stale queued op (older clientTs)', async () => {
+    insertTask('t-hab-1'); // subtype defaults, no field_ts at all
+    await promoteToHabit(SYSTEM_OWNER, 't-hab-1');
+    expect(getTask('t-hab-1')['subtype']).toBe('habit');
+
+    // The op a client queued while offline, before the promotion reached the server.
+    const result = applyOp(sqlite, {
+      opId: 'op-hab-1', entity: 'task', entityId: 't-hab-1',
+      fields: { subtype: 'standard' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-hab-1', 'subtype', 'promoteToHabit'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('subtype');
+    expect(getTask('t-hab-1')['subtype']).toBe('habit');
+  });
+
+  it('a genuinely newer op still demotes (the stamp must not pin subtype)', async () => {
+    insertTask('t-hab-2');
+    await promoteToHabit(SYSTEM_OWNER, 't-hab-2');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-hab-2', entity: 'task', entityId: 't-hab-2',
+      fields: { subtype: 'standard' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-hab-2', 'subtype', 'promoteToHabit'), +1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).not.toContain('subtype');
+    expect(getTask('t-hab-2')['subtype']).toBe('standard');
+  });
+});
+
+// ── reschedule guard (owner action living in the nightly-review module) ───────
+
+/**
+ * `rescheduleTask` sits in engine/review.ts beside the cron, but it is an OWNER action
+ * with a single route caller — so it stamps like any other online edit. Without it a
+ * queued op holding the old day wins LWW and drags the task back off its new one.
+ */
+describe('rescheduleTask — stamping', () => {
+  beforeEach(() => resetDb());
+
+  it('does NOT let a stale queued op drag scheduled_for back', async () => {
+    insertTask('t-resc-1');
+    rescheduleTask('t-resc-1', 3, SYSTEM_OWNER);
+    const newDay = getTask('t-resc-1')['scheduled_for'] as string;
+
+    // The op a client queued while offline, before the reschedule reached the server.
+    const result = applyOp(sqlite, {
+      opId: 'op-resc-1', entity: 'task', entityId: 't-resc-1',
+      fields: { scheduled_for: '2026-01-01', status: 'open' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-resc-1', 'scheduled_for', 'rescheduleTask'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('scheduled_for');
+    expect(getTask('t-resc-1')['scheduled_for']).toBe(newDay);
+  });
+
+  it('never stamps a foreign owner\'s row when the scoped UPDATE misses', () => {
+    createOwner(SECOND_OWNER_ID);
+    insertTask('t-resc-2'); // belongs to SYSTEM_OWNER
+    const before = getTask('t-resc-2');
+
+    // A caller that skipped the route's ownership pre-check: the UPDATE must miss, and
+    // the stamp must not fire — stamping here would corrupt SYSTEM_OWNER's merge state.
+    rescheduleTask('t-resc-2', 3, SECOND_OWNER_ID);
+
+    const after = getTask('t-resc-2');
+    expect(after['scheduled_for']).toBe(before['scheduled_for']);
+    expect(after['version']).toBe(before['version']);
+    expect(after['field_ts']).toBe(before['field_ts']);
+  });
+});
+
+// ── owner-path writes the stampRow audit found unstamped (2026-07-16) ─────────
+
+/**
+ * Every site here is reached from a route or GraphQL mutation, so by the WHO-STAMPS rule
+ * on `stampRow` it must stamp. (Their cron/agent counterparts — nightly review, groom,
+ * auto-defense — deliberately do NOT, and are not tested here.) Each case asserts the
+ * stale op is dropped; the geometry fields carry no applyMonotonic pin, so a
+ * newer-op-still-wins case is included once per entity rather than per site.
+ */
+describe('owner-path writes — stamping', () => {
+  beforeEach(() => resetDb());
+
+  it('moveBlockGroup: a stale queued op cannot snap the group back', async () => {
+    const before = { start_at: '2026-06-01T09:00:00.000Z', end_at: '2026-06-01T10:00:00.000Z' };
+    insertBlock('b-mv-1', before);
+    await moveBlockGroup(SYSTEM_OWNER, 'b-mv-1', 30);
+    const moved = getBlock('b-mv-1')['start_at'] as string;
+    expect(moved).not.toBe(before.start_at);
+
+    const result = applyOp(sqlite, {
+      opId: 'op-mv-1', entity: 'block', entityId: 'b-mv-1',
+      fields: before, baseVersion: 1,
+      clientTs: shift(fieldStamp('b-mv-1', 'start_at', 'moveBlockGroup', 'time_blocks'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('start_at');
+    expect(getBlock('b-mv-1')['start_at']).toBe(moved);
+  });
+
+  it('moveBlockGroup: a genuinely newer op still moves it (no accidental pin)', async () => {
+    insertBlock('b-mv-2');
+    await moveBlockGroup(SYSTEM_OWNER, 'b-mv-2', 30);
+
+    const result = applyOp(sqlite, {
+      opId: 'op-mv-2', entity: 'block', entityId: 'b-mv-2',
+      fields: { start_at: '2026-06-01T14:00:00.000Z' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('b-mv-2', 'start_at', 'moveBlockGroup', 'time_blocks'), +1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).not.toContain('start_at');
+    expect(getBlock('b-mv-2')['start_at']).toBe('2026-06-01T14:00:00.000Z');
+  });
+
+  it('promoteBlockToScheduled: a stale queued op cannot un-promote the Plan', async () => {
+    insertBlock('b-pr-1', { block_type: 'concept', duration_minutes: 60 });
+    await promoteBlockToScheduled(SYSTEM_OWNER, 'b-pr-1', { start_at: '2026-06-01T14:00:00.000Z' });
+    expect(getBlock('b-pr-1')['block_type']).toBe('scheduled');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-pr-1', entity: 'block', entityId: 'b-pr-1',
+      fields: { block_type: 'concept' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('b-pr-1', 'block_type', 'promoteBlockToScheduled', 'time_blocks'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('block_type');
+    expect(getBlock('b-pr-1')['block_type']).toBe('scheduled');
+  });
+
+  it('extendBlock: a stale queued op cannot un-extend the anchor', () => {
+    insertBlock('b-ex-1');
+    extendBlock('b-ex-1', 30, { commit: true }, SYSTEM_OWNER);
+    const extended = getBlock('b-ex-1')['end_at'] as string;
+    expect(extended).toBe('2026-06-01T10:30:00.000Z');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-ex-1', entity: 'block', entityId: 'b-ex-1',
+      fields: { end_at: '2026-06-01T10:00:00.000Z' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('b-ex-1', 'end_at', 'extendBlock', 'time_blocks'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('end_at');
+    expect(getBlock('b-ex-1')['end_at']).toBe(extended);
+  });
+
+  it('skipRecurringInstance: a stale queued op cannot revive the skipped instance', async () => {
+    insertTask('t-tpl-1');
+    sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, priority, version, recurrence_parent_id, occurrence_date)
+                VALUES (?, 'Instance', ?, 'open', 3, 1, 't-tpl-1', '2026-06-01')`)
+      .run('t-skip-1', SYSTEM_OWNER);
+
+    await skipRecurringInstance(SYSTEM_OWNER, 't-skip-1');
+    expect(getTask('t-skip-1')['status']).toBe('skipped');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-skip-1', entity: 'task', entityId: 't-skip-1',
+      fields: { status: 'open' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-skip-1', 'status', 'skipRecurringInstance'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('status');
+    expect(getTask('t-skip-1')['status']).toBe('skipped');
+  });
+});
+
+/**
+ * The reschedule fix lives in the route handler itself, so this one goes over HTTP.
+ * The route is dark behind `time_sense_enabled` (Phase Z), which is why this gap was
+ * not reachable in production yet — the flag has to be on for the handler to run at all.
+ */
+describe('POST /api/blocks/:id/reschedule — stamping', () => {
+  let server: TestServer;
+  beforeAll(async () => { server = await startTestServer(); });
+  afterAll(() => server.close());
+  beforeEach(() => resetDb());
+
+  it('a stale queued op cannot resurrect the abandoned attempt', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET time_sense_enabled = 1 WHERE owner_id = ?`).run(SYSTEM_OWNER);
+    insertTask('t-resched-1');
+    insertBlock('b-resched-1', { task_id: 't-resched-1' });
+
+    const r = await api(server.url, '/api/blocks/b-resched-1/reschedule', { method: 'POST', json: {} });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(getBlock('b-resched-1')['status']).toBe('skipped');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-resched-1', entity: 'block', entityId: 'b-resched-1',
+      fields: { status: 'planned' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('b-resched-1', 'status', 'the reschedule route', 'time_blocks'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('status');
+    expect(getBlock('b-resched-1')['status']).toBe('skipped');
+  });
+});
+
+// ── the task⇄block mirror must stamp BOTH sides ───────────────────────────────
+
+/**
+ * `syncBlockFromTask` / `syncTaskFromBlock` keep a task and its placement block in
+ * lockstep. Both run on owner paths (updateTask, and the block edits stamped elsewhere in
+ * this PR), so both must stamp — stamping only one side leaves the other open to a stale
+ * queued op that pulls the pair apart, which is the one invariant that module exists for.
+ */
+describe('task⇄block mirror — both sides stamped', () => {
+  beforeEach(() => resetDb());
+
+  it('syncBlockFromTask stamps the block it moves', async () => {
+    insertTask('t-mirror-1');
+    sqlite.prepare(
+      `INSERT INTO time_blocks (id, owner_id, task_id, title, block_kind, start_at, end_at, status, version)
+       VALUES ('b-mirror-1', ?, 't-mirror-1', 'M', 'task', '2026-06-01T09:00:00.000Z', '2026-06-01T10:00:00.000Z', 'planned', 1)`,
+    ).run(SYSTEM_OWNER);
+
+    // An owner PATCH that moves the task's time drags the block with it.
+    await updateTask(SYSTEM_OWNER, 't-mirror-1', { task_time: '15:00' });
+    const moved = getBlock('b-mirror-1')['start_at'] as string;
+    expect(moved).not.toBe('2026-06-01T09:00:00.000Z');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-mirror-1', entity: 'block', entityId: 'b-mirror-1',
+      fields: { start_at: '2026-06-01T09:00:00.000Z', end_at: '2026-06-01T10:00:00.000Z' },
+      baseVersion: 1,
+      clientTs: shift(fieldStamp('b-mirror-1', 'start_at', 'syncBlockFromTask', 'time_blocks'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('start_at');
+    expect(getBlock('b-mirror-1')['start_at']).toBe(moved);
+  });
+
+  it('syncTaskFromBlock stamps the task it re-dates', async () => {
+    insertTask('t-mirror-2');
+    insertBlock('b-mirror-2', { task_id: 't-mirror-2' });
+
+    // An owner block drag mirrors onto the task's scheduled_for/task_time.
+    await moveBlockGroup(SYSTEM_OWNER, 'b-mirror-2', 90);
+    const dated = getTask('t-mirror-2')['scheduled_for'] as string;
+    expect(dated).toBeTruthy();
+
+    const result = applyOp(sqlite, {
+      opId: 'op-mirror-2', entity: 'task', entityId: 't-mirror-2',
+      fields: { scheduled_for: '2020-01-01' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-mirror-2', 'scheduled_for', 'syncTaskFromBlock'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('scheduled_for');
+    expect(getTask('t-mirror-2')['scheduled_for']).toBe(dated);
   });
 });
 

@@ -5,6 +5,29 @@
 > **Design:** this ticket is the spec (see also docs/ftue-plan.md)
 > **Dependencies:** None
 
+> ### 📓 HISTORICAL — this is the pre-implementation draft, and it SHIPPED
+> Built on branch `claude/archive-cascade-sync-memory-887009` (PR #377) as **migration 0131**,
+> closing issue **#337**. Kept as the decision record: the *why* behind the design, which the
+> diff cannot explain.
+>
+> **It describes the codebase as it was BEFORE the build — read it in the past tense.** Every
+> `file:line` below is a snapshot from 2026-07-14 authoring and has drifted; for current
+> behavior read the code.
+>
+> ⚠️ **Its reserved migration slot was gone by the time it was built.** `0127` had become
+> `life_priorities` (#356), so the `0127_planning_sessions` name that appears in five places
+> below (the file, the `id` export, the `index.ts` import, the `MIGRATIONS` append, the DoD
+> line) was renumbered to **0131** — exactly as §Pinned conventions instructed: *"the
+> implementer confirms the next free integer at implementation time and renumbers if `0127` is
+> taken."*
+>
+> Amended during implementation: timestamps use the repo's ISO-8601 idiom
+> (`strftime('%Y-%m-%dT%H:%M:%fZ','now')`), NOT the `CURRENT_TIMESTAMP` this draft specifies —
+> the two are not the same thing, and `CURRENT_TIMESTAMP` yields a space-separated local-parsed
+> string. `appendTranscript`/`closeSession` return discriminated results so the route can tell
+> a missing row (404) from a bad enum (422), and an optional `kind` was added to transcript
+> entries for T3+.
+
 ## Goal
 
 Persist each "Plan my week" session at the **session level only** — one `planning_sessions` row per session that stores the entire chat as a single transcript blob — behind an owner-scoped service and a REST CRUD API. This is the foundation the assistant shell (T2) and the per-branch flows write to, and the Logs tab (T6) reads. No per-turn event rows: the whole conversation is one JSON array on the session row.
