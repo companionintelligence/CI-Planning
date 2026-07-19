@@ -7,7 +7,17 @@
 > that gets a new user from zero to a planned day with as little input as
 > possible.
 
-> ## ⚠️ §1 and §2 are STALE (re-verified 2026-07-16 at migration head 0130)
+> ## ⚠️ §1 and §2 are STALE (re-verified 2026-07-16 at head 0130; wave status updated 2026-07-19 at head 0132)
+>
+> **Wave status (2026-07-19): T1–T12 are MERGED to `main`** (PRs #377–#385, including the
+> post-merge review fix-set). **T13 (#349) is the next live ticket.** T14 (#350) + M1–M5
+> (#351–#355) remain deferred. Two loose ends the merged waves left open, found by the
+> 2026-07-19 audit: (1) **`PromptStep` — T2's shared free-text primitive — is dead code**
+> (all three shipped branches render bespoke components; T8's parse path and §A4's
+> `plan.instruct` apply path are therefore both unreachable from the live UI), and T14's
+> drafted DoD ("Mic button on the assistant PromptStep") targets that dead component —
+> the wire-or-relocate decision gates T14. (2) **`planning_sessions.llm_used` is never set
+> true** by any close() call site, so the Logs surface can't report AI usage truthfully yet.
 >
 > This doc's framing still holds and the **T1–T14 tickets it produced are live**
 > (#337–#350). But its "honest current state" was written at head ~0100 and **four of
