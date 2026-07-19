@@ -335,6 +335,37 @@ export function Settings() {
   const [reviewing, setReviewing] = createSignal<PlanningSession | null>(null);
   const [clearingAll, setClearingAll] = createSignal(false);
 
+  // T10 — session selection for "Consolidate (summarize)". T6 shipped no multi-select
+  // (each row is Review/Export/Delete only), so this signal + the row checkboxes below
+  // are new; there was no existing selection UI to reuse.
+  const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set());
+  const [consolidating, setConsolidating] = createSignal(false);
+  const [consolidateResult, setConsolidateResult] = createSignal<{ summary: string; source: 'model' | 'fallback' } | null>(null);
+
+  function toggleSessionSelected(id: string) {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function consolidateSelectedSessions() {
+    const ids = [...selectedSessionIds()];
+    if (!ids.length) return;
+    setConsolidating(true);
+    try {
+      const res = await api.planWeek.consolidateSessions(ids);
+      setConsolidateResult(res);
+      setSelectedSessionIds(new Set<string>());
+      await refetchSessions(); // the newest selected session's summary just changed
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setConsolidating(false);
+    }
+  }
+
   async function reviewSession(id: string) {
     try {
       const { session } = await api.planWeek.session.get(id);
@@ -1652,25 +1683,50 @@ export function Settings() {
 
         </Show>
 
-        {/* ── LOGS TAB (T6) ───────────────────────────────────────────────────── */}
+        {/* ── LOGS TAB (T6 + T10) ─────────────────────────────────────────────── */}
         {/* Read/export/delete over T1's plan-week sessions — not part of the
             settings form submit (no fields here feed `form()`/`doSave`). */}
         <Show when={activeTab() === 'logs'}>
           <section class="card">
-            <div class="flex items-center justify-between mb-1">
+            <div class="flex items-center justify-between mb-1 gap-2">
               <div class="section-label flex items-center gap-1.5"><ScrollText size={12} /> Planning-session logs</div>
-              <button
-                type="button"
-                class="btn-danger text-xs px-3 py-1.5"
-                disabled={!sessions()?.length || clearingAll()}
-                onClick={clearAllSessions}
-              >
-                <Trash2 size={12} /> {clearingAll() ? 'Clearing…' : 'Clear all'}
-              </button>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  type="button"
+                  class="btn-secondary text-xs px-3 py-1.5"
+                  disabled={!selectedSessionIds().size || consolidating()}
+                  onClick={consolidateSelectedSessions}
+                >
+                  <ScrollText size={12} /> {consolidating() ? 'Consolidating…' : `Consolidate (summarize)${selectedSessionIds().size ? ` (${selectedSessionIds().size})` : ''}`}
+                </button>
+                <button
+                  type="button"
+                  class="btn-danger text-xs px-3 py-1.5"
+                  disabled={!sessions()?.length || clearingAll()}
+                  onClick={clearAllSessions}
+                >
+                  <Trash2 size={12} /> {clearingAll() ? 'Clearing…' : 'Clear all'}
+                </button>
+              </div>
             </div>
             <p class="text-xs text-muted-foreground mb-3">
               Every Weekly-Planning-Assistant session — fill week, schedule tasks, and review — recorded for your own reference.
+              Select sessions below to consolidate them into one summary.
             </p>
+
+            <Show when={consolidateResult()}>
+              {(result) => (
+                <div class="rounded-md border border-border bg-muted/40 px-3 py-2 mb-3">
+                  <div class="text-[11px] text-muted-foreground mb-0.5">
+                    Consolidated summary
+                    <Show when={result().source === 'model'}>
+                      <span class="font-normal ml-0.5">(AI)</span>
+                    </Show>
+                  </div>
+                  <p class="text-xs text-foreground whitespace-pre-wrap">{result().summary}</p>
+                </div>
+              )}
+            </Show>
 
             <Show
               when={sessions()}
@@ -1690,12 +1746,20 @@ export function Settings() {
                     <For each={list()}>
                       {(session) => (
                         <div class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-                          <div class="min-w-0">
-                            <div class="text-sm text-foreground truncate">
-                              {session.entry_branch.replace(/_/g, ' ')} · {session.started_at.slice(0, 10)}
-                            </div>
-                            <div class="text-[11px] text-muted-foreground">
-                              {session.status} · {new Date(session.started_at).toLocaleString()}
+                          <div class="flex items-center gap-2 min-w-0">
+                            <input
+                              type="checkbox"
+                              class="accent-primary w-4 h-4 flex-shrink-0"
+                              checked={selectedSessionIds().has(session.id)}
+                              onChange={() => toggleSessionSelected(session.id)}
+                            />
+                            <div class="min-w-0">
+                              <div class="text-sm text-foreground truncate">
+                                {session.entry_branch.replace(/_/g, ' ')} · {session.started_at.slice(0, 10)}
+                              </div>
+                              <div class="text-[11px] text-muted-foreground">
+                                {session.status} · {new Date(session.started_at).toLocaleString()}
+                              </div>
                             </div>
                           </div>
                           <div class="flex items-center gap-1 flex-shrink-0">
