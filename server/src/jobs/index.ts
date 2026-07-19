@@ -454,13 +454,18 @@ export async function runScheduledJob(kind: string): Promise<void> {
 }
 
 /**
- * FTUE · T12 (#348) — the kinds a "Run my first sync now" click triggers, in this
- * order: pull calendar events first (so the day has meetings to plan around), then
- * mirror them as blocks, then process email, then let grooming surface anything
- * ingest staged. All four are owner-scoped (`OWNER_SCOPED_KINDS`), so calling `runJob`
- * directly under the CURRENT owner's context (already bound by `requireAuth`) is
- * correct — this deliberately does NOT fan out across owners like `runScheduledJob`
- * does; see its own doc comment above ("a user 'run now' is for their own account").
+ * FTUE · T12 (#348) — the kinds a "Run my first sync now" click triggers: mirror
+ * calendar events as locked meeting blocks first (`sync_calendar`), then mine
+ * calendar/email for possibles (`ingest_gcal`/`ingest_gmail` — WP5: these only
+ * extract + auto-promote, they place nothing themselves), then let grooming
+ * (`nightly_grooming`) sweep and auto-block anything staged earlier in this same
+ * pass. The exact ingest_gcal/ingest_gmail ordering doesn't matter — neither places
+ * blocks on its own, and nightly_grooming's sweep at the end catches whatever either
+ * one staged regardless of which ran first. All four are owner-scoped
+ * (`OWNER_SCOPED_KINDS`), so calling `runJob` directly under the CURRENT owner's
+ * context (already bound by `requireAuth`) is correct — this deliberately does NOT
+ * fan out across owners like `runScheduledJob` does; see its own doc comment above
+ * ("a user 'run now' is for their own account").
  */
 export const RUN_NOW_KINDS = ['sync_calendar', 'ingest_gcal', 'ingest_gmail', 'nightly_grooming'] as const;
 
