@@ -608,6 +608,11 @@ function revisePrompt(lines: string[], order: number[], defects: Defect[], criti
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+/** T9 — what a day was actually authored as, truthfully; never trust `aiAvailable()`
+ *  alone, since it only gates the ATTEMPT, not the outcome (Ollama can still drop
+ *  mid-loop, or planning_mode may not be 'smart'). Mirrors `daily_plan.source`. */
+export type PlanOrderSource = 'llm' | 'deterministic';
+
 /**
  * Author the day's task order into `daily_plan` for `(owner, date)`.
  *
@@ -617,11 +622,12 @@ function revisePrompt(lines: string[], order: number[], defects: Defect[], criti
  *   deterministic). Falls back to pre-post-pass order if checkOrder detects defects.
  * - §C2: reads day_theme from prefs and injects a theme bias into deterministic
  *   ordering and into the LLM prompt.
- * - Author-once: a second call for the same (owner, date) is a no-op.
+ * - Author-once: a second call for the same (owner, date) is a no-op that reports the
+ *   day's already-persisted source (T9) rather than resolving void.
  * - Never throws: Ollama failures always fall back to the deterministic order.
  * - Does NOT place blocks. Placement reads `daily_plan.position` independently.
  */
-export async function authorPlanOrder(owner: string, date: string, opts: { force?: boolean; deterministic?: boolean } = {}): Promise<void> {
+export async function authorPlanOrder(owner: string, date: string, opts: { force?: boolean; deterministic?: boolean } = {}): Promise<PlanOrderSource> {
   // B4 accept (`force`): drop the prior authored order so the author-once guard
   // re-opens and the day is freshly re-authored (LLM if smart+Ollama up, else
   // deterministic). The only reactive path that re-runs authoring, behind explicit
@@ -630,14 +636,21 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // Schedule-mode N-day horizon (T-SCHED-2) for future days so a multi-day plan
   // doesn't fire one LLM call per day (day 0 still authors normally).
   if (opts.force) sqlite.prepare(`DELETE FROM daily_plan WHERE owner_id = ? AND date = ?`).run(owner, date);
-  if (dailyPlanAuthored(owner, date)) return;
+  if (dailyPlanAuthored(owner, date)) {
+    // T9 — a no-op re-call (no `force`) must still report truthfully what the day was
+    // ACTUALLY authored as, not just resolve void; every row for a day shares one source.
+    const row = sqlite.prepare(`SELECT source FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`).get(owner, date) as
+      | { source?: string }
+      | undefined;
+    return (row?.source as PlanOrderSource) ?? 'deterministic';
+  }
 
   const prefs = loadPlanningPrefs(owner);
   const staged = getStagedTasks(owner);
 
   if (staged.length < 2) {
     if (staged.length === 1) persistOrder(owner, date, staged, [0], 'deterministic');
-    return;
+    return 'deterministic';
   }
 
   // §C2: resolve today's theme tag (null = no theming today)
@@ -662,7 +675,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   const aiEnabled = !opts.deterministic && prefs.planning_mode === 'smart';
   if (!aiEnabled || !(await isAvailable())) {
     persistDeterministic();
-    return;
+    return 'deterministic';
   }
 
   const lines = staged.map(taskLine);
@@ -759,6 +772,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
     // visible, not just a server log. (Client surfacing of plan:needs_review is a follow-up;
     // the audit row is the §A0 inspectability sink and is queryable today.)
     if (result.escaped) signalPlanNeedsReview(owner, date, result.score);
+    return source;
   } catch (err) {
     logger.warn('authorPlanOrder: LLM authoring failed mid-call, falling back to deterministic order', {
       owner,
@@ -766,6 +780,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
       err: String(err),
     });
     persistDeterministic();
+    return 'deterministic';
   }
 }
 
