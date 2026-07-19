@@ -84,10 +84,10 @@ export function flightPlanRouter() {
   // broadcast stays transport-side — one aggregated `auto:placed` on a multi-day run.
   router.post('/api/auto/run', async (ctx) => {
     const owner = currentOwnerId();
-    const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string; horizon_days?: number };
+    const body = (ctx.request.body ?? {}) as { block_id?: string; date?: string; horizon_days?: number; smart?: boolean };
     const date = body.date ?? localISODate();
 
-    const result = await autoRun(owner, { date, blockId: body.block_id, horizonDays: body.horizon_days });
+    const result = await autoRun(owner, { date, blockId: body.block_id, horizonDays: body.horizon_days, smart: body.smart });
 
     // A multi-day run (result.days > 1) fires one aggregated event; single-day fires none
     // (byte-identical to before).

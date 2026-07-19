@@ -166,6 +166,27 @@ describe('W13 — auto ops', () => {
     expect(r.body.data.autoRun.flightPlan.find((e: any) => e.id === t)).toBeUndefined();
   });
 
+  /**
+   * T9 — REST/GraphQL parity for the `smart` flag. No Ollama mock in this file (see the
+   * file header), so `smart: true` still lands on the deterministic path here — the point
+   * of this test is that the GraphQL resolver actually forwards `input.smart` through to
+   * `autoRun` (a typo in `input.smart ?? undefined` wouldn't be caught by the REST test
+   * alone) and that both transports surface the same `llm` field, truthfully false when
+   * Ollama is unreachable.
+   */
+  it('autoRun forwards the smart flag through GraphQL and REST identically', async () => {
+    const t1 = insertTask('GraphQL smart run');
+    stageTask(t1);
+    const gqlResult = await gql(`mutation { autoRun(input: { date: "${DATE}", smart: true }) { result flightPlan { id } success } }`);
+    expect(gqlResult.body.errors).toBeUndefined();
+    expect(gqlResult.body.data.autoRun.result.llm).toBe(false); // Ollama unreachable in this suite
+
+    const t2 = insertTask('REST smart run');
+    stageTask(t2);
+    const restResult = await api(srv.url, '/api/auto/run', { method: 'POST', json: { date: DATE, smart: true } });
+    expect(restResult.body.result.llm).toBe(false);
+  });
+
   it('autoPriority tops up workday capacity with unplaced tasks', async () => {
     const t = insertTask('Priority placed');
     stageTask(t);

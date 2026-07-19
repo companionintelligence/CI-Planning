@@ -13,7 +13,8 @@ import { render, fireEvent, waitFor, screen } from '@solidjs/testing-library';
  */
 
 const fillMock = vi.fn(async (_b?: unknown) => ({ result: {} }));
-const runMock = vi.fn(async (_b?: unknown) => ({ result: { placed: 4, unplaced: 1, days: 3 } }));
+type RunResult = { result: { placed: number; unplaced: number; days: number; llm?: boolean } };
+const runMock = vi.fn(async (_b?: unknown): Promise<RunResult> => ({ result: { placed: 4, unplaced: 1, days: 3 } }));
 const candidatesMock = vi.fn(async (_p: unknown) => ({
   horizon: 7, start: '2026-07-18',   // server echoes the OWNER's today, matching selectedDay here
   open_tasks: { count: 9, will_stage: 9, items: [{ id: 't1', title: 'Pay invoice', priority: 3, due_at: null }] },
@@ -29,11 +30,13 @@ vi.mock('../lib/api.js', () => ({
 const toastMock = vi.fn();
 const refetchFlightPlanMock = vi.fn();
 const refetchBlocksMock = vi.fn();
+const aiAvailableFlag = { current: false };
 vi.mock('../stores/index.js', () => ({
   selectedDay: () => '2026-07-18',
   showToast: (...a: unknown[]) => toastMock(...a),
   refetchFlightPlan: () => refetchFlightPlanMock(),
   refetchBlocks: () => refetchBlocksMock(),
+  aiAvailable: () => aiAvailableFlag.current,
 }));
 
 const { PlanWeekFill } = await import('./PlanWeekFill.js');
@@ -71,6 +74,7 @@ describe('PlanWeekFill — the deterministic fill branch', () => {
     toastMock.mockReset();
     refetchFlightPlanMock.mockReset();
     refetchBlocksMock.mockReset();
+    aiAvailableFlag.current = false;
   });
 
   it('appends exactly one kind-tagged transcript entry per step, in order', async () => {
@@ -96,7 +100,7 @@ describe('PlanWeekFill — the deterministic fill branch', () => {
 
     fireEvent.click(screen.getByText('Schedule it'));
 
-    await waitFor(() => expect(runMock).toHaveBeenCalledWith({ date: '2026-07-18', horizon_days: 3 }));
+    await waitFor(() => expect(runMock).toHaveBeenCalledWith({ date: '2026-07-18', horizon_days: 3, smart: false }));
     expect(fillMock).toHaveBeenCalledTimes(1);
     // Order matters: staging must precede placement.
     expect(fillMock.mock.invocationCallOrder[0]).toBeLessThan(runMock.mock.invocationCallOrder[0]);
@@ -182,5 +186,40 @@ describe('PlanWeekFill — the deterministic fill branch', () => {
     await waitFor(() => expect(toastMock).toHaveBeenCalledWith('engine busy', 'error'));
     expect(appendMock.mock.calls.map((c) => c[1])).not.toContain('plan_week:confirm');
     expect(refetchBlocksMock).not.toHaveBeenCalled();
+  });
+
+  // ── T9 (#345) — smart-week authoring wiring ──────────────────────────────────
+  describe('T9 smart flag + truthful (AI) marker', () => {
+    it('passes smart: aiAvailable() on the run call', async () => {
+      aiAvailableFlag.current = true;
+      mount();
+      await stepToConfirm();
+      fireEvent.click(screen.getByText('Schedule it'));
+      await waitFor(() => expect(runMock).toHaveBeenCalledWith({ date: '2026-07-18', horizon_days: 7, smart: true }));
+    });
+
+    it('shows the "(AI)" marker in the transcript ONLY when result.llm is true — never from aiAvailable() alone', async () => {
+      aiAvailableFlag.current = true; // gate is true...
+      runMock.mockResolvedValue({ result: { placed: 4, unplaced: 1, days: 3, llm: false } }); // ...but the server says it degraded
+      mount();
+      await stepToConfirm();
+      fireEvent.click(screen.getByText('Schedule it'));
+
+      await waitFor(() => expect(appendMock.mock.calls.map((c) => c[1])).toContain('plan_week:confirm'));
+      const confirmCall = appendMock.mock.calls.find((c) => c[1] === 'plan_week:confirm')!;
+      expect(confirmCall[0]).not.toContain('(AI)');
+    });
+
+    it('shows the "(AI)" marker when result.llm is true', async () => {
+      aiAvailableFlag.current = true;
+      runMock.mockResolvedValue({ result: { placed: 4, unplaced: 1, days: 3, llm: true } });
+      mount();
+      await stepToConfirm();
+      fireEvent.click(screen.getByText('Schedule it'));
+
+      await waitFor(() => expect(appendMock.mock.calls.map((c) => c[1])).toContain('plan_week:confirm'));
+      const confirmCall = appendMock.mock.calls.find((c) => c[1] === 'plan_week:confirm')!;
+      expect(confirmCall[0]).toContain('(AI)');
+    });
   });
 });

@@ -6,7 +6,9 @@ import {
 } from '../services/planning-sessions.js';
 import { planWeekReview, defaultAnchorForOwner } from '../services/plan-week-review.js';
 import { planWeekNextStep } from '../services/plan-week.js';
-import { isValidISODate } from '../lib/dates.js';
+import { parseInstruction, InstructError } from '../agents/plan.js';
+import { currentOwnerId } from '../lib/context.js';
+import { isValidISODate, localISODate } from '../lib/dates.js';
 
 /**
  * Plan-my-week session log (FTUE · T1, #337) — thin transport over
@@ -83,6 +85,34 @@ export function planWeekRouter() {
       fallbackQuestion,
       fallbackOptions,
     });
+  });
+
+  /**
+   * T8 — parse a free-text answer into a structured scheduling intent WITHOUT applying
+   * it (authoring/execution is T9). Reuses `parseInstruction` directly, NOT
+   * `instructPlan` (the apply-wrapper `POST /api/plan/instruct` uses) — this route makes
+   * no writes. Error mapping mirrors `POST /api/plan/instruct` byte-for-byte
+   * (routes/plan.ts).
+   */
+  router.post('/api/plan-week/parse', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as { text?: string; date?: string };
+    const text = (body.text ?? '').trim();
+    if (!text) { ctx.status = 422; ctx.body = { error: 'text is required' }; return; }
+    const date = body.date ?? localISODate();
+    const owner = currentOwnerId();
+
+    let result;
+    try {
+      result = await parseInstruction(owner, date, text);
+    } catch (err) {
+      if (err instanceof InstructError) {
+        ctx.status = err.code === 'unavailable' ? 503 : 422;
+        ctx.body = { error: err.message };
+        return;
+      }
+      throw err;
+    }
+    ctx.body = { ok: true, date, pins: result.pins, hints: result.hints };
   });
 
   router.post('/api/plan-week/sessions', async (ctx) => {

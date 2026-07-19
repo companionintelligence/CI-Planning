@@ -85,7 +85,7 @@ describe('authorPlanOrder — robustness (b4-1, a0-1, a02-1)', () => {
     const a = insertTask('A'); const b = insertTask('B');
     stage(a, 0); stage(b, 1);
 
-    await expect(authorPlanOrder(OWNER, DATE)).resolves.toBeUndefined(); // no 500 / no throw
+    await expect(authorPlanOrder(OWNER, DATE)).resolves.toBe('deterministic'); // no 500 / no throw, reports truthfully
 
     const rows = dailyPlanRows();
     expect(rows).toHaveLength(2);
@@ -135,7 +135,7 @@ describe('authorPlanOrder — LLM path (mocked Ollama)', () => {
     const a = insertTask('A'); const b = insertTask('B');
     stage(a, 0); stage(b, 1);
 
-    await expect(authorPlanOrder(OWNER, DATE)).resolves.toBeUndefined();
+    await expect(authorPlanOrder(OWNER, DATE)).resolves.toBe('deterministic');
 
     const rows = dailyPlanRows();
     expect(rows).toHaveLength(2);
