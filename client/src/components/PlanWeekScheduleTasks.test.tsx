@@ -18,20 +18,28 @@ const updateMock = vi.fn(async (_id: string, _b: unknown) => ({ task: {} }));
 const addTaskMock = vi.fn(async (_id: string) => ({ flight_plan: [{ task_id: 't1', selected: true }], added: 1 }));
 const fpUpdateMock = vi.fn(async (_id: string, _b: unknown) => ({ flight_plan: [] }));
 const runMock = vi.fn(async (_b?: unknown) => ({ result: { placed: 1 }, flight_plan: [] as { task_id: string }[] }));
+const nextStepMock = vi.fn(async (_input?: unknown): Promise<{ question: string; options: string[]; source: 'model' | 'fallback' }> => ({
+  question: 'Which task should I find time for?',
+  options: [],
+  source: 'fallback',
+}));
 vi.mock('../lib/api.js', () => ({
   api: {
     tasks: { list: (p?: unknown) => listMock(p), update: (id: string, b: unknown) => updateMock(id, b) },
     flightPlan: { addTask: (id: string) => addTaskMock(id), update: (id: string, b: unknown) => fpUpdateMock(id, b) },
     auto: { run: (b?: unknown) => runMock(b) },
+    planWeek: { nextStep: (input?: unknown) => nextStepMock(input) },
   },
 }));
 
 const toastMock = vi.fn();
 const stagedIds = { current: new Set<string>() };
+const aiAvailableFlag = { current: false };
 vi.mock('../stores/index.js', () => ({
   showToast: (...a: unknown[]) => toastMock(...a),
   selectedDay: () => '2026-07-18',
   flightPlanTaskIds: () => stagedIds.current,
+  aiAvailable: () => aiAvailableFlag.current,
   refetchFlightPlan: vi.fn(),
   refetchBlocks: vi.fn(),
   refetchTasks: vi.fn(),
@@ -54,8 +62,12 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
     addTaskMock.mockReset().mockResolvedValue({ flight_plan: [{ task_id: 't1', selected: true }], added: 1 });
     fpUpdateMock.mockReset().mockResolvedValue({ flight_plan: [] });
     runMock.mockReset().mockResolvedValue({ result: { placed: 1 }, flight_plan: [] });
+    nextStepMock.mockReset().mockResolvedValue({
+      question: 'Which task should I find time for?', options: [], source: 'fallback',
+    });
     appendMock.mockReset(); onBackMock.mockReset(); toastMock.mockReset();
     stagedIds.current = new Set();
+    aiAvailableFlag.current = false;
   });
 
   it('lists only undated, non-habit, non-recurring, unstaged open tasks', async () => {
@@ -148,5 +160,70 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
 
     await waitFor(() => expect(toastMock).toHaveBeenCalledWith('server said no', 'error'));
     expect(appendMock).not.toHaveBeenCalled();
+  });
+
+  // ── T7 (#343) — the hybrid top-3 AI chip layer, wired only into this branch ──────
+  describe('T7 hybrid follow-up', () => {
+    const THREE = [
+      PLAIN,
+      { id: 't2', title: 'Second thing' },
+      { id: 't3', title: 'Third thing' },
+    ];
+
+    it('never calls nextStep when aiAvailable() is false', async () => {
+      aiAvailableFlag.current = false;
+      listMock.mockResolvedValue({ tasks: THREE });
+      mount();
+      await screen.findByText('Pay invoices');
+      expect(nextStepMock).not.toHaveBeenCalled();
+      expect(screen.getByText('Which task should I find time for?')).toBeTruthy();
+    });
+
+    it('never calls nextStep when fewer than 3 candidates are eligible', async () => {
+      aiAvailableFlag.current = true;
+      listMock.mockResolvedValue({ tasks: [PLAIN] });
+      mount();
+      await screen.findByText('Pay invoices');
+      expect(nextStepMock).not.toHaveBeenCalled();
+    });
+
+    it('fetches the top-3 as fallbackOptions, renders the model question + chips, and records source', async () => {
+      aiAvailableFlag.current = true;
+      listMock.mockResolvedValue({ tasks: THREE });
+      nextStepMock.mockResolvedValue({
+        question: 'Which of these matters most?',
+        options: ['Pick A', 'Pick B', 'Pick C'],
+        source: 'model',
+      });
+
+      mount();
+      await screen.findByText('Which of these matters most?');
+
+      expect(nextStepMock).toHaveBeenCalledWith({
+        branch: 'schedule_tasks',
+        context: { openCount: 3 },
+        fallbackQuestion: 'Which task should I find time for?',
+        fallbackOptions: ['Pay invoices', 'Second thing', 'Third thing'],
+      });
+      await waitFor(() =>
+        expect(appendMock).toHaveBeenCalledWith('Suggested: Which of these matters most? (model)', 'plan_week:next_step'),
+      );
+
+      // Chip index 1 ("Pick B") must resolve to the SECOND task by array position —
+      // a model rewrite of the label must never pick the wrong task.
+      fireEvent.click(screen.getByText('Pick B'));
+      await screen.findByText('Second thing');
+    });
+
+    it('a suggestion fetch error leaves the static question and full list intact', async () => {
+      aiAvailableFlag.current = true;
+      listMock.mockResolvedValue({ tasks: THREE });
+      nextStepMock.mockRejectedValue(new Error('down'));
+
+      mount();
+      await screen.findByText('Pay invoices');
+      expect(screen.getByText('Which task should I find time for?')).toBeTruthy();
+      expect(screen.getAllByText(/Second thing|Third thing/)).toHaveLength(2);
+    });
   });
 });

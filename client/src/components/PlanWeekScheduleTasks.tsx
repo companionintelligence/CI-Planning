@@ -3,7 +3,7 @@ import { ChevronLeft } from 'lucide-solid';
 import { api, type Task } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import {
-  showToast, selectedDay, flightPlanTaskIds,
+  showToast, selectedDay, flightPlanTaskIds, aiAvailable,
   refetchFlightPlan, refetchBlocks, refetchTasks,
 } from '../stores/index.js';
 import type { BranchProps } from './PlanWeekAssistant.js';
@@ -28,6 +28,17 @@ import type { BranchProps } from './PlanWeekAssistant.js';
  * Props are T2's shipped `BranchProps`. The ticket sketched
  * `{ appendTranscript({role:'assistant'|'action', text}), onDone }`, but T1 validates
  * roles against {'system','user'} and 422s anything else — hence the shell's own seam.
+ *
+ * T7 HYBRID LAYER — wired here only. T7 assumed every branch has a generic
+ * "fixed deterministic question + top-3 options" moment to enhance; only this
+ * branch's "Which task should I find time for?" step actually has that shape (T3 is
+ * a multi-field wizard — horizon number, source checkboxes — with no such moment, and
+ * T5 is a read-only recap with no question at all). ADDITIVE, not a restructure: the
+ * full candidate list below is untouched; the top-3 AI chips are a shortcut on top of
+ * it, gated on `aiAvailable()` and on there being exactly 3 candidates (the endpoint
+ * requires exactly 3 `fallbackOptions`). Chip label i always traces back to
+ * `topThree()[i]` by array position — `renderCopy` only rephrases the seed string, it
+ * never reorders — so a model rewrite of the label can never pick the wrong task.
  */
 
 /** Undated, schedulable, not already staged — the only things this branch can act on. */
@@ -46,6 +57,32 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
   const [running, setRunning] = createSignal(false);
 
   const candidates = () => schedulable(openTasks()?.tasks ?? [], flightPlanTaskIds());
+
+  // T7: the top-3 AI chip layer. `suggestKey` is a stable joined-id string (not the
+  // array itself) so the resource only re-fetches when the actual top-3 changes.
+  const topThree = () => candidates().slice(0, 3);
+  const suggestKey = () => (aiAvailable() && topThree().length === 3 ? topThree().map((t) => t.id).join(',') : '');
+
+  const [suggestion] = createResource(
+    () => suggestKey() || null,
+    async () => {
+      const top = topThree();
+      // Soft-degrade on any transport failure: fall through to the static question +
+      // full list below rather than surfacing an error for a nice-to-have suggestion.
+      try {
+        const res = await api.planWeek.nextStep({
+          branch: 'schedule_tasks',
+          context: { openCount: candidates().length },
+          fallbackQuestion: 'Which task should I find time for?',
+          fallbackOptions: top.map((t) => t.title),
+        });
+        void props.append(`Suggested: ${res.question} (${res.source})`, 'plan_week:next_step');
+        return { ...res, tasks: top };
+      } catch {
+        return null;
+      }
+    },
+  );
 
   const afterPlacement = () => {
     setPicked(null);
@@ -109,7 +146,19 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
   return (
     <div class="flex flex-col gap-3">
       <Show when={!picked()}>
-        <p class="text-sm text-foreground">Which task should I find time for?</p>
+        <p class="text-sm text-foreground">{suggestion()?.question ?? 'Which task should I find time for?'}</p>
+
+        <Show when={suggestion()?.options.length}>
+          <div class="flex flex-wrap gap-2">
+            <For each={suggestion()!.options}>
+              {(label, i) => (
+                <button type="button" class="btn-ghost text-xs" onClick={() => setPicked(suggestion()!.tasks[i()])}>
+                  {label}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
 
         <Show when={!openTasks.loading} fallback={<p class="text-xs text-muted-foreground">Loading…</p>}>
           <Show
