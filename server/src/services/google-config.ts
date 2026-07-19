@@ -26,6 +26,10 @@ import { logger } from '../lib/logger.js';
 const KEY_ENABLED = 'google_enabled';
 const KEY_CLIENT_ID = 'google_client_id';
 const KEY_CLIENT_SECRET = 'google_client_secret'; // KEK-sealed JSON blob, never plaintext
+// FTUE · T12 (#348) — set to 'fixture' to run the FTUE "Try with sample data" path
+// without a real OAuth client or a KEK. Absent/anything else ⇒ derive live/off from
+// clientId as before. Cleared on every non-fixture save so switching away is clean.
+const KEY_MODE = 'google_mode';
 
 // The env-derived values captured at module load, restored when in-app config is
 // disabled (so toggling the app config off cleanly returns to the env posture).
@@ -91,6 +95,8 @@ export interface AppGoogleConfig {
   enabled: boolean;
   clientId: string | null;
   hasClientSecret: boolean;
+  /** Persisted fixture-mode override; null = derive live/off from clientId as before. */
+  mode: 'fixture' | null;
 }
 
 export function readAppGoogleConfig(): AppGoogleConfig {
@@ -98,23 +104,45 @@ export function readAppGoogleConfig(): AppGoogleConfig {
     enabled: readValue(KEY_ENABLED) === '1',
     clientId: readValue(KEY_CLIENT_ID),
     hasClientSecret: readValue(KEY_CLIENT_SECRET) !== null,
+    mode: readValue(KEY_MODE) === 'fixture' ? 'fixture' : null,
   };
 }
 
 export type SaveGoogleConfigResult =
   | { ok: true; state: GoogleConfigState }
-  | { ok: false; error: 'env_pinned' | 'kek_required' | 'client_id_required' };
+  | { ok: false; error: 'env_pinned' | 'kek_required' | 'client_id_required' | 'fixture_forbidden_in_production' };
 
 /**
  * Save the in-app Google client and re-hydrate the config singleton.
  * `clientSecret`: string = replace; null = clear; undefined = keep existing.
+ * `mode: 'fixture'` (FTUE · T12) is a separate, minimal branch: it needs neither a
+ * client id nor a KEK — it's a local demo path, not a real OAuth client — and never
+ * touches the stored client id/secret, so switching back to `live` later restores them
+ * untouched. It DOES need the same production guard `config.ts` enforces at boot for
+ * `GOOGLE_MODE=fixture` (fixture mode serves committed sample data as real tasks to
+ * EVERY owner on the deployment — this is a single global `app_config` row, not
+ * per-owner) — without this check, an operator's own "Try with sample data" onboarding
+ * click could flip a live production deployment into demo mode with no confirmation.
  */
 export function saveGoogleConfig(input: {
   clientId?: string;
   clientSecret?: string | null;
   enabled: boolean;
+  mode?: 'live' | 'fixture';
 }): SaveGoogleConfigResult {
   if (config.google.envPinned) return { ok: false, error: 'env_pinned' };
+
+  if (input.enabled && input.mode === 'fixture') {
+    if (process.env.NODE_ENV === 'production' && process.env.CP_ALLOW_FIXTURE !== 'true') {
+      return { ok: false, error: 'fixture_forbidden_in_production' };
+    }
+    sqlite.transaction(() => {
+      writeValue(KEY_ENABLED, '1');
+      writeValue(KEY_MODE, 'fixture');
+    })();
+    hydrateGoogleConfig();
+    return { ok: true, state: googleConfigState() };
+  }
 
   const clientId = (input.clientId ?? readAppGoogleConfig().clientId ?? '').trim();
   if (input.enabled && !clientId) return { ok: false, error: 'client_id_required' };
@@ -125,6 +153,7 @@ export function saveGoogleConfig(input: {
 
   sqlite.transaction(() => {
     writeValue(KEY_ENABLED, input.enabled ? '1' : '0');
+    deleteValue(KEY_MODE); // leaving (or never entering) fixture mode
     if (clientId) writeValue(KEY_CLIENT_ID, clientId);
     else deleteValue(KEY_CLIENT_ID);
     if (typeof input.clientSecret === 'string' && input.clientSecret.trim()) {
@@ -149,7 +178,12 @@ export function saveGoogleConfig(input: {
 export function hydrateGoogleConfig(): void {
   if (config.google.envPinned) return;
   const app = readAppGoogleConfig();
-  if (app.enabled && app.clientId) {
+  if (app.enabled && app.mode === 'fixture') {
+    config.google.clientId = undefined;
+    config.google.clientSecret = undefined;
+    config.google.mode = 'fixture';
+    logger.info('google-config: in-app fixture mode active (mode=fixture)');
+  } else if (app.enabled && app.clientId) {
     config.google.clientId = app.clientId;
     config.google.clientSecret = openStoredSecret() ?? undefined;
     config.google.mode = 'live';
@@ -181,7 +215,7 @@ export interface GoogleConfigState {
 export function googleConfigState(): GoogleConfigState {
   const app = readAppGoogleConfig();
   return {
-    source: config.google.envPinned ? 'env' : app.enabled && app.clientId ? 'app' : 'off',
+    source: config.google.envPinned ? 'env' : app.enabled && (app.mode === 'fixture' || app.clientId) ? 'app' : 'off',
     mode: config.google.mode,
     envPinned: config.google.envPinned,
     kekAvailable: kekAvailable(),

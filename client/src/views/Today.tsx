@@ -4,6 +4,7 @@ import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPat
 import { dueFilterActive, passesDueFilter } from '../lib/due-filter.js';
 import { dueFilter, toggleDirection, setHideHabits, setHideRoutines } from '../stores/due-filter.js';
 import { FocusRitual } from '../components/FocusRitual.js';
+import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { selection, clearSelection, selectedTaskIds, selectedTitles, routineModal, setRoutineModal } from '../stores/selection.js';
 import { api, type Task } from '../lib/api.js';
 import { splitTagNames } from '../lib/multi-tag.js';
@@ -246,7 +247,10 @@ export function Today() {
 
         <Show
           when={todayTags().length > 0}
-          fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing scheduled yet.</p>}
+          fallback={<>
+            <p class="mt-2 text-sm text-muted-foreground">Nothing scheduled yet.</p>
+            <EmptyStateConnectCTA />
+          </>}
         >
           <div class="mt-2 flex flex-wrap gap-1.5">
             <For each={todayTags()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
@@ -452,7 +456,10 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
         {/* The day's due list. */}
         <Show
           when={items().dueToday.length > 0}
-          fallback={<p class="mt-2 text-sm text-muted-foreground">Nothing due this day.</p>}
+          fallback={<>
+            <p class="mt-2 text-sm text-muted-foreground">Nothing due this day.</p>
+            <EmptyStateConnectCTA />
+          </>}
         >
           <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-border bg-background/40">
             <For each={items().dueToday}>

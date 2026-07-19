@@ -148,6 +148,100 @@ describe('PUT /api/google-config', () => {
   });
 });
 
+// FTUE · T12 (#348) — the "Try with sample data" fixture-mode toggle.
+describe('fixture mode', () => {
+  it('enables with no client id and no KEK, persists the marker, and survives boot hydration', () => {
+    delete process.env.CP_KEK_B64; // fixture mode must not need a KEK
+    const res = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.state).toMatchObject({ source: 'app', mode: 'fixture', enabled: true, clientId: null });
+    expect(config.google.mode).toBe('fixture');
+
+    // Simulate a restart: singleton back at defaults, then re-hydrate from app_config.
+    config.google.mode = 'off';
+    hydrateGoogleConfig();
+    expect(config.google.mode).toBe('fixture');
+    expect(googleConfigState().mode).toBe('fixture');
+  });
+
+  it('disabling clears the marker and returns to off', () => {
+    saveGoogleConfig({ enabled: true, mode: 'fixture' });
+    expect(config.google.mode).toBe('fixture');
+
+    const cleared = saveGoogleConfig({ enabled: false });
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.state).toMatchObject({ source: 'off', mode: 'off' });
+    expect(config.google.mode).toBe('off');
+
+    const rows = sqlite.prepare(`SELECT key FROM app_config WHERE key = 'google_mode'`).all();
+    expect(rows).toEqual([]);
+  });
+
+  it('switching to fixture then back to live restores the previously-saved client untouched', () => {
+    saveGoogleConfig({ clientId: 'id-1', clientSecret: 'sekret', enabled: true });
+    saveGoogleConfig({ enabled: true, mode: 'fixture' });
+    expect(config.google.mode).toBe('fixture');
+
+    const back = saveGoogleConfig({ enabled: true }); // mode omitted => live path
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    expect(back.state).toMatchObject({ mode: 'live', clientId: 'id-1', hasClientSecret: true });
+    expect(config.google.clientId).toBe('id-1');
+  });
+
+  it('PUT /api/google-config: admin sets fixture mode, non-admin 403s, an invalid mode 400s', async () => {
+    const asAdmin = await put({ enabled: true, mode: 'fixture' });
+    expect(asAdmin.status).toBe(200);
+    expect(asAdmin.body.mode).toBe('fixture');
+
+    const asNonAdmin = await put({ enabled: true, mode: 'fixture' }, NON_ADMIN);
+    expect(asNonAdmin.status).toBe(403);
+
+    const badMode = await put({ enabled: true, mode: 'bogus' });
+    expect(badMode.status).toBe(400);
+  });
+
+  // Adversarial review caught this: the boot-time guard in config.ts (NODE_ENV=
+  // production + GOOGLE_MODE=fixture refuses to start without CP_ALLOW_FIXTURE=true)
+  // only runs once at process start against the ENV variable — it does nothing to stop
+  // this RUNTIME path from flipping a live production deployment into fixture mode via
+  // a single admin (or FTUE onboarding) click. saveGoogleConfig must re-check it.
+  describe('production guard (mirrors config.ts boot check)', () => {
+    const savedNodeEnv = process.env.NODE_ENV;
+    const savedAllowFixture = process.env.CP_ALLOW_FIXTURE;
+    afterEach(() => {
+      if (savedNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = savedNodeEnv;
+      if (savedAllowFixture === undefined) delete process.env.CP_ALLOW_FIXTURE; else process.env.CP_ALLOW_FIXTURE = savedAllowFixture;
+    });
+
+    it('refuses fixture mode in production without CP_ALLOW_FIXTURE', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.CP_ALLOW_FIXTURE;
+      const res = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.error).toBe('fixture_forbidden_in_production');
+      expect(config.google.mode).not.toBe('fixture'); // nothing was persisted or hot-applied
+    });
+
+    it('allows fixture mode in production with the explicit CP_ALLOW_FIXTURE escape hatch', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.CP_ALLOW_FIXTURE = 'true';
+      const res = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+      expect(res.ok).toBe(true);
+    });
+
+    it('PUT /api/google-config 403s the fixture toggle in production without CP_ALLOW_FIXTURE', async () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.CP_ALLOW_FIXTURE;
+      const res = await put({ enabled: true, mode: 'fixture' });
+      expect(res.status).toBe(403);
+    });
+  });
+});
+
 describe('boot hydration', () => {
   it('re-applies a saved app config after a simulated restart', () => {
     saveGoogleConfig({ clientId: 'boot-id', clientSecret: 'boot-secret', enabled: true });
