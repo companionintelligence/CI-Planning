@@ -159,16 +159,26 @@ describe('W11 — updateSchedulingPrefs', () => {
     it('lowering recurrenceHorizonDays triggers the SAME prune REST does', async () => {
       // Raise the horizon first (mirrors recurrence-horizon.test.ts), materialize a
       // daily recurring block across it, then shorten via the GraphQL mutation.
+      //
+      // Dates are RELATIVE TO TODAY on purpose. This fixture used to hard-code
+      // 2026-06-15 → 2026-07-25 against a horizon that rolls forward from the current
+      // day; the two only overlapped by >7 days while real time stayed on the near side
+      // of 2026-07-19, then the test began failing every run with "expected 7 to be
+      // greater than 7" on commits that changed nothing. Anchor on today and the overlap
+      // is the full horizon forever.
+      const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+      const dtstart = day(0);
+
       await gql('mutation { updateSchedulingPrefs(input: { planning: { recurrenceHorizonDays: 30 } }) { success } }');
       const created = await api(srv.url, '/api/blocks', {
         method: 'POST',
         json: {
           title: 'Deep Work', block_kind: 'timeblock', block_type: 'scheduled', tag: 'focus',
-          start_at: '2026-06-15T09:00:00.000Z', end_at: '2026-06-15T11:00:00.000Z', recurrence_rule: 'FREQ=DAILY',
+          start_at: `${dtstart}T09:00:00.000Z`, end_at: `${dtstart}T11:00:00.000Z`, recurrence_rule: 'FREQ=DAILY',
         },
       });
       const tpl = created.body.block;
-      const wide = await api(srv.url, `/api/blocks?from=2026-06-15T00:00:00.000Z&to=2026-07-25T23:59:00.000Z`);
+      const wide = await api(srv.url, `/api/blocks?from=${dtstart}T00:00:00.000Z&to=${day(40)}T23:59:00.000Z`);
       expect(wide.status).toBe(200);
       const before = (sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE recurrence_parent_id = ?`).get(tpl.id) as { n: number }).n;
       expect(before).toBeGreaterThan(7); // materialized under the 30-day horizon
