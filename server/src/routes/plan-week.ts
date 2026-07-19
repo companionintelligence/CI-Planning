@@ -1,7 +1,7 @@
 import Router from '@koa/router';
 import {
   openSession, appendTranscript, setTranscript, closeSession,
-  listSessions, getSession, deleteSession, planWeekCandidates,
+  listSessions, getSession, deleteSession, planWeekCandidates, consolidateSessions,
   type TranscriptMessage,
 } from '../services/planning-sessions.js';
 import { planWeekReview, defaultAnchorForOwner } from '../services/plan-week-review.js';
@@ -175,6 +175,18 @@ export function planWeekRouter() {
   router.delete('/api/plan-week/sessions/:id', async (ctx) => {
     if (!deleteSession(ctx.params.id)) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     ctx.body = { ok: true };
+  });
+
+  /**
+   * T10 — collapse a selected set of the caller's own sessions into one prose summary.
+   * Never deletes a source row (Clear/T6 remains the only deletion path). 422 on a
+   * missing/empty/non-array `ids`, or an `ids` set that resolves to zero owned rows.
+   */
+  router.post('/api/plan-week/sessions/consolidate', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as { ids?: unknown };
+    const res = await consolidateSessions(body.ids);
+    if (!res.ok) { ctx.status = 422; ctx.body = { error: res.error }; return; }
+    ctx.body = res.value;
   });
 
   return router;

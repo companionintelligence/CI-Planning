@@ -510,6 +510,11 @@ export const api = {
      *  no deterministic fallback parser. */
     parse: (text: string, date?: string) =>
       request<PlanWeekParseResponse>('POST', '/plan-week/parse', { text, date }),
+    /** T10 — collapses the given session ids into one prose summary; always works
+     *  offline (degrades to a deterministic digest, `source: 'fallback'`). Non-
+     *  destructive — no source session is deleted. */
+    consolidateSessions: (ids: string[]) =>
+      request<{ summary: string; source: 'model' | 'fallback' }>('POST', '/plan-week/sessions/consolidate', { ids }),
   },
 
   // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────

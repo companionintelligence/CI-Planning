@@ -3,6 +3,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
 import { localDateInTZ } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
+import { renderCopy } from '../agents/render-copy.js';
 
 /**
  * services/planning-sessions.ts (FTUE · T1, #337) — owner-scoped CRUD for the
@@ -329,4 +330,70 @@ export function deleteSession(id: string): boolean {
     .prepare(`DELETE FROM planning_sessions WHERE id = ? AND owner_id = ?`)
     .run(id, currentOwnerId());
   return info.changes > 0;
+}
+
+// ── T10 (#346): consolidate / summarize ─────────────────────────────────────────
+
+export interface ConsolidateResult { summary: string; source: 'model' | 'fallback' }
+
+/**
+ * Collapse a caller-selected set of the owner's own sessions into one prose summary.
+ * Builds a deterministic digest, passes it as BOTH `facts` and `fallback` to a single
+ * `renderCopy('weekly_review', …)` call, and persists `copy.text` onto the newest
+ * selected session's `summary` (source rows are never deleted — Clear/T6 owns that).
+ *
+ * T1's schema (migration 0131) has no action/created-task count columns, so both are
+ * derived from `transcript`: `actionCount` is every logged turn (the simplest faithful
+ * proxy); `createdTaskCount` counts turns tagged with a per-task placement kind
+ * (`plan_week:schedule_set` / `plan_week:schedule_auto`, T4's Schedule-Tasks branch).
+ * Fill-branch sessions (T3/T9) record their placement in one aggregate
+ * `plan_week:confirm` line rather than per task, so they contribute 0 to
+ * `createdTaskCount` — a real gap in what the transcript captures, not a bug here.
+ */
+export async function consolidateSessions(ids: unknown): Promise<SessionResult<ConsolidateResult>> {
+  if (!Array.isArray(ids) || ids.length === 0 || !ids.every((v) => typeof v === 'string' && v)) {
+    return { ok: false, error: 'ids must be a non-empty array of strings' };
+  }
+  const owner = currentOwnerId();
+  // Ids belonging to another owner simply don't match this WHERE clause — never leaked,
+  // never mutated, same as every other owner-scoped read in this file.
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = sqlite
+    .prepare(`SELECT * FROM planning_sessions WHERE owner_id = ? AND id IN (${placeholders}) ORDER BY started_at DESC`)
+    .all(owner, ...ids) as SessionRow[];
+  if (rows.length === 0) {
+    return { ok: false, error: 'no owned sessions found for the given ids' };
+  }
+  const sessions = rows.map(hydrate); // newest first (started_at DESC)
+
+  const tz = ownerTimezone(owner);
+  const dates = sessions.map((s) => localDateInTZ(s.started_at, tz)).sort();
+  const dateRange = dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`;
+
+  const branches = [...new Set(sessions.map((s) => s.entry_branch))].sort();
+  const branchLine = branches.length ? branches.join(', ') : 'no branch recorded';
+
+  let actionCount = 0;
+  let createdTaskCount = 0;
+  for (const s of sessions) {
+    actionCount += s.transcript.length;
+    for (const turn of s.transcript) {
+      if (turn.kind === 'plan_week:schedule_set' || turn.kind === 'plan_week:schedule_auto') createdTaskCount++;
+    }
+  }
+
+  const digest =
+    `${sessions.length} planning session${sessions.length === 1 ? '' : 's'} ` +
+    `(${dateRange}) across ${branches.length} branch${branches.length === 1 ? '' : 'es'}: ${branchLine}. ` +
+    `${actionCount} action${actionCount === 1 ? '' : 's'} recorded, ` +
+    `${createdTaskCount} task${createdTaskCount === 1 ? '' : 's'} placed.`;
+
+  const copy = await renderCopy('weekly_review', { facts: digest, fallback: digest });
+
+  const newest = sessions[0];
+  sqlite
+    .prepare(`UPDATE planning_sessions SET summary = ? WHERE id = ? AND owner_id = ?`)
+    .run(copy.text, newest.id, owner);
+
+  return { ok: true, value: { summary: copy.text, source: copy.source } };
 }
