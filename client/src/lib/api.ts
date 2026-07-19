@@ -838,6 +838,9 @@ export interface Prefs {
   sleep_hours_per_week?: number;
   // Cross-device calendar view-state (0111); null/absent = use built-in defaults.
   view_prefs?: ViewPrefs | null;
+  // FTUE · T11 (0132): null = onboarding wizard not yet completed/skipped; non-null
+  // ISO-8601 = onboarded (and doubles as the completion timestamp).
+  onboarded_at?: string | null;
 }
 
 // Phase P · P2 — result of POST /api/planner/clear (also the dry-run preview shape).
