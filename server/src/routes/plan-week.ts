@@ -4,7 +4,7 @@ import {
   listSessions, getSession, deleteSession, planWeekCandidates,
   type TranscriptMessage,
 } from '../services/planning-sessions.js';
-import { planWeekReview, priorWeekAnchor } from '../services/plan-week-review.js';
+import { planWeekReview, defaultAnchorForOwner } from '../services/plan-week-review.js';
 import { isValidISODate } from '../lib/dates.js';
 
 /**
@@ -35,7 +35,7 @@ export function planWeekRouter() {
     if (raw !== undefined && !isValidISODate(raw)) {
       ctx.status = 422; ctx.body = { error: 'anchor must be YYYY-MM-DD' }; return;
     }
-    ctx.body = planWeekReview((raw as string | undefined) ?? priorWeekAnchor());
+    ctx.body = planWeekReview((raw as string | undefined) ?? defaultAnchorForOwner());
   });
 
   /**
@@ -44,7 +44,9 @@ export function planWeekRouter() {
    * no writes, so the preview can be re-run freely as the user changes the horizon.
    */
   router.get('/api/plan-week/candidates', async (ctx) => {
-    ctx.body = planWeekCandidates(ctx.query.horizon, ctx.query.start);
+    // No `start` param: the staging day is not the caller's to choose — /api/auto/fill
+    // resolves ownerToday itself, so the service anchors on the same value and echoes it.
+    ctx.body = planWeekCandidates(ctx.query.horizon);
   });
 
   router.post('/api/plan-week/sessions', async (ctx) => {

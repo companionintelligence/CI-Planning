@@ -78,13 +78,19 @@ export function syncTaskFromBlock(blockId: string, ownerId: string): string | nu
   // the new day too — otherwise reminders (which anchor on scheduled_for) and the
   // recurrence/streak logic (which keys on occurrence_date) would disagree and the
   // instance would be half-moved.
-  sqlite
+  const info = sqlite
     .prepare(
       `UPDATE tasks SET scheduled_for = ?, task_time = ?,
          occurrence_date = CASE WHEN occurrence_date IS NOT NULL THEN ? ELSE occurrence_date END
        WHERE id = ? AND owner_id = ?`,
     )
     .run(scheduledFor, taskTime, scheduledFor, block.task_id, ownerId);
+  // The mirror image of the stamp in syncBlockFromTask. Every caller of this is an owner
+  // block edit (moveBlockGroup / promoteBlockToScheduled / updateBlock / the extend route)
+  // whose BLOCK side this PR stamps — leaving the task side unstamped would let a stale
+  // queued task op drag scheduled_for/task_time back out of lockstep with the block.
+  // (`occurrence_date` is outside the sync allowlist, so it needs no stamp.)
+  if (info.changes > 0) stampRow(sqlite, 'task', block.task_id, ['scheduledFor', 'taskTime']);
 
   syncTaskReminders(ownerId, block.task_id);
   return block.task_id;
@@ -289,9 +295,15 @@ export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resiz
   const newEnd = new Date(Date.parse(newStart) + durMs).toISOString();
 
   if (newStart === block.start_at && newEnd === block.end_at) return null; // no change
-  sqlite
+  const info = sqlite
     .prepare(`UPDATE time_blocks SET start_at = ?, end_at = ?, is_auto = 0 WHERE id = ? AND owner_id = ?`)
     .run(newStart, newEnd, block.id, ownerId);
+  // The task side of this mirror is stamped by updateTask, but the block side was not:
+  // without it a queued block op with ANY older clientTs wins LWW (the compare is
+  // `clientTs >= ''`) and snaps the block back, leaving block and task desynced — the one
+  // invariant this module exists to hold. Gated on the owner-scoped UPDATE landing, since
+  // stampRow keys on id alone. (`is_auto` is outside the sync allowlist, so it needs none.)
+  if (info.changes > 0) stampRow(sqlite, 'block', block.id, ['startAt', 'endAt']);
   return block.id;
 }
 

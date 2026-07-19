@@ -3,6 +3,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
 import type { PlanWeekCandidates } from '../src/services/planning-sessions.js';
+import { localDateInTZ } from '../src/lib/tz.js';
 
 /**
  * FTUE · T3 (#339) — the read-only candidate preview behind "Fill next week".
@@ -88,6 +89,77 @@ describe('GET /api/plan-week/candidates', () => {
     expect(r.flight_plan.count).toBe(1);  // only selected = 1
     expect(r.objectives.count).toBe(1);   // only linked = 1, and not staged
     expect(r.recurring.count).toBe(2);    // recurrence_rule OR habit
+  });
+
+  /**
+   * "Live link" needs all three predicates (#369's rule): linked=1, the objective not
+   * ARCHIVED, and the objective OURS. Counting on `linked = 1` alone both inflates the
+   * number with archived work and reads across a cross-owner link row.
+   */
+  it('counts objective links only when the objective is live AND ours', async () => {
+    createOwner(SECOND_OWNER_ID);
+    const mkObj = (id: string, owner: string, archivedAt: string | null = null) =>
+      sqlite.prepare(
+        `INSERT INTO objectives (id, owner_id, title, level, horizon, status, cadence, priority, created_at, updated_at, archived_at)
+         VALUES (?, ?, 'O', 'objective', 'none', 'active', 'none', 3, ?, ?, ?)`,
+      ).run(id, owner, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', archivedAt);
+    const link = (lid: string, oid: string, tid: string) =>
+      sqlite.prepare(`INSERT INTO objective_tasks (objective_id, task_id, id, linked, version) VALUES (?, ?, ?, 1, 1)`).run(oid, tid, lid);
+
+    mkObj('o-live', SYSTEM_OWNER);
+    mkObj('o-archived', SYSTEM_OWNER, '2026-07-02T00:00:00.000Z');
+    mkObj('o-theirs', SECOND_OWNER_ID);
+
+    link('l-live', 'o-live', insertTask({ title: 'Counts' }));
+    link('l-arch', 'o-archived', insertTask({ title: 'Archived objective' }));
+    link('l-cross', 'o-theirs', insertTask({ title: 'Cross-owner link' })); // MY task, THEIR objective
+
+    // Only the live, owned link counts — the other two are still open tasks, so a naive
+    // `linked = 1` query would have returned 3.
+    expect((await get()).body.objectives.count).toBe(1);
+  });
+
+  /**
+   * The `scheduled_for` / live-block clause is the one most likely to drift from
+   * autoplan.ts's copy, and it is what makes "what fill would stage" true rather than
+   * approximate. Anchored on the OWNER's today, since that is the day fill resolves.
+   */
+  it('mirrors the scheduled_for + live-block clause exactly', async () => {
+    const today = localDateInTZ(new Date().toISOString(), 'UTC');
+    const tomorrow = new Date(Date.parse(`${today}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+
+    insertTask({ title: 'Undated' });                          // eligible
+    insertTask({ title: 'Today, no block', scheduled_for: today }); // eligible (fill re-stages it)
+    insertTask({ title: 'Another day', scheduled_for: tomorrow }); // NOT eligible
+    const blocked = insertTask({ title: 'Today, live block', scheduled_for: today });
+    sqlite.prepare(
+      `INSERT INTO time_blocks (id, owner_id, task_id, title, block_kind, start_at, end_at, status)
+       VALUES ('b-live', ?, ?, 'Blocked', 'task', ?, ?, 'planned')`,
+    ).run(SYSTEM_OWNER, blocked, `${today}T09:00:00.000Z`, `${today}T10:00:00.000Z`);
+
+    const titles = (await get()).body.open_tasks.items.map((t) => t.title).sort();
+    expect(titles).toEqual(['Today, no block', 'Undated']);
+
+    // A terminal block does not protect a task — it is eligible again.
+    sqlite.prepare(`UPDATE time_blocks SET status = 'completed' WHERE id = 'b-live'`).run();
+    expect((await get()).body.open_tasks.items.map((t) => t.title)).toContain('Today, live block');
+  });
+
+  /**
+   * The preview must anchor on the day fill will actually use. `POST /api/auto/fill` takes
+   * no date and resolves ownerToday itself, so a caller-supplied day would make the
+   * preview describe a different task set than the confirm it gates.
+   */
+  it('anchors staging on the owner\'s today and ignores any caller-supplied day', async () => {
+    const today = localDateInTZ(new Date().toISOString(), 'UTC');
+    insertTask({ title: 'Today', scheduled_for: today });
+
+    const echoed = (await get()).body;
+    expect(echoed.start).toBe(today);
+    // A start= param must not change the answer — it is not the caller's to choose.
+    const spoofed = (await get(`horizon=7&start=1999-01-01`)).body;
+    expect(spoofed.start).toBe(today);
+    expect(spoofed.open_tasks.items.map((t) => t.title)).toEqual(echoed.open_tasks.items.map((t) => t.title));
   });
 
   it('writes nothing — row counts are identical before and after', async () => {

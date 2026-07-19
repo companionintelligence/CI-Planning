@@ -39,10 +39,12 @@ export function PlanWeekFill(props: BranchProps) {
     open_tasks: true, flight_plan: true, objectives: true, recurring: true,
   });
   const [running, setRunning] = createSignal(false);
+  /** Set once the confirm has actually placed — this branch runs at most once per session. */
+  const [done, setDone] = createSignal(false);
 
   // Only fetched once the user reaches the preview step — the earlier steps need no data.
   const [preview] = createResource(
-    () => (step() === 'preview' || step() === 'confirm' ? { horizon: horizon(), start: selectedDay() } : null),
+    () => (step() === 'preview' || step() === 'confirm' ? { horizon: horizon() } : null),
     (p) => api.planWeek.candidates(p),
   );
 
@@ -71,6 +73,9 @@ export function PlanWeekFill(props: BranchProps) {
 
   /** The only writing step. Mirrors FlightPlan.runSchedule's call → toast → refetch idiom. */
   const confirm = async () => {
+    // `running` only covers the in-flight window; without a terminal flag the button comes
+    // back enabled on the same step and a second click stages and places another batch.
+    if (running() || done()) return;
     setRunning(true);
     try {
       // Fill stages the open backlog; skip it entirely when that source is off, so the
@@ -87,6 +92,7 @@ export function PlanWeekFill(props: BranchProps) {
         `Confirmed: placed ${result.placed ?? 0}, unplaced ${result.unplaced ?? 0}${result.days ? `, days ${result.days}` : ''}`,
         'plan_week:confirm',
       );
+      setDone(true);
       refetchFlightPlan();
       refetchBlocks();
     } catch (err) {
@@ -151,6 +157,11 @@ export function PlanWeekFill(props: BranchProps) {
                 <Show when={p().horizon !== horizon()}>
                   <span>Horizon clamped to {p().horizon} days by the server.</span>
                 </Show>
+                {/* Staging is anchored on the owner's today, which can differ from the day
+                    the cockpit is browsing; say so rather than implying otherwise. */}
+                <Show when={sources().open_tasks && p().start !== selectedDay()}>
+                  <span>Staging is based on {p().start} (today), not {selectedDay()}.</span>
+                </Show>
               </div>
               <Show when={sources().open_tasks && p().open_tasks.items.length}>
                 <ul class="text-xs text-foreground flex flex-col gap-0.5 max-h-40 overflow-y-auto">
@@ -168,8 +179,8 @@ export function PlanWeekFill(props: BranchProps) {
           Schedule {horizon()} day{horizon() === 1 ? '' : 's'} from {selectedDay()}?
           {sources().open_tasks ? ' Your open backlog will be staged first.' : ' Only already-staged items will be placed.'}
         </p>
-        <button type="button" class="btn-primary text-xs self-start" disabled={running()} onClick={() => void confirm()}>
-          {running() ? 'Scheduling…' : 'Schedule it'}
+        <button type="button" class="btn-primary text-xs self-start" disabled={running() || done()} onClick={() => void confirm()}>
+          {running() ? 'Scheduling…' : done() ? 'Scheduled' : 'Schedule it'}
         </button>
       </Show>
 

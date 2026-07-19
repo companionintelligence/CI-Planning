@@ -1,6 +1,8 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
+import { localDateInTZ } from '../lib/tz.js';
+import { ownerTimezone } from '../engine/recurrence-generate.js';
 
 /**
  * services/planning-sessions.ts (FTUE · T1, #337) — owner-scoped CRUD for the
@@ -228,6 +230,16 @@ export interface PlanWeekCandidates {
 const clampHorizon = (n: unknown): number => Math.max(1, Math.min(60, Math.floor(Number(n) || 1)));
 
 /**
+ * Today in the OWNER's timezone — the same value `fillFlightPlanCandidates` resolves via
+ * its own `ownerToday` (engine/autoplan.ts:588). `scheduled_for` is owner-local, so a
+ * server-tz `localISODate()` would mis-window scheduled tasks around midnight for any
+ * owner in a different zone.
+ */
+function ownerToday(owner: string): string {
+  return localDateInTZ(new Date().toISOString(), ownerTimezone(owner));
+}
+
+/**
  * What "Fill next week" WOULD stage and place, without touching anything. Strictly
  * read-only — no INSERT/UPDATE/DELETE — so the preview step is free to re-run.
  *
@@ -241,12 +253,15 @@ const clampHorizon = (n: unknown): number => Math.max(1, Math.min(60, Math.floor
  * Flight-plan / Objectives / Recurring toggles change what this summary shows, never what
  * placement does.
  */
-export function planWeekCandidates(horizonRaw: unknown, startRaw: unknown): PlanWeekCandidates {
+export function planWeekCandidates(horizonRaw: unknown): PlanWeekCandidates {
   const owner = currentOwnerId();
   const horizon = clampHorizon(horizonRaw);
-  const start = typeof startRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(startRaw)
-    ? startRaw
-    : new Date().toISOString().slice(0, 10);
+  // NOT a caller-supplied day. `POST /api/auto/fill` takes no date and always resolves
+  // ownerToday itself, so anchoring the preview on anything else would make it describe a
+  // different task set than the confirm it gates — listing tasks fill will not stage and
+  // hiding ones it will. The run's own anchor (selectedDay) is passed straight to
+  // /api/auto/run by the client and is a separate concern.
+  const start = ownerToday(owner);
 
   // Mirrors fillFlightPlanCandidates (autoplan.ts:600) — minus the write and the LIMIT.
   const ELIGIBLE = `
@@ -276,13 +291,22 @@ export function planWeekCandidates(horizonRaw: unknown, startRaw: unknown): Plan
     .get(owner) as { n: number };
 
   // Open, unstaged tasks carrying a LIVE objective link — an informational subset of
-  // open_tasks. `linked = 1` is the active-link predicate (services/objectives.ts).
+  // open_tasks.
+  //
+  // "Live" needs all three predicates, per the rule #369 established: `linked = 1` alone
+  // is NOT enough (a soft-deleted link keeps linked=1's sibling rows around), the
+  // objective must not be ARCHIVED (archive is orthogonal to status — an archived
+  // objective is absent from the live tree), and the objective must be OURS. Joining
+  // objective_tasks without joining objectives counts another owner's objective through a
+  // cross-owner link row — the same cross-tenant leak #369 closed in buildTree's CTEs.
   const { n: objCount } = sqlite
     .prepare(`SELECT COUNT(DISTINCT t.id) AS n FROM tasks t
                 JOIN objective_tasks ot ON ot.task_id = t.id AND ot.linked = 1
+                JOIN objectives o ON o.id = ot.objective_id
+                     AND o.owner_id = ? AND o.archived_at IS NULL
                WHERE t.owner_id = ? AND t.status = 'open'
                  AND t.id NOT IN (SELECT task_id FROM flight_plan WHERE owner_id = ?)`)
-    .get(owner, owner) as { n: number };
+    .get(owner, owner, owner) as { n: number };
 
   const { n: recCount } = sqlite
     .prepare(`SELECT COUNT(*) AS n FROM tasks

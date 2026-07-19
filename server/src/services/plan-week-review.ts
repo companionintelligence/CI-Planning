@@ -1,5 +1,6 @@
 import { currentOwnerId } from '../lib/context.js';
-import { localISODate } from '../lib/dates.js';
+import { localDateInTZ } from '../lib/tz.js';
+import { ownerTimezone } from '../engine/recurrence-generate.js';
 import {
   weeklyReview, globalCalibrationReadout,
   type WeekReview, type CalibrationReadout,
@@ -46,10 +47,23 @@ export interface PlanWeekReview {
  * what the branch is for. Pivots at noon UTC like `weekDays`/`addDays` in weekly-review.ts,
  * so a DST shift can't roll the date across a boundary.
  */
-export function priorWeekAnchor(today: string = localISODate()): string {
+export function priorWeekAnchor(today: string): string {
   const dt = new Date(`${today}T12:00:00Z`);
   dt.setUTCDate(dt.getUTCDate() - 7);
   return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * The default anchor for the CURRENT owner.
+ *
+ * Must derive "today" in the OWNER's timezone, not the server's: a one-day difference
+ * becomes a whole-week error here, because the anchor is then snapped to Mon→Sun. A
+ * server on UTC serving an owner in Pacific/Auckland would otherwise hand them the week
+ * before last — or, mirrored, their in-progress week, which is exactly what anchoring on
+ * a prior week exists to avoid.
+ */
+export function defaultAnchorForOwner(owner: string = currentOwnerId()): string {
+  return priorWeekAnchor(localDateInTZ(new Date().toISOString(), ownerTimezone(owner)));
 }
 
 /**
@@ -66,8 +80,15 @@ export function planWeekReview(anchor: string): PlanWeekReview {
 
   // T1's listSessions() is owner-self-scoping and returns every session; the week filter
   // is applied here so the aggregation owns its own range semantics.
+  //
+  // `started_at` is a UTC instant but `week.days` are OWNER-LOCAL calendar days, so the
+  // comparison must convert rather than slice. Slicing would put a session logged at
+  // 23:00 local on Sunday into the following week (or Monday 00:30 local into the
+  // previous one) — and would disagree with the stars/note_dates in this very payload,
+  // which are keyed by owner-local day.
+  const tz = ownerTimezone(owner);
   const sessions = listSessions().filter((s) => {
-    const day = s.started_at.slice(0, 10);
+    const day = localDateInTZ(s.started_at, tz);
     return day >= from && day <= to;
   });
 

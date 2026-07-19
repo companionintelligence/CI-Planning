@@ -114,9 +114,20 @@ export function PlanWeekAssistant() {
   const [step, setStep] = createSignal<Step>('menu');
   const [sessionId, setSessionId] = createSignal<string | null>(null);
 
-  // Reset on every open so a reopened shell never inherits the last run's branch or id.
+  /**
+   * Reset only on the false→true EDGE, not on every truthy read.
+   *
+   * The signal holds an object, so any `setPlanWeekModal({ open: true })` while already
+   * open is a new reference and re-fires this effect. The Focus trigger stays mounted and
+   * focusable behind the modal, so a stray re-open (Enter on the still-focused button, a
+   * second entry point, an HMR remount) would silently throw away the user's in-progress
+   * branch and its session id. Observed live during verification.
+   */
+  let wasOpen = false;
   createEffect(() => {
-    if (open()) { setStep('menu'); setSessionId(null); sessionP = Promise.resolve(null); }
+    const isOpen = open();
+    if (isOpen && !wasOpen) { setStep('menu'); setSessionId(null); sessionP = Promise.resolve(null); }
+    wasOpen = isOpen;
   });
 
   const branch = () => BRANCHES.find((b) => b.key === step());
@@ -131,6 +142,15 @@ export function PlanWeekAssistant() {
 
   /** Session open/close/append are best-effort: the log must never block the UI. */
   const pickBranch = (key: BranchKey, label: string) => {
+    // Going back to the menu and choosing again opens a SECOND session. Without this the
+    // first would sit `open` with a null ended_at forever, and T6's Logs tab would fill
+    // with rows that never resolve — the same zombie-row problem the abandoned status
+    // exists to prevent. Close the previous one before replacing the handle.
+    const prev = sessionP;
+    void prev.then((id) => {
+      if (id) api.planWeek.session.close(id, { status: 'abandoned' }).catch(() => {});
+    });
+
     setStep(key); // advance first — a failed log must not strand the user on the menu
     sessionP = api.planWeek.session
       .open(key)

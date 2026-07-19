@@ -107,6 +107,49 @@ describe('PlanWeekAssistant — the shell', () => {
     expect(screen.queryByText('Or type your answer…')).toBeNull(); // no PromptStep input
   });
 
+  /**
+   * Going back and choosing again opens a SECOND session. The first must be closed, or it
+   * sits `open` with a null ended_at forever and T6's Logs tab fills with rows that never
+   * resolve — the zombie-row problem the abandoned status exists to prevent.
+   */
+  it('abandons the previous session when a second branch is chosen', async () => {
+    openMock.mockResolvedValueOnce({ session: { id: 'sess-A' } })
+            .mockResolvedValueOnce({ session: { id: 'sess-B' } });
+    render(() => <PlanWeekAssistant />);
+    setPlanWeekModal({ open: true });
+    await screen.findByText('Review past data');
+
+    fireEvent.click(screen.getByText('Review past data'));
+    await waitFor(() => expect(openMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText('Back'));
+    await screen.findByText('Fill next week');
+    fireEvent.click(screen.getByText('Fill next week'));
+
+    await waitFor(() => expect(openMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-A', { status: 'abandoned' }));
+  });
+
+  /**
+   * The signal holds an object, so re-setting it while open is a new reference that
+   * re-fires the reset effect. The Focus trigger stays focusable behind the modal, so a
+   * stray re-open must NOT discard the branch the user is in.
+   */
+  it('a redundant open while already open does not reset the in-progress branch', async () => {
+    render(() => <PlanWeekAssistant />);
+    setPlanWeekModal({ open: true });
+    await screen.findByText('Fill next week');
+    fireEvent.click(screen.getByText('Fill next week'));
+    await screen.findByText('fill-branch');
+
+    setPlanWeekModal({ open: true }); // new object, same state
+    await new Promise((r) => setTimeout(r, 50));
+
+    await screen.findByText('fill-branch');                    // still in the branch
+    expect(screen.queryByText('Review past data')).toBeNull(); // not back at the menu
+    expect(openMock).toHaveBeenCalledTimes(1);                 // and no second session
+  });
+
   it('Back returns to the menu', async () => {
     render(() => <PlanWeekAssistant />);
     setPlanWeekModal({ open: true });

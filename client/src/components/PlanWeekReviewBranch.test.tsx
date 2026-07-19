@@ -64,6 +64,19 @@ describe('PlanWeekReviewBranch — read-only weekly recap', () => {
     await screen.findByText('None last week.');
   });
 
+  /**
+   * Solid RE-THROWS on reading an errored resource, so a `<Show when={review()}>` alone
+   * would escape its own fallback and blow up the render — and the app mounts no
+   * ErrorBoundary. The error must be checked before the value is read.
+   */
+  it('renders the failure message instead of crashing when the request rejects', async () => {
+    reviewMock.mockRejectedValueOnce(new Error('offline'));
+    mount();
+    await screen.findByText("Couldn't load the review.");
+    // Still usable: the way out survives the failure.
+    expect(screen.getByText('Back')).toBeTruthy();
+  });
+
   it('offers a way back to the menu', async () => {
     mount();
     await screen.findByText('weekly-stats');

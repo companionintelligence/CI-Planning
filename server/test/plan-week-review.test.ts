@@ -2,8 +2,9 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { startTestServer, resetDb, api, createOwner, SECOND_OWNER_ID, type TestServer } from './helpers.js';
-import { priorWeekAnchor } from '../src/services/plan-week-review.js';
+import { priorWeekAnchor, defaultAnchorForOwner } from '../src/services/plan-week-review.js';
 import type { PlanWeekReview } from '../src/services/plan-week-review.js';
+import { localDateInTZ } from '../src/lib/tz.js';
 
 /**
  * FTUE · T5 (#341) — the deterministic weekly recap.
@@ -22,6 +23,41 @@ describe('priorWeekAnchor', () => {
   });
 });
 
+/**
+ * The default anchor must follow the OWNER's calendar, not the server's. A one-day
+ * difference becomes a WHOLE-WEEK error here, because the anchor is snapped to Mon→Sun:
+ * an owner just past midnight would otherwise be handed the week before last, and one
+ * just before midnight their own in-progress week — the very thing the prior-week anchor
+ * exists to avoid.
+ */
+describe('defaultAnchorForOwner — owner timezone, not the server clock', () => {
+  beforeEach(() => resetDb());
+
+  const setTz = (tz: string) =>
+    sqlite.prepare(`UPDATE scheduling_prefs SET timezone = ? WHERE owner_id = ?`).run(tz, SYSTEM_OWNER);
+
+  it('derives today in the owner zone, so far-east and far-west owners can differ by a week', () => {
+    setTz('Pacific/Auckland');
+    const east = defaultAnchorForOwner(SYSTEM_OWNER);
+    setTz('Pacific/Niue');
+    const west = defaultAnchorForOwner(SYSTEM_OWNER);
+
+    // Both must be real anchors...
+    for (const a of [east, west]) expect(a).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // ...and each must be exactly 7 days before that owner's own today.
+    setTz('Pacific/Auckland');
+    expect(east).toBe(priorWeekAnchor(localDateInTZ(new Date().toISOString(), 'Pacific/Auckland')));
+    setTz('Pacific/Niue');
+    expect(west).toBe(priorWeekAnchor(localDateInTZ(new Date().toISOString(), 'Pacific/Niue')));
+
+    // The two zones are ~23h apart, so they disagree about "today" for most of the day.
+    // Whenever they do, the anchors must differ too — a server-clock default could not.
+    const eastToday = localDateInTZ(new Date().toISOString(), 'Pacific/Auckland');
+    const westToday = localDateInTZ(new Date().toISOString(), 'Pacific/Niue');
+    if (eastToday !== westToday) expect(east).not.toBe(west);
+  });
+});
+
 describe('GET /api/plan-week/review', () => {
   let server: TestServer;
   beforeAll(async () => { server = await startTestServer(); });
@@ -34,10 +70,13 @@ describe('GET /api/plan-week/review', () => {
   it('defaults to the week that just ended and echoes the anchor it used', async () => {
     const r = await get();
     expect(r.status).toBe(200);
-    expect(r.body.anchor).toBe(priorWeekAnchor());
-    // The anchor must fall inside the returned week.
+    expect(r.body.anchor).toBe(defaultAnchorForOwner(SYSTEM_OWNER));
+    // The anchor must fall inside the returned week...
     expect(r.body.week.days).toContain(r.body.anchor);
     expect(r.body.week.days).toHaveLength(7);
+    // ...and that week must be strictly in the past for this owner, never the current one.
+    const ownerToday = localDateInTZ(new Date().toISOString(), 'UTC');
+    expect(r.body.week.days[6] < ownerToday).toBe(true);
   });
 
   it('honours an explicit anchor and 422s a malformed one', async () => {
