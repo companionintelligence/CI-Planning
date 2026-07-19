@@ -1217,6 +1217,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "view_prefs",
       "memory_pull_enabled",
       "sleep_hours_per_week",
+      "onboarded_at",
     ],
     "table": "scheduling_prefs",
   },

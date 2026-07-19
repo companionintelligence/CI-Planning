@@ -289,6 +289,9 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // Onboarding Priorities Wizard (0128): weekly hours reserved for SLEEP — unschedulable,
   // attributed to Health. Default 63 = 9h/night × 7; the wizard's schedulable pool = 168 − this.
   sleepHoursPerWeek: integer('sleep_hours_per_week').notNull().default(63),
+  // FTUE · T11 (0132): NULL = the owner hasn't completed/skipped the first-run
+  // onboarding wizard yet; non-NULL ISO-8601 is both the "done" flag and its timestamp.
+  onboardedAt: text('onboarded_at'),
 });
 
 export const tags = sqliteTable('tags', {
