@@ -28,13 +28,14 @@ export function googleConfigRouter() {
     ctx.body = googleConfigState();
   });
 
-  // PUT /api/google-config — { client_id?, client_secret? (string | null), enabled }
+  // PUT /api/google-config — { client_id?, client_secret? (string | null), enabled, mode? }
   router.put('/api/google-config', (ctx) => {
     if (!requireAdmin(ctx)) return;
     const body = (ctx.request.body ?? {}) as {
       client_id?: unknown;
       client_secret?: unknown;
       enabled?: unknown;
+      mode?: unknown;
     };
     if (typeof body.enabled !== 'boolean') {
       ctx.status = 400;
@@ -51,11 +52,18 @@ export function googleConfigRouter() {
       ctx.body = { error: 'client_secret must be a string or null' };
       return;
     }
+    // FTUE · T12 — 'fixture' powers the FTUE "Try with sample data" path.
+    if (body.mode !== undefined && body.mode !== 'live' && body.mode !== 'fixture') {
+      ctx.status = 400;
+      ctx.body = { error: "mode must be 'live' or 'fixture'" };
+      return;
+    }
 
     const res = saveGoogleConfig({
       clientId: body.client_id as string | undefined,
       clientSecret: body.client_secret as string | null | undefined,
       enabled: body.enabled,
+      mode: body.mode as 'live' | 'fixture' | undefined,
     });
     if (!res.ok) {
       if (res.error === 'env_pinned') {
@@ -66,6 +74,11 @@ export function googleConfigRouter() {
       if (res.error === 'kek_required') {
         ctx.status = 400;
         ctx.body = { error: 'CP_KEK_B64 must be set on the server first (generate with: openssl rand -base64 32) — it encrypts the client secret and the OAuth tokens' };
+        return;
+      }
+      if (res.error === 'fixture_forbidden_in_production') {
+        ctx.status = 403;
+        ctx.body = { error: 'GOOGLE_MODE=fixture is forbidden in production — it ingests committed sample data as real tasks. Set CP_ALLOW_FIXTURE=true to explicitly allow it (demo appliances only).' };
         return;
       }
       ctx.status = 400;

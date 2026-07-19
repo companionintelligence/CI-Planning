@@ -1,6 +1,7 @@
 import { createSignal, createMemo, Show, For, onCleanup } from 'solid-js';
 import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, CalendarRange } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
+import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, setPlanWeekModal } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
@@ -352,6 +353,7 @@ export function Focus() {
               >
                 <CalendarRange size={14} /> Plan my week
               </button>
+              <EmptyStateConnectCTA />
             </Show>
           </div>
         </Show>

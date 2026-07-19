@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import type Koa from 'koa';
-import { runJob } from '../jobs/index.js';
+import { runJob, runIngestNow } from '../jobs/index.js';
 import { currentScopes } from '../lib/context.js';
 import { hasAdminScope } from '../lib/auth/scopes.js';
 import { listJobs, triggerJob } from '../services/jobs.js';
@@ -30,6 +30,18 @@ export function jobsRouter() {
   router.get('/api/jobs', async (ctx) => {
     if (!requireAdmin(ctx)) return;
     ctx.body = { jobs: listJobs() };
+  });
+
+  /**
+   * POST /api/jobs/run-now — FTUE · T12 (#348). Registered BEFORE /:id/run so the
+   * literal path is never shadowed. Deliberately NOT admin-gated: this runs the
+   * CALLING owner's own ingest (ordinary `requireAuth` write scope, same as every
+   * other mutation), unlike the admin-only single-job trigger below. Awaits the run
+   * (unlike /:id/run's fire-and-forget) so the wizard can show a real result.
+   */
+  router.post('/api/jobs/run-now', async (ctx) => {
+    const ran = await runIngestNow();
+    ctx.body = { ok: true, ran };
   });
 
   // POST /api/jobs/:id/run — admin-only. Fires async; client listens on SSE for completion.
