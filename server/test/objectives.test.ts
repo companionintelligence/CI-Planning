@@ -1100,7 +1100,12 @@ describe('objective purge (48h reversal)', () => {
   });
 
   it('the purge job is a clean no-op when nothing is pending', async () => {
-    await expect(runJob('purge_objectives')).resolves.toBeUndefined();
+    // FTUE · T12 (#348) widened runJob's return from void to a JobRunResult (used by
+    // the new POST /api/jobs/run-now) — a no-op run still succeeds cleanly, it just
+    // now reports that outcome instead of resolving to nothing.
+    await expect(runJob('purge_objectives')).resolves.toMatchObject({
+      kind: 'purge_objectives', status: 'done', itemsCreated: 0, itemsUpdated: 0,
+    });
   });
 });
 

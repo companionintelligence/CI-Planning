@@ -7,6 +7,7 @@ import { colorVar } from '../lib/pattern-meta.js';
 import { localISODate } from '../lib/dates.js';
 import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
+import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { SortControl, type SortOrder } from '../components/SortControl.js';
 import { byPriority, byDueDateAsc } from '../lib/sort.js';
@@ -341,7 +342,10 @@ export function AllTasks() {
           >
             <Show
               when={newTodayList().length + openList().length + scheduledList().length + routineList().length > 0}
-              fallback={<div class="card text-center text-slate-500 py-12 text-sm">No tasks found.</div>}
+              fallback={<div class="card text-center text-slate-500 py-12 text-sm flex flex-col items-center gap-2">
+                No tasks found.
+                <EmptyStateConnectCTA />
+              </div>}
             >
               {/* AF-7: everything created on the local today, above the standing sections.
                   Rolls into Open/Scheduled at the local midnight by pure date derivation. */}

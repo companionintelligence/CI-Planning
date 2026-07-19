@@ -1,6 +1,6 @@
 import { createSignal, createMemo, createResource, createEffect } from 'solid-js';
 import { api } from '../lib/api.js';
-import type { Block, Task, Pattern, PatternType, ReplanSuggestion } from '../lib/api.js';
+import type { Block, Task, Pattern, PatternType, ReplanSuggestion, RunNowOutcome } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
@@ -16,6 +16,7 @@ import {
   deserializePrio,
 } from '../lib/view-prefs.js';
 import { replanToastMessage } from '../lib/replan.js';
+import { hasConnectedSource as pureHasConnectedSource } from '../lib/onboarding.js';
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 export const [taskFilter, setTaskFilter] = createSignal<Record<string, string>>({});
@@ -483,3 +484,38 @@ export const [elementModal, setElementModal] = createSignal<{
 // this and renders nothing when closed. Minimal shape — the assistant owns its own
 // step state internally, so nothing but open/closed belongs here.
 export const [planWeekModal, setPlanWeekModal] = createSignal<{ open: boolean }>({ open: false });
+
+// ── Onboarding wizard step (FTUE · T11 shell / T12 external open) ──────────────
+// T11's wizard originally kept `step` as a component-local signal (nothing outside
+// it needed to move it). T12 adds the empty-state "Connect a source" CTA, which lives
+// in Focus/Today/AllTasks — siblings of the wizard, not descendants — so the step
+// needs to be store-level for `openOnboardingAt` to reach the already-mounted wizard
+// and jump it to the Connect step. 5 steps: 1 identity, 2 time+place, 3 connect a
+// source (T12), 4 trust dial, 5 run first sync (T12).
+export const [onboardingStep, setOnboardingStep] = createSignal<1 | 2 | 3 | 4 | 5>(1);
+// The wizard's own gate is `prefs().onboarded_at == null` — true only pre-completion.
+// By the time a user can SEE an empty Focus/Today/Tasks view, onboarding has almost
+// always already finished (any Skip, from any step, sets `onboarded_at`), so the
+// gate alone can't reopen it. This flag lets `openOnboardingAt` force it back open
+// regardless of `onboarded_at`; `completeOnboarding` clears it again on Finish/Skip.
+export const [onboardingForceOpen, setOnboardingForceOpen] = createSignal(false);
+/** Jump the (already-mounted, self-gating) onboarding wizard to `step`, reopening it
+ *  if onboarding already completed — used by the empty-state CTA to reopen at Connect
+ *  (3) without a second competing open signal. */
+export function openOnboardingAt(step: 1 | 2 | 3 | 4 | 5): void {
+  setOnboardingStep(step);
+  setOnboardingForceOpen(true);
+}
+
+/** Delegates to the pure helper (client/src/lib/onboarding.ts) so callers don't have
+ *  to import `integrations()` themselves just to ask "is there a source connected?" */
+export const hasConnectedSource = () => pureHasConnectedSource(integrations());
+
+/** FTUE · T12 — trigger the owner's ingest now and refresh everything it can fill.
+ *  Shared by ConnectSourceStep's "Try with sample data" and RunFirstSyncStep's "Run
+ *  my first sync now" — both are "run ingest, then show its effects" and nothing else. */
+export async function runIngestNowAndRefetch(): Promise<RunNowOutcome[]> {
+  const { ran } = await api.jobs.runNow();
+  await Promise.all([refetchTasks(), refetchBlocks(), refetchFlightPlan(), refetchIntegrations()]);
+  return ran;
+}
