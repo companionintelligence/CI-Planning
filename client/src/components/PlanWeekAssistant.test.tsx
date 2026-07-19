@@ -17,6 +17,8 @@ import { createSignal } from 'solid-js';
 const openMock = vi.fn(async (_b: string) => ({ session: { id: 'sess-1' } }));
 const closeMock = vi.fn(async (_id: string, _p: { status: string }) => ({ session: { id: 'sess-1' } }));
 const appendMock = vi.fn(async (_id: string, _m: unknown) => ({ session: { id: 'sess-1' } }));
+type ParseResult = { ok: boolean; date: string; pins: { title: string; start_at: string; end_at: string }[]; hints: { kind: string; tag: string; time?: string }[] };
+const parseMock = vi.fn(async (_text: string, _date?: string): Promise<ParseResult> => ({ ok: true, date: '2026-07-18', pins: [], hints: [] }));
 vi.mock('../lib/api.js', () => ({
   api: {
     planWeek: {
@@ -25,16 +27,19 @@ vi.mock('../lib/api.js', () => ({
         close: (id: string, p: { status: string }) => closeMock(id, p),
         append: (id: string, m: unknown) => appendMock(id, m),
       },
+      parse: (text: string, date?: string) => parseMock(text, date),
     },
   },
 }));
 
 const [planWeekModal, setPlanWeekModal] = createSignal<{ open: boolean }>({ open: false });
 const toastMock = vi.fn();
+const aiAvailableFlag = { current: true };
 vi.mock('../stores/index.js', () => ({
   planWeekModal: () => planWeekModal(),
   setPlanWeekModal: (v: { open: boolean }) => setPlanWeekModal(v),
   showToast: (...a: unknown[]) => toastMock(...a),
+  aiAvailable: () => aiAvailableFlag.current,
 }));
 
 // The shell test is about the SHELL. T3's branch component has its own test file, and
@@ -61,7 +66,9 @@ describe('PlanWeekAssistant — the shell', () => {
     openMock.mockReset().mockResolvedValue({ session: { id: 'sess-1' } });
     closeMock.mockReset().mockResolvedValue({ session: { id: 'sess-1' } });
     appendMock.mockReset().mockResolvedValue({ session: { id: 'sess-1' } });
+    parseMock.mockReset().mockResolvedValue({ ok: true, date: '2026-07-18', pins: [], hints: [] });
     toastMock.mockReset();
+    aiAvailableFlag.current = true;
     setPlanWeekModal({ open: false });
   });
 
@@ -246,6 +253,11 @@ describe('PlanWeekAssistant — the shell', () => {
 });
 
 describe('PromptStep — the reusable primitive', () => {
+  beforeEach(() => {
+    parseMock.mockReset().mockResolvedValue({ ok: true, date: '2026-07-18', pins: [], hints: [] });
+    aiAvailableFlag.current = true;
+  });
+
   it('caps option chips at three even when passed more', () => {
     const opts = ['a', 'b', 'c', 'd', 'e'].map((label) => ({ label, onSelect: vi.fn() }));
     const { container } = render(() => <PromptStep question="Q?" options={opts} />);
@@ -254,23 +266,51 @@ describe('PromptStep — the reusable primitive', () => {
     expect(chips.map((c) => c.textContent!.trim())).toEqual(['a', 'b', 'c']);
   });
 
-  it('Enter fires onSubmit with the typed text and clears the input', async () => {
+  // T8 (#344) — the free-text box has no deterministic fallback, so it renders iff
+  // aiAvailable() is true; option chips are unaffected either way.
+  it('hides the free-text box when aiAvailable() is false; chips still render', () => {
+    aiAvailableFlag.current = false;
+    const opts = [{ label: 'a', onSelect: vi.fn() }];
+    const { container } = render(() => <PromptStep question="Q?" options={opts} />);
+    expect(container.querySelector('input')).toBeNull();
+    expect(screen.getByText('a')).toBeTruthy();
+  });
+
+  it('Enter parses the typed text and fires onSubmit with the parsed summary, then clears the input', async () => {
+    parseMock.mockResolvedValue({ ok: true, date: '2026-07-18', pins: [{ title: 'Dentist', start_at: 'x', end_at: 'y' }], hints: [] });
     const onSubmit = vi.fn();
     const { container } = render(() => <PromptStep question="Q?" onSubmit={onSubmit} />);
     const input = container.querySelector('input')!;
 
-    fireEvent.input(input, { target: { value: 'next monday' } });
+    fireEvent.input(input, { target: { value: 'dentist 2-3pm' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('next monday'));
+    await waitFor(() => expect(parseMock).toHaveBeenCalledWith('dentist 2-3pm', undefined));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('"dentist 2-3pm" → 1 pin(s), 0 hint(s)'));
     expect(input.value).toBe('');
   });
 
-  it('ignores an empty submit and renders Back only when onBack is given', () => {
+  it('a rejected parse shows an inline error, appends nothing, and leaves chips usable', async () => {
+    parseMock.mockRejectedValue(new Error('Could not understand the instruction'));
+    const onSubmit = vi.fn();
+    const opts = [{ label: 'a', onSelect: vi.fn() }];
+    const { container } = render(() => <PromptStep question="Q?" options={opts} onSubmit={onSubmit} />);
+    const input = container.querySelector('input')!;
+
+    fireEvent.input(input, { target: { value: 'gibberish' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await screen.findByText("Couldn't turn that into a plan change — rephrase or pick an option.");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText('a')).toBeTruthy(); // chips untouched
+  });
+
+  it('ignores an empty submit (no parse call) and renders Back only when onBack is given', () => {
     const onSubmit = vi.fn();
     const { container, unmount } = render(() => <PromptStep question="Q?" onSubmit={onSubmit} />);
     fireEvent.keyDown(container.querySelector('input')!, { key: 'Enter' });
     expect(onSubmit).not.toHaveBeenCalled();
+    expect(parseMock).not.toHaveBeenCalled();
     expect([...container.querySelectorAll('button')].some((b) => b.textContent?.includes('Back'))).toBe(false);
     unmount();
 

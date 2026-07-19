@@ -5,7 +5,10 @@ import {
   type TranscriptMessage,
 } from '../services/planning-sessions.js';
 import { planWeekReview, defaultAnchorForOwner } from '../services/plan-week-review.js';
-import { isValidISODate } from '../lib/dates.js';
+import { planWeekNextStep } from '../services/plan-week.js';
+import { parseInstruction, InstructError } from '../agents/plan.js';
+import { currentOwnerId } from '../lib/context.js';
+import { isValidISODate, localISODate } from '../lib/dates.js';
 
 /**
  * Plan-my-week session log (FTUE · T1, #337) — thin transport over
@@ -47,6 +50,69 @@ export function planWeekRouter() {
     // No `start` param: the staging day is not the caller's to choose — /api/auto/fill
     // resolves ownerToday itself, so the service anchors on the same value and echoes it.
     ctx.body = planWeekCandidates(ctx.query.horizon);
+  });
+
+  /**
+   * T7 — the hybrid follow-up layer. ALWAYS 200s (Ollama-down / gate-rejected ⇒
+   * `source: 'fallback'` with the caller's own deterministic question/options echoed
+   * back verbatim); the only error is `422` on a malformed body, before any renderCopy
+   * call is made.
+   */
+  router.post('/api/plan-week/next-step', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as {
+      branch?: string;
+      context?: Record<string, unknown>;
+      fallbackQuestion?: string;
+      fallbackOptions?: string[];
+    };
+
+    const fallbackQuestion = typeof body.fallbackQuestion === 'string' ? body.fallbackQuestion.trim() : '';
+    if (!fallbackQuestion) {
+      ctx.status = 422; ctx.body = { error: 'fallbackQuestion is required' }; return;
+    }
+    const fallbackOptions = body.fallbackOptions;
+    if (
+      !Array.isArray(fallbackOptions) ||
+      fallbackOptions.length !== 3 ||
+      !fallbackOptions.every((o) => typeof o === 'string' && o.trim().length > 0)
+    ) {
+      ctx.status = 422; ctx.body = { error: 'fallbackOptions must be exactly 3 non-empty strings' }; return;
+    }
+
+    ctx.body = await planWeekNextStep({
+      branch: typeof body.branch === 'string' ? body.branch : '',
+      context: body.context && typeof body.context === 'object' ? body.context : undefined,
+      fallbackQuestion,
+      fallbackOptions,
+    });
+  });
+
+  /**
+   * T8 — parse a free-text answer into a structured scheduling intent WITHOUT applying
+   * it (authoring/execution is T9). Reuses `parseInstruction` directly, NOT
+   * `instructPlan` (the apply-wrapper `POST /api/plan/instruct` uses) — this route makes
+   * no writes. Error mapping mirrors `POST /api/plan/instruct` byte-for-byte
+   * (routes/plan.ts).
+   */
+  router.post('/api/plan-week/parse', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as { text?: string; date?: string };
+    const text = (body.text ?? '').trim();
+    if (!text) { ctx.status = 422; ctx.body = { error: 'text is required' }; return; }
+    const date = body.date ?? localISODate();
+    const owner = currentOwnerId();
+
+    let result;
+    try {
+      result = await parseInstruction(owner, date, text);
+    } catch (err) {
+      if (err instanceof InstructError) {
+        ctx.status = err.code === 'unavailable' ? 503 : 422;
+        ctx.body = { error: err.message };
+        return;
+      }
+      throw err;
+    }
+    ctx.body = { ok: true, date, pins: result.pins, hints: result.hints };
   });
 
   router.post('/api/plan-week/sessions', async (ctx) => {

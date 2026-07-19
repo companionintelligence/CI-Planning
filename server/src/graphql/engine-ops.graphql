@@ -102,6 +102,8 @@ input AutoRunInput {
   blockId: ID
   "Explicit N-day horizon override (clamped 1..60). Hands-off mode defaults to planning_horizon_days."
   horizonDays: Int
+  "T9 — opt-in: author every horizon day via the smart LLM loop instead of day-0-only."
+  smart: Boolean
 }
 
 # ── D. clearPlanner (POST /api/planner/clear) ────────────────────────────────────

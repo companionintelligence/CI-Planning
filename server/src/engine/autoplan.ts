@@ -43,6 +43,7 @@ export interface AutoResult {
   placedInPlans?: number;    // step 2: tasks that landed inside a Plan
   placedInWorkday?: number;  // step 2: tasks that landed in the workday fallback
   days?: number;             // T-SCHED-2: how many days a Schedule-mode horizon run spanned (>1 only)
+  llm?: boolean;             // T9: true iff at least one authored day's source was 'llm'
 }
 
 interface StagedTask {

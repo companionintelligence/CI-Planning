@@ -241,7 +241,9 @@ export const api = {
     // Auto Schedule: place selected staged items (Plans → direction windows → workday fill).
     // horizon_days (T-SCHED-2): explicitly place across N days; omit to let the server
     // apply the Schedule-mode horizon (planning_horizon_days) in Schedule mode.
-    run: (body?: { block_id?: string; date?: string; horizon_days?: number }) =>
+    // smart (T9): opt-in — author every horizon day via the LLM loop instead of the
+    // default day-0-smart/rest-deterministic split. Gate on `aiAvailable()`.
+    run: (body?: { block_id?: string; date?: string; horizon_days?: number; smart?: boolean }) =>
       request<{ result: AutoResult; flight_plan: FlightPlanItem[] }>('POST', '/auto/run', body ?? {}),
     // Undo the last placement run (D2): delete its blocks, re-stage its tasks.
     undo: () =>
@@ -498,6 +500,16 @@ export const api = {
     /** T5 recap — one request for the whole week. Omit `anchor` for the week that just ended. */
     review: (anchor?: string) =>
       request<PlanWeekReview>('GET', `/plan-week/review${anchor ? `?anchor=${anchor}` : ''}`),
+    /** T7 — never rejects on Ollama being down; the server degrades to `source: 'fallback'`
+     *  and echoes `fallbackQuestion`/`fallbackOptions` back verbatim. Call only when
+     *  `aiAvailable()` is true — when false, use the branch's local fixed top-3 directly. */
+    nextStep: (input: PlanWeekNextStepInput) =>
+      request<PlanWeekNextStep>('POST', '/plan-week/next-step', input),
+    /** T8 — parse-only: reuses `parseInstruction`, never applies. `date` defaults to
+     *  today server-side when omitted. Call only when `aiAvailable()` is true — there is
+     *  no deterministic fallback parser. */
+    parse: (text: string, date?: string) =>
+      request<PlanWeekParseResponse>('POST', '/plan-week/parse', { text, date }),
   },
 
   // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────
@@ -681,6 +693,7 @@ export interface AutoResult {
   candidatesAdded?: number;              // step 1
   blocksCreated?: number; placed?: number; unplaced?: number; // step 2
   days?: number;                          // T-SCHED-2: Schedule-mode horizon span (>1 only)
+  llm?: boolean;                         // T9: true iff at least one authored day used the LLM loop
 }
 
 /** Phase M B1/B3: one block a reactive reflow moved (its before/after windows). */
@@ -715,6 +728,9 @@ export interface ReplanSuggestion {
 export interface PlanPin { title: string; start_at: string; end_at: string }
 export interface PlanHint { kind: 'tag_before' | 'tag_after' | 'batch'; tag: string; time?: string }
 export interface InstructResponse { ok: boolean; date: string; pins: PlanPin[]; hints: PlanHint[]; created: number }
+
+/** FTUE · T8 — the parse-only twin of InstructResponse: no `created`, nothing was applied. */
+export interface PlanWeekParseResponse { ok: boolean; date: string; pins: PlanPin[]; hints: PlanHint[] }
 
 /** Result of POST /api/patterns/:id/place-today (PR-C+, Phase C). */
 export interface PlacePatternResult {
@@ -1197,6 +1213,23 @@ export interface PlanWeekReview {
   stars: DayStar[];
   note_dates: string[];
   sessions: PlanningSession[];
+}
+
+/**
+ * T7 — the hybrid follow-up layer: a model-phrased question + 3 chips on top of a
+ * branch's own fixed deterministic question/options (server: services/plan-week.ts).
+ */
+export interface PlanWeekNextStepInput {
+  branch: string;
+  context?: Record<string, unknown>;
+  fallbackQuestion: string;
+  /** Exactly 3 non-empty strings — the branch's own deterministic top-3. */
+  fallbackOptions: string[];
+}
+export interface PlanWeekNextStep {
+  question: string;
+  options: string[];
+  source: 'model' | 'fallback';
 }
 
 export interface ObjectiveInput {

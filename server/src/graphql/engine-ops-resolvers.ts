@@ -115,7 +115,7 @@ export const engineOpsResolvers = {
 
     // POST /api/auto/run — horizon resolution + placement (service; audit inside). A
     // multi-day run (result.days > 1) fires one aggregated auto:placed; single-day fires none.
-    autoRun: async (_p: unknown, args: { input?: { date?: string | null; blockId?: string | null; horizonDays?: number | null } | null }) => {
+    autoRun: async (_p: unknown, args: { input?: { date?: string | null; blockId?: string | null; horizonDays?: number | null; smart?: boolean | null } | null }) => {
       const owner = currentOwnerId();
       const input = args.input ?? {};
       const date = input.date ?? localISODate();
@@ -123,6 +123,7 @@ export const engineOpsResolvers = {
         date,
         blockId: input.blockId ?? undefined,
         horizonDays: input.horizonDays ?? undefined,
+        smart: input.smart ?? undefined,
       });
       if (result.days != null && result.days > 1) {
         broadcast(owner, 'auto:placed', { blocksCreated: result.blocksCreated, placed: result.placed, unplaced: result.unplaced, days: result.days });

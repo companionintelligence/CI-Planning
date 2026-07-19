@@ -104,6 +104,10 @@ export interface AutoRunInput {
   blockId?: string;
   /** Explicit N-day horizon override (clamped 1..60). */
   horizonDays?: number;
+  /** T9 — opt-in: author EVERY horizon day via the smart LLM loop (reauthor
+   *  semantics, `{ force: true }`) instead of the default day-0-smart/rest-deterministic
+   *  split. Absent/false is byte-identical to pre-T9 behavior. */
+  smart?: boolean;
 }
 
 /**
@@ -123,7 +127,7 @@ export interface AutoRunInput {
  * caller does the `broadcast(...)`.
  */
 export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoResult> {
-  const { date, blockId, horizonDays } = input;
+  const { date, blockId, horizonDays, smart } = input;
 
   const sched = sqlite
     .prepare(`SELECT planning_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
@@ -135,23 +139,26 @@ export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoR
       : (resolveTrustPolicy(owner).mode === 'hands_off' ? clampDays(sched?.planning_horizon_days ?? 7) : 1);
 
   if (days > 1) {
-    let blocksCreated = 0, placed = 0, unplaced = 0;
+    let blocksCreated = 0, placed = 0, unplaced = 0, llm = false;
     for (let d = 0; d < days; d++) {
       const day = addDaysISO(date, d);
-      await authorPlanOrder(owner, day, d === 0 ? {} : { deterministic: true });
+      // T9: `smart` reauthors every day (`{ force: true }`); otherwise byte-identical to
+      // pre-T9 (day 0 authors normally, days 1..N forced deterministic).
+      const source = await authorPlanOrder(owner, day, smart ? { force: true } : d === 0 ? {} : { deterministic: true });
+      if (source === 'llm') llm = true;
       const r = placeFlightPlan(owner, { date: day, silent: true });
       blocksCreated += r.blocksCreated ?? 0;
       placed += r.placed ?? 0;
       unplaced = r.unplaced ?? 0; // tasks still staged after the final day
     }
     writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: `flight-plan:run:${days}d` });
-    return { step: 'place', blocksCreated, placed, unplaced, days };
+    return { step: 'place', blocksCreated, placed, unplaced, days, llm };
   }
 
-  await authorPlanOrder(owner, date);
+  const source = await authorPlanOrder(owner, date);
   const result = placeFlightPlan(owner, { blockId, date });
   writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: 'flight-plan:run' });
-  return result;
+  return { ...result, llm: source === 'llm' };
 }
 
 // ─── 3. validateClearRange (POST /api/planner/clear) ───────────────────────────
