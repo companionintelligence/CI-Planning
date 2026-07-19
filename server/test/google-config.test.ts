@@ -239,6 +239,37 @@ describe('fixture mode', () => {
       const res = await put({ enabled: true, mode: 'fixture' });
       expect(res.status).toBe(403);
     });
+
+    // A second adversarial-review pass (post-merge) caught this: the write-path guard
+    // above stops a NEW save, but a DB carrying an already-persisted `mode=fixture`
+    // row (e.g. copied/promoted from a non-production box) would still get silently
+    // re-activated by hydrateGoogleConfig on every later boot — that function only
+    // checked config.google.envPinned, never NODE_ENV/CP_ALLOW_FIXTURE directly.
+    it('a persisted fixture row from a non-production save is NOT re-activated by hydrateGoogleConfig() on a later production boot', () => {
+      // Persist the row while allowed (no NODE_ENV set in this test's default env).
+      const saved = saveGoogleConfig({ enabled: true, mode: 'fixture' });
+      expect(saved.ok).toBe(true);
+      expect(config.google.mode).toBe('fixture');
+
+      // Simulate the DB surviving into a later production boot with no CP_ALLOW_FIXTURE.
+      config.google.mode = 'off'; // singleton back at defaults, as a real restart would leave it
+      process.env.NODE_ENV = 'production';
+      delete process.env.CP_ALLOW_FIXTURE;
+      hydrateGoogleConfig();
+
+      expect(config.google.mode).not.toBe('fixture');
+      expect(config.google.mode).toBe('off'); // no clientId configured either, so falls all the way to off
+      expect(googleConfigState().source).toBe('off'); // not the misleading 'app'
+    });
+
+    it('the same persisted fixture row IS re-activated on a production boot with CP_ALLOW_FIXTURE=true', () => {
+      saveGoogleConfig({ enabled: true, mode: 'fixture' });
+      config.google.mode = 'off';
+      process.env.NODE_ENV = 'production';
+      process.env.CP_ALLOW_FIXTURE = 'true';
+      hydrateGoogleConfig();
+      expect(config.google.mode).toBe('fixture');
+    });
   });
 });
 
