@@ -254,6 +254,38 @@ describe('OnboardingWizard', () => {
       await screen.findByText('Trust dial'); // onNext() advances past Connect
     });
 
+    it('Step 3: Skip/Back/Next are disabled while "Connect Google" is in flight (adversarial-review fix)', async () => {
+      let resolveStart!: (v: { url: string }) => void;
+      googleStartMock.mockImplementation(() => new Promise((resolve) => { resolveStart = resolve; }));
+      setPrefs({ onboarded_at: null });
+      setIntegrationsValue({ ...OFF_INTEGRATIONS, google: { ...OFF_INTEGRATIONS.google, liveEnabled: true } });
+      mount();
+      await advanceToConnectStep();
+
+      fireEvent.click(screen.getByText('Connect Google'));
+      await waitFor(() => expect((screen.getByText('Skip') as HTMLButtonElement).disabled).toBe(true));
+      expect((screen.getByText('Back') as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByText('Next') as HTMLButtonElement).disabled).toBe(true);
+
+      resolveStart({ url: 'https://accounts.google.com/o/oauth2/consent' });
+    });
+
+    it('Step 3: "Try with sample data" shows an error and does not advance when every job fails (adversarial-review fix)', async () => {
+      runNowMock.mockResolvedValue({
+        ok: true, ran: [{ kind: 'sync_calendar', status: 'error', itemsCreated: 0, itemsUpdated: 0, log: 'boom' }],
+      });
+      setPrefs({ onboarded_at: null });
+      mount();
+      await advanceToConnectStep();
+      await screen.findByText('Try with sample data');
+
+      fireEvent.click(screen.getByText('Try with sample data'));
+
+      await waitFor(() => expect(toastMock).toHaveBeenCalledWith('Could not load sample data — try again in a moment.', 'error'));
+      await screen.findByText('Connect a source'); // did NOT advance to Trust dial
+      expect(screen.queryByText('Trust dial')).toBeNull();
+    });
+
     it('Step 3: a non-admin (googleConfig.get 403 -> null) never sees "Try with sample data"', async () => {
       googleConfigGetMock.mockRejectedValue(new Error('forbidden'));
       setPrefs({ onboarded_at: null });
@@ -309,6 +341,40 @@ describe('OnboardingWizard', () => {
 
       fireEvent.click(screen.getByText('Back to Connect'));
       await screen.findByText('Connect a source');
+    });
+
+    it('Step 5: an all-failed sync shows an error-styled summary, does not block Finish (adversarial-review fix)', async () => {
+      runNowMock.mockResolvedValue({
+        ok: true, ran: [{ kind: 'sync_calendar', status: 'error', itemsCreated: 0, itemsUpdated: 0, log: 'boom' }],
+      });
+      setPrefs({ onboarded_at: null });
+      mount();
+      await advanceToRunSyncStep();
+
+      fireEvent.click(screen.getByText('Run my first sync now'));
+
+      const msg = await screen.findByText('Sync failed — try again in a moment.');
+      expect(msg.className).toContain('text-destructive');
+      // Finish still works after a failed run — the wizard never gets the user stuck.
+      fireEvent.click(screen.getByText('Finish'));
+      await waitFor(() => expect(prefsUpdateMock).toHaveBeenCalledWith(
+        expect.objectContaining({ onboarded_at: expect.any(String) }),
+      ));
+    });
+
+    it('Step 5: Skip/Back/Finish are disabled while a sync is in flight (adversarial-review fix)', async () => {
+      let resolveRun!: (v: { ok: true; ran: { kind: string; status: string; itemsCreated: number; itemsUpdated: number; log: string }[] }) => void;
+      runNowMock.mockImplementation(() => new Promise((resolve) => { resolveRun = resolve; }));
+      setPrefs({ onboarded_at: null });
+      mount();
+      await advanceToRunSyncStep();
+
+      fireEvent.click(screen.getByText('Run my first sync now'));
+      await waitFor(() => expect((screen.getByText('Skip') as HTMLButtonElement).disabled).toBe(true));
+      expect((screen.getByText('Back') as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByText('Finish') as HTMLButtonElement).disabled).toBe(true);
+
+      resolveRun({ ok: true, ran: [{ kind: 'sync_calendar', status: 'done', itemsCreated: 0, itemsUpdated: 0, log: '' }] });
     });
   });
 

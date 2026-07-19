@@ -343,6 +343,22 @@ export function Settings() {
   const [consolidating, setConsolidating] = createSignal(false);
   const [consolidateResult, setConsolidateResult] = createSignal<{ summary: string; source: 'model' | 'fallback' } | null>(null);
 
+  // Adversarial review caught this: neither a single-row Delete nor "Clear all" ever
+  // touched `selectedSessionIds`, so the Consolidate button's count/enabled-state could
+  // reference ids that no longer exist — a guaranteed-422 click after Clear all, or a
+  // silently-smaller-than-implied consolidate after deleting just one of several
+  // selected rows. Reconcile against the current list on every change instead of
+  // special-casing each deletion path.
+  createEffect(() => {
+    const list = sessions();
+    if (!list) return;
+    const liveIds = new Set(list.map((s) => s.id));
+    setSelectedSessionIds((prev) => {
+      const pruned = new Set([...prev].filter((id) => liveIds.has(id)));
+      return pruned.size === prev.size ? prev : pruned;
+    });
+  });
+
   function toggleSessionSelected(id: string) {
     setSelectedSessionIds((prev) => {
       const next = new Set(prev);
@@ -407,6 +423,7 @@ export function Settings() {
     try {
       await Promise.all(list.map((s) => api.planWeek.session.remove(s.id)));
       showToast('All sessions deleted', 'success');
+      setConsolidateResult(null); // its summary may reference a row that no longer exists
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
@@ -1719,11 +1736,16 @@ export function Settings() {
             <Show when={consolidateResult()}>
               {(result) => (
                 <div class="rounded-md border border-border bg-muted/40 px-3 py-2 mb-3">
-                  <div class="text-[11px] text-muted-foreground mb-0.5">
-                    Consolidated summary
-                    <Show when={result().source === 'model'}>
-                      <span class="font-normal ml-0.5">(AI)</span>
-                    </Show>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <div class="text-[11px] text-muted-foreground">
+                      Consolidated summary
+                      <Show when={result().source === 'model'}>
+                        <span class="font-normal ml-0.5">(AI)</span>
+                      </Show>
+                    </div>
+                    <button type="button" class="btn-icon" title="Dismiss" onClick={() => setConsolidateResult(null)}>
+                      <X size={13} />
+                    </button>
                   </div>
                   <p class="text-xs text-foreground whitespace-pre-wrap">{result().summary}</p>
                 </div>

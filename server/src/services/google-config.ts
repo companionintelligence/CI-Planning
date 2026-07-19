@@ -63,6 +63,23 @@ function deleteValue(key: string): void {
   sqlite.prepare(`DELETE FROM app_config WHERE key = ?`).run(key);
 }
 
+/**
+ * FTUE · T12 (#348) — fixture mode serves committed sample data as real tasks to
+ * EVERY owner on the deployment (a single global `app_config` row, not per-owner), so
+ * it needs the same production opt-in `config.ts`'s boot guard enforces for
+ * `GOOGLE_MODE=fixture`. Shared by `saveGoogleConfig` (the write path) AND
+ * `hydrateGoogleConfig` (the read/boot path) — an earlier version of this file only
+ * gated the write path, which left a real gap: a DB carrying a persisted
+ * `google_mode='fixture'` row (e.g. copied/promoted from a non-production
+ * environment where fixture mode was legitimately enabled) would silently reactivate
+ * fixture ingest on every later production boot, since `hydrateGoogleConfig` only
+ * ever checked `config.google.envPinned` — never `NODE_ENV`/`CP_ALLOW_FIXTURE`
+ * directly — before trusting whatever was already in the table.
+ */
+function fixtureForbiddenInProduction(): boolean {
+  return process.env.NODE_ENV === 'production' && process.env.CP_ALLOW_FIXTURE !== 'true';
+}
+
 /** Whether a KEK is configured (and decodes) — the gate for enabling in-app setup. */
 export function kekAvailable(): boolean {
   try {
@@ -133,7 +150,7 @@ export function saveGoogleConfig(input: {
   if (config.google.envPinned) return { ok: false, error: 'env_pinned' };
 
   if (input.enabled && input.mode === 'fixture') {
-    if (process.env.NODE_ENV === 'production' && process.env.CP_ALLOW_FIXTURE !== 'true') {
+    if (fixtureForbiddenInProduction()) {
       return { ok: false, error: 'fixture_forbidden_in_production' };
     }
     sqlite.transaction(() => {
@@ -174,11 +191,24 @@ export function saveGoogleConfig(input: {
  * migrations) and after every save. No-op when GOOGLE_MODE is env-pinned. When the
  * app config is disabled/absent, the env-derived client id/secret and 'off' mode are
  * restored, so disabling round-trips cleanly.
+ *
+ * A persisted `mode='fixture'` row is only honored when `fixtureForbiddenInProduction()`
+ * says no — a stale fixture row surviving into a production boot is refused (falls
+ * through to the live/off branches below) rather than trusted blindly; the row itself
+ * is left untouched (not auto-deleted) so a legitimate demo-appliance boot that's
+ * merely missing `CP_ALLOW_FIXTURE` this one time isn't destructively "healed."
  */
 export function hydrateGoogleConfig(): void {
   if (config.google.envPinned) return;
   const app = readAppGoogleConfig();
-  if (app.enabled && app.mode === 'fixture') {
+  const wantsFixture = app.enabled && app.mode === 'fixture';
+  const fixtureAllowed = wantsFixture && !fixtureForbiddenInProduction();
+  if (wantsFixture && !fixtureAllowed) {
+    logger.warn(
+      'google-config: a persisted mode=fixture row exists but NODE_ENV=production without CP_ALLOW_FIXTURE — refusing to activate it (fixture mode ingests committed sample data as real tasks for every owner). Set CP_ALLOW_FIXTURE=true to explicitly allow it, or clear it from Settings → Connections.',
+    );
+  }
+  if (fixtureAllowed) {
     config.google.clientId = undefined;
     config.google.clientSecret = undefined;
     config.google.mode = 'fixture';
@@ -215,7 +245,12 @@ export interface GoogleConfigState {
 export function googleConfigState(): GoogleConfigState {
   const app = readAppGoogleConfig();
   return {
-    source: config.google.envPinned ? 'env' : app.enabled && (app.mode === 'fixture' || app.clientId) ? 'app' : 'off',
+    // Derived from the ALREADY-HYDRATED config.google.mode, not re-derived from the raw
+    // app_config row — so a fixture row that hydrateGoogleConfig refused to honor (a
+    // production boot with no CP_ALLOW_FIXTURE) correctly reports source:'off' instead
+    // of the misleading 'app' a naive re-derivation from `app.mode === 'fixture'` would
+    // give, even though config.google.mode itself already (correctly) says 'off'.
+    source: config.google.envPinned ? 'env' : config.google.mode !== 'off' ? 'app' : 'off',
     mode: config.google.mode,
     envPinned: config.google.envPinned,
     kekAvailable: kekAvailable(),
