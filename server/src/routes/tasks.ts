@@ -413,6 +413,7 @@ export function tasksRouter() {
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const out = { ...taskToApi(res.task), tags: [] as string[] };
     broadcast(owner, 'task:updated', out);
+    for (const blockId of res.cancelledBlockIds) broadcast(owner, 'block:updated', { id: blockId });
     requestReplan('task:deleted'); // B2: a cancelled task frees its slot — re-pack the day
     ctx.body = { task: out };
   });

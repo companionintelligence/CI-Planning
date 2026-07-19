@@ -1509,12 +1509,14 @@ export function Settings() {
                                 >
                                   {c.status}
                                 </span>
+                                {/* Never gated on liveEnabled: the DELETE route works in any
+                                    mode, and a user switching modes must keep an escape hatch
+                                    to drop a stored connection (its tokens outlive the mode). */}
                                 <button
                                   type="button"
                                   onClick={() => disconnectGoogle(c.account)}
-                                  disabled={!i().google.liveEnabled}
-                                  title={i().google.liveEnabled ? 'Disconnect this account' : 'Set GOOGLE_MODE=live to manage connections'}
-                                  class="btn-ghost text-xs px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title="Disconnect this account"
+                                  class="btn-ghost text-xs px-2 py-1"
                                 >
                                   <Unlink size={12} /> Disconnect
                                 </button>

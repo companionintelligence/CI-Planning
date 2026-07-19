@@ -24,6 +24,15 @@ export function BottomNav() {
   const navigate = useNavigate();
   const [cfg] = createResource(() => api.auth.config().catch(() => null));
   const showSignOut = () => { const c = cfg(); return !!c && authGateActive(c); };
+  // Phase AG parity with Nav.tsx's showLink: Jobs is an operator surface — the mobile
+  // More sheet must hide it for member/viewer sessions the same way the desktop rail
+  // does (the server 403s them, and Jobs.tsx would surface that as an error page).
+  const [me] = createResource(() => api.auth.me().catch(() => null));
+  const showLink = (href: string) => {
+    if (href !== '/jobs') return true;
+    const c = cfg();
+    return !c || !authGateActive(c) || me()?.isOperator === true;
+  };
   async function signOut() {
     setMoreOpen(false);
     try {
@@ -45,10 +54,12 @@ export function BottomNav() {
           >
             <For each={overflow}>
               {(l) => (
-                <A href={l.href} class="nav-item" activeClass="nav-item-active" onClick={() => setMoreOpen(false)}>
-                  <l.Icon size={16} class="flex-shrink-0" />
-                  <span class="flex-1">{l.label}</span>
-                </A>
+                <Show when={showLink(l.href)}>
+                  <A href={l.href} class="nav-item" activeClass="nav-item-active" onClick={() => setMoreOpen(false)}>
+                    <l.Icon size={16} class="flex-shrink-0" />
+                    <span class="flex-1">{l.label}</span>
+                  </A>
+                </Show>
               )}
             </For>
             <div class="border-t border-border my-1" />

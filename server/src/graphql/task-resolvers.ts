@@ -153,6 +153,7 @@ export const taskResolvers = {
       const res = await deleteTaskService(owner, args.input.id);
       if (!res.ok) throw new GraphQLError('task not found', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'task:updated', taskToApi(res.task)); // REST DELETE emits task:updated (soft-delete)
+      for (const blockId of res.cancelledBlockIds) broadcast(owner, 'block:updated', { id: blockId });
       requestReplan('task:deleted'); // B2: a cancelled task frees its slot
       return { deletedId: args.input.id, success: true };
     },

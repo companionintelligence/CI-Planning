@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
+import { config } from '../lib/config.js';
 import { GoogleCalendarConnector } from './google.js';
 import type { CalendarConnector } from './base.js';
 
@@ -21,6 +22,9 @@ export type { CalendarConnector, RemoteEvent, RemoteEventInput, ListEventsResult
  * same posture getConnectors() gives sync.
  */
 export function googleAccounts(): string[] {
+  // GOOGLE_MODE=off means OFF for stored connections too, not just new ones —
+  // oauth /start gates connecting, this gates every already-connected account.
+  if (config.google.mode === 'off') return [];
   const ownerId = currentOwnerId();
   try {
     const rows = sqlite
@@ -46,7 +50,11 @@ export function getConnectors(): CalendarConnector[] {
   }
   return rows.flatMap(({ provider, account }) => {
     switch (provider) {
-      case 'google':  return [new GoogleCalendarConnector(account)];
+      // Mode 'off' silences stored Google connections everywhere at this single choke
+      // point — syncAll, enqueueOutbound, and pushOutboundDeletes all source from here,
+      // so disabling the integration in Settings actually stops the 15-minute sync
+      // instead of only blocking NEW connections (oauth /start's gate).
+      case 'google':  return config.google.mode === 'off' ? [] : [new GoogleCalendarConnector(account)];
       default: return [];
     }
   });

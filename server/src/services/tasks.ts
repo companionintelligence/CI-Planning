@@ -6,7 +6,7 @@ import { parseRule } from '../engine/recurrence.js';
 import { generateRecurrences, ownerTimezone, type GenerateResult } from '../engine/recurrence-generate.js';
 import { skipInstance, resolveTemplateId, deleteFutureOpenInstances } from '../engine/recurrence-ops.js';
 import { syncTaskReminders } from '../engine/reminders.js';
-import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus, mirrorTaskStatusToBlocks, applyTaskPlacementStatus } from './block-task-sync.js';
+import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus, mirrorTaskStatusToBlocks, applyTaskPlacementStatus, cancelBlocksForTask } from './block-task-sync.js';
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
 import { rollupStatusFacet } from './objectives.js';
 import { ensureHabitPattern } from './patterns.js';
@@ -520,13 +520,14 @@ export async function updateTask(
   return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds, generated };
 }
 
-export type DeleteTaskResult = { ok: true; task: TaskRow } | { ok: false; error: 'not_found' };
+export type DeleteTaskResult = { ok: true; task: TaskRow; cancelledBlockIds: string[] } | { ok: false; error: 'not_found' };
 
 /**
- * Soft-delete a task (status → 'cancelled'): drops its auto reminders and runs the
- * objectives upkeep — drop the objective this task spawned (if pristine); if it was
- * a subtask, GC its parent's objective when now empty; and recompute any objective
- * still linking it so progress doesn't count the abandoned task.
+ * Soft-delete a task (status → 'cancelled'): drops its auto reminders, settles its
+ * still-active Planner placements (blocks → 'cancelled'), and runs the objectives
+ * upkeep — drop the objective this task spawned (if pristine); if it was a subtask,
+ * GC its parent's objective when now empty; and recompute any objective still
+ * linking it so progress doesn't count the abandoned task.
  */
 export async function deleteTask(ownerId: string, id: string): Promise<DeleteTaskResult> {
   const [task] = await db
@@ -541,11 +542,14 @@ export async function deleteTask(ownerId: string, id: string): Promise<DeleteTas
   // 'open' and resurrecting this task — same guard the archive fields rely on.
   stampRow(sqlite, 'task', id, ['status']);
   syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
+  // A cancelled task's placements settle with it — a manual block is invisible to
+  // reflow's agent-only GC and would otherwise stay on the board looking live.
+  const cancelledBlockIds = cancelBlocksForTask(id, ownerId);
   dropSourceObjective(id, ownerId);
   if (task.parentId) unpromoteIfEmpty(task.parentId, ownerId);
   recomputeObjectivesForTask(id);
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `task:${id}` });
-  return { ok: true, task };
+  return { ok: true, task, cancelledBlockIds };
 }
 
 export type PromoteToHabitResult = { ok: true; task: TaskRow } | { ok: false; error: 'not_found' };

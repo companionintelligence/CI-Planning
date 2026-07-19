@@ -442,8 +442,11 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
   // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
   const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
   const conflict = () => props.placed.cols > 1;
-  // Settled = completed OR skipped, matching BlockCard.done() — the two views must
-  // agree on what reads as "done" (a skipped session is settled, just not counted).
+  // Settled = ANY terminal status, matching BlockCard.done() and the server's
+  // TERMINAL_BLOCK_STATUSES (block-task-sync.ts) — the views must agree on what reads
+  // as settled history vs live work. `completed()` (the done semantics: hatch +
+  // checkbox) stays completed|skipped so cancelled/missed never read as "done".
+  const settled = () => ['completed', 'skipped', 'cancelled', 'missed'].includes(b().status);
   const completed = () => b().status === 'completed' || b().status === 'skipped';
   const locked = () => isImmovable(b());
 
@@ -487,7 +490,7 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
     <div
       class="absolute z-10 rounded-md overflow-hidden border bg-card text-[11px] leading-tight select-none touch-none transition-shadow"
       classList={{
-        'opacity-40': b().status === 'skipped',
+        'opacity-40': settled() && b().status !== 'completed',
         'opacity-70': completed(),
         'anim-done-glow': glow(),
         'border-l-[3px] border-l-primary border-border': !props.isNextUp,
@@ -506,7 +509,7 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         ...(completed() ? doneHatchStyle(tag()) : {}),
         ...(glow() ? { '--done-glow': `color-mix(in srgb, ${color()} 55%, transparent)` } : {}),
       }}
-      title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
+      title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${b().status === 'cancelled' ? ' · cancelled' : b().status === 'missed' ? ' · missed' : ''}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
       onAnimationEnd={() => setGlow(false)}
       onPointerDown={(ev) => {
         if (props.updateMode) return; // Update mode: a tap toggles done (onClick) — no drag.
@@ -557,7 +560,7 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
           <Show when={props.isNextUp}><Play size={9} class="text-primary flex-shrink-0 fill-primary" /></Show>
           <Show when={b().is_locked}><Lock size={9} class="text-muted-foreground flex-shrink-0" /></Show>
           <Show when={props.nested}><Star size={8} class="text-primary/60 flex-shrink-0" /></Show>
-          <span class="truncate">{b().title}</span>
+          <span class="truncate" classList={{ 'line-through': b().status === 'cancelled' }}>{b().title}</span>
           <Show when={subCount() > 0}>
             <span class="flex-shrink-0 inline-flex items-center gap-0.5 text-[9px] text-muted-foreground" title={`${subCount()} subtask${subCount() === 1 ? '' : 's'}`}>
               <ListChecks size={9} /> {subCount()}
