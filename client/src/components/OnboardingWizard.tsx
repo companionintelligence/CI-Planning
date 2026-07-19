@@ -172,6 +172,9 @@ export function OnboardingWizard() {
         style={{ background: 'rgba(0,0,0,.7)', 'backdrop-filter': 'blur(6px)' }}
       >
         <div class="card w-full max-w-md flex flex-col gap-4">
+          {/* Adversarial review noted the 5-step flow had no progress indicator at
+              all — a user had no sense of how much was left. */}
+          <p class="text-[11px] text-muted-foreground -mb-1">Step {onboardingStep()} of 5</p>
           <Show when={onboardingStep() === 1}>
             <div class="flex flex-col gap-3">
               <div>

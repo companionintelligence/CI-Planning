@@ -19,6 +19,13 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
 
   const liveEnabled = () => integrations()?.google.liveEnabled ?? false;
   const connections = () => integrations()?.google.connections ?? [];
+  // Adversarial review caught this: without gating Skip/Back/Next too, a click on
+  // Next right after "Connect Google" (before api.oauth.googleStart() resolves) would
+  // advance to step 4 and THEN — moments later — the resolved promise still fires an
+  // unconditional window.location.href, yanking the user off whatever step they'd
+  // moved to; a Skip mid-"Try with sample data" would unmount the wizard while that
+  // request kept running unobserved. Steps 1/2/4 already gate their own nav on `busy`.
+  const busy = () => connecting() || tryingSample();
 
   async function connectGoogle() {
     if (!liveEnabled() || connecting()) return;
@@ -35,12 +42,20 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
   }
 
   async function trySampleData() {
-    if (tryingSample()) return;
+    if (busy()) return;
     setTryingSample(true);
     try {
       await api.googleConfig.save({ enabled: true, mode: 'fixture' });
-      await runIngestNowAndRefetch();
-      showToast('Sample data loaded', 'success');
+      const ran = await runIngestNowAndRefetch();
+      // Adversarial review caught this: runJob never throws (failures land in
+      // `status`, not a rejection), so the old code always reached this success toast
+      // and always advanced, even when every job failed.
+      const failed = ran.filter((r) => r.status !== 'done');
+      if (failed.length === ran.length) {
+        showToast('Could not load sample data — try again in a moment.', 'error');
+        return; // stay on this step so the user can retry, don't advance
+      }
+      showToast(failed.length ? 'Sample data loaded (some sources had trouble)' : 'Sample data loaded', 'success');
       props.onNext();
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -93,10 +108,10 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
       </Show>
 
       <div class="flex justify-between items-center pt-1">
-        <button type="button" class="btn-ghost text-xs" onClick={props.onSkip}>Skip</button>
+        <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={props.onSkip}>Skip</button>
         <div class="flex gap-2">
-          <button type="button" class="btn-ghost text-xs" onClick={props.onBack}>Back</button>
-          <button type="button" class="btn-primary text-xs" onClick={props.onNext}>Next</button>
+          <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={props.onBack}>Back</button>
+          <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={props.onNext}>Next</button>
         </div>
       </div>
     </div>
