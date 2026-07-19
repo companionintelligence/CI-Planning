@@ -17,6 +17,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { localISODate } from '../lib/dates.js';
 import { removeEntityTags } from '../services/tags.js';
+import { stampRow } from '../sync/apply.js';
 
 /** Backoff schedule by prior deferral count: 0→+1d, 1→+3d, 2+→+7d. */
 export function backoffDays(deferCount: number): number {
@@ -167,11 +168,23 @@ export function reviewAndReschedule(opts: { owner?: number; nowISO?: string } = 
  * is_locked = 0: a user-PINNED placement survives the reschedule — the task's intent
  * moves to the new day, but a deliberate pin is never silently destroyed (it stays put
  * for the user to move or unpin themselves).
+ *
+ * Despite living beside the nightly sweep, this is an OWNER action with a single caller
+ * (`routes/tasks.ts`) — never the cron, which does its own inline defer/mark. So it stamps
+ * like any other online edit: `scheduled_for` and `status` are both mergeable and unpinned,
+ * and without the server clock a queued op holding the old day would win LWW and drag the
+ * task back. (`defer_count` isn't in the sync allowlist, so it needs no stamp.)
+ *
+ * The stamp is gated on the owner-scoped UPDATE landing, for the reason spelled out on
+ * `cascadeArchiveToDescendants`: `stampRow` keys on `id` alone, so stamping a foreign row
+ * would corrupt that owner's merge state. The route pre-checks ownership, but this stays
+ * correct if a future caller does not.
  */
 export function rescheduleTask(taskId: string, days: number, owner: string): { scheduled_for: string } {
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   const tx = sqlite.transaction(() => {
-    sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
+    const info = sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
+    if (info.changes > 0) stampRow(sqlite, 'task', taskId, ['scheduledFor', 'status']);
     // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
     for (const b of sqlite.prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') AND is_locked = 0 RETURNING id`).all(taskId, owner) as { id: string }[]) {
       removeEntityTags('time_block', b.id);

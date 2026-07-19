@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (FTUE framing in `docs/ftue-plan.md`)
 > **Dependencies:** T3, T4, T5 (the three branch components + their fixed deterministic top-3), and T2 (the `PlanWeekAssistant` shell + its session transcript store these branches render inside)
 
+> ### 🚧 LIVE — issue #343, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Inside a Plan-Week branch, when the AI half of the app is usable (`aiAvailable()`), generate a **contextual follow-up question + exactly 3 suggested answer options** through the existing `renderCopy` Voice loop — the "hybrid" layer that sits *on top of* each branch's fixed deterministic top-3. When Ollama is down (or every draft fails the voice gate), the step degrades to the branch's fixed deterministic question + top-3 sub-steps from T3/T4/T5, with zero user-visible failure.

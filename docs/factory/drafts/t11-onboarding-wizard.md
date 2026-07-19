@@ -5,6 +5,19 @@
 > **Design:** this ticket is the spec (+ `docs/ftue-plan.md` §3 "What must be set" and §5 "The FTUE flow", steps 1, 2, 4)
 > **Dependencies:** T2 (Weekly Planning Assistant — provides the reusable stepper primitive AND the planning-session record with `entry_branch`)
 
+> ### 🚧 LIVE — issue #347, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+>
+> ⚠️ **Its migration slot is TAKEN.** The ticket claims `0128_owner_onboarded`, but `0128` is now
+> `sleep_hours`; its "current head is `0126`" line is stale. The ticket's own *"confirm the next
+> free slot at implementation time"* caveat is the right instinct — and T1 has since taken `0131`,
+> so **use `0132`** (free as of 2026-07-18, no open PR claiming it) and rename the file, the `id`
+> export, the `index.ts` import, and the `MIGRATIONS` append to match. Re-confirm at start: this
+> answer moves every time a migration lands.
+
 ## Goal
 
 Ship a **first-run onboarding wizard** that a brand-new / not-yet-confirmed owner sees exactly once, reusing the T2 stepper primitive. Three steps, each prefilled and skippable, that stop the identity from being stuck at the seeded migration value and stop timezone/work-hours/trust from being rediscovered later:

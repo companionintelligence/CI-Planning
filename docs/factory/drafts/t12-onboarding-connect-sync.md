@@ -8,6 +8,12 @@
 > - A per-step render slot for Step 3 and Step 5, and a way to advance the current step.
 > - A store-level open helper `openOnboardingAt(step: number)` (used by the empty-state CTA to jump back to the connect step). If T11 has not landed this exact helper, T12 adds a minimal `[onboardingStep, setOnboardingStep]` signal in `client/src/stores/index.ts` and wires the wizard to it — do NOT create a second competing open-signal.
 
+> ### 🚧 LIVE — issue #348, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Complete the FTUE wizard's data-in half: (Step 3) let the user **connect a Google account** by embedding the already-shipped OAuth connect flow, plus a **"Try with sample data"** fixture path so the app is never empty; (Step 5) **run the first sync immediately** — trigger the ingest jobs now instead of waiting for the 06:30 cron — so the payoff (Inbox filled, meetings mirrored, day blocked) lands in the same session; and add a **systematic empty-state CTA** ("Connect a source to fill this automatically") to the empty Focus / Today / Tasks views that links back to the connect step.

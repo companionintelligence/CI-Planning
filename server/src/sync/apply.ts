@@ -253,6 +253,30 @@ const CAMEL_TO_SNAKE: Record<SyncEntity, Record<string, string>> = {
  * `camelFields` — the keys of the Drizzle `update` object (camelCase). Unknown
  * keys are silently skipped; recurrence/meta columns outside the sync whitelist
  * get stamped but not participted in sync merges (harmless).
+ *
+ * WHO STAMPS (owner ruling 2026-07-16) — the rule an audit keeps rediscovering:
+ *
+ *   - **Owner-initiated writes stamp.** Routes, GraphQL mutations, and the services
+ *     behind them. Skipping it is a real bug: an unstamped mergeable field leaves no
+ *     `field_ts` entry, so the compare below is `clientTs >= ''` and *every* queued op
+ *     wins regardless of its clock. That is how a cancelled task came back to life
+ *     (`deleteTask`), a habit demoted itself (`promoteToHabit`), and a reschedule got
+ *     dragged back a day (`rescheduleTask`).
+ *   - **Cron jobs and agents deliberately DO NOT stamp.** The nightly review, groom,
+ *     auto-defense, inbound calendar sync. Their writes are system *inferences about
+ *     the past*, and stamping would let 3am cron outrank a genuine edit the user made
+ *     at 9pm offline and hasn't synced yet — the review marks `missed`, the user's
+ *     queued `done` arrives, and the user is right. Losing to the user's op is the
+ *     intended outcome, not an oversight.
+ *
+ * So an unstamped write in a job/agent is CORRECT — do not "fix" it. Judge a site by
+ * its caller, not by whether the column is mergeable.
+ *
+ * OWNER SAFETY: this keys on `id` alone. A caller whose UPDATE is owner-scoped MUST
+ * gate the stamp on that UPDATE actually landing (`info.changes > 0`, or a `returning()`
+ * / not_found guard). Stamping a stranger's row rewrites THEIR `field_ts`, so their own
+ * next op silently loses LWW — a cross-tenant write into someone else's merge state.
+ * See `cascadeArchiveToDescendants` (services/objectives.ts) for the canonical shape.
  */
 export function stampRow(
   sqlite: Database,

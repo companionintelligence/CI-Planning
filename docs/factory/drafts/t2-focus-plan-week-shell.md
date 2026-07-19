@@ -5,6 +5,12 @@
 > **Design:** this ticket is the spec (weekly-planning-assistant surface; see `docs/ftue-plan.md` §5 for the broader FTUE framing — the assistant is a distinct, net-new UI surface, not the onboarding wizard)
 > **Dependencies:** T1 (planning-session log schema + `api.planWeek.session.*`). T1 lands first; this ticket only **consumes** its client API.
 
+> ### 🚧 LIVE — issue #338, open and not started. Verify the pins before implementing.
+> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
+> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
+> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
+> durable pointers here are the *file + symbol* names.
+
 ## Goal
 
 Give the FOCUS view a persistent **"Plan my week"** affordance that opens a new modal / bottom-sheet **assistant shell**. The shell is a step state-machine: it lands on a **fixed top-3 branch menu** (Fill next week / Schedule tasks / Review past data) and reuses one **PromptStep** component (question text + up to 3 option chips + a free-text input). Branch bodies are **stubs** in this ticket. The shell **opens a planning session** (T1 API) when it launches and **closes that session** when the user finishes, so every planning interaction is bracketed by a session-log record.
