@@ -488,9 +488,13 @@ export const api = {
         request<{ session: PlanningSession }>('PATCH', `/plan-week/sessions/${id}`, patch),
       remove: (id: string) => request<{ ok: boolean }>('DELETE', `/plan-week/sessions/${id}`),
     },
-    /** T3 preview — read-only; writes nothing, so it is safe to re-run per horizon change. */
-    candidates: (params: { horizon: number; start: string }) =>
-      request<PlanWeekCandidates>('GET', `/plan-week/candidates?horizon=${params.horizon}&start=${params.start}`),
+    /**
+     * T3 preview — read-only; writes nothing, so it is safe to re-run per horizon change.
+     * Takes no start date on purpose: `/api/auto/fill` always stages against the owner's
+     * today, so the preview anchors on the same day and echoes it back as `start`.
+     */
+    candidates: (params: { horizon: number }) =>
+      request<PlanWeekCandidates>('GET', `/plan-week/candidates?horizon=${params.horizon}`),
     /** T5 recap — one request for the whole week. Omit `anchor` for the week that just ended. */
     review: (anchor?: string) =>
       request<PlanWeekReview>('GET', `/plan-week/review${anchor ? `?anchor=${anchor}` : ''}`),

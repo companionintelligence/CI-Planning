@@ -8,13 +8,14 @@
 > `file:line` below is a snapshot from 2026-07-15 authoring and has drifted. For current
 > behavior read the code; the durable pointers here are the *file + symbol* names.
 >
-> ⚠️ **This draft was stale before implementation even started, and it misled.** It was
-> written against ENTITY-3's *original* placeholder-subtask design, which was overturned as
-> backwards before either ticket shipped. So the "same mechanism as ENTITY-3: creating a
-> subtask auto-promotes the parent" claim under Non-goals describes code that was **never
-> written** — it sent the implementer looking for a promote path to extract that did not
-> exist. What shipped is direct promote plus a guard-only extraction
-> (`isPromotableToObjective`). Read ENTITY-3's revision notice before this file.
+> ⚠️ **This draft was stale before implementation even started.** It was written against
+> ENTITY-3's *original* placeholder-subtask design, which was overturned as backwards before
+> either ticket shipped. Its Non-goals point at ENTITY-3 for the promote mechanism, so read
+> ENTITY-3's revision notice first: what shipped is a **direct** promote plus a guard-only
+> extraction (`isPromotableToObjective`), not the placeholder-subtask route this draft
+> assumed. (The auto-promote-on-subtask-creation mechanism it cites does exist and predates
+> the ENTITY wave — `services/tasks.ts:193`, "§H: creating a subtask promotes its parent to
+> an objective"; it is the *placeholder* design layered on top that was abandoned.)
 
 ## Goal
 

@@ -10,7 +10,7 @@ import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { applyMonotonic, applyOp, stampRow, type Op } from '../src/sync/apply.js';
 import { applySyncedObjectiveUpkeep } from '../src/services/objectives.js';
-import { deleteTask, promoteToHabit, skipRecurringInstance } from '../src/services/tasks.js';
+import { deleteTask, promoteToHabit, skipRecurringInstance, updateTask } from '../src/services/tasks.js';
 import { rescheduleTask } from '../src/engine/review.js';
 import { moveBlockGroup, promoteBlockToScheduled } from '../src/services/blocks.js';
 import { extendBlock } from '../src/engine/extend-block.js';
@@ -551,6 +551,60 @@ describe('POST /api/blocks/:id/reschedule — stamping', () => {
 
     expect(result.dropped).toContain('status');
     expect(getBlock('b-resched-1')['status']).toBe('skipped');
+  });
+});
+
+// ── the task⇄block mirror must stamp BOTH sides ───────────────────────────────
+
+/**
+ * `syncBlockFromTask` / `syncTaskFromBlock` keep a task and its placement block in
+ * lockstep. Both run on owner paths (updateTask, and the block edits stamped elsewhere in
+ * this PR), so both must stamp — stamping only one side leaves the other open to a stale
+ * queued op that pulls the pair apart, which is the one invariant that module exists for.
+ */
+describe('task⇄block mirror — both sides stamped', () => {
+  beforeEach(() => resetDb());
+
+  it('syncBlockFromTask stamps the block it moves', async () => {
+    insertTask('t-mirror-1');
+    sqlite.prepare(
+      `INSERT INTO time_blocks (id, owner_id, task_id, title, block_kind, start_at, end_at, status, version)
+       VALUES ('b-mirror-1', ?, 't-mirror-1', 'M', 'task', '2026-06-01T09:00:00.000Z', '2026-06-01T10:00:00.000Z', 'planned', 1)`,
+    ).run(SYSTEM_OWNER);
+
+    // An owner PATCH that moves the task's time drags the block with it.
+    await updateTask(SYSTEM_OWNER, 't-mirror-1', { task_time: '15:00' });
+    const moved = getBlock('b-mirror-1')['start_at'] as string;
+    expect(moved).not.toBe('2026-06-01T09:00:00.000Z');
+
+    const result = applyOp(sqlite, {
+      opId: 'op-mirror-1', entity: 'block', entityId: 'b-mirror-1',
+      fields: { start_at: '2026-06-01T09:00:00.000Z', end_at: '2026-06-01T10:00:00.000Z' },
+      baseVersion: 1,
+      clientTs: shift(fieldStamp('b-mirror-1', 'start_at', 'syncBlockFromTask', 'time_blocks'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('start_at');
+    expect(getBlock('b-mirror-1')['start_at']).toBe(moved);
+  });
+
+  it('syncTaskFromBlock stamps the task it re-dates', async () => {
+    insertTask('t-mirror-2');
+    insertBlock('b-mirror-2', { task_id: 't-mirror-2' });
+
+    // An owner block drag mirrors onto the task's scheduled_for/task_time.
+    await moveBlockGroup(SYSTEM_OWNER, 'b-mirror-2', 90);
+    const dated = getTask('t-mirror-2')['scheduled_for'] as string;
+    expect(dated).toBeTruthy();
+
+    const result = applyOp(sqlite, {
+      opId: 'op-mirror-2', entity: 'task', entityId: 't-mirror-2',
+      fields: { scheduled_for: '2020-01-01' }, baseVersion: 1,
+      clientTs: shift(fieldStamp('t-mirror-2', 'scheduled_for', 'syncTaskFromBlock'), -1),
+    }, SYSTEM_OWNER);
+
+    expect(result.dropped).toContain('scheduled_for');
+    expect(getTask('t-mirror-2')['scheduled_for']).toBe(dated);
   });
 });
 

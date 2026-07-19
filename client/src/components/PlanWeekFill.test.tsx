@@ -15,7 +15,7 @@ import { render, fireEvent, waitFor, screen } from '@solidjs/testing-library';
 const fillMock = vi.fn(async (_b?: unknown) => ({ result: {} }));
 const runMock = vi.fn(async (_b?: unknown) => ({ result: { placed: 4, unplaced: 1, days: 3 } }));
 const candidatesMock = vi.fn(async (_p: unknown) => ({
-  horizon: 7, start: '2026-07-18',
+  horizon: 7, start: '2026-07-18',   // server echoes the OWNER's today, matching selectedDay here
   open_tasks: { count: 9, will_stage: 9, items: [{ id: 't1', title: 'Pay invoice', priority: 3, due_at: null }] },
   flight_plan: { count: 2 }, objectives: { count: 1 }, recurring: { count: 5 },
 }));
@@ -140,6 +140,36 @@ describe('PlanWeekFill — the deterministic fill branch', () => {
     fireEvent.click(screen.getByText('Back'));
     await screen.findByText('How far ahead should I plan?'); // back to horizon, not out
     expect(onBackMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * `running` only covers the in-flight window. Without a terminal flag the button returns
+   * enabled on the same step, and a second click stages and places a WHOLE SECOND BATCH.
+   */
+  it('cannot be confirmed twice — the second click is a no-op', async () => {
+    mount();
+    await stepToConfirm();
+
+    fireEvent.click(screen.getByText('Schedule it'));
+    await waitFor(() => expect(runMock).toHaveBeenCalledTimes(1));
+    await screen.findByText('Scheduled');           // terminal label
+
+    fireEvent.click(screen.getByText('Scheduled'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(runMock).toHaveBeenCalledTimes(1);       // still one
+    expect(fillMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the server for candidates without a start date', async () => {
+    mount();
+    fireEvent.click(screen.getByText('Next'));
+    await screen.findByText('What should I draw from?');
+    fireEvent.click(screen.getByText('Preview'));
+    await previewItem();
+
+    // The staging day is the server's to resolve (auto/fill takes no date), so the client
+    // must not send one and imply otherwise.
+    expect(candidatesMock).toHaveBeenCalledWith({ horizon: 7 });
   });
 
   it('a failed run toasts and does not log a confirm entry', async () => {

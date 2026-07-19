@@ -5,18 +5,28 @@
 > **Design:** this ticket is the spec (see also docs/ftue-plan.md)
 > **Dependencies:** None
 
-> ### 🚧 LIVE — issue #337, open and not started. Verify the pins before implementing.
-> A **pre-implementation artifact**: nothing here has been built (no branch, no commits), and every
-> `file:line` below is a snapshot from 2026-07-14 authoring. Since then the migration head moved
-> **0126 → 0130** and the ENTITY wave (#357–#375) landed. Read the code for current behavior; the
-> durable pointers here are the *file + symbol* names.
+> ### 📓 HISTORICAL — this is the pre-implementation draft, and it SHIPPED
+> Built on branch `claude/archive-cascade-sync-memory-887009` (PR #377) as **migration 0131**,
+> closing issue **#337**. Kept as the decision record: the *why* behind the design, which the
+> diff cannot explain.
 >
-> ⚠️ **Its migration slot is TAKEN.** `0127` is now `life_priorities` (PR #356) and the head is
-> `0130`, so the `0127_planning_sessions` name appears in five places below that all need
-> renumbering: the file, the `id` export, the `index.ts` import, the `MIGRATIONS` append, and the
-> DoD line. **Use `0131`** — verified free on 2026-07-18 with no open PRs claiming a slot.
-> (§Pinned conventions already anticipated this: *"the implementer confirms the next free integer
-> at implementation time and renumbers if `0127` is taken."* This banner is that confirmation.)
+> **It describes the codebase as it was BEFORE the build — read it in the past tense.** Every
+> `file:line` below is a snapshot from 2026-07-14 authoring and has drifted; for current
+> behavior read the code.
+>
+> ⚠️ **Its reserved migration slot was gone by the time it was built.** `0127` had become
+> `life_priorities` (#356), so the `0127_planning_sessions` name that appears in five places
+> below (the file, the `id` export, the `index.ts` import, the `MIGRATIONS` append, the DoD
+> line) was renumbered to **0131** — exactly as §Pinned conventions instructed: *"the
+> implementer confirms the next free integer at implementation time and renumbers if `0127` is
+> taken."*
+>
+> Amended during implementation: timestamps use the repo's ISO-8601 idiom
+> (`strftime('%Y-%m-%dT%H:%M:%fZ','now')`), NOT the `CURRENT_TIMESTAMP` this draft specifies —
+> the two are not the same thing, and `CURRENT_TIMESTAMP` yields a space-separated local-parsed
+> string. `appendTranscript`/`closeSession` return discriminated results so the route can tell
+> a missing row (404) from a bad enum (422), and an optional `kind` was added to transcript
+> entries for T3+.
 
 ## Goal
 

@@ -29,6 +29,13 @@ export function PlanWeekReviewBranch(props: BranchProps) {
       <p class="text-sm text-foreground">Here's how last week went.</p>
 
       <Show when={!review.loading} fallback={<p class="text-xs text-muted-foreground">Loading…</p>}>
+        {/* `review.error` must be checked BEFORE reading review(): Solid re-throws the
+            error on access, so testing review() first would escape this fallback entirely
+            and blow up the render (the app mounts no ErrorBoundary). */}
+        <Show
+          when={!review.error}
+          fallback={<p class="text-xs text-muted-foreground">Couldn't load the review.</p>}
+        >
         <Show
           when={review()}
           fallback={<p class="text-xs text-muted-foreground">Couldn't load the review.</p>}
@@ -75,6 +82,7 @@ export function PlanWeekReviewBranch(props: BranchProps) {
               </div>
             </div>
           )}
+        </Show>
         </Show>
       </Show>
 

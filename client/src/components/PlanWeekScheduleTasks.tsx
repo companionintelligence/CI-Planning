@@ -168,9 +168,13 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
               </button>
             </div>
 
-            {/* The distinction the ticket insists on: Set dates, Auto places. */}
+            {/* The distinction the ticket insists on: Set dates, Auto places. The second
+                line is load-bearing honesty — Auto runs against the day the cockpit is on
+                (selectedDay), NOT the day/time typed above, and silently ignoring a value
+                the user just entered is worse than saying so. */}
             <p class="text-[11px] text-muted-foreground">
-              “Set” gives it a day. “Let Auto place it” finds a slot and adds it to your calendar.
+              “Set” gives it the day and time above. “Let Auto place it” ignores them and
+              finds a slot on {selectedDay()}, adding it to your calendar.
             </p>
 
             <button type="button" class="btn-ghost text-xs self-start" onClick={() => setPicked(null)}>
