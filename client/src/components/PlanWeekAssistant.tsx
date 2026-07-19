@@ -1,7 +1,7 @@
 import { createSignal, createEffect, For, Show, type JSX } from 'solid-js';
 import { X, ChevronLeft } from 'lucide-solid';
 import { api, type PlanWeekEntryBranch } from '../lib/api.js';
-import { planWeekModal, setPlanWeekModal, showToast } from '../stores/index.js';
+import { planWeekModal, setPlanWeekModal, showToast, aiAvailable } from '../stores/index.js';
 import { PlanWeekFill } from './PlanWeekFill.js';
 import { PlanWeekScheduleTasks } from './PlanWeekScheduleTasks.js';
 import { PlanWeekReviewBranch } from './PlanWeekReviewBranch.js';
@@ -60,6 +60,19 @@ const BRANCHES: {
  * The reusable conversation primitive: a question, up to three option chips, and a
  * free-text input. T3/T4/T5 drive real flows through it; here each branch renders one.
  * Caps at three chips by contract, so a caller passing more cannot break the layout.
+ *
+ * ⚠️ DEAD CODE TODAY, by design of T3/T4/T5 as shipped, not something T8 introduced or
+ * can fix: `PromptStep` only renders as the shell's fallback when a `BRANCHES` entry has
+ * no `component` (see the `Show` below in `PlanWeekAssistant`), but all three shipped
+ * branches supply bespoke components instead (`PlanWeekFill`'s multi-step wizard,
+ * `PlanWeekScheduleTasks`'s task-picker, `PlanWeekReviewBranch`'s read-only recap — none
+ * share a common question+options moment). T8's Files-impacted list scopes this ticket to
+ * `PlanWeekAssistant.tsx` only, so this is implemented against the ticket's contract and
+ * DoD as written, exercised directly (the same way its own existing tests already do),
+ * not wired live into any of the three branches. Flagged for follow-up, not hidden.
+ *
+ * T8 (#344) — free text is parsed (not applied) via `api.planWeek.parse`, no
+ * deterministic fallback exists, so the box is gated on `aiAvailable()`.
  */
 export function PromptStep(props: {
   question: string;
@@ -68,12 +81,28 @@ export function PromptStep(props: {
   onBack?: () => void;
 }) {
   const [text, setText] = createSignal('');
+  const [parsing, setParsing] = createSignal(false);
+  const [parseError, setParseError] = createSignal<string | null>(null);
 
   const submit = () => {
     const value = text().trim();
-    if (!value) return;
-    props.onSubmit?.(value);
-    setText('');
+    if (!value || parsing()) return;
+    setParseError(null);
+    setParsing(true);
+    void api.planWeek
+      .parse(value)
+      .then((res) => {
+        setText('');
+        props.onSubmit?.(`"${value}" → ${res.pins.length} pin(s), ${res.hints.length} hint(s)`);
+      })
+      .catch(() => {
+        // Uniform message: `request()` collapses every non-OK response to a bare Error
+        // with just the server's message string, so a 422 (invalid) and a 503
+        // (Ollama-down) can't be told apart here — and the ticket only specifies one
+        // rejection copy either way. The chips above are untouched and still usable.
+        setParseError("Couldn't turn that into a plan change — rephrase or pick an option.");
+      })
+      .finally(() => setParsing(false));
   };
 
   return (
@@ -92,13 +121,21 @@ export function PromptStep(props: {
         </div>
       </Show>
 
-      <input
-        class="input text-sm"
-        placeholder="Or type your answer…"
-        value={text()}
-        onInput={(e) => setText(e.currentTarget.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-      />
+      {/* parseInstruction is Ollama-only with no deterministic fallback, so the box
+          itself (not just its behavior) is hidden rather than dangling as a no-op. */}
+      <Show when={aiAvailable()}>
+        <input
+          class="input text-sm"
+          placeholder="Or type your answer…"
+          value={text()}
+          disabled={parsing()}
+          onInput={(e) => setText(e.currentTarget.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+        />
+        <Show when={parseError()}>
+          <p class="text-xs text-destructive">{parseError()}</p>
+        </Show>
+      </Show>
 
       <Show when={props.onBack}>
         <button type="button" class="btn-ghost text-xs self-start inline-flex items-center gap-1" onClick={() => props.onBack!()}>

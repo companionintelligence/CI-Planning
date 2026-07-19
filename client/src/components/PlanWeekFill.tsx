@@ -1,7 +1,7 @@
 import { createSignal, createResource, For, Show } from 'solid-js';
 import { ChevronLeft } from 'lucide-solid';
 import { api } from '../lib/api.js';
-import { selectedDay, showToast, refetchFlightPlan, refetchBlocks } from '../stores/index.js';
+import { selectedDay, showToast, refetchFlightPlan, refetchBlocks, aiAvailable } from '../stores/index.js';
 import type { BranchProps } from './PlanWeekAssistant.js';
 
 /**
@@ -10,10 +10,13 @@ import type { BranchProps } from './PlanWeekAssistant.js';
  * `POST /api/auto/fill` then `POST /api/auto/run`, so there is no second placement engine
  * here and `engine/autoplan.ts` / `services/engine-ops.ts` stay untouched.
  *
- * No LLM anywhere and no `aiAvailable()` gate — this branch is always available.
- * (`autoRun` may internally use the LLM for day 0 when the owner is already in a
- * smart/hands-off trust mode; that is pre-existing engine behavior this branch neither
- * triggers nor configures. T9 owns LLM ordering.)
+ * The branch itself has no `aiAvailable()` gate on whether it RUNS — Suggest/Schedule
+ * both always work here. T9 (#345) adds a `smart: aiAvailable()` opt-in on the
+ * `auto.run` call: when true, every horizon day is authored via the LLM loop instead of
+ * just day 0. The "(AI)" transcript marker is driven ONLY by the server's returned
+ * `result.llm` — never by `aiAvailable()` alone — so it stays truthful even if Ollama
+ * drops between the gate check and the response (e.g. too few staged tasks to trigger
+ * authoring, or a mid-loop Ollama failure that degraded to deterministic).
  *
  * SOURCE TOGGLES ARE PREVIEW-SCOPING, with one exception. Flight-plan / Objectives /
  * Recurring only change what the preview summarizes — excluding them from *placement*
@@ -81,7 +84,7 @@ export function PlanWeekFill(props: BranchProps) {
       // Fill stages the open backlog; skip it entirely when that source is off, so the
       // run places only what is already staged.
       if (sources().open_tasks) await api.auto.fill({});
-      const { result } = await api.auto.run({ date: selectedDay(), horizon_days: horizon() });
+      const { result } = await api.auto.run({ date: selectedDay(), horizon_days: horizon(), smart: aiAvailable() });
 
       const span = (result.days ?? 1) > 1 ? ` across ${result.days} days` : '';
       const bits = [`Scheduled ${result.placed ?? 0}${span}`];
@@ -89,7 +92,7 @@ export function PlanWeekFill(props: BranchProps) {
       showToast(bits.join(' · '), 'success');
 
       void props.append(
-        `Confirmed: placed ${result.placed ?? 0}, unplaced ${result.unplaced ?? 0}${result.days ? `, days ${result.days}` : ''}`,
+        `Confirmed: placed ${result.placed ?? 0}, unplaced ${result.unplaced ?? 0}${result.days ? `, days ${result.days}` : ''}${result.llm ? ' (AI)' : ''}`,
         'plan_week:confirm',
       );
       setDone(true);
