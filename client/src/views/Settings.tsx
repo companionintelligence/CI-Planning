@@ -1,7 +1,8 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound } from 'lucide-solid';
+import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable } from '../stores/index.js';
-import { api } from '../lib/api.js';
+import { api, type PlanningSession } from '../lib/api.js';
+import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
 import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
@@ -59,7 +60,7 @@ const DEFAULTS: SettingsForm = {
 };
 
 export function Settings() {
-  const [activeTab, setActiveTab] = createSignal<'preferences' | 'connections'>('preferences');
+  const [activeTab, setActiveTab] = createSignal<'preferences' | 'connections' | 'logs'>('preferences');
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   // V8 — account (local sign-in only): the backup reset-email. Fetch auth config + the
@@ -325,6 +326,62 @@ export function Settings() {
   const [accounts, { refetch: refetchAccounts }] = createResource(() =>
     api.accounts.list().then((r) => r.accounts).catch(() => null),
   );
+
+  // T6 — Logs tab: the owner's plan-week (T1) sessions. `list()` is already
+  // newest-first (server: `ORDER BY started_at DESC`); no client sort needed.
+  const [sessions, { refetch: refetchSessions }] = createResource(() =>
+    api.planWeek.session.list().then((r) => r.sessions).catch(() => null),
+  );
+  const [reviewing, setReviewing] = createSignal<PlanningSession | null>(null);
+  const [clearingAll, setClearingAll] = createSignal(false);
+
+  async function reviewSession(id: string) {
+    try {
+      const { session } = await api.planWeek.session.get(id);
+      setReviewing(session);
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
+  function downloadSession(session: PlanningSession, format: 'json' | 'md') {
+    const content = format === 'json' ? sessionToJson(session) : sessionToMarkdown(session);
+    const mime = format === 'json' ? 'application/json' : 'text/markdown';
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFilename(session, format);
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function deleteSession(session: PlanningSession) {
+    if (!window.confirm(`Delete this ${session.entry_branch} session from ${session.started_at.slice(0, 10)}? This cannot be undone.`)) return;
+    try {
+      await api.planWeek.session.remove(session.id);
+      await refetchSessions();
+      showToast('Session deleted', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    }
+  }
+
+  async function clearAllSessions() {
+    const list = sessions() ?? [];
+    if (!list.length) return;
+    if (!window.confirm(`Delete all ${list.length} planning-session logs? This cannot be undone.`)) return;
+    setClearingAll(true);
+    try {
+      await Promise.all(list.map((s) => api.planWeek.session.remove(s.id)));
+      showToast('All sessions deleted', 'success');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      await refetchSessions(); // keeps the list truthful even on partial failure
+      setClearingAll(false);
+    }
+  }
   const [acctUsername, setAcctUsername] = createSignal('');
   const [acctEmail, setAcctEmail] = createSignal('');
   const [acctRole, setAcctRole] = createSignal<import('../lib/api.js').OwnerRole>('member');
@@ -554,6 +611,17 @@ export function Settings() {
           }}
         >
           Connections
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('logs')}
+          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5"
+          classList={{
+            'border-primary text-foreground': activeTab() === 'logs',
+            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'logs',
+          }}
+        >
+          <ScrollText size={13} /> Logs
         </button>
       </div>
 
@@ -1584,7 +1652,129 @@ export function Settings() {
 
         </Show>
 
+        {/* ── LOGS TAB (T6) ───────────────────────────────────────────────────── */}
+        {/* Read/export/delete over T1's plan-week sessions — not part of the
+            settings form submit (no fields here feed `form()`/`doSave`). */}
+        <Show when={activeTab() === 'logs'}>
+          <section class="card">
+            <div class="flex items-center justify-between mb-1">
+              <div class="section-label flex items-center gap-1.5"><ScrollText size={12} /> Planning-session logs</div>
+              <button
+                type="button"
+                class="btn-danger text-xs px-3 py-1.5"
+                disabled={!sessions()?.length || clearingAll()}
+                onClick={clearAllSessions}
+              >
+                <Trash2 size={12} /> {clearingAll() ? 'Clearing…' : 'Clear all'}
+              </button>
+            </div>
+            <p class="text-xs text-muted-foreground mb-3">
+              Every Weekly-Planning-Assistant session — fill week, schedule tasks, and review — recorded for your own reference.
+            </p>
+
+            <Show
+              when={sessions()}
+              fallback={<p class="text-xs text-muted-foreground py-4 text-center">Loading…</p>}
+            >
+              {(list) => (
+                <Show
+                  when={list().length > 0}
+                  fallback={
+                    <div class="flex flex-col items-center gap-1.5 py-8 text-muted-foreground">
+                      <ScrollText size={20} class="opacity-50" />
+                      <p class="text-xs">No planning sessions recorded yet.</p>
+                    </div>
+                  }
+                >
+                  <div class="flex flex-col gap-2">
+                    <For each={list()}>
+                      {(session) => (
+                        <div class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                          <div class="min-w-0">
+                            <div class="text-sm text-foreground truncate">
+                              {session.entry_branch.replace(/_/g, ' ')} · {session.started_at.slice(0, 10)}
+                            </div>
+                            <div class="text-[11px] text-muted-foreground">
+                              {session.status} · {new Date(session.started_at).toLocaleString()}
+                            </div>
+                          </div>
+                          <div class="flex items-center gap-1 flex-shrink-0">
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" title="Review" onClick={() => reviewSession(session.id)}>
+                              <Eye size={13} />
+                            </button>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" title="Export JSON" onClick={() => downloadSession(session, 'json')}>
+                              <FileJson size={13} />
+                            </button>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" title="Export Markdown" onClick={() => downloadSession(session, 'md')}>
+                              <FileText size={13} />
+                            </button>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive" title="Delete" onClick={() => deleteSession(session)}>
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              )}
+            </Show>
+          </section>
+        </Show>
+
       </form>
+
+      {/* Review modal (T6) — a LOCAL signal, not the global elementModal (reserved
+          for the ElementWizard). Closes on backdrop click or the X. */}
+      <Show when={reviewing()}>
+        {(session) => (
+          <div class="modal-backdrop" onClick={() => setReviewing(null)}>
+            <div class="modal max-w-lg" onClick={(e) => e.stopPropagation()}>
+              <div class="px-4 py-3 border-b border-border flex items-center justify-between">
+                <span class="text-sm font-semibold text-foreground">
+                  {session().entry_branch.replace(/_/g, ' ')} · {session().started_at.slice(0, 10)}
+                </span>
+                <button class="btn-icon" onClick={() => setReviewing(null)}><X size={15} /></button>
+              </div>
+
+              <div class="p-4 flex flex-col gap-3 max-h-[60vh] overflow-y-auto">
+                <div class="text-[11px] text-muted-foreground">
+                  {session().status} · Started {new Date(session().started_at).toLocaleString()}
+                  {session().ended_at ? ` · Ended ${new Date(session().ended_at!).toLocaleString()}` : ''}
+                </div>
+                <Show when={session().summary}>
+                  <p class="text-xs text-foreground">{session().summary}</p>
+                </Show>
+                <Show
+                  when={session().transcript.length > 0}
+                  fallback={<p class="text-xs text-muted-foreground">No transcript entries.</p>}
+                >
+                  <div class="flex flex-col gap-2">
+                    <For each={session().transcript}>
+                      {(turn) => (
+                        <div class="text-xs">
+                          <span class="font-semibold text-foreground">{turn.role === 'system' ? 'System' : 'You'}</span>
+                          <span class="text-muted-foreground"> · {new Date(turn.ts).toLocaleString()}</span>
+                          <p class="text-foreground whitespace-pre-wrap mt-0.5">{turn.text}</p>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+
+              <div class="px-4 py-3 border-t border-border flex items-center gap-2">
+                <button type="button" class="btn-secondary text-xs px-3 py-1.5" onClick={() => downloadSession(session(), 'json')}>
+                  <FileJson size={12} /> Export JSON
+                </button>
+                <button type="button" class="btn-secondary text-xs px-3 py-1.5" onClick={() => downloadSession(session(), 'md')}>
+                  <FileText size={12} /> Export Markdown
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }
