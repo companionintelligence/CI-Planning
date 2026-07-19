@@ -342,6 +342,9 @@ export const api = {
   jobs: {
     list: () => request<{ jobs: Job[] }>('GET', '/jobs'),
     run: (id: string) => request<{ ok: boolean; message: string }>('POST', `/jobs/${id}/run`, {}),
+    // FTUE · T12 — the owner's own ingest, right now (write-scoped, NOT admin-gated,
+    // unlike run() above). Awaited: the wizard shows a real per-kind result.
+    runNow: () => request<{ ok: boolean; ran: RunNowOutcome[] }>('POST', '/jobs/run-now', {}),
   },
 
   schedule: { run: (date?: string) => request<unknown>('POST', '/schedule/run', { date }) },
@@ -542,8 +545,19 @@ export const api = {
   // In-app Google connection setup (admin-gated; GET 403s for non-admin credentials).
   googleConfig: {
     get: () => request<GoogleConfigState>('GET', '/google-config'),
-    save: (body: { client_id?: string; client_secret?: string | null; enabled: boolean }) =>
+    // FTUE · T12 — `mode: 'fixture'` powers "Try with sample data" (no client_id/KEK needed).
+    save: (body: { client_id?: string; client_secret?: string | null; enabled: boolean; mode?: 'live' | 'fixture' }) =>
       request<GoogleConfigState>('PUT', '/google-config', body),
+  },
+
+  // FTUE · T12 (#348) — the Google OAuth connect flow, lifted out of Settings.tsx's
+  // own raw fetch() calls (marked "(assumed)" in comments there) so it's a typed,
+  // shared contract like every other endpoint in this file, instead of a bespoke
+  // fetch duplicated once for Settings and once for the onboarding wizard.
+  oauth: {
+    googleStart: () => request<{ url: string }>('GET', '/oauth/google/start'),
+    googleDisconnect: (account: string) =>
+      request<{ disconnected: string }>('DELETE', `/oauth/google/accounts/${encodeURIComponent(account)}`),
   },
 
   // Phase AG — operator account management (operator-gated; 403s for everyone else).
@@ -891,6 +905,15 @@ export interface Job {
   id: string; name: string; kind: string; cron: string; enabled: boolean;
   last_run_at?: string; last_started?: string; last_status?: string;
   items_created?: number;
+}
+
+/** FTUE · T12 (#348) — one job's result from `POST /api/jobs/run-now`. */
+export interface RunNowOutcome {
+  kind: string;
+  status: string;
+  itemsCreated: number;
+  itemsUpdated: number;
+  log: string;
 }
 
 export interface FocusItem { taskId: string; title: string; reason: string }

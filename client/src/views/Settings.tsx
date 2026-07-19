@@ -3,6 +3,7 @@ import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshC
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
+import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
 import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
@@ -454,46 +455,47 @@ export function Settings() {
 
   // After the OAuth callback redirects back to /settings?google=connected|error,
   // surface a toast once and strip the query param so it doesn't re-fire on refresh.
+  // FTUE · T12 — when the onboarding wizard itself started this connect, it sets
+  // FTUE_RESUME_KEY before navigating away; OnboardingWizard's own onMount owns the
+  // toast/advance/strip for that case (Settings mounts first in the tree, so it can
+  // safely defer here without removing the marker — the wizard claims it next).
   onMount(() => {
     const q = new URLSearchParams(window.location.search);
     const g = q.get('google');
-    if (g === 'connected') { showToast('Google account connected', 'success'); refetchIntegrations(); }
-    else if (g === 'error') { showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
+    const wizardInitiated = g && localStorage.getItem(FTUE_RESUME_KEY);
+    if (g && !wizardInitiated) {
+      if (g === 'connected') { showToast('Google account connected', 'success'); refetchIntegrations(); }
+      else if (g === 'error') { showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
+    }
     // AA0b — the memory CI-Portal connector callback bounces back here too.
     const m = q.get('memory');
     if (m === 'connected') { showToast('Connected to Companion Memory via CI-Portal', 'success'); refetchPrefs(); refetchMem(); }
     else if (m === 'error') { showToast(`CI-Portal connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
-    if (g || m) {
+    if ((g && !wizardInitiated) || m) {
       q.delete('google'); q.delete('memory'); q.delete('reason');
       const qs = q.toString();
       window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
     }
   });
 
-  // WP7: kick off the OAuth flow. GET /api/oauth/google/start returns { url }; we
-  // fetch it (credentialed) then navigate the browser to Google. Degrade on non-2xx.
+  // WP7: kick off the OAuth flow via the typed api.oauth helper (was a raw fetch()).
   async function connectGoogle() {
     if (!integrations()?.google.liveEnabled) return;
     try {
-      const res = await fetch('/api/oauth/google/start');
-      if (!res.ok) { showToast('Google connect is not available yet', 'default'); return; }
-      const data = await res.json().catch(() => ({} as { url?: string }));
-      if (data.url) { window.location.href = data.url; return; }
-      // Some flows redirect directly; if we landed here with a 2xx and no url, refetch.
-      refetchIntegrations();
-    } catch {
-      showToast('Could not start Google connect', 'error');
+      const { url } = await api.oauth.googleStart();
+      window.location.href = url;
+    } catch (err) {
+      showToast((err as Error).message, 'error');
     }
   }
 
-  // WP7: disconnect one account. Contract (assumed): DELETE /api/oauth/google/accounts/:account.
+  // WP7: disconnect one account, via the typed api.oauth helper (was a raw fetch()).
   async function disconnectGoogle(account: string) {
     try {
-      const res = await fetch(`/api/oauth/google/accounts/${encodeURIComponent(account)}`, { method: 'DELETE' });
-      if (!res.ok) { showToast('Disconnect is not available yet', 'default'); return; }
+      await api.oauth.googleDisconnect(account);
       showToast(`Disconnected ${account}`, 'success');
-    } catch {
-      showToast('Could not disconnect', 'error');
+    } catch (err) {
+      showToast((err as Error).message, 'error');
     } finally {
       refetchIntegrations();
     }

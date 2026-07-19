@@ -33,6 +33,12 @@ export interface JobOutcome {
   log: string;
 }
 
+/** FTUE · T12 (#348) — what `runJob` hands back to a caller that awaits it. */
+export interface JobRunResult extends JobOutcome {
+  kind: string;
+  status: string;
+}
+
 /**
  * TM-5 — best-effort auto-block after a promote. In the Hands-off trust mode this stages
  * the newly-promoted, estimate-bearing tasks and places them (zero-click); a no-op in
@@ -342,7 +348,7 @@ async function execute(kind: string): Promise<JobOutcome> {
 }
 
 /** Run a job by kind, recording a job_runs row and broadcasting start/finish over SSE. */
-export async function runJob(kind: string): Promise<void> {
+export async function runJob(kind: string): Promise<JobRunResult> {
   const startedAt = new Date().toISOString();
   const run = sqlite
     .prepare(
@@ -379,6 +385,7 @@ export async function runJob(kind: string): Promise<void> {
 
   broadcast(currentOwnerId(), 'job:run', { kind, status, ...outcome, finishedAt });
   logger.info(`Job ${kind} ${status}`, { ...outcome });
+  return { kind, status, ...outcome };
 }
 
 /**
@@ -444,6 +451,27 @@ export async function runScheduledJob(kind: string): Promise<void> {
       err: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+/**
+ * FTUE · T12 (#348) — the kinds a "Run my first sync now" click triggers, in this
+ * order: pull calendar events first (so the day has meetings to plan around), then
+ * mirror them as blocks, then process email, then let grooming surface anything
+ * ingest staged. All four are owner-scoped (`OWNER_SCOPED_KINDS`), so calling `runJob`
+ * directly under the CURRENT owner's context (already bound by `requireAuth`) is
+ * correct — this deliberately does NOT fan out across owners like `runScheduledJob`
+ * does; see its own doc comment above ("a user 'run now' is for their own account").
+ */
+export const RUN_NOW_KINDS = ['sync_calendar', 'ingest_gcal', 'ingest_gmail', 'nightly_grooming'] as const;
+
+/** Trigger the current owner's own ingest right now instead of waiting for the cron.
+ *  Sequential — `runJob` never throws, so one kind failing doesn't stop the rest. */
+export async function runIngestNow(): Promise<JobRunResult[]> {
+  const results: JobRunResult[] = [];
+  for (const kind of RUN_NOW_KINDS) {
+    results.push(await runJob(kind));
+  }
+  return results;
 }
 
 export function startCronJobs() {

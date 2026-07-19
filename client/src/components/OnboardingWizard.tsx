@@ -1,6 +1,11 @@
-import { createSignal, createResource, createEffect, For, Show } from 'solid-js';
+import { createSignal, createResource, createEffect, onMount, For, Show } from 'solid-js';
 import { api } from '../lib/api.js';
-import { prefs, refetchPrefs, showToast } from '../stores/index.js';
+import {
+  prefs, refetchPrefs, showToast, onboardingStep, setOnboardingStep, onboardingForceOpen, setOnboardingForceOpen,
+} from '../stores/index.js';
+import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
+import { ConnectSourceStep } from './onboarding/ConnectSourceStep.js';
+import { RunFirstSyncStep } from './onboarding/RunFirstSyncStep.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -15,24 +20,28 @@ const TRUST_OPTIONS: { value: TrustMode; label: string; hint: string }[] = [
 ];
 
 /**
- * FTUE · T11 (#347) — the first-run onboarding overlay: identity, time + place, trust
- * dial (docs/ftue-plan.md §5 steps 1/2/4; steps 3/5 — connect a source, first sync —
- * are T12). Gated on the owner's own `onboarded_at` flag (0132), never on route, so it
- * covers every screen the same way `ElementWizard` does.
+ * FTUE · T11 (#347) + T12 (#348) — the first-run onboarding overlay, 5 steps
+ * (docs/ftue-plan.md §5): 1 identity, 2 time+place, 3 connect a source, 4 trust dial,
+ * 5 run first sync. Gated on the owner's own `onboarded_at` flag (0132), never on
+ * route, so it covers every screen the same way `ElementWizard` does.
  *
  * T2 ("Plan my week") defines no exported, form-generic stepper to reuse: its
  * `PlanWeekAssistant` is a self-contained modal driven by its own fixed 3-branch menu,
  * and its one exported primitive (`PromptStep`) is a question+chips+free-text shape —
- * not remotely suited to name/email fields, a TZ confirm + two time inputs, or a
- * 3-option dial. This owns its own small step signal instead of forcing a fake reuse.
+ * not remotely suited to name/email fields, a TZ confirm + two time inputs, a 3-option
+ * dial, or the Connect/Run-sync steps. This owns its own step signal instead — but
+ * (T12) that signal now lives in the store (`onboardingStep`), not locally, because
+ * the empty-state "Connect a source" CTA is a SIBLING of this component (it lives in
+ * Focus/Today/AllTasks), not a descendant, and needs to jump the already-mounted
+ * wizard to step 3 from outside.
  */
 export function OnboardingWizard() {
   const shouldOnboard = () => {
     const p = prefs();
-    return p !== undefined && p !== null && p.onboarded_at == null;
+    const notYetOnboarded = p !== undefined && p !== null && p.onboarded_at == null;
+    return notYetOnboarded || onboardingForceOpen();
   };
 
-  const [step, setStep] = createSignal<1 | 2 | 3>(1);
   const [busy, setBusy] = createSignal(false);
 
   const [me] = createResource(() => api.auth.me().catch(() => null));
@@ -45,12 +54,25 @@ export function OnboardingWizard() {
     if (m) { setName(m.name ?? ''); setEmail(m.email ?? ''); }
   });
 
-  // Step 2 — time + place
+  // Step 2 — time + place. Defaults only matter pre-completion (nothing saved yet);
+  // once onboarding has finished, `openOnboardingAt` can reopen this same wizard
+  // (the empty-state CTA), and Back/Next through this step must not silently
+  // resubmit these hardcoded defaults over whatever the owner already saved — so,
+  // like the identity effect above, hydrate from `prefs()` whenever it resolves.
   const [workdayStart, setWorkdayStart] = createSignal('09:00');
   const [workdayEnd, setWorkdayEnd] = createSignal('18:00');
+  createEffect(() => {
+    const p = prefs();
+    if (p) { setWorkdayStart(p.workday_start); setWorkdayEnd(p.workday_end); }
+  });
 
-  // Step 3 — trust dial (Balanced preselected, matching docs/ftue-plan.md §4)
+  // Step 4 — trust dial (Balanced preselected pre-completion, matching
+  // docs/ftue-plan.md §4; hydrated from prefs() for the same reopen reason as above).
   const [trustMode, setTrustMode] = createSignal<TrustMode>('balanced');
+  createEffect(() => {
+    const p = prefs();
+    if (p?.trust_mode) setTrustMode(p.trust_mode);
+  });
 
   /**
    * Finish or Skip, from any step. Records `onboarded_at` first — that's the gate the
@@ -67,6 +89,8 @@ export function OnboardingWizard() {
         const { session } = await api.planWeek.session.open('onboarding');
         await api.planWeek.session.close(session.id, { status: 'completed' });
       } catch { /* best-effort */ }
+      setOnboardingForceOpen(false); // reopened-via-CTA case: onboarded_at may already
+                                      // have been set, so the force flag is what closes it
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
@@ -74,43 +98,72 @@ export function OnboardingWizard() {
     }
   }
 
-  async function nextFromIdentity() {
+  /** Shared shape behind every "save this step, then advance" transition: busy-guard,
+   *  write, advance on success, toast + stay put on failure. */
+  async function advance(write: () => Promise<unknown>, nextStep: 1 | 2 | 3 | 4 | 5) {
+    setBusy(true);
+    try {
+      await write();
+      setOnboardingStep(nextStep);
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function nextFromIdentity() {
     const trimmed = name().trim();
-    if (!trimmed) { setStep(2); return; } // nothing to write — move on rather than 400
-    setBusy(true);
-    try {
-      await api.owner.updateProfile({ name: trimmed, email: email().trim() || null });
-      setStep(2);
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setBusy(false);
-    }
+    if (!trimmed) { setOnboardingStep(2); return Promise.resolve(); } // nothing to write — move on rather than 400
+    return advance(() => api.owner.updateProfile({ name: trimmed, email: email().trim() || null }), 2);
   }
 
-  async function nextFromTimePlace() {
-    setBusy(true);
-    try {
-      await api.prefs.update({ timezone: BROWSER_TZ, workday_start: workdayStart(), workday_end: workdayEnd() });
-      setStep(3);
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setBusy(false);
-    }
+  function nextFromTimePlace() {
+    return advance(
+      () => api.prefs.update({ timezone: BROWSER_TZ, workday_start: workdayStart(), workday_end: workdayEnd() }),
+      3,
+    );
   }
 
-  async function finish() {
-    setBusy(true);
-    try {
-      await api.prefs.update({ trust_mode: trustMode() });
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-      setBusy(false);
-      return;
-    }
-    await completeOnboarding();
+  function nextFromTrust() {
+    return advance(() => api.prefs.update({ trust_mode: trustMode() }), 5);
   }
+
+  /**
+   * OAuth-return resume (T12) — the callback always redirects to `/settings?google=…`
+   * via a real server-side 302 (server-side, unconditionally; see oauth.ts), so this
+   * only acts when the wizard itself set the marker before navigating away. Settings.tsx's
+   * own onMount checks the same marker and stands down when it's present, so only one
+   * of the two ever toasts/strips the param for a given return.
+   *
+   * A full-page redirect reloads the whole SPA, so every module-level signal — including
+   * `onboardingStep` and `onboardingForceOpen` — resets to its default. For a NOT-yet-
+   * onboarded owner that's harmless (`shouldOnboard()`'s other branch already keeps the
+   * overlay open). But an ALREADY-onboarded owner who reopened the wizard via the
+   * empty-state CTA (`onboardingForceOpen`) would otherwise land back on a bare Settings
+   * page with only a toast — the force-open flag must be re-armed here too, and the step
+   * explicitly set on BOTH outcomes (on error nothing else sets it, so it would silently
+   * default back to step 1 instead of staying on Connect where the user can retry).
+   */
+  onMount(() => {
+    if (typeof window === 'undefined') return;
+    if (!localStorage.getItem(FTUE_RESUME_KEY)) return;
+    const q = new URLSearchParams(window.location.search);
+    const g = q.get('google');
+    if (!g) return; // marker set but no return param yet — still out on the consent screen
+    localStorage.removeItem(FTUE_RESUME_KEY);
+    if (g === 'connected') {
+      showToast('Google account connected', 'success');
+      setOnboardingStep(4);
+    } else {
+      showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error');
+      setOnboardingStep(3); // back to Connect so the user can retry, not the step-1 default
+    }
+    setOnboardingForceOpen(true);
+    q.delete('google'); q.delete('reason');
+    const qs = q.toString();
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+  });
 
   return (
     <Show when={shouldOnboard()}>
@@ -119,7 +172,7 @@ export function OnboardingWizard() {
         style={{ background: 'rgba(0,0,0,.7)', 'backdrop-filter': 'blur(6px)' }}
       >
         <div class="card w-full max-w-md flex flex-col gap-4">
-          <Show when={step() === 1}>
+          <Show when={onboardingStep() === 1}>
             <div class="flex flex-col gap-3">
               <div>
                 <h2 class="text-base font-semibold text-foreground">Welcome</h2>
@@ -140,7 +193,7 @@ export function OnboardingWizard() {
             </div>
           </Show>
 
-          <Show when={step() === 2}>
+          <Show when={onboardingStep() === 2}>
             <div class="flex flex-col gap-3">
               <div>
                 <h2 class="text-base font-semibold text-foreground">Time and place</h2>
@@ -159,14 +212,22 @@ export function OnboardingWizard() {
               <div class="flex justify-between items-center pt-1">
                 <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>
                 <div class="flex gap-2">
-                  <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setStep(1)}>Back</button>
+                  <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setOnboardingStep(1)}>Back</button>
                   <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void nextFromTimePlace()}>Next</button>
                 </div>
               </div>
             </div>
           </Show>
 
-          <Show when={step() === 3}>
+          <Show when={onboardingStep() === 3}>
+            <ConnectSourceStep
+              onNext={() => setOnboardingStep(4)}
+              onBack={() => setOnboardingStep(2)}
+              onSkip={() => void completeOnboarding()}
+            />
+          </Show>
+
+          <Show when={onboardingStep() === 4}>
             <div class="flex flex-col gap-3">
               <div>
                 <h2 class="text-base font-semibold text-foreground">Trust dial</h2>
@@ -190,11 +251,19 @@ export function OnboardingWizard() {
               <div class="flex justify-between items-center pt-1">
                 <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>
                 <div class="flex gap-2">
-                  <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setStep(2)}>Back</button>
-                  <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void finish()}>Finish</button>
+                  <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => setOnboardingStep(3)}>Back</button>
+                  <button type="button" class="btn-primary text-xs" disabled={busy()} onClick={() => void nextFromTrust()}>Next</button>
                 </div>
               </div>
             </div>
+          </Show>
+
+          <Show when={onboardingStep() === 5}>
+            <RunFirstSyncStep
+              onBack={() => setOnboardingStep(4)}
+              onFinish={() => void completeOnboarding()}
+              onGoToConnect={() => setOnboardingStep(3)}
+            />
           </Show>
         </div>
       </div>
