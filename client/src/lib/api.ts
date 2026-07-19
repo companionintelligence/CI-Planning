@@ -498,6 +498,11 @@ export const api = {
     /** T5 recap — one request for the whole week. Omit `anchor` for the week that just ended. */
     review: (anchor?: string) =>
       request<PlanWeekReview>('GET', `/plan-week/review${anchor ? `?anchor=${anchor}` : ''}`),
+    /** T7 — never rejects on Ollama being down; the server degrades to `source: 'fallback'`
+     *  and echoes `fallbackQuestion`/`fallbackOptions` back verbatim. Call only when
+     *  `aiAvailable()` is true — when false, use the branch's local fixed top-3 directly. */
+    nextStep: (input: PlanWeekNextStepInput) =>
+      request<PlanWeekNextStep>('POST', '/plan-week/next-step', input),
   },
 
   // ── Auth (U1/U2/U3) ──────────────────────────────────────────────────────────
@@ -1197,6 +1202,23 @@ export interface PlanWeekReview {
   stars: DayStar[];
   note_dates: string[];
   sessions: PlanningSession[];
+}
+
+/**
+ * T7 — the hybrid follow-up layer: a model-phrased question + 3 chips on top of a
+ * branch's own fixed deterministic question/options (server: services/plan-week.ts).
+ */
+export interface PlanWeekNextStepInput {
+  branch: string;
+  context?: Record<string, unknown>;
+  fallbackQuestion: string;
+  /** Exactly 3 non-empty strings — the branch's own deterministic top-3. */
+  fallbackOptions: string[];
+}
+export interface PlanWeekNextStep {
+  question: string;
+  options: string[];
+  source: 'model' | 'fallback';
 }
 
 export interface ObjectiveInput {

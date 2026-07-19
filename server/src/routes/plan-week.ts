@@ -5,6 +5,7 @@ import {
   type TranscriptMessage,
 } from '../services/planning-sessions.js';
 import { planWeekReview, defaultAnchorForOwner } from '../services/plan-week-review.js';
+import { planWeekNextStep } from '../services/plan-week.js';
 import { isValidISODate } from '../lib/dates.js';
 
 /**
@@ -47,6 +48,41 @@ export function planWeekRouter() {
     // No `start` param: the staging day is not the caller's to choose — /api/auto/fill
     // resolves ownerToday itself, so the service anchors on the same value and echoes it.
     ctx.body = planWeekCandidates(ctx.query.horizon);
+  });
+
+  /**
+   * T7 — the hybrid follow-up layer. ALWAYS 200s (Ollama-down / gate-rejected ⇒
+   * `source: 'fallback'` with the caller's own deterministic question/options echoed
+   * back verbatim); the only error is `422` on a malformed body, before any renderCopy
+   * call is made.
+   */
+  router.post('/api/plan-week/next-step', async (ctx) => {
+    const body = (ctx.request.body ?? {}) as {
+      branch?: string;
+      context?: Record<string, unknown>;
+      fallbackQuestion?: string;
+      fallbackOptions?: string[];
+    };
+
+    const fallbackQuestion = typeof body.fallbackQuestion === 'string' ? body.fallbackQuestion.trim() : '';
+    if (!fallbackQuestion) {
+      ctx.status = 422; ctx.body = { error: 'fallbackQuestion is required' }; return;
+    }
+    const fallbackOptions = body.fallbackOptions;
+    if (
+      !Array.isArray(fallbackOptions) ||
+      fallbackOptions.length !== 3 ||
+      !fallbackOptions.every((o) => typeof o === 'string' && o.trim().length > 0)
+    ) {
+      ctx.status = 422; ctx.body = { error: 'fallbackOptions must be exactly 3 non-empty strings' }; return;
+    }
+
+    ctx.body = await planWeekNextStep({
+      branch: typeof body.branch === 'string' ? body.branch : '',
+      context: body.context && typeof body.context === 'object' ? body.context : undefined,
+      fallbackQuestion,
+      fallbackOptions,
+    });
   });
 
   router.post('/api/plan-week/sessions', async (ctx) => {

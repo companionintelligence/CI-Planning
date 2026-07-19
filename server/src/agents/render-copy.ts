@@ -38,7 +38,9 @@ export type Surface =
   | 'nudge'
   | 'daily_brief'
   | 'eod_alignment'
-  | 'weekly_review';
+  | 'weekly_review'
+  | 'plan_week_followup'
+  | 'plan_week_option';
 
 /** A surface's payload — a flat bag of the deterministic facts the line must carry. */
 export type Payload = Record<string, string | number | boolean | null | undefined>;
@@ -163,6 +165,24 @@ export const SURFACES: Record<Surface, SurfaceConfig> = {
 
   weekly_review: {
     tier: 'medium', maxLen: 900, historyK: 4, lengthHint: PARA_HINT,
+    required: () => [],
+    facts: (p) => str(p.facts),
+    fallbacks: [(p) => str(p.fallback) || str(p.facts)],
+  },
+
+  // FTUE · T7 (#343) — the Plan-Week hybrid layer. Both surfaces follow the same
+  // caller-supplies-facts-and-fallback shape as the narrative surfaces above: the
+  // branch's own fixed deterministic question/option IS the fallback, verbatim.
+  plan_week_followup: {
+    tier: 'small', maxLen: 160, historyK: 8,
+    lengthHint: 'one short question, warm and specific, ending with a question mark',
+    required: () => [],
+    facts: (p) => str(p.facts),
+    fallbacks: [(p) => str(p.fallback) || str(p.facts)],
+  },
+  plan_week_option: {
+    tier: 'small', maxLen: 48, historyK: 12,
+    lengthHint: 'a terse answer chip, 2-5 words, no trailing period',
     required: () => [],
     facts: (p) => str(p.facts),
     fallbacks: [(p) => str(p.fallback) || str(p.facts)],
