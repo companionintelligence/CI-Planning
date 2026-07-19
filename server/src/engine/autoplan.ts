@@ -184,8 +184,9 @@ interface CategoryPlanRow { id: string; start_at: string; end_at: string; catego
  * container is filled by THIS pass, keyed on its category).
  */
 function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlanRow[] {
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  // Same DST-aware day window as dayPlans directly above — a start+24h add drifts
+  // an hour off local midnight on the two DST-transition days.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   return sqlite
     .prepare(
       `SELECT tb.id, tb.start_at, tb.end_at, tb.category_id

@@ -28,7 +28,11 @@ import { httpError } from '../lib/http-error.js';
 // sync mirror + push queue; previously excluded as re-derivable but now round-tripped so a
 // restore doesn't drop pending pushes / sync identity). Purely additive — a '6'/'7' dump
 // lacks these keys and the restore treats an absent key as empty, so it still restores.
-const EXPORT_VERSION = '8';
+// · '9' round 3 of the same gap class: life_priorities (0127, the Priorities-Wizard
+// self-audit) and planning_sessions (0131, the FTUE weekly-assistant session log) landed
+// after v8's audit (which covered migrations 0001–0114) and were silently dropped by a
+// round-trip. Purely additive — an '8' dump restores with these keys treated as empty.
+const EXPORT_VERSION = '9';
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
@@ -72,6 +76,9 @@ const OWNER_TABLES = [
   'copy_history',
   'external_events',
   'outbound_queue',
+  // Added in v9: post-v8-audit tables (migrations 0127/0131) the export dropped.
+  'life_priorities',
+  'planning_sessions',
 ] as const;
 
 // Owner-scoped tables INTENTIONALLY excluded from export/import. Audited against every
@@ -291,6 +298,9 @@ export function backupRouter() {
       copy_history: ownerData['copy_history'],
       external_events: ownerData['external_events'],
       outbound_queue: ownerData['outbound_queue'],
+      // v9: post-v8-audit tables (0127/0131).
+      life_priorities: ownerData['life_priorities'],
+      planning_sessions: ownerData['planning_sessions'],
     };
 
     const date = new Date().toISOString().slice(0, 10);
@@ -314,10 +324,10 @@ export function backupRouter() {
       ctx.body = { error: 'Missing export version' };
       return;
     }
-    // Accept the current version plus prior v6 (pre-Phase-Z, grouping axis kind='pattern')
-    // and v7 (pre-v8, before the three added tables). A v6 dump is remapped below; v7 and v8
-    // dumps differ only by the additive v8 keys, which the restore treats as empty if absent.
-    const SUPPORTED_VERSIONS = ['6', '7', EXPORT_VERSION];
+    // Accept the current version plus prior v6 (pre-Phase-Z, grouping axis kind='pattern'),
+    // v7 (pre-v8 tables), and v8 (pre-v9 tables). A v6 dump is remapped below; v7/v8/v9
+    // dumps differ only by additive keys, which the restore treats as empty if absent.
+    const SUPPORTED_VERSIONS = ['6', '7', '8', EXPORT_VERSION];
     if (!SUPPORTED_VERSIONS.includes(String(body['version']))) {
       ctx.status = 400;
       ctx.body = { error: `Unsupported export version '${body['version']}'; expected one of ${SUPPORTED_VERSIONS.join(', ')}` };
@@ -419,6 +429,9 @@ export function backupRouter() {
       counts['copy_history']     = insertRows('copy_history', g('copy_history'), ownerId);
       counts['external_events']  = insertRows('external_events', g('external_events'), ownerId);
       counts['outbound_queue']   = insertRows('outbound_queue', g('outbound_queue'), ownerId);
+      // v9: standalone owner tables (no children, no junctions).
+      counts['life_priorities']  = insertRows('life_priorities', g('life_priorities'), ownerId);
+      counts['planning_sessions'] = insertRows('planning_sessions', g('planning_sessions'), ownerId);
     })();
 
     writeAudit({ ownerId, actor: 'owner', action: 'import', entity: 'import' });

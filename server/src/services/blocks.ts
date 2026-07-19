@@ -3,7 +3,7 @@ import { db, sqlite } from '../db/index.js';
 import { timeBlocks } from '../db/schema.js';
 import { toApi, toApiList, toBlockApi } from '../lib/serialize.js';
 import { localISODate } from '../lib/dates.js';
-import { serverTimezone, zonedWallTimeToUTC, localDateInTZ } from '../lib/tz.js';
+import { serverTimezone, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
@@ -665,8 +665,10 @@ export function clearDayAutoBlocks(ownerId: string, date: string): ClearDayAutoB
     .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
     .get(ownerId) as { timezone?: string } | undefined;
   const tz = tzRow?.timezone || serverTimezone();
-  const dayStartISO = zonedWallTimeToUTC(date, '00:00', tz);
-  const dayEndISO = new Date(Date.parse(dayStartISO) + 24 * 60 * 60_000).toISOString();
+  // Same day window as clearPriorAuto/dayPlans (utcDayBounds — DST-aware, end is
+  // next-day midnight, not start+24h): on a DST-transition day a start+24h window
+  // is off by an hour, sweeping the next day's first block or missing the last one.
+  const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   const removed = sqlite
     .prepare(
       `DELETE FROM time_blocks

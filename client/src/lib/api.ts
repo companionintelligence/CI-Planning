@@ -464,8 +464,9 @@ export const api = {
     /** The live tree. `{ archived: '1' }` returns the archive instead — a FLAT list. */
     list: (params?: { archived?: '1' }) =>
       request<{ objectives: Objective[] }>('GET', `/objectives${params?.archived ? '?archived=1' : ''}`),
-    create: (body: ObjectiveInput) => request<{ objective: Objective }>('POST', '/objectives', body),
-    update: (id: string, body: Partial<ObjectiveInput>) => request<{ objective: Objective }>('PATCH', `/objectives/${id}`, body),
+    /** Returns the RAW row — the tree-only computed fields come from `list` alone. */
+    create: (body: ObjectiveInput) => request<{ objective: ObjectiveRecord }>('POST', '/objectives', body),
+    update: (id: string, body: Partial<ObjectiveInput>) => request<{ objective: ObjectiveRecord }>('PATCH', `/objectives/${id}`, body),
     /** ARCHIVES (0129) — the objective is kept and restorable, not destroyed. */
     delete: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}`),
     restore: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/restore`, {}),
@@ -909,7 +910,12 @@ export interface ReminderInput {
 export interface Job {
   id: string; name: string; kind: string; cron: string; enabled: boolean;
   last_run_at?: string; last_started?: string; last_status?: string;
+  // Many job kinds report their real work via items_updated with items_created
+  // pinned at 0 (fire_reminders, reset_routines, tag_tasks, …) — read both.
   items_created?: number;
+  items_updated?: number;
+  /** The last run's human-readable outcome line (e.g. "Fired 5 reminder(s)"). */
+  log?: string | null;
 }
 
 /** FTUE · T12 (#348) — one job's result from `POST /api/jobs/run-now`. */
@@ -1195,6 +1201,18 @@ export interface Objective {
   tasks: ObjectiveTaskSummary[];
   children: Objective[];
 }
+
+/**
+ * What POST /objectives and PATCH /objectives/:id actually return: the raw table row.
+ * Only GET /objectives runs buildTree(), which computes next_action / effective_target /
+ * pace_expected / has_tasks / tasks / children — create/update responses never carry
+ * them (`request<T>` is a blind cast, so typing them as Objective was a latent lie:
+ * `.children.length` on an update response would crash at runtime).
+ */
+export type ObjectiveRecord = Omit<
+  Objective,
+  'next_action' | 'effective_target' | 'pace_expected' | 'has_tasks' | 'tasks' | 'children'
+>;
 
 // ── FTUE · T1: plan-my-week session log (server: services/planning-sessions.ts) ──
 export type PlanWeekEntryBranch = 'fill_week' | 'schedule_tasks' | 'review' | 'onboarding';

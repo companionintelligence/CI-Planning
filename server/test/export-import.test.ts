@@ -12,7 +12,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('8'); // '8' (G-CASCADEXPORT): +copy_history, external_events, outbound_queue
+    expect(body.version).toBe('9'); // '9': +life_priorities, planning_sessions (post-v8-audit tables)
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {
@@ -238,6 +238,45 @@ describe('POST /api/import', () => {
     expect(body.imported.copy_history).toBe(1);
     expect(body.imported.external_events).toBe(1);
     expect(body.imported.outbound_queue).toBe(1);
+  });
+
+  it('restores life_priorities and planning_sessions on a round-trip (v9)', async () => {
+    const { id: ownerId } = sqlite.prepare('SELECT id FROM owners LIMIT 1').get() as { id: string };
+    sqlite.prepare(
+      `INSERT INTO life_priorities (id, owner_id, category, satisfaction, importance, target_hours_per_week)
+       VALUES (uuid7(), ?, 'health', 7, 9, 5)`
+    ).run(ownerId);
+    sqlite.prepare(
+      `INSERT INTO planning_sessions (id, owner_id, entry_branch, status, summary)
+       VALUES (uuid7(), ?, 'fill_week', 'completed', 'Planned the week')`
+    ).run(ownerId);
+
+    const exp = await (await fetch(`${srv.url}/api/export`)).json() as Record<string, unknown>;
+    expect((exp.life_priorities as { category: string }[]).some((r) => r.category === 'health')).toBe(true);
+    expect((exp.planning_sessions as { summary: string | null }[]).some((r) => r.summary === 'Planned the week')).toBe(true);
+
+    resetDb();
+    // Prove the wipe cleared them, so a surviving import isn't a false positive.
+    expect((sqlite.prepare('SELECT count(*) as n FROM life_priorities').get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare('SELECT count(*) as n FROM planning_sessions').get() as { n: number }).n).toBe(0);
+
+    const { status, body } = await api<{ imported: Record<string, number> }>(
+      srv.url, '/api/import', { method: 'POST', json: exp }
+    );
+    expect(status).toBe(200);
+    expect(body.imported.life_priorities).toBe(1);
+    expect(body.imported.planning_sessions).toBe(1);
+    const lp = sqlite.prepare(`SELECT satisfaction, importance FROM life_priorities WHERE category = 'health'`).get() as
+      { satisfaction: number; importance: number } | undefined;
+    expect(lp).toEqual({ satisfaction: 7, importance: 9 });
+  });
+
+  it('accepts a v8 dump (absent v9 keys restore as empty)', async () => {
+    const exp = await (await fetch(`${srv.url}/api/export`)).json() as Record<string, unknown>;
+    delete exp.life_priorities;
+    delete exp.planning_sessions;
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: { ...exp, version: '8' } });
+    expect(status).toBe(200);
   });
 
   it('rolls back entirely when a row violates a NOT NULL constraint', async () => {
