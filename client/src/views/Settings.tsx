@@ -6,6 +6,7 @@ import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-we
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
 import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
 import { DayTypeManager } from '../components/DayTypeManager.js';
+import { CalibrationPins } from '../components/CalibrationPins.js';
 import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
@@ -1082,6 +1083,9 @@ export function Settings() {
                   hint="Category-color depletion across the block, breathing in the final 3 minutes." />
                 <Toggle field="calibration_loop_enabled" label="Calibration nudge"
                   hint="The suggest-only estimate chip based on your tag-scoped history." />
+                {/* #390: the combo-suggestion confirm workflow — reads live prefs (not
+                    the unsaved form) so it appears/disappears with the SAVED flags. */}
+                <CalibrationPins />
                 <Show when={prefs()?.z_experiment_arm}>
                   <div class="text-[11px] text-muted-foreground">
                     Study arm <span class="font-mono text-foreground">{prefs()!.z_experiment_arm}</span> — assigned once, fixed for the study.

@@ -364,6 +364,15 @@ export const api = {
     // callers treat any failure as "no suggestion").
     suggest: (taskId: string) =>
       request<{ suggestion: EstimateSuggestion | null }>('GET', `/calibration/suggest/${taskId}`),
+    // #390 — the §2.3 hybrid confirm workflow: the system detects divergent tag-combo
+    // biases; a POSTed pin is the explicit human confirmation that persists (and
+    // triggers an immediate recompute). All three 404 when Time-Sense is off.
+    scopes: () => request<CalibrationScopes>('GET', '/calibration/scopes'),
+    addPin: (tag_ids: string[]) =>
+      request<{ ok: boolean; scope_ref: string }>('POST', '/calibration/pins', { tag_ids }),
+    /** scope_ref is a '+'-joined tag-id tuple — encode it (the '+' survives no raw URL). */
+    removePin: (scopeRef: string) =>
+      request<{ ok: boolean }>('DELETE', `/calibration/pins/${encodeURIComponent(scopeRef)}`),
   },
 
   review: {
@@ -971,6 +980,27 @@ export interface EstimateSuggestion {
   scope_label: string;
   confidence: 'tentative' | 'confident';
   message?: string; // Z7 — the chip line rendered through the Voice loop (server-side)
+}
+
+// #390 — GET /api/calibration/scopes (mirror of services/calibration.ts shapes).
+// Suggestions are pre-filtered server-side (unpinned, ≥5 samples, ≥0.25 divergence
+// from every component tag) and pre-sorted — render in server order.
+export interface ComboSuggestion {
+  /** Sorted '+'-joined tag-id tuple — the canonical tag_combo scope_ref. */
+  scope_ref: string;
+  tag_ids: string[];
+  sample_count: number;
+  combo_bias: number;
+  /** The component-tag bias the combo diverges from most. */
+  component_bias: number;
+}
+export interface CalibrationScopes {
+  rows: {
+    scope_kind: string; scope_ref: string; computed_at: string; sample_count: number;
+    bias_ratio: number | null; p25: number | null; p50: number | null; p75: number | null;
+  }[];
+  pins: { scope_ref: string; created_at: string }[];
+  suggestions: ComboSuggestion[];
 }
 
 export interface WeekReview {
