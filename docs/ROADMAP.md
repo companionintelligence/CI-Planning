@@ -1,14 +1,15 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-> ## ⚠️ Current status (2026-07-16, migration head **0130**)
+> ## ⚠️ Current status (2026-07-19, migration head **0132**)
 >
 > **Read this box, not the archaeology below.** The status paragraph that follows is a
 > stack of dated "Update:" parentheticals and **contradicts itself on the migration head
 > (it says 0126, 0117 and 0112 in three places) and on naming-Z W4 (both "planned/unbuilt"
 > and "shipped")**. It is kept for history. Where they disagree, this box wins.
 >
-> - **Migration head: `0130_purge_objectives_job`.** (0119 is an intentional gap — see
->   `server/src/db/migrations/index.ts`.) Every "head = 0112/0117/0126" claim below is stale.
+> - **Migration head: `0132_owner_onboarded`** (0131 `planning_sessions`, 0132 T11's onboarding
+>   flag; 0119 is an intentional gap — see `server/src/db/migrations/index.ts`). Every
+>   "head = 0112/0117/0126/0130" claim below is stale.
 > - **Phases A–AG: shipped.** Naming-Z **W4 is shipped** (mig 0123); **W1** (`patterns`→`routines`)
 >   remains the only unbuilt naming item.
 > - **Post-AG, no phase letter** (see ARCHITECTURE §1.1):
@@ -17,9 +18,22 @@
 >   - **ENTITY track** (#357–#363 → PRs #362–#368) — wizard gating, confirm-before-delete,
 >     promote-task-to-objective (Planner + task-card picker), and **objectives archive + 48h purge**
 >     (migs 0129/0130). Follow-ups #369–#372 closed the archive's read/write/sync leaks.
+>   - **FTUE track T1–T12: MERGED** (PRs #377–#385, 2026-07-19) — planning-session log, Plan-my-week
+>     assistant (Fill/Schedule/Review branches + LLM hybrid steps), Settings Logs tab + consolidate,
+>     and the 5-step OnboardingWizard with connect-source + first-sync. **T13 (#349) is the next
+>     live ticket; T14 (#350) + M1–M5 (#351–#355) stay deferred.**
+> - **Spike #361 is DECIDED** — decision record `docs/objectives-in-planner.md` (option (c):
+>   non-geometric objective accent + opt-in single-objective rail; the derived spanning band is
+>   rejected on measurement). Follow-up recipe drafted at
+>   `docs/factory/drafts/spike361_followup_objective_accent.md`, not yet promoted to an issue.
+> - **2026-07-19 full-codebase audit** (33 verified findings: stubs, dead wiring, data-flow gaps).
+>   The 8 clear correctness bugs are fixed on branch `fix/audit-findings-2026-07-19` (orphaned
+>   blocks on task-cancel, mode-blind calendar sync, backup dropping `life_priorities`/
+>   `planning_sessions`, DST day-bounds, MEMORY_MODE fixture guard, mobile Jobs leak, Jobs-page
+>   counters, objectives return-type lie). The remaining findings are build-vs-delete product
+>   decisions (reminders manager, calibration pins, evening reflection, pattern types, §A4
+>   free-text entry point / PromptStep, dead API surface) — issues to be filed after owner input.
 > - **Locked decision D1 is superseded** — see the note in that table.
-> - **Open work:** #361 (spike — objectives as Planner block groupings) and the **FTUE/Factory
->   track**, 20 tickets T1–T14 + M1–M5 (#337–#355). None are represented in the phase map below.
 > - **Known doc gaps:** `docs/ftue-plan.md` §1 "honest current state" is **materially false** as of
 >   this head (see its own status box).
 

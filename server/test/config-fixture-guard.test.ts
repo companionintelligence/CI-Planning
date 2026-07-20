@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
  * unless CP_ALLOW_FIXTURE=true — fixture mode ingests committed sample data as real
  * tasks, which must never happen to a production user by default.
  */
-const KEYS = ['NODE_ENV', 'GOOGLE_MODE', 'CP_ALLOW_FIXTURE', 'AUTH_MODE'] as const;
+const KEYS = ['NODE_ENV', 'GOOGLE_MODE', 'MEMORY_MODE', 'CP_ALLOW_FIXTURE', 'AUTH_MODE'] as const;
 const SAVED: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -59,5 +59,33 @@ describe('GOOGLE_MODE parsing + production fixture guard', () => {
     process.env.AUTH_MODE = 'standalone';
     delete process.env.GOOGLE_MODE;
     expect((await freshConfig()).google.mode).toBe('off');
+  });
+});
+
+describe('MEMORY_MODE production fixture guard (mirrors the Google one)', () => {
+  it('production + fixture refuses to boot', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.AUTH_MODE = 'standalone';
+    delete process.env.GOOGLE_MODE; // isolate: only the memory guard should fire
+    process.env.MEMORY_MODE = 'fixture';
+    delete process.env.CP_ALLOW_FIXTURE;
+    await expect(freshConfig()).rejects.toThrowError(/MEMORY_MODE=fixture is forbidden in production/);
+  });
+
+  it('production + fixture boots with the explicit CP_ALLOW_FIXTURE escape hatch', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.AUTH_MODE = 'standalone';
+    delete process.env.GOOGLE_MODE;
+    process.env.MEMORY_MODE = 'fixture';
+    process.env.CP_ALLOW_FIXTURE = 'true';
+    await expect(freshConfig()).resolves.toBeDefined();
+  });
+
+  it('production with MEMORY_MODE unset boots (connector off)', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.AUTH_MODE = 'standalone';
+    delete process.env.GOOGLE_MODE;
+    delete process.env.MEMORY_MODE;
+    await expect(freshConfig()).resolves.toBeDefined();
   });
 });

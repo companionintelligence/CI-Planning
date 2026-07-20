@@ -249,6 +249,11 @@ async function execute(kind: string): Promise<JobOutcome> {
       return { itemsCreated: 0, itemsUpdated: r.tagged, log: r.log };
     }
     case 'sync_calendar': {
+      // Same honest skip the ingest jobs have — getConnectors() also gates itself on
+      // mode 'off' (defense in depth), but a skip here logs WHY nothing synced.
+      if (config.google.mode === 'off') {
+        return { itemsCreated: 0, itemsUpdated: 0, log: 'Google integration off (GOOGLE_MODE unset) — skipped' };
+      }
       const results = await syncAll();
       const totals = results.reduce(
         (acc, r) => ({

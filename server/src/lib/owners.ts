@@ -220,6 +220,12 @@ export function purgeOwnerData(ownerId: string): void {
   run('DELETE FROM estimate_calibration WHERE owner_id = ?', ownerId);
   run('DELETE FROM calibration_combo_pins WHERE owner_id = ?', ownerId);
   run('DELETE FROM copy_history WHERE owner_id = ?', ownerId);
+  // v9 (G-EXPORT-MISSING round 3): the Priorities-Wizard self-audit and the FTUE
+  // planning-session log are portable owner data — purged here so an import is a
+  // clean replace (life_priorities' UNIQUE(owner_id, category) would otherwise
+  // collide with the restored rows).
+  run('DELETE FROM life_priorities WHERE owner_id = ?', ownerId);
+  run('DELETE FROM planning_sessions WHERE owner_id = ?', ownerId);
   // entity_tags has no direct owner_id — delete by entity membership.
   run(`DELETE FROM entity_tags WHERE entity_id IN (
          SELECT id FROM tasks WHERE owner_id = ?
