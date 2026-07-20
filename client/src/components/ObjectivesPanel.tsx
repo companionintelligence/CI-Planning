@@ -447,10 +447,14 @@ function ObjectiveNode(props: {
 
         {/* Level icon + rot dot */}
         <span class="relative flex-shrink-0">
-          <LevelIcon
-            level={obj().level}
-            class={`flex-shrink-0 ${obj().status === 'active' ? 'text-primary' : 'text-muted-foreground'}`}
-          />
+          {/* #391: a user-chosen colour tints the icon (active only — a paused/done
+              objective stays muted so status keeps priority over identity). */}
+          <span style={obj().color_token && obj().status === 'active' ? { color: `var(--${obj().color_token})` } : {}}>
+            <LevelIcon
+              level={obj().level}
+              class={`flex-shrink-0 ${obj().status === 'active' ? (obj().color_token ? '' : 'text-primary') : 'text-muted-foreground'}`}
+            />
+          </span>
           <Show when={isRotting()}>
             <span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400" title="Needs attention" />
           </Show>
