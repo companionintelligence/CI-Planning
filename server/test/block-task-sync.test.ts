@@ -346,3 +346,45 @@ describe('correctness fixes (#2, #3)', () => {
     expect(rem.c).toBe(0); // reminders re-derived after the status flip → none for a done task
   });
 });
+
+describe('task cancel → block reconciliation (DELETE /api/tasks/:id)', () => {
+  const blockStatus = (id: string) =>
+    (sqlite.prepare(`SELECT status FROM time_blocks WHERE id = ?`).get(id) as { status: string }).status;
+
+  it('cancelling a task settles its manually-placed blocks to cancelled (not deleted)', async () => {
+    const task = insertTask('Doomed');
+    // insertBlock uses source_kind='manual' — the exact case reflow's agent-only GC never sees.
+    const block = insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
+
+    const r = await api(srv.url, `/api/tasks/${task}`, { method: 'DELETE' });
+    expect(r.status).toBe(200);
+    expect(taskRow(task).status).toBe('cancelled');
+    expect(blockStatus(block)).toBe('cancelled'); // settled evidence, still on the board
+  });
+
+  it('settles active statuses only — completed/skipped history is left untouched', async () => {
+    const task = insertTask('Mixed history');
+    const done = insertBlock({ taskId: task, start: '2026-06-22T15:00:00.000Z', end: '2026-06-22T15:30:00.000Z' });
+    const skipped = insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
+    const live = insertBlock({ taskId: task, start: '2026-06-22T17:00:00.000Z', end: '2026-06-22T17:30:00.000Z' });
+    sqlite.prepare(`UPDATE time_blocks SET status = 'completed' WHERE id = ?`).run(done);
+    sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ?`).run(skipped);
+
+    await api(srv.url, `/api/tasks/${task}`, { method: 'DELETE' });
+    expect(blockStatus(done)).toBe('completed'); // done outcome preserved
+    expect(blockStatus(skipped)).toBe('skipped');
+    expect(blockStatus(live)).toBe('cancelled');
+  });
+
+  it('includes locked pins (settling never deletes or moves) and other tasks are untouched', async () => {
+    const task = insertTask('Pinned');
+    const other = insertTask('Bystander');
+    const pinned = insertBlock({ taskId: task, start: '2026-06-22T16:00:00.000Z', end: '2026-06-22T16:30:00.000Z' });
+    const bystander = insertBlock({ taskId: other, start: '2026-06-22T17:00:00.000Z', end: '2026-06-22T17:30:00.000Z' });
+    sqlite.prepare(`UPDATE time_blocks SET is_locked = 1 WHERE id = ?`).run(pinned);
+
+    await api(srv.url, `/api/tasks/${task}`, { method: 'DELETE' });
+    expect(blockStatus(pinned)).toBe('cancelled');
+    expect(blockStatus(bystander)).toBe('planned');
+  });
+});

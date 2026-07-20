@@ -158,3 +158,23 @@ pnpm --filter client build
 4. Verify against the spike's scenario: non-contiguous pair, a nested-in-Plan member, an unrelated
    block, and an objective with no blocks today.
 5. Screenshot the result on the PR (real UI this time — the spike committed no images on purpose).
+
+---
+
+## Addendum (2026-07-19, promotion to issue — head 0132 + audit-fix branch)
+
+Two drift notes since the recipe above was drafted at head 0131:
+
+1. **`PlannerChip` changed on `fix/audit-findings-2026-07-19`** (the 2026-07-19 audit fix-set):
+   a `settled()` accessor now sits beside `completed()` (~`Planner.tsx:447-451`), the chip's
+   `classList` opacity rules cover cancelled/missed, and the title template gained status
+   suffixes. The ⭐ insertion point (the style spread after `doneHatchStyle`/`--done-glow`)
+   is unchanged in shape but its line number moved — re-grep, as the pins already instruct.
+   The accent must render on settled (dimmed) chips too — a cancelled block still served its
+   objective; do not gate the accent on `!settled()`.
+2. **Planned upgrade — user-chosen objective colours.** A follow-up ticket (per-item
+   `color_token` on `objectives` + `patterns`, migration 0133) will make the accent prefer a
+   user-picked token over the id-hash. **Design for it now**: route ALL colour resolution
+   through one function in `lib/objective-accent.ts` (e.g. `accentColor(objective)` returning
+   the hash-derived token today) so the upgrade is a one-function change. The hash stays as
+   the permanent fallback for objectives with no chosen colour.

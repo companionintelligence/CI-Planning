@@ -402,6 +402,22 @@ if (
   );
 }
 
+// Same fail-closed rule for the memory connector: MEMORY_MODE=fixture serves the
+// committed sample graph (server/fixtures/memory/) as the owner's real CI-Server
+// memory, and memory_suggest auto-promotes those canned events into real tasks.
+// Identical mistake class to GOOGLE_MODE=fixture, identical escape hatch.
+if (
+  process.env.MEMORY_MODE === 'fixture' &&
+  process.env.NODE_ENV === 'production' &&
+  process.env.CP_ALLOW_FIXTURE !== 'true'
+) {
+  throw new Error(
+    'MEMORY_MODE=fixture is forbidden in production — it serves committed sample memory data as real suggestions. ' +
+      'Set MEMORY_MODE=live (with a CI-Server connection), unset it to disable the memory connector, ' +
+      'or set CP_ALLOW_FIXTURE=true to explicitly allow fixtures (demo appliances only).',
+  );
+}
+
 // Fail closed (Wave 0): GOOGLE_MODE=live without OAuth credentials would silently fall
 // back to broken auth flows. Require the client id + redirect uri up front. These guards
 // never fire under the test harness (test env sets GOOGLE_MODE=fixture explicitly).

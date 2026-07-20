@@ -298,6 +298,11 @@ export function PlannerEntityCard(props: {
                 <Show when={durationMin()}>{(m) => <span>· {m()}m</span>}</Show>
                 <Show when={locked()}><span class="inline-flex items-center gap-0.5"><Lock size={11} /> locked</span></Show>
                 <Show when={b().status === 'completed'}><span class="inline-flex items-center gap-0.5 text-primary"><Play size={10} /> done</span></Show>
+                {/* Other settled statuses read as history too — a cancelled/missed/skipped
+                    block must not look like live work (matches PlannerChip.settled()). */}
+                <Show when={['skipped', 'cancelled', 'missed'].includes(b().status)}>
+                  <span class="text-muted-foreground">· {b().status}</span>
+                </Show>
               </div>
             )}
           </Show>

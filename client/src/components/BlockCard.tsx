@@ -33,7 +33,9 @@ interface Props {
 
 export function BlockCard(props: Props) {
   const borderColor = () => kindBorderStyle[props.block.block_kind] ?? '#152637';
-  const done = () => ['completed', 'skipped'].includes(props.block.status);
+  // Settled = any terminal status, matching PlannerChip.settled() and the server's
+  // TERMINAL_BLOCK_STATUSES — cancelled/missed dim like other settled history.
+  const done = () => ['completed', 'skipped', 'cancelled', 'missed'].includes(props.block.status);
   const durationMins = () =>
     Math.round((new Date(props.block.end_at).getTime() - new Date(props.block.start_at).getTime()) / 60_000);
 

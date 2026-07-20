@@ -31,13 +31,14 @@ export interface ScheduledJobWithLastRun extends ScheduledJobRow {
   last_status: string | null;
   items_created: number | null;
   items_updated: number | null;
+  log: string | null;
 }
 
 /** All jobs + their latest run (verbatim from the old GET /api/jobs query). System-global. */
 export function listJobs(): ScheduledJobWithLastRun[] {
   return sqlite
     .prepare(
-      `SELECT j.*, r.started_at as last_started, r.status as last_status, r.items_created, r.items_updated
+      `SELECT j.*, r.started_at as last_started, r.status as last_status, r.items_created, r.items_updated, r.log
          FROM scheduled_jobs j
          LEFT JOIN job_runs r ON r.id = (
            SELECT id FROM job_runs WHERE job_id = j.id ORDER BY started_at DESC, id DESC LIMIT 1

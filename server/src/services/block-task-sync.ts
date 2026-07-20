@@ -308,6 +308,35 @@ export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resiz
 }
 
 /**
+ * Cancelling a task settles its Planner placements: every still-active task-block
+ * (`planned`/`overrun`/`in_progress`) becomes `cancelled`. Without this, a manually
+ * placed block (`source_kind='manual'`, invisible to reflow's agent-only GC) would
+ * outlive its cancelled task on the board, indistinguishable from live work. Blocks
+ * are settled — not deleted — per the terminal-status doctrine above: cancelled is
+ * review-surface evidence. Locked pins included (settling never deletes or moves).
+ * Returns the affected block ids so callers can broadcast `block:updated`.
+ */
+export function cancelBlocksForTask(taskId: string, ownerId: string): string[] {
+  const rows = sqlite
+    .prepare(
+      `SELECT id FROM time_blocks
+        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+          AND status IN ('planned','overrun','in_progress')`,
+    )
+    .all(taskId, ownerId) as { id: string }[];
+  if (rows.length === 0) return [];
+  const update = sqlite.prepare(`UPDATE time_blocks SET status = 'cancelled' WHERE id = ? AND owner_id = ?`);
+  for (const { id } of rows) {
+    update.run(id, ownerId);
+    // Owner action (delete/cancel came from the owner), so the block status write is
+    // stamped like every other mirror in this module — an older queued block op must
+    // not revive a cancelled placement through LWW.
+    stampRow(sqlite, 'block', id, ['status']);
+  }
+  return rows.map((r) => r.id);
+}
+
+/**
  * Unschedule a task: drop its (non-locked) placed task-blocks. Called when a task's
  * start intent (`scheduled_for`) is CLEARED — the task returns to the backlog and leaves
  * the Planner. Locked blocks are preserved (an explicit user pin outranks the clear).
