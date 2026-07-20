@@ -52,11 +52,12 @@ export function accentIndex(id: string): number {
 
 /**
  * The ONE colour-resolution seam (#386 addendum): every consumer takes the
- * accent colour from here, so #391's upgrade (a user-chosen
- * `objectives.color_token` wins; the hash stays the permanent fallback) is a
- * one-function change.
+ * accent colour from here. #391 landed `objectives.color_token`, so the planned
+ * upgrade is now live — a user-chosen token wins; the stable id-hash is the
+ * permanent fallback for objectives with no colour set.
  */
 export function accentColor(obj: { id: string; color_token?: string | null }): string {
+  if (obj.color_token) return `var(--${obj.color_token})`;
   return `var(--${ACCENT_TOKENS[accentIndex(obj.id)]})`;
 }
 

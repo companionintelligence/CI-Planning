@@ -89,4 +89,12 @@ describe('accentIndex / accentColor', () => {
       expect(accentColor({ id })).toBe(`var(--${ACCENT_TOKENS[idx]})`);
     }
   });
+
+  it('#391 — a user-chosen color_token wins; the hash is the fallback', () => {
+    // A set token overrides the hash entirely…
+    expect(accentColor({ id: 'obj-a', color_token: 'tag-7' })).toBe('var(--tag-7)');
+    // …and null/undefined fall back to the stable hash for that id.
+    expect(accentColor({ id: 'obj-a', color_token: null })).toBe(`var(--${ACCENT_TOKENS[accentIndex('obj-a')]})`);
+    expect(accentColor({ id: 'obj-a' })).toBe(`var(--${ACCENT_TOKENS[accentIndex('obj-a')]})`);
+  });
 });
