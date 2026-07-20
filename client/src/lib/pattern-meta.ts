@@ -71,6 +71,20 @@ export function colorVar(token: string | null | undefined): string {
 }
 
 /**
+ * #391 — the per-ITEM colour resolution rule, in one place: the item's own saved
+ * token wins, else the type-level token, else `var(--primary)`. Every routine/habit
+ * tint point (RoutinesPanel, TaskCard, AllTasks group headers) routes through this
+ * so the fallback order can't drift between surfaces — the same saved-value-wins
+ * idiom `directionColorForTask` uses for direction colours.
+ */
+export function resolveItemColor(
+  itemToken: string | null | undefined,
+  typeToken: string | null | undefined,
+): string {
+  return colorVar(itemToken ?? typeToken);
+}
+
+/**
  * The CSS colour for a Task's **direction** (its pattern-tag) — for outlining
  * task cards (T-TASKS-3) and tinting the Selected Task Summary name (T-PLAN-3).
  *

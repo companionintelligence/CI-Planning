@@ -49,6 +49,9 @@ const OBJECTIVE_FIELDS = new Set([
   'title', 'description', 'parent_id', 'horizon', 'status', 'cadence',
   'target_date', 'category_id', 'priority', 'completed_at',
   'archived_at', 'archive_root_id',
+  // #391 (0133) — cosmetic, client-authored, plain LWW is fine. Absent from the
+  // allowlist it would be silently dropped and the colour would never cross devices.
+  'color_token',
 ]);
 
 // A link is an addressable versioned row (migration 0087). Only `linked` is a
@@ -226,6 +229,8 @@ const OBJECTIVE_CAMEL_TO_SNAKE: Record<string, string> = {
   targetDate: 'target_date', categoryId: 'category_id', priority: 'priority',
   completedAt: 'completed_at',
   archivedAt: 'archived_at', archiveRootId: 'archive_root_id',
+  colorToken: 'color_token', // #391 — online PATCHes stamp it so a stale op can't revert it
+
   // server-derived meta — stamped (harmless) but not in the sync allowlist:
   level: 'level', progressCache: 'progress_cache', lastAdvancedAt: 'last_advanced_at',
   purgeAfter: 'purge_after',

@@ -294,6 +294,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
 {
   "patterns": [
     {
+      "color_token": null,
       "created_at": "<ts>",
       "directions": [],
       "id": "pattern#1",
@@ -950,6 +951,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "archived_at",
       "archive_root_id",
       "purge_after",
+      "color_token",
     ],
     "table": "objectives",
   },
@@ -1044,6 +1046,7 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "created_at",
       "recurrence_rule",
       "recurrence_dtstart",
+      "color_token",
     ],
     "table": "patterns",
   },
