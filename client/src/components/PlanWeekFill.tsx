@@ -3,6 +3,7 @@ import { ChevronLeft } from 'lucide-solid';
 import { api } from '../lib/api.js';
 import { selectedDay, showToast, refetchFlightPlan, refetchBlocks, aiAvailable } from '../stores/index.js';
 import type { BranchProps } from './PlanWeekAssistant.js';
+import { InstructBox } from './InstructBox.js';
 
 /**
  * "Fill next week" (FTUE · T3, #339) — the deterministic branch: horizon → sources →
@@ -95,6 +96,9 @@ export function PlanWeekFill(props: BranchProps) {
         `Confirmed: placed ${result.placed ?? 0}, unplaced ${result.unplaced ?? 0}${result.days ? `, days ${result.days}` : ''}${result.llm ? ' (AI)' : ''}`,
         'plan_week:confirm',
       );
+      // #387: the session's llm_used mirrors the same server-reported truth as the
+      // "(AI)" marker above — result.llm, never aiAvailable().
+      if (result.llm) props.reportAiUse();
       setDone(true);
       refetchFlightPlan();
       refetchBlocks();
@@ -182,6 +186,9 @@ export function PlanWeekFill(props: BranchProps) {
           Schedule {horizon()} day{horizon() === 1 ? '' : 's'} from {selectedDay()}?
           {sources().open_tasks ? ' Your open backlog will be staged first.' : ' Only already-staged items will be placed.'}
         </p>
+        {/* #387: free-text constraints land here — pins/hints applied BEFORE the run
+            shape what Auto packs around ("block off Tuesday mornings…"). */}
+        <InstructBox date={selectedDay} append={props.append} reportAiUse={props.reportAiUse} />
         <button type="button" class="btn-primary text-xs self-start" disabled={running() || done()} onClick={() => void confirm()}>
           {running() ? 'Scheduling…' : done() ? 'Scheduled' : 'Schedule it'}
         </button>
