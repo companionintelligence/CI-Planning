@@ -407,6 +407,54 @@ export function BriefMenu(props: { date: string }) {
   const [topTasks, { refetch: refetchTop }] = createResource(() => (open() ? props.date : null), (d) => api.summary.topTasks(d).then((r) => r.tasks));
   const [refreshing, setRefreshing] = createSignal(false);
 
+  // ── #389: evening reflection authoring state ─────────────────────────────────
+  // evLlm carries the LAST authoring response's llm flag: true iff the model wrote
+  // the prose (the T9 truthfulness rule — an idempotent re-open returns null, the
+  // deterministic fallback returns false; neither may show the badge).
+  const [evEditing, setEvEditing] = createSignal(false);
+  const [evDraft, setEvDraft] = createSignal('');
+  const [evBusy, setEvBusy] = createSignal(false);
+  const [evLlm, setEvLlm] = createSignal<boolean | null>(null);
+
+  /** Update the folded evening prose in place — cheaper than a full summary refetch. */
+  const mutateEveningProse = (prose: string | null) =>
+    mutate((s) => (s?.evening ? { ...s, evening: { ...s.evening, prose } } : s));
+
+  /** Author (or, with refresh, re-author) the narrative. period_key ALWAYS comes from
+   * the summary's own evening.date — the fold is the previous day; never client math. */
+  async function reflect(refresh = false) {
+    const ev = summary()?.evening;
+    if (!ev || evBusy()) return;
+    setEvBusy(true);
+    try {
+      const res = await api.reflections.openEvening(ev.date, refresh);
+      mutateEveningProse(res.body);
+      setEvLlm(res.llm);
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setEvBusy(false);
+    }
+  }
+
+  /** Save a hand-edit; an emptied textarea deletes the narrative (server contract). */
+  async function saveEvening() {
+    const ev = summary()?.evening;
+    if (!ev || evBusy()) return;
+    setEvBusy(true);
+    try {
+      const body = evDraft().trim();
+      await api.reflections.setEvening(ev.date, body);
+      mutateEveningProse(body || null);
+      setEvLlm(null); // a hand-edit is the owner's words, not the model's
+      setEvEditing(false);
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setEvBusy(false);
+    }
+  }
+
   const capacity = () => summary()?.capacity;
   const capacityPct = () => {
     const c = capacity();
@@ -487,9 +535,10 @@ export function BriefMenu(props: { date: string }) {
           </Show>
 
           {/* Phase Z · Z2 — last night's EOD Alignment folded in (Time-Sense on).
-              Present only when the server attaches it; degrades to carry-forward
-              alone when the evening modal was never opened (prose null). */}
-          <Show when={summary()?.evening && (summary()!.evening!.prose || summary()!.evening!.carry_forward.length)}>
+              #389 widened the gate: the section renders whenever the server attaches
+              `evening` (flag on) — the un-authored state (prose null, no carry) is
+              exactly when the Reflect trigger must be reachable. The old gate hid it. */}
+          <Show when={summary()?.evening}>
             {(() => {
               const ev = () => summary()!.evening!;
               const openCarry = (taskId: string) => {
@@ -500,9 +549,54 @@ export function BriefMenu(props: { date: string }) {
                 <div class="border-t border-border/50 pt-3">
                   <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
                     <Moon size={11} /> Last night
+                    <Show when={evLlm() === true}>
+                      <span class="normal-case tracking-normal text-muted-foreground font-normal" title="AI-authored — regenerate or edit below">(AI)</span>
+                    </Show>
+                    <span class="flex-1" />
+                    <Show when={ev().prose && !evEditing()}>
+                      <button
+                        class="btn-ghost text-[10px] normal-case tracking-normal px-1.5 py-0.5"
+                        onClick={() => { setEvDraft(ev().prose ?? ''); setEvEditing(true); }}
+                      >
+                        Edit
+                      </button>
+                    </Show>
+                    <Show when={ev().prose && aiAvailable()}>
+                      <button
+                        class="btn-icon opacity-50 hover:opacity-100"
+                        onClick={() => void reflect(true)}
+                        disabled={evBusy()}
+                        title="Regenerate the evening reflection"
+                      >
+                        <RefreshCw size={11} classList={{ 'animate-spin': evBusy() }} />
+                      </button>
+                    </Show>
                   </div>
-                  <Show when={ev().prose}>
-                    <p class="text-sm text-muted-foreground leading-relaxed whitespace-pre-line mb-2">{ev().prose}</p>
+                  <Show when={!evEditing()} fallback={
+                    <div class="flex flex-col gap-1.5 mb-2">
+                      <textarea
+                        class="input text-sm w-full leading-relaxed"
+                        rows={4}
+                        aria-label="Evening reflection"
+                        value={evDraft()}
+                        onInput={(e) => setEvDraft(e.currentTarget.value)}
+                      />
+                      <div class="flex gap-2">
+                        <button class="btn-primary text-xs" disabled={evBusy()} onClick={() => void saveEvening()}>Save</button>
+                        <button class="btn-ghost text-xs" onClick={() => setEvEditing(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  }>
+                    <Show
+                      when={ev().prose}
+                      fallback={
+                        <button class="btn-ghost text-xs mb-2" disabled={evBusy()} onClick={() => void reflect()}>
+                          {evBusy() ? 'Reflecting…' : `Reflect on ${ev().date}`}
+                        </button>
+                      }
+                    >
+                      <p class="text-sm text-muted-foreground leading-relaxed whitespace-pre-line mb-2">{ev().prose}</p>
+                    </Show>
                   </Show>
                   <Show when={ev().carry_forward.length}>
                     <div class="text-[10px] text-muted-foreground mb-1">Carry forward first</div>
