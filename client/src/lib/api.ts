@@ -900,6 +900,9 @@ export interface MemorySuggestResult {
 export interface Reminder {
   id: string; task_id: string | null; block_id: string | null;
   fire_at: string; status: string; fired_at?: string | null;
+  /** 'manual' | 'auto' — listReminders returns it; #388's card badges auto rows
+   * (the engine may re-derive a deleted auto reminder on the next task edit). */
+  source?: string;
 }
 /** Create input: exactly one target (taskId|blockId) + `fireAt` (UTC ISO) or `date`+`time`. */
 export interface ReminderInput {
