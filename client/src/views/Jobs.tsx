@@ -81,6 +81,7 @@ export function Jobs() {
                 onClick={() => trigger(job.id)}
                 disabled={triggering() === job.id}
                 class="btn-secondary text-xs gap-1.5 flex-shrink-0"
+                title="Runs for YOUR account only — the scheduled cron runs every account"
               >
                 <Show when={triggering() === job.id} fallback={<Play size={12} />}>
                   <RefreshCw size={12} class="animate-spin" />

@@ -665,6 +665,8 @@ export function Planner() {
   // Plan containers on the timed grid (★ outline); all-day ones go to the header lane.
   const containers = () => dayBlocks().filter((b) => b.block_kind === 'timeblock' && !isAllDay(b));
   // Task/meeting/focus chips share the overlap layout; containers + break/buffer + all-day don't.
+  // NB (#392): 'break'/'buffer' (and 'focus'/'habit' below) are API-only kinds — no UI
+  // or server code writes them today; these branches exist for raw-API-authored rows.
   const chips = () => dayBlocks().filter((b) => !['timeblock', 'break', 'buffer'].includes(b.block_kind) && !isAllDay(b));
   const nextUp = createMemo(() => pickNextUp(chips(), nowISO()));
 
