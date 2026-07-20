@@ -450,6 +450,15 @@ export const api = {
     // Phase O · O1 — dates in [from, to] that have a day note (calendar dots).
     notedDays: (from: string, to: string) =>
       request<{ dates: string[] }>('GET', `/reflections/notes?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+    // #389 — the EOD Alignment narrative (Time-Sense; 404 when the flag is off).
+    // open() authors it (idempotent: an existing row returns as-is with llm null
+    // unless refresh); llm is true iff the MODEL wrote the prose — the badge's truth.
+    openEvening: (period_key: string, refresh?: boolean) =>
+      request<{ period_key: string; body: string; llm: boolean | null; created: boolean }>(
+        'POST', '/reflections/evening/open', { period_key, ...(refresh ? { refresh: true } : {}) }),
+    /** Hand-edit the narrative. An EMPTY body deletes it (the server's contract). */
+    setEvening: (period_key: string, body: string) =>
+      request<{ ok: boolean }>('PUT', '/reflections/evening', { period_key, body }),
   },
 
   // ── Phase O · O2/O3: the five-star day score ─────────────────────────────────
