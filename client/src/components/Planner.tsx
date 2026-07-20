@@ -19,7 +19,8 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock } from '../stores/index.js';
+import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
@@ -449,6 +450,10 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
   const settled = () => ['completed', 'skipped', 'cancelled', 'missed'].includes(b().status);
   const completed = () => b().status === 'completed' || b().status === 'skipped';
   const locked = () => isImmovable(b());
+  // #386: the leaf objective this chip's task serves — identity only, zero geometry
+  // (spike #361 option (c)). Rendered on settled chips too: a cancelled block still
+  // served its objective.
+  const objAccent = () => objectiveAccentByBlock().get(b().id);
 
   // Quick-complete (Update mode): a tap toggles done. The completed chip wears a
   // tag-coloured diagonal hatch + a one-shot glow (set on the act of completing).
@@ -508,6 +513,10 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         width: frame().width,
         ...(completed() ? doneHatchStyle(tag()) : {}),
         ...(glow() ? { '--done-glow': `color-mix(in srgb, ${color()} 55%, transparent)` } : {}),
+        // #386 objective accent: recolour the EXISTING 3px left border (inline style
+        // beats the border-l-primary class in both isNextUp and normal cases) — no
+        // box-shadow, which would clobber the tailwind ring's shadow-based rings.
+        ...(objAccent() ? { 'border-left-color': accentColor(objAccent()!) } : {}),
       }}
       title={`${b().title}${tag() ? ` · #${tag()}` : ''} · ${fmtTime(b().start_at)}–${fmtTime(b().end_at)}${b().status === 'cancelled' ? ' · cancelled' : b().status === 'missed' ? ' · missed' : ''}${props.nested ? ' · in a Plan (drag moves the group; Alt-drag to pull out)' : ''}`}
       onAnimationEnd={() => setGlow(false)}

@@ -5,6 +5,7 @@ import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
 import { effectiveBlock } from '../lib/drag.js';
 import { blockPassesAxes, emptyAxisDeselected, TAG_AXES } from '../lib/overlay.js';
+import { objectiveOfBlock, type ObjectiveAccent } from '../lib/objective-accent.js';
 import type { AxisDeselected, TagAxis, TagKindLookup } from '../lib/overlay.js';
 import { DEFAULT_AXIS_STATE } from '../lib/day-axis.js';
 import type { AxisState } from '../lib/day-axis.js';
@@ -85,6 +86,27 @@ export const [concepts, { refetch: refetchConcepts }] = createResource(() =>
 on('block:created', () => refetchConcepts());
 on('block:updated', () => refetchConcepts());
 on('block:deleted', () => refetchConcepts());
+
+// ── Objectives (shared store — #386 objective accent) ──────────────────────────
+// The live tree, shared so the Planner can join objective → task → block for the
+// per-objective chip accent. Mirrors the concepts idiom above. ObjectivesPanel
+// keeps its own local resource for now (migrating it here is a separate cleanup).
+// objective_task:updated is included alongside the recipe's three: link/unlink
+// changes membership, which is exactly what the accent join reads.
+export const [objectives, { refetch: refetchObjectives }] = createResource(() =>
+  api.objectives.list().then((r) => r.objectives)
+);
+on('objective:created', () => refetchObjectives());
+on('objective:updated', () => refetchObjectives());
+on('objective:deleted', () => refetchObjectives());
+on('objective_task:updated', () => refetchObjectives());
+
+// blockId → owning leaf-objective accent. Declared AFTER the `objectives` and
+// `blocks` resources it reads — module-scope memos evaluate eagerly at init
+// (see the ordering note at taskById below).
+export const objectiveAccentByBlock = createMemo<Map<string, ObjectiveAccent>>(() =>
+  objectiveOfBlock(objectives() ?? [], blocks() ?? [])
+);
 
 // ── Overlays (three tag axes AND priority, combinable) ──────────────────────────
 // Tag/priority live on the linked *task*, not the block. The filter is client-side
