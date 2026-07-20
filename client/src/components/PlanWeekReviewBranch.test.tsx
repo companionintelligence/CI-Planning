@@ -31,7 +31,7 @@ vi.mock('./WeeklyReview.js', () => ({ WeeklyReview: () => <div>weekly-stats</div
 const { PlanWeekReviewBranch } = await import('./PlanWeekReviewBranch.js');
 
 const onBack = vi.fn();
-const mount = () => render(() => <PlanWeekReviewBranch append={vi.fn()} onBack={onBack} />);
+const mount = () => render(() => <PlanWeekReviewBranch append={vi.fn()} onBack={onBack} reportAiUse={vi.fn()} />);
 
 describe('PlanWeekReviewBranch — read-only weekly recap', () => {
   beforeEach(() => { reviewMock.mockClear(); onBack.mockReset(); });

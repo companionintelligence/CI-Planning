@@ -39,11 +39,15 @@ vi.mock('../stores/index.js', () => ({
   aiAvailable: () => aiAvailableFlag.current,
 }));
 
+// #387: the InstructBox has its own test file; stub it so this one stays about the branch.
+vi.mock('./InstructBox.js', () => ({ InstructBox: () => <div data-testid="instruct-box" /> }));
+
 const { PlanWeekFill } = await import('./PlanWeekFill.js');
 
 const appendMock = vi.fn(async (_t: string, _k?: string) => {});
 const onBackMock = vi.fn();
-const mount = () => render(() => <PlanWeekFill append={appendMock} onBack={onBackMock} />);
+const reportAiUseMock = vi.fn();
+const mount = () => render(() => <PlanWeekFill append={appendMock} onBack={onBackMock} reportAiUse={reportAiUseMock} />);
 
 /** The candidate list renders as "· <title>", so match loosely. */
 const previewItem = () => screen.findByText(/Pay invoice/);
@@ -66,6 +70,7 @@ async function stepToConfirm() {
 
 describe('PlanWeekFill — the deterministic fill branch', () => {
   beforeEach(() => {
+    reportAiUseMock.mockReset();
     fillMock.mockReset().mockResolvedValue({ result: {} });
     runMock.mockReset().mockResolvedValue({ result: { placed: 4, unplaced: 1, days: 3 } });
     candidatesMock.mockClear();
@@ -208,6 +213,8 @@ describe('PlanWeekFill — the deterministic fill branch', () => {
       await waitFor(() => expect(appendMock.mock.calls.map((c) => c[1])).toContain('plan_week:confirm'));
       const confirmCall = appendMock.mock.calls.find((c) => c[1] === 'plan_week:confirm')!;
       expect(confirmCall[0]).not.toContain('(AI)');
+      // #387: llm_used follows the same truth — a degraded run reports no AI use.
+      expect(reportAiUseMock).not.toHaveBeenCalled();
     });
 
     it('shows the "(AI)" marker when result.llm is true', async () => {
@@ -220,6 +227,8 @@ describe('PlanWeekFill — the deterministic fill branch', () => {
       await waitFor(() => expect(appendMock.mock.calls.map((c) => c[1])).toContain('plan_week:confirm'));
       const confirmCall = appendMock.mock.calls.find((c) => c[1] === 'plan_week:confirm')!;
       expect(confirmCall[0]).toContain('(AI)');
+      // #387: and the session usage flag fires from the same server-reported truth.
+      expect(reportAiUseMock).toHaveBeenCalled();
     });
   });
 });

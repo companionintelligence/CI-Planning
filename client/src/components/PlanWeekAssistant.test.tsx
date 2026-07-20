@@ -44,7 +44,16 @@ vi.mock('../stores/index.js', () => ({
 
 // The shell test is about the SHELL. T3's branch component has its own test file, and
 // stubbing it here keeps this file from needing the branch's api/store seams.
-vi.mock('./PlanWeekFill.js', () => ({ PlanWeekFill: () => <div>fill-branch</div> }));
+// #387: the Fill stub captures the injected BranchProps so tests can drive
+// `reportAiUse` (the truthful llm_used seam) without the real branch's api surface,
+// and renders a Back button so a branch-switch flow can be driven from it.
+const capturedFill: { props?: { reportAiUse: () => void; onBack: () => void } } = {};
+vi.mock('./PlanWeekFill.js', () => ({
+  PlanWeekFill: (p: { reportAiUse: () => void; onBack: () => void }) => {
+    capturedFill.props = p;
+    return <div><span>fill-branch</span><button onClick={() => p.onBack()}>Back</button></div>;
+  },
+}));
 vi.mock('./PlanWeekScheduleTasks.js', () => ({ PlanWeekScheduleTasks: () => <div>schedule-branch</div> }));
 // This stub exposes the shell's injected onBack, so "Back returns to the menu" still
 // proves something real now that each branch owns its own Back control.
@@ -134,7 +143,7 @@ describe('PlanWeekAssistant — the shell', () => {
     fireEvent.click(screen.getByText('Fill next week'));
 
     await waitFor(() => expect(openMock).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-A', { status: 'abandoned' }));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-A', { status: 'abandoned', llm_used: false }));
   });
 
   /**
@@ -179,7 +188,7 @@ describe('PlanWeekAssistant — the shell', () => {
     await waitFor(() => expect(openMock).toHaveBeenCalled());
 
     fireEvent.click(screen.getByText('Done'));
-    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'completed' }));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'completed', llm_used: false }));
     expect(planWeekModal().open).toBe(false);
 
     // Reopen and dismiss mid-flow instead.
@@ -190,7 +199,7 @@ describe('PlanWeekAssistant — the shell', () => {
     await waitFor(() => expect(openMock).toHaveBeenCalledTimes(2));
 
     fireEvent.click(screen.getByLabelText('Close'));
-    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'abandoned' }));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'abandoned', llm_used: false }));
     expect(planWeekModal().open).toBe(false);
   });
 
@@ -202,8 +211,41 @@ describe('PlanWeekAssistant — the shell', () => {
     await waitFor(() => expect(openMock).toHaveBeenCalled());
 
     fireEvent.click(container.querySelector('.modal-backdrop')!);
-    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'abandoned' }));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'abandoned', llm_used: false }));
     expect(planWeekModal().open).toBe(false);
+  });
+
+  // ── #387 — truthful llm_used at close ───────────────────────────────────────
+  it('close carries llm_used: true after a branch reports AI use', async () => {
+    render(() => <PlanWeekAssistant />);
+    setPlanWeekModal({ open: true });
+    await screen.findByText('Fill next week');
+    fireEvent.click(screen.getByText('Fill next week'));
+    await screen.findByText('fill-branch');
+
+    capturedFill.props!.reportAiUse();
+    fireEvent.click(screen.getByText('Done'));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-1', { status: 'completed', llm_used: true }));
+  });
+
+  it("a branch-switch abandon carries the PREVIOUS session's own flag and resets for the new one", async () => {
+    openMock.mockResolvedValueOnce({ session: { id: 'sess-A' } })
+            .mockResolvedValueOnce({ session: { id: 'sess-B' } });
+    render(() => <PlanWeekAssistant />);
+    setPlanWeekModal({ open: true });
+    await screen.findByText('Fill next week');
+    fireEvent.click(screen.getByText('Fill next week'));
+    await screen.findByText('fill-branch');
+    capturedFill.props!.reportAiUse(); // AI ran in sess-A
+
+    fireEvent.click(screen.getByText('Back'));
+    await screen.findByText('Review past data');
+    fireEvent.click(screen.getByText('Review past data'));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-A', { status: 'abandoned', llm_used: true }));
+
+    // The replacement session starts clean — its close must NOT inherit sess-A's usage.
+    fireEvent.click(screen.getByText('Done'));
+    await waitFor(() => expect(closeMock).toHaveBeenCalledWith('sess-B', { status: 'completed', llm_used: false }));
   });
 
   it('dismissing from the menu writes no session at all', async () => {
