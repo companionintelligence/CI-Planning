@@ -438,6 +438,8 @@ export const patterns = sqliteTable('patterns', {
   // `place_patterns` expands these and runs `placePatternOnDay` idempotently.
   recurrenceRule: text('recurrence_rule'),
   recurrenceDtstart: text('recurrence_dtstart'),
+  // #391 (0133) — per-ITEM colour token (CI-Hub key); NULL = inherit the type's.
+  colorToken: text('color_token'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
 });
 

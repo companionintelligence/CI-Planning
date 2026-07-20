@@ -42,6 +42,8 @@ export interface ObjectiveRow {
   /** 0129 — non-null ⇒ permanent deletion requested; the hourly purge_objectives job
    *  reaps it past this absolute deadline. Restorable until then. */
   purge_after: string | null;
+  /** #391 (0133) — per-item colour token; NULL = the Planner accent's hash fallback. */
+  color_token: string | null;
 }
 
 // ── Hierarchy leveling (height-from-bottom) ───────────────────────────────────
@@ -417,6 +419,8 @@ export interface CreateObjectiveInput {
   category_id?: string | null;
   priority?: number;
   description?: string | null;
+  /** #391 — per-item colour token; explicit null clears (fall back to the accent hash). */
+  color_token?: string | null;
 }
 
 /** One of the owner's objectives (raw row), or undefined (not found / not this owner's). */
@@ -544,17 +548,18 @@ export function createObjective(owner: string, body: CreateObjectiveInput): Crea
   sqlite
     .prepare(
       `INSERT INTO objectives
-         (id, owner_id, parent_id, title, description, horizon, status, cadence, target_date, category_id, priority, created_at, updated_at, level)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, owner_id, parent_id, title, description, horizon, status, cadence, target_date, category_id, priority, color_token, created_at, updated_at, level)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id, owner, body.parent_id ?? null, body.title.trim(), body.description ?? null,
       body.horizon ?? 'none', body.status ?? 'active', body.cadence ?? 'none',
-      body.target_date ?? null, body.category_id ?? null, body.priority ?? 3, now, now,
+      body.target_date ?? null, body.category_id ?? null, body.priority ?? 3,
+      body.color_token ?? null, now, now,
       'objective', // placeholder — re-stamped from height below
     );
   restampLevels(id);
-  stampRow(sqlite, 'objective', id, ['title', 'description', 'parentId', 'horizon', 'status', 'cadence', 'targetDate', 'categoryId', 'priority']);
+  stampRow(sqlite, 'objective', id, ['title', 'description', 'parentId', 'horizon', 'status', 'cadence', 'targetDate', 'categoryId', 'priority', 'colorToken']);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `objective:${id}` });
   return { ok: true, row: sqlite.prepare(`SELECT * FROM objectives WHERE id = ?`).get(id) as ObjectiveRow };
 }
@@ -593,18 +598,19 @@ export function updateObjective(owner: string, id: string, body: UpdateObjective
     priority: body.priority ?? existing.priority,
     parent_id: 'parent_id' in body ? body.parent_id ?? null : existing.parent_id,
     completed_at: 'completed_at' in body ? body.completed_at ?? null : existing.completed_at,
+    color_token: 'color_token' in body ? body.color_token ?? null : existing.color_token,
   };
 
   sqlite
     .prepare(
       `UPDATE objectives SET
          title = ?, description = ?, horizon = ?, status = ?, cadence = ?,
-         target_date = ?, category_id = ?, priority = ?, parent_id = ?, completed_at = ?, updated_at = ?
+         target_date = ?, category_id = ?, priority = ?, parent_id = ?, completed_at = ?, color_token = ?, updated_at = ?
        WHERE id = ? AND owner_id = ?`,
     )
     .run(
       patch.title, patch.description, patch.horizon, patch.status, patch.cadence,
-      patch.target_date, patch.category_id, patch.priority, patch.parent_id, patch.completed_at, now, id, owner,
+      patch.target_date, patch.category_id, patch.priority, patch.parent_id, patch.completed_at, patch.color_token, now, id, owner,
     );
 
   restampLevels(id);
@@ -614,6 +620,7 @@ export function updateObjective(owner: string, id: string, body: UpdateObjective
     title: 'title', description: 'description', horizon: 'horizon', status: 'status',
     cadence: 'cadence', target_date: 'targetDate', category_id: 'categoryId',
     priority: 'priority', parent_id: 'parentId', completed_at: 'completedAt',
+    color_token: 'colorToken',
   };
   const stamped = Object.keys(body).map((k) => patchToCamel[k]).filter(Boolean);
   if (stamped.length > 0) stampRow(sqlite, 'objective', id, stamped);

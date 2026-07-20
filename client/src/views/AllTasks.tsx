@@ -142,7 +142,8 @@ export function AllTasks() {
       const id = info?.pattern.id ?? '_ungrouped';
       let g = groups.get(id);
       if (!g) {
-        g = { id, name: info?.pattern.name ?? 'Routine', iconShape: info?.type?.icon_shape, colorToken: info?.type?.color_token, items: [] };
+        // #391: the group tint is item-first (the routine's own colour beats its type's).
+        g = { id, name: info?.pattern.name ?? 'Routine', iconShape: info?.type?.icon_shape, colorToken: info?.pattern.color_token ?? info?.type?.color_token, items: [] };
         groups.set(id, g);
       }
       g.items.push(t);
