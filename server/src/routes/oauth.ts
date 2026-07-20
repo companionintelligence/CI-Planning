@@ -299,6 +299,9 @@ export function oauthRouter() {
 
   // ── GET /api/oauth/google/accounts ──────────────────────────────────────────
   // Gated. Lists connected accounts WITHOUT leaking any ciphertext/iv/tokens.
+  // DEAD SURFACE (zero client callers — see #392): Settings sources its account list
+  // from GET /api/integrations (richer: health + sync stats). Kept + route-tested;
+  // T13 (#349) may delete it when extracting disconnectConnection().
   router.get('/accounts', (ctx) => {
     const ownerId = currentOwnerId();
     const rows = sqlite

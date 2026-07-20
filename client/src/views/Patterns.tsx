@@ -4,10 +4,11 @@ import { RoutinesPanel } from '../components/RoutinesPanel.js';
 import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
 
 /**
- * The Routines view. As of the Tasks/Nav overhaul (T-TASKS-1/6 + T-NAV-1) its
- * content lives in the reusable `RoutinesPanel` / `TimeBlocksPanel`, now also mounted
- * as Tasks-screen tabs; `/patterns` redirects to `/tasks` so this view is reached only
- * by stale deep-links. Kept as a thin composition so those links still render.
+ * DEAD VIEW (see #392): neither router imports this file, and BOTH map `/patterns`
+ * to an unconditional `<Navigate href="/tasks" />` (App.tsx) — so even a stale
+ * deep-link never renders it (the previous claim here was wrong). The content lives
+ * in `RoutinesPanel` / `TimeBlocksPanel`, mounted as Tasks-screen tabs. Kept per the
+ * owner's document-only ruling; delete-candidates go through #392.
  */
 export function Patterns() {
   return (

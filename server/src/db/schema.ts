@@ -504,6 +504,9 @@ export const scheduledJobs = sqliteTable('scheduled_jobs', {
   cron: text('cron').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
   lastRunAt: text('last_run_at'),
+  // Dead column (see #392): defined + exposed over REST (SELECT j.*) and GraphQL but
+  // NEVER written — startCronJobs discards the Cron instance (croner's .nextRun()
+  // could supply it). Always null; job.graphql documents the same.
   nextRunAt: text('next_run_at'),
   config: text('config', { mode: 'json' }),
 });

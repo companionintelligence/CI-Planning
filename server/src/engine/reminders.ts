@@ -34,6 +34,9 @@ interface DueReminder {
  */
 export const FOCUS_SOURCES = ['focus_start', 'focus_warn', 'focus_end'] as const;
 /** Block kinds a Focus Ritual can run on — user focus work, not meetings/breaks/containers. */
+// NB (#392): 'focus'/'habit' block_kinds are producible ONLY via the raw REST/GraphQL
+// API today (block_kind is free-form TEXT by design — block.graphql); no UI or server
+// code path writes them.
 const FOCUS_ELIGIBLE_KINDS = new Set(['task', 'focus', 'habit']);
 /** Minutes before a block's end that the "land the plane" warning fires (T3). */
 const WARN_LEAD_MIN = 3;
