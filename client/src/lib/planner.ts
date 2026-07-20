@@ -12,6 +12,7 @@
 import { type AxisState, minAt, yOf, visibleExtent } from './day-axis.js';
 
 /** One "slot" of context — retained for callers that still reason about a lead-in. */
+// Dead surface (zero importers repo-wide — see #392).
 export const SLOT_MIN = 60;
 
 /** The minimal shape the next-up pick needs from a block. */

@@ -239,6 +239,9 @@ export interface VapidConfigState {
 }
 
 /** Diagnostic snapshot of the current VAPID posture (never includes key material). */
+// Dead surface (see #392): mirrors googleConfigState but NO route exposes it (google's
+// has GET /api/google-config); only its test calls this. An operator diagnosing dormant
+// push (unsealed key, rotated KEK) sees only push.configured=false without server logs.
 export function vapidConfigState(): VapidConfigState {
   const priv = readStoredPrivate();
   const configured = Boolean(config.vapidPublicKey && config.vapidPrivateKey);

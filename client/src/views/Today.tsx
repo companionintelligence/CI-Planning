@@ -81,6 +81,8 @@ export function Today() {
     const t = nowTick();
     return (blocks() ?? []).find(
       (b) =>
+        // NB (#392): 'focus'/'habit' are API-only kinds today (nothing in the UI/server
+        // writes them); included so raw-API-authored sessions still drive the ritual.
         (b.block_kind === 'task' || b.block_kind === 'focus' || b.block_kind === 'habit') &&
         b.status === 'planned' &&
         Date.parse(b.start_at) <= t && Date.parse(b.end_at) > t,

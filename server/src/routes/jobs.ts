@@ -44,7 +44,10 @@ export function jobsRouter() {
     ctx.body = { ok: true, ran };
   });
 
-  // POST /api/jobs/:id/run — admin-only. Fires async; client listens on SSE for completion.
+  // POST /api/jobs/:id/run — NB (#392): runs under the CALLING operator's owner context
+  // only. For the 14 OWNER_SCOPED_KINDS the cron fans out per-owner (jobs/index.ts's
+  // runScheduledJob); this manual trigger deliberately does NOT — the Jobs page tooltip
+  // states the same so operators aren't surprised in multi-tenant deployments. — admin-only. Fires async; client listens on SSE for completion.
   router.post('/api/jobs/:id/run', async (ctx) => {
     if (!requireAdmin(ctx)) return;
     const res = await triggerJob(ctx.params.id);

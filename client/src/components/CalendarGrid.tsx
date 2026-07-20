@@ -22,6 +22,8 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { localISODate, addDays } from '../lib/dates.js';
 
 // ── Palette (mirrors BlockCard's CI teal kinds) ───────────────────────────────
+// NB (#392): focus/habit/break/buffer entries serve API-only kinds — no UI or server
+// path writes those block_kinds today (block_kind is free-form TEXT by design).
 const kindColor: Record<string, string> = {
   task:    '#409b9b', // ci-4
   meeting: '#244859', // ci-10

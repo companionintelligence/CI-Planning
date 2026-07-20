@@ -321,7 +321,8 @@ export function tasksRouter() {
     ctx.body = { tags };
   });
 
-  // POST /api/tasks/:id/recall — clone a (usually shelved/Past) task to a brand-new
+  // POST /api/tasks/:id/recall — DEAD SURFACE (zero client callers — see #392): no
+  // Recall action exists in any UI; reachable only by direct API call. — clone a (usually shelved/Past) task to a brand-new
   // task (new id): carries title/tags/estimate/notes/subtype + subtasks (recursively,
   // reset to open); Routine membership only when prefs.recall_keeps_pattern. Fresh
   // dates/status; no recurrence or history. cockpit-v2 Phase 6.
@@ -336,7 +337,9 @@ export function tasksRouter() {
     ctx.body = { task: out };
   });
 
-  // POST /api/tasks/:id/reschedule { days } — bump a missed/planned task `days`
+  // POST /api/tasks/:id/reschedule — DEAD SURFACE (zero client callers — see #392):
+  // Today's one-tap defer moves due_at via PATCH /tasks/:id instead (this route
+  // moves scheduled_for — the wrong axis for the shipped affordance). { days } — bump a missed/planned task `days`
   // out from today (the +1/+3/+7 buttons on the Missed review surface). Clears
   // 'missed', increments defer_count, drops stale blocks so it re-places cleanly.
   // Stays a thin wrapper over engine rescheduleTask (no service layer needed).
