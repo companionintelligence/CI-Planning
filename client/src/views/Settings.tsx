@@ -1061,6 +1061,9 @@ export function Settings() {
               <div class="section-label">Routine Settings</div>
               <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
+            {/* Orphaned setting (see #392): NO Recall action exists anywhere in the UI
+                (api.tasks.recall has zero callers), so this toggle persists but
+                currently governs nothing. */}
             <Toggle field="recall_keeps_pattern" label="Recall keeps Routine membership"
               hint="When recalling a shelved (Past) task, also re-link it to its Routine. Off (default) → recall makes a clean, standalone task." />
 

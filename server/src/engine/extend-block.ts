@@ -68,6 +68,10 @@ interface Row {
  * is a task-only status), so the clock, not the block row, is the source of truth
  * for what's running (per M's convention).
  */
+// ⚠️ Reachable edge (see #392): block_kind is free-form TEXT on the write path by
+// design (block.graphql), so an API caller can create 'focus'/'habit' blocks TODAY
+// even though no UI does — and this predicate would NOT treat them as fixed, letting
+// 'Keep working' extend straight through an unlocked focus/habit session.
 function isFixed(r: Row): boolean {
   return (
     r.block_kind === 'meeting' ||

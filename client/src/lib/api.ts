@@ -124,10 +124,14 @@ export const api = {
     // promoting twice reuses the task's objective. 422 when the task is ephemeral
     // (quick / recurrence instance) and so can't carry one.
     promoteObjective: (id: string) => request<{ objective: Objective }>('POST', `/tasks/${id}/promote-objective`, {}),
-    // Reschedule a missed/planned task `days` out from today (the +1/+3/+7 buttons).
+    // DEAD SURFACE (zero callers — see #392). Superseded: Today's DueCard defers via
+    // tasks.update({ due_at }) on purpose — this endpoint moves scheduled_for, the
+    // wrong axis for the shipped one-tap defer (see Today.tsx's defer comment).
     reschedule: (id: string, days: number) =>
       request<{ task: Task; scheduled_for: string }>('POST', `/tasks/${id}/reschedule`, { days }),
-    // Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
+    // DEAD SURFACE (zero callers — see #392): no Recall action exists anywhere in the
+    // UI, so Settings' 'Recall keeps Routine membership' toggle currently governs
+    // nothing. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
     recall: (id: string) => request<{ task: Task }>('POST', `/tasks/${id}/recall`, {}),
   },
 
@@ -181,6 +185,7 @@ export const api = {
   // ── Patterns (Phase G, G1) — typed, reusable task collections ────────────────
   patterns: {
     list: () => request<{ patterns: Pattern[] }>('GET', '/patterns'),
+    // Dead surface (zero callers — see #392); every UI read goes through list().
     get: (id: string) => request<{ pattern: Pattern }>('GET', `/patterns/${id}`),
     create: (body: PatternInput) => request<{ pattern: Pattern }>('POST', '/patterns', body),
     update: (id: string, body: Partial<PatternInput>) =>
@@ -202,6 +207,7 @@ export const api = {
     // Three Routine-promotion endpoints (Phase E + F): same backend write path,
     // different sources (a placed Plan's members; a saved template's tasks; a
     // multi-selection of task ids).
+    // Dead surface (zero callers — see #392); the UI calls promoteFromPlanTemplate.
     promoteFromPlan: (plan_block_id: string, name?: string) =>
       request<{ pattern: Pattern }>('POST', '/patterns/promote-from-plan', { plan_block_id, name }),
     promoteFromPlanTemplate: (template_id: string, name?: string) =>
@@ -224,6 +230,7 @@ export const api = {
     list: () => request<{ flight_plan: FlightPlanItem[] }>('GET', '/flight-plan'),
     addTask: (task_id: string) =>
       request<{ flight_plan: FlightPlanItem[]; added: number }>('POST', '/flight-plan', { task_id }),
+    // Dead surface (zero callers — see #392).
     addPattern: (pattern_id: string) =>
       request<{ flight_plan: FlightPlanItem[]; added: number }>('POST', '/flight-plan', { pattern_id }),
     update: (taskId: string, body: { selected?: boolean; position?: number }) =>
@@ -326,6 +333,7 @@ export const api = {
   },
 
   memory: {
+    // Dead surface (zero callers — see #392); the UI reads the richer integrations().
     status: () => request<MemoryStatus>('GET', '/memory/status'),
     sync: () => request<{ ok: boolean; syncedAt?: string }>('POST', '/memory/sync', {}),
     // AA0 — CI-Server connection (pull). api_key travels once on connect; it is
@@ -336,6 +344,8 @@ export const api = {
     ciportalStart: () => request<{ url: string }>('GET', '/memory/ciportal/start'),
     disconnect: () => request<MemoryStatus>('POST', '/memory/disconnect', {}),
     // AA1 — manual "pull suggestions now" trigger.
+    // Dead surface (zero callers — see #392) — the intended manual 'pull now' trigger
+    // if ever surfaced; suggestions only arrive via the memory_suggest cron today.
     suggest: () => request<MemorySuggestResult>('POST', '/memory/suggest', {}),
   },
 
@@ -410,6 +420,7 @@ export const api = {
     remove: (id: string) => request<{ ok: boolean }>('DELETE', `/day-types/${id}`),
     weekMap: () => request<{ map: Record<number, string> }>('GET', '/day-types/week-map'),
     setWeekMap: (map: Record<number, string>) => request<{ map: Record<number, string> }>('PUT', '/day-types/week-map', { map }),
+    // Dead surface (zero callers — see #392).
     assignments: () => request<{ assignments: Record<string, string> }>('GET', '/day-types/assignments'),
     assign: (date: string, dayTypeKey: string) =>
       request<{ date: string; day_type_key: string }>('PUT', `/day-types/assignments/${date}`, { day_type_key: dayTypeKey }),
@@ -451,6 +462,7 @@ export const api = {
       request<{ ok: boolean }>('PUT', `/reflections/weekly/${position}`, body),
     setDone: (kind: 'today_goal' | 'weekly_goal', position: number, period_key: string, done: boolean) =>
       request<{ ok: boolean }>('POST', `/reflections/${kind}/${position}/done`, { period_key, done }),
+    // Dead surface (zero callers — see #392); goals are cleared via empty-body set*.
     delete: (kind: 'today_goal' | 'weekly_goal', position: number, period_key: string) =>
       request<{ ok: boolean }>('DELETE', `/reflections/${kind}/${position}?period_key=${encodeURIComponent(period_key)}`),
     // Phase O · O1 — the one-per-day free-text note. Empty body deletes.
@@ -494,6 +506,8 @@ export const api = {
     cancelPurge: (id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/purge`),
     linkTask: (id: string, task_id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/tasks`, { task_id }),
     unlinkTask: (id: string, task_id: string) => request<{ ok: boolean }>('DELETE', `/objectives/${id}/tasks/${task_id}`),
+    // Dead surface (zero callers — see #392); progress recomputes server-side on link
+    // and task changes — no UI needs the manual kick.
     recompute: (id: string) => request<{ ok: boolean }>('POST', `/objectives/${id}/recompute`),
   },
 
