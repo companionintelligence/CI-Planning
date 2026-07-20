@@ -42,6 +42,8 @@ export interface PatternRow {
   notes: string | null;
   recurrence_rule: string | null;
   recurrence_dtstart: string | null;
+  /** #391 — per-ITEM colour (CI-Hub token). NULL = inherit the type's colour. */
+  color_token: string | null;
   created_at: string;
 }
 
@@ -96,6 +98,7 @@ export const serializePattern = (p: PatternRow, derived?: DerivedRoutineTags) =>
     notes: p.notes,
     recurrence_rule: p.recurrence_rule,
     recurrence_dtstart: p.recurrence_dtstart,
+    color_token: p.color_token,
     created_at: p.created_at,
     task_ids: taskIdsOf(p.id),
   };
@@ -253,6 +256,8 @@ export interface CreatePatternInput {
   task_ids?: string[];
   recurrence_rule?: string | null;
   recurrence_dtstart?: string | null;
+  /** #391 — per-item colour token; explicit null clears (inherit the type's). */
+  color_token?: string | null;
 }
 export type UpdatePatternInput = CreatePatternInput;
 
@@ -284,7 +289,7 @@ export function createPattern(owner: string, input: CreatePatternInput): CreateP
   // time. An incoming `tag` is accepted for API compat (old clients still send it) but
   // IGNORED: the column stays NULL and nothing is mirrored to entity_tags.
   const p = sqlite
-    .prepare(`INSERT INTO patterns (id, owner_id, type_id, name, tag, notes, recurrence_rule, recurrence_dtstart) VALUES (uuid7(), ?, ?, ?, NULL, ?, ?, ?) RETURNING *`)
+    .prepare(`INSERT INTO patterns (id, owner_id, type_id, name, tag, notes, recurrence_rule, recurrence_dtstart, color_token) VALUES (uuid7(), ?, ?, ?, NULL, ?, ?, ?, ?) RETURNING *`)
     .get(
       owner,
       input.type_id ?? null,
@@ -292,6 +297,7 @@ export function createPattern(owner: string, input: CreatePatternInput): CreateP
       input.notes ?? null,
       rec.rule === undefined ? null : rec.rule,
       rec.dtstart === undefined ? null : rec.dtstart,
+      input.color_token ?? null,
     ) as PatternRow;
   if (Array.isArray(input.task_ids) && input.task_ids.length) {
     try {
@@ -326,13 +332,14 @@ export function updatePattern(owner: string, id: string, input: UpdatePatternInp
   // AF-11 (D2): `input.tag` is accepted-and-IGNORED (API compat) — the column is
   // preserved as-is (NULL after migration 0120) and entity_tags is never written.
   const row = sqlite
-    .prepare(`UPDATE patterns SET type_id = ?, name = ?, notes = ?, recurrence_rule = ?, recurrence_dtstart = ? WHERE id = ? RETURNING *`)
+    .prepare(`UPDATE patterns SET type_id = ?, name = ?, notes = ?, recurrence_rule = ?, recurrence_dtstart = ?, color_token = ? WHERE id = ? RETURNING *`)
     .get(
       nextTypeId,
       input.name?.trim() ?? existing.name,
       input.notes !== undefined ? input.notes : existing.notes,
       rec.rule === undefined ? existing.recurrence_rule : rec.rule,
       rec.dtstart === undefined ? existing.recurrence_dtstart : rec.dtstart,
+      input.color_token !== undefined ? input.color_token : existing.color_token,
       id,
     ) as PatternRow;
   if (Array.isArray(input.task_ids)) {

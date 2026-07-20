@@ -2,6 +2,7 @@ import { createSignal, createResource, For } from 'solid-js';
 import { X } from 'lucide-solid';
 import { api, type Objective, type ObjectiveInput } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
+import { ItemColorPicker } from './ItemColorPicker.js';
 
 /** Flatten the objectives tree into indented rows for the parent picker.
  *  AF-CU2: deliberately NOT the shared lib/objectives.ts `flattenObjectives`
@@ -67,6 +68,7 @@ export function ObjectiveModal(props: Props) {
   const [cadence, setCadence] = createSignal<string>(props.objective?.cadence ?? 'none');
   const [targetDate, setTargetDate] = createSignal(props.objective?.target_date ?? '');
   const [parentId, setParentId] = createSignal(props.objective?.parent_id ?? props.defaultParentId ?? '');
+  const [colorToken, setColorToken] = createSignal<string | null>(props.objective?.color_token ?? null); // #391
   const [saving, setSaving] = createSignal(false);
 
   // §N: grouping — pick a parent to nest this objective under a project / goal.
@@ -99,6 +101,7 @@ export function ObjectiveModal(props: Props) {
         cadence: cadence() as ObjectiveInput['cadence'],
         target_date: targetDate() || null,
         parent_id: parentId() || null, // §N: '' → top-level
+        color_token: colorToken(), // #391: null = inherit (the accent hash)
       };
       if (isEdit()) {
         await api.objectives.update(props.objective!.id, body);
@@ -194,6 +197,13 @@ export function ObjectiveModal(props: Props) {
                 onInput={(e) => setTargetDate(e.currentTarget.value)}
               />
             </label>
+          </div>
+
+          {/* #391: the objective's identity colour — shown on the Objectives tab and
+              (once both land) the Planner accent. Inherit = the stable hash colour. */}
+          <div class="flex flex-col gap-1">
+            <span class="text-[11px] text-muted-foreground">Color</span>
+            <ItemColorPicker value={colorToken()} onChange={setColorToken} inheritLabel="Automatic (stable per-objective colour)" />
           </div>
         </div>
 

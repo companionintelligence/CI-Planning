@@ -7,7 +7,9 @@ import { useDropZone, dragPayload } from '../lib/draggable.js';
 import { on } from '../lib/sse.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
 import { MinuteDial } from '../components/MinuteDial.js';
-import { colorVar } from '../lib/pattern-meta.js';
+import { PatternTypeManager } from '../components/PatternTypeManager.js';
+import { ItemColorPicker } from '../components/ItemColorPicker.js';
+import { colorVar, resolveItemColor } from '../lib/pattern-meta.js';
 import { routineChips } from '../lib/multi-tag.js';
 
 /**
@@ -21,6 +23,8 @@ import { routineChips } from '../lib/multi-tag.js';
  *  - **T-RTN-2**: each member row has an Edit affordance opening the ElementWizard.
  */
 export function RoutinesPanel() {
+  // #391: the pattern-type manager modal (single entry point, Routines header).
+  const [typesOpen, setTypesOpen] = createSignal(false);
   // Own unfiltered task fetch so the view is correct regardless of the global task
   // filter; refreshed on task SSE + after our own mutations. include_fast so a
   // ritual's hidden fast tasks resolve here (they're excluded elsewhere).
@@ -100,6 +104,11 @@ export function RoutinesPanel() {
   }
   async function savePatternRule(p: Pattern, rule: string | null) {
     try { await api.patterns.update(p.id, { recurrence_rule: rule }); refetchPatterns(); }
+    catch (err) { showToast((err as Error).message, 'error'); }
+  }
+  // #391: per-item colour — null clears (inherit the type's colour again).
+  async function savePatternColor(p: Pattern, token: string | null) {
+    try { await api.patterns.update(p.id, { color_token: token }); refetchPatterns(); }
     catch (err) { showToast((err as Error).message, 'error'); }
   }
   // T-RTN: a free-text note on a routine (patterns.notes already exists server-side).
@@ -219,7 +228,9 @@ export function RoutinesPanel() {
     const canRecur = props.shape !== 'triangle'; // not a Ritual
 
     return (
-      <div class="rounded-lg border border-border bg-card">
+      // #391: the resolved item-first colour is the card's left-edge identity —
+      // the same 3px-border idiom TaskCard's direction rail uses.
+      <div class="rounded-lg border border-border bg-card border-l-[3px]" style={{ 'border-left-color': props.color }}>
         <div class="flex items-center gap-2 px-3 py-2">
           <button onClick={() => setOpen((v) => !v)} class="text-muted-foreground hover:text-foreground">
             <Show when={open()} fallback={<ChevronRight size={14} />}><ChevronDown size={14} /></Show>
@@ -247,6 +258,15 @@ export function RoutinesPanel() {
         </div>
         <Show when={open()}>
           <div class="px-3 pb-2.5 border-t border-border pt-2">
+            {/* #391: per-item colour — the hollow chip clears back to the type colour. */}
+            <div class="mb-3 flex items-start gap-2">
+              <span class="text-[10px] uppercase tracking-wide text-muted-foreground w-14 flex-shrink-0 mt-1">Color</span>
+              <ItemColorPicker
+                value={props.pattern.color_token}
+                onChange={(token) => void savePatternColor(props.pattern, token)}
+                inheritLabel="Inherit the type's colour"
+              />
+            </div>
             <Show when={canRecur}>
               <div class="mb-3 rounded-md border border-border/60 bg-background/40 p-2">
                 <div class="flex items-center gap-1.5 mb-1.5">
@@ -416,7 +436,7 @@ export function RoutinesPanel() {
   }
 
   // ── A section per pattern category ───────────────────────────────────────────
-  function Section(props: { typeName: string; title: string; subtitle: string; children?: any }) {
+  function Section(props: { typeName: string; title: string; subtitle: string; onManageTypes?: () => void; children?: any }) {
     const ty = () => typeByName().get(props.typeName);
     const [creating, setCreating] = createSignal(false);
     const [name, setName] = createSignal('');
@@ -433,6 +453,13 @@ export function RoutinesPanel() {
             <h2 class="text-sm font-semibold text-foreground">{props.title}</h2>
             <p class="text-[11px] text-muted-foreground">{props.subtitle}</p>
           </div>
+          {/* #391: the type manager's single entry point (feature-local — deliberately
+              not the Settings section PR #331 removed). */}
+          <Show when={props.onManageTypes}>
+            <button onClick={() => props.onManageTypes!()} class="btn-ghost text-xs px-2 py-1" title="Create, rename, recolour, or delete pattern types">
+              <Pencil size={11} /> Manage types
+            </button>
+          </Show>
           {/* Routine creation now happens from a task (Tasks → add-to-routine → + New
               routine); the standalone "New Routine" button is removed. Rituals keep theirs. */}
           <Show when={props.typeName !== 'Routine'}>
@@ -469,7 +496,8 @@ export function RoutinesPanel() {
       <Show when={patternsOfType(props.typeName).length > 0} fallback={<EmptyHint>No {props.typeName.toLowerCase()}s yet.</EmptyHint>}>
         <div class="flex flex-col gap-1.5">
           <For each={patternsOfType(props.typeName)}>
-            {(p) => <PatternCard pattern={p} shape={ty()?.icon_shape ?? 'square'} color={colorVar(ty()?.color_token)} allowFast={props.typeName === 'Ritual'} />}
+            {/* #391: item colour wins, else the type's (resolveItemColor). */}
+            {(p) => <PatternCard pattern={p} shape={ty()?.icon_shape ?? 'square'} color={resolveItemColor(p.color_token, ty()?.color_token)} allowFast={props.typeName === 'Ritual'} />}
           </For>
         </div>
       </Show>
@@ -485,7 +513,7 @@ export function RoutinesPanel() {
         '-mx-1 px-1': routineDrop.isOver(),
       }}
     >
-      <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work). Drop a Habit or Time Block to make one.">
+      <Section typeName="Routine" title="Routines" subtitle="A bundle of habits that go together (e.g. Prep for work). Drop a Habit or Time Block to make one." onManageTypes={() => setTypesOpen(true)}>
         <Show when={dragPayload()}>
           <p class="text-[11px] text-primary text-center -mt-2 mb-2">Drop here to create a Routine →</p>
         </Show>
@@ -496,6 +524,10 @@ export function RoutinesPanel() {
         <Section typeName="Ritual" title="Rituals" subtitle="Habits + one-off tasks for an occasion (e.g. Board-meeting prep)">
           <PatternList typeName="Ritual" />
         </Section>
+      </Show>
+
+      <Show when={typesOpen()}>
+        <PatternTypeManager onClose={() => setTypesOpen(false)} />
       </Show>
     </div>
   );

@@ -687,6 +687,8 @@ export interface Pattern {
   name: string; tag: string | null; notes: string | null;
   directions: string[]; intentions: string[];
   recurrence_rule: string | null; recurrence_dtstart: string | null;
+  /** #391 (0133) — per-ITEM colour token; null = inherit the type's colour. */
+  color_token: string | null;
   created_at: string; task_ids: string[];
 }
 
@@ -696,6 +698,8 @@ export interface PatternInput {
   type_id?: string | null; name: string;
   notes?: string | null; task_ids?: string[];
   recurrence_rule?: string | null; recurrence_dtstart?: string | null;
+  /** #391 — per-item colour; explicit null clears (inherit the type's). */
+  color_token?: string | null;
 }
 
 /** A flight-plan row: a staged task (+ its nominating source). */
@@ -1180,6 +1184,8 @@ export interface Objective {
   completed_at: string | null;
   /** Set when the objective was auto-promoted from a task (mig 0086); NULL for manual ones. */
   source_task_id: string | null;
+  /** #391 (0133) — per-item colour token; null = the Planner accent's hash fallback. */
+  color_token?: string | null;
   /** 0129 — non-null ⇒ archived (absent from the live tree, kept indefinitely). */
   archived_at?: string | null;
   /** 0129 — the objective whose archiving cascaded to this row; NULL on the root. */
@@ -1272,5 +1278,6 @@ export interface ObjectiveInput {
   target_date?: string | null;
   category_id?: string | null;
   priority?: number;
-  description?: string | null;
+  description?: string | null;  /** #391 — per-item colour token; explicit null clears (fall back to the accent hash). */
+  color_token?: string | null;
 }

@@ -4,7 +4,7 @@ import { type Task, api } from '../lib/api.js';
 import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
-import { directionColorForTask, directionShapeForTask, colorVar } from '../lib/pattern-meta.js';
+import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
 import { textureStyle } from '../lib/textures.js';
 import { ShapeIcon } from './ShapeIcon.js';
 
@@ -457,7 +457,7 @@ export function TaskCard(props: Props) {
                 // AF-11: routines no longer author a tag — seed from the first
                 // DERIVED direction (legacy pattern.tag as fallback).
                 ...textureStyle(r().type?.icon_shape, r().pattern.directions?.[0] ?? r().pattern.tag),
-                color: colorVar(r().type?.color_token),
+                color: resolveItemColor(r().pattern.color_token, r().type?.color_token), // #391: item wins
                 'z-index': '-1',
                 'border-radius': 'inherit',
               }}
@@ -539,7 +539,7 @@ export function TaskCard(props: Props) {
         <Show when={routine()}>
           {(r) => (
             <div class="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground" title={`In the "${r().pattern.name}" routine`}>
-              <span class="inline-flex" style={{ color: colorVar(r().type?.color_token) }}>
+              <span class="inline-flex" style={{ color: resolveItemColor(r().pattern.color_token, r().type?.color_token) }}>
                 <ShapeIcon shape={r().type?.icon_shape ?? 'circle'} size={11} strokeWidth={1.75} />
               </span>
               <span class="truncate">{r().pattern.name}</span>
