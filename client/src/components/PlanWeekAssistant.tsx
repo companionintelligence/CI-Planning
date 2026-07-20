@@ -37,6 +37,14 @@ type BranchKey = Extract<Step, PlanWeekEntryBranch>;
 export interface BranchProps {
   append: (text: string, kind?: string) => Promise<void>;
   onBack: () => void;
+  /**
+   * #387 — the truthful `llm_used` seam. A branch calls this when the SERVER reports
+   * AI actually ran for this session: `result.llm === true` on an auto run,
+   * `source === 'model'` on a next-step, or a successful parse/apply (InstructBox).
+   * Never call it on `aiAvailable()` alone — that is the availability gate, not
+   * evidence of use (the T9 rule). The shell folds it into `llm_used` at close.
+   */
+  reportAiUse: () => void;
 }
 
 /**
@@ -58,18 +66,16 @@ const BRANCHES: {
 
 /**
  * The reusable conversation primitive: a question, up to three option chips, and a
- * free-text input. T3/T4/T5 drive real flows through it; here each branch renders one.
- * Caps at three chips by contract, so a caller passing more cannot break the layout.
+ * free-text input. Caps at three chips by contract, so a caller passing more cannot
+ * break the layout.
  *
- * ⚠️ DEAD CODE TODAY, by design of T3/T4/T5 as shipped, not something T8 introduced or
- * can fix: `PromptStep` only renders as the shell's fallback when a `BRANCHES` entry has
- * no `component` (see the `Show` below in `PlanWeekAssistant`), but all three shipped
- * branches supply bespoke components instead (`PlanWeekFill`'s multi-step wizard,
- * `PlanWeekScheduleTasks`'s task-picker, `PlanWeekReviewBranch`'s read-only recap — none
- * share a common question+options moment). T8's Files-impacted list scopes this ticket to
- * `PlanWeekAssistant.tsx` only, so this is implemented against the ticket's contract and
- * DoD as written, exercised directly (the same way its own existing tests already do),
- * not wired live into any of the three branches. Flagged for follow-up, not hidden.
+ * STATUS after #387: the free-text NL chain is LIVE — but through `InstructBox`
+ * (parse → preview → confirm apply), mounted inside the Fill and Schedule branches,
+ * not through this component. `PromptStep` itself remains only the shell's fallback
+ * for a `BRANCHES` entry with no `component` (none exists today: all three shipped
+ * branches are bespoke), kept for that contract and its standalone tests. If a
+ * future stub branch ever renders it, its submit path parses without applying —
+ * for the full preview→apply flow, mount `InstructBox` instead.
  *
  * T8 (#344) — free text is parsed (not applied) via `api.planWeek.parse`, no
  * deterministic fallback exists, so the box is gated on `aiAvailable()`.
@@ -150,6 +156,10 @@ export function PlanWeekAssistant() {
   const open = () => planWeekModal().open;
   const [step, setStep] = createSignal<Step>('menu');
   const [sessionId, setSessionId] = createSignal<string | null>(null);
+  // #387: per-SESSION truthful AI-usage flag — set only via BranchProps.reportAiUse
+  // (server-reported evidence), folded into `llm_used` at every close, reset whenever
+  // a new session starts (modal re-open or branch switch).
+  const [aiUsed, setAiUsed] = createSignal(false);
 
   /**
    * Reset only on the false→true EDGE, not on every truthy read.
@@ -163,7 +173,7 @@ export function PlanWeekAssistant() {
   let wasOpen = false;
   createEffect(() => {
     const isOpen = open();
-    if (isOpen && !wasOpen) { setStep('menu'); setSessionId(null); sessionP = Promise.resolve(null); }
+    if (isOpen && !wasOpen) { setStep('menu'); setSessionId(null); setAiUsed(false); sessionP = Promise.resolve(null); }
     wasOpen = isOpen;
   });
 
@@ -184,9 +194,13 @@ export function PlanWeekAssistant() {
     // with rows that never resolve — the same zombie-row problem the abandoned status
     // exists to prevent. Close the previous one before replacing the handle.
     const prev = sessionP;
+    // Capture NOW: the close resolves later, by which time aiUsed belongs to the NEW
+    // session. The abandoned session's llm_used must describe ITS OWN lifetime.
+    const prevAiUsed = aiUsed();
     void prev.then((id) => {
-      if (id) api.planWeek.session.close(id, { status: 'abandoned' }).catch(() => {});
+      if (id) api.planWeek.session.close(id, { status: 'abandoned', llm_used: prevAiUsed }).catch(() => {});
     });
+    setAiUsed(false); // the replacement session starts with a clean usage record
 
     setStep(key); // advance first — a failed log must not strand the user on the menu
     sessionP = api.planWeek.session
@@ -216,7 +230,7 @@ export function PlanWeekAssistant() {
     const id = await sessionP; // may still be in flight if the user is quick
     if (id) {
       try {
-        await api.planWeek.session.close(id, { status });
+        await api.planWeek.session.close(id, { status, llm_used: aiUsed() });
       } catch (err) {
         showToast((err as Error).message, 'error');
       }
@@ -273,7 +287,7 @@ export function PlanWeekAssistant() {
                     />
                   }
                 >
-                  {(Comp) => Comp()({ append, onBack: () => setStep('menu') })}
+                  {(Comp) => Comp()({ append, onBack: () => setStep('menu'), reportAiUse: () => setAiUsed(true) })}
                 </Show>
               )}
             </Show>

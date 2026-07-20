@@ -7,6 +7,7 @@ import {
   refetchFlightPlan, refetchBlocks, refetchTasks,
 } from '../stores/index.js';
 import type { BranchProps } from './PlanWeekAssistant.js';
+import { InstructBox } from './InstructBox.js';
 
 /**
  * "Schedule tasks" (FTUE · T4, #340) — the deterministic one-at-a-time branch: list the
@@ -77,6 +78,9 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
           fallbackOptions: top.map((t) => t.title),
         });
         void props.append(`Suggested: ${res.question} (${res.source})`, 'plan_week:next_step');
+        // #387: llm_used mirrors the server-reported source — a 'fallback' rewrite
+        // used no model even though aiAvailable() gated the request.
+        if (res.source === 'model') props.reportAiUse();
         return { ...res, tasks: top };
       } catch {
         return null;
@@ -159,6 +163,10 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
             </For>
           </div>
         </Show>
+
+        {/* #387: free-text constraints ("block off Tuesday mornings…") — parsed to a
+            preview, applied only on explicit confirm. */}
+        <InstructBox date={selectedDay} append={props.append} reportAiUse={props.reportAiUse} />
 
         <Show when={!openTasks.loading} fallback={<p class="text-xs text-muted-foreground">Loading…</p>}>
           <Show

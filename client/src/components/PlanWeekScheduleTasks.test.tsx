@@ -47,16 +47,21 @@ vi.mock('../stores/index.js', () => ({
 
 vi.mock('../lib/dates.js', () => ({ localISODate: () => '2026-07-18' }));
 
+// #387: the InstructBox has its own test file; stub it so this one stays about the branch.
+vi.mock('./InstructBox.js', () => ({ InstructBox: () => <div data-testid="instruct-box" /> }));
+
 const { PlanWeekScheduleTasks } = await import('./PlanWeekScheduleTasks.js');
 
 const appendMock = vi.fn(async (_t: string, _k?: string) => {});
 const onBackMock = vi.fn();
-const mount = () => render(() => <PlanWeekScheduleTasks append={appendMock} onBack={onBackMock} />);
+const reportAiUseMock = vi.fn();
+const mount = () => render(() => <PlanWeekScheduleTasks append={appendMock} onBack={onBackMock} reportAiUse={reportAiUseMock} />);
 
 const PLAIN = { id: 't1', title: 'Pay invoices', estimated_minutes: 30 };
 
 describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () => {
   beforeEach(() => {
+    reportAiUseMock.mockReset();
     listMock.mockReset().mockResolvedValue({ tasks: [PLAIN] });
     updateMock.mockReset().mockResolvedValue({ task: {} });
     addTaskMock.mockReset().mockResolvedValue({ flight_plan: [{ task_id: 't1', selected: true }], added: 1 });
@@ -205,6 +210,8 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
         fallbackQuestion: 'Which task should I find time for?',
         fallbackOptions: ['Pay invoices', 'Second thing', 'Third thing'],
       });
+      // #387: source === 'model' is the server-reported truth llm_used keys on.
+      expect(reportAiUseMock).toHaveBeenCalled();
       await waitFor(() =>
         expect(appendMock).toHaveBeenCalledWith('Suggested: Which of these matters most? (model)', 'plan_week:next_step'),
       );
@@ -213,6 +220,23 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
       // a model rewrite of the label must never pick the wrong task.
       fireEvent.click(screen.getByText('Pick B'));
       await screen.findByText('Second thing');
+    });
+
+    it('a fallback-source rewrite reports no AI use (#387 — never keyed on aiAvailable)', async () => {
+      aiAvailableFlag.current = true; // the gate is open...
+      listMock.mockResolvedValue({ tasks: THREE });
+      nextStepMock.mockResolvedValue({
+        question: 'Which task should I find time for?',
+        options: ['Pay invoices', 'Second thing', 'Third thing'],
+        source: 'fallback', // ...but the server degraded — no model ran
+      });
+
+      mount();
+      await waitFor(() => expect(nextStepMock).toHaveBeenCalled());
+      await waitFor(() =>
+        expect(appendMock).toHaveBeenCalledWith('Suggested: Which task should I find time for? (fallback)', 'plan_week:next_step'),
+      );
+      expect(reportAiUseMock).not.toHaveBeenCalled();
     });
 
     it('a suggestion fetch error leaves the static question and full list intact', async () => {
