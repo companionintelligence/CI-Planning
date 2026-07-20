@@ -464,6 +464,18 @@ on('reminder:fire', (data) => {
 });
 on('reminder:snoozed', () => showToast('Reminder snoozed for 10 min', 'success'));
 
+// #388 — the reminders list (Focus card). listReminders returns non-cancelled rows
+// ordered by fire_at; the four events below are every server-side reminder mutation
+// (routes + GraphQL broadcast created/cancelled/snoozed; the engine broadcasts fire),
+// so the card stays live without polling.
+export const [reminders, { refetch: refetchReminders }] = createResource(() =>
+  api.reminders.list().then((r) => r.reminders)
+);
+on('reminder:created', () => refetchReminders());
+on('reminder:cancelled', () => refetchReminders());
+on('reminder:snoozed', () => refetchReminders());
+on('reminder:fire', () => refetchReminders());
+
 // ── Element wizard modal ────────────────────────────────────────────────────────
 // The unified Add/Edit wizard for the calendar-addable Entities. "Element" is a
 // UI-only union (no DB noun) over Task / Habit / Routine / Time-Block. `kind: null`

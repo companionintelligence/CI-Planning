@@ -1,6 +1,7 @@
 import { createSignal, createMemo, Show, For, onCleanup } from 'solid-js';
 import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, CalendarRange } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
+import { FocusReminders } from '../components/FocusReminders.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, setPlanWeekModal } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
@@ -319,6 +320,9 @@ export function Focus() {
           </div>
         )}
       </Show>
+
+      {/* #388: reminders — list, create, delete (the toast keeps Snooze). */}
+      <FocusReminders />
 
       {/* Past tasks — collapsed into one expandable row. */}
       <Show when={past().length > 0}>
