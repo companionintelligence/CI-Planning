@@ -1,5 +1,5 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
-import { Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
+import { ErrorBoundary, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
 import { Plus, Cpu, Loader2 } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
 import { Login }    from './views/Login.js';
@@ -11,6 +11,7 @@ import { ConflictBanner } from './components/ConflictBanner.js';
 import { ElementWizard } from './components/ElementWizard.js';
 import { PlanWeekAssistant } from './components/PlanWeekAssistant.js';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
+import { ErrorBoundaryFallback } from './components/ErrorBoundaryFallback.js';
 import { Today }    from './views/Today.js';
 import { Focus }    from './views/Focus.js';
 import { Calendar } from './views/Calendar.js';
@@ -136,7 +137,15 @@ function Shell(props: { children?: any }) {
 
         {/* Bottom padding clears the mobile tab bar */}
         <div class="flex-1 overflow-auto pb-16 md:pb-0">
-          {props.children}
+          {/* Root ErrorBoundary — the app's only one. A routed view whose render throws
+              (commonly a resource read hitting a 403/500) degrades to a recoverable
+              fallback here instead of white-screening the whole SPA; the shell chrome
+              stays mounted. Both routers (SessionGate + UngatedRouter) render through
+              Shell, so this single boundary covers every route. Per-view resource.error
+              guards remain the first line of defense. */}
+          <ErrorBoundary fallback={(err, reset) => <ErrorBoundaryFallback error={err} onReset={reset} />}>
+            {props.children}
+          </ErrorBoundary>
         </div>
       </main>
 
