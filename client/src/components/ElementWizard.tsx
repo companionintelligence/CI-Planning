@@ -1,8 +1,9 @@
 import { createSignal, createEffect, createResource, onMount, onCleanup, Show, For } from 'solid-js';
 import {
   X, ChevronDown, ChevronLeft, ChevronRight, Plus, ListTodo, Flame, Boxes, Clock,
-  Calendar, Timer, Flag, Lock, Repeat as RepeatIcon, Link2, Square,
+  Calendar, Timer, Flag, Lock, Repeat as RepeatIcon, Link2, Square, Sparkles,
 } from 'lucide-solid';
+import { MicButton } from './MicButton.js';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
   type ElementKind,
@@ -133,6 +134,11 @@ export function ElementWizard() {
   const [depDraft, setDepDraft] = createSignal('');
   const [saving, setSaving] = createSignal(false);
   const [makeHabit, setMakeHabit] = createSignal(false);
+  // T14 (#350) — the header NL quick line (see parseNl below).
+  const [nlText, setNlText] = createSignal('');
+  const [nlBusy, setNlBusy] = createSignal(false);
+  const [nlLlm, setNlLlm] = createSignal(false);
+  const [nlError, setNlError] = createSignal<string | null>(null);
   // Routine chip — single-select membership (add + edit).
   const [routineId, setRoutineId] = createSignal('');
   const [initialRoutineId, setInitialRoutineId] = createSignal('');
@@ -290,6 +296,7 @@ export function ElementWizard() {
     if (st.open && !wasOpen) {
       const pf = st.prefill ?? {};
       setTitle(''); setPrimary(''); setIntentions([]); setTagDraft(''); setLlm([]);
+      setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null);
       setDay(pf.day || localISODate());
       setStart(pf.start || nextHalfHour());
       setDurMin(pf.durationMin ?? 60);
@@ -383,6 +390,49 @@ export function ElementWizard() {
     setPrimary(next);
     // Direction drives the default duration (redesign): estimate + block length.
     if (next) { setDurMin(patternDefaultMinutes(next)); setEstimate(patternDefaultMinutes(next)); }
+  }
+
+  // ── T14 (#350) — NL quick line (type or speak) → parse-only PREVIEW ──────────
+  // Moved here from the Today view's top-of-page QuickAdd (UI-comments 2026-07-20):
+  // the FAB modal is now the one add surface. Unlike the old QuickAdd this NEVER
+  // creates on Enter — it calls the zero-write /tasks/quick/parse twin and hydrates
+  // the wizard's own fields, so the populated form IS the preview and the Add button
+  // is the approval (same preview→confirm doctrine as InstructBox / #387). Works
+  // without Ollama (deterministic parse; `llm` truthfully marks AI enrichment).
+  async function parseNl(raw?: string) {
+    const value = (raw ?? nlText()).trim();
+    if (!value || nlBusy()) return;
+    setNlError(null);
+    setNlBusy(true);
+    try {
+      const { parsed, llm } = await api.tasks.quickParse(value);
+      setNlLlm(llm);
+      // Hydrate the form fields — every value below is visible in the wizard for
+      // review/correction before Add.
+      setTitle(parsed.title);
+      if (parsed.scheduledFor) setScheduledFor(parsed.scheduledFor);
+      if (parsed.taskTime) setTaskTime(parsed.taskTime);
+      if (parsed.priority != null) setPriority(parsed.priority);
+      // Known direction names land on the primary axis, first one wins (mirrors the
+      // /tasks/quick route's splitNamesByDirection); the rest become intention chips.
+      const dirNames = new Set(patternTagList().map((t) => t.name.toLowerCase()));
+      const dirs = parsed.tags.filter((t) => dirNames.has(t.toLowerCase()));
+      const others = parsed.tags.filter((t) => !dirNames.has(t.toLowerCase()));
+      if (dirs.length) {
+        setPrimary(dirs[0]);
+        setDurMin(patternDefaultMinutes(dirs[0]));
+        setEstimate(patternDefaultMinutes(dirs[0]));
+      }
+      if (others.length || dirs.length > 1) setIntentions([...new Set([...dirs.slice(1), ...others])]);
+      // An explicit ~Nm beats the direction's default estimate (applied after).
+      if (parsed.estimatedMinutes != null) setEstimate(parsed.estimatedMinutes);
+      // dueAt: untouched — the Due=Start mirror keeps it on the scheduled day, which
+      // matches the parse (AD1 dueAt is only ever the same timed day).
+    } catch (err) {
+      setNlError((err as Error).message);
+    } finally {
+      setNlBusy(false);
+    }
   }
   function addIntention(name: string) {
     const n = name.replace(/^#/, '').trim();
@@ -876,6 +926,41 @@ export function ElementWizard() {
               <span class="text-[11px] text-muted-foreground ml-1">{isEdit() ? 'Editing' : ''}</span>
               <button onClick={close} class="btn-icon ml-auto"><X size={16} /></button>
             </div>
+
+            {/* T14 (#350) — NL quick line: describe the task (typed or spoken) and the
+                parse PREVIEWS into the fields below for approval; Add creates. Task
+                add-mode only (edits keep their loaded values; blocks/routines have no
+                quick grammar). Sits between the type tabs and the title by design. */}
+            <Show when={tab() === 'task' && !isEdit()}>
+              <div class="mb-2">
+                <div class="relative">
+                  <Plus size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <input
+                    class="input text-sm pl-8 pr-16 w-full"
+                    placeholder="Describe it… e.g. 'pay invoice fri 3pm #finance ~20m'"
+                    value={nlText()}
+                    disabled={nlBusy()}
+                    onInput={(e) => setNlText(e.currentTarget.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void parseNl(); } }}
+                  />
+                  <div class="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                    <Show when={nlLlm()}>
+                      <span title="Parsed with AI enrichment"><Sparkles size={11} class="text-accent-light" /></span>
+                    </Show>
+                    <MicButton
+                      onTranscript={(t) => { setNlText(t); void parseNl(t); }}
+                      onError={(r) => setNlError(r)}
+                      disabled={nlBusy()}
+                      class="btn-icon p-1"
+                    />
+                  </div>
+                </div>
+                <Show when={nlError()}>
+                  <p class="text-[11px] text-destructive mt-1">{nlError()}</p>
+                </Show>
+              </div>
+            </Show>
+
             <input autofocus
               class="w-full bg-transparent border-none outline-none text-lg font-semibold text-foreground placeholder:text-muted-foreground"
               placeholder={tab() === 'timeblock' ? 'Time block title…' : tab() === 'routine' ? 'Routine name…' : 'Task title…'}

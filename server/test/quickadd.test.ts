@@ -83,6 +83,45 @@ describe('parseQuick — deterministic NL parse', () => {
   });
 });
 
+describe('POST /api/tasks/quick/parse — T14 parse-only preview twin', () => {
+  beforeEach(() => resetDb());
+
+  it('returns the parse and writes NOTHING (no task, no audit row)', async () => {
+    const srv = await startTestServer();
+    try {
+      const res = await api<{ parsed: { title: string; tags: string[]; estimatedMinutes?: number; taskTime?: string; scheduledFor?: string }; llm: boolean }>(
+        srv.url,
+        '/api/tasks/quick/parse',
+        { method: 'POST', json: { text: 'Pay the AMD invoice friday 3pm #finance ~20m' } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.parsed.title).toBe('Pay the AMD invoice');
+      expect(res.body.parsed.tags).toEqual(['finance']);
+      expect(res.body.parsed.estimatedMinutes).toBe(20);
+      expect(res.body.parsed.taskTime).toMatch(TIME);
+      expect(res.body.parsed.scheduledFor).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(typeof res.body.llm).toBe('boolean'); // truthful: true only when Ollama enriched
+      // ZERO writes — the wizard previews client-side; only its Add creates.
+      const tasks = sqlite.prepare(`SELECT COUNT(*) AS n FROM tasks`).get() as { n: number };
+      const audits = sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log`).get() as { n: number };
+      expect(tasks.n).toBe(0);
+      expect(audits.n).toBe(0);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('400s on empty text', async () => {
+    const srv = await startTestServer();
+    try {
+      const res = await api(srv.url, '/api/tasks/quick/parse', { method: 'POST', json: { text: '  ' } });
+      expect(res.status).toBe(400);
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('POST /api/tasks/quick', () => {
   beforeEach(() => resetDb());
 
