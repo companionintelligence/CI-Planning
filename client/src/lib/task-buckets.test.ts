@@ -138,6 +138,35 @@ describe('dueItems (Phase AB · AB4 — the always-visible Due card)', () => {
     ];
     expect(dueItems(tasks, DAY).dueToday.map((t) => t.id)).toEqual(['top']);
   });
+
+  // ── The Missed review surface (engine/review.ts's designed counterpart) ────────
+  it('missed = status missed, one-off tasks only (recurring instances are history)', () => {
+    const tasks = [
+      task({ id: 'stuck', status: 'missed', scheduled_for: '2026-06-28' }),
+      task({ id: 'inst', status: 'missed', scheduled_for: '2026-06-29', recurrence_parent_id: 'r1' }), // instance → excluded
+      task({ id: 'sub', status: 'missed', parent_id: 'p' }),   // subtask → excluded
+      task({ id: 'open', status: 'open' }),                     // not missed
+    ];
+    expect(dueItems(tasks, DAY).missed.map((t) => t.id)).toEqual(['stuck']);
+  });
+
+  it('missed sorts by scheduled_for ascending (oldest miss first) and ignores the viewed day', () => {
+    const tasks = [
+      task({ id: 'newer', status: 'missed', scheduled_for: '2026-06-30' }),
+      task({ id: 'older', status: 'missed', scheduled_for: '2026-06-20' }),
+    ];
+    // Same list from two different viewed days — missed is a state, not a deadline relation.
+    expect(dueItems(tasks, DAY).missed.map((t) => t.id)).toEqual(['older', 'newer']);
+    expect(dueItems(tasks, '2026-08-15').missed.map((t) => t.id)).toEqual(['older', 'newer']);
+  });
+
+  it('missed tasks never leak into overdue/dueToday (not an ACTIVE status)', () => {
+    const tasks = [task({ id: 'm', status: 'missed', due_at: beforeDay })];
+    const d = dueItems(tasks, DAY);
+    expect(d.overdue).toEqual([]);
+    expect(d.dueToday).toEqual([]);
+    expect(d.missed.map((t) => t.id)).toEqual(['m']);
+  });
 });
 
 describe('pageWindow', () => {
