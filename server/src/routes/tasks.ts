@@ -139,6 +139,19 @@ export function tasksRouter() {
     ctx.body = { task: out, ...(placement ? { placement } : {}) };
   });
 
+  // The owner's tag vocabulary, split by kind, for the quick-add enrichment overlay:
+  // the model classifies a direction (Work/Home/Community) and up to two existing
+  // secondary tags, constrained to these lists — it can never invent a tag.
+  function quickVocab(owner: string) {
+    const rows = sqlite
+      .prepare(`SELECT name, kind FROM tags WHERE owner_id = ? ORDER BY name`)
+      .all(owner) as { name: string; kind: string }[];
+    return {
+      directions: rows.filter((r) => r.kind === 'direction').map((r) => r.name),
+      others: rows.filter((r) => r.kind !== 'direction').map((r) => r.name),
+    };
+  }
+
   // POST /api/tasks/quick/parse — T14 (#350): the parse-only twin of /tasks/quick.
   // ZERO writes — the wizard's NL line (typed or spoken) previews the parse by
   // hydrating its own form fields, and the user approves via the wizard's Add
@@ -158,7 +171,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed); // Ollama overlay; never overrides parsed fields
+      enriched = await enrichQuick(text, parsed, quickVocab(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -180,7 +193,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed); // Ollama overlay; never overrides parsed fields
+      enriched = await enrichQuick(text, parsed, quickVocab(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -202,7 +215,9 @@ export function tasksRouter() {
       scheduled_for: enriched.scheduledFor,
       task_time: enriched.taskTime,
       estimated_minutes: enriched.estimatedMinutes,
-      priority: enriched.priority ?? 3,
+      // P1 when unsure (owner rule 2026-07-20): a captured task is important until
+      // the user says otherwise — quick-add never silently files things at P3.
+      priority: enriched.priority ?? 1,
       ...(enriched.tags.length ? { tags: directions, secondary_tags: others } : {}),
     });
     if (!res.ok) {
@@ -372,6 +387,8 @@ export function tasksRouter() {
   // callers; was flagged dead in #392 because that surface hadn't been built). This
   // is the scheduled_for axis ON PURPOSE — Today's overdue defer chips move due_at
   // via PATCH /tasks/:id, the deadline axis; the two affordances coexist.
+  // In Schedule mode (trust_mode='hands_off') the engine also books the reopened
+  // task into the next available slot on its new day; `placement` reports it.
   // Stays a thin wrapper over engine rescheduleTask (no service layer needed).
   router.post('/api/tasks/:id/reschedule', async (ctx) => {
     const id = ctx.params.id;
@@ -381,13 +398,13 @@ export function tasksRouter() {
     if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
-    const { scheduled_for } = rescheduleTask(id, body.days, owner);
+    const { scheduled_for, placement } = rescheduleTask(id, body.days, owner);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
     const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `task:${id}` });
     broadcast(owner, 'block:updated', { rescheduled: id });
-    ctx.body = { task: out, scheduled_for };
+    ctx.body = { task: out, scheduled_for, ...(placement ? { placement } : {}) };
   });
 
   // PATCH /api/tasks/:id

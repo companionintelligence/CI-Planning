@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
-import { parseQuick } from '../src/engine/quickadd.js';
+import { parseQuick, type ParsedQuick } from '../src/engine/quickadd.js';
+import { mergeEnrichment } from '../src/agents/quickadd.js';
 import { resetDb, startTestServer, api } from './helpers.js';
 
 // Fixed reference so chrono is deterministic (its non-determinism risk).
@@ -80,6 +81,48 @@ describe('parseQuick — deterministic NL parse', () => {
     expect(parseQuick('Submit report tomorrow 9am #work ~30m', REF)).toEqual(
       parseQuick('Submit report tomorrow 9am #work ~30m', REF)
     );
+  });
+});
+
+describe('mergeEnrichment — constrained classification overlay (2026-07-20)', () => {
+  const VOCAB = { directions: ['Work', 'Home', 'Community'], others: ['finance', 'errands', 'health'] };
+  const base = (over: Partial<ParsedQuick> = {}): ParsedQuick => ({ title: 'call mom', tags: [], ...over });
+
+  it('adds the model direction (canonical casing) when the entry named none', () => {
+    const out = mergeEnrichment(base(), { direction: 'home' }, VOCAB);
+    expect(out.tags).toEqual(['Home']);
+  });
+
+  it('never overrides an explicit direction from the entry', () => {
+    const out = mergeEnrichment(base({ tags: ['work'] }), { direction: 'Home' }, VOCAB);
+    expect(out.tags).toEqual(['work']); // parsed tag wins; no second direction
+  });
+
+  it('rejects an invented direction (not in the vocabulary)', () => {
+    const out = mergeEnrichment(base(), { direction: 'Gym' }, VOCAB);
+    expect(out.tags).toEqual([]);
+  });
+
+  it('adds at most two EXISTING secondary tags, deduped against the parse', () => {
+    const out = mergeEnrichment(
+      base({ tags: ['finance'] }),
+      { tags: ['finance', 'errands', 'health', 'made-up'] },
+      VOCAB,
+    );
+    expect(out.tags).toEqual(['finance', 'errands', 'health']); // finance deduped, made-up rejected, cap 2 added
+  });
+
+  it('never overrides parsed estimate/priority; fills only the gaps', () => {
+    const out = mergeEnrichment(
+      base({ estimatedMinutes: 20, priority: 1 }),
+      { estimatedMinutes: 90, priority: 4, direction: 'Home' },
+      VOCAB,
+    );
+    expect(out.estimatedMinutes).toBe(20);
+    expect(out.priority).toBe(1);
+    const filled = mergeEnrichment(base(), { estimatedMinutes: 15, priority: 2 }, VOCAB);
+    expect(filled.estimatedMinutes).toBe(15);
+    expect(filled.priority).toBe(2);
   });
 });
 
