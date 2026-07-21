@@ -40,7 +40,9 @@ const REM = (over: Partial<Reminder> = {}): Reminder => ({
   id: 'r1', task_id: 't1', block_id: null, fire_at: '2026-07-19T16:00:00.000Z',
   status: 'pending', fired_at: null, source: 'manual', ...over,
 });
-const TASK = { id: 't1', title: 'Write report', status: 'open' } as unknown as Task;
+// Backlog-3 (2026-07-21): the picker offers TODAY's tasks only — the fixture must be
+// scheduled for the mocked today or it drops out of the candidate list.
+const TASK = { id: 't1', title: 'Write report', status: 'open', scheduled_for: '2026-07-19' } as unknown as Task;
 
 describe('FocusReminders — list, create, delete', () => {
   beforeEach(() => {
