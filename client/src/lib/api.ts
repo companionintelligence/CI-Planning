@@ -89,6 +89,7 @@ export interface ParsedQuick {
   scheduledFor?: string;
   taskTime?: string;
   tags: string[];
+  categories?: string[]; // Phase B: classifier's 1–3 category names (best fit first)
   estimatedMinutes?: number;
   priority?: number;
 }

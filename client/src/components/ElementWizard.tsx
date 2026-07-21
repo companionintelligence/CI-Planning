@@ -453,6 +453,9 @@ export function ElementWizard() {
         if (isBlock) setDurMin(def); else { setDurMin(def); setEstimate(def); }
       }
       if (others.length || dirs.length > 1) setIntentions([...new Set([...dirs.slice(1), ...others])]);
+      // Phase B: the classifier's best-guess categories seed the picker (best fit
+      // first = position 0 = first stripe) — reviewable chips, like every NL field.
+      if (parsed.categories?.length) seedCategories(parsed.categories);
       // An explicit ~Nm beats the direction's default duration (applied after).
       if (parsed.estimatedMinutes != null) { if (isBlock) setDurMin(parsed.estimatedMinutes); else setEstimate(parsed.estimatedMinutes); }
       // dueAt: untouched — the Due=Start mirror keeps it on the scheduled day, which

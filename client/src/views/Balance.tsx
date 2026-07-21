@@ -6,13 +6,17 @@ import type { Priority } from '../lib/api.js';
 
 interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
 
+// Swatches align with the seeded category colour tokens (0134: health→tag-1 red,
+// career→tag-7 blue, relationships→tag-11 pink, growth→tag-9 purple, leisure→tag-5
+// green, finance→tag-2 amber). Owner ruling 2026-07-21: the seeded tokens are
+// canonical — leisure/finance were swapped here before Phase B.
 const CATEGORIES: CategoryConfig[] = [
   { key: 'health',        name: 'Health',          icon: Heart,      colorClass: 'text-red-500' },
   { key: 'career',        name: 'Career',          icon: Briefcase,  colorClass: 'text-blue-500' },
   { key: 'relationships', name: 'Relationships',   icon: Users,      colorClass: 'text-pink-500' },
   { key: 'growth',        name: 'Personal Growth', icon: Brain,      colorClass: 'text-purple-500' },
-  { key: 'leisure',       name: 'Leisure',         icon: Smile,      colorClass: 'text-amber-500' },
-  { key: 'finance',       name: 'Finance',         icon: DollarSign, colorClass: 'text-emerald-500' },
+  { key: 'leisure',       name: 'Leisure',         icon: Smile,      colorClass: 'text-emerald-500' },
+  { key: 'finance',       name: 'Finance',         icon: DollarSign, colorClass: 'text-amber-500' },
 ];
 
 const FALLBACK: Omit<Priority, 'category'> = { satisfaction: 5, importance: 5, target_hours_per_week: 0 };
