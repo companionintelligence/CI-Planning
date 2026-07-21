@@ -161,7 +161,12 @@ export interface ElementForm {
   locked?: boolean;           // time-block: is_locked (user-fixed; reflow won't move it)
   allDay?: boolean;           // time-block: all-day lane (scheduled, no start time)
   recurrenceRule?: string | null;  // time-block RRULE ('' / null clears)
-  categoryId?: string;             // time-block: the Time Block Category (0069); direction implied
+  // Phase B (0134/0135): 1–3 category NAMES (order = stripe order), tasks AND blocks.
+  // undefined = leave alone; [] = clear (the server's partial-PATCH contract).
+  categories?: string[];
+  // Phase B (0135): per-element texture override; undefined = leave alone.
+  textureEnabled?: boolean;
+  textureColorToken?: string | null; // null = derive from categories
   // time-block membership (scheduled only): existing tasks/habits to scatter inside,
   // routines to place inside, and child blocks to detach — all applied on Save.
   attachTaskIds?: string[];
@@ -244,6 +249,10 @@ export async function saveElement(
       defer_until: form.deferUntil ? new Date(form.deferUntil + 'T00:00:00').toISOString() : undefined,
       depends_on: form.dependsOn ?? [],
       auto_place: placeOnSave,
+      // Phase B: 1–3 categories + texture override, both tabs. undefined = untouched.
+      ...(form.categories !== undefined ? { categories: form.categories } : {}),
+      ...(form.textureEnabled !== undefined ? { texture_enabled: form.textureEnabled } : {}),
+      ...(form.textureColorToken !== undefined ? { texture_color_token: form.textureColorToken } : {}),
     };
     if (kind === 'habit') body.is_habit = true;
     if (rule) body.recurrence_rule = rule;
@@ -305,14 +314,19 @@ export async function saveElement(
   // semantics preserve an omitted `tag`, so send the documented clearing value
   // (null → empties level 1 + nulls the column). Create keeps omitting.
   const tagOut = tag !== undefined ? tag : mode === 'edit' ? null : undefined;
-  // AF-CU2: category has the same JSON-drop hazard as `tag` — an omitted
-  // category_id is PRESERVED by the server's partial PATCH, so an EDIT that
-  // cleared the category must send the documented clearing value (null →
-  // clears category_id + color_token). Create keeps omitting when empty.
+  // AF-CU2 → Phase B: same JSON-drop hazard as `tag` — an omitted `categories` is
+  // PRESERVED by the server's partial PATCH, so an EDIT that cleared the categories
+  // must send the documented clearing value ([] → clears the set + color_token).
+  // Create keeps omitting when empty. (The legacy single category_id is retired.)
   const categoryOut: Record<string, unknown> =
-    form.categoryId ? { category_id: form.categoryId }
-    : mode === 'edit' ? { category_id: null }
-    : {};
+    form.categories === undefined ? {} // leave alone (programmatic callers)
+    : form.categories.length ? { categories: form.categories }
+    : mode === 'edit' ? { categories: [] } // explicit empty on edit clears server-side
+    : {}; // empty on create: nothing to send
+  const textureOut: Record<string, unknown> = {
+    ...(form.textureEnabled !== undefined ? { texture_enabled: form.textureEnabled } : {}),
+    ...(form.textureColorToken !== undefined ? { texture_color_token: form.textureColorToken } : {}),
+  };
   let body: Record<string, unknown>;
   if (form.someday) {
     const goal = form.goalDay || localISODate();
@@ -323,6 +337,7 @@ export async function saveElement(
       note: form.note || undefined, start_at: start,
       end_at: new Date(Date.parse(start) + durMin * 60_000).toISOString(),
       ...categoryOut,
+      ...textureOut,
       ...extra,
     };
   } else {
@@ -338,6 +353,7 @@ export async function saveElement(
       is_locked: !!form.locked, all_day: !!form.allDay,
       ...(form.recurrenceRule !== undefined ? { recurrence_rule: form.recurrenceRule } : {}),
       ...categoryOut,
+      ...textureOut,
       ...extra,
     };
   }
