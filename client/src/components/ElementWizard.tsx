@@ -1,7 +1,7 @@
-import { createSignal, createEffect, createResource, onMount, onCleanup, Show, For } from 'solid-js';
+import { createSignal, createEffect, createMemo, createResource, onMount, onCleanup, Show, For } from 'solid-js';
 import {
   X, ChevronDown, ChevronLeft, ChevronRight, Plus, ListTodo, Flame, Boxes, Clock,
-  Calendar, Timer, Flag, Lock, Repeat as RepeatIcon, Link2, Square, Sparkles,
+  Calendar, Timer, Flag, Lock, Repeat as RepeatIcon, Link2, Square, Sparkles, AlertTriangle,
 } from 'lucide-solid';
 import { MicButton } from './MicButton.js';
 import {
@@ -16,6 +16,7 @@ import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { localISODate, shortDate, clockLabel, addDays, monthGridOf } from '../lib/dates.js';
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { proposeSlot } from '../lib/propose-slot.js';
+import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { api } from '../lib/api.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -400,22 +401,27 @@ export function ElementWizard() {
   // the wizard's own fields, so the populated form IS the preview and the Add button
   // is the approval (same preview→confirm doctrine as InstructBox / #387). Works
   // without Ollama (deterministic parse; `llm` truthfully marks AI enrichment).
+  //
+  // Tab-aware: the same task grammar (chrono + tags + ~Nm) drives a Time Block too —
+  // title, day, START (block start vs task_time), duration (durMin vs estimate), and
+  // direction map cleanly; priority is task-only.
   async function parseNl(raw?: string) {
     const value = (raw ?? nlText()).trim();
     if (!value || nlBusy()) return;
     setNlError(null);
     setNlBusy(true);
+    const isBlock = tab() === 'timeblock';
     try {
       const { parsed, llm } = await api.tasks.quickParse(value);
       setNlLlm(llm);
       // Hydrate the form fields — every value below is visible in the wizard for
       // review/correction before Add.
       setTitle(parsed.title);
-      if (parsed.scheduledFor) setScheduledFor(parsed.scheduledFor);
-      if (parsed.taskTime) setTaskTime(parsed.taskTime);
-      // Priority: the parse/enrichment value, else P1 (owner rule: a captured task
-      // is important until the user says otherwise — never a silent P3).
-      setPriority(parsed.priority ?? 1);
+      if (parsed.scheduledFor) { if (isBlock) setDay(parsed.scheduledFor); else setScheduledFor(parsed.scheduledFor); }
+      if (parsed.taskTime) { if (isBlock) setStart(parsed.taskTime); else setTaskTime(parsed.taskTime); }
+      // Priority: task only — the parse/enrichment value, else P1 (owner rule: a
+      // captured task is important until the user says otherwise — never a silent P3).
+      if (!isBlock) setPriority(parsed.priority ?? 1);
       // Known direction names land on the primary axis, first one wins (mirrors the
       // /tasks/quick route's splitNamesByDirection); the rest become intention chips.
       const dirNames = new Set(patternTagList().map((t) => t.name.toLowerCase()));
@@ -423,33 +429,33 @@ export function ElementWizard() {
       const others = parsed.tags.filter((t) => !dirNames.has(t.toLowerCase()));
       if (dirs.length) {
         setPrimary(dirs[0]);
-        setDurMin(patternDefaultMinutes(dirs[0]));
-        setEstimate(patternDefaultMinutes(dirs[0]));
+        const def = patternDefaultMinutes(dirs[0]);
+        if (isBlock) setDurMin(def); else { setDurMin(def); setEstimate(def); }
       }
       if (others.length || dirs.length > 1) setIntentions([...new Set([...dirs.slice(1), ...others])]);
-      // An explicit ~Nm beats the direction's default estimate (applied after).
-      if (parsed.estimatedMinutes != null) setEstimate(parsed.estimatedMinutes);
+      // An explicit ~Nm beats the direction's default duration (applied after).
+      if (parsed.estimatedMinutes != null) { if (isBlock) setDurMin(parsed.estimatedMinutes); else setEstimate(parsed.estimatedMinutes); }
       // dueAt: untouched — the Due=Start mirror keeps it on the scheduled day, which
       // matches the parse (AD1 dueAt is only ever the same timed day).
 
       // No explicit time → PROPOSE one: the first open workday gap on the target day
-      // lands in the TIME field + mini timeline for approval (drag/nudge to change,
+      // lands in the START field + mini timeline for approval (drag/nudge to change,
       // Add to accept). Preview-only — nothing is written until Add. The busy list
       // comes from the loaded blocks store, which may not cover a far-off day; the
       // server re-validates placement at create time anyway.
       if (!parsed.taskTime) {
-        const day = parsed.scheduledFor ?? scheduledFor();
-        const dur = parsed.estimatedMinutes ?? (dirs.length ? patternDefaultMinutes(dirs[0]) : estimate());
+        const targetDay = parsed.scheduledFor ?? (isBlock ? day() : scheduledFor());
+        const dur = parsed.estimatedMinutes ?? (dirs.length ? patternDefaultMinutes(dirs[0]) : (isBlock ? durMin() : estimate()));
         const busy = (blocks() ?? [])
           .filter((b) => b.block_type !== 'someday' && !b.all_day && b.status !== 'cancelled'
-            && localISODate(new Date(b.start_at)) === day)
+            && localISODate(new Date(b.start_at)) === targetDay)
           .map((b) => {
             const s = new Date(b.start_at);
             const startMin = s.getHours() * 60 + s.getMinutes();
             return { startMin, endMin: startMin + Math.max(Math.round((Date.parse(b.end_at) - Date.parse(b.start_at)) / 60000), 15) };
           });
         const now = new Date();
-        const isToday = day === localISODate();
+        const isToday = targetDay === localISODate();
         const nowMin = isToday ? now.getHours() * 60 + now.getMinutes() : null;
         const workStartMin = hhmmToMin(prefs()?.workday_start ?? '09:00') ?? 540;
         const workEndMin = hhmmToMin(prefs()?.workday_end ?? '18:00') ?? 1080;
@@ -459,13 +465,27 @@ export function ElementWizard() {
           // day isn't — still propose the next open quarter-hour before midnight, so an
           // 8pm "call mom" previews 8:15pm instead of "No time".
           (isToday ? proposeSlot({ busy, durationMin: dur, workStartMin, workEndMin: 24 * 60 - 5, nowMin }) : null);
-        if (slot) setTaskTime(slot);
+        if (slot) { if (isBlock) setStart(slot); else setTaskTime(slot); }
       }
     } catch (err) {
       setNlError((err as Error).message);
     } finally {
       setNlBusy(false);
     }
+  }
+
+  // Duplicate guard (UI-comments 2026-07-20): existing tasks whose title is close to
+  // the one being composed. Task add-mode only; a tap opens the match instead of
+  // creating a near-dup. Reactive on the title so it tracks typing + a parse.
+  const similarTasks = createMemo(() =>
+    tab() === 'task' && !isEdit() ? findSimilarTasks(title(), tasks() ?? []) : [],
+  );
+  function openSimilar(id: string) {
+    // Close then reopen on the next tick so the seed effect's closed→open edge fires
+    // and loadForEdit hydrates the tapped task — switching editTarget on an already-open
+    // modal would keep the composed add-mode values (the effect guards on !wasOpen).
+    setElementModal({ open: false });
+    queueMicrotask(() => setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id } }));
   }
   function addIntention(name: string) {
     const n = name.replace(/^#/, '').trim();
@@ -960,17 +980,19 @@ export function ElementWizard() {
               <button onClick={close} class="btn-icon ml-auto"><X size={16} /></button>
             </div>
 
-            {/* T14 (#350) — NL quick line: describe the task (typed or spoken) and the
-                parse PREVIEWS into the fields below for approval; Add creates. Task
-                add-mode only (edits keep their loaded values; blocks/routines have no
-                quick grammar). Sits between the type tabs and the title by design. */}
-            <Show when={tab() === 'task' && !isEdit()}>
+            {/* T14 (#350) — NL quick line: describe the task/block (typed or spoken) and
+                the parse PREVIEWS into the fields below for approval; Add creates. Both
+                Task and Time Block add-modes (edits keep their loaded values; routines
+                are just a name). Sits between the type tabs and the title by design. */}
+            <Show when={tab() !== 'routine' && !isEdit()}>
               <div class="mb-2">
                 <div class="relative">
                   <Plus size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                   <input
                     class="input text-sm pl-8 pr-16 w-full"
-                    placeholder="Describe it… e.g. 'pay invoice fri 3pm #finance ~20m'"
+                    placeholder={tab() === 'timeblock'
+                      ? "Describe it… e.g. 'deep work 2pm ~90m #work'"
+                      : "Describe it… e.g. 'pay invoice fri 3pm #finance ~20m'"}
                     value={nlText()}
                     disabled={nlBusy()}
                     onInput={(e) => setNlText(e.currentTarget.value)}
@@ -1229,6 +1251,28 @@ export function ElementWizard() {
                     </div>
                   </Show>
                 </div>
+
+                {/* Similar-task notice (UI-comments 2026-07-20): existing tasks whose
+                    title is close to the one being composed. Tapping one OPENS it —
+                    it does NOT create a new task — so near-duplicates get merged into
+                    the real thing. Task add-mode only. */}
+                <Show when={similarTasks().length > 0}>
+                  <div class="flex flex-col gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-2.5 py-2">
+                    <div class="flex items-center gap-1.5 text-[11px] text-amber-400">
+                      <AlertTriangle size={11} />
+                      <span>You may already have {similarTasks().length === 1 ? 'this' : 'these'} — open instead of adding?</span>
+                    </div>
+                    <For each={similarTasks()}>
+                      {(s) => (
+                        <button type="button" onClick={() => openSimilar(s.id)}
+                          class="flex items-center justify-between gap-2 text-left text-xs rounded px-1.5 py-1 hover:bg-amber-500/10 transition-colors">
+                          <span class="truncate text-foreground">{s.title}</span>
+                          <span class="text-[10px] text-muted-foreground capitalize flex-shrink-0">{s.status}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
 
                 {/* Edit scope — recurring task edits */}
                 <Show when={tab() === 'task' && isEdit() && wasRecurring()}>
