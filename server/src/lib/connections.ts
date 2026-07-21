@@ -1,6 +1,7 @@
 import { sqlite } from '../db/index.js';
 import { open, loadKek } from './crypto/index.js';
 import { logger } from './logger.js';
+import { revoke } from '../connectors/index.js';
 
 /**
  * WP7 — read-only Google connection health for the Settings "Connections" card.
@@ -162,4 +163,92 @@ function latestSyncRun(_ownerId: string, _provider: string, _account: string): S
         LIMIT 1`,
     )
     .get() as SyncRunRow | undefined;
+}
+
+/**
+ * T13 (#349) — provider-agnostic connection summary for the Settings "Connections" tab.
+ *
+ * Deliberately even leaner than ConnectionHealth: it is the raw `status` column, so it
+ * needs NO decrypt (never calls open()/loadKek()) and carries only four columns. Like
+ * ConnectionHealth it NEVER exposes token material (iv/auth_tag/ciphertext/key_version/
+ * accessToken/refreshToken) — the SELECT names only the four safe columns, and the
+ * connections-route no-leak guard asserts it.
+ */
+export interface ConnectionSummary {
+  provider: string;
+  account: string;
+  status: string;      // raw connection_tokens.status: 'active' | 'revoked' | 'error'
+  createdAt: string;   // ISO-8601 (connection_tokens.created_at)
+}
+
+/**
+ * Every connection the owner holds, across all providers, ordered by provider then
+ * account. Returns [] (never null) when the owner has none. Mode-blind ON PURPOSE:
+ * a user whose Google integration is `off` must still see (and be able to drop) the
+ * stored token — visibility of stored connections is exactly what this surface is for.
+ */
+export function listConnections(ownerId: string): ConnectionSummary[] {
+  const rows = sqlite
+    .prepare(
+      `SELECT provider, account, status, created_at
+         FROM connection_tokens
+        WHERE owner_id = ?
+        ORDER BY provider, account`,
+    )
+    .all(ownerId) as { provider: string; account: string; status: string; created_at: string }[];
+  return rows.map((r) => ({
+    provider: r.provider,
+    account: r.account,
+    status: r.status,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * Disconnect one (owner, provider, account): best-effort revoke at the provider, then
+ * hard-delete the connection_tokens row AND any pending outbound_queue rows for it (I12,
+ * so a re-connect starts clean). Returns true iff a connection_tokens row was deleted.
+ *
+ * Revoke is Google-only — it is the sole provider with a revocation endpoint (ci_memory
+ * / fixture have none and are simply dropped locally). Revoke is best-effort: a decrypt
+ * or network failure is warn-logged (redacted) and never blocks the local delete.
+ *
+ * Extracted from the former DELETE /api/oauth/google/accounts/:account handler so that
+ * handler and the generic DELETE /api/connections/:provider/:account share one path.
+ */
+export async function disconnectConnection(
+  ownerId: string,
+  provider: string,
+  account: string,
+): Promise<boolean> {
+  if (provider === 'google') {
+    // Best-effort revoke using the stored refresh token (decrypted just-in-time).
+    const tokRow = sqlite
+      .prepare(
+        'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
+      )
+      .get(ownerId, provider, account) as
+      | { iv: string; auth_tag: string; ciphertext: string }
+      | undefined;
+    if (tokRow) {
+      try {
+        const decoded = JSON.parse(
+          open({ iv: tokRow.iv, authTag: tokRow.auth_tag, ciphertext: tokRow.ciphertext }, loadKek()),
+        ) as { refreshToken?: string; accessToken?: string };
+        const token = decoded.refreshToken || decoded.accessToken;
+        if (token) await revoke(token);
+      } catch (err) {
+        logger.warn('Could not decrypt token for revoke (continuing)', { err: (err as Error).message });
+      }
+    }
+  }
+
+  const delTokens = sqlite
+    .prepare('DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?')
+    .run(ownerId, provider, account);
+  sqlite
+    .prepare('DELETE FROM outbound_queue WHERE owner_id = ? AND provider = ? AND account = ?')
+    .run(ownerId, provider, account);
+
+  return delTokens.changes > 0;
 }
