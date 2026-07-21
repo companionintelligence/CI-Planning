@@ -598,6 +598,18 @@ export const api = {
       request<{ disconnected: string }>('DELETE', `/oauth/google/accounts/${encodeURIComponent(account)}`),
   },
 
+  // T13 (#349) — provider-agnostic connection surface for the Settings Connections tab.
+  // `list` returns only { provider, account, status, createdAt } (no token material);
+  // `disconnect` works for any stored provider (Google also revokes server-side).
+  connections: {
+    list: () => request<{ connections: ConnectionSummary[] }>('GET', '/connections'),
+    disconnect: (provider: string, account: string) =>
+      request<{ disconnected: { provider: string; account: string } }>(
+        'DELETE',
+        `/connections/${encodeURIComponent(provider)}/${encodeURIComponent(account)}`,
+      ),
+  },
+
   // Phase AG — operator account management (operator-gated; 403s for everyone else).
   // Onboarding is by email invite: create mints a password-less account and sends a
   // set-your-password link; with no SMTP the link comes back for the operator to
@@ -1070,6 +1082,16 @@ export interface ConnectionHealth {
   mappedEventCount: number;
   lastSyncAt: string | null;
   lastError: string | null;
+}
+
+// T13 (#349) — provider-agnostic connection summary for the Connections tab. Mirrors
+// the server's ConnectionSummary (server/src/lib/connections.ts) EXACTLY. `status` is
+// the raw connection_tokens.status ('active' | 'revoked' | 'error'); no token material.
+export interface ConnectionSummary {
+  provider: string;
+  account: string;
+  status: string;
+  createdAt: string;
 }
 
 /** A life-priority row (life_priorities, 0127). The wizard sends the four core fields;

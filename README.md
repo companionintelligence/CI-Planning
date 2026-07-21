@@ -726,8 +726,9 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
 | GET | `/api/oauth/google/start` | Begin the standalone Google OAuth flow (Auth Code + PKCE); returns `{ url }` for the SPA to navigate to. Gated; refused under `AUTH_MODE=test`. |
 | GET | `/api/oauth/google/callback` | Public OAuth redirect target; verifies the `id_token`, exchanges the code, seals tokens into `connection_tokens`. |
-| GET | `/api/oauth/google/accounts` | List connected Google accounts (status only, no secrets). |
-| DELETE | `/api/oauth/google/accounts/:account` | Disconnect an account (revoke at Google + drop its tokens and queued pushes). |
+| DELETE | `/api/oauth/google/accounts/:account` | Disconnect a Google account (revoke at Google + drop its tokens and queued pushes). Delegates to the shared `disconnectConnection`. |
+| GET | `/api/connections` | List every connection the owner holds, any provider (`{ provider, account, status, createdAt }` — status only, no secrets). |
+| DELETE | `/api/connections/:provider/:account` | Provider-agnostic disconnect (Google also revokes); `404 connection_not_found` when the owner holds none. |
 | GET/PUT/DELETE | `/api/reflections` · `/api/reflections/today` · `/api/reflections/weekly/:pos` | Today goal + weekly goals (Phase N) |
 | POST | `/api/reflections/:kind/:pos/done` | Mark a goal done / undone (`today_goal`/`weekly_goal` only — `day_note` is 422'd here) |
 | PUT | `/api/reflections/note` | Upsert the day's note; empty body deletes (Phase O) |
