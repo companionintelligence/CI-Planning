@@ -13,9 +13,9 @@ import { normalizeRole, type OwnerRole } from './auth/scopes.js';
  *
  *   - `scheduling_prefs`   — cloned from the sentinel's baseline row (schema-drift-
  *                            proof via PRAGMA table_info, same as test createOwner).
- *   - base `tags`          — home/work/community (kind='direction') + personal/
- *                            professional/social (kind='category'), is_base=1
- *                            (mirrors 0036 + 0069-as-amended-by-0126).
+ *   - base `tags`          — home/work/community (kind='direction') + the six Balance
+ *                            dimensions health/career/relationships/growth/leisure/
+ *                            finance (kind='category'), is_base=1 (0036 + 0134).
  *                            Without direction tags, Auto silently places nothing.
  *   - `pattern_blocks`     — default availability windows per direction × day type
  *                            (mirrors 0037's DEFAULTS). Auto's direction-window pass
@@ -64,11 +64,16 @@ const DEFAULT_PATTERN_BLOCKS: Record<string, Record<string, readonly (readonly [
     community: [['08:00', '22:00']],
   },
 };
-// name → per-owner category tag_prefs color token (0126's base set).
-const BASE_CATEGORY_TAGS: readonly (readonly [string, string])[] = [
-  ['personal', 'chart-5'],
-  ['professional', 'chart-2'],
-  ['social', 'chart-3'],
+// 0134: base categories now MATCH the Balance view's six Core Dimensions (unified —
+// a Category is a tracked Balance dimension by name). [name, color_token, default_minutes];
+// colours are the nearest CI-Hub tag hue to Balance's swatches.
+const BASE_CATEGORY_TAGS: readonly (readonly [string, string, number])[] = [
+  ['health', 'tag-1', 45],         // red
+  ['career', 'tag-7', 60],         // blue
+  ['relationships', 'tag-11', 60], // pink
+  ['growth', 'tag-9', 45],         // purple
+  ['leisure', 'tag-5', 60],        // green (Jade)
+  ['finance', 'tag-2', 30],        // amber
 ];
 // name → icon_shape (0013); Community additionally carries catch_all=1 (0054).
 const BUILTIN_PATTERN_TYPES: readonly (readonly [string, string, number])[] = [
@@ -151,12 +156,12 @@ export function provisionOwner(fields: ProvisionOwnerFields): string {
 
     const insCatPref = sqlite.prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
-       VALUES (?, ?, ?, 'category', ?, 60)`,
+       VALUES (?, ?, ?, 'category', ?, ?)`,
     );
-    for (const [name, colorToken] of BASE_CATEGORY_TAGS) {
+    for (const [name, colorToken, minutes] of BASE_CATEGORY_TAGS) {
       const tagId = newId();
       insTag.run(tagId, id, name, 'category');
-      insCatPref.run(newId(), id, tagId, colorToken);
+      insCatPref.run(newId(), id, tagId, colorToken, minutes);
     }
 
     // day_types + day-of-week mapping (0068's per-owner builtins).

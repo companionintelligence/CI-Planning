@@ -436,9 +436,47 @@ export function directionOptoutsOf(categoryTagId: string): string[] {
 // it — callers pass an owner-validated category id (routes/tags.ts 404s a foreign one).
 const catRefByBlock = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE category_id = ? LIMIT 1`);
 const catRefByMember = sqlite.prepare(`SELECT 1 FROM tag_categories WHERE category_tag_id = ? LIMIT 1`);
-/** True if a category tag is assigned to any time block or has any member intention. */
+const catRefByEntity = sqlite.prepare(`SELECT 1 FROM entity_categories WHERE category_tag_id = ? LIMIT 1`);
+/** True if a category tag is assigned to any time block/task or has any member intention. */
 export function categoryIsReferenced(categoryTagId: string): boolean {
-  return !!catRefByBlock.get(categoryTagId) || !!catRefByMember.get(categoryTagId);
+  return !!catRefByBlock.get(categoryTagId) || !!catRefByMember.get(categoryTagId) || !!catRefByEntity.get(categoryTagId);
+}
+
+// ── entity_categories (0134): 1–3 categories per task/time_block, position-ordered ──
+// A second multi-select axis (like intentions), kept OUT of entity_tags. `position`
+// (0-based, capped at 3 rows) preserves the user's category order → the even-stripe
+// texture order. Owner-scoping rides on the caller: it passes category ids already
+// validated against the current owner (a foreign id simply never matches on read).
+
+const delEntityCats = sqlite.prepare(`DELETE FROM entity_categories WHERE entity_kind = ? AND entity_id = ?`);
+const insEntityCat = sqlite.prepare(
+  `INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) VALUES (?, ?, ?, ?)`,
+);
+/** Replace an entity's category set (max 3, order preserved). Empty array clears it. */
+export function setEntityCategories(entityKind: 'task' | 'time_block', entityId: string, categoryTagIds: string[]): void {
+  delEntityCats.run(entityKind, entityId);
+  const seen = new Set<string>();
+  let pos = 0;
+  for (const id of categoryTagIds) {
+    if (pos >= 3 || seen.has(id)) continue;
+    seen.add(id);
+    insEntityCat.run(entityKind, entityId, id, pos++);
+  }
+}
+
+const entityCatNamesStmt = sqlite.prepare(
+  `SELECT c.name AS name FROM entity_categories ec
+     JOIN tags c ON c.id = ec.category_tag_id
+    WHERE ec.entity_kind = ? AND ec.entity_id = ? ORDER BY ec.position, c.name`,
+);
+/** An entity's category names, in position order (empty = none). */
+export function entityCategoryNames(entityKind: 'task' | 'time_block', entityId: string): string[] {
+  return (entityCatNamesStmt.all(entityKind, entityId) as { name: string }[]).map((r) => r.name);
+}
+
+/** Resolve category NAMES to the owner's category-tag ids (skips unknown / other owners'). */
+export function categoryIdsForOwner(names: string[], owner: string): string[] {
+  return categoryIds(names, owner);
 }
 
 // ── Tag CRUD orchestration (extracted from routes/tags.ts so REST + GraphQL share ONE
