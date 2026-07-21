@@ -1,5 +1,31 @@
 # Handoff — 2026-07-20 · Categories⇄Balance feature + UI-comment backlog
 
+> ## ✅ CLOSED OUT (2026-07-21)
+>
+> Everything below is **delivered**; this doc is kept as the historical plan. Where the
+> plan and the shipped code disagree, the code wins. Delivery map:
+>
+> - **Independent UI backlog 1–2 + backlog-3 part 1** (Jobs Run-all · Schedule Day fix —
+>   which was a *misleading-success* bug, not an unwired button; the repoint also fixed
+>   `POST /api/auto/fill` ignoring `body.date` · Focus FAB · Plan-my-week → Calendar):
+>   **#413** (merged).
+> - **Phase B (capture)** — migration `0135_categories_capture` (category backfill +
+>   per-element `texture_enabled`/`texture_color_token` on tasks AND time_blocks),
+>   `entity_categories` write/read wiring (blocks DERIVE own → task's live categories),
+>   1–3 picker on both wizard tabs, quick-add category classifier: **#414** (merged).
+> - **Phase C (renderer)** — `elementTextureStyle` (opt-out → override → even category
+>   stripes in position order → legacy motif), opacity 0.06→0.03, un-gated to all
+>   tasks/blocks; TaskCards show categories instead of intention secondary tags:
+>   **#415** → delivered to main via **#417** (a stacked-merge catch-up: #414 had merged
+>   an earlier branch snapshot).
+> - **Phase D (polish)** — Balance Focus-Area "N open" → related-tasks modal (pure
+>   client-side join), functional Calendar category overlay (the old category row was
+>   inert) + palette toggle + intention-row retirement, Tags per-chip Category selects:
+>   **#416** → main via **#417**.
+> - **Backlog 3 leftovers** (Today-style Focus header card, day-scoped + restyled
+>   reminder picker): **#418**. `feat/tasks-search` rebased → **#419**.
+> - Migration head is now **`0135`**; next free slot **`0136`**.
+
 > Read this first. State of the world at the end of the 2026-07-20 session. Do **not**
 > continue building the Categories feature past Phase A without reading the "Decisions"
 > box — the owner locked several choices.
