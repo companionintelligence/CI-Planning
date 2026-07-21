@@ -237,6 +237,12 @@ export function purgeOwnerData(ownerId: string): void {
          UNION SELECT id FROM patterns WHERE owner_id = ?
          UNION SELECT id FROM time_blocks WHERE owner_id = ?
        )`, ownerId, ownerId, ownerId);
+  // entity_categories (0134) likewise — explicit like everything here, though the
+  // tags FK cascade below would also reach it (category_tag_id ON DELETE CASCADE).
+  run(`DELETE FROM entity_categories WHERE entity_id IN (
+         SELECT id FROM tasks WHERE owner_id = ?
+         UNION SELECT id FROM time_blocks WHERE owner_id = ?
+       )`, ownerId, ownerId);
   run('DELETE FROM time_entries WHERE owner_id = ?', ownerId);
   run('DELETE FROM task_dependencies WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)', ownerId);
   run('DELETE FROM pattern_tasks WHERE task_id IN (SELECT id FROM tasks WHERE owner_id = ?)', ownerId);

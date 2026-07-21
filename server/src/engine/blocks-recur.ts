@@ -113,6 +113,13 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
        SELECT 'time_block', ?, tag_id, level FROM entity_tags
         WHERE entity_kind = 'time_block' AND entity_id = ?`,
   );
+  // Phase B (0135): carry the category axis too (position preserved — stripe order),
+  // so a recurring category Plan's instances keep filling by category.
+  const copyCats = sqlite.prepare(
+    `INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position)
+       SELECT 'time_block', ?, category_tag_id, position FROM entity_categories
+        WHERE entity_kind = 'time_block' AND entity_id = ?`,
+  );
 
   let blocksCreated = 0;
   const run = sqlite.transaction(() => {
@@ -142,6 +149,7 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
         if (row) {
           blocksCreated++;
           copyTags.run(row.id, t.id);
+          copyCats.run(row.id, t.id);
         }
       }
     }

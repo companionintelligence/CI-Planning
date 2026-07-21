@@ -28,6 +28,7 @@ const EXPECTED_COLS = [
   'parent_block_id', 'recurrence_rule', 'recurrence_dtstart', 'recurrence_parent_id',
   'occurrence_date', 'auto_run_id', 'last_moved_at', 'category_id', 'color_token',
   'recurrence_exdates', 'version', 'updated_at', 'field_ts',
+  'texture_enabled', 'texture_color_token', // 0135 (Categories Phase B)
 ];
 
 const EXPECTED_INDEXES = [

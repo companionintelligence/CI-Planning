@@ -117,7 +117,7 @@ describe('category-Plan fill (0069)', () => {
     expect(childOf(tagPlan.id).map((c) => c.title)).not.toContain('Kids');
   });
 
-  it('recurrence: a recurring category template propagates category_id + frozen color_token to instances', async () => {
+  it('recurrence: a recurring category template propagates its categories + frozen color_token to instances', async () => {
     const family = makeCategory('family');
     await api(srv.url, `/api/category-prefs/${family}`, { method: 'PUT', json: { color_token: 'chart-1' } });
     // A near-future recurring category template. Must be WITHIN the recurrence
@@ -134,10 +134,17 @@ describe('category-Plan fill (0069)', () => {
       },
     });
     ensureRecurringBlocksForRange(OWNER, `${future}T00:00:00.000Z`, `${future}T23:59:59.999Z`);
+    // Phase B (0135): the category axis rides entity_categories (copied template →
+    // instance, position preserved); color_token is still the frozen column stamp.
     const inst = sqlite
-      .prepare(`SELECT category_id, color_token FROM time_blocks WHERE recurrence_parent_id IS NOT NULL AND category_id IS NOT NULL`)
-      .get() as { category_id: string; color_token: string } | undefined;
-    expect(inst?.category_id).toBe(family);
+      .prepare(
+        `SELECT tb.id, tb.color_token, ec.category_tag_id
+           FROM time_blocks tb
+           JOIN entity_categories ec ON ec.entity_kind = 'time_block' AND ec.entity_id = tb.id
+          WHERE tb.recurrence_parent_id IS NOT NULL`,
+      )
+      .get() as { id: string; color_token: string; category_tag_id: string } | undefined;
+    expect(inst?.category_tag_id).toBe(family);
     expect(inst?.color_token).toBe('chart-1'); // frozen stamp copied verbatim
   });
 });

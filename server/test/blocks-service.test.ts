@@ -88,7 +88,10 @@ describe('createBlock', () => {
     // still fires even with a category present.
     const created = unwrap(await createBlock(OWNER, { title: 'Both', tag: 'work', category_id: catId, start_at: at('09:00'), end_at: at('10:00') }));
     expect(created.block.tag).toBe('work');
-    expect(created.block.categoryId).toBe(catId);
+    // Phase B (0135): the legacy category_id bridges into entity_categories; the
+    // retired column stays unwritten and the api carries `categories` (names).
+    expect(created.block.categoryId).toBeNull();
+    expect((created.api as { categories: string[] }).categories).toEqual(['cat']);
     const lvl1 = sqlite
       .prepare(`SELECT COUNT(*) AS n FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_kind = 'time_block' AND et.entity_id = ? AND et.level = 1 AND t.name = 'work'`)
       .get(created.block.id) as { n: number };
@@ -98,13 +101,13 @@ describe('createBlock', () => {
     const tagFirst = unwrap(await createBlock(OWNER, { title: 'Tag first', tag: 'work', start_at: at('11:00'), end_at: at('12:00') }));
     const addedCat = unwrap(await updateBlock(OWNER, tagFirst.block.id, { category_id: catId }));
     expect(addedCat.block.tag).toBe('work');
-    expect(addedCat.block.categoryId).toBe(catId);
+    expect((addedCat.api as { categories: string[] }).categories).toEqual(['cat']);
 
-    // … and a category block may later ADD a tag.
+    // … and a category block may later ADD a tag (a category-less PATCH preserves it).
     const catFirst = unwrap(await createBlock(OWNER, { title: 'Cat first', category_id: catId, start_at: at('13:00'), end_at: at('14:00') }));
     const addedTag = unwrap(await updateBlock(OWNER, catFirst.block.id, { tag: 'work' }));
     expect(addedTag.block.tag).toBe('work');
-    expect(addedTag.block.categoryId).toBe(catId);
+    expect((addedTag.api as { categories: string[] }).categories).toEqual(['cat']);
   });
 
   it('AF-9 wizard shape: tag + secondary_tags + category_id together — level 1 = the single primary, level 2 = secondaries, all three read back', async () => {
@@ -116,7 +119,7 @@ describe('createBlock', () => {
       start_at: at('09:00'), end_at: at('10:00'),
     }));
     expect(res.block.tag).toBe('work');
-    expect(res.block.categoryId).toBe(catId);
+    expect((res.api as { categories: string[] }).categories).toEqual(['cat']); // Phase B bridge
     expect([...res.api.secondary_tags].sort()).toEqual(['deep', 'errand']);
 
     const rows = sqlite

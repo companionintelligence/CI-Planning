@@ -77,6 +77,10 @@ export const tasks = sqliteTable('tasks', {
   version: integer('version').notNull().default(1),
   updatedAt: text('updated_at'),
   fieldTs: text('field_ts'),
+  // 0135 (Categories Phase B): per-element striped-texture override. enabled=1 shows the
+  // category-derived texture; color_token (null ⇒ derive from the element's categories).
+  textureEnabled: integer('texture_enabled', { mode: 'boolean' }).notNull().default(true),
+  textureColorToken: text('texture_color_token'),
 });
 
 // Dependency edges: task_id is blocked until depends_on_id is done.
@@ -165,6 +169,9 @@ export const timeBlocks = sqliteTable('time_blocks', {
   version: integer('version').notNull().default(1),
   updatedAt: text('updated_at'),
   fieldTs: text('field_ts'),
+  // 0135 (Categories Phase B): per-element striped-texture override, same as tasks.
+  textureEnabled: integer('texture_enabled', { mode: 'boolean' }).notNull().default(true),
+  textureColorToken: text('texture_color_token'),
 });
 
 // Reusable Time-Block templates (Phase G): a saved named/tagged container with a
