@@ -30,8 +30,9 @@ export function PlanWeekReviewBranch(props: BranchProps) {
 
       <Show when={!review.loading} fallback={<p class="text-xs text-muted-foreground">Loading…</p>}>
         {/* `review.error` must be checked BEFORE reading review(): Solid re-throws the
-            error on access, so testing review() first would escape this fallback entirely
-            and blow up the render (the app mounts no ErrorBoundary). */}
+            error on access, so testing review() first would escape this inline fallback
+            and surface as the root ErrorBoundary's generic panel instead of this
+            in-context message. */}
         <Show
           when={!review.error}
           fallback={<p class="text-xs text-muted-foreground">Couldn't load the review.</p>}
