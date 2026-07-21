@@ -828,6 +828,16 @@ exports[`behavior baseline — schema shape > preserves every table and column n
     "columns": [
       "entity_kind",
       "entity_id",
+      "category_tag_id",
+      "position",
+      "created_at",
+    ],
+    "table": "entity_categories",
+  },
+  {
+    "columns": [
+      "entity_kind",
+      "entity_id",
       "tag_id",
       "level",
       "created_at",

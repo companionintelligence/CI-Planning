@@ -364,12 +364,14 @@ describe('GET /api/auth/ciportal/callback — provisioning & session', () => {
     const tags = sqlite
       .prepare(`SELECT name, kind, is_base FROM tags WHERE owner_id = ? ORDER BY kind, name`)
       .all(owner.id) as { name: string; kind: string; is_base: number }[];
+    // 0134: base categories are the six Balance dimensions (ordered by kind, then name).
     expect(tags.map((t) => `${t.kind}:${t.name}`)).toEqual([
-      'category:personal', 'category:professional', 'category:social',
+      'category:career', 'category:finance', 'category:growth',
+      'category:health', 'category:leisure', 'category:relationships',
       'direction:community', 'direction:home', 'direction:work',
     ]);
     expect(tags.every((t) => t.is_base === 1)).toBe(true);
-    expect((sqlite.prepare(`SELECT COUNT(*) n FROM tag_prefs WHERE owner_id = ? AND kind='category'`).get(owner.id) as { n: number }).n).toBe(3);
+    expect((sqlite.prepare(`SELECT COUNT(*) n FROM tag_prefs WHERE owner_id = ? AND kind='category'`).get(owner.id) as { n: number }).n).toBe(6);
     expect(sqlite.prepare(`SELECT key FROM day_types WHERE owner_id = ? ORDER BY key`).all(owner.id)).toEqual([{ key: 'weekend' }, { key: 'workday' }]);
     expect((sqlite.prepare(`SELECT COUNT(*) n FROM day_of_week_map WHERE owner_id = ?`).get(owner.id) as { n: number }).n).toBe(7);
     const pts = sqlite.prepare(`SELECT name, catch_all FROM pattern_types WHERE owner_id = ? ORDER BY name`).all(owner.id) as { name: string; catch_all: number }[];

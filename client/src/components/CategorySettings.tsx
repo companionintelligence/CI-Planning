@@ -1,4 +1,5 @@
 import { For, Show, createSignal } from 'solid-js';
+import { CATEGORIES_EDITABLE } from '../lib/flags.js';
 import { Check, X, Pencil, Trash2, Plus, Hash } from 'lucide-solid';
 import { tags, refetchTags, categoryPrefs, refetchCategoryPrefs, showToast } from '../stores/index.js';
 import { api, type Tag } from '../lib/api.js';
@@ -166,14 +167,21 @@ export function CategorySettings() {
         }}
       </For>
 
-      {/* Add a category */}
-      <form onSubmit={addCategory} class="flex gap-2 mt-1">
-        <div class="relative flex-1">
-          <Hash size={12} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <input class="input text-sm pl-7" placeholder="New category…" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)} />
-        </div>
-        <button type="submit" disabled={saving() || !newName().trim()} class="btn-secondary text-xs px-2.5 py-1 disabled:opacity-50"><Plus size={12} /> Add</button>
-      </form>
+      {/* Add a category — gated OFF this delivery (0134): categories == the fixed six
+          Balance dimensions; adding one means adding a Balance dimension (a later phase). */}
+      <Show when={CATEGORIES_EDITABLE} fallback={
+        <p class="text-[11px] text-muted-foreground mt-1">
+          Categories mirror your Balance dimensions — rename or recolour them here; adding new ones is coming soon.
+        </p>
+      }>
+        <form onSubmit={addCategory} class="flex gap-2 mt-1">
+          <div class="relative flex-1">
+            <Hash size={12} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input class="input text-sm pl-7" placeholder="New category…" value={newName()} onInput={(e) => setNewName(e.currentTarget.value)} />
+          </div>
+          <button type="submit" disabled={saving() || !newName().trim()} class="btn-secondary text-xs px-2.5 py-1 disabled:opacity-50"><Plus size={12} /> Add</button>
+        </form>
+      </Show>
     </div>
   );
 }
