@@ -9,7 +9,7 @@ import { stampRow } from '../sync/apply.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
 import { placeTasksInBlock, type PlaceTasksResult } from '../engine/blocks-place.js';
-import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels } from './tags.js';
+import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels, setEntityCategories, categoryIdsForOwner, entityCategoryNames, entityCategoryNamesByIds } from './tags.js';
 import { getCategoryPrefs } from './category-prefs.js';
 import { syncTaskFromBlock, mirrorBlockStatusToTask, applyTaskPlacementStatus, revertTaskPlacementStatus, TERMINAL_BLOCK_STATUS_SQL } from './block-task-sync.js';
 
@@ -111,14 +111,33 @@ async function blockRowsForQuery(ownerId: string, query: ListBlocksQuery): Promi
   return fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
 }
 
+/** A block's effective categories: its OWN entity_categories rows, else (task-backed,
+ *  none of its own) its task's — the single-row twin of enrichApi's batched derive.
+ *  Exported for the GraphQL TimeBlockType.categories resolver (same rule, one home). */
+export function blockCategoryNames(blockId: string, taskId: string | null): string[] {
+  const own = entityCategoryNames('time_block', blockId);
+  if (own.length || !taskId) return own;
+  return entityCategoryNames('task', taskId);
+}
+
 /** Serialize + enrich raw block rows into the snake_case API dicts (secondary tags +
- *  the "why now" rationale). The shared tail of listBlocks/fetchBlocksForRange. */
+ *  the "why now" rationale + categories). The shared tail of listBlocks/fetchBlocksForRange. */
 function enrichApi(rows: BlockRow[]): Record<string, unknown>[] {
-  return toApiList(rows).map((b) => ({
-    ...b,
-    secondary_tags: secondaryTagsOf(b.id as string),
-    rationale: rationaleOf(b.id as string),
-  }));
+  // Phase B: batched category attach (no N+1), with the derive rule: a block's OWN
+  // entity_categories rows win; a task-backed block with none inherits its task's LIVE
+  // categories. Auto-placed blocks therefore never copy category rows — they derive,
+  // so re-categorizing a task re-stripes its blocks with zero engine writes.
+  const ownCats = entityCategoryNamesByIds('time_block', rows.map((r) => r.id));
+  const taskCats = entityCategoryNamesByIds('task', [...new Set(rows.map((r) => r.taskId).filter((t): t is string => t != null))]);
+  return toApiList(rows).map((b) => {
+    const own = ownCats.get(b.id as string);
+    return {
+      ...b,
+      secondary_tags: secondaryTagsOf(b.id as string),
+      rationale: rationaleOf(b.id as string),
+      categories: (own?.length ? own : taskCats.get(b.task_id as string)) ?? [],
+    };
+  });
 }
 
 /**
@@ -223,8 +242,16 @@ export type CreateBlockInput = {
   parent_block_id?: string | null;
   recurrence_rule?: string;
   recurrence_dtstart?: string;
+  /** LEGACY single category (a tag id). Bridged into `entity_categories` (position 0);
+   *  the `time_blocks.category_id` column itself is no longer written (0135). */
   category_id?: string;
   color_token?: string;
+  // Phase B (0134/0135): 1–3 category NAMES (array order = position = stripe order).
+  // Canonical going forward; wins over the legacy `category_id` when both are sent.
+  categories?: string[];
+  // Phase B (0135): per-element texture override (omitted ⇒ column defaults).
+  texture_enabled?: boolean;
+  texture_color_token?: string | null;
 };
 
 export type CreateBlockResult =
@@ -246,13 +273,21 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
   // split is a convention, not a DB CHECK). color_token remains the forward-only
   // stamp copied from category_prefs at create-time; when both are set, the
   // category-frozen color wins.
+  //
+  // Phase B (0135): categories live in `entity_categories` (1–3, position-ordered);
+  // the `time_blocks.category_id` column is retired from the write path. The canonical
+  // input is `categories` (names); the legacy single `category_id` (an id) bridges to
+  // a one-element set with its original validation (invalid_category) intact.
   const hasCat = input.category_id != null && input.category_id !== '';
   if (hasCat) {
     const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
     if (!ok) return { ok: false, error: 'invalid_category' };
   }
-  const colorToken = hasCat
-    ? (input.color_token ?? getCategoryPrefs(ownerId)[input.category_id!]?.color_token ?? 'primary')
+  const categoryIds = input.categories !== undefined
+    ? categoryIdsForOwner(input.categories, ownerId)
+    : hasCat ? [input.category_id!] : undefined;
+  const colorToken = categoryIds?.length
+    ? (input.color_token ?? getCategoryPrefs(ownerId)[categoryIds[0]]?.color_token ?? 'primary')
     : undefined;
 
   // Attach-at-create (PR-C): validated BEFORE the insert, so a bad parent yields a clean
@@ -271,8 +306,10 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
       parentBlockId: input.parent_block_id ?? null,
       blockKind: input.block_kind ?? 'task',
       tag: input.tag,
-      categoryId: input.category_id,
+      // category_id is NOT written (0135 retired it); categories go to entity_categories below.
       colorToken,
+      ...(input.texture_enabled !== undefined ? { textureEnabled: input.texture_enabled } : {}),
+      ...(input.texture_color_token !== undefined ? { textureColorToken: input.texture_color_token } : {}),
       blockType: input.block_type,
       goalStartDate: input.goal_start_date,
       durationMinutes: input.duration_minutes,
@@ -296,7 +333,11 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
     applyBlockTagLevels(ownerId, block.id, { tag: input.tag, secondary: input.secondary_tags });
   }
 
+  // Phase B: category axis (entity_categories, position-ordered).
+  if (categoryIds !== undefined) setEntityCategories('time_block', block.id, categoryIds);
+
   const out = toBlockApi(block, secondaryTagsOf(block.id));
+  out.categories = blockCategoryNames(block.id, block.taskId);
 
   // REQ2: a placed task IS scheduled — on create (not just PATCH), mirror the
   // placement onto the task's scheduling-intent fields and flip open → scheduled.
@@ -329,7 +370,13 @@ export type UpdateBlockInput = Partial<{
   secondary_tags: string[];
   recurrence_rule: string | null;
   recurrence_dtstart: string | null;
+  /** LEGACY single category (a tag id; null clears). Bridged into `entity_categories`. */
   category_id: string | null;
+  // Phase B: category NAMES. `undefined` = don't touch; `[]` = clear (mirrors tags).
+  categories: string[];
+  // Phase B (0135): per-element texture override columns.
+  texture_enabled: boolean;
+  texture_color_token: string | null;
 }>;
 
 export type UpdateBlockResult =
@@ -365,11 +412,10 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // Ownership FIRST: a cross-owner (or absent) id must resolve to `not_found` before any
   // guard below can run — otherwise the I10 guard leaks a foreign block's existence/state
   // (a title/time edit on someone else's inbound-mirrored block would 422 `inbound_readonly`
-  // instead of 404, an existence oracle across owners). This SELECT also fetches
-  // category_id for the color re-stamp check below.
-  const existing = sqlite.prepare(`SELECT category_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-    .get(id, ownerId) as { category_id: string | null } | undefined;
-  if (!existing) return { ok: false, error: 'not_found' };
+  // instead of 404, an existence oracle across owners).
+  if (!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, ownerId)) {
+    return { ok: false, error: 'not_found' };
+  }
 
   // I10: inbound calendar mirrors are authoritative — the owner may not directly
   // edit their title or time. The next sync cycle will overwrite any local change
@@ -415,16 +461,25 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   if (input.all_day !== undefined) update.allDay = input.all_day;
   // Attach to / detach from a Plan (PR-C): a number attaches, null detaches.
   if (input.parent_block_id !== undefined) update.parentBlockId = input.parent_block_id;
-  // 0069: re-stamp the frozen color ONLY when the category actually changes (a
-  // deliberate re-assignment); detaching (null) clears it, a no-op patch keeps it.
-  if (input.category_id !== undefined) {
-    update.categoryId = input.category_id;
-    if (input.category_id !== existing.category_id) {
-      update.colorToken = input.category_id != null && input.category_id !== ''
-        ? (getCategoryPrefs(ownerId)[input.category_id]?.color_token ?? 'primary')
-        : null;
-    }
+  // Phase B (0135): the category write path is entity_categories. The canonical input
+  // is `categories` (names); the legacy `category_id` (id / null-to-clear) bridges to a
+  // one-element set. Any category-bearing PATCH also NULLs the retired column so the
+  // two stores can never diverge, and re-stamps the frozen colour from the FIRST
+  // category (an explicit category edit is a deliberate re-assignment — the 0069
+  // freeze still protects blocks from category re-colours, not from their own edits).
+  const categoryIds = input.categories !== undefined
+    ? categoryIdsForOwner(input.categories, ownerId)
+    : input.category_id !== undefined
+      ? (input.category_id != null && input.category_id !== '' ? [input.category_id] : [])
+      : undefined;
+  if (categoryIds !== undefined) {
+    update.categoryId = null; // retired column — cleared on touch (0135 backfilled it)
+    update.colorToken = categoryIds.length
+      ? (getCategoryPrefs(ownerId)[categoryIds[0]]?.color_token ?? 'primary')
+      : null;
   }
+  if (input.texture_enabled !== undefined) update.textureEnabled = input.texture_enabled;
+  if (input.texture_color_token !== undefined) update.textureColorToken = input.texture_color_token;
   // CON-4 series edit: changing the rule on a template re-anchors + re-materializes.
   if (input.recurrence_rule !== undefined) {
     update.recurrenceRule = input.recurrence_rule;
@@ -449,6 +504,9 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
     applyBlockTagLevels(ownerId, id, { tag: input.tag, secondary: input.secondary_tags });
   }
 
+  // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
+  if (categoryIds !== undefined) setEntityCategories('time_block', id, categoryIds);
+
   // CON-4 series edit: a rule (or anchor) change drops future-or-today instances
   // of this template + their tag rows; GET re-materializes under the new rule.
   if (input.recurrence_rule !== undefined || input.recurrence_dtstart !== undefined) {
@@ -456,11 +514,12 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
     for (const inst of sqlite
       .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND occurrence_date >= ? AND owner_id = ? RETURNING id`)
       .all(id, today, ownerId) as { id: string }[]) {
-      removeEntityTags('time_block', inst.id);
+      removeEntityTags('time_block', inst.id); // also purges entity_categories (Phase B)
     }
   }
 
   const out = toBlockApi(block, secondaryTagsOf(id));
+  out.categories = blockCategoryNames(id, block.taskId);
 
   // REQ2: a placed task IS scheduled — keep the linked task's scheduling-intent
   // fields (and its done-state) in lockstep with the block. A time change mirrors

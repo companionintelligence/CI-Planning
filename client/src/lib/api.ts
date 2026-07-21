@@ -33,6 +33,9 @@ export interface Task {
   completed_at?: string;
   tags: string[];                 // primary tags (entity_tags level 1) — incl. the home/work/community direction
   secondary_tags?: string[];      // Phase 5: secondary tags (entity_tags level>1)
+  categories?: string[];          // Phase B (0134): 1–3 category names, position order (stripe order)
+  texture_enabled?: boolean;      // Phase B (0135): per-element texture toggle (default on)
+  texture_color_token?: string | null; // Phase B (0135): colour override; null ⇒ derive from categories
   depends_on?: string[];
   blocked?: boolean;
   // Recurrence (Phase E): a template has recurrence_rule set + no parent; an
@@ -61,6 +64,10 @@ export interface TaskInput {
   owner_id?: string;
   tags?: string[];
   secondary_tags?: string[];
+  /** Phase B: 1–3 category names (order = stripe order). undefined preserves; [] clears. */
+  categories?: string[];
+  texture_enabled?: boolean;
+  texture_color_token?: string | null;
   depends_on?: string[];
   recurrence_rule?: string | null;
   is_habit?: boolean;
@@ -82,6 +89,7 @@ export interface ParsedQuick {
   scheduledFor?: string;
   taskTime?: string;
   tags: string[];
+  categories?: string[]; // Phase B: classifier's 1–3 category names (best fit first)
   estimatedMinutes?: number;
   priority?: number;
 }
@@ -704,7 +712,10 @@ export interface Block {
   duration_minutes?: number | null; // concept duration (no start/end semantics)
   note?: string | null; // optional saved note on a Plan/Concept container (0021)
   parent_block_id?: string | null; // the containing Plan for a member task block (PR-C / 0023)
-  category_id?: string | null; // Time Block Category (tags.kind='category'); direction implied by the category (0069)
+  category_id?: string | null; // LEGACY single category column — retired from the write path (0135); read `categories`
+  categories?: string[]; // Phase B: EFFECTIVE category names (own rows, else the task's), position order
+  texture_enabled?: boolean; // Phase B (0135): per-element texture toggle (default on)
+  texture_color_token?: string | null; // Phase B (0135): colour override; null ⇒ derive from categories
   color_token?: string | null; // frozen category color stamped at create-time — forward-only (0069)
   rationale?: string | null; // §A3 "why now" — joined from daily_plan via block_id (AI-authored placements only)
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;

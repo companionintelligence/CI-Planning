@@ -3,14 +3,14 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from '../routes/sse.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
 import { getTask } from '../services/tasks.js';
-import { getOwnedTag, entityTagsFull } from '../services/tags.js';
+import { getOwnedTag, entityTagsFull, entityCategoryIds } from '../services/tags.js';
 import {
   createBlock as createBlockService,
   updateBlock as updateBlockService,
   deleteBlock as deleteBlockService,
   moveBlockGroup as moveBlockGroupService,
   promoteBlockToScheduled as promoteBlockToScheduledService,
-  getBlock, listBlockPage,
+  getBlock, listBlockPage, blockCategoryNames,
   type BlockRow, type CreateBlockInput as SvcCreateInput, type UpdateBlockInput as SvcUpdateInput,
 } from '../services/blocks.js';
 import { toNode } from './tag-resolvers.js';
@@ -55,7 +55,10 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
     recurrence_rule: input.recurrenceRule == null ? undefined : (input.recurrenceRule as string),
     recurrence_dtstart: input.recurrenceDtstart == null ? undefined : (input.recurrenceDtstart as string),
     category_id: input.categoryId == null ? undefined : (input.categoryId as string),
+    categories: input.categories == null ? undefined : (input.categories as string[]),
     color_token: input.colorToken == null ? undefined : (input.colorToken as string),
+    texture_enabled: input.textureEnabled == null ? undefined : (input.textureEnabled as boolean),
+    texture_color_token: input.textureColorToken == null ? undefined : (input.textureColorToken as string),
   };
 }
 
@@ -105,6 +108,14 @@ function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
   if ('recurrenceRule' in input) out.recurrence_rule = input.recurrenceRule as string | null;
   if ('recurrenceDtstart' in input) out.recurrence_dtstart = input.recurrenceDtstart as string | null;
   if ('categoryId' in input) out.category_id = input.categoryId as string | null;
+  // Phase B: categories NAMES (absent preserves; [] clears). null is treated as absent —
+  // clearing is expressed by [], matching the REST body contract.
+  if ('categories' in input && input.categories != null) out.categories = input.categories as string[];
+  if ('textureEnabled' in input) {
+    if (input.textureEnabled === null) throw new GraphQLError('textureEnabled cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.texture_enabled = input.textureEnabled as boolean;
+  }
+  if ('textureColorToken' in input) out.texture_color_token = input.textureColorToken as string | null;
   return out;
 }
 
@@ -215,11 +226,19 @@ export const blockResolvers = {
     status: (b: BlockRow) => b.status ?? 'planned',
     task: async (b: BlockRow) => (b.taskId ? (await getTask(currentOwnerId(), b.taskId)) ?? null : null),
     parentBlock: async (b: BlockRow) => (b.parentBlockId ? (await getBlock(currentOwnerId(), b.parentBlockId)) ?? null : null),
+    // Phase B: first EFFECTIVE category — own entity_categories rows, else the task's,
+    // else the legacy category_id column (pre-0135 rows the write path hasn't touched).
     category: (b: BlockRow) => {
-      if (!b.categoryId) return null;
-      const row = getOwnedTag(currentOwnerId(), b.categoryId);
+      const id = entityCategoryIds('time_block', b.id)[0]
+        ?? (b.taskId ? entityCategoryIds('task', b.taskId)[0] : undefined)
+        ?? b.categoryId;
+      if (!id) return null;
+      const row = getOwnedTag(currentOwnerId(), id);
       return row ? toNode(row) : null;
     },
+    // Phase B: effective category names (same derive rule as REST's `categories`).
+    categories: (b: BlockRow) => blockCategoryNames(b.id, b.taskId),
+    textureEnabled: (b: BlockRow) => b.textureEnabled ?? true,
     // W4a Taggable forward edge. Owner-safe: this resolver only runs on an
     // already-owner-scoped block (timeBlock/timeBlocks/parentBlock all go through
     // getBlock/listBlockPage), so its entity_tags are the owner's. id/label/taggedAt map

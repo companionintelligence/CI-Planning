@@ -90,8 +90,14 @@ export function syncEntityTags(kind: EntityKind, entityId: string, names: string
  * Remove all of an entity's tag associations — the cascade primitive every HARD
  * delete path must call (soft deletes leave the entity row, so they don't).
  */
+const delEntityCatsCleanup = sqlite.prepare(`DELETE FROM entity_categories WHERE entity_kind = ? AND entity_id = ?`);
 export function removeEntityTags(kind: EntityKind, entityId: string): void {
   deleteEntity.run(kind, entityId);
+  // Phase B (0134): entity_categories is the same spans-tables shape as entity_tags,
+  // so the hard-delete doctrine above covers BOTH stores through this ONE seam —
+  // no delete site can clean tags but orphan categories. (Matches nothing for kinds
+  // that never carry categories, e.g. 'routine'.)
+  delEntityCatsCleanup.run(kind, entityId);
 }
 
 /** An entity's associated tag names (level-then-name ordered). */
@@ -472,6 +478,40 @@ const entityCatNamesStmt = sqlite.prepare(
 /** An entity's category names, in position order (empty = none). */
 export function entityCategoryNames(entityKind: 'task' | 'time_block', entityId: string): string[] {
   return (entityCatNamesStmt.all(entityKind, entityId) as { name: string }[]).map((r) => r.name);
+}
+
+const entityCatIdsStmt = sqlite.prepare(
+  `SELECT category_tag_id AS id FROM entity_categories
+    WHERE entity_kind = ? AND entity_id = ? ORDER BY position`,
+);
+/** An entity's category tag IDS, in position order (the names twin above). */
+export function entityCategoryIds(entityKind: 'task' | 'time_block', entityId: string): string[] {
+  return (entityCatIdsStmt.all(entityKind, entityId) as { id: string }[]).map((r) => r.id);
+}
+
+/**
+ * Batched variant for list endpoints (no N+1) — same chunking + Map shape as
+ * `taskTagNamesByIds`: every requested id is present (empty array = no categories).
+ * Names come back in `position` order (the stripe order).
+ */
+export function entityCategoryNamesByIds(entityKind: 'task' | 'time_block', ids: string[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const id of ids) out.set(id, []);
+  if (ids.length === 0) return out;
+  for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
+    const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = sqlite
+      .prepare(
+        `SELECT ec.entity_id AS id, c.name AS name
+           FROM entity_categories ec JOIN tags c ON c.id = ec.category_tag_id
+          WHERE ec.entity_kind = ? AND ec.entity_id IN (${placeholders})
+          ORDER BY ec.entity_id, ec.position, c.name`,
+      )
+      .all(entityKind, ...chunk) as { id: string; name: string }[];
+    for (const r of rows) out.get(r.id)?.push(r.name);
+  }
+  return out;
 }
 
 /** Resolve category NAMES to the owner's category-tag ids (skips unknown / other owners'). */

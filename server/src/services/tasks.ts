@@ -10,7 +10,7 @@ import { syncBlockFromTask, clearTaskPlacement, revertTaskPlacementStatus, mirro
 import { ensureTaskPromoted, unpromoteIfEmpty, dropSourceObjective, recomputeObjectivesForTask } from './task-promotion.js';
 import { rollupStatusFacet } from './objectives.js';
 import { ensureHabitPattern } from './patterns.js';
-import { entityTagLevels, syncLeveledEntityTags } from './tags.js';
+import { entityTagLevels, syncLeveledEntityTags, setEntityCategories, categoryIdsForOwner } from './tags.js';
 import { utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
@@ -127,6 +127,13 @@ export type CreateTaskInput = {
   parent_id?: string;
   tags?: string[];
   secondary_tags?: string[];
+  // Phase B (0134/0135): 1–3 category NAMES (position = array order → stripe order).
+  // Unknown / other-owner names are dropped; entries past 3 are ignored.
+  categories?: string[];
+  // Phase B (0135): per-element texture override. Omitted ⇒ column defaults
+  // (enabled, colour derived from categories).
+  texture_enabled?: boolean;
+  texture_color_token?: string | null;
   depends_on?: string[];
   // AB1: route-level opt-in — POST /api/tasks runs placeStartAnchoredTask after create
   // when true AND scheduled_for is set. Ignored by the service itself (default false;
@@ -174,12 +181,18 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
       priority: input.priority ?? 3,
       parentId: parentId,
       ownerId, // W3.1b: always the authenticated caller — never a client body owner_id.
+      ...(input.texture_enabled !== undefined ? { textureEnabled: input.texture_enabled } : {}),
+      ...(input.texture_color_token !== undefined ? { textureColorToken: input.texture_color_token } : {}),
       ...(sw ?? {}),
     })
     .returning();
 
   if (input.tags !== undefined || input.secondary_tags !== undefined)
     applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
+  // Phase B: category axis (kept OUT of entity_tags). Names resolve owner-scoped;
+  // unknown names drop silently (mirrors tag behavior).
+  if (input.categories !== undefined)
+    setEntityCategories('task', task.id, categoryIdsForOwner(input.categories, ownerId));
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
@@ -234,6 +247,11 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
     .returning();
   if (input.tags !== undefined || input.secondary_tags !== undefined)
     applyTaskTagLevels(ownerId, template.id, { tags: input.tags, secondary: input.secondary_tags });
+  // Phase B: category axis on the template. Instances carry NO category rows —
+  // exactly like entity_tags (generateRecurrences copies neither); the series'
+  // categories live on the template only.
+  if (input.categories !== undefined)
+    setEntityCategories('task', template.id, categoryIdsForOwner(input.categories, ownerId));
   // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
   if (sw?.subtype === 'habit') ensureHabitPattern(template.id, owner, template.title);
   const generated = generateRecurrences();
@@ -262,6 +280,11 @@ export type UpdateTaskInput = {
   parent_id?: string | null;
   tags?: string[];
   secondary_tags?: string[];
+  // Phase B: category NAMES. `undefined` = don't touch; `[]` = clear (mirrors tags).
+  categories?: string[];
+  // Phase B (0135): per-element texture override columns.
+  texture_enabled?: boolean;
+  texture_color_token?: string | null;
   depends_on?: string[];
   recurrence_rule?: string | null;
   recurrence_dtstart?: string | null;
@@ -350,6 +373,8 @@ export async function updateTask(
   if (input.priority !== undefined)          update.priority = input.priority;
   if (input.status !== undefined)            update.status = input.status;
   if (input.completed_at !== undefined)      update.completedAt = input.completed_at;
+  if (input.texture_enabled !== undefined)   update.textureEnabled = input.texture_enabled;
+  if (input.texture_color_token !== undefined) update.textureColorToken = input.texture_color_token;
   // W3.1b: re-parenting must target a caller-owned task; a foreign parent_id is
   // dropped to null (an explicit null un-parents). `parentIdSet` remembers a
   // parent_id was in the PATCH; `newParentId` is the validated value written.
@@ -407,6 +432,11 @@ export async function updateTask(
   if (Array.isArray(input.tags) || Array.isArray(input.secondary_tags)) {
     // Partial: an omitted level is preserved (mirrors the block PATCH semantics).
     applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
+  }
+
+  // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
+  if (Array.isArray(input.categories)) {
+    setEntityCategories('task', targetId, categoryIdsForOwner(input.categories, ownerId));
   }
 
   if (Array.isArray(input.depends_on)) {
@@ -592,19 +622,22 @@ export async function recallTask(ownerId: string, taskId: string): Promise<Recal
   // clone is a fresh independent task (parent_id null); uuid7() mints each new id.
   const cloneTree = (srcId: string, parentId: string | null): string => {
     const s = sqlite.prepare(
-      'SELECT title, description, notes, estimated_minutes, priority, task_time, subtype, source_kind FROM tasks WHERE id = ?'
+      'SELECT title, description, notes, estimated_minutes, priority, task_time, subtype, source_kind, texture_enabled, texture_color_token FROM tasks WHERE id = ?'
     ).get(srcId) as {
       title: string; description: string | null; notes: string | null;
       estimated_minutes: number | null; priority: number | null; task_time: string | null;
       subtype: string | null; source_kind: string | null;
+      texture_enabled: number; texture_color_token: string | null;
     };
     const st = s.subtype ?? 'standard';
     const newId = (sqlite.prepare(
-      `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, parent_id, owner_id, status, source_kind)
-       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?) RETURNING id`
-    ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, parentId, ownerId, s.source_kind ?? 'manual') as { id: string }).id;
+      `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, parent_id, owner_id, status, source_kind, texture_enabled, texture_color_token)
+       VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?) RETURNING id`
+    ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, parentId, ownerId, s.source_kind ?? 'manual', s.texture_enabled, s.texture_color_token) as { id: string }).id;
     // Carry tags (entity_tags, all levels); Routine membership only when the pref is on.
     sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
+    // Phase B: carry the category axis too (position preserved — the stripe order).
+    sqlite.prepare("INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) SELECT 'task', ?, category_tag_id, position FROM entity_categories WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
     if (keepPattern) {
       sqlite.prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
     }
