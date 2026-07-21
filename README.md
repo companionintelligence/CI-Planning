@@ -182,30 +182,31 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0130_purge_objectives_job`) produce the following tables:
+Migrations (current head: `0135_categories_capture`) produce the following tables:
 
 | Table | Purpose |
 |---|---|
 | `owners` | User identity — `role` drives scopes (0125): `operator` (R+W+A) · `member` (R+W) · `viewer` (R) |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype; `texture_enabled`/`texture_color_token` (0135) per-element striped-texture override |
 | `task_dependencies` | Blocked-by edges between tasks |
-| `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support |
+| `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support; same `texture_enabled`/`texture_color_token` override (0135); legacy `category_id`/`color_token` (0069) are read-only now — writes go through `entity_categories` |
 | `block_templates` | Reusable Time-Block templates with saved task lists |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` |
 | `possible_tasks` | Staged AI-proposed items — auto-promoted into tasks at the end of each ingestion run (kept as the audit/dedup trail, Phase AF) |
-| `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community), `intention`, or `category` (base: Personal / Professional / Social, mig 0126) |
+| `tags` | Cross-cutting labels; `kind`: `direction` (Home / Work / Community), `intention`, or `category` (base: the six Balance dimensions — health/career/relationships/growth/leisure/finance — re-seeded in mig 0134, superseding the old Personal/Professional/Social set) |
 | `tag_directions` | Many-to-many: intention tags grouped under direction tags (0043 briefly renamed this to `tag_patterns`; reverted in 0105) |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, and routines (CON-3); carries `created_at` (`NOT NULL DEFAULT CURRENT_TIMESTAMP`, table rebuilt in 0110) backing GraphQL `EntityTagType.taggedAt` |
+| `entity_categories` | Polymorphic **category** store for tasks/time_blocks — 1–3 per entity (`entity_kind, entity_id, category_tag_id, position`); `position` orders the striped-texture stripes (0134) |
 | `possible_task_tags` | Tags proposed alongside a staged suggestion |
 | `patterns` | Routines — typed, reusable task collections with optional recurrence |
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
 | `pattern_blocks` | Direction-scoped scheduling windows (`workday` / `weekend` time ranges) |
-| `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097) |
+| `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097). `category` rows are the six Balance-dimension hues (0134) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128) |
 | `app_config` | Server-owned singleton config set in-app rather than via env — Google connection setup + the auto-provisioned Web Push VAPID keypair (0124) |
-| `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127) |
+| `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127). `/balance` also joins tasks by their `entity_categories` to show each dimension's related open tasks (0134) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
 | `job_runs` | Execution log per job run (status, items created/updated, log text) |
 | `reminders` | Scheduled reminders (`fire_at`, task XOR block target, `source` manual/auto) fired by the 1-min dispatcher (Phase H, 0044/0045) |
@@ -291,7 +292,19 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   The Balance dashboard reads that self-audit back: a **Balance Index** of how far your
   satisfaction tracks what you said matters most, plus your allocated weekly targets per
   category. It reports **stated intent, not measured time** — actual-vs-target tracking
-  doesn't exist yet
+  doesn't exist yet, but each dimension's card now shows an **"N open"** button → the
+  tasks you've filed under it
+- **Categories, unified with Balance** — tasks and time blocks can carry **1–3 categories**
+  (the same six Balance dimensions — health/career/relationships/growth/leisure/finance —
+  picked in the Add/Edit wizard, or best-guessed by the natural-language quick-add). A
+  block with no categories of its own inherits its linked task's, so auto-scheduled blocks
+  stay in sync automatically. Each element can show an optional **striped background** in
+  its categories' colours (even stripes, one per category, in the order you picked them) —
+  toggle it off or override the colour per element. Adding/removing which six categories
+  exist is deliberately locked for now (a feature flag, off); renaming and recolouring stay
+  open
+- **Reminders, scoped to today** — the Focus view's reminder picker only offers tasks
+  actually on today's plate (scheduled for today, or already placed in a time block today)
 - **Accounts + auth** — CI-Portal OIDC (OAuth 2.1 + PKCE) or local username/password, with
   role-based scopes: **operator** (read/write/admin) · **member** (read/write) · **viewer**
   (read-only). An unrecognized role degrades to read-only rather than escalating
@@ -719,7 +732,7 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | GET | `/api/push/vapid-key` | Web Push public key (empty when VAPID unconfigured) |
 | POST/DELETE | `/api/push/subscribe` | Register / remove a browser push subscription |
 | GET/POST/DELETE | `/api/reminders` · POST `/api/reminders/:id/snooze` | Reminders CRUD + snooze |
-| GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs |
+| GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs. The Jobs view's **Run all** button is client-side sugar — it loops this same per-job endpoint over every listed job; no separate batch route |
 | GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count) |
 | POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
 | GET/POST | `/api/memory` | Companion Memory sync state |
@@ -748,7 +761,7 @@ pnpm seed         # uses Ollama extraction when available, deterministic otherwi
 | PATCH | `/api/owner/profile` · `/api/owner/backup-email` | Edit the signed-in owner's display name / backup email (Phase ship-readiness) |
 | GET/PUT | `/api/google-config` | Read/save the in-app Google OAuth client (admin; flips connector to live at runtime, mig 0124) |
 | GET/POST/PATCH/DELETE | `/api/day-types` · `/resolve/:date` · `/week-map` · `/assignments/:date` | Day-type CRUD + per-date resolution |
-| GET/PUT | `/api/category-prefs` | Base **category** tag prefs (Personal / Professional / Social) |
+| GET/PUT | `/api/category-prefs` | Base **category** tag prefs — the six Balance dimensions (health/career/relationships/growth/leisure/finance, mig 0134) |
 | GET | `/api/health` | Liveness probe (`{"ok":true}`) |
 | GET | `/api/events` | SSE stream (task / block / job / possible / reminder events) |
 | POST | `/api/graphql` | GraphQL endpoint (Apollo, alongside REST; introspection on); gated by the same `requireAuth` as REST (session cookie in `sso` mode, `x-api-key` in `standalone`) (Phase W, done) |

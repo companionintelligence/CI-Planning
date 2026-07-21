@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-16 · migration head `0130`
+**Status:** Living document · last updated 2026-07-21 · migration head `0135`
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -10,7 +10,8 @@
 
 Companion Planning is a **local-first, AI-assisted personal planning system**. It runs as a private server on a laptop or desktop, reachable from any device over Tailscale, stores everything in local SQLite, and uses a local LLM (Ollama) for briefings, task extraction, grooming, and auto-scheduling. No cloud required; no account.
 
-**Shipped phases (A → AG, plus the post-AG work in §1.1; migration head 0130):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`) · **Phase T — multi-tenant owner-scoping** (every table + route + service scoped to `owner_id`; owner-less rows retired) · **Phase U — CI-Portal OIDC + local auth** (session-cookie login: OAuth 2.1 + PKCE relying-party, or `DISABLE_OIDC` local username/password) · **Phase V — password reset** (single-use tokens; `session_epoch` invalidation) · **Phase W — GraphQL CRUD layer alongside REST** (complete; see §6a) · **Phase X — MCP intent vocabulary** · **Phase Y — env-config** (every env var documented; `server/.env.example`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
+**Shipped phases (A → AG, plus the post-AG work in §1.1 and the Categories⇄Balance
+feature in §1.2; migration head 0135):** Tasks + scheduler · Rich semantics + time tracking · Recurrence · Calendar grid · Time-blocks + patterns + cockpit · Notifications + Web Push · Backups + export/import + audit · Identity + auth + connector infrastructure · Two-way calendar sync (Google) · Google OAuth 2.1 + MCP · AI scheduler + reactive reflow · Multi-device sync + offline writes · Life-planning layer (objectives, reflections, weekly review, calibration) · **Phase O — the gamified five-star day** (FOCUS card with linked/freeform focus + Today's Brief pop-up, a day note, `computeStars()` + nightly-frozen `daily_recap` stars, calendar heatmap; the standalone Morning Briefing section is retired) · **Phase P — planner hygiene** (a shared `clear-range` engine behind the CLI, `POST /api/planner/clear`, and a `recurrence_horizon_days` setting that bounds + auto-prunes both recurrence engines) · **Phase Q — schema hygiene** (FK enforcement guaranteed on every connection via a shared `openDb()`, FK-path index coverage, and owner-identity integrity rebuilds of `flight_plan` and `daily_summaries` — pre-multi-tenant) · **Phase S — schema consolidation** (dropped the dead `plan_outcomes` table + its cron; merged `daily_summaries` + `day_stars` into `daily_recap`; `pattern_prefs` + `category_prefs` into `tag_prefs`) · **Phase T — multi-tenant owner-scoping** (every table + route + service scoped to `owner_id`; owner-less rows retired) · **Phase U — CI-Portal OIDC + local auth** (session-cookie login: OAuth 2.1 + PKCE relying-party, or `DISABLE_OIDC` local username/password) · **Phase V — password reset** (single-use tokens; `session_epoch` invalidation) · **Phase W — GraphQL CRUD layer alongside REST** (complete; see §6a) · **Phase X — MCP intent vocabulary** · **Phase Y — env-config** (every env var documented; `server/.env.example`). Also in this window: task placement lifecycle (open↔scheduled), task→objective auto-promotion with height-based leveling, block-template application, and objectives joining the multi-device sync layer (0085–0087).
 
 **Phase Z Time-Sense** (a Focus Ritual + estimate-calibration loop — EOD alignment, daily-brief fold-in, "Keep working"/"Schedule again", focus-cue reminders + vibrate, per-cue prefs, suggest-only estimate chip, voice loop) has **landed behind the `time_sense_enabled` master flag** (flag-off = behavior-neutral; migs 0106–0109). The **calendar / UI feedback waves** have also landed (QuickAdd mounted in Today, Planner de-scroll, Flight-Plan tabs + saved-blocks + search, three-axis calendar tag filter, container-outlines + click-to-add, select-date → day-type picker, collapsed night hours).
 
@@ -24,13 +25,13 @@ Companion Planning is a **local-first, AI-assisted personal planning system**. I
 **Phases AF–AG + ship-readiness** (2026-07, migs 0118–0126) — note 0119 is an intentional gap (see `migrations/index.ts`); the line continues past AG in §1.1:
 - **AF — Task management** (migs 0120/0121): Objectives surface as a **tab inside `/tasks`** (URL-synced `?focus`), tree API returns tasks-per-leaf, quick-add subtask, assign-to-objective on the task card. **The Inbox surface is retired** — ingested `possible_tasks` are deduplicated inline and **auto-promoted** into Tasks (no manual triage), surfacing in a date-derived **New Today** section until owner-local midnight; `/inbox`, `/objectives`, `/patterns`, `/routines` are now redirects/tabs, not standalone views. Includes **AF-11 tag unification** (routine-tag cleanup 0120, task-intention level move 0121).
 - **AG — Multi-tenant RBAC** (mig 0125): `owners.role` drives scopes at one choke point (`lib/auth/scopes.ts` `roleToScopes`, unknown role → read-only), replacing the hardcoded `[READ, WRITE, ADMIN]` triple. Three roles — `operator` (R+W+A) · `member` (R+W) · `viewer` (R); existing owners backfill to `operator`, OIDC auto-provision defaults to `member` (closes the auto-admin hole). Operator-gated `routes/accounts.ts` (`GET/POST/PATCH/DELETE /api/accounts` + `/:id/invite`) creates/manages accounts via password-less invite + reset-token link.
-- **Ship-readiness + hardening** (migs 0122–0124, 0126): seeded developer identity scrubbed (0122); dead `auto_mode` column dropped, top-bar Suggest/Schedule toggle repointed to `trust_mode` (0123); in-app Google connection setup + auto-provisioned Web Push VAPID keys via the `app_config` table (0124); base **category** tags (Personal / Professional / Social) seeded (0126). License corrected to **CI-Commercial-1.0** (not MIT).
+- **Ship-readiness + hardening** (migs 0122–0124, 0126): seeded developer identity scrubbed (0122); dead `auto_mode` column dropped, top-bar Suggest/Schedule toggle repointed to `trust_mode` (0123); in-app Google connection setup + auto-provisioned Web Push VAPID keys via the `app_config` table (0124); base **category** tags (Personal / Professional / Social) seeded (0126) — **superseded by the six Balance-dimension categories, migration 0134, §1.2**. License corrected to **CI-Commercial-1.0** (not MIT).
 
 ## 1.1 Post-AG work (2026-07-14 → 07-16, migs 0127–0130)
 
-Two tracks landed after the AG close-out. Neither has a phase letter; both are current head.
+Two tracks landed after the AG close-out. Neither has a phase letter; §1.2 (Categories⇄Balance, migs 0134–0135) is now the current head.
 
-**Life priorities + the Priorities Wizard** (migs 0127/0128, #356). A `life_priorities` row per `(owner, category)` captures a self-audit — `satisfaction` (1–10), `importance` (1–10), `target_hours_per_week`. It backs two routed views: **`/priorities`** (the wizard) and **`/balance`** (the dashboard). `scheduling_prefs.sleep_hours_per_week` (0128, default 63 = 9h × 7) reserves sleep as unschedulable, so the wizard's weekly pool is `168 − sleep_hours_per_week`. `/balance` reads the self-audit back — a **Balance Index** (how far `satisfaction` tracks `importance`) plus the allocated weekly targets. Self-contained, and narrower than it may sound: **it reports stated intent, not measured time.** There is no actual-vs-target tracking (`Balance.tsx` reads no `time_entries`/`actual_minutes`), no `task.category`, and no scheduling boosts yet.
+**Life priorities + the Priorities Wizard** (migs 0127/0128, #356). A `life_priorities` row per `(owner, category)` captures a self-audit — `satisfaction` (1–10), `importance` (1–10), `target_hours_per_week`. It backs two routed views: **`/priorities`** (the wizard) and **`/balance`** (the dashboard). `scheduling_prefs.sleep_hours_per_week` (0128, default 63 = 9h × 7) reserves sleep as unschedulable, so the wizard's weekly pool is `168 − sleep_hours_per_week`. `/balance` reads the self-audit back — a **Balance Index** (how far `satisfaction` tracks `importance`) plus the allocated weekly targets. Self-contained, and narrower than it may sound: **it reports stated intent, not measured time.** There is still no actual-vs-target tracking (`Balance.tsx` reads no `time_entries`/`actual_minutes`) or scheduling boosts — but the `no task.category` gap named here is now **closed by the Categories⇄Balance feature (§1.2)**.
 
 **Objectives archive + 48h purge** (migs 0129/0130, #366 and follow-ups #367–#372). **`DELETE /api/objectives/:id` no longer hard-deletes — it archives.** This is the single most load-bearing behavioral change in this window, and the invariant it rests on is easy to break:
 
@@ -40,6 +41,58 @@ Two tracks landed after the AG close-out. Neither has a phase letter; both are c
 - **Purge is separate and explicit.** `PURGE_WINDOW_HOURS = 48`. `POST /:id/purge` stamps an absolute `purge_after` deadline across the subtree; `DELETE /:id/purge` cancels it. The hourly `purge_objectives` job (0130) reaps rows past the deadline — the only path to permanent removal.
 - **Routes:** `GET /api/objectives?archived=1` (flat archive list — an archived subtree is not a renderable tree), `POST /:id/restore` (root-only; a cascaded member must restore from its root), `POST /:id/purge`, `DELETE /:id/purge`.
 - **Exception — auto-generated scaffolding is still hard-deleted.** `unpromoteIfEmpty` / `dropSourceObjective` (`services/task-promotion.ts`) `DELETE` a *pristine* auto-promoted objective rather than archiving it, so the archive doesn't fill with rows the owner never chose to create. Guarded by `isPristine` (top-level, no sub-objectives).
+
+## 1.2 Categories⇄Balance + per-element striped textures (2026-07-20 → 07-21, migs 0134–0135)
+
+Unifies the old block-only "Time Block Category" axis with `/balance`'s six Core Dimensions,
+so a **Category** is a tracked Balance dimension by name, on **both tasks and blocks**, and
+drives an optional per-element striped background. Full session record + owner decisions:
+`docs/HANDOFF-2026-07-20-categories-and-ui.md` (closed out).
+
+- **Model (0134).** The `kind='category'` tag axis is purged and re-seeded to exactly the six
+  `life_priorities` keys — `health / career / relationships / growth / leisure / finance` —
+  each `is_base=1`, hue-matched to a `--tag-N` token via `tag_prefs`. Add/remove of categories
+  is behind `client/src/lib/flags.ts` `CATEGORIES_EDITABLE` (**false** this delivery — the six
+  are fixed; rename/recolour stays allowed). New table **`entity_categories`**
+  `(entity_kind, entity_id, category_tag_id, position)`, PK on all three, `position` (0–2)
+  ordering a **1–3 multi-select** per task/block — the single legacy `time_blocks.category_id`
+  column couldn't express that. `services/tags.ts`: `setEntityCategories` /
+  `entityCategoryNames` / `categoryIdsForOwner` (+ batched `entityCategoryNamesByIds`, the
+  `taskTagNamesByIds` idiom — no N+1 on list reads).
+- **Capture (0135 + wiring).** `0135_categories_capture` backfills any surviving
+  `time_blocks.category_id` into `entity_categories` at position 0, then adds
+  `texture_enabled` (`DEFAULT 1`) + `texture_color_token` to **both** `tasks` and
+  `time_blocks` — the per-element texture on/off + colour override. `category_id` stays a
+  column (back-compat reads) but is **retired from the write path**: `createBlock`/
+  `updateBlock` bridge a legacy `category_id` input into `entity_categories` and null the
+  column on touch; `entity_categories` is authoritative. The 1–3 picker lives on both
+  ElementWizard tabs; `quickVocab`/`enrichQuick` (`agents/quickadd.ts`) classify 1–3
+  best-guess categories on a **separate axis from intentions**, so a category name can never
+  leak into `secondary_tags`.
+- **Derive rule (the key relationship).** A block's *effective* categories are **its own
+  `entity_categories` rows if any, else its linked task's** — resolved server-side
+  (`blockCategoryNames`, `services/blocks.ts`) and reused client-side (the same rule backs
+  the Planner chip's texture and the Calendar overlay's category filter). Consequence: an
+  auto-placed task block needs **no category write of its own** — recategorizing the task
+  re-stripes every block it holds, free.
+- **Renderer.** `client/src/lib/textures.ts` `elementTextureStyle(el, tags, prefs,
+  motifFallback?)` is the one resolution rule: `texture_enabled=0` → none →
+  `texture_color_token` (user override, single hue) → `categories` (**even stripes**, a
+  `repeating-linear-gradient` interleaving each category's colour token line-by-line in
+  `position` order, 1px line / 2px gap) → the legacy routine/pattern motif tile (kept, for
+  Habit/Ritual members) → none. `TEXTURE_OPACITY` halved `0.06 → 0.03` (stripes render at 2×
+  to compensate — a 1px line carries roughly a third the ink of the old motif tile). Un-gated
+  from routine-only to **every** task card and planner chip.
+- **Surfaces.** TaskCard's secondary-axis chips are now the task's **categories** (colour-dot
+  + name), not intention `secondary_tags` — intentions stay in `entity_tags` (still drive
+  `tag_categories`/`tag_directions` grouping and auto-tag) but are off the card. `/balance`
+  Core-Dimension cards get an "N open" button → a client-joined modal of that dimension's
+  open tasks (no new query — tasks already carry `categories`). The Calendar overlay's
+  Category row is now **functional** (`lib/overlay.ts` `namesPass` reads the block's
+  effective categories — previously it matched category names against task tags, where
+  they never appear, so the row was inert) plus a brand-monochrome ↔ colourful-per-tag
+  palette toggle. Tags view: a per-chip Category `<select>` on both tabs (writes
+  `tag_categories`), alongside the existing drag-to-refile.
 
 ---
 
@@ -80,7 +133,7 @@ graph TB
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>18 cron jobs (19 kinds)"]
-            Migrate["Migration runner<br/>0001–0130 on boot"]
+            Migrate["Migration runner<br/>0001–0135 on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -139,7 +192,7 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0130_purge_objectives_job (0119 is an
+│       │   ├── migrations/   0001_baseline → 0135_categories_capture (0119 is an
 │       │   │                 intentional gap — see index.ts; do not "fix" it)
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow (auto-defense) · flight-plan
@@ -197,23 +250,24 @@ erDiagram
 | Table | Purpose | Added |
 |---|---|---|
 | `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103) | 0001, 0101, 0103 |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence | 0001 |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2) | 0001, 0135 |
 | `task_dependencies` | Blocked-by edges between tasks | 0005 |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | 0007 |
-| `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099) | 0015, 0099 |
+| `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099). `category_id`/`color_token` (0069) are legacy reads only — writes go through `entity_categories` (0134/§1.2); `texture_enabled`/`texture_color_token` (0135) per-element override | 0015, 0099, 0135 |
 | `block_templates` | Reusable Time-Block templates with saved task lists | 0022 |
 | `flight_plan` | Two-step Auto staging tray — task list ordered before scheduling; `owner_id` `TEXT NOT NULL` (0093) | 0016, 0093 |
 | `daily_plan` | AI-authored task order for a day (`outcome` stamp for plan tracking) | 0062, 0084 |
 | `replan_suggestions` | Pending "re-plan with AI?" nudges on big-disruption reflows | 0067 |
 | `possible_tasks` | Inbox — AI-proposed items pending promote / dismiss; owner-scoped `(proposed_owner_id, source_kind, source_ref)` uniqueness (0114) + `proposed_estimated_minutes` (0114) + `proposed_scheduled_for`/`proposed_task_time` START intent (0115) | 0001, 0114, 0115 |
-| `tags` | Cross-cutting labels; `kind`: `direction` or `intention` or `category`; `owner_id` (0100) | 0001, 0100 |
+| `tags` | Cross-cutting labels; `kind`: `direction` or `intention` or `category`. `category` is re-seeded to the six Balance dimensions, `is_base=1` (§1.2); `owner_id` (0100) | 0001, 0100, 0134 |
 | `tag_directions` | Many-to-many: intention tags grouped under direction tags | 0043/0105 |
 | `entity_tags` | Polymorphic tag store for tasks, blocks, routines (CON-3); `created_at` NOT NULL DEFAULT CURRENT_TIMESTAMP (0110, table rebuilt) | 0033, 0110 |
+| `entity_categories` | Polymorphic **category** store for tasks/time_blocks (`entity_kind, entity_id, category_tag_id, position`), 1–3 per entity, `position` (0–2) = stripe order. A block's *effective* categories are its own rows, else its linked task's (§1.2) | 0134 |
 | `patterns` | Routines — typed, reusable task collections (Habit ◯ / Routine ▢) | 0013 |
 | `pattern_types` | Routine taxonomy — **load-bearing, do not rename** | 0019 |
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
 | `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
-| `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs` | 0039, 0069, 0097 |
+| `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs`. `category` rows are the six Balance-dimension hues (0134) | 0039, 0069, 0097, 0134 |
 | `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this) | 0001, 0091, 0106, 0108, 0111, 0113, 0128 |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
 | `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
@@ -231,7 +285,7 @@ erDiagram
 | `password_reset_tokens` | Single-use local-owner password-reset tokens (Phase V) | 0104 |
 | `copy_history` | Time-Sense voice-loop anti-repetition log (NOT in owner export) | 0109 |
 | `app_config` | Server-owned singleton config rows set from inside the app rather than env — in-app Google connection setup + the auto-provisioned Web Push VAPID keypair (generated + persisted on first boot; env pins win) | 0124 |
-| `life_priorities` | Self-audit per `(owner, category)` — `satisfaction` 1–10, `importance` 1–10, `target_hours_per_week`. Backs `/priorities` (wizard) + `/balance` (dashboard); `UNIQUE(owner_id, category)` | 0127 |
+| `life_priorities` | Self-audit per `(owner, category)` — `satisfaction` 1–10, `importance` 1–10, `target_hours_per_week`. Backs `/priorities` (wizard) + `/balance` (dashboard); `UNIQUE(owner_id, category)`. `category` is a plain TEXT key (no FK) — shares its NAME vocabulary with `tags.kind='category'` (0134) but the two are linked only by string equality, per owner | 0127 |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | 0080, 0088 |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync. **Archive (0129):** `archived_at` (non-null ⇒ soft-deleted, absent from the live tree, `status` untouched), `archive_root_id` (the node whose archiving cascaded to this row; NULL on the root), `purge_after` (absolute reap deadline; server-owned — never client-authored) + `ix_objectives_purge_after`. See §1.1 | 0081, 0085, 0086, 0087, 0129 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
@@ -347,10 +401,12 @@ sequenceDiagram
 | View | Route | Key components |
 |---|---|---|
 | **Today** | `/` | Single header row (Today's Brief · Focus bullseye · Note, each a popover) + FAB · collapsible DUE card · day-stars tally · PLANNER (8h/expand, drag-reorder; Alt-drag = free placement) · Flight-plan staging · ElementWizard drawer (AC/AD) |
-| **Calendar** | `/calendar` | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (week toggle) |
+| **Focus** | `/focus` | Today-only single-column list (upcoming / collapsed past); Time-Sense hero + Focus Ritual launcher; header mirrors Today's card (Brief · Focus goals · day note) + FAB; reminders card offers only today's tasks |
+| **Calendar** | `/calendar` | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (week toggle) · overlay filter (Direction + **Category**, brand ↔ colourful palette toggle — §1.2) · "Schedule Day" (fill-then-place intake) |
 | **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies; task-chip merged direction-icon/done toggle; Routine tasks grouped by routine with end-of-day archive (AC). Hosts the **Objectives** tree (Goal › Project › Objective) and **Routines** as URL-synced **tabs** (`?focus`, AF), plus a date-derived **New Today** section for auto-promoted suggestions |
-| **Tags** | `/tags` | direction / intention / category taxonomy; weighted cloud; mute / delete |
-| **Jobs** | `/jobs` | Scheduled job registry; run any job on demand; execution log |
+| **Balance** | `/balance` | Core-Dimension satisfaction/importance bars + Balance Index; each dimension's "N open" button opens a client-joined modal of its related open tasks (§1.2) |
+| **Tags** | `/tags` | direction / intention / category taxonomy; weighted cloud; mute / delete; per-chip **Category** select on both tabs (§1.2) |
+| **Jobs** | `/jobs` | Scheduled job registry; run any job on demand, or **Run all**; execution log |
 | **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · Google/CI-memory connections · Profile · Accounts (operator-only, AG) · export/import · recurrence duration · Clear Date Range |
 
 The nine routed views are `/`, `/focus`, `/calendar`, `/tasks`, `/tags`, `/priorities`, `/balance`, `/settings`, `/jobs` (`client/src/App.tsx`), plus the unauthenticated `/login` and `/reset-password`. Legacy paths `/inbox`, `/objectives`, `/patterns` **redirect** into their host tab — the Inbox surface was retired in Phase AF (ingested `possible_tasks` auto-promote, no manual triage), and Objectives/Routines became Tasks-view tabs. (`/routines` is **not** a route and never redirected — it 404s.) `/priorities` (wizard) and `/balance` (dashboard) are the life-priorities layer, §1.1.
