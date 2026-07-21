@@ -151,7 +151,10 @@ export function tasksRouter() {
       .all(owner) as { name: string; kind: string }[];
     return {
       directions: rows.filter((r) => r.kind === 'direction').map((r) => r.name),
-      others: rows.filter((r) => r.kind !== 'direction').map((r) => r.name),
+      // Phase B: categories are their OWN classifier axis — carved out of `others`
+      // so a category name can never be mis-filed as an intention secondary tag.
+      categories: rows.filter((r) => r.kind === 'category').map((r) => r.name),
+      others: rows.filter((r) => r.kind !== 'direction' && r.kind !== 'category').map((r) => r.name),
     };
   }
 
@@ -222,6 +225,9 @@ export function tasksRouter() {
       // the user says otherwise — quick-add never silently files things at P3.
       priority: enriched.priority ?? 1,
       ...(enriched.tags.length ? { tags: directions, secondary_tags: others } : {}),
+      // Phase B: the classifier's best-guess categories (1–3 names, best fit first)
+      // ride createTask's categories field → entity_categories.
+      ...(enriched.categories?.length ? { categories: enriched.categories } : {}),
     });
     if (!res.ok) {
       // Only title_required is reachable (no depends_on here) — defensive mapping.

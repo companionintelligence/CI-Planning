@@ -20,7 +20,11 @@ import type { ParsedQuick } from '../engine/quickadd.js';
 export interface QuickVocab {
   /** The owner's direction-tag names (kind='direction'): Work / Home / Community. */
   directions: string[];
-  /** Every other existing tag name the owner has (intentions, categories, …). */
+  /** The owner's category names (kind='category') — the six Balance dimensions
+   *  (Phase B). A separate axis so a category pick can never leak into the
+   *  intention tags (and vice versa). */
+  categories?: string[];
+  /** Every other existing tag name the owner has (intentions, …). */
   others: string[];
 }
 
@@ -29,6 +33,7 @@ interface EnrichOut {
   priority?: number | null;
   direction?: string | null;
   tags?: unknown;
+  categories?: unknown;
 }
 
 /**
@@ -76,7 +81,29 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
     }
   }
 
-  return { ...parsed, estimatedMinutes, priority, tags };
+  // Categories (Phase B): 1–3 of the owner's category names — its OWN axis, never
+  // mixed into `tags` (a model pick of "finance" must become a category, not an
+  // intention). Same constrained-vocabulary rule: canonical casing from the vocab,
+  // unknown names dropped, deduped, capped at 3. A parse that already carries
+  // categories (future syntax) wins.
+  let categories = parsed.categories;
+  if (!categories?.length && Array.isArray(out.categories)) {
+    const catByLower = new Map((vocab.categories ?? []).map((c) => [c.toLowerCase(), c]));
+    const seen = new Set<string>();
+    const picked: string[] = [];
+    for (const raw of out.categories) {
+      if (picked.length >= 3) break;
+      if (typeof raw !== 'string') continue;
+      const canonical = catByLower.get(raw.trim().toLowerCase());
+      if (canonical && !seen.has(canonical.toLowerCase())) {
+        picked.push(canonical);
+        seen.add(canonical.toLowerCase());
+      }
+    }
+    if (picked.length) categories = picked;
+  }
+
+  return { ...parsed, estimatedMinutes, priority, tags, ...(categories !== undefined ? { categories } : {}) };
 }
 
 export async function enrichQuick(
@@ -84,13 +111,15 @@ export async function enrichQuick(
   parsed: ParsedQuick,
   vocab: QuickVocab = { directions: [], others: [] },
 ): Promise<ParsedQuick> {
+  const hasCats = (vocab.categories?.length ?? 0) > 0;
   const out = await generateJson<EnrichOut>(
     `Classify this quick task entry. Reply with JSON ` +
       `{"estimatedMinutes": <minutes or null>, "priority": <1-5 or null>, ` +
       `"direction": <REQUIRED — exactly one of ${JSON.stringify(vocab.directions)}, pick the closest fit>, ` +
+      (hasCats ? `"categories": <1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first>, ` : '') +
       `"tags": <up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else []>}. ` +
       `1 is highest priority. Every task has a direction — always choose one. ` +
-      `Choose direction/tags ONLY from the given lists — never invent. ` +
+      `Choose direction/categories/tags ONLY from the given lists — never invent. ` +
       `Entry: "${text}"`,
     { tier: 'small', temperature: 0.1, timeoutMs: 15_000 }
   );
