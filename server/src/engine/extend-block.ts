@@ -68,14 +68,18 @@ interface Row {
  * is a task-only status), so the clock, not the block row, is the source of truth
  * for what's running (per M's convention).
  */
-// ⚠️ Reachable edge (see #392): block_kind is free-form TEXT on the write path by
-// design (block.graphql), so an API caller can create 'focus'/'habit' blocks TODAY
-// even though no UI does — and this predicate would NOT treat them as fixed, letting
-// 'Keep working' extend straight through an unlocked focus/habit session.
+// #392 edge CLOSED: block_kind is free-form TEXT on the write path by design
+// (block.graphql), so an API caller can create 'focus'/'habit' blocks even though no
+// UI does. Those are protected work sessions, so they're fixed here — 'Keep working'
+// escalates to blockedBy rather than silently shoving a focus/habit block. 'break' and
+// 'buffer' are intentionally NOT fixed: they're loose padding and stay movable (and the
+// obstacle query below doesn't surface them anyway).
 function isFixed(r: Row): boolean {
   return (
     r.block_kind === 'meeting' ||
     r.block_kind === 'timeblock' ||
+    r.block_kind === 'focus' ||
+    r.block_kind === 'habit' ||
     r.is_locked === 1 ||
     r.is_running === 1 ||
     r.status === 'in_progress'
@@ -112,8 +116,9 @@ export function extendBlock(
 
   // Top-level timeline entities starting at/after this block's ORIGINAL end, in
   // order — the only things an end-extension can run into. Scoped to real
-  // obstacles (mirrors dayObstacles): locked, meetings, live task blocks, and
-  // scheduled Plan containers. `parent_block_id IS NULL` excludes child blocks —
+  // obstacles (mirrors dayObstacles): locked, meetings, live task blocks, focus/habit
+  // sessions (protected work, #392), and scheduled Plan containers. break/buffer padding
+  // is deliberately omitted — it stays loose. `parent_block_id IS NULL` excludes child blocks —
   // they live inside a container (itself fixed here) and must never be pushed
   // independently. Someday Plans and completed/skipped/cancelled blocks aren't
   // timeline obstacles.
@@ -128,6 +133,8 @@ export function extendBlock(
                is_locked = 1
             OR block_kind = 'meeting'
             OR block_kind = 'task'
+            OR block_kind = 'focus'
+            OR block_kind = 'habit'
             OR (block_kind = 'timeblock' AND block_type = 'scheduled')
           )
         ORDER BY start_at ASC`,
