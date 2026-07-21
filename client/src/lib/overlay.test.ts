@@ -130,6 +130,23 @@ describe('blockPassesAxes — AND across the three axes + priority', () => {
     expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, deselect({ direction: ['home'] }), [])).toBe(false);
     expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, emptyAxisDeselected(), [])).toBe(true);
   });
+
+  // ── Phase D: the category axis reads the BLOCK's effective `categories` ──
+  it('category axis: hides a block whose (derived) categories are all deselected', () => {
+    const b = blk({ task_id: 10, categories: ['health'] });
+    expect(blockPassesAxes(b, hw, kindOf, deselect({ category: ['health'] }), [])).toBe(false);
+    expect(blockPassesAxes(b, hw, kindOf, deselect({ category: ['finance'] }), [])).toBe(true); // other chip
+  });
+
+  it('category axis: multi-category blocks pass while ANY of theirs stays selected (OR)', () => {
+    const b = blk({ task_id: 10, categories: ['health', 'finance'] });
+    expect(blockPassesAxes(b, hw, kindOf, deselect({ category: ['health'] }), [])).toBe(true);
+    expect(blockPassesAxes(b, hw, kindOf, deselect({ category: ['health', 'finance'] }), [])).toBe(false);
+  });
+
+  it('category axis: an uncategorized block is never hidden by category chips', () => {
+    expect(blockPassesAxes(blk({ task_id: 10 }), hw, kindOf, deselect({ category: ['health'] }), [])).toBe(true);
+  });
 });
 
 describe('noAxisFilter helper', () => {

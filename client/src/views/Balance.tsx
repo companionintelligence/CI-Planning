@@ -1,8 +1,8 @@
-import { For, Show } from 'solid-js';
+import { For, Show, createSignal } from 'solid-js';
 import { A } from '@solidjs/router';
-import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target } from 'lucide-solid';
-import { priorities, prefs } from '../stores/index.js';
-import type { Priority } from '../lib/api.js';
+import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target, ListTodo, X } from 'lucide-solid';
+import { priorities, prefs, tasks, setElementModal } from '../stores/index.js';
+import type { Priority, Task } from '../lib/api.js';
 
 interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
 
@@ -26,6 +26,17 @@ export function Balance() {
     priorities()?.find((p) => p.category === key) ?? { category: key, ...FALLBACK };
   const hasData = () => (priorities()?.length ?? 0) > 0;
   const sleepWeek = () => prefs()?.sleep_hours_per_week ?? 63;
+
+  // Phase D: related OPEN tasks per dimension — a pure client-side join (every task
+  // carries its `categories` names since Phase B), so no new server surface. The
+  // live statuses match FocusReminders' candidate set.
+  const openTasksFor = (key: string): Task[] =>
+    (tasks() ?? []).filter(
+      (t) => ['open', 'scheduled', 'in_progress'].includes(t.status ?? '') && (t.categories ?? []).includes(key),
+    );
+  // The dimension key whose related-tasks modal is open (null = closed).
+  const [tasksModal, setTasksModal] = createSignal<string | null>(null);
+  const modalCat = () => CATEGORIES.find((c) => c.key === tasksModal());
 
   // Balance Index: how well current satisfaction tracks stated importance across categories.
   // Per category alignment = 1 − |importance − satisfaction| / 9; averaged, ×100.
@@ -127,6 +138,16 @@ export function Balance() {
                           </div>
                         </div>
                         <div class="flex gap-3 items-center">
+                          {/* Phase D: the dimension's related open tasks (categories join). */}
+                          <button
+                            type="button"
+                            onClick={() => setTasksModal(cat.key)}
+                            class="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-xl border border-border bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                            title={`Open tasks in ${cat.name}`}
+                          >
+                            <ListTodo class="w-3.5 h-3.5" />
+                            {openTasksFor(cat.key).length} open
+                          </button>
                           <div class="flex flex-col items-center bg-muted/50 px-2.5 py-1 rounded-xl border border-border">
                             <span class="text-[9px] text-muted-foreground uppercase font-mono">Satisfy</span>
                             <span class="text-sm font-mono font-bold text-accent">{p().satisfaction}/10</span>
@@ -212,6 +233,44 @@ export function Balance() {
             </div>
           </div>
         </div>
+      </Show>
+
+      {/* Phase D — related open tasks for a dimension. Click-through opens the task's
+          edit wizard (the app-global ElementWizard), same affordance as a card edit. */}
+      <Show when={modalCat()}>
+        {(cat) => (
+          <div class="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setTasksModal(null)}>
+            <div class="card w-full max-w-md max-h-[70vh] flex flex-col p-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div class="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                <div class={`p-1.5 rounded-lg bg-muted ${cat().colorClass}`}>{(() => { const I = cat().icon; return <I class="w-4 h-4" />; })()}</div>
+                <h3 class="text-sm font-bold text-foreground flex-1">{cat().name} — open tasks</h3>
+                <button type="button" class="btn-icon" onClick={() => setTasksModal(null)}><X size={14} /></button>
+              </div>
+              <div class="overflow-y-auto p-2 flex flex-col gap-1">
+                <For each={openTasksFor(cat().key)}>
+                  {(t) => (
+                    <button
+                      type="button"
+                      class="w-full text-left px-2.5 py-2 rounded-lg hover:bg-sidebar-accent flex items-center gap-2.5"
+                      onClick={() => { setTasksModal(null); setElementModal({ open: true, mode: 'edit', kind: t.is_habit ? 'habit' : 'task', editTarget: { kind: t.is_habit ? 'habit' : 'task', id: t.id } }); }}
+                    >
+                      <span class="text-[10px] font-mono text-muted-foreground flex-shrink-0">P{t.priority}</span>
+                      <span class="text-sm text-foreground truncate flex-1">{t.title}</span>
+                      <Show when={t.scheduled_for}>
+                        <span class="text-[10px] text-muted-foreground font-mono flex-shrink-0">{t.scheduled_for}</span>
+                      </Show>
+                    </button>
+                  )}
+                </For>
+                <Show when={openTasksFor(cat().key).length === 0}>
+                  <div class="text-xs text-muted-foreground text-center py-6">
+                    No open tasks in this area yet — categorize tasks in the Add/Edit wizard.
+                  </div>
+                </Show>
+              </div>
+            </div>
+          </div>
+        )}
       </Show>
     </div>
   );

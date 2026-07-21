@@ -78,21 +78,37 @@ export function axisPasses(
 }
 
 /**
+ * Does a plain name list pass a deselection set? The category-axis twin of
+ * `axisPasses` (Phase D): categories are NOT tag names on the task — they ride the
+ * block's `categories` (its effective set: own entity_categories rows, else its
+ * task's, derived server-side) — so there's no kind-bucketing step. Same
+ * semantics: nothing on the axis passes; else any still-selected name passes.
+ */
+export function namesPass(names: readonly string[], deselected: ReadonlySet<string>): boolean {
+  if (deselected.size === 0) return true;
+  if (names.length === 0) return true; // uncategorized is never hidden
+  return names.some((n) => !deselected.has(n));
+}
+
+/**
  * The full calendar predicate: a block passes when it clears all three tag axes AND
- * the priority row. Tag/priority come from the linked task; a block with no task
- * (break/buffer) carries no tags and no priority, so it passes every tag axis
- * (untagged-on-axis) but is hidden the moment a priority filter is set.
+ * the priority row. Direction/intention come from the linked task's tags; the
+ * CATEGORY axis reads the block's effective `categories` (Phase D — previously it
+ * matched category names against task tags, where they never appear, making the
+ * category row inert). A block with no task (break/buffer) carries no tags and no
+ * priority, so it passes every tag axis but is hidden the moment a priority
+ * filter is set.
  */
 export function blockPassesAxes(
-  block: Pick<Block, 'task_id'>,
+  block: Pick<Block, 'task_id' | 'categories'>,
   task: Pick<Task, 'tags' | 'priority'> | undefined,
   kindOf: TagKindLookup,
   deselected: AxisDeselected,
   prioFilter: readonly number[],
 ): boolean {
-  void block; // task linkage is resolved by the caller; signature kept for clarity
   const tags = task?.tags ?? [];
-  const tagsOk = TAG_AXES.every((axis) => axisPasses(tags, axis, kindOf, deselected[axis]));
+  const tagsOk = (['direction', 'intention'] as const).every((axis) => axisPasses(tags, axis, kindOf, deselected[axis]));
+  const catOk = namesPass(block.categories ?? [], deselected.category);
   const prioOk = !prioFilter.length || (!!task && prioFilter.includes(task.priority));
-  return tagsOk && prioOk;
+  return tagsOk && catOk && prioOk;
 }
