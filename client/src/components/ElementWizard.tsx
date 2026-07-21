@@ -484,7 +484,7 @@ export function ElementWizard() {
     // Close then reopen on the next tick so the seed effect's closed→open edge fires
     // and loadForEdit hydrates the tapped task — switching editTarget on an already-open
     // modal would keep the composed add-mode values (the effect guards on !wasOpen).
-    setElementModal({ open: false });
+    setElementModal({ open: false, mode: 'add', kind: null });
     queueMicrotask(() => setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id } }));
   }
   function addIntention(name: string) {
