@@ -2,7 +2,7 @@ import { createSignal, Show, For, type JSX } from 'solid-js';
 import { Lock, Trash2, VolumeX, Volume2, ChevronRight, ChevronDown } from 'lucide-solid';
 import { tags, refetchTags, showToast } from '../stores/index.js';
 import { api, type Tag } from '../lib/api.js';
-import { groupByDirection, groupByCategory, sortDirections, displayTag } from '../lib/tag-tax.js';
+import { groupByDirection, groupByCategory, sortDirections, sortCategories, displayTag } from '../lib/tag-tax.js';
 import { useDraggable, useDropZone } from '../lib/draggable.js';
 
 /**
@@ -250,12 +250,35 @@ function DirectionCard(props: {
 }
 
 /** A draggable intention chip. Only the label is the drag handle, so the mute/delete
- *  buttons (siblings) still receive clicks (useDraggable preventDefaults pointerdown). */
+ *  buttons (siblings) still receive clicks (useDraggable preventDefaults pointerdown).
+ *  Phase D (batch-3): every chip carries a compact Category select on BOTH tabs, so an
+ *  intention's category is pickable without dragging (drag stays the axis-refile). */
 function Chip(props: { tag: Tag; onMute: (t: Tag) => void; onDelete: (t: Tag) => void }): JSX.Element {
   const drag = useDraggable(() => ({ kind: 'tag-chip' as const, id: props.tag.id }));
+  const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
+  const current = () => props.tag.categories?.[0] ?? '';
+  async function setCategory(name: string) {
+    try {
+      await api.tags.update(props.tag.id, { categories: name ? [name] : [] });
+      refetchTags();
+      showToast(name ? `Filed under ${displayTag(name)}` : 'Category cleared', 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
   return (
     <span class="badge-neutral text-[11px] flex items-center gap-1 pr-1">
       <span {...drag} class="cursor-grab select-none">#{props.tag.name}</span>
+      <select
+        value={current()}
+        onChange={(e) => void setCategory(e.currentTarget.value)}
+        onPointerDown={(e) => e.stopPropagation()}
+        class="bg-transparent border-0 text-[10px] text-muted-foreground max-w-[72px] cursor-pointer capitalize focus:outline-none"
+        title="Category"
+      >
+        <option value="">—</option>
+        <For each={categoryOptions()}>
+          {(c) => <option value={c.name} selected={current() === c.name}>{displayTag(c.name)}</option>}
+        </For>
+      </select>
       <button onClick={() => props.onMute(props.tag)} class="opacity-60 hover:opacity-100" title={props.tag.muted ? 'Unmute' : 'Mute'}>
         <Show when={props.tag.muted} fallback={<Volume2 size={11} />}><VolumeX size={11} /></Show>
       </button>

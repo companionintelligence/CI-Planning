@@ -1,5 +1,5 @@
 import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
-import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange } from 'lucide-solid';
+import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange, Palette } from 'lucide-solid';
 import { useNavigate } from '@solidjs/router';
 import {
   visibleBlocks,
@@ -15,10 +15,11 @@ import {
   setSelectedDay,
   setPlanWeekModal,
   refetchBlocks,
+  categoryPrefs,
 } from '../stores/index.js';
 import { sortDirections, sortCategories, displayTag } from '../lib/tag-tax.js';
-import { TAG_AXES } from '../lib/overlay.js';
 import type { TagAxis } from '../lib/overlay.js';
+import { tagColorVar } from '../lib/textures.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
 import { localISODate, rangeUTC, addDays, weekDaysOf, monthGridOf } from '../lib/dates.js';
@@ -225,6 +226,21 @@ export function Calendar() {
     intention: 'Intention',
     category: 'Category',
   };
+  // Phase D (batch-3): the panel shows Direction + CATEGORY — the huge intention chip
+  // list is retired from this surface (intentions keep filtering via the Tasks view;
+  // the axis machinery is untouched, just not rendered here).
+  const VISIBLE_AXES: TagAxis[] = ['direction', 'category'];
+  // Phase D: chip colour style — brand teal-monochrome ↔ the colourful per-tag hues
+  // Today's timeline uses. Per-session toggle (the colour icon in the panel header).
+  const [overlayColorful, setOverlayColorful] = createSignal(false);
+  /** A chip's hue in colourful mode: category pref token, else the per-tag hash. */
+  const chipColor = (axis: TagAxis, t: { id: string; name: string }) => {
+    if (axis === 'category') {
+      const token = categoryPrefs()?.prefs?.[t.id]?.color_token;
+      if (token) return `var(--${token})`;
+    }
+    return tagColorVar(t.name);
+  };
 
   /** Tags per axis, ordered per the Tags-page convention (brand first, then A–Z).
    *  Memoized so the filter/sort runs only when the tag list changes — not on every
@@ -332,11 +348,14 @@ export function Calendar() {
         </button>
       </div>
 
-      {/* Overlay filter panel: three tag-axis chip rows + 1–5 priority row, AND-combined.
-          Chips start ON; deselecting hides matching entities (OR within a row, AND across). */}
+      {/* Overlay filter panel (Phase D): Direction + Category chip rows + 1–5 priority,
+          AND-combined — the intention list is retired from this surface; categories are
+          the visible secondary axis (they filter on the block's EFFECTIVE categories).
+          Chips start ON; deselecting hides matching entities (OR within a row, AND across).
+          The palette button flips brand-monochrome ↔ colourful per-tag chips. */}
       <Show when={showFilters()}>
         <div class="mb-4 p-3 rounded-lg border border-surface-700/60 bg-surface-800 flex flex-col gap-3">
-          <For each={TAG_AXES}>
+          <For each={VISIBLE_AXES}>
             {(axis) => (
               <Show when={axisTags(axis).length}>
                 <div class="flex items-center gap-2 flex-wrap">
@@ -347,11 +366,15 @@ export function Calendar() {
                         type="button"
                         aria-pressed={chipOn(axis, t.name)}
                         onClick={() => toggleAxisTag(axis, t.name)}
-                        class="px-2 py-0.5 rounded-full text-xs border transition-colors"
+                        class="px-2 py-0.5 rounded-full text-xs border transition-colors capitalize"
                         classList={{
-                          'bg-accent text-white border-accent': chipOn(axis, t.name),
+                          'bg-accent text-white border-accent': chipOn(axis, t.name) && !overlayColorful(),
+                          'text-white': chipOn(axis, t.name) && overlayColorful(),
                           'border-surface-700 text-slate-400 hover:text-slate-200': !chipOn(axis, t.name),
                         }}
+                        style={chipOn(axis, t.name) && overlayColorful()
+                          ? { 'background-color': chipColor(axis, t), 'border-color': chipColor(axis, t) }
+                          : {}}
                       >
                         {displayTag(t.name)}
                       </button>
@@ -364,6 +387,15 @@ export function Calendar() {
           <Show when={!(tags() ?? []).length}>
             <span class="text-xs text-slate-600">No tags yet</span>
           </Show>
+          <button
+            type="button"
+            onClick={() => setOverlayColorful((c) => !c)}
+            class="btn-ghost text-xs gap-1.5 self-start"
+            classList={{ 'text-accent-light': overlayColorful() }}
+            title="Toggle brand vs per-tag chip colours"
+          >
+            <Palette size={13} /> {overlayColorful() ? 'Colourful' : 'Brand'} chips
+          </button>
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-[10px] uppercase tracking-wide text-slate-500 w-14">Priority</span>
             <For each={[1, 2, 3, 4, 5]}>
