@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { textureSeed, textureStyle, motifFor, TEXTURE_OPACITY } from './textures.js';
+import {
+  textureSeed, textureStyle, motifFor, TEXTURE_OPACITY,
+  stripeStyle, categoryStripeColors, elementTextureStyle,
+} from './textures.js';
 
 describe('textureSeed — deterministic + well-distributed', () => {
   it('is stable for the same tag across calls', () => {
@@ -75,5 +78,69 @@ describe('textureStyle — deterministic, shape-correct, subtle', () => {
     expect(Number(style.opacity)).toBeLessThanOrEqual(0.08);
     expect(style['background-color']).toBe('currentColor'); // flips with light/dark
     expect(style['mask-image']).toBe(style['-webkit-mask-image']); // both prefixes set
+  });
+});
+
+// ── Phase C: category stripes ────────────────────────────────────────────────
+
+const TAGS = [
+  { id: 'c-health', name: 'health', kind: 'category' },
+  { id: 'c-fin', name: 'finance', kind: 'category' },
+  { id: 'i-deep', name: 'deep', kind: 'intention' }, // same-name intention must NOT match
+];
+const PREFS = { 'c-health': { color_token: 'tag-1' }, 'c-fin': { color_token: 'tag-2' } };
+
+describe('categoryStripeColors — name → colour var resolution', () => {
+  it('maps category names to their pref tokens, order preserved, case-insensitive', () => {
+    expect(categoryStripeColors(['Finance', 'health'], TAGS, PREFS)).toEqual(['var(--tag-2)', 'var(--tag-1)']);
+  });
+  it('drops unknown names and non-category kinds; empty inputs yield []', () => {
+    expect(categoryStripeColors(['deep', 'nonsense'], TAGS, PREFS)).toEqual([]);
+    expect(categoryStripeColors([], TAGS, PREFS)).toEqual([]);
+    expect(categoryStripeColors(['health'], undefined, PREFS)).toEqual([]);
+  });
+});
+
+describe('stripeStyle — even 1px/2px stripes of 1–3 colours', () => {
+  it('one colour: a single 1px line per 3px period', () => {
+    const s = stripeStyle(['var(--tag-1)'])!;
+    expect(s['background-image']).toBe(
+      'repeating-linear-gradient(45deg, var(--tag-1) 0px 1px, transparent 1px 3px)',
+    );
+  });
+  it('two colours interleave line-by-line (even distribution, order = position)', () => {
+    const s = stripeStyle(['var(--tag-2)', 'var(--tag-1)'])!;
+    expect(s['background-image']).toBe(
+      'repeating-linear-gradient(45deg, var(--tag-2) 0px 1px, transparent 1px 3px, var(--tag-1) 3px 4px, transparent 4px 6px)',
+    );
+  });
+  it('empty input yields undefined (caller falls back to the motif)', () => {
+    expect(stripeStyle([])).toBeUndefined();
+  });
+});
+
+describe('elementTextureStyle — the one resolution rule', () => {
+  const motif = { iconShape: 'square', seedTag: 'work' };
+
+  it('texture_enabled=false suppresses everything, even with categories + a fallback', () => {
+    expect(elementTextureStyle({ texture_enabled: false, categories: ['health'] }, TAGS, PREFS, motif)).toBeUndefined();
+  });
+  it('a colour override wins over categories', () => {
+    const s = elementTextureStyle({ texture_color_token: 'tag-9', categories: ['health'] }, TAGS, PREFS, motif)!;
+    expect(s['background-image']).toContain('var(--tag-9)');
+    expect(s['background-image']).not.toContain('var(--tag-1)');
+  });
+  it('categories drive the stripes when no override', () => {
+    const s = elementTextureStyle({ categories: ['health', 'finance'] }, TAGS, PREFS, motif)!;
+    expect(s['background-image']).toContain('var(--tag-1)');
+    expect(s['background-image']).toContain('var(--tag-2)');
+  });
+  it('no override/categories → the legacy motif fallback (mask-based)', () => {
+    const s = elementTextureStyle({}, TAGS, PREFS, motif)!;
+    expect(s['mask-image']).toBeDefined();
+    expect(s['background-color']).toBe('currentColor');
+  });
+  it('nothing to derive and no fallback → undefined', () => {
+    expect(elementTextureStyle({}, TAGS, PREFS)).toBeUndefined();
   });
 });
