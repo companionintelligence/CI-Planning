@@ -1,11 +1,11 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled } from '../stores/index.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
-import { textureStyle } from '../lib/textures.js';
+import { elementTextureStyle } from '../lib/textures.js';
 import { ShapeIcon } from './ShapeIcon.js';
 
 const statusClass: Record<string, string> = {
@@ -414,11 +414,31 @@ export function TaskCard(props: Props) {
   // "send" CTA — see the button's classList below.
   const inFlightPlan = () => flightPlanTaskIds().has(props.task.id);
   const dimmed = () => props.task.status === 'cancelled' || inFlightPlan();
-  // §C: a routine member paints its Routine's texture as the card background — but not
-  // when the card is dimmed (opacity-40 × the 6% texture ≈ invisible mud; skip it), and
-  // only while the Settings "Direction textures" appearance toggle is on.
-  const routineTex = () =>
-    (texturesEnabled() && !dimmed() && isRoutineTask(props.task.id) ? patternForTask(props.task.id) : undefined);
+  // Phase C: EVERY task can paint a texture now (was routine-only). Resolution lives
+  // in elementTextureStyle: per-element opt-out → colour override → category stripes
+  // (position order) → the legacy routine motif → none. Still skipped when dimmed
+  // (opacity-40 × a 3% texture ≈ invisible mud) and gated on the Settings toggle.
+  /** A category name → its pref hue (the same map the stripes use), for the chip dot. */
+  const categoryDotColor = (name: string) => {
+    const t = (tags() ?? []).find((x) => x.kind === 'category' && x.name.toLowerCase() === name.toLowerCase());
+    const token = t ? categoryPrefs()?.prefs?.[t.id]?.color_token : undefined;
+    return token ? `var(--${token})` : 'var(--muted-foreground)';
+  };
+
+  const cardTexture = () => {
+    if (!texturesEnabled() || dimmed()) return undefined;
+    const r = isRoutineTask(props.task.id) ? patternForTask(props.task.id) : undefined;
+    const style = elementTextureStyle(
+      props.task,
+      tags(),
+      categoryPrefs()?.prefs,
+      r ? { iconShape: r.type?.icon_shape, seedTag: r.pattern.directions?.[0] ?? r.pattern.tag } : undefined,
+    );
+    if (!style) return undefined;
+    // The motif fallback tints currentColor — feed it the routine's item colour
+    // (#391: item wins over type). Stripes carry explicit colours and ignore it.
+    return r ? { ...style, color: resolveItemColor(r.pattern.color_token, r.type?.color_token) } : style;
+  };
 
   return (
     <div class={depth() > 0 ? 'pl-6 relative' : ''}>
@@ -447,21 +467,12 @@ export function TaskCard(props: Props) {
           'border-left-color': dirColor(),
         }}
       >
-        {/* §C: Routine texture background — a low-contrast whisper behind the content
-            (z-index:-1 within the card's isolated stacking context; rounded to match). */}
-        <Show when={routineTex()}>
-          {(r) => (
-            <div
-              aria-hidden="true"
-              style={{
-                // AF-11: routines no longer author a tag — seed from the first
-                // DERIVED direction (legacy pattern.tag as fallback).
-                ...textureStyle(r().type?.icon_shape, r().pattern.directions?.[0] ?? r().pattern.tag),
-                color: resolveItemColor(r().pattern.color_token, r().type?.color_token), // #391: item wins
-                'z-index': '-1',
-                'border-radius': 'inherit',
-              }}
-            />
+        {/* Phase C texture background — category stripes / colour override / routine
+            motif, a low-contrast whisper behind the content (z-index:-1 within the
+            card's isolated stacking context; rounded to match). */}
+        <Show when={cardTexture()}>
+          {(tex) => (
+            <div aria-hidden="true" style={{ ...tex(), 'z-index': '-1', 'border-radius': 'inherit' }} />
           )}
         </Show>
 
@@ -553,21 +564,24 @@ export function TaskCard(props: Props) {
           </p>
         </Show>
 
-        {/* Row C — tags, full width. */}
-        <Show when={props.task.tags.length > 0 || (props.task.secondary_tags?.length ?? 0) > 0}>
+        {/* Row C — tags, full width. Phase C (batch-3 comment): the visible secondary
+            axis is now the task's CATEGORIES (colour-dotted chips, position order) —
+            intentions stay in the data (grouping/auto-tag/filters) but off the card. */}
+        <Show when={props.task.tags.length > 0 || (props.task.categories?.length ?? 0) > 0}>
           <div class="flex flex-wrap gap-1.5 mt-2">
             {/* Primary tags (level 1) — solid badge; includes the home/work/community direction. */}
             <For each={props.task.tags}>
               {(t) => <span class="badge-neutral text-[11px]">#{t}</span>}
             </For>
-            {/* Secondary tags (level>1) — ghost/outline badge to read as secondary. */}
-            <For each={props.task.secondary_tags ?? []}>
-              {(t) => (
+            {/* Categories (entity_categories, position order) — ghost chip + hue dot. */}
+            <For each={props.task.categories ?? []}>
+              {(c) => (
                 <span
-                  class="text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80"
-                  title="secondary tag"
+                  class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-border/60 text-muted-foreground/80 capitalize"
+                  title="category"
                 >
-                  {t}
+                  <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ 'background-color': categoryDotColor(c) }} />
+                  {c}
                 </span>
               )}
             </For>

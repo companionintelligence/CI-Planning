@@ -99,8 +99,9 @@ function motifSvg(motif: Motif, cell: number, r: number): string {
   }
 }
 
-/** Max contrast of the texture over its surface — a whisper, never noise (design §7). */
-export const TEXTURE_OPACITY = 0.06;
+/** Max contrast of the texture over its surface — a whisper, never noise (design §7).
+ *  Phase C (owner ruling 2026-07-20): halved 0.06 → 0.03 — denser geometry, fainter ink. */
+export const TEXTURE_OPACITY = 0.03;
 
 /** A style object (Solid `style=` shape) for the texture overlay. */
 export type TextureStyle = Record<string, string | number>;
@@ -113,6 +114,91 @@ export type TextureStyle = Record<string, string | number>;
  * overlay tints `currentColor` (so it flips with the theme) and clips it to the
  * motif via a CSS mask at `TEXTURE_OPACITY`.
  */
+// ── Phase C (0134/0135): category stripes ────────────────────────────────────
+// The per-element texture: even diagonal stripes of the element's category
+// colours (position order = stripe order), 1px line / 2px gap (denser than the
+// old 8px hatch), at the halved TEXTURE_OPACITY. Colour resolution:
+//   element texture_color_token (user override) → its categories' colour tokens
+//   → the legacy motif fallback (routine patterns keep their tile, fainter).
+// `texture_enabled=0` suppresses the overlay entirely.
+
+/** Stripe geometry: 1px ink line, 2px transparent gap (owner: "2px apart"). */
+const STRIPE_LINE_PX = 1;
+const STRIPE_GAP_PX = 2;
+
+/**
+ * Resolve category NAMES → CSS colour values, via the tag list (name → id) and
+ * category_prefs (id → colour token). Pure — callers pass the stores' current
+ * values. Unknown names drop out; order is preserved (position = stripe order).
+ */
+export function categoryStripeColors(
+  names: readonly string[] | undefined,
+  tagList: readonly { id: string; name: string; kind: string }[] | undefined,
+  prefs: Record<string, { color_token: string }> | undefined,
+): string[] {
+  if (!names?.length || !tagList?.length) return [];
+  const out: string[] = [];
+  for (const n of names) {
+    const t = tagList.find((x) => x.kind === 'category' && x.name.toLowerCase() === n.toLowerCase());
+    const token = t ? prefs?.[t.id]?.color_token : undefined;
+    if (token) out.push(`var(--${token})`);
+  }
+  return out;
+}
+
+/**
+ * The even-stripe overlay for 1–3 colours: a 45° repeating-linear-gradient whose
+ * cycle interleaves one 1px line PER colour, each followed by the 2px gap — so a
+ * two-category element alternates its two hues line by line (even distribution),
+ * and a single category reads as a plain fine hatch in its hue. Deterministic in
+ * `colors`; empty input yields no stripes (callers fall back to the motif).
+ */
+export function stripeStyle(colors: readonly string[]): TextureStyle | undefined {
+  if (!colors.length) return undefined;
+  const period = STRIPE_LINE_PX + STRIPE_GAP_PX;
+  const stops: string[] = [];
+  colors.forEach((c, i) => {
+    const at = i * period;
+    stops.push(`${c} ${at}px ${at + STRIPE_LINE_PX}px`, `transparent ${at + STRIPE_LINE_PX}px ${at + period}px`);
+  });
+  return {
+    position: 'absolute',
+    inset: '0',
+    'pointer-events': 'none',
+    'background-image': `repeating-linear-gradient(45deg, ${stops.join(', ')})`,
+    opacity: TEXTURE_OPACITY * 2, // 1px lines carry ~⅓ the ink of the motif tile — 2× keeps the whisper visible
+  };
+}
+
+/** The element fields the texture reads (snake_case API shape, tasks + blocks). */
+export interface TexturedElement {
+  texture_enabled?: boolean;
+  texture_color_token?: string | null;
+  categories?: string[];
+}
+
+/**
+ * The ONE resolution rule for a task/block texture (Phase C). Returns the overlay
+ * style, or undefined when the element opted out / nothing to derive from:
+ *   1. `texture_enabled === false` → none (per-element opt-out, 0135);
+ *   2. `texture_color_token` set → single-colour stripes in the override hue;
+ *   3. categories present → even stripes of their colour tokens (position order);
+ *   4. `motifFallback` given (a routine/pattern member) → the legacy motif tile;
+ *   5. otherwise → none.
+ */
+export function elementTextureStyle(
+  el: TexturedElement,
+  tagList: readonly { id: string; name: string; kind: string }[] | undefined,
+  prefs: Record<string, { color_token: string }> | undefined,
+  motifFallback?: { iconShape: string | null | undefined; seedTag: string | null | undefined },
+): TextureStyle | undefined {
+  if (el.texture_enabled === false) return undefined;
+  if (el.texture_color_token) return stripeStyle([`var(--${el.texture_color_token})`]);
+  const catColors = categoryStripeColors(el.categories, tagList, prefs);
+  if (catColors.length) return stripeStyle(catColors);
+  return motifFallback ? textureStyle(motifFallback.iconShape, motifFallback.seedTag) : undefined;
+}
+
 export function textureStyle(iconShape: string | null | undefined, tag: string | null | undefined): TextureStyle {
   const motif = motifFor(iconShape);
   const seed = textureSeed(tag);

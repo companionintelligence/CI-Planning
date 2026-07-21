@@ -50,6 +50,7 @@ vi.mock('../stores/index.js', () => ({
   flightPlanTaskIds: () => new Set<string>(),
   scheduledByTaskId: () => new Set<string>(),
   texturesEnabled: () => true,
+  categoryPrefs: () => ({ prefs: {} }), // Phase C: category-stripe colour lookup
 }));
 
 vi.mock('@solidjs/router', () => ({ useNavigate: () => () => {} }));
@@ -68,30 +69,33 @@ const baseTask = {
   blocked: false,
 } as unknown as Task;
 
-describe('TaskCard — split tag rendering (AF-11)', () => {
-  it('renders the L1 direction as a solid badge and L2 intentions as ghost badges', () => {
-    const { container } = render(() => <TaskCard task={baseTask} />);
-    // Primary (level 1): solid badge with the # prefix.
+describe('TaskCard — tag row (AF-11 → Phase C: categories are the visible secondary axis)', () => {
+  it('renders the L1 direction as a solid badge and CATEGORIES as ghost chips (intentions stay off the card)', () => {
+    const t = { ...baseTask, categories: ['health', 'finance'] } as unknown as Task;
+    const { container } = render(() => <TaskCard task={t} />);
+    // Primary (level 1): solid badge with the # prefix — unchanged.
     const solid = [...container.querySelectorAll('.badge-neutral')].map((el) => el.textContent);
     expect(solid).toEqual(['#work']);
-    // Secondary (level 2): ghost badges, marked title="secondary tag", no # prefix.
-    const ghosts = [...container.querySelectorAll('[title="secondary tag"]')].map((el) => el.textContent);
-    expect(ghosts).toEqual(['deep', 'errand']);
-  });
-
-  it('renders ghost badges even when the task has NO level-1 direction (tags: [])', () => {
-    const t = { ...baseTask, id: 't2', tags: [], secondary_tags: ['deep'] } as unknown as Task;
-    const { container } = render(() => <TaskCard task={t} />);
-    expect(container.querySelectorAll('.badge-neutral').length).toBe(0);
-    const ghosts = [...container.querySelectorAll('[title="secondary tag"]')].map((el) => el.textContent);
-    expect(ghosts).toEqual(['deep']);
-  });
-
-  it('renders no tag row at all when both levels are empty', () => {
-    const t = { ...baseTask, id: 't3', tags: [], secondary_tags: [] } as unknown as Task;
-    const { container } = render(() => <TaskCard task={t} />);
-    expect(container.querySelectorAll('.badge-neutral').length).toBe(0);
+    // Secondary axis: the task's categories (position order), title="category";
+    // intentions (secondary_tags) are in the data but no longer rendered.
+    const cats = [...container.querySelectorAll('[title="category"]')].map((el) => el.textContent?.trim());
+    expect(cats).toEqual(['health', 'finance']);
     expect(container.querySelectorAll('[title="secondary tag"]').length).toBe(0);
+  });
+
+  it('renders category chips even when the task has NO level-1 direction (tags: [])', () => {
+    const t = { ...baseTask, id: 't2', tags: [], secondary_tags: ['deep'], categories: ['health'] } as unknown as Task;
+    const { container } = render(() => <TaskCard task={t} />);
+    expect(container.querySelectorAll('.badge-neutral').length).toBe(0);
+    const cats = [...container.querySelectorAll('[title="category"]')].map((el) => el.textContent?.trim());
+    expect(cats).toEqual(['health']);
+  });
+
+  it('renders no tag row at all when tags and categories are both empty (intentions alone no longer show)', () => {
+    const t = { ...baseTask, id: 't3', tags: [], secondary_tags: ['deep'], categories: [] } as unknown as Task;
+    const { container } = render(() => <TaskCard task={t} />);
+    expect(container.querySelectorAll('.badge-neutral').length).toBe(0);
+    expect(container.querySelectorAll('[title="category"]').length).toBe(0);
   });
 });
 
