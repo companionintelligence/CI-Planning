@@ -67,9 +67,10 @@ export function directionsFirst(tags: Tag[]): Tag[] {
 
 // ── Category axis (0069): mirror of the direction grouping, on tags.kind='category' ──
 
-const CATEGORY_BASE_ORDER = ['family', 'social', 'me'];
+// 0134: categories now mirror the Balance view's six Core Dimensions (unified).
+const CATEGORY_BASE_ORDER = ['health', 'career', 'relationships', 'growth', 'leisure', 'finance'];
 
-/** Base categories first (family·social·me), then custom categories alphabetically. */
+/** Balance dimensions first (health·career·relationships·growth·leisure·finance), then custom alphabetically. */
 export function sortCategories(categories: Tag[]): Tag[] {
   return [...categories].sort((a, b) => {
     const ai = CATEGORY_BASE_ORDER.indexOf(a.name), bi = CATEGORY_BASE_ORDER.indexOf(b.name);

@@ -494,6 +494,24 @@ export const entityTags = sqliteTable(
   (t) => ({ pk: primaryKey({ columns: [t.entityKind, t.entityId, t.tagId] }) })
 );
 
+// 0134: Categories ⇄ Balance unification. A task OR a time block carries 1–3
+// CATEGORIES (a second multi-select axis, like intentions) — the single
+// time_blocks.category_id column can't. category_tag_id FK→tags(id) cascade; no FK on
+// entity_id (spans tasks + time_blocks, app-enforced like entity_tags). `position`
+// (0–2) orders the categories, which drives the even-stripe texture order. Kept SEPARATE
+// from entity_tags on purpose — the "categories never enter entity_tags" invariant holds.
+export const entityCategories = sqliteTable(
+  'entity_categories',
+  {
+    entityKind: text('entity_kind').notNull(),                    // 'task' | 'time_block'
+    entityId: text('entity_id').notNull(),
+    categoryTagId: text('category_tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
+    position: integer('position').notNull().default(0),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.entityKind, t.entityId, t.categoryTagId] }) })
+);
+
 export const possibleTaskTags = sqliteTable('possible_task_tags', {
   possibleTaskId: text('possible_task_id').references(() => possibleTasks.id, { onDelete: 'cascade' }).notNull(),
   tagId: text('tag_id').references(() => tags.id, { onDelete: 'cascade' }).notNull(),
