@@ -124,6 +124,34 @@ describe('mergeEnrichment — constrained classification overlay (2026-07-20)', 
     expect(filled.estimatedMinutes).toBe(15);
     expect(filled.priority).toBe(2);
   });
+
+  // ── Phase B: the categories axis (its own field — never mixed into tags) ──
+  const CAT_VOCAB = { ...VOCAB, categories: ['health', 'career', 'finance', 'leisure'] };
+
+  it('categories: constrained to the vocabulary, canonical casing, capped at 3, deduped', () => {
+    const out = mergeEnrichment(
+      base(),
+      { categories: ['Finance', 'HEALTH', 'finance', 'made-up', 'career', 'leisure'] },
+      CAT_VOCAB,
+    );
+    expect(out.categories).toEqual(['finance', 'health', 'career']); // order kept, dupe+invented dropped, cap 3
+    expect(out.tags).toEqual([]); // never leaks into the tag axes
+  });
+
+  it('categories: parse-carried categories win over the model suggestion', () => {
+    const out = mergeEnrichment(base({ categories: ['leisure'] }), { categories: ['finance'] }, CAT_VOCAB);
+    expect(out.categories).toEqual(['leisure']);
+  });
+
+  it('categories: absent from the output when neither parse nor model provide any', () => {
+    const out = mergeEnrichment(base(), { direction: 'Home' }, CAT_VOCAB);
+    expect(out.categories).toBeUndefined();
+  });
+
+  it('categories: a vocab without categories rejects every model pick', () => {
+    const out = mergeEnrichment(base(), { categories: ['health'] }, VOCAB); // VOCAB has no categories list
+    expect(out.categories).toBeUndefined();
+  });
 });
 
 describe('POST /api/tasks/quick/parse — T14 parse-only preview twin', () => {

@@ -29,10 +29,17 @@ type TimeBlockType implements Node & Taggable {
   blockType: String
   durationMinutes: Int
   colorToken: String
+  # Phase B (0135): per-element texture override (default resolvers over the columns).
+  textureEnabled: Boolean!
+  textureColorToken: String
   # Relations (owner-scoped field resolvers; null when the FK is unset).
   task: TaskType                    # task_id
   parentBlock: TimeBlockType        # parent_block_id
-  category: TagType                 # category_id (a tags.kind='category' row)
+  # Phase B: FIRST effective category (own entity_categories → task's → legacy category_id).
+  category: TagType
+  # Phase B: effective category NAMES, position order (own rows, else the task's — the
+  # same derive rule as REST's `categories`).
+  categories: [String!]!
   tags: [EntityTagType!]!           # W4a: tags applied to this block (entity_tags, all levels)
 }
 
@@ -65,8 +72,13 @@ input CreateTimeBlockInput {
   parentBlockId: ID
   recurrenceRule: String
   recurrenceDtstart: String
+  "LEGACY single category id — bridged to `categories` (entity_categories); prefer `categories`."
   categoryId: ID
+  "Phase B: 1–3 category NAMES (array order = stripe order). Wins over categoryId."
+  categories: [String!]
   colorToken: String
+  textureEnabled: Boolean
+  textureColorToken: String
 }
 
 input UpdateTimeBlockInput {
@@ -87,7 +99,12 @@ input UpdateTimeBlockInput {
   secondaryTags: [String!]
   recurrenceRule: String
   recurrenceDtstart: String
+  "LEGACY single category id (null clears) — bridged to `categories`; prefer `categories`."
   categoryId: ID
+  "Phase B: category NAMES — absent preserves, [] clears (mirrors tags)."
+  categories: [String!]
+  textureEnabled: Boolean
+  textureColorToken: String
 }
 
 # Shift a Plan + all its members by one minute delta, atomically (PR-C). `id` may be the

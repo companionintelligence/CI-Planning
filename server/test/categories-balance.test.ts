@@ -6,7 +6,12 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';
 import { newId } from '../src/lib/ids.js';
 import { resetDb } from './helpers.js';
-import { setEntityCategories, entityCategoryNames, categoryIdsForOwner } from '../src/services/tags.js';
+import {
+  setEntityCategories, entityCategoryNames, categoryIdsForOwner,
+  entityCategoryNamesByIds, removeEntityTags,
+} from '../src/services/tags.js';
+import { createTask, updateTask, recallTask } from '../src/services/tasks.js';
+import { createBlock, updateBlock, blockCategoryNames } from '../src/services/blocks.js';
 
 /**
  * 0134 — Categories ⇄ Balance unification. The category axis is re-seeded to the six
@@ -91,5 +96,97 @@ describe('entity_categories service — 1–3 per task/time_block', () => {
   it('category resolution is owner-scoped', () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-z', 'Z')`).run();
     expect(categoryIdsForOwner(['health'], 'owner-z')).toEqual([]); // owner-z has no categories
+  });
+
+  it('batched reader returns every requested id (empty array when none)', () => {
+    const a = newId(), b = newId();
+    setEntityCategories('task', a, categoryIdsForOwner(['career', 'health'], SYSTEM_OWNER));
+    const map = entityCategoryNamesByIds('task', [a, b]);
+    expect(map.get(a)).toEqual(['career', 'health']);
+    expect(map.get(b)).toEqual([]);
+  });
+});
+
+describe('Phase B capture — service write/read wiring', () => {
+  function seedCats(names: string[]): void {
+    const insTag = sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind, is_base) VALUES (?, ?, ?, 'category', 1)`);
+    const insPref = sqlite.prepare(`INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes) VALUES (?, ?, ?, 'category', 'tag-1', 60)`);
+    for (const n of names) { const id = newId(); insTag.run(id, SYSTEM_OWNER, n); insPref.run(newId(), SYSTEM_OWNER, id); }
+  }
+  beforeEach(() => { resetDb(); seedCats(DIMS); });
+
+  it('createTask/updateTask round-trip: names in → position-ordered names out; undefined preserves; [] clears', async () => {
+    const res = await createTask(SYSTEM_OWNER, { title: 'T', categories: ['finance', 'health'] });
+    if (!res.ok) throw new Error('create failed');
+    expect(entityCategoryNames('task', res.task.id)).toEqual(['finance', 'health']);
+
+    // A categories-less PATCH preserves the set.
+    const up1 = await updateTask(SYSTEM_OWNER, res.task.id, { title: 'T2' });
+    expect(up1.ok).toBe(true);
+    expect(entityCategoryNames('task', res.task.id)).toEqual(['finance', 'health']);
+
+    // [] clears.
+    const up2 = await updateTask(SYSTEM_OWNER, res.task.id, { categories: [] });
+    expect(up2.ok).toBe(true);
+    expect(entityCategoryNames('task', res.task.id)).toEqual([]);
+  });
+
+  it('texture override columns ride create/update and default to enabled', async () => {
+    const res = await createTask(SYSTEM_OWNER, { title: 'Tex' });
+    if (!res.ok) throw new Error('create failed');
+    expect(res.task.textureEnabled).toBe(true); // 0135 DEFAULT 1
+    expect(res.task.textureColorToken).toBeNull();
+
+    const up = await updateTask(SYSTEM_OWNER, res.task.id, { texture_enabled: false, texture_color_token: 'tag-5' });
+    if (!up.ok) throw new Error('update failed');
+    expect(up.task.textureEnabled).toBe(false);
+    expect(up.task.textureColorToken).toBe('tag-5');
+  });
+
+  it('block create with categories: entity_categories written, retired category_id NOT, colour frozen from first', async () => {
+    const res = await createBlock(SYSTEM_OWNER, {
+      title: 'B', block_kind: 'timeblock', categories: ['career', 'growth'],
+      start_at: '2026-06-20T09:00:00.000Z', end_at: '2026-06-20T10:00:00.000Z',
+    });
+    if (!res.ok) throw new Error('create failed');
+    expect(res.block.categoryId).toBeNull();
+    expect(res.block.colorToken).toBe('tag-1'); // frozen from career's pref
+    expect((res.api as { categories: string[] }).categories).toEqual(['career', 'growth']);
+  });
+
+  it('task-backed block DERIVES its task categories (own rows win when present)', async () => {
+    const t = await createTask(SYSTEM_OWNER, { title: 'T', categories: ['health'] });
+    if (!t.ok) throw new Error('create failed');
+    const b = await createBlock(SYSTEM_OWNER, {
+      title: 'placed', task_id: t.task.id,
+      start_at: '2026-06-20T09:00:00.000Z', end_at: '2026-06-20T10:00:00.000Z',
+    });
+    if (!b.ok) throw new Error('block failed');
+    // No own rows → inherits the task's LIVE categories.
+    expect(blockCategoryNames(b.block.id, t.task.id)).toEqual(['health']);
+    // Re-categorizing the task re-derives with zero block writes.
+    await updateTask(SYSTEM_OWNER, t.task.id, { categories: ['leisure', 'health'] });
+    expect(blockCategoryNames(b.block.id, t.task.id)).toEqual(['leisure', 'health']);
+    // Own rows win once set.
+    const up = await updateBlock(SYSTEM_OWNER, b.block.id, { categories: ['finance'] });
+    expect(up.ok).toBe(true);
+    expect(blockCategoryNames(b.block.id, t.task.id)).toEqual(['finance']);
+  });
+
+  it('recallTask clone carries categories (position preserved) + texture override', async () => {
+    const t = await createTask(SYSTEM_OWNER, { title: 'Src', categories: ['growth', 'career'], texture_color_token: 'tag-9' });
+    if (!t.ok) throw new Error('create failed');
+    const cloned = await recallTask(SYSTEM_OWNER, t.task.id);
+    if (!cloned.ok) throw new Error('recall failed');
+    expect(entityCategoryNames('task', cloned.task.id)).toEqual(['growth', 'career']);
+    expect(cloned.task.textureColorToken).toBe('tag-9');
+  });
+
+  it('removeEntityTags purges entity_categories through the same seam (no orphans on hard delete)', () => {
+    const blockId = newId();
+    setEntityCategories('time_block', blockId, categoryIdsForOwner(['health'], SYSTEM_OWNER));
+    expect(entityCategoryNames('time_block', blockId)).toEqual(['health']);
+    removeEntityTags('time_block', blockId);
+    expect(entityCategoryNames('time_block', blockId)).toEqual([]);
   });
 });

@@ -3,7 +3,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from '../routes/sse.js';
 import { requestReplan } from '../engine/auto-defense.js';
 import { taskToApi } from '../lib/serialize.js';
-import { entityTagsFull } from '../services/tags.js';
+import { entityTagsFull, entityCategoryNames } from '../services/tags.js';
 import { objectiveForTask } from '../services/objectives.js';
 import {
   createTask as createTaskService,
@@ -57,6 +57,9 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
     parent_id: input.parentId == null ? undefined : (input.parentId as string),
     tags: input.tags == null ? undefined : (input.tags as string[]),
     secondary_tags: input.secondaryTags == null ? undefined : (input.secondaryTags as string[]),
+    categories: input.categories == null ? undefined : (input.categories as string[]),
+    texture_enabled: input.textureEnabled == null ? undefined : (input.textureEnabled as boolean),
+    texture_color_token: input.textureColorToken == null ? undefined : (input.textureColorToken as string),
     depends_on: input.dependsOn == null ? undefined : (input.dependsOn as string[]),
   };
 }
@@ -88,6 +91,13 @@ function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
   if ('parentId' in input) out.parent_id = input.parentId as string | null;
   if ('tags' in input) out.tags = input.tags as string[];
   if ('secondaryTags' in input) out.secondary_tags = input.secondaryTags as string[];
+  // Phase B: null is treated as absent — clearing is expressed by [] (REST contract).
+  if ('categories' in input && input.categories != null) out.categories = input.categories as string[];
+  if ('textureEnabled' in input) {
+    if (input.textureEnabled === null) throw new GraphQLError('textureEnabled cannot be null', { extensions: { code: 'BAD_USER_INPUT' } });
+    out.texture_enabled = input.textureEnabled as boolean;
+  }
+  if ('textureColorToken' in input) out.texture_color_token = input.textureColorToken as string | null;
   if ('dependsOn' in input) out.depends_on = input.dependsOn as string[];
   return out;
 }
@@ -178,6 +188,9 @@ export const taskResolvers = {
     // listTasks), so its entity_tags are the owner's. id/label/taggedAt map to
     // EntityTagType's fields via default resolvers — no EntityTagType resolver needed.
     tags: (t: TaskRow) => entityTagsFull('task', t.id).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
+    // Phase B: 1–3 category names, position order; texture default coerced like subtype.
+    categories: (t: TaskRow) => entityCategoryNames('task', t.id),
+    textureEnabled: (t: TaskRow) => t.textureEnabled ?? true,
     // W8a follow-up: the first objective this task is linked to (owner-scoped in the
     // service). The returned raw ObjectiveRow is shaped by ObjectiveType's field resolvers.
     objective: (t: TaskRow) => objectiveForTask(currentOwnerId(), t.id) ?? null,

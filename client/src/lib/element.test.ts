@@ -163,12 +163,12 @@ describe('timeblockTagPayload — the AF-9 split', () => {
 });
 
 describe('saveElement(timeblock) — payload shape on create', () => {
-  it('sends primary as the single tag + secondary_tags + category_id together', async () => {
-    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', intentions: ['deep', 'errand'], categoryId: 'c1' });
+  it('sends primary as the single tag + secondary_tags + categories together', async () => {
+    await saveElement('timeblock', 'add', { ...baseForm, primary: 'work', intentions: ['deep', 'errand'], categories: ['health'] });
     const body = lastCreateBody();
     expect(body.tag).toBe('work');                          // NOT 'work,deep,errand'
     expect(body.secondary_tags).toEqual(['deep', 'errand']);
-    expect(body.category_id).toBe('c1');
+    expect(body.categories).toEqual(['health']);            // Phase B: names, not category_id
     expect(body.block_kind).toBe('timeblock');
   });
 
@@ -232,29 +232,30 @@ describe('saveElement(timeblock) — edit round-trip', () => {
   });
 });
 
-describe('saveElement(timeblock) — category clear-on-edit (AF-CU2)', () => {
-  it('edit with the category CLEARED sends category_id: null on the wire (omitted would be JSON-dropped and server-preserved)', async () => {
-    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work' }, 'blk-5');
+describe('saveElement(timeblock) — categories clear-on-edit (AF-CU2 → Phase B)', () => {
+  it('edit with the categories CLEARED sends categories: [] on the wire (omitted would be JSON-dropped and server-preserved)', async () => {
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', categories: [] }, 'blk-5');
     const wire = JSON.parse(JSON.stringify(lastUpdateBody()));
-    expect(wire.category_id).toBeNull();           // survives serialization → server clears category_id + color_token
+    expect(wire.categories).toEqual([]);           // survives serialization → server clears the set + color_token
   });
 
-  it('someday edit with the category cleared also sends category_id: null', async () => {
-    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', someday: true, goalDay: '2026-08-01' }, 'blk-6');
+  it('someday edit with the categories cleared also sends categories: []', async () => {
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', someday: true, goalDay: '2026-08-01', categories: [] }, 'blk-6');
     const wire = JSON.parse(JSON.stringify(lastUpdateBody()));
-    expect(wire.category_id).toBeNull();
+    expect(wire.categories).toEqual([]);
   });
 
-  it('edit with a category picked still sends it', async () => {
-    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', categoryId: 'c1' }, 'blk-7');
+  it('edit with categories picked sends them in order (position = stripe order)', async () => {
+    await saveElement('timeblock', 'edit', { ...baseForm, primary: 'work', categories: ['finance', 'health'] }, 'blk-7');
     const wire = JSON.parse(JSON.stringify(lastUpdateBody()));
-    expect(wire.category_id).toBe('c1');
+    expect(wire.categories).toEqual(['finance', 'health']);
   });
 
-  it('create without a category OMITS category_id from the wire body (nothing to clear)', async () => {
+  it('create without categories OMITS the field from the wire body (nothing to clear)', async () => {
     await saveElement('timeblock', 'add', { ...baseForm, primary: 'work' });
     const wire = JSON.parse(JSON.stringify(lastCreateBody()));
-    expect('category_id' in wire).toBe(false);
+    expect('categories' in wire).toBe(false);
+    expect('category_id' in wire).toBe(false); // the legacy field is never sent anymore
   });
 });
 

@@ -10,6 +10,9 @@ export interface ParsedQuick {
   tags: string[];
   estimatedMinutes?: number;
   priority?: number; // only ever filled by optional enrichment, never the parser
+  // Phase B: 1–3 of the owner's category names (Balance dimensions) — only ever
+  // filled by optional enrichment (a constrained classifier), never the parser.
+  categories?: string[];
 }
 
 const TAG_RE = /#[\w-]+/g;

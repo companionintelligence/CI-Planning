@@ -13,6 +13,7 @@ import {
   nextHalfHour, saveElement, splitBlockTag, mergeTagNames, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
+import { PATTERN_COLORS, colorVar } from '../lib/pattern-meta.js';
 import { localISODate, shortDate, clockLabel, addDays, monthGridOf } from '../lib/dates.js';
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { proposeSlot } from '../lib/propose-slot.js';
@@ -70,7 +71,6 @@ const clampDay = (m: number) => Math.max(DAY_START, Math.min(DAY_END - 15, m));
 
 type PopoverName =
   | 'defer' | 'depends' | 'repeat' | 'routine'      // task utility row
-  | 'category'                                      // block category dropdown
   | 'due'                                           // due-flag popover (day row)
   | 'time' | 'duration'                             // chip dropdowns
   | null;
@@ -130,7 +130,11 @@ export function ElementWizard() {
   const [tbRepeat, setTbRepeat] = createSignal<RepeatPreset>('none');
   const [tbWeekdays, setTbWeekdays] = createSignal<string[]>([]);
   const [tbCustomRule, setTbCustomRule] = createSignal('');
-  const [categoryId, setCategoryId] = createSignal('');
+  // Phase B (0134): 1–3 categories, tasks AND blocks; array order = stripe order.
+  const [categoryIds, setCategoryIds] = createSignal<string[]>([]);
+  // Phase B (0135): per-element texture override (on by default; null colour = derive).
+  const [textureEnabled, setTextureEnabled] = createSignal(true);
+  const [textureColorToken, setTextureColorToken] = createSignal<string | null>(null);
   const [locked, setLocked] = createSignal(false);
   const [allDay, setAllDay] = createSignal(false);
   const [depDraft, setDepDraft] = createSignal('');
@@ -169,18 +173,23 @@ export function ElementWizard() {
   // T-TB-1: Time-Block weekly recurrence — its own weekday set, mirroring the task path.
   const currentTbRule = () => buildRule(tbRepeat(), tbWeekdays(), tbCustomRule());
   const toggleTbWeekday = (d: string) => setTbWeekdays((ws) => (ws.includes(d) ? ws.filter((x) => x !== d) : [...ws, d]));
-  // Time Block Category picker (0069): single-select; picking one prefills the block length.
+  // Category picker (Phase B): 1–3 multi-select on BOTH tabs (was single, block-only).
+  // Selection order is preserved — it becomes entity_categories.position (stripe order).
   const categoryOptions = () => sortCategories((tags() ?? []).filter((t) => t.kind === 'category'));
-  const categoryName = () => {
-    const c = (tags() ?? []).find((t) => t.id === categoryId());
-    return c ? displayTag(c.name) : '';
-  };
-  function pickCategory(id: string) {
-    setCategoryId(id);
-    const p = id ? categoryPrefs()?.prefs?.[id] : undefined;
-    if (p?.default_minutes) setDurMin(p.default_minutes);
-    setPopover(null);
+  function toggleCategory(id: string) {
+    const cur = categoryIds();
+    if (cur.includes(id)) { setCategoryIds(cur.filter((x) => x !== id)); return; }
+    if (cur.length >= 3) return; // cap 3 — mirrors setEntityCategories
+    setCategoryIds([...cur, id]);
+    // First pick prefills the block length from the category's default (0069 behavior).
+    if (cur.length === 0) {
+      const p = categoryPrefs()?.prefs?.[id];
+      if (p?.default_minutes) setDurMin(p.default_minutes);
+    }
   }
+  /** Selected category ids → names (position order) for the save payload. */
+  const categoryNames = () =>
+    categoryIds().map((id) => (tags() ?? []).find((t) => t.id === id)?.name).filter((n): n is string => !!n);
   const candidateTasks = () => (tasks() ?? []).filter((t) => t.status === 'open' && t.id !== m().editTarget?.id);
 
   // T-DEP-1: "Depends on" task search — typeahead over open tasks (excludes self +
@@ -259,13 +268,11 @@ export function ElementWizard() {
 
   // ── Popover dismissal: outside click + Escape ──────────────────────────────
   let utilityEl: HTMLDivElement | undefined;
-  let categoryEl: HTMLDivElement | undefined;
   let dayEl: HTMLDivElement | undefined;
   let timeEl: HTMLDivElement | undefined;
   let durEl: HTMLDivElement | undefined;
   const regionFor = (p: Exclude<PopoverName, null>): HTMLElement | undefined =>
-    p === 'category' ? categoryEl
-    : p === 'due' ? dayEl
+    p === 'due' ? dayEl
     : p === 'time' ? timeEl
     : p === 'duration' ? durEl
     : utilityEl;
@@ -311,7 +318,8 @@ export function ElementWizard() {
       setEstimate(30); setDueAt(pf.day || localISODate()); setDueEdited(false); setPriority(3);
       setTaskRepeat('none'); setTaskWeekdays([]); setTaskCustomRule('');
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false);
-      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryId(''); setMakeHabit(false);
+      setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setMakeHabit(false);
+      setTextureEnabled(true); setTextureColorToken(null);
       setLocked(false); setAllDay(false); setRoutineId(''); setInitialRoutineId('');
       setAttachDraft(''); setAttachItems([]); setRemovedMemberIds([]);
       setPopover(null); setCalendarOpen(false); setCalTarget('start');
@@ -334,7 +342,9 @@ export function ElementWizard() {
       setPrimary(prim);
       setIntentions(mergeTagNames(secondary, b.secondary_tags).filter((n) => n.toLowerCase() !== prim.toLowerCase()));
       setNote(b.note ?? ''); setNoteExpanded(!!b.note);
-      setCategoryId(b.category_id ?? '');
+      seedCategories(b.categories ?? []);
+      setTextureEnabled(b.texture_enabled ?? true);
+      setTextureColorToken(b.texture_color_token ?? null);
       setLocked(!!b.is_locked);
       const ps = rulePreset(b.recurrence_rule);
       setTbRepeat(TB_REPEAT.includes(ps.preset) ? ps.preset : 'custom');
@@ -355,6 +365,9 @@ export function ElementWizard() {
       if (!t) return;
       setTitle(t.title);
       seedTags(t.tags ?? [], t.secondary_tags ?? []);
+      seedCategories(t.categories ?? []);
+      setTextureEnabled(t.texture_enabled ?? true);
+      setTextureColorToken(t.texture_color_token ?? null);
       setNote(t.notes ?? ''); setNoteExpanded(!!t.notes);
       setScheduledFor(t.scheduled_for ?? localISODate());
       setTaskTime(t.task_time ?? '');
@@ -378,6 +391,13 @@ export function ElementWizard() {
   // level-1 list (post-split: just the direction; legacy rows: the old flat set) and
   // `secondary` is the level-2 intentions — fold BOTH into the chips so an edit
   // round-trips them (an unseeded chip set would save secondary_tags: [] and wipe L2).
+  /** Seed the category picker from the server's `categories` names (position order). */
+  function seedCategories(names: string[]) {
+    const all = tags() ?? [];
+    setCategoryIds(names
+      .map((n) => all.find((t) => t.kind === 'category' && t.name.toLowerCase() === n.toLowerCase())?.id)
+      .filter((id): id is string => !!id));
+  }
   function seedTags(names: string[], secondary: string[] = []) {
     const patternNames = new Set(patternTagList().map((p) => p.name.toLowerCase()));
     const prim = names.find((n) => patternNames.has(n.toLowerCase()));
@@ -433,6 +453,9 @@ export function ElementWizard() {
         if (isBlock) setDurMin(def); else { setDurMin(def); setEstimate(def); }
       }
       if (others.length || dirs.length > 1) setIntentions([...new Set([...dirs.slice(1), ...others])]);
+      // Phase B: the classifier's best-guess categories seed the picker (best fit
+      // first = position 0 = first stripe) — reviewable chips, like every NL field.
+      if (parsed.categories?.length) seedCategories(parsed.categories);
       // An explicit ~Nm beats the direction's default duration (applied after).
       if (parsed.estimatedMinutes != null) { if (isBlock) setDurMin(parsed.estimatedMinutes); else setEstimate(parsed.estimatedMinutes); }
       // dueAt: untouched — the Due=Start mirror keeps it on the scheduled day, which
@@ -689,7 +712,7 @@ export function ElementWizard() {
   // ── Summary line ────────────────────────────────────────────────────────────
   const summaryText = () => {
     if (tab() === 'routine') return 'A named, reusable bundle of tasks';
-    const dir = primary() || (tab() === 'timeblock' ? categoryName() : '') || (tab() === 'task' ? 'Task' : 'Block');
+    const dir = primary() || displayTag(categoryNames()[0] ?? '') || (tab() === 'task' ? 'Task' : 'Block');
     if (taskIsSomeday()) return `${dir} · Someday${intentions().length ? ' · ' + intentions().join(', ') : ''}`;
     if (tab() === 'timeblock' && someday()) return `${dir} · Someday · ${fmtDayLabel(goalDay())} · ${fmtDur(durMin())}`;
     if (blockAllDayView()) return `${dir} · ${fmtDayLabel(day())} · All-day`;
@@ -710,7 +733,10 @@ export function ElementWizard() {
         locked: locked(), allDay: allDay(),
         // AF-9: time-block secondary tags live in `intentions` (round-tripped on
         // edit), so no separate blind-preserve set is passed.
-        categoryId: categoryId() || undefined,
+        // Phase B: 1–3 category names (picker order = stripe order) + texture override.
+        categories: categoryNames(),
+        textureEnabled: textureEnabled(),
+        textureColorToken: textureColorToken(),
         scheduledFor: scheduledFor(), taskTime: taskTime() || undefined, estimatedMinutes: estimate(),
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
@@ -1040,33 +1066,63 @@ export function ElementWizard() {
                 aria-disabled={gateLeft()}>
                 <PrimaryPicker label="Direction" empty="No direction tags yet." />
 
-                {/* Category dropdown — blocks only (0069; coexists with direction) */}
-                <Show when={tab() === 'timeblock'}>
-                  <div ref={categoryEl} class="relative flex flex-col gap-1.5">
-                    <div class={sectionLabel}>Category</div>
-                    <button type="button" onClick={() => togglePopover('category')}
-                      class="flex items-center justify-between gap-2 rounded-md border border-border bg-background text-foreground text-xs px-2.5 py-1.5 w-full">
-                      <span class="capitalize">{categoryName() || 'None'}</span>
-                      <ChevronDown size={12} class="text-muted-foreground" />
-                    </button>
-                    <Show when={popover() === 'category'}>
-                      <div class={`${popCard} right-0 max-h-56 overflow-y-auto`}>
-                        <button type="button" class={popItem}
-                          classList={{ 'text-primary': !categoryId() }}
-                          onClick={() => pickCategory('')}>None</button>
-                        <For each={categoryOptions()}>
-                          {(c) => (
-                            <button type="button" class={`${popItem} capitalize`}
-                              classList={{ 'text-primary': categoryId() === c.id }}
-                              onClick={() => pickCategory(c.id)}>
-                              {displayTag(c.name)}
-                            </button>
-                          )}
-                        </For>
-                      </div>
+                {/* Categories — Phase B: 1–3 multi-select on BOTH tabs (was single,
+                    block-only). Pick order = stripe order; a chip dot shows the
+                    category's colour token; picks past 3 are ignored (server cap). */}
+                <div class="flex flex-col gap-1.5">
+                  <div class={sectionLabel}>Categories <span class="normal-case tracking-normal">(up to 3)</span></div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <For each={categoryOptions()}>
+                      {(c) => {
+                        const on = () => categoryIds().includes(c.id);
+                        return (
+                          <button type="button" onClick={() => toggleCategory(c.id)}
+                            class={`${pill} capitalize inline-flex items-center gap-1.5`}
+                            classList={{ [chipOn]: on(), [chipOff]: !on() }}>
+                            <span class="w-2 h-2 rounded-full flex-shrink-0"
+                              style={{ 'background-color': colorVar(categoryPrefs()?.prefs?.[c.id]?.color_token) }} />
+                            {displayTag(c.name)}
+                          </button>
+                        );
+                      }}
+                    </For>
+                    <Show when={categoryOptions().length === 0}>
+                      <span class="text-xs text-muted-foreground">No categories yet.</span>
                     </Show>
                   </div>
-                </Show>
+                </div>
+
+                {/* Texture — Phase B (0135): per-element on/off + colour override.
+                    "Auto" (null) derives the colour from the categories above. */}
+                <div class="flex flex-col gap-1.5">
+                  <div class={sectionLabel}>Texture</div>
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <button type="button" onClick={() => setTextureEnabled(!textureEnabled())}
+                      class={pill}
+                      classList={{ [chipOn]: textureEnabled(), [chipOff]: !textureEnabled() }}>
+                      {textureEnabled() ? 'On' : 'Off'}
+                    </button>
+                    <Show when={textureEnabled()}>
+                      <button type="button" onClick={() => setTextureColorToken(null)}
+                        class={pill}
+                        classList={{ [chipOn]: textureColorToken() === null, [chipOff]: textureColorToken() !== null }}>
+                        Auto
+                      </button>
+                      <For each={PATTERN_COLORS}>
+                        {(col) => (
+                          <button type="button" title={col.label}
+                            onClick={() => setTextureColorToken(col.token)}
+                            class="w-5 h-5 rounded-full border-2 transition-transform flex-shrink-0"
+                            classList={{
+                              'border-foreground scale-110': textureColorToken() === col.token,
+                              'border-transparent hover:scale-105': textureColorToken() !== col.token,
+                            }}
+                            style={{ 'background-color': colorVar(col.token) }} />
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                </div>
 
                 <Show when={tab() === 'task' ? !!primary() : true}><TagSection /></Show>
 

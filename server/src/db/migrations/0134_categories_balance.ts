@@ -19,7 +19,7 @@ export const id = '0134_categories_balance';
  * Colours map each dimension to the nearest CI-Hub tag hue (index.css `--tag-N`), so the
  * Planner/Balance tints line up with the Balance view's Tailwind swatches:
  *   health→tag-1(red) career→tag-7(blue) relationships→tag-11(pink)
- *   growth→tag-9(purple) leisure→tag-2(amber) finance→tag-5(green)
+ *   growth→tag-9(purple) leisure→tag-5(green) finance→tag-2(amber)
  *
  * Destructive by design (the ruling: "remove the existing block categories"): every
  * prior category tag + its prefs/memberships/opt-outs are deleted and any block pointing
