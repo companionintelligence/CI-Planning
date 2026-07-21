@@ -1,6 +1,7 @@
 import { createSignal, For, Show } from 'solid-js';
 import { api } from '../lib/api.js';
 import { aiAvailable, refetchBlocks, showToast } from '../stores/index.js';
+import { MicButton } from './MicButton.js';
 import type { BranchProps } from './PlanWeekAssistant.js';
 
 /**
@@ -115,14 +116,27 @@ export function InstructBox(props: {
         <p class="text-[11px] text-muted-foreground">
           Anything to block off or arrange? e.g. “block off Tuesday mornings for deep work”
         </p>
-        <input
-          class="input text-sm"
-          placeholder="Describe a constraint…"
-          value={text()}
-          disabled={busy() !== null}
-          onInput={(e) => setText(e.currentTarget.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') parse(); }}
-        />
+        {/* T14 (#350): talk as well as type — the transcript lands in the same text
+            state and feeds the same parse; MicButton renders nothing when the browser
+            has no SpeechRecognition, so typing is always the degrade path. */}
+        <div class="relative">
+          <input
+            class="input text-sm w-full pr-9"
+            placeholder="Describe a constraint…"
+            value={text()}
+            disabled={busy() !== null}
+            onInput={(e) => setText(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') parse(); }}
+          />
+          <div class="absolute right-1.5 top-1/2 -translate-y-1/2">
+            <MicButton
+              onTranscript={(t) => { setText(t); parse(); }}
+              onError={(r) => setError(r)}
+              disabled={busy() !== null}
+              class="btn-icon p-1"
+            />
+          </div>
+        </div>
         <Show when={error()}>
           <p class="text-xs text-destructive">{error()}</p>
         </Show>

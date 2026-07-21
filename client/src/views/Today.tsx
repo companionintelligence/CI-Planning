@@ -10,7 +10,6 @@ import { api, type Task } from '../lib/api.js';
 import { splitTagNames } from '../lib/multi-tag.js';
 import { localISODate, addDays } from '../lib/dates.js';
 import { dueItems } from '../lib/task-buckets.js';
-import { QuickAdd } from '../components/QuickAdd.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
 import { DayTypeControl } from '../components/DayTypeControl.js';
@@ -144,10 +143,9 @@ export function Today() {
 
   return (
     <div class="flex flex-col gap-4 p-4 md:p-6 page-enter min-h-full">
-      {/* Quick task entry — one line of natural language, Enter to add. QuickAdd
-          refetches the tasks store itself; onAdded refreshes this view's summary
-          resource + the flight-plan so the new task shows up without a reload. */}
-      <QuickAdd onAdded={() => { refetchSummary(); refetchFlightPlan(); }} />
+      {/* The one-line NL quick entry moved into the FAB's Add modal (T14 #350 /
+          UI-comments 2026-07-20) — ElementWizard's header now hosts it as a
+          parse→preview→approve line, with voice. */}
 
       {/* Day Overview — date · tag set · counts, with + New Task top-right */}
       <div class="rounded-xl border border-border bg-card p-4">
