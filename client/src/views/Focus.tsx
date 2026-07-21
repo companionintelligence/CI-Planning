@@ -1,7 +1,8 @@
-import { createSignal, createMemo, Show, For, onCleanup } from 'solid-js';
-import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, CalendarRange } from 'lucide-solid';
+import { createSignal, createMemo, createResource, Show, For, onCleanup } from 'solid-js';
+import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, CalendarRange, NotebookPen } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusReminders } from '../components/FocusReminders.js';
+import { BriefMenu, FocusMenu } from '../components/DayGoals.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, setPlanWeekModal } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
@@ -53,6 +54,22 @@ export function Focus() {
 
   const [pastOpen, setPastOpen] = createSignal(false);
   const [ritualOpen, setRitualOpen] = createSignal(false);
+  // Day note (the Today idiom, O1): one free-text note for today, inline editor.
+  const [reflections, { refetch: refetchReflections }] = createResource(() => today, (date) => api.reflections.get(date));
+  const note = () => reflections()?.note ?? null;
+  const [editingNote, setEditingNote] = createSignal(false);
+  const [noteDraft, setNoteDraft] = createSignal('');
+  function startEditNote() {
+    setNoteDraft(note()?.body ?? '');
+    setEditingNote(true);
+  }
+  async function saveNote() {
+    try {
+      await api.reflections.setNote(today, noteDraft());
+      void refetchReflections();
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    setEditingNote(false);
+  }
   // The block the user explicitly STARTED from this view (start-any-task-now). Drives the
   // Focus Ritual directly, independent of the Time-Sense master flag — an explicit start is
   // a deliberate request for the timer, so it runs even if the ambient hero is off.
@@ -259,13 +276,57 @@ export function Focus() {
 
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-2xl mx-auto w-full">
-      <div class="flex items-baseline gap-3 mb-5">
-        <h1 class="text-2xl font-bold text-foreground flex items-center gap-2"><Crosshair size={20} class="text-accent-hi" /> Focus</h1>
-        <span class="text-sm text-muted-foreground">
-          {new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-        </span>
-        {/* The persistent "Plan my week" entry point moved to the Calendar header (it acts
-            on the week/calendar); the empty-day contextual nudge below stays. */}
+      {/* Header — the Today-style card container (backlog-3 parity, 2026-07-21): same
+          rounded card + right-column button cluster (Brief · Focus goals · day note).
+          No day-stepper on purpose: FOCUS is today-only by design (see the view doc
+          comment) — other days live in Today/Calendar. "Plan my week" moved to the
+          Calendar header; the empty-day contextual nudge below stays. */}
+      <div class="rounded-xl border border-border bg-card p-4 mb-5">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex items-baseline gap-2">
+            <h1 class="text-xl font-semibold text-foreground flex items-center gap-2">
+              <Crosshair size={18} class="text-accent-hi" /> Focus
+            </h1>
+            <span class="text-sm text-muted-foreground">
+              · {new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            </span>
+          </div>
+          {/* Right column — the same cluster as Today's header. */}
+          <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
+            <BriefMenu date={today} />
+            <FocusMenu date={today} />
+            <button
+              onClick={startEditNote}
+              class="btn-icon"
+              classList={{ 'text-primary': !!note(), 'text-muted-foreground': !note() }}
+              title={note() ? 'Edit day note' : 'Add a note for the day'}
+            >
+              <NotebookPen size={16} fill={note() ? 'currentColor' : 'none'} />
+            </button>
+          </div>
+        </div>
+
+        {/* Inline day-note editor + display (the Today idiom — no modal). */}
+        <Show when={editingNote()}>
+          <div class="mt-3 flex flex-col gap-2">
+            <textarea
+              class="input text-sm min-h-[64px]"
+              placeholder="A note for today…"
+              value={noteDraft()}
+              onInput={(e) => setNoteDraft(e.currentTarget.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void saveNote(); }}
+            />
+            <div class="flex gap-2">
+              <button class="btn-primary text-xs px-3 py-1" onClick={() => void saveNote()}>Save note</button>
+              <button class="btn-ghost text-xs px-3 py-1" onClick={() => setEditingNote(false)}>Cancel</button>
+            </div>
+          </div>
+        </Show>
+        <Show when={!editingNote() && note()}>
+          <button class="mt-2 text-left text-xs text-muted-foreground italic hover:text-foreground" onClick={startEditNote}>
+            {note()!.body}
+          </button>
+        </Show>
       </div>
 
       {/* Time-Sense hero — the in-progress block, live countdown, Focus Ritual launcher. */}
