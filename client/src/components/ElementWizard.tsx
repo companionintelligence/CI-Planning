@@ -15,6 +15,7 @@ import {
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { localISODate, shortDate, clockLabel, addDays, monthGridOf } from '../lib/dates.js';
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
+import { proposeSlot } from '../lib/propose-slot.js';
 import { api } from '../lib/api.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -412,7 +413,9 @@ export function ElementWizard() {
       setTitle(parsed.title);
       if (parsed.scheduledFor) setScheduledFor(parsed.scheduledFor);
       if (parsed.taskTime) setTaskTime(parsed.taskTime);
-      if (parsed.priority != null) setPriority(parsed.priority);
+      // Priority: the parse/enrichment value, else P1 (owner rule: a captured task
+      // is important until the user says otherwise — never a silent P3).
+      setPriority(parsed.priority ?? 1);
       // Known direction names land on the primary axis, first one wins (mirrors the
       // /tasks/quick route's splitNamesByDirection); the rest become intention chips.
       const dirNames = new Set(patternTagList().map((t) => t.name.toLowerCase()));
@@ -428,6 +431,36 @@ export function ElementWizard() {
       if (parsed.estimatedMinutes != null) setEstimate(parsed.estimatedMinutes);
       // dueAt: untouched — the Due=Start mirror keeps it on the scheduled day, which
       // matches the parse (AD1 dueAt is only ever the same timed day).
+
+      // No explicit time → PROPOSE one: the first open workday gap on the target day
+      // lands in the TIME field + mini timeline for approval (drag/nudge to change,
+      // Add to accept). Preview-only — nothing is written until Add. The busy list
+      // comes from the loaded blocks store, which may not cover a far-off day; the
+      // server re-validates placement at create time anyway.
+      if (!parsed.taskTime) {
+        const day = parsed.scheduledFor ?? scheduledFor();
+        const dur = parsed.estimatedMinutes ?? (dirs.length ? patternDefaultMinutes(dirs[0]) : estimate());
+        const busy = (blocks() ?? [])
+          .filter((b) => b.block_type !== 'someday' && !b.all_day && b.status !== 'cancelled'
+            && localISODate(new Date(b.start_at)) === day)
+          .map((b) => {
+            const s = new Date(b.start_at);
+            const startMin = s.getHours() * 60 + s.getMinutes();
+            return { startMin, endMin: startMin + Math.max(Math.round((Date.parse(b.end_at) - Date.parse(b.start_at)) / 60000), 15) };
+          });
+        const now = new Date();
+        const isToday = day === localISODate();
+        const nowMin = isToday ? now.getHours() * 60 + now.getMinutes() : null;
+        const workStartMin = hhmmToMin(prefs()?.workday_start ?? '09:00') ?? 540;
+        const workEndMin = hhmmToMin(prefs()?.workday_end ?? '18:00') ?? 1080;
+        const slot =
+          proposeSlot({ busy, durationMin: dur, workStartMin, workEndMin, nowMin }) ??
+          // Evening capture: today's workday window is already over (or full), but the
+          // day isn't — still propose the next open quarter-hour before midnight, so an
+          // 8pm "call mom" previews 8:15pm instead of "No time".
+          (isToday ? proposeSlot({ busy, durationMin: dur, workStartMin, workEndMin: 24 * 60 - 5, nowMin }) : null);
+        if (slot) setTaskTime(slot);
+      }
     } catch (err) {
       setNlError((err as Error).message);
     } finally {
