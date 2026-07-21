@@ -22,7 +22,7 @@ import { layoutBlocks } from './CalendarGrid.js';
 import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock } from '../stores/index.js';
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
-import { textureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
+import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { pickNextUp, segmentExtentPx, dragDeltaMin, inheritedBlockTag } from '../lib/planner.js';
 import { computeBands, type Band } from '../lib/day-windows.js';
@@ -442,6 +442,17 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
   const tag = () => tagNames()[0];
   // 0069: a block's colour — stamped category colour wins, else the tag hash (forward-only).
   const color = () => blockColorVar(b(), categoryPrefs()?.prefs);
+  // Phase C: the chip's texture — category stripes / override / legacy pattern motif.
+  const chipTexture = () => {
+    if (!texturesEnabled()) return undefined;
+    const p = pat();
+    return elementTextureStyle(
+      b(),
+      tags(),
+      categoryPrefs()?.prefs,
+      p ? { iconShape: p.type?.icon_shape, seedTag: p.pattern.directions?.[0] ?? p.pattern.tag ?? tag() ?? null } : undefined,
+    );
+  };
   const conflict = () => props.placed.cols > 1;
   // Settled = ANY terminal status, matching BlockCard.done() and the server's
   // TERMINAL_BLOCK_STATUSES (block-task-sync.ts) — the views must agree on what reads
@@ -536,12 +547,12 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
         if (locked()) { const tid = b().task_id; if (tid != null) setActiveTask(tid); else setActiveBlock(b().id); }
       }}
     >
-      {/* Pattern texture (type shape + tag-seeded variation) — a low-contrast whisper.
-          Gated on the Settings "Direction textures" appearance toggle. */}
-      <Show when={texturesEnabled() && pat()}>
-        {/* AF-11: routines no longer author a tag — seed the texture from the routine's
-            first DERIVED direction (pattern.tag stays as a legacy fallback). */}
-        {(p) => <div style={textureStyle(p().type?.icon_shape, p().pattern.directions?.[0] ?? p().pattern.tag ?? tag() ?? null)} />}
+      {/* Phase C texture — category stripes (the block's effective categories: its own
+          rows, else its task's — derived server-side) / colour override / the legacy
+          pattern motif. Gated on the Settings "Direction textures" appearance toggle;
+          texture_enabled=0 opts this element out. */}
+      <Show when={chipTexture()}>
+        {(t) => <div style={t()} />}
       </Show>
 
       {/* Update-mode checkbox (top-left) — the explicit affordance; tapping the
