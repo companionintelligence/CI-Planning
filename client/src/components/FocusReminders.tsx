@@ -40,9 +40,22 @@ export function FocusReminders() {
   const [busy, setBusy] = createSignal(false);
 
   const rows = () => reminders() ?? [];
-  /** Actionable targets: open-ish tasks (the server rejects another owner's id anyway). */
-  const candidates = () =>
-    (tasks() ?? []).filter((t) => ['open', 'scheduled', 'in_progress'].includes(t.status ?? ''));
+  /** Actionable targets — TODAY's tasks only (backlog-3, 2026-07-21): a reminder's date
+   *  is hard-fixed to today (Focus is the today-only surface), so offering the whole
+   *  open backlog was noise. "Today's" = scheduled for today OR holding a block today
+   *  (the shared blocks resource is pinned to today on this view). Still open-ish —
+   *  the server rejects another owner's id anyway. */
+  const candidates = () => {
+    const today = localISODate();
+    const blockedToday = new Set(
+      (blocks() ?? []).filter((b) => b.task_id && !['completed', 'skipped', 'cancelled'].includes(b.status)).map((b) => b.task_id),
+    );
+    return (tasks() ?? []).filter(
+      (t) =>
+        ['open', 'scheduled', 'in_progress'].includes(t.status ?? '') &&
+        (t.scheduled_for === today || blockedToday.has(t.id)),
+    );
+  };
 
   const titleOf = (r: { task_id: string | null; block_id: string | null }) => {
     if (r.task_id) return taskOf(r.task_id)?.title ?? 'Reminder';
@@ -125,21 +138,36 @@ export function FocusReminders() {
           </button>
         }
       >
-        <div class="flex items-center gap-2 flex-wrap">
-          <select class="input text-sm" aria-label="Task" value={taskId()} onChange={(e) => setTaskId(e.currentTarget.value)}>
-            <option value="">Pick a task…</option>
-            <For each={candidates()}>{(t) => <option value={t.id}>{t.title}</option>}</For>
-          </select>
-          <input
-            type="time" step={900} class="input text-sm" aria-label="Time"
-            value={time()} onInput={(e) => setTime(e.currentTarget.value)}
-          />
-          <button type="button" class="btn-primary text-xs" disabled={!taskId() || busy()} onClick={() => void create()}>
-            Remind me
-          </button>
-          <button type="button" class="btn-ghost text-xs" onClick={() => setAdding(false)}>
-            Cancel
-          </button>
+        {/* Backlog-3 restyle: a proper labeled card (was a bare unlabeled inline row). */}
+        <div class="rounded-2xl border border-border/60 bg-card p-4 flex flex-col gap-3 max-w-sm">
+          <div class="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground flex items-center gap-1.5">
+            <Bell size={11} /> New reminder — today
+          </div>
+          <label class="flex flex-col gap-1">
+            <span class="text-[10px] uppercase tracking-wider text-muted-foreground">Task (today's)</span>
+            <select class="input text-sm w-full" value={taskId()} onChange={(e) => setTaskId(e.currentTarget.value)}>
+              <option value="">Pick one of today's tasks…</option>
+              <For each={candidates()}>{(t) => <option value={t.id}>{t.title}</option>}</For>
+            </select>
+            <Show when={candidates().length === 0}>
+              <span class="text-[11px] text-muted-foreground">Nothing on today's plate yet — schedule a task first.</span>
+            </Show>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-[10px] uppercase tracking-wider text-muted-foreground">Time</span>
+            <input
+              type="time" step={900} class="input text-sm w-full"
+              value={time()} onInput={(e) => setTime(e.currentTarget.value)}
+            />
+          </label>
+          <div class="flex gap-2">
+            <button type="button" class="btn-primary text-xs" disabled={!taskId() || busy()} onClick={() => void create()}>
+              Remind me
+            </button>
+            <button type="button" class="btn-ghost text-xs" onClick={() => setAdding(false)}>
+              Cancel
+            </button>
+          </div>
         </div>
       </Show>
     </div>
