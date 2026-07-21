@@ -272,12 +272,14 @@ export function Today() {
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
       <ReplanBanner />
 
-      {/* Stacked workspace: Planner on top, Flight-plan below it (full width).
-          Someday Time Blocks render on their goal day in the Planner header lane
-          (the ConceptLane is retired — CON-2d). */}
+      {/* Stacked workspace: Flight-plan on top, Planner below it (full width) — the
+          staging area now leads (UI-comments 2026-07-20 item 4: stage/select first,
+          then see the day the Schedule run fills in below). Someday Time Blocks render
+          on their goal day in the Planner header lane (the ConceptLane is retired —
+          CON-2d). */}
       <div class="flex flex-col gap-4">
-        <Planner />
         <FlightPlan />
+        <Planner />
       </div>
 
       {/* Multi-select indicator (Phase F) — appears when items are picked. */}
@@ -347,9 +349,10 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
     const raw = dueItems(tasks() ?? [], props.date);
     const f = dueFilter();
     const keep = (t: Task) => passesDueFilter(t, isRoutineTask(t.id), f);
-    return { overdue: raw.overdue.filter(keep), dueToday: raw.dueToday.filter(keep) };
+    return { overdue: raw.overdue.filter(keep), dueToday: raw.dueToday.filter(keep), missed: raw.missed.filter(keep) };
   });
   const [showOverdue, setShowOverdue] = createSignal(false);
+  const [showMissed, setShowMissed] = createSignal(false);
   const [expanded, setExpanded] = createSignal(true); // AC — the whole due list is collapsible
   const fmtTime = (iso: string) =>
     new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -368,7 +371,24 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
-  const Row = (p: { task: Task; when: string; danger?: boolean }) => (
+  // Missed revive — the review surface engine/review.ts designed for: the nightly
+  // sweep marks high-priority past-due tasks 'missed' and waits for an EXPLICIT user
+  // reschedule (no silent move). These chips are that reschedule: POST /tasks/:id/
+  // reschedule clears 'missed' → open, bumps scheduled_for +N days, and drops stale
+  // blocks so Auto re-places cleanly. 'Today' = 0 days (back onto today's plan).
+  const REVIVE_STEPS = [
+    { days: 0, label: 'Today' }, { days: 1, label: '+1d' }, { days: 3, label: '+3d' }, { days: 7, label: '+1w' },
+  ] as const;
+  async function reviveMissed(t: Task, days: number, label: string) {
+    try {
+      await api.tasks.reschedule(t.id, days);
+      refetchTasks();
+      refetchFlightPlan(); // reopened tasks are Fill candidates again
+      showToast(`"${t.title}" back on the plan — ${label.toLowerCase() === 'today' ? 'today' : label}`, 'success');
+    } catch (err) { showToast((err as Error).message, 'error'); }
+  }
+
+  const Row = (p: { task: Task; when: string; danger?: boolean; missed?: boolean }) => (
     <li class="flex items-center">
       <button
         class="flex-1 min-w-0 flex items-center gap-2 px-3 py-1.5 text-left text-foreground hover:bg-primary/5 transition-colors"
@@ -395,6 +415,21 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
                 onClick={() => deferDue(p.task, s.days, s.label)}
                 class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
                 title={`Defer due date ${s.label}`}
+              >{s.label}</button>
+            )}
+          </For>
+        </div>
+      </Show>
+      {/* Revive chips — missed rows only: clear 'missed' and reschedule N days out. */}
+      <Show when={p.missed}>
+        <div class="flex items-center gap-1 pr-2 flex-shrink-0">
+          <For each={REVIVE_STEPS}>
+            {(s) => (
+              <button
+                type="button"
+                onClick={() => reviveMissed(p.task, s.days, s.label)}
+                class="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:border-primary transition-colors"
+                title={s.days === 0 ? 'Reopen and reschedule for today' : `Reopen and reschedule ${s.label}`}
               >{s.label}</button>
             )}
           </For>
@@ -439,6 +474,25 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
               </Show>
             </button>
           </Show>
+          {/* Missed rollup toggle — the review surface for the nightly sweep's
+              high-priority 'missed' tasks (engine/review.ts). Amber, parallel to the
+              overdue pill; hidden when nothing is stuck. */}
+          <Show when={items().missed.length > 0}>
+            <button
+              type="button"
+              aria-expanded={showMissed()}
+              onClick={() => setShowMissed((v) => !v)}
+              class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/5 px-2.5 py-1 text-xs transition-colors hover:border-amber-500"
+              title={showMissed() ? 'Hide missed tasks' : 'Show missed tasks — reopen them with the chips'}
+            >
+              <AlertCircle size={12} class="text-amber-400" />
+              <span class="tabular-nums font-semibold text-amber-400">{items().missed.length}</span>
+              <span class="text-muted-foreground">missed</span>
+              <Show when={showMissed()} fallback={<ChevronDown size={12} class="text-muted-foreground" />}>
+                <ChevronUp size={12} class="text-muted-foreground" />
+              </Show>
+            </button>
+          </Show>
           {/* Multi-select filter menu — direction · hide habits · hide routines. */}
           <DueFilterMenu />
         </div>
@@ -451,6 +505,17 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
           <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-destructive/30 bg-background/40">
             <For each={items().overdue}>
               {(t) => <Row task={t} when={t.due_at ? fmtDay(t.due_at) : ''} danger />}
+            </For>
+          </ul>
+        </Show>
+
+        {/* Missed list (expanded rollup) — oldest miss first; each row's chips reopen
+            the task (missed → open, scheduled_for = today + N, stale blocks dropped)
+            so it surfaces for Fill/Auto again. */}
+        <Show when={showMissed() && items().missed.length > 0}>
+          <ul class="mt-2 divide-y divide-border/60 rounded-lg border border-amber-500/30 bg-background/40">
+            <For each={items().missed}>
+              {(t) => <Row task={t} when={t.scheduled_for ? fmtDay(t.scheduled_for + 'T12:00:00') : ''} missed />}
             </For>
           </ul>
         </Show>
