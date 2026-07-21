@@ -131,7 +131,12 @@ export const api = {
     // tasks.update({ due_at }) on purpose — this endpoint moves scheduled_for, the
     // wrong axis for the shipped one-tap defer (see Today.tsx's defer comment).
     reschedule: (id: string, days: number) =>
-      request<{ task: Task; scheduled_for: string }>('POST', `/tasks/${id}/reschedule`, { days }),
+      request<{
+        task: Task;
+        scheduled_for: string;
+        // Schedule mode only: the engine booked the reopened task into a slot.
+        placement?: { placed: boolean; blockId?: string; startAt?: string; endAt?: string; reason?: string };
+      }>('POST', `/tasks/${id}/reschedule`, { days }),
     // DEAD SURFACE (zero callers — see #392): no Recall action exists anywhere in the
     // UI, so Settings' 'Recall keeps Routine membership' toggle currently governs
     // nothing. Clone a (shelved/Past) task to a brand-new task — cockpit-v2 Phase 6.
@@ -394,6 +399,13 @@ export const api = {
       return request<WeekReview>('GET', `/review/week${q}`);
     },
     calibration: () => request<Calibration>('GET', '/calibration'),
+    // The top-bar refresh: run the review sweep now (owner-scoped review_day engine).
+    // Auto-defers past-due tasks, revives stuck 'missed' one-offs, and (Schedule mode)
+    // places everything reopened into its new day.
+    sweep: () =>
+      request<{ result: { missed: number; deferred: number; revived: number; placed: number; restaged: number } }>(
+        'POST', '/review/sweep', {},
+      ),
   },
 
   llm: {

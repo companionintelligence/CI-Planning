@@ -1,6 +1,6 @@
 import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { ErrorBoundary, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
-import { Plus, Cpu, Loader2 } from 'lucide-solid';
+import { Plus, Cpu, Loader2, RefreshCw } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
 import { Login }    from './views/Login.js';
 import { ResetPassword } from './views/ResetPassword.js';
@@ -21,7 +21,7 @@ import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
-import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast } from './stores/index.js';
+import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan } from './stores/index.js';
 import { api } from './lib/api.js';
 import {
   requestNotificationPermission,
@@ -95,6 +95,26 @@ function Shell(props: { children?: any }) {
     catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // Sweep-now (the review_day engine, on demand): auto-defer past-due tasks, revive
+  // stuck 'missed' one-offs, and — in Schedule mode — place everything reopened into
+  // its new day. The refetches repaint whatever the sweep touched.
+  const [sweeping, setSweeping] = createSignal(false);
+  async function sweepNow() {
+    if (sweeping()) return;
+    setSweeping(true);
+    try {
+      const { result: r } = await api.review.sweep();
+      const moved = r.deferred + r.revived;
+      const bits: string[] = [];
+      if (moved) bits.push(`${moved} task${moved === 1 ? '' : 's'} rescheduled`);
+      if (r.placed) bits.push(`${r.placed} placed`);
+      if (r.restaged) bits.push(`${r.restaged} re-staged`);
+      showToast(bits.length ? bits.join(' · ') : 'Nothing stale — all caught up', bits.length ? 'success' : 'default');
+      await Promise.all([refetchTasks(), refetchBlocks(), refetchFlightPlan()]);
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setSweeping(false); }
+  }
+
   return (
     <div class="flex h-screen overflow-hidden bg-surface-950">
       <Nav />
@@ -127,6 +147,18 @@ function Shell(props: { children?: any }) {
               classList={{ 'bg-primary text-primary-foreground': mode() === 'schedule', 'text-muted-foreground hover:text-foreground': mode() !== 'schedule' }}
             >Schedule</button>
           </div>
+          {/* Sweep-now — run the review sweep on demand (the nightly review_day engine,
+              owner-scoped): past-due tasks auto-defer with backoff, stuck 'missed'
+              one-offs reopen, and in Schedule mode everything reopened is placed. */}
+          <button
+            type="button"
+            onClick={sweepNow}
+            disabled={sweeping()}
+            title="Sweep missed & stale tasks now — reopen them (and in Schedule mode, re-place them)"
+            class="btn-icon disabled:opacity-40"
+          >
+            <RefreshCw size={13} classList={{ 'animate-spin': sweeping() }} />
+          </button>
           <span class="text-xs font-mono text-foreground">
             {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>

@@ -5,9 +5,13 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 import { reviewAndReschedule, rescheduleTask, backoffDays } from '../src/engine/review.js';
 
 /**
- * Nightly review + reschedule (PR-C+, Workstream B). Hybrid-by-priority: low
- * priority auto-defers with a +1/3/7 backoff; high priority is surfaced for the
- * user (status='missed'). Plus the +1/+3/+7 reschedule endpoint.
+ * Review + reschedule (PR-C+, Workstream B; UNIFIED 2026-07-20). Every priority
+ * auto-defers with the +1/3/7 backoff — the old high-priority 'missed' parking is
+ * retired (it starved Fill/Auto: the review surface only arrived in #409). Stuck
+ * 'missed' one-offs are revived by the same backoff. daily_plan outcome stamps
+ * KEEP the priority split ('missed' ≤2 / 'deferred' ≥3). hands_off owners get
+ * everything reopened placed via placeStartAnchoredTask. Plus the reschedule
+ * endpoint (+ Schedule-mode placement) and the owner-scoped POST /review/sweep.
  */
 
 const OWNER = SYSTEM_OWNER;
@@ -49,12 +53,12 @@ describe('backoffDays', () => {
   });
 });
 
-describe('reviewAndReschedule (hybrid by priority)', () => {
+describe('reviewAndReschedule (unified auto-defer)', () => {
   it('low-priority miss auto-defers (+backoff), drops the stale block, bumps defer_count', () => {
     const t = insertTask('Low chore', 4, 'open', 0);
     insertBlock(t, -2); // ended 2h ago, un-started
     const r = reviewAndReschedule();
-    expect(r).toMatchObject({ missed: 1, deferred: 1, surfaced: 0 });
+    expect(r).toMatchObject({ missed: 1, deferred: 1, revived: 0 });
     const after = task(t);
     expect(after.status).toBe('open');
     expect(after.defer_count).toBe(1);
@@ -62,24 +66,42 @@ describe('reviewAndReschedule (hybrid by priority)', () => {
     expect(blockCount(t)).toBe(0);            // stale block dropped
   });
 
-  it('high-priority miss is surfaced (status=missed), NOT moved silently', () => {
+  it('high-priority miss ALSO auto-defers (unified — no more missed parking)', () => {
     const t = insertTask('Important', 1, 'open', 0);
     insertBlock(t, -2);
     const r = reviewAndReschedule();
-    expect(r).toMatchObject({ missed: 1, deferred: 0, surfaced: 1 });
+    expect(r).toMatchObject({ missed: 1, deferred: 1, revived: 0 });
     const after = task(t);
-    expect(after.status).toBe('missed');
-    expect(after.scheduled_for).toBeNull(); // not moved
-    expect(after.defer_count).toBe(0);
+    expect(after.status).toBe('open');        // back in circulation, never parked
+    expect(after.defer_count).toBe(1);
+    expect(after.scheduled_for).toBeTruthy();
+    expect(blockCount(t)).toBe(0);
   });
 
-  it('ignores future blocks, completed tasks, and already-missed tasks', () => {
+  it('revives a stuck status=missed one-off (backoff → open), not recurring instances', () => {
+    const stuck = insertTask('Stuck P1', 1, 'missed', 0); insertBlock(stuck, -2, 'missed');
+    // A recurring INSTANCE stays missed — its missed day is genuine history.
+    const parent = insertTask('Routine', 3, 'recurring');
+    const inst = (sqlite
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, priority, recurrence_parent_id) VALUES (uuid7(), 'Routine day', ?, 'missed', 3, ?) RETURNING id`)
+      .get(OWNER, parent) as { id: string }).id;
+    const r = reviewAndReschedule();
+    expect(r.revived).toBe(1);
+    const after = task(stuck);
+    expect(after.status).toBe('open');
+    expect(after.defer_count).toBe(1);
+    expect(after.scheduled_for).toBeTruthy();
+    expect(blockCount(stuck)).toBe(0);        // the relabelled 'missed' block dropped too
+    expect(task(inst).status).toBe('missed'); // instance untouched
+  });
+
+  it('ignores future blocks and completed tasks', () => {
     const future = insertTask('Future', 4); insertBlock(future, +3);    // not yet due
     const done = insertTask('Done', 4, 'done'); insertBlock(done, -2);  // already done
-    const already = insertTask('Already', 4, 'missed'); insertBlock(already, -2);
     const r = reviewAndReschedule();
     expect(r.missed).toBe(0);
     expect(task(future).status).toBe('open');
+    expect(task(done).status).toBe('done');
   });
 
   it('backoff escalates across successive misses (defer_count drives +1 → +3 → +7)', () => {
@@ -91,6 +113,35 @@ describe('reviewAndReschedule (hybrid by priority)', () => {
     insertBlock(t, -2);
     reviewAndReschedule();
     expect(task(t).defer_count).toBe(2);
+  });
+
+  it('is idempotent — a second immediate run moves nothing further', () => {
+    const t = insertTask('Once', 1, 'open', 0);
+    insertBlock(t, -2);
+    reviewAndReschedule();
+    const r2 = reviewAndReschedule();
+    expect(r2).toMatchObject({ missed: 0, deferred: 0, revived: 0 });
+    expect(task(t).defer_count).toBe(1); // not double-deferred
+  });
+
+  it('hands_off owner: a deferred task is placed into its new day (block created)', () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = 'hands_off' WHERE owner_id = ?`).run(OWNER);
+    const t = insertTask('Auto-place me', 1, 'open', 0);
+    insertBlock(t, -2);
+    const r = reviewAndReschedule();
+    expect(r.deferred).toBe(1);
+    expect(r.placed).toBe(1);
+    expect(task(t).status).toBe('scheduled'); // R2 parity: placed = scheduled
+    expect(blockCount(t)).toBe(1);            // the new-day block exists
+  });
+
+  it('balanced (Suggest) owner: deferred task is reopened+dated but NOT placed', () => {
+    const t = insertTask('Wait for me', 1, 'open', 0);
+    insertBlock(t, -2);
+    const r = reviewAndReschedule();
+    expect(r.placed).toBe(0);
+    expect(task(t).status).toBe('open');
+    expect(blockCount(t)).toBe(0);
   });
 });
 
@@ -105,12 +156,13 @@ describe('daily_plan.outcome stamping (N4 lossy-slip fix)', () => {
     expect(planOutcome(t)).toBe('deferred');
   });
 
-  it("stamps 'missed' on surfaced high-priority task", () => {
+  it("stamps 'missed' on a high-priority miss — the outcome keeps the priority split even though the task now auto-defers", () => {
     const t = insertTask('Important', 1, 'open', 0);
     insertBlock(t, -2);
     insertDailyPlan(t, DATE);
     reviewAndReschedule();
-    expect(planOutcome(t)).toBe('missed');
+    expect(planOutcome(t)).toBe('missed'); // the DAY's record: important work was missed
+    expect(task(t).status).toBe('open');   // but the TASK auto-defers like everything else
   });
 
   it('is write-once: does not overwrite an already-stamped outcome', () => {
@@ -133,22 +185,54 @@ describe('daily_plan.outcome stamping (N4 lossy-slip fix)', () => {
 });
 
 describe('POST /api/tasks/:id/reschedule', () => {
-  it('reschedules a missed task by N days, clears missed, drops stale blocks', async () => {
+  it('reschedules a missed task by N days, clears missed, drops stale blocks (Suggest: no placement)', async () => {
     const t = insertTask('Important', 1, 'missed', 0);
     insertBlock(t, -2, 'missed');
     const r = await api(srv.url, `/api/tasks/${t}/reschedule`, { method: 'POST', json: { days: 3 } });
     expect(r.status).toBe(200);
     expect(r.body.scheduled_for).toBeTruthy();
+    expect(r.body.placement).toBeUndefined(); // balanced owner — nothing placed
     const after = task(t);
     expect(after.status).toBe('open');
     expect(after.defer_count).toBe(1);
     expect(blockCount(t)).toBe(0);
   });
 
+  it('Schedule mode (hands_off): the reopened task is placed on its new day and the response reports it', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET trust_mode = 'hands_off' WHERE owner_id = ?`).run(OWNER);
+    const t = insertTask('Place me', 1, 'missed', 0);
+    insertBlock(t, -2, 'missed');
+    const r = await api(srv.url, `/api/tasks/${t}/reschedule`, { method: 'POST', json: { days: 1 } });
+    expect(r.status).toBe(200);
+    expect(r.body.placement?.placed).toBe(true);
+    expect(r.body.placement?.startAt).toBeTruthy();
+    expect(r.body.task.status).toBe('scheduled'); // response carries the post-placement row
+    expect(blockCount(t)).toBe(1);
+  });
+
   it('422 without days; 404 for unknown task', async () => {
     const t = insertTask('X', 3);
     expect((await api(srv.url, `/api/tasks/${t}/reschedule`, { method: 'POST', json: {} })).status).toBe(422);
     expect((await api(srv.url, `/api/tasks/999999/reschedule`, { method: 'POST', json: { days: 1 } })).status).toBe(404);
+  });
+});
+
+describe('POST /api/review/sweep (the top-bar refresh)', () => {
+  it('runs the owner-scoped sweep and returns the counts', async () => {
+    const t = insertTask('Sweep me', 1, 'open', 0);
+    insertBlock(t, -2);
+    const stuck = insertTask('Stuck', 2, 'missed', 0);
+    const r = await api(srv.url, `/api/review/sweep`, { method: 'POST', json: {} });
+    expect(r.status).toBe(200);
+    expect(r.body.result).toMatchObject({ missed: 1, deferred: 1, revived: 1 });
+    expect(task(t).status).toBe('open');
+    expect(task(stuck).status).toBe('open');
+  });
+
+  it('is a no-op returning zeros when nothing is stale', async () => {
+    const r = await api(srv.url, `/api/review/sweep`, { method: 'POST', json: {} });
+    expect(r.status).toBe(200);
+    expect(r.body.result).toMatchObject({ missed: 0, deferred: 0, revived: 0, placed: 0 });
   });
 });
 

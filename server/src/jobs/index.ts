@@ -226,14 +226,15 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'review_day': {
-      // 01:00 — review the day that just closed. Low-priority misses auto-defer
-      // (+1/3/7 backoff); high-priority misses are surfaced for the user.
+      // 01:00 — review the day that just closed. EVERY missed task auto-defers
+      // (+1/3/7 backoff, unified 2026-07-20); stuck 'missed' one-offs are revived;
+      // hands_off owners get reopened tasks placed into their new day right away.
       // Open tasks with no future blocks are re-staged into the flight plan.
       const r = reviewAndReschedule();
       return {
         itemsCreated: r.restaged,
-        itemsUpdated: r.deferred + r.surfaced,
-        log: `Reviewed ${r.missed} missed → ${r.deferred} auto-deferred, ${r.surfaced} surfaced; re-staged ${r.restaged}`,
+        itemsUpdated: r.deferred + r.revived,
+        log: `Reviewed ${r.missed} missed → ${r.deferred} auto-deferred, ${r.revived} revived, ${r.placed} placed; re-staged ${r.restaged}`,
       };
     }
     case 'fire_reminders': {
