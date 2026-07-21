@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
 import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText } from 'lucide-solid';
-import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable } from '../stores/index.js';
+import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable, connections, refetchConnections } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
@@ -513,7 +513,7 @@ export function Settings() {
     const g = q.get('google');
     const wizardInitiated = g && localStorage.getItem(FTUE_RESUME_KEY);
     if (g && !wizardInitiated) {
-      if (g === 'connected') { showToast('Google account connected', 'success'); refetchIntegrations(); }
+      if (g === 'connected') { showToast('Google account connected', 'success'); refetchConnections(); refetchIntegrations(); }
       else if (g === 'error') { showToast(`Google connect failed${q.get('reason') ? `: ${q.get('reason')}` : ''}`, 'error'); }
     }
     // AA0b — the memory CI-Portal connector callback bounces back here too.
@@ -538,14 +538,17 @@ export function Settings() {
     }
   }
 
-  // WP7: disconnect one account, via the typed api.oauth helper (was a raw fetch()).
-  async function disconnectGoogle(account: string) {
+  // T13 (#349): disconnect one connection via the provider-agnostic api.connections
+  // helper (Google also revokes server-side). Refetch BOTH resources: `connections`
+  // drives the Connected-accounts card, `integrations` the WP7 health sub-line.
+  async function disconnectAccount(provider: string, account: string) {
     try {
-      await api.oauth.googleDisconnect(account);
+      await api.connections.disconnect(provider, account);
       showToast(`Disconnected ${account}`, 'success');
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
+      refetchConnections();
       refetchIntegrations();
     }
   }
@@ -1462,90 +1465,107 @@ export function Settings() {
                       </div>
                     </div>
                   </Show>
-
-                  {/* WP7: read-only Google connection health, live-updated on sync. */}
-                  <div class="flex flex-col gap-2 pl-7">
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="section-label">Connections</span>
-                      <Show when={i().google.connections.length === 0}>
-                        <button
-                          type="button"
-                          onClick={connectGoogle}
-                          disabled={!i().google.liveEnabled}
-                          title={
-                            i().google.liveEnabled
-                              ? 'Connect a Google account'
-                              : i().google.mode === 'off'
-                                ? 'Save a Google OAuth client above (or set GOOGLE_MODE=live on the server) to enable connecting'
-                                : 'Fixture mode serves sample data only — no real account can be connected'
-                          }
-                          class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          <Link2 size={12} /> Connect
-                        </button>
-                      </Show>
-                    </div>
-
-                    <Show
-                      when={i().google.connections.length > 0}
-                      fallback={
-                        <div class="text-xs text-slate-500">
-                          {i().google.mode === 'off'
-                            ? (gcfg() && !gcfg()!.envPinned
-                                ? 'Not configured yet — save a Google OAuth client above to enable connecting.'
-                                : 'Google integration is not configured on this server.')
-                            : i().google.mode === 'fixture'
-                              ? 'Fixture mode — sample data only; no real account can be connected.'
-                              : 'No Google accounts connected.'}
-                        </div>
-                      }
-                    >
-                      <For each={i().google.connections}>
-                        {(c) => (
-                          <div class="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
-                            <div class="flex items-center justify-between gap-2">
-                              <span class="text-xs text-slate-200 font-medium truncate">{c.account}</span>
-                              <div class="flex items-center gap-2 shrink-0">
-                                <span
-                                  class="text-[10px] px-1.5 py-0.5 rounded-full"
-                                  classList={{
-                                    'bg-green-500/15 text-green-400': c.status === 'connected',
-                                    'bg-amber-500/15 text-amber-400': c.status === 'expired',
-                                    'bg-slate-500/15 text-slate-400': c.status === 'inactive',
-                                  }}
-                                >
-                                  {c.status}
-                                </span>
-                                {/* Never gated on liveEnabled: the DELETE route works in any
-                                    mode, and a user switching modes must keep an escape hatch
-                                    to drop a stored connection (its tokens outlive the mode). */}
-                                <button
-                                  type="button"
-                                  onClick={() => disconnectGoogle(c.account)}
-                                  title="Disconnect this account"
-                                  class="btn-ghost text-xs px-2 py-1"
-                                >
-                                  <Unlink size={12} /> Disconnect
-                                </button>
-                              </div>
-                            </div>
-                            <div class="flex items-center gap-3 text-[11px] text-slate-500">
-                              <span>{c.lastSyncAt ? `Last sync: ${new Date(c.lastSyncAt).toLocaleString()}` : 'Never synced'}</span>
-                              <span>·</span>
-                              <span>{c.mappedEventCount} mapped event{c.mappedEventCount === 1 ? '' : 's'}</span>
-                            </div>
-                            <Show when={c.lastError}>
-                              <div class="flex items-center gap-1.5 text-[11px] text-destructive">
-                                <AlertTriangle size={11} /> {c.lastError}
-                              </div>
-                            </Show>
-                          </div>
-                        )}
-                      </For>
-                    </Show>
-                  </div>
                 </div>
               )}
+            </Show>
+          </section>
+
+          {/* Connected accounts (T13 #349) — the provider-agnostic connection surface.
+              Backed by the `connections` resource (GET /api/connections): one row per
+              stored connection_tokens record, mode-blind so a user whose Google is `off`
+              still sees (and can drop) a stored token. Google rows are enriched with the
+              WP7 health sub-line by matching integrations().google.connections on account. */}
+          <section class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div class="section-label flex items-center gap-1.5"><Link2 size={12} /> Connected accounts</div>
+              {/* Connect is Google-only (the sole provider with a connect flow) and shows
+                  only when Google is live and no Google account is connected yet. */}
+              <Show when={integrations()?.google.liveEnabled && !(connections() ?? []).some((c) => c.provider === 'google')}>
+                <button type="button" onClick={connectGoogle} class="btn-secondary text-xs px-3 py-1.5">
+                  <Link2 size={12} /> Connect Google
+                </button>
+              </Show>
+            </div>
+
+            <Show
+              when={(connections() ?? []).length > 0}
+              fallback={
+                <div class="text-xs text-slate-500">
+                  <Show when={!connections.loading} fallback="Loading connections…">
+                    No accounts connected.
+                    {integrations()?.google.mode === 'fixture'
+                      ? ' Fixture mode serves sample data only — no real account can be connected.'
+                      : integrations()?.google.mode === 'off'
+                        ? ' Configure a Google OAuth client under Integrations to enable connecting.'
+                        : ''}
+                  </Show>
+                </div>
+              }
+            >
+              <div class="flex flex-col gap-2">
+                <For each={connections()}>
+                  {(c) => {
+                    // Google rows carry richer WP7 health (status + last sync / mapped
+                    // events / errors); other providers show the raw status column only.
+                    const health = () =>
+                      c.provider === 'google'
+                        ? integrations()?.google.connections.find((h) => h.account === c.account)
+                        : undefined;
+                    const status = () => health()?.status ?? c.status;
+                    return (
+                      <div class="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="text-xs text-slate-200 font-medium truncate">
+                            <span class="text-slate-400 capitalize">{c.provider}</span>
+                            <span class="text-slate-600"> · </span>
+                            {c.account}
+                          </span>
+                          <div class="flex items-center gap-2 shrink-0">
+                            <span
+                              class="text-[10px] px-1.5 py-0.5 rounded-full capitalize"
+                              classList={{
+                                'bg-green-500/15 text-green-400': status() === 'connected' || status() === 'active',
+                                'bg-amber-500/15 text-amber-400': status() === 'expired',
+                                'bg-slate-500/15 text-slate-400': status() === 'inactive',
+                                'bg-red-500/15 text-red-400': status() === 'revoked' || status() === 'error',
+                              }}
+                            >
+                              {status()}
+                            </span>
+                            {/* Never gated on liveEnabled: the DELETE route works in any
+                                mode, and a user switching modes must keep an escape hatch
+                                to drop a stored connection (its tokens outlive the mode). */}
+                            <button
+                              type="button"
+                              onClick={() => disconnectAccount(c.provider, c.account)}
+                              title="Disconnect this account"
+                              class="btn-ghost text-xs px-2 py-1"
+                            >
+                              <Unlink size={12} /> Disconnect
+                            </button>
+                          </div>
+                        </div>
+                        <Show when={health()}>
+                          {(h) => (
+                            <>
+                              <div class="flex items-center gap-3 text-[11px] text-slate-500">
+                                <span>{h().lastSyncAt ? `Last sync: ${new Date(h().lastSyncAt!).toLocaleString()}` : 'Never synced'}</span>
+                                <span>·</span>
+                                <span>{h().mappedEventCount} mapped event{h().mappedEventCount === 1 ? '' : 's'}</span>
+                              </div>
+                              <Show when={h().lastError}>
+                                <div class="flex items-center gap-1.5 text-[11px] text-destructive">
+                                  <AlertTriangle size={11} /> {h().lastError}
+                                </div>
+                              </Show>
+                            </>
+                          )}
+                        </Show>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
             </Show>
           </section>
 

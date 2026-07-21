@@ -9,7 +9,8 @@ import { SCOPE_READ, SCOPE_WRITE } from '../lib/auth/types.js';
 import { loadKek, open } from '../lib/crypto/index.js';
 import { verifyOidcIdToken, type OidcClaims } from '../lib/auth/verifyOidcIdToken.js';
 import { base64url, s256 } from '../lib/auth/pkce.js';
-import { BaseOAuth2Client, revoke } from '../connectors/index.js';
+import { BaseOAuth2Client } from '../connectors/index.js';
+import { disconnectConnection } from '../lib/connections.js';
 import { buildGoogleScopes } from '../mcp/gmail-flag.js';
 
 /**
@@ -297,56 +298,21 @@ export function oauthRouter() {
     ctx.redirect(settingsRedirect('google=connected'));
   });
 
-  // ── GET /api/oauth/google/accounts ──────────────────────────────────────────
-  // Gated. Lists connected accounts WITHOUT leaking any ciphertext/iv/tokens.
-  // DEAD SURFACE (zero client callers — see #392): Settings sources its account list
-  // from GET /api/integrations (richer: health + sync stats). Kept + route-tested;
-  // T13 (#349) may delete it when extracting disconnectConnection().
-  router.get('/accounts', (ctx) => {
-    const ownerId = currentOwnerId();
-    const rows = sqlite
-      .prepare(
-        `SELECT account, status, updated_at FROM connection_tokens
-         WHERE owner_id = ? AND provider = 'google' ORDER BY account`,
-      )
-      .all(ownerId) as { account: string; status: string; updated_at: string }[];
-    ctx.body = { accounts: rows };
-  });
-
   // ── DELETE /api/oauth/google/accounts/:account ──────────────────────────────
   // Gated. Best-effort token revoke at Google, then delete the connection AND any
-  // pending outbound queue rows for it (I12) so a re-connect starts clean.
+  // pending outbound queue rows for it (I12) so a re-connect starts clean. The
+  // revoke+delete+queue-cleanup body lives in the shared disconnectConnection()
+  // (server/src/lib/connections.ts), which the generic DELETE /api/connections/
+  // :provider/:account route (T13 #349) also delegates to. This route keeps its
+  // original { disconnected: account } / 404 { error: 'account_not_found' } contract.
+  // (The former dead GET /accounts list route was removed in T13 — Settings sources
+  // the account list from GET /api/connections + /api/integrations.)
   router.delete('/accounts/:account', async (ctx) => {
     const ownerId = currentOwnerId();
     const account = ctx.params.account;
 
-    // Best-effort revoke using the stored refresh token (decrypted just-in-time).
-    const tokRow = sqlite
-      .prepare(
-        'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
-      )
-      .get(ownerId, 'google', account) as { iv: string; auth_tag: string; ciphertext: string } | undefined;
-
-    if (tokRow) {
-      try {
-        const decoded = JSON.parse(
-          open({ iv: tokRow.iv, authTag: tokRow.auth_tag, ciphertext: tokRow.ciphertext }, loadKek()),
-        ) as { refreshToken?: string; accessToken?: string };
-        const token = decoded.refreshToken || decoded.accessToken;
-        if (token) await revoke(token);
-      } catch (err) {
-        logger.warn('Could not decrypt token for revoke (continuing)', { err: (err as Error).message });
-      }
-    }
-
-    const delTokens = sqlite
-      .prepare("DELETE FROM connection_tokens WHERE owner_id = ? AND provider = 'google' AND account = ?")
-      .run(ownerId, account);
-    sqlite
-      .prepare("DELETE FROM outbound_queue WHERE owner_id = ? AND provider = 'google' AND account = ?")
-      .run(ownerId, account);
-
-    if (delTokens.changes === 0) {
+    const removed = await disconnectConnection(ownerId, 'google', account);
+    if (!removed) {
       ctx.status = 404;
       ctx.body = { error: 'account_not_found' };
       return;
