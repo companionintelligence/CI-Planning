@@ -16,7 +16,7 @@ import { requestReplan } from '../engine/auto-defense.js';
 import { placeStartAnchoredTask, type StartAnchoredOutcome } from '../engine/autoplan.js';
 import { computeStreak } from '../engine/recurrence-ops.js';
 import { objectiveIdsByTaskIds, ensureTaskPromoted } from '../services/task-promotion.js';
-import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, splitNamesByDirection } from '../services/tags.js';
+import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, splitNamesByDirection, entityCategoryNames, entityCategoryNamesByIds } from '../services/tags.js';
 import {
   createTask, createRecurringTask, updateTask, deleteTask,
   promoteToHabit, recallTask, skipRecurringInstance,
@@ -61,11 +61,13 @@ export function tasksRouter() {
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
+    const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
     const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
+      categories: categoriesById.get(t.id) ?? [],
       depends_on: getDependencies(t.id),
       blocked: blocked.has(t.id),
       // §I star + AF-10 card picker. objective_id = objective_ids[0] ?? null (back compat).
@@ -96,7 +98,7 @@ export function tasksRouter() {
         if (res.error === 'title_required') { ctx.status = 400; ctx.body = { error: 'title is required' }; return; }
         ctx.status = 422; ctx.body = { error: res.message }; return;
       }
-      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: taskSecondaryTags(res.template.id), depends_on: [] as string[], blocked: false };
+      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: taskSecondaryTags(res.template.id), categories: entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false };
       broadcast(owner, 'task:created', out);
       broadcast(owner, 'recurrence:generated', res.generated);
       ctx.status = 201;
@@ -130,6 +132,7 @@ export function tasksRouter() {
       ...taskToApi(task),
       tags: body.tags ?? [],
       secondary_tags: taskSecondaryTags(task.id),
+      categories: entityCategoryNames('task', task.id),
       depends_on: getDependencies(task.id),
       blocked: blockedTaskIds().has(task.id),
     };
@@ -268,10 +271,12 @@ export function tasksRouter() {
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
     const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
+    const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
+      categories: categoriesById.get(t.id) ?? [],
       // objective_id = objective_ids[0] ?? null (back compat with the single-link shape).
       objective_ids: objectivesById.get(t.id) ?? [],
       objective_id: objectivesById.get(t.id)?.[0] ?? null,
@@ -444,6 +449,7 @@ export function tasksRouter() {
       ...taskToApi(res.task),
       tags: taskTagNames(res.targetId),
       secondary_tags: taskSecondaryTags(res.targetId),
+      categories: entityCategoryNames('task', res.targetId),
       depends_on: getDependencies(res.targetId),
       blocked: blockedTaskIds().has(res.targetId),
     };

@@ -35,6 +35,11 @@ type TaskType implements Node & Taggable {
   subtasks(first: Int, after: String): TaskConnection!   # forward-only (last/before unimplemented → omitted)
   dependsOn: [TaskType!]!           # task_dependencies.depends_on_id
   tags: [EntityTagType!]!           # W4a: tags applied to this task (entity_tags, all levels)
+  # Phase B (0134): the task's 1–3 category NAMES, position order (stripe order).
+  categories: [String!]!
+  # Phase B (0135): per-element texture override.
+  textureEnabled: Boolean!
+  textureColorToken: String
   objective: ObjectiveType          # the first objective this task is linked to (objective_tasks, linked=1); null if none
 }
 
@@ -60,6 +65,10 @@ input CreateTaskInput {
   parentId: ID
   tags: [String!]
   secondaryTags: [String!]
+  "Phase B: 1–3 category NAMES (array order = stripe order)."
+  categories: [String!]
+  textureEnabled: Boolean
+  textureColorToken: String
   dependsOn: [ID!]
   # NOTE: no `recurrenceRule` — recurring creation (the REST POST's createRecurringTask
   # branch) is out of scope for W3.3b; omitted so a rule can't be passed-and-ignored.
@@ -81,6 +90,10 @@ input UpdateTaskInput {
   parentId: ID
   tags: [String!]
   secondaryTags: [String!]
+  "Phase B: category NAMES — absent preserves, [] clears (mirrors tags)."
+  categories: [String!]
+  textureEnabled: Boolean
+  textureColorToken: String
   dependsOn: [ID!]
 }
 

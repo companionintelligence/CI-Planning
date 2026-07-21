@@ -31,7 +31,10 @@ describe('time-block category (0069)', () => {
       json: { title: 'Focus', block_kind: 'timeblock', block_type: 'scheduled', category_id: catId, start_at: at('09'), end_at: at('10') },
     });
     expect(created.status).toBe(201);
-    expect(created.body.block.category_id).toBe(catId);
+    // Phase B (0135): the legacy category_id input bridges into entity_categories —
+    // the response carries `categories` (names); the retired column is not written.
+    expect(created.body.block.categories).toEqual(['focus-time']);
+    expect(created.body.block.category_id).toBeNull();
     expect(created.body.block.color_token).toBe('chart-1'); // stamped from prefs
 
     // Re-colour the category AFTER placement → the placed block keeps its frozen stamp.
@@ -47,13 +50,13 @@ describe('time-block category (0069)', () => {
     });
     expect(both.status).toBe(201);
     expect(both.body.block.tag).toBe('work');
-    expect(both.body.block.category_id).toBe(catId);
+    expect(both.body.block.categories).toEqual(['social-time']); // Phase B: names, not the column
     expect(both.body.block.color_token).toBe('chart-3'); // category-frozen color wins when both set
 
-    // The read API returns tag, secondary_tags, and category_id together.
+    // The read API returns tag, secondary_tags, and categories together.
     const listed = await api(srv.url, '/api/blocks?from=2026-06-20T00:00:00.000Z&to=2026-06-20T23:59:59.999Z');
     const read = (listed.body.blocks as any[]).find((b) => b.id === both.body.block.id);
-    expect(read).toMatchObject({ tag: 'work', secondary_tags: ['deep'], category_id: catId });
+    expect(read).toMatchObject({ tag: 'work', secondary_tags: ['deep'], categories: ['social-time'] });
 
     // entity_tags level-1 sync still fires when a category is also present.
     const lvl1 = sqlite
@@ -69,7 +72,7 @@ describe('time-block category (0069)', () => {
     const patched = await api(srv.url, `/api/blocks/${tagBlock.id}`, { method: 'PATCH', json: { category_id: catId } });
     expect(patched.status).toBe(200);
     expect(patched.body.block.tag).toBe('work');
-    expect(patched.body.block.category_id).toBe(catId);
+    expect(patched.body.block.categories).toEqual(['social-time']); // Phase B bridge
   });
 
   it('rejects a category_id that is not a kind=category tag (422)', async () => {

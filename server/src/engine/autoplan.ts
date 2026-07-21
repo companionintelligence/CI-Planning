@@ -21,7 +21,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
-import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString } from '../services/tags.js';
+import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString, entityCategoryIds } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
 import { newId } from '../lib/ids.js';
 import { buildGaps, pickGap, splitIntoSessions, dayObstacles, MS_PER_MIN } from './scheduler.js';
@@ -166,7 +166,8 @@ function dayPlans(owner: string, date: string, tz: string): PlanRow[] {
                          WHERE pt.name = tb.tag AND pt.catch_all = 1 LIMIT 1), 0) AS catch_all
          FROM time_blocks tb
         WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled' AND tb.tag IS NOT NULL
-          AND tb.category_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM entity_categories ec
+                           WHERE ec.entity_kind = 'time_block' AND ec.entity_id = tb.id)
           AND COALESCE(tb.all_day, 0) = 0
           AND tb.start_at < ? AND tb.end_at > ?
         ORDER BY tb.start_at, tb.id`
@@ -178,10 +179,15 @@ interface CategoryPlanRow { id: string; start_at: string; end_at: string; catego
 
 /**
  * Category-tagged, timed Plan containers on `date`, earliest first (0069). Disjoint
- * from dayPlans by the SQL filters themselves: dayPlans requires category_id IS NULL,
- * this pass requires category_id IS NOT NULL — so no block is ever filled by both
+ * from dayPlans by the SQL filters themselves: dayPlans requires NO entity_categories
+ * rows, this pass requires the position-0 row — so no block is ever filled by both
  * passes, even now that AF-4 lets a block carry a tag AND a category (a both-set
  * container is filled by THIS pass, keyed on its category).
+ *
+ * Phase B (0135): the category axis moved to `entity_categories` (time_blocks.category_id
+ * is retired from the write path; 0135 backfilled surviving values). A multi-category
+ * Plan is filled by its POSITION-0 category — the fill axis is singular by design; the
+ * stripes are a render concern.
  */
 function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlanRow[] {
   // Same DST-aware day window as dayPlans directly above — a start+24h add drifts
@@ -189,9 +195,11 @@ function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlan
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   return sqlite
     .prepare(
-      `SELECT tb.id, tb.start_at, tb.end_at, tb.category_id
+      `SELECT tb.id, tb.start_at, tb.end_at, ec.category_tag_id AS category_id
          FROM time_blocks tb
-        WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled' AND tb.category_id IS NOT NULL
+         JOIN entity_categories ec
+           ON ec.entity_kind = 'time_block' AND ec.entity_id = tb.id AND ec.position = 0
+        WHERE tb.owner_id = ? AND tb.block_kind = 'timeblock' AND tb.block_type = 'scheduled'
           AND COALESCE(tb.all_day, 0) = 0
           AND tb.start_at < ? AND tb.end_at > ?
         ORDER BY tb.start_at, tb.id`
@@ -659,16 +667,19 @@ export function placeFlightPlan(
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
-    const block = sqlite.prepare(`SELECT start_at, end_at, tag, category_id FROM time_blocks WHERE id = ? AND owner_id = ?`).get(opts.blockId, owner) as
-      | { start_at: string; end_at: string; tag: string | null; category_id: string | null }
+    const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(opts.blockId, owner) as
+      | { start_at: string; end_at: string; tag: string | null }
       | undefined;
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
+    // Phase B (0135): the fill axis is the Plan's position-0 entity_categories row (the
+    // retired category_id column is no longer consulted — 0135 backfilled it).
+    const blockCategoryId = entityCategoryIds('time_block', opts.blockId)[0];
     let cands: StagedTask[];
     let ordered: StagedTask[];
-    if (block.category_id) {
+    if (blockCategoryId) {
       // 0069 category Plan: fill ONLY its category candidates (NOT every staged task) —
       // the same secondary-tag + opt-out filter as the general Pass 1.5.
-      cands = categoryCandidates(staged, block.category_id, owner);
+      cands = categoryCandidates(staged, blockCategoryId, owner);
       ordered = cands; // preserve staged order (deterministic)
     } else {
       const catchAll = !!(sqlite

@@ -320,6 +320,9 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
 
   // ---- write (one atomic transaction: suppress first, then delete) -----------
   const delTags = sqlite.prepare(`DELETE FROM entity_tags WHERE entity_kind = 'time_block' AND entity_id = ?`);
+  // Phase B (0134): entity_categories spans tables (no FK to time_blocks) — clean it
+  // wherever entity_tags is cleaned, or hard-deleted blocks leave orphan category rows.
+  const delCats = sqlite.prepare(`DELETE FROM entity_categories WHERE entity_kind = 'time_block' AND entity_id = ?`);
   const delBlock = sqlite.prepare(`DELETE FROM time_blocks WHERE id = ? AND owner_id = ?`);
   const capTB = sqlite.prepare(`UPDATE time_blocks SET recurrence_rule = ? WHERE id = ? AND owner_id = ?`);
   const capPat = sqlite.prepare(`UPDATE patterns SET recurrence_rule = ? WHERE id = ?`);
@@ -339,6 +342,7 @@ export function clearPlannerRange(input: ClearRangeInput): ClearRangeResult {
     for (const o of optoutOps) insOptout.run(owner, o.patternId, o.day);
     for (const b of blocksToDelete) {
       delTags.run(b.id);
+      delCats.run(b.id);
       delBlock.run(b.id, owner);
     }
     if (clearDailyPlan) sqlite.prepare(dpDeleteSql).run(...dpArgs);
