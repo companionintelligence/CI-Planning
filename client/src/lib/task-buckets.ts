@@ -90,14 +90,23 @@ export function bucketCounts(
 export interface DueItems {
   overdue: Task[];
   dueToday: Task[];
+  /** The Missed review surface (engine/review.ts): high-priority tasks the nightly
+   *  sweep marked `status='missed'` — waiting on an explicit user reschedule.
+   *  Recurring INSTANCES are excluded: a missed routine day is genuine history
+   *  (recurrence-generate marks stale instances missed itself); only one-off tasks
+   *  are revivable via the +N-day reschedule. Date-independent — missed is a state,
+   *  not a deadline relation. */
+  missed: Task[];
 }
 
 export function dueItems(tasks: Task[], date: string): DueItems {
   const top = tasks.filter((t) => !t.parent_id);
   const byDueAt = (a: Task, b: Task) => (a.due_at ?? '').localeCompare(b.due_at ?? '');
+  const bySchedFor = (a: Task, b: Task) => (a.scheduled_for ?? '').localeCompare(b.scheduled_for ?? '');
   return {
     overdue: top.filter((t) => ACTIVE.has(t.status) && isBeforeDay(t.due_at, date)).sort(byDueAt),
     dueToday: top.filter((t) => ACTIVE.has(t.status) && isOnDay(t.due_at, date)).sort(byDueAt),
+    missed: top.filter((t) => t.status === 'missed' && !t.recurrence_parent_id).sort(bySchedFor),
   };
 }
 
