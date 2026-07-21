@@ -101,6 +101,40 @@ describe('extendBlock engine (§1.1a)', () => {
     expect(extendBlock(b2, 30, {}, SYSTEM_OWNER).fits).toBe(false);
   });
 
+  it('treats a following focus block as fixed (never silently pushed) — #392 edge', () => {
+    const b = makeBlock({ start: '10:00', end: '11:00' });
+    const f = makeBlock({ start: '11:00', end: '11:45', kind: 'focus', title: 'Deep work' });
+    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.fits).toBe(false);
+    expect(r.committed).toBe(false);
+    expect(r.blockedBy?.block_id).toBe(f);
+    expect(r.blockedBy?.title).toBe('Deep work');
+    expect(r.movedSet).toHaveLength(0);
+    expect(endOf(b)).toBe(at('11:00'));    // unchanged
+    expect(startOf(f)).toBe(at('11:00'));  // focus session not moved
+  });
+
+  it('treats a following habit block as fixed — #392 edge', () => {
+    const b = makeBlock({ start: '10:00', end: '11:00' });
+    const h = makeBlock({ start: '11:00', end: '11:30', kind: 'habit', title: 'Meditation' });
+    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.fits).toBe(false);
+    expect(r.blockedBy?.block_id).toBe(h);
+    expect(r.movedSet).toHaveLength(0);
+    expect(startOf(h)).toBe(at('11:00'));  // habit not moved
+  });
+
+  it('does NOT treat break/buffer padding as an obstacle (stays loose → silent fit)', () => {
+    const b = makeBlock({ start: '10:00', end: '11:00' });
+    // A break block overlapping the window: it is not in the obstacle query, so it is
+    // neither surfaced nor moved — the extension fits silently straight over it.
+    makeBlock({ start: '11:00', end: '11:15', kind: 'break', title: 'Break' });
+    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    expect(r.fits).toBe(true);
+    expect(r.movedSet).toHaveLength(0);
+    expect(endOf(b)).toBe(at('11:30'));
+  });
+
   it('ignores completed/skipped following blocks (not obstacles)', () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     makeBlock({ start: '11:00', end: '11:30', status: 'completed' });
