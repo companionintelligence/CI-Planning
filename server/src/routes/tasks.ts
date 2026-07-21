@@ -215,7 +215,9 @@ export function tasksRouter() {
       scheduled_for: enriched.scheduledFor,
       task_time: enriched.taskTime,
       estimated_minutes: enriched.estimatedMinutes,
-      priority: enriched.priority ?? 3,
+      // P1 when unsure (owner rule 2026-07-20): a captured task is important until
+      // the user says otherwise — quick-add never silently files things at P3.
+      priority: enriched.priority ?? 1,
       ...(enriched.tags.length ? { tags: directions, secondary_tags: others } : {}),
     });
     if (!res.ok) {
