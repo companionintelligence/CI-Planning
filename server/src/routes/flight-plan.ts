@@ -64,9 +64,13 @@ export function flightPlanRouter() {
   });
 
   // Fill Flight Plan: propose open-task candidates into the staging area. Never places.
+  // Honors an optional `date` so callers can stage a specific day's scheduled tasks (plus
+  // the undated backlog); omitted ⇒ the owner's today (fillFlightPlanCandidates' default),
+  // so no-date callers (e.g. Plan-my-week's fill({})) are unchanged.
   router.post('/api/auto/fill', async (ctx) => {
     const owner = currentOwnerId();
-    const added = fillFlightPlanCandidates(owner);
+    const body = (ctx.request.body ?? {}) as { date?: string };
+    const added = fillFlightPlanCandidates(owner, { date: body.date });
     broadcast(owner, 'flight_plan:filled', { added });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'fill', entity: 'flight-plan:fill' });
     ctx.body = { result: { step: 'fill', candidatesAdded: added }, flight_plan: listFlightPlan(owner) };
