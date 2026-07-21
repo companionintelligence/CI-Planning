@@ -428,29 +428,8 @@ describe('accounts listing + disconnect', () => {
       .run(newId(), SYSTEM_OWNER, account, sealed.iv, sealed.authTag, sealed.ciphertext, status);
   }
 
-  it('GET /accounts lists status only — never leaks ciphertext/iv/tokens', async () => {
-    config.auth.mode = 'standalone';
-    seedToken('list@example.com');
-    const { status, body } = await api<{ accounts: Record<string, unknown>[] }>(
-      srv.url,
-      '/api/oauth/google/accounts',
-      authHeaders(),
-    );
-    expect(status).toBe(200);
-    expect(body.accounts).toHaveLength(1);
-    const acct = body.accounts[0];
-    expect(acct.account).toBe('list@example.com');
-    expect(acct.status).toBe('active');
-    expect(acct.updated_at).toBeTruthy();
-    // No secret material in the payload — check for the field names as JSON keys
-    // (substring checks would false-positive, e.g. "active" contains "iv").
-    const serialized = JSON.stringify(body);
-    for (const leak of ['ciphertext', 'auth_tag', 'iv', 'accessToken', 'refreshToken', 'access_token', 'refresh_token']) {
-      expect(serialized).not.toContain(`"${leak}"`);
-    }
-    // And the listed object exposes ONLY the three safe fields.
-    expect(Object.keys(acct).sort()).toEqual(['account', 'status', 'updated_at']);
-  });
+  // (The dead GET /accounts list route was removed in T13 (#349) — the account list is
+  // now sourced from GET /api/connections + /api/integrations; see connections-route.test.ts.)
 
   it('DELETE removes connection_tokens AND outbound_queue rows and calls revoke (I12)', async () => {
     config.auth.mode = 'standalone';

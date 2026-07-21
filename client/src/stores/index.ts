@@ -324,6 +324,18 @@ export const [integrations, { refetch: refetchIntegrations }] = createResource((
 /** True when a reachable Ollama makes the AI features usable. Everything AI gates on this. */
 export const aiAvailable = () => integrations()?.ollama.available ?? false;
 
+// ── Connections (T13 #349) ─────────────────────────────────────────────────────
+// Provider-agnostic list of the owner's stored connections (provider/account/status),
+// backing the Settings → Connections "Connected accounts" card. Distinct from
+// `integrations().google.connections` (WP7 health): this is mode-blind and covers every
+// provider, so a user whose Google is `off` still sees (and can drop) a stored token.
+export const [connections, { refetch: refetchConnections }] = createResource(() =>
+  // .catch(() => null) mirrors the failure-closed convention of the other Settings
+  // resources (me/gcfg/accounts): a 500/transient drop degrades to the card's "No
+  // accounts connected." fallback instead of re-throwing on read (no ErrorBoundary).
+  api.connections.list().then((r) => r.connections).catch(() => null)
+);
+
 // ── Life priorities (0127) — the Priorities Wizard writes; the Balance view reads. ──
 export const [priorities, { refetch: refetchPriorities }] = createResource(() =>
   api.priorities.list().then((r) => r.priorities)
