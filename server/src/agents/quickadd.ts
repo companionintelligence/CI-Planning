@@ -3,23 +3,115 @@ import type { ParsedQuick } from '../engine/quickadd.js';
 
 /**
  * Optional best-effort overlay on the deterministic parse: a small local model
- * fills ONLY metadata the parser couldn't (a missing estimate, a priority). It
- * never overrides a field the parser set (title/dates/tags stay authoritative),
- * and any failure (Ollama down, bad JSON) must be caught by the caller, which
- * then keeps the deterministic result. This keeps quick-add reproducible.
+ * fills ONLY metadata the parser couldn't. It never overrides a field the parser
+ * set (title/dates/explicit #tags stay authoritative), and any failure (Ollama
+ * down, bad JSON) must be caught by the caller, which then keeps the
+ * deterministic result. This keeps quick-add reproducible.
+ *
+ * 2026-07-20 (owner request): the overlay now also CLASSIFIES the task —
+ *  - `direction`: exactly one of the owner's direction tags (Work/Home/Community),
+ *    added only when the entry didn't name one itself;
+ *  - `tags`: up to two of the owner's EXISTING other tags (never invented —
+ *    same constrained-vocabulary rule as agents/tags.ts suggestTags).
+ * Dates stay deterministic on purpose: chrono owns them; a small model inventing
+ * "next Tuesday" from "call mom" would be a lie, not an enrichment.
  */
-export async function enrichQuick(text: string, parsed: ParsedQuick): Promise<ParsedQuick> {
-  const out = await generateJson<{ estimatedMinutes?: number | null; priority?: number | null }>(
-    `From this quick task entry, infer ONLY missing metadata. Reply with JSON ` +
-      `{"estimatedMinutes": <minutes or null>, "priority": <1-5 or null>}. ` +
-      `1 is highest priority. Entry: "${text}"`,
-    { tier: 'small', temperature: 0.1, timeoutMs: 15_000 }
-  );
 
+export interface QuickVocab {
+  /** The owner's direction-tag names (kind='direction'): Work / Home / Community. */
+  directions: string[];
+  /** Every other existing tag name the owner has (intentions, categories, …). */
+  others: string[];
+}
+
+interface EnrichOut {
+  estimatedMinutes?: number | null;
+  priority?: number | null;
+  direction?: string | null;
+  tags?: unknown;
+}
+
+/**
+ * Pure merge of the model's suggestion onto the deterministic parse — exported
+ * for unit tests. Constrained: `direction` must name an existing direction tag
+ * (case-insensitive) and is skipped when the entry already carries one; `tags`
+ * must name existing non-direction tags, capped at two, deduped against the
+ * parse. Explicit parsed fields always win.
+ */
+export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: QuickVocab): ParsedQuick {
   const estimatedMinutes =
     parsed.estimatedMinutes ?? (typeof out.estimatedMinutes === 'number' ? out.estimatedMinutes : undefined);
   const priority =
-    out.priority && out.priority >= 1 && out.priority <= 5 ? out.priority : undefined;
+    parsed.priority ?? (out.priority && out.priority >= 1 && out.priority <= 5 ? out.priority : undefined);
 
-  return { ...parsed, estimatedMinutes, priority };
+  const have = new Set(parsed.tags.map((t) => t.toLowerCase()));
+  const tags = [...parsed.tags];
+
+  // Direction: only when the entry didn't already name one of the owner's
+  // direction tags; the model's pick must match an existing direction (canonical
+  // casing comes from the vocabulary, not the model).
+  const dirByLower = new Map(vocab.directions.map((d) => [d.toLowerCase(), d]));
+  const hasDirection = parsed.tags.some((t) => dirByLower.has(t.toLowerCase()));
+  if (!hasDirection && typeof out.direction === 'string') {
+    const canonical = dirByLower.get(out.direction.trim().toLowerCase());
+    if (canonical && !have.has(canonical.toLowerCase())) {
+      tags.push(canonical);
+      have.add(canonical.toLowerCase());
+    }
+  }
+
+  // Secondary tags: existing non-direction tags only, max two, deduped.
+  const otherByLower = new Map(vocab.others.map((t) => [t.toLowerCase(), t]));
+  if (Array.isArray(out.tags)) {
+    let added = 0;
+    for (const raw of out.tags) {
+      if (added >= 2) break;
+      if (typeof raw !== 'string') continue;
+      const canonical = otherByLower.get(raw.trim().toLowerCase());
+      if (canonical && !have.has(canonical.toLowerCase())) {
+        tags.push(canonical);
+        have.add(canonical.toLowerCase());
+        added++;
+      }
+    }
+  }
+
+  return { ...parsed, estimatedMinutes, priority, tags };
+}
+
+export async function enrichQuick(
+  text: string,
+  parsed: ParsedQuick,
+  vocab: QuickVocab = { directions: [], others: [] },
+): Promise<ParsedQuick> {
+  const out = await generateJson<EnrichOut>(
+    `Classify this quick task entry. Reply with JSON ` +
+      `{"estimatedMinutes": <minutes or null>, "priority": <1-5 or null>, ` +
+      `"direction": <REQUIRED — exactly one of ${JSON.stringify(vocab.directions)}, pick the closest fit>, ` +
+      `"tags": <up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else []>}. ` +
+      `1 is highest priority. Every task has a direction — always choose one. ` +
+      `Choose direction/tags ONLY from the given lists — never invent. ` +
+      `Entry: "${text}"`,
+    { tier: 'small', temperature: 0.1, timeoutMs: 15_000 }
+  );
+
+  let merged = mergeEnrichment(parsed, out, vocab);
+
+  // Second chance (owner request: ALWAYS attempt a direction): when the first pass
+  // yielded none, ask once more with a single-field prompt — small models answer a
+  // narrow question far more reliably than a wide one. Still constrained: an
+  // invalid answer is dropped by the same merge, never invented.
+  const dirLower = new Set(vocab.directions.map((d) => d.toLowerCase()));
+  const hasDirection = merged.tags.some((t) => dirLower.has(t.toLowerCase()));
+  if (!hasDirection && vocab.directions.length > 0) {
+    const retry = await generateJson<{ direction?: string | null }>(
+      `Which area of life does this task belong to? Answer with JSON ` +
+        `{"direction": <exactly one of ${JSON.stringify(vocab.directions)}>}. ` +
+        `Task: "${text}"`,
+      { tier: 'small', temperature: 0.1, timeoutMs: 15_000 }
+    );
+    merged = mergeEnrichment(merged, { direction: retry.direction }, vocab);
+  }
+
+  return merged;
 }
