@@ -60,9 +60,11 @@ describe('displayTag', () => {
 });
 
 describe('category axis (0069)', () => {
-  it('sortCategories orders family·social·me first, then others alphabetically', () => {
-    const out = sortCategories([cat('errands', false), cat('me'), cat('social'), cat('family'), cat('admin', false)]);
-    expect(out.map((c) => c.name)).toEqual(['family', 'social', 'me', 'admin', 'errands']);
+  // 0134: base categories are now the six Balance dimensions (health·career·relationships·
+  // growth·leisure·finance), ordered by CATEGORY_BASE_ORDER; anything else is alphabetical.
+  it('sortCategories orders the six Balance dimensions first, then others alphabetically', () => {
+    const out = sortCategories([cat('errands', false), cat('finance'), cat('health'), cat('career'), cat('admin', false)]);
+    expect(out.map((c) => c.name)).toEqual(['health', 'career', 'finance', 'admin', 'errands']);
   });
 
   it('groupByCategory groups intentions by category membership, splits muted, collects Unsorted', () => {

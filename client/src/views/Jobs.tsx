@@ -17,6 +17,7 @@ function statusIcon(s?: string) {
 
 export function Jobs() {
   const [triggering, setTriggering] = createSignal<string | null>(null);
+  const [runningAll, setRunningAll] = createSignal(false);
 
   async function trigger(id: string) {
     setTriggering(id);
@@ -31,9 +32,44 @@ export function Jobs() {
     }
   }
 
+  // Run every listed job once, reusing the same admin-gated per-job trigger the row
+  // buttons use — so the scope/auth match exactly (YOUR account only; the cron still
+  // fans out per-owner). Triggers are fire-and-forget server-side, so a sequential loop
+  // just kicks each off; SSE + the delayed refetch surface their results.
+  async function runAll() {
+    const list = jobs.error ? [] : (jobs() ?? []);
+    if (!list.length) { showToast('No jobs to run', 'default'); return; }
+    setRunningAll(true);
+    let ok = 0;
+    try {
+      for (const job of list) {
+        try { await api.jobs.run(job.id); ok++; } catch { /* skip a single failure */ }
+      }
+      showToast(ok ? `Triggered ${ok} job${ok === 1 ? '' : 's'} — running for your account` : 'No jobs ran', 'default');
+    } finally {
+      setRunningAll(false);
+      setTimeout(refetchJobs, 1500);
+    }
+  }
+
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
-      <h1 class="text-2xl font-bold text-foreground mb-5">Scheduled Jobs</h1>
+      <div class="flex items-center gap-3 mb-5">
+        <h1 class="text-2xl font-bold text-foreground">Scheduled Jobs</h1>
+        <Show when={!jobs.error}>
+          <button
+            onClick={runAll}
+            disabled={runningAll() || triggering() !== null}
+            class="btn-secondary text-xs gap-1.5 ml-auto flex-shrink-0"
+            title="Runs every job once — for YOUR account only, like each row's button. The scheduled cron runs every account."
+          >
+            <Show when={runningAll()} fallback={<Play size={13} />}>
+              <RefreshCw size={13} class="animate-spin" />
+            </Show>
+            {runningAll() ? 'Running…' : 'Run all'}
+          </button>
+        </Show>
+      </div>
 
       {/* The jobs resource is error-guarded BEFORE jobs() is read: Solid re-throws the
           fetch error on access, and this inline guard explains a non-operator's 403 in
@@ -79,7 +115,7 @@ export function Jobs() {
               </div>
               <button
                 onClick={() => trigger(job.id)}
-                disabled={triggering() === job.id}
+                disabled={triggering() === job.id || runningAll()}
                 class="btn-secondary text-xs gap-1.5 flex-shrink-0"
                 title="Runs for YOUR account only — the scheduled cron runs every account"
               >

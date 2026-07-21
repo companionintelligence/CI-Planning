@@ -264,15 +264,8 @@ export function Focus() {
         <span class="text-sm text-muted-foreground">
           {new Date(`${today}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </span>
-        {/* T2: the persistent weekly-planning entry point. `self-center` because the row
-            is items-baseline, which would otherwise sit the button on the text baseline. */}
-        <div class="flex-1" />
-        <button
-          class="btn-ghost text-xs self-center inline-flex items-center gap-1.5"
-          onClick={() => setPlanWeekModal({ open: true })}
-        >
-          <CalendarRange size={14} /> Plan my week
-        </button>
+        {/* The persistent "Plan my week" entry point moved to the Calendar header (it acts
+            on the week/calendar); the empty-day contextual nudge below stays. */}
       </div>
 
       {/* Time-Sense hero — the in-progress block, live countdown, Focus Ritual launcher. */}

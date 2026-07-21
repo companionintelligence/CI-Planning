@@ -182,9 +182,9 @@ function Shell(props: { children?: any }) {
       </main>
 
       {/* Floating Create button — lifted above the bottom nav on mobile. On Today,
-          Tasks, Calendar, Tags, and Jobs; other views own their own create affordance
-          (e.g. the Planner grid's click-to-create). */}
-      <Show when={['/', '/tasks', '/calendar', '/tags', '/jobs'].includes(location.pathname)}>
+          Tasks, Calendar, Tags, Focus, and Jobs; other views own their own create
+          affordance (e.g. the Planner grid's click-to-create). */}
+      <Show when={['/', '/tasks', '/calendar', '/tags', '/focus', '/jobs'].includes(location.pathname)}>
         <button
           class="fab bottom-20 md:bottom-6"
           onClick={() => setElementModal({ open: true, mode: 'add', kind: null })}

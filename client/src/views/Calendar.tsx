@@ -1,5 +1,5 @@
 import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
-import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList } from 'lucide-solid';
+import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange } from 'lucide-solid';
 import { useNavigate } from '@solidjs/router';
 import {
   visibleBlocks,
@@ -13,6 +13,8 @@ import {
   setOverlayPrio,
   setElementModal,
   setSelectedDay,
+  setPlanWeekModal,
+  refetchBlocks,
 } from '../stores/index.js';
 import { sortDirections, sortCategories, displayTag } from '../lib/tag-tax.js';
 import { TAG_AXES } from '../lib/overlay.js';
@@ -140,11 +142,27 @@ export function Calendar() {
 
   function goToday() { setAnchor(localISODate()); }
 
+  // "Schedule Day" is the day's INTAKE action: stage the day's open work (its
+  // scheduled-for tasks + the undated backlog) then place what fits into blocks — the
+  // fill → run idiom Plan-my-week uses (POST /api/auto/fill then /api/auto/run). The old
+  // /api/schedule/run only ran reflow(), which re-compacts blocks ALREADY on the day and
+  // stages nothing, so on a day whose tasks weren't pre-staged it changed nothing yet
+  // still toasted "Day scheduled". Fill stages (placeFlightPlan only places SELECTED
+  // staged rows), then run places; the toast now reflects the real placement result.
   async function runSchedule() {
     setRunningSchedule(true);
     try {
-      await api.schedule.run(anchor());
-      showToast('Day scheduled', 'success');
+      await api.auto.fill({ date: anchor() });
+      const { result } = await api.auto.run({ date: anchor() });
+      const placed = result.placed ?? 0;
+      if (placed === 0 && (result.blocksCreated ?? 0) === 0) {
+        showToast('Nothing to schedule for this day', 'default');
+      } else {
+        const bits = [`Scheduled ${placed}`];
+        if (result.unplaced) bits.push(`${result.unplaced} didn't fit`);
+        showToast(bits.join(' · '), 'success');
+      }
+      refetchBlocks();
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally { setRunningSchedule(false); }
@@ -278,6 +296,16 @@ export function Calendar() {
               <ClipboardList size={13} /> Review
             </button>
           </Show>
+          {/* Weekly-planning entry point — moved here from the Focus view header so
+              planning lives alongside the calendar it acts on. The PlanWeekAssistant
+              modal is mounted app-globally (App.tsx), so only the trigger relocates. */}
+          <button
+            onClick={() => setPlanWeekModal({ open: true })}
+            class="btn-ghost text-xs gap-1"
+            title="Plan your week with the assistant"
+          >
+            <CalendarRange size={13} /> Plan my week
+          </button>
           <button onClick={runSchedule} disabled={runningSchedule()} class="btn-primary">
             <Zap size={14} />
             {runningSchedule() ? 'Scheduling…' : 'Schedule Day'}
