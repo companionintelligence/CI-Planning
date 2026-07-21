@@ -1,6 +1,6 @@
 import { createResource, createMemo, createSignal, onCleanup, onMount, Show, For } from 'solid-js';
 import { AlertCircle, CalendarClock, X, Repeat, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, CalendarDays, NotebookPen, Zap, ListFilter } from 'lucide-solid';
-import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, refetchTasks, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
+import { blocks, tasks, taskOf, tags, isRoutineTask, setElementModal, refetchPatterns, refetchFlightPlan, refetchTasks, refetchBlocks, showToast, selectedDay, setSelectedDay, prefs } from '../stores/index.js';
 import { dueFilterActive, passesDueFilter } from '../lib/due-filter.js';
 import { dueFilter, toggleDirection, setHideHabits, setHideRoutines } from '../stores/due-filter.js';
 import { FocusRitual } from '../components/FocusRitual.js';
@@ -379,10 +379,17 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
   ] as const;
   async function reviveMissed(t: Task, days: number, label: string) {
     try {
-      await api.tasks.reschedule(t.id, days);
+      const res = await api.tasks.reschedule(t.id, days);
       refetchTasks();
       refetchFlightPlan(); // reopened tasks are Fill candidates again
-      showToast(`"${t.title}" back on the plan — ${label.toLowerCase() === 'today' ? 'today' : label}`, 'success');
+      refetchBlocks();     // Schedule mode: the engine may have placed a block already
+      const when = label.toLowerCase() === 'today' ? 'today' : label;
+      showToast(
+        res.placement?.placed
+          ? `"${t.title}" placed ${when} at ${new Date(res.placement.startAt!).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+          : `"${t.title}" back on the plan — ${when}`,
+        'success',
+      );
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
