@@ -35,9 +35,9 @@ export function Jobs() {
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
       <h1 class="text-2xl font-bold text-foreground mb-5">Scheduled Jobs</h1>
 
-      {/* The jobs resource must be error-guarded BEFORE jobs() is read: Solid re-throws
-          the fetch error on access and the app mounts no ErrorBoundary — a non-operator's
-          403 would otherwise blow up the render instead of explaining itself. */}
+      {/* The jobs resource is error-guarded BEFORE jobs() is read: Solid re-throws the
+          fetch error on access, and this inline guard explains a non-operator's 403 in
+          context rather than bouncing to the root ErrorBoundary's generic fallback. */}
       <Show when={jobs.error}>
         <div class="card text-sm text-muted-foreground">
           Couldn't load jobs — this page needs an operator account. ({(jobs.error as Error)?.message})
