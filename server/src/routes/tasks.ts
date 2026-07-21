@@ -365,11 +365,13 @@ export function tasksRouter() {
     ctx.body = { task: out };
   });
 
-  // POST /api/tasks/:id/reschedule — DEAD SURFACE (zero client callers — see #392):
-  // Today's one-tap defer moves due_at via PATCH /tasks/:id instead (this route
-  // moves scheduled_for — the wrong axis for the shipped affordance). { days } — bump a missed/planned task `days`
-  // out from today (the +1/+3/+7 buttons on the Missed review surface). Clears
-  // 'missed', increments defer_count, drops stale blocks so it re-places cleanly.
+  // POST /api/tasks/:id/reschedule — { days }: bump a missed/planned task `days` out
+  // from today. Clears 'missed', increments defer_count, drops stale blocks so it
+  // re-places cleanly. LIVE since the Missed review surface shipped (Today DueCard's
+  // amber "missed" rollup — its Today/+1d/+3d/+1w revive chips are the designed
+  // callers; was flagged dead in #392 because that surface hadn't been built). This
+  // is the scheduled_for axis ON PURPOSE — Today's overdue defer chips move due_at
+  // via PATCH /tasks/:id, the deadline axis; the two affordances coexist.
   // Stays a thin wrapper over engine rescheduleTask (no service layer needed).
   router.post('/api/tasks/:id/reschedule', async (ctx) => {
     const id = ctx.params.id;
