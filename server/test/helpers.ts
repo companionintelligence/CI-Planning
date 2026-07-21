@@ -33,6 +33,7 @@ export function resetDb(): void {
     DELETE FROM task_dependencies;
     DELETE FROM possible_task_tags;
     DELETE FROM entity_tags;
+    DELETE FROM entity_categories;
     DELETE FROM time_entries;
     DELETE FROM outbound_queue;
     DELETE FROM external_events;
