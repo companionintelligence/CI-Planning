@@ -96,6 +96,9 @@ export const api = {
     },
     create: (body: TaskInput) => request<{ task: Task }>('POST', '/tasks', body),
     quick: (text: string) => request<{ task: Task; parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick', { text }),
+    // T14 (#350) — parse-only twin of `quick`: zero writes; the wizard previews the
+    // parse in its own fields and the user approves via the normal Add path.
+    quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
     // Best-effort LLM auto-tag for the wizard, constrained to existing tags ([] if Ollama down).
     suggestTags: (title: string) => request<{ tags: string[] }>('POST', '/tasks/suggest-tags', { title }),
     update: (

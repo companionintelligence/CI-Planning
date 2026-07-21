@@ -139,6 +139,34 @@ export function tasksRouter() {
     ctx.body = { task: out, ...(placement ? { placement } : {}) };
   });
 
+  // POST /api/tasks/quick/parse — T14 (#350): the parse-only twin of /tasks/quick.
+  // ZERO writes — the wizard's NL line (typed or spoken) previews the parse by
+  // hydrating its own form fields, and the user approves via the wizard's Add
+  // (which runs the normal create path). Same preview→confirm doctrine as
+  // /plan-week/parse vs /plan/instruct (#387). Deterministic parse always succeeds;
+  // the Ollama overlay is best-effort and `llm` reports truthfully whether it ran.
+  // Registered BEFORE /quick only for reading order — @koa/router matches exactly.
+  router.post('/api/tasks/quick/parse', async (ctx) => {
+    const text = (ctx.request.body as { text?: string })?.text?.trim();
+    if (!text) {
+      ctx.status = 400;
+      ctx.body = { error: 'text is required' };
+      return;
+    }
+
+    const parsed = parseQuick(text); // deterministic, always succeeds
+    let enriched = parsed;
+    let llm = false;
+    try {
+      enriched = await enrichQuick(text, parsed); // Ollama overlay; never overrides parsed fields
+      llm = true;
+    } catch {
+      /* OllamaUnavailable / bad JSON → keep the deterministic parse */
+    }
+
+    ctx.body = { parsed: enriched, llm };
+  });
+
   // POST /api/tasks/quick — natural-language quick add (deterministic + optional AI)
   router.post('/api/tasks/quick', async (ctx) => {
     const text = (ctx.request.body as { text?: string })?.text?.trim();
