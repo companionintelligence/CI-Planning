@@ -1,6 +1,6 @@
 import { createSignal, createResource, createMemo, onCleanup, Show, For } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
-import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight } from 'lucide-solid';
+import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight, X } from 'lucide-solid';
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
@@ -23,6 +23,16 @@ export function AllTasks() {
   const [showArchive, setShowArchive] = createSignal(false);
   const [order, setOrder] = createSignal<SortOrder>('priority');
   const [direction, setDirection] = createSignal('');
+  // Always-visible task search (client-side over the loaded list, title + tag names).
+  // Distinct from the Filters panel's server `q` — that mutates the SHARED taskFilter
+  // store and would filter Today/Focus too; this is local to the Tasks view.
+  const [search, setSearch] = createSignal('');
+  const matchesSearch = (t: Task): boolean => {
+    const q = search().trim().toLowerCase();
+    if (!q) return true;
+    if (t.title.toLowerCase().includes(q)) return true;
+    return [...(t.tags ?? []), ...(t.secondary_tags ?? [])].some((n) => n.toLowerCase().includes(q));
+  };
   const [doneOpen, setDoneOpen] = createSignal(true);
   const [cancelledOpen, setCancelledOpen] = createSignal(true);
   // §E / AF-7: the Tasks tab groups the backlog into New Today / Open / Scheduled /
@@ -85,6 +95,7 @@ export function AllTasks() {
   const shownList = () => {
     let list = baseList().filter((t) => inActiveList(t) && (view() === 'habits' ? t.is_habit : !t.is_habit));
     if (direction()) list = list.filter((t) => taskDirection(t) === direction());
+    list = list.filter(matchesSearch);
     return [...list].sort(order() === 'due' ? byDueDateAsc : byPriority);
   };
   const tabCount = (v: 'tasks' | 'habits') =>
@@ -286,6 +297,27 @@ export function AllTasks() {
             directions={directions()}
             onDirection={setDirection}
           />
+          {/* Always-visible task search — filters the loaded list by title + tag names. */}
+          <div class="relative flex-1 min-w-[10rem] max-w-md">
+            <Search size={13} class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+            <input
+              class="input pl-8 pr-8 w-full"
+              type="search"
+              placeholder="Search tasks…"
+              value={search()}
+              onInput={(e) => setSearch(e.currentTarget.value)}
+            />
+            <Show when={search()}>
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                title="Clear search"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-foreground"
+              >
+                <X size={13} />
+              </button>
+            </Show>
+          </div>
         </Show>
       </div>
 
