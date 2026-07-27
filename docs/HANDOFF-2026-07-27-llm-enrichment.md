@@ -7,8 +7,8 @@
 > - **The enrichment upgrade below is SPEC ONLY — not built.** Decisions are locked; the
 >   code is not written.
 > - **Two launch blockers remain open** (§6). Neither is caused by the work in #422.
-> - **One verified engine gap** (§3.3) contradicts a stated intent and should be decided
->   before the enrichment work lands, because the enrichment writes the very field it affects.
+> - **The category-block matching gap is FIXED** (§3.3). It contradicted a stated intent and
+>   blocked the enrichment work, which writes the very field it affected.
 
 ---
 
@@ -69,34 +69,36 @@ cands = staged.filter((t) => planTags.some((name) => t.tags.includes(name)));
 Priority appears only in `orderForPlan` / the catch-all sort — it never filters. Consistent
 with D1.
 
-### 3.3 ⚠️ Category Plans ↔ categories — **ASYMMETRIC (verified gap)**
+### 3.3 Category Plans ↔ categories — ✅ FIXED (was asymmetric)
 
-The two sides of a category block use **different** category mechanisms:
+The two sides of a category block used **different** category mechanisms:
 
 | side | source of truth |
 |---|---|
 | the **block's** category | `entity_categories` — the Phase B (0134/0135) store, i.e. the 1–3 picker (`autoplan.ts:169, 200, 676`) |
-| the **task's** eligibility | `entity_tags level>1` joined to `tag_categories` — the *old* 0069 intention→category grouping (`categoryCandidates`, `autoplan.ts:220-245`) |
+| the **task's** eligibility | `entity_tags level>1` joined to `tag_categories` — the *old* 0069 intention→category grouping |
 
-**Consequence, directly against D2:** a task the user explicitly tagged *Relationships*
-using the Phase B category picker is **not** matched by a Relationships time block, unless
-it also happens to carry an intention tag that is grouped under Relationships.
+**Consequence, directly against D2:** a task the user explicitly tagged *Relationships* with
+the Phase B picker was **never** matched by a Relationships time block unless it also
+happened to carry a Relationships-grouped intention tag. The picker looked wired and did
+nothing — the same misleading-success class as §5.
 
-This matters for the enrichment work because §4 has the LLM assign `categories`
-(= `entity_categories`). Under the current code those assignments **do not** affect category
-block matching at all — the feature would look wired and do nothing, the same
-misleading-success class as §5.
+**Fixed** (option (a), chosen by the owner): `categoryCandidates` now matches by EITHER
+route, as a SQL `UNION` —
 
-**Decision needed before building §4.** Options:
-- **(a)** Make `categoryCandidates` also accept tasks whose own `entity_categories` include
-  the block's category (union with today's intention-grouping rule). Backward compatible;
-  makes D2 true for the new picker. *Recommended.*
-- **(b)** Leave as-is and have the enrichment write intention tags that are grouped under
-  the category instead — indirect, and fights the Phase B model.
-- **(c)** Leave as-is and accept that category blocks ignore the category picker.
+1. the task carries the category directly (`entity_categories`), i.e. what the wizard's 1–3
+   picker and the quick-add classifier write; **or**
+2. the task has a level>1 intention tag grouped under the category via `tag_categories` (0069).
 
-Not fixed in #422: it is a behavior change to the placement engine and deserves its own
-review, not a drive-by inside an LLM commit.
+The direction opt-out (`category_direction_optouts`) still applies to both routes, so the
+new path is not a bypass. Route 2 is untouched, so this is backward compatible.
+
+This mattered for §4: the enrichment has the LLM assign `categories` (= `entity_categories`),
+and before the fix those assignments had **no** effect on placement.
+
+**Pinned by tests** in `test/category-fill.test.ts` — verified to fail without the fix
+(4 of the 5 new cases fail when the `UNION` is reverted; the fifth is a negative case that
+correctly passes either way).
 
 ---
 
