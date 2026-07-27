@@ -129,7 +129,7 @@ export function taskTagPayload(
 }
 
 // ── Date helpers (client-local) ─────────────────────────────────────────────────
-function isoAt(dateStr: string, hhmm: string): string {
+export function isoAt(dateStr: string, hhmm: string): string {
   const [y, mo, d] = dateStr.split('-').map(Number);
   const [h, mi] = hhmm.split(':').map(Number);
   return new Date(y, mo - 1, d, h || 0, mi || 0, 0, 0).toISOString();

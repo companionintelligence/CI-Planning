@@ -12,7 +12,6 @@ import { localISODate, addDays } from '../lib/dates.js';
 import { dueItems } from '../lib/task-buckets.js';
 import { Planner } from '../components/Planner.js';
 import { FlightPlan } from '../components/FlightPlan.js';
-import { DayTypeControl } from '../components/DayTypeControl.js';
 import { DayStarsRow } from '../components/DayStarsRow.js';
 import { ReplanBanner } from '../components/ReplanBanner.js';
 import { FocusMenu, BriefMenu } from '../components/DayGoals.js';
@@ -98,6 +97,17 @@ export function Today() {
   });
   const [focusOpen, setFocusOpen] = createSignal(false);
 
+  // ── Due — button + popup modal (was an always-open card; UI backlog request:
+  // collapse it behind a button so the day-header stays short). Badge count uses
+  // the same predicate as the card itself so the two never disagree.
+  const [dueOpen, setDueOpen] = createSignal(false);
+  const dueBadgeCount = createMemo(() => {
+    const raw = dueItems(tasks() ?? [], selectedDay());
+    const f = dueFilter();
+    const keep = (t: Task) => passesDueFilter(t, isRoutineTask(t.id), f);
+    return raw.overdue.filter(keep).length + raw.dueToday.filter(keep).length + raw.missed.filter(keep).length;
+  });
+
   // ── Capacity bar (relocated from the removed Morning Briefing, Phase O · O3) ──
   const capacity = () => summary()?.capacity;
   const capacityPct = () => {
@@ -147,6 +157,12 @@ export function Today() {
           UI-comments 2026-07-20) — ElementWizard's header now hosts it as a
           parse→preview→approve line, with voice. */}
 
+      {/* Day-stars tally — relocated up here (UI backlog request), directly below
+          the top bar's Suggest/Schedule toggle instead of buried in the day card. */}
+      <div class="flex justify-end">
+        <DayStarsRow date={selectedDay()} />
+      </div>
+
       {/* Day Overview — date · tag set · counts, with + New Task top-right */}
       <div class="rounded-xl border border-border bg-card p-4">
         <div class="flex items-start justify-between gap-3">
@@ -176,6 +192,20 @@ export function Today() {
               (Phase AC — collapsed from the removed FOCUS card). The FAB (App.tsx)
               is the create affordance now; the Add button is gone. */}
           <div class="flex items-center gap-1.5 flex-shrink-0 self-start">
+            {/* Due — was an always-open card; now a button + popup modal (UI backlog). */}
+            <button
+              onClick={() => setDueOpen(true)}
+              class="btn-icon relative"
+              classList={{ 'text-destructive': dueBadgeCount() > 0, 'text-muted-foreground': dueBadgeCount() === 0 }}
+              title="Due — deadlines for this day"
+            >
+              <CalendarClock size={16} />
+              <Show when={dueBadgeCount() > 0}>
+                <span class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-destructive text-[9px] leading-[14px] text-white text-center font-semibold">
+                  {dueBadgeCount()}
+                </span>
+              </Show>
+            </button>
             {/* Today's Brief — popover (same idiom as Focus). */}
             <BriefMenu date={selectedDay()} />
             {/* Focus — bullseye popover: today & this-week focus (add/edit/delete/complete). */}
@@ -256,16 +286,21 @@ export function Today() {
             <For each={todayTags()}>{(t) => <span class="badge-neutral text-[11px]">#{t}</span>}</For>
           </div>
         </Show>
-
-        {/* Day type + day-stars row. */}
-        <div class="mt-3 pt-3 border-t border-border">
-          <DayTypeControl date={selectedDay()} hideLabel trailing={<DayStarsRow date={selectedDay()} />} />
-        </div>
       </div>
 
-      {/* Phase AB · AB4 — always-visible Due card: the selected day's deadlines +
-          an overdue rollup. The primary due surface (the count buttons above stay). */}
-      <DueCard date={selectedDay()} onOpen={openTask} />
+      {/* Due — popup modal (button lives in the day-header icon row above). */}
+      <Show when={dueOpen()}>
+        <div class="modal-backdrop" onClick={() => setDueOpen(false)}>
+          <div class="modal max-w-md max-h-[85vh] overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
+            <DueCard
+              date={selectedDay()}
+              onOpen={(t) => { openTask(t); setDueOpen(false); }}
+              onClose={() => setDueOpen(false)}
+              bare
+            />
+          </div>
+        </div>
+      </Show>
 
       {/* Replan suggestion — a big-disruption reflow asks to re-plan with AI (B4) */}
       <ReplanBanner />
@@ -339,7 +374,7 @@ export function Today() {
  * on demand — a destructive-toned pill mirroring the overdue count button. Rows
  * reuse the bucket-list row styling and open the task editor the same way.
  */
-function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
+function DueCard(props: { date: string; onOpen: (t: Task) => void; bare?: boolean; onClose?: () => void }) {
   // The day's dues + overdue rollup, then narrowed by the persisted filter
   // (direction include-set · hide habits · hide routines — habits & routines
   // hidden by default). Both lists share one predicate so they stay consistent.
@@ -444,7 +479,7 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
   );
 
   return (
-    <div class="rounded-xl border border-border bg-card p-4">
+    <div class={props.bare ? '' : 'rounded-xl border border-border bg-card p-4'}>
       <div class="flex items-center justify-between gap-2">
         {/* Header doubles as the collapse toggle for the whole due list. */}
         <button
@@ -500,6 +535,12 @@ function DueCard(props: { date: string; onOpen: (t: Task) => void }) {
           </Show>
           {/* Multi-select filter menu — direction · hide habits · hide routines. */}
           <DueFilterMenu />
+          {/* Embedded-in-modal close (bare mode only — the standalone card has none). */}
+          <Show when={props.onClose}>
+            <button type="button" onClick={props.onClose} class="btn-icon" title="Close">
+              <X size={14} />
+            </button>
+          </Show>
         </div>
       </div>
 

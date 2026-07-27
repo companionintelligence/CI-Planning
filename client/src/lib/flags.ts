@@ -12,3 +12,11 @@
  * Editing (rename/recolour) an existing category stays allowed.
  */
 export const CATEGORIES_EDITABLE = false;
+
+/**
+ * Google account connection — OAuth client setup (Settings → Integrations) and the
+ * Connected-accounts surface (Settings → Connections, onboarding Step 3). Re-enabled
+ * 2026-07-23 (owner request) after briefly gating it off in favor of Companion Memory
+ * only. Server routes/config were never touched — this only shows/hides the UI.
+ */
+export const GOOGLE_CONNECT_ENABLED = true;
