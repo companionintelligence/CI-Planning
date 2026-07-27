@@ -11,6 +11,7 @@ import { PatternBlockSettings } from '../components/PatternBlockSettings.js';
 import { CategorySettings } from '../components/CategorySettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { on } from '../lib/sse.js';
+import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -1244,10 +1245,25 @@ export function Settings() {
                   </div>
                 }
               >
+                {/* "available" only means the URL/key parsed and are stored — it is NOT
+                    proof CI-Server actually answered. Only a completed sync/pull is that
+                    proof, so the label stays honest until lastSyncedAt is real (owner
+                    request 2026-07-23: the prior unconditional "Connected" read as a lie
+                    when the host turned out to be unreachable). */}
                 <div class="flex items-center justify-between gap-3">
                   <span class="flex items-center gap-1.5 text-xs text-foreground">
-                    <CheckCircle2 size={13} class="text-primary" />
-                    Connected to {memStatus()!.pull.host}
+                    <Show
+                      when={memStatus()!.lastSyncedAt}
+                      fallback={<AlertTriangle size={13} class="text-amber-400" />}
+                    >
+                      <CheckCircle2 size={13} class="text-primary" />
+                    </Show>
+                    <Show
+                      when={memStatus()!.lastSyncedAt}
+                      fallback={<>Saved, not yet verified — {memStatus()!.pull.host}</>}
+                    >
+                      Connected to {memStatus()!.pull.host}
+                    </Show>
                     <Show when={memStatus()!.pull.authKind === 'oidc'}>
                       <span class="text-muted-foreground">(via CI-Portal)</span>
                     </Show>
@@ -1261,6 +1277,11 @@ export function Settings() {
                     </button>
                   </Show>
                 </div>
+                <Show when={!memStatus()!.lastSyncedAt}>
+                  <p class="text-[11px] text-muted-foreground">
+                    Credentials are saved, but nothing has synced yet — hit "Sync now" below to confirm CI-Server actually answers.
+                  </p>
+                </Show>
               </Show>
 
               {/* Inline connect form */}
@@ -1350,7 +1371,6 @@ export function Settings() {
                     <Show when={memStatus()?.lastSyncedAt} fallback="Never synced">
                       Last synced {new Date(memStatus()!.lastSyncedAt!).toLocaleString()}
                     </Show>
-                    {' '}· push arrives with a later phase
                   </span>
                   <button type="button" onClick={syncNow} class="btn-secondary text-xs px-3 py-1.5"
                     disabled={!memStatus()?.connected}>
@@ -1390,6 +1410,10 @@ export function Settings() {
                       </div>
                     </div>
                   </div>
+                  {/* Google connection — hidden from the live app for now (flags.ts
+                      GOOGLE_CONNECT_ENABLED); Companion Memory is the only connectable
+                      source at launch. Server-side Google config/routes are untouched. */}
+                  <Show when={GOOGLE_CONNECT_ENABLED}>
                   <div class="flex items-center gap-3">
                     <Globe size={16} class="text-blue-400" />
                     <div class="flex-1">
@@ -1465,6 +1489,7 @@ export function Settings() {
                       </div>
                     </div>
                   </Show>
+                  </Show>
                 </div>
               )}
             </Show>
@@ -1474,7 +1499,10 @@ export function Settings() {
               Backed by the `connections` resource (GET /api/connections): one row per
               stored connection_tokens record, mode-blind so a user whose Google is `off`
               still sees (and can drop) a stored token. Google rows are enriched with the
-              WP7 health sub-line by matching integrations().google.connections on account. */}
+              WP7 health sub-line by matching integrations().google.connections on account.
+              Google is currently the only provider with a connect flow, so the whole card
+              is hidden with it (flags.ts GOOGLE_CONNECT_ENABLED — owner request 2026-07-23). */}
+          <Show when={GOOGLE_CONNECT_ENABLED}>
           <section class="card">
             <div class="flex items-center justify-between mb-3">
               <div class="section-label flex items-center gap-1.5"><Link2 size={12} /> Connected accounts</div>
@@ -1568,6 +1596,7 @@ export function Settings() {
               </div>
             </Show>
           </section>
+          </Show>
 
           {/* Phase AG — Accounts (operator-only; non-operators never see this card,
               and the server 403s them anyway). Only rendered behind the auth gate:

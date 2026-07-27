@@ -136,11 +136,54 @@ describe('PlanWeekScheduleTasks — deterministic one-at-a-time placement', () =
     fireEvent.click(await screen.findByText('Pay invoices'));
     fireEvent.click(screen.getByText('Let Auto place it'));
 
+    // day()'s default (localISODate()) happens to equal the mocked selectedDay() too —
+    // see the dedicated test below for proof it's actually day()-sourced, not selectedDay().
     await waitFor(() => expect(runMock).toHaveBeenCalledWith({ date: '2026-07-18' }));
     expect(addTaskMock).toHaveBeenCalledWith('t1');
     // It came back unselected, so the branch had to fix that before running.
     expect(fpUpdateMock).toHaveBeenCalledWith('t1', { selected: true });
+    // No time picked → no pin write; Auto's own gap-finding chooses the slot.
+    expect(updateMock).not.toHaveBeenCalled();
     await waitFor(() => expect(appendMock).toHaveBeenCalledWith(expect.stringContaining('Auto placed'), 'plan_week:schedule_auto'));
+  });
+
+  it('Auto place targets THIS branch\'s own day picker, not the global selectedDay (2026-07-23 fix)', async () => {
+    // selectedDay() is mocked to '2026-07-18' throughout this suite; picking a DIFFERENT
+    // day here and asserting auto.run receives IT (not '2026-07-18') is the only way to
+    // prove the regression this fix targets can't come back.
+    runMock.mockResolvedValue({ result: { placed: 1 }, flight_plan: [] });
+
+    mount();
+    fireEvent.click(await screen.findByText('Pay invoices'));
+    const dayInput = document.querySelector('input[type=date]') as HTMLInputElement;
+    fireEvent.input(dayInput, { target: { value: '2026-07-25' } });
+    fireEvent.click(screen.getByText('Let Auto place it'));
+
+    await waitFor(() => expect(runMock).toHaveBeenCalledWith({ date: '2026-07-25' }));
+    expect(updateMock).not.toHaveBeenCalled(); // still no time picked → no pin write
+  });
+
+  it('Auto place honors a picked TIME by pinning (scheduled_for, task_time) before staging', async () => {
+    // api.auto.run has no time parameter at all — the only way a picked time can land
+    // exactly is the engine's AD1 pin pass, which keys off the task's own scheduled_for/
+    // task_time matching the run's date. This test pins the client-side half of that
+    // contract: the write must happen, with the right fields, before addTask/run.
+    runMock.mockResolvedValue({ result: { placed: 1 }, flight_plan: [] });
+
+    mount();
+    fireEvent.click(await screen.findByText('Pay invoices'));
+    const dayInput = document.querySelector('input[type=date]') as HTMLInputElement;
+    const timeInput = document.querySelector('input[type=time]') as HTMLInputElement;
+    fireEvent.input(dayInput, { target: { value: '2026-07-25' } });
+    fireEvent.input(timeInput, { target: { value: '14:30' } });
+    fireEvent.click(screen.getByText('Let Auto place it'));
+
+    await waitFor(() => expect(updateMock).toHaveBeenCalledWith('t1', { scheduled_for: '2026-07-25', task_time: '14:30' }));
+    await waitFor(() => expect(runMock).toHaveBeenCalledWith({ date: '2026-07-25' }));
+    // The pin write must happen BEFORE staging/running, not after.
+    const updateOrder = updateMock.mock.invocationCallOrder[0];
+    const addTaskOrder = addTaskMock.mock.invocationCallOrder[0];
+    expect(updateOrder).toBeLessThan(addTaskOrder);
   });
 
   it('reports "didn\'t fit" when the task is still staged after the run', async () => {

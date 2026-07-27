@@ -26,6 +26,17 @@ import { InstructBox } from './InstructBox.js';
  * only if it is ABSENT from the returned flight_plan. `result.placed` is an aggregate and
  * may include other pre-staged items, so it cannot answer "did MY task land?".
  *
+ * DAY/TIME TARGETING (fixed 2026-07-23): both actions act on THIS branch's own day()/
+ * time() picker. Auto previously ran against the unrelated global `selectedDay()` (the
+ * app's "cockpit day" — whatever Today/Calendar happened to be showing elsewhere) — a
+ * task could silently land on today's Planner while the user was planning next week.
+ * A picked TIME is honored by writing (scheduled_for, task_time) onto the task before
+ * staging, since `api.auto.run` takes no time parameter at all — the engine's AD1 pin
+ * pass (server/src/engine/autoplan.ts:725-755) only pins a staged task exactly at
+ * (date, task_time) when its own scheduled_for equals the run's date; that's the same
+ * pair "Set" already writes. No time picked → the task stays time-less, so Auto's
+ * normal window/gap-finding still chooses the best open slot within the day.
+ *
  * Props are T2's shipped `BranchProps`. The ticket sketched
  * `{ appendTranscript({role:'assistant'|'action', text}), onDone }`, but T1 validates
  * roles against {'system','user'} and 422s anything else — hence the shell's own seam.
@@ -115,18 +126,24 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
     }
   };
 
-  /** Auto: stage it, make sure it's selected, then run. This one really does place. */
+  /** Auto: stage it, make sure it's selected, then run — targeting THIS branch's own
+   *  day/time picker (see the file-level "DAY/TIME TARGETING" note). */
   const autoPlace = async () => {
     const t = picked();
     if (!t || running()) return;
     setRunning(true);
     try {
+      // A picked time only takes effect via the engine's AD1 pin pass, which requires
+      // the task's own scheduled_for/task_time to already match — write them first.
+      if (time()) {
+        await api.tasks.update(t.id, { scheduled_for: day(), task_time: time() });
+      }
       const staged = await api.flightPlan.addTask(t.id);
       // addTask can land unselected; an unselected staged item is skipped by the run.
       if (staged.flight_plan.find((i) => i.task_id === t.id)?.selected === false) {
         await api.flightPlan.update(t.id, { selected: true });
       }
-      const after = await api.auto.run({ date: selectedDay() });
+      const after = await api.auto.run({ date: day() });
 
       // Absence from the post-run staging list is the only reliable signal for THIS task.
       const placed = !after.flight_plan.some((i) => i.task_id === t.id);
@@ -225,13 +242,12 @@ export function PlanWeekScheduleTasks(props: BranchProps) {
               </button>
             </div>
 
-            {/* The distinction the ticket insists on: Set dates, Auto places. The second
-                line is load-bearing honesty — Auto runs against the day the cockpit is on
-                (selectedDay), NOT the day/time typed above, and silently ignoring a value
-                the user just entered is worse than saying so. */}
+            {/* The distinction the ticket insists on: Set dates, Auto places. Both now act
+                on the SAME day/time above (2026-07-23 fix — Auto used to silently target
+                the unrelated global selectedDay() instead; see the file-level comment). */}
             <p class="text-[11px] text-muted-foreground">
-              “Set” gives it the day and time above. “Let Auto place it” ignores them and
-              finds a slot on {selectedDay()}, adding it to your calendar.
+              “Set” just dates it — no calendar entry. “Let Auto place it” adds a real
+              block on {day()}{time() ? ` at ${time()}` : ', finding the best open slot'}.
             </p>
 
             <button type="button" class="btn-ghost text-xs self-start" onClick={() => setPicked(null)}>

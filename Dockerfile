@@ -40,4 +40,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 WORKDIR /app/server
 # Exec tsx directly (not via pnpm) so node is PID 1 and receives SIGTERM —
 # otherwise docker stop kills pnpm before the server can shut down gracefully.
-CMD ["node_modules/.bin/tsx", "src/index.ts"]
+#
+# --env-file-if-exists=/data/.env: operator overrides live on the persistent volume,
+# matching the CI platform convention (CI-OpenClaw's bootstrap-from-hub.sh writes the
+# app's .env into its data dir the same way). Real env vars injected by the Hub/Docker
+# still win — Node only fills in keys the process environment doesn't already define —
+# and the flag is a no-op when the file is absent, so a plain `docker run` is unchanged.
+CMD ["node_modules/.bin/tsx", "--env-file-if-exists=/data/.env", "src/index.ts"]
