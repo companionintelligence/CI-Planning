@@ -1136,7 +1136,20 @@ export interface Priority {
 }
 
 export interface Integrations {
-  ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
+  // `available` = Ollama answered; `ready` = the models that will actually be used are
+  // pulled (gate AI surfaces on `ready` — see aiAvailable). `smallModel`/`mediumModel`/
+  // `embedModel` are the EFFECTIVE picks (Settings override → env pin → auto-selected),
+  // and `missingModels` lists any of them that aren't installed. `ready`/`missingModels`
+  // are optional so a client can talk to a server that predates them.
+  ollama: {
+    available: boolean;
+    ready?: boolean;
+    models: string[];
+    smallModel: string;
+    mediumModel: string;
+    embedModel: string;
+    missingModels?: string[];
+  };
   google: { mode: string; liveEnabled: boolean; source: 'env' | 'app' | 'off'; connections: ConnectionHealth[] };
   push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver
 }

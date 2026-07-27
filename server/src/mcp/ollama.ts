@@ -1,6 +1,15 @@
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
-import { resolveModel, resolveEmbedModel } from '../lib/models.js';
+import {
+  resolveModel,
+  resolveEmbedModel,
+  resolveModelDefault,
+  resolveEmbedModelDefault,
+  setInstalledModels,
+  isInstalled,
+  parseParamB,
+  type InstalledModel,
+} from '../lib/models.js';
 
 /** Thrown when Ollama is unreachable or a model isn't available. Callers may catch and degrade. */
 export class OllamaUnavailable extends Error {
@@ -136,30 +145,99 @@ export async function embed(text: string, timeoutMs = 30_000): Promise<number[]>
 }
 
 export interface OllamaStatus {
+  /** Ollama answered `/api/tags`. Says NOTHING about whether a usable model is pulled. */
   available: boolean;
+  /**
+   * Reachable AND the models that would actually be used are installed. This is the
+   * signal AI features gate on: `available` alone was reported as a green light while
+   * every call failed with `model '…' not found`, because the built-in default tags
+   * aren't pulled on most machines.
+   */
+  ready: boolean;
   url: string;
   models: string[];
+  /** The EFFECTIVE models for this owner (Settings override → env pin → auto-selected),
+   *  not the raw built-in defaults — those were what made the old display misleading. */
   smallModel: string;
   mediumModel: string;
   embedModel: string;
+  /** Effective models that are NOT installed, so the UI can name them. */
+  missingModels: string[];
   error?: string;
 }
 
-/** Health check + installed model list. Never throws. */
-export async function status(): Promise<OllamaStatus> {
-  const base: Omit<OllamaStatus, 'available' | 'models' | 'error'> = {
-    url: config.ollamaUrl,
-    smallModel: config.ollamaSmallModel,
-    mediumModel: config.ollamaMediumModel,
-    embedModel: config.ollamaEmbedModel,
+/**
+ * Health check + installed model list. Never throws.
+ *
+ * Also the single place that refreshes the installed-model cache `lib/models.ts` uses to
+ * auto-select a real model — `resolveModel` is synchronous and on the inference hot path,
+ * so it can't fetch `/api/tags` itself. Called at boot, by the Settings/integrations poll,
+ * and by "Re-check".
+ *
+ * `owner` is optional because this runs outside a request too (boot, tests), where
+ * `currentOwnerId()` throws by design; without one, per-owner Settings overrides are
+ * skipped and the env/auto-selected models are reported.
+ */
+export async function status(owner?: string): Promise<OllamaStatus> {
+  /** Effective models — resolved AFTER the cache refresh so auto-selection is applied. */
+  const effective = () => {
+    try {
+      return {
+        smallModel: resolveModel('small', owner),
+        mediumModel: resolveModel('medium', owner),
+        embedModel: resolveEmbedModel(owner),
+      };
+      // No owner context (boot health logging): drop only the per-owner override and
+      // still apply env-pin → installed-default → auto-selection. Returning the raw
+      // configured names here would report `qwen2.5:0.5b` as effective while every
+      // request actually used the auto-selected model.
+    } catch {
+      return {
+        smallModel: resolveModelDefault('small'),
+        mediumModel: resolveModelDefault('medium'),
+        embedModel: resolveEmbedModelDefault(),
+      };
+    }
   };
+
   try {
     const res = await fetchWithTimeout(`${config.ollamaUrl}/api/tags`, {}, 5_000);
-    if (!res.ok) return { ...base, available: false, models: [], error: `HTTP ${res.status}` };
-    const data = (await res.json()) as { models?: { name: string }[] };
-    return { ...base, available: true, models: (data.models ?? []).map((m) => m.name) };
+    if (!res.ok) {
+      setInstalledModels(null); // unknown, not "none" — don't auto-select off a bad read
+      return { ...effective(), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: `HTTP ${res.status}` };
+    }
+    const data = (await res.json()) as {
+      models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
+    };
+    const rows: InstalledModel[] = (data.models ?? []).map((m) => ({
+      name: m.name,
+      capabilities: m.capabilities ?? [],
+      paramB: parseParamB(m.details?.parameter_size),
+    }));
+    // Never auto-select during tests. Otherwise the suite's behavior depends on whether
+    // the developer happens to be running Ollama: with it up, auto-selection hands every
+    // agent a REAL model, so jobs/enrichment stop failing fast on "model not found" and
+    // instead perform genuine inference — run-now alone went from ~1s to 124s, and the
+    // parallel suite then times out. Tests that exercise selection set the cache directly
+    // via setInstalledModels(); leaving it unknown here keeps every other suite on the
+    // deterministic degrade path it was written against.
+    if (process.env.NODE_ENV !== 'test') setInstalledModels(rows);
+
+    const eff = effective();
+    // The embed tier is only exercised by dedupe/memory, so a missing embedder is
+    // reported but does not by itself make the app "not ready" for AI features.
+    const missingModels = [eff.smallModel, eff.mediumModel, eff.embedModel].filter((m) => !isInstalled(m));
+    return {
+      ...eff,
+      url: config.ollamaUrl,
+      available: true,
+      ready: isInstalled(eff.smallModel) && isInstalled(eff.mediumModel),
+      models: rows.map((m) => m.name),
+      missingModels,
+    };
   } catch (err) {
-    return { ...base, available: false, models: [], error: (err as Error).message };
+    setInstalledModels(null);
+    return { ...effective(), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: (err as Error).message };
   }
 }
 

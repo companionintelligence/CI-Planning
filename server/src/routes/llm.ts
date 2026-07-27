@@ -18,11 +18,16 @@ export function llmRouter() {
     const ollama = await status();
     ctx.body = {
       ollama: {
+        // `available` = Ollama answered. `ready` = the models that will actually be used
+        // are pulled; the client gates AI surfaces on `ready`, because a reachable Ollama
+        // with an un-pulled model produced a green light over dead features.
         available: ollama.available,
+        ready: ollama.ready,
         models: ollama.models,
         smallModel: ollama.smallModel,
         mediumModel: ollama.mediumModel,
         embedModel: ollama.embedModel,
+        missingModels: ollama.missingModels,
       },
       // WP7: widen the google block with the live toggle + read-only connection
       // health (one entry per connected account; [] when none). connectionHealth
