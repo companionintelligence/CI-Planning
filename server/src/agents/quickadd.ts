@@ -106,6 +106,23 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
   return { ...parsed, estimatedMinutes, priority, tags, ...(categories !== undefined ? { categories } : {}) };
 }
 
+// The three directions are fixed by provisioning (owners.ts) — Work/Home/Community —
+// but bare labels alone under-specify the axis for a small model (e.g. "Dad's
+// birthday" reads as ambiguous and gets force-fit to "Work" without grounding).
+// Definitions give it the semantic split the owner actually means by each name.
+const DIRECTION_HINTS: Record<string, string> = {
+  work: 'Work — job/professional obligations (meetings, deliverables, career tasks).',
+  home: 'Home — personal, household, and family life (errands, chores, family events like birthdays, self-care).',
+  community: 'Community — social and civic life outside work/family (friends, volunteering, group events).',
+};
+
+function directionGuide(directions: string[]): string {
+  const lines = directions
+    .map((d) => DIRECTION_HINTS[d.toLowerCase()])
+    .filter((h): h is string => Boolean(h));
+  return lines.length ? ` Direction meanings — ${lines.join(' ')}` : '';
+}
+
 export async function enrichQuick(
   text: string,
   parsed: ParsedQuick,
@@ -118,7 +135,7 @@ export async function enrichQuick(
       `"direction": <REQUIRED — exactly one of ${JSON.stringify(vocab.directions)}, pick the closest fit>, ` +
       (hasCats ? `"categories": <1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first>, ` : '') +
       `"tags": <up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else []>}. ` +
-      `1 is highest priority. Every task has a direction — always choose one. ` +
+      `1 is highest priority. Every task has a direction — always choose one.${directionGuide(vocab.directions)} ` +
       `Choose direction/categories/tags ONLY from the given lists — never invent. ` +
       `Entry: "${text}"`,
     { tier: 'small', temperature: 0.1, timeoutMs: 15_000 }
@@ -135,7 +152,7 @@ export async function enrichQuick(
   if (!hasDirection && vocab.directions.length > 0) {
     const retry = await generateJson<{ direction?: string | null }>(
       `Which area of life does this task belong to? Answer with JSON ` +
-        `{"direction": <exactly one of ${JSON.stringify(vocab.directions)}>}. ` +
+        `{"direction": <exactly one of ${JSON.stringify(vocab.directions)}>}.${directionGuide(vocab.directions)} ` +
         `Task: "${text}"`,
       { tier: 'small', temperature: 0.1, timeoutMs: 15_000 }
     );
