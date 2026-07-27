@@ -321,8 +321,16 @@ export const [integrations, { refetch: refetchIntegrations }] = createResource((
   api.llm.integrations()
 );
 
-/** True when a reachable Ollama makes the AI features usable. Everything AI gates on this. */
-export const aiAvailable = () => integrations()?.ollama.available ?? false;
+/**
+ * True when AI features can actually run. Everything AI gates on this.
+ *
+ * Keys on `ready`, not `available`: `available` only means Ollama answered, and the
+ * built-in default model tags aren't pulled on most machines — so this used to report
+ * true while every call failed with `model '…' not found`, leaving AI controls visible
+ * as silent no-ops. `ready` additionally requires the models that will actually be used
+ * to be installed. Older servers don't send it, so fall back to `available`.
+ */
+export const aiAvailable = () => integrations()?.ollama.ready ?? integrations()?.ollama.available ?? false;
 
 // ── Connections (T13 #349) ─────────────────────────────────────────────────────
 // Provider-agnostic list of the owner's stored connections (provider/account/status),

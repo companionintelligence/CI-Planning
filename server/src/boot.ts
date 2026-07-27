@@ -7,6 +7,7 @@ import { logger } from './lib/logger.js';
 import { buildApp } from './app.js';
 import { startCronJobs } from './jobs/index.js';
 import { pushEnabled } from './lib/push.js';
+import { status as ollamaStatus } from './mcp/ollama.js';
 
 // DB is initialised on import (runs setup + seed).
 import './db/index.js';
@@ -27,6 +28,23 @@ const app = await buildApp();
 
 const server = app.listen(config.port, () => {
   logger.info(`Companion Planning running on http://localhost:${config.port}`);
+});
+
+// Warm the installed-model cache so the FIRST inference already auto-selects a model that
+// is really pulled (lib/models.ts). Deliberately not awaited: Ollama is optional and may
+// come up after us — until this resolves, resolution falls back to the configured names,
+// and every later status() call refreshes the cache anyway. status() never throws.
+void ollamaStatus().then((s) => {
+  if (!s.available) {
+    logger.info(`Ollama not reachable at ${s.url} — AI features degrade to their deterministic paths.`);
+  } else if (!s.ready) {
+    logger.warn(
+      `Ollama is running but ${s.missingModels.join(', ')} is not installed — ` +
+        `AI features stay off. Pull it (\`ollama pull …\`) or pick an installed model in Settings → Models.`,
+    );
+  } else {
+    logger.info(`Ollama ready — small=${s.smallModel} medium=${s.mediumModel} embed=${s.embedModel}`);
+  }
 });
 
 startCronJobs();
