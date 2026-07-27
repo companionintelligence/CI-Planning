@@ -23,6 +23,7 @@ import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, 
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
+import { DayTypeControl } from './DayTypeControl.js';
 import { displayTag } from '../lib/tag-tax.js';
 import { pickNextUp, segmentExtentPx, dragDeltaMin, inheritedBlockTag } from '../lib/planner.js';
 import { computeBands, type Band } from '../lib/day-windows.js';
@@ -966,11 +967,13 @@ export function Planner() {
 
   return (
     <div class="rounded-xl border border-border bg-card overflow-hidden flex flex-col">
-      {/* Header — region label + actions (no zoom control: the whole day is shown). */}
-      <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0">
+      {/* Header — region label + day-type control + actions (no zoom control: the
+          whole day is shown). Day-type select relocated here from the Today
+          header card (UI backlog request) — it drives this same grid's shading. */}
+      <div class="flex items-center justify-between px-3 py-2 border-b border-border flex-shrink-0 flex-wrap gap-y-1.5">
         <div class="flex items-center gap-2">
           <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-primary">Planner</span>
-          <span class="text-[10px] text-muted-foreground">full day</span>
+          <DayTypeControl date={day()} hideLabel />
         </div>
         <div class="flex items-center gap-3">
           {/* Multi-select → Routine: a one-click entry point for the Shift++ chord,

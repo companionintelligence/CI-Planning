@@ -1,16 +1,17 @@
 import { createSignal, createEffect, createMemo, createResource, onMount, onCleanup, Show, For } from 'solid-js';
 import {
   X, ChevronDown, ChevronLeft, ChevronRight, Plus, ListTodo, Flame, Boxes, Clock,
-  Calendar, Timer, Flag, Lock, Repeat as RepeatIcon, Link2, Square, Sparkles, AlertTriangle,
+  Calendar, Timer, Flag, Lock, Repeat as RepeatIcon, Link2, Square, Sparkles, AlertTriangle, Search,
 } from 'lucide-solid';
 import { MicButton } from './MicButton.js';
 import {
   elementModal, setElementModal, tags, blocks, concepts, tasks, patterns, patternTypes, categoryPrefs, prefs, showToast,
+  refetchBlocks, refetchTasks, refetchFlightPlan,
   type ElementKind,
 } from '../stores/index.js';
 import {
   patternTagList, patternDefaultMinutes, rankedSecondaryTags,
-  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, type ElementForm,
+  nextHalfHour, saveElement, splitBlockTag, mergeTagNames, isoAt, type ElementForm,
 } from '../lib/element.js';
 import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { PATTERN_COLORS, colorVar } from '../lib/pattern-meta.js';
@@ -18,7 +19,8 @@ import { localISODate, shortDate, clockLabel, addDays, monthGridOf } from '../li
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
 import { proposeSlot } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
-import { api } from '../lib/api.js';
+import { inheritedBlockTag } from '../lib/planner.js';
+import { api, type Task } from '../lib/api.js';
 
 const TB_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
 const TASK_REPEAT: RepeatPreset[] = ['none', 'daily', 'weekly', 'custom'];
@@ -145,6 +147,15 @@ export function ElementWizard() {
   const [nlBusy, setNlBusy] = createSignal(false);
   const [nlLlm, setNlLlm] = createSignal(false);
   const [nlError, setNlError] = createSignal<string | null>(null);
+
+  // Search-existing-tasks mode (calendar-click ask): the "Describe it" line toggles
+  // into a task search bar. Picking a result schedules that EXISTING task at the
+  // wizard's current day/time instead of composing a new one — same placement the
+  // flight-plan drag-to-grid path uses (api.blocks.create with task_id set), just
+  // reachable without a drag gesture.
+  const [taskSearchMode, setTaskSearchMode] = createSignal(false);
+  const [taskQuery, setTaskQuery] = createSignal('');
+  const [schedulingId, setSchedulingId] = createSignal<string | null>(null);
   // Routine chip — single-select membership (add + edit).
   const [routineId, setRoutineId] = createSignal('');
   const [initialRoutineId, setInitialRoutineId] = createSignal('');
@@ -509,6 +520,49 @@ export function ElementWizard() {
     // modal would keep the composed add-mode values (the effect guards on !wasOpen).
     setElementModal({ open: false, mode: 'add', kind: null });
     queueMicrotask(() => setElementModal({ open: true, mode: 'edit', kind: 'task', editTarget: { kind: 'task', id } }));
+  }
+
+  // Task-search results — client-side over the already-loaded list (same approach as
+  // the Tasks view's always-visible search), title + tag names, archived excluded (an
+  // existing done/cancelled task isn't something you'd schedule). Capped so the popover
+  // stays a glance, not a second Tasks list.
+  const taskSearchResults = createMemo(() => {
+    const q = taskQuery().trim().toLowerCase();
+    if (!q) return [];
+    const archived = new Set(['done', 'cancelled']);
+    return (tasks() ?? [])
+      .filter((t) => !archived.has(t.status))
+      .filter((t) => t.title.toLowerCase().includes(q)
+        || [...(t.tags ?? []), ...(t.secondary_tags ?? [])].some((n) => n.toLowerCase().includes(q)))
+      .slice(0, 8);
+  });
+
+  /** Schedule an EXISTING task at the wizard's current day/time — mirrors the
+   *  flight-plan drag-to-grid placement (Planner.tsx createBlockAt): a real block
+   *  bound to task_id, never a new task. Closes the wizard on success, same as
+   *  picking a similar-task match does. */
+  async function scheduleExisting(t: Task) {
+    if (schedulingId()) return;
+    setSchedulingId(t.id);
+    try {
+      const startMin = barStartMin() ?? hhmmToMin(nextHalfHour()) ?? 540;
+      const dur = t.estimated_minutes || barDurMin() || 30;
+      const startAt = isoAt(selDay(), minToHHMM(startMin));
+      const endAt = new Date(Date.parse(startAt) + dur * 60_000).toISOString();
+      const tag = inheritedBlockTag(t);
+      await api.blocks.create({
+        title: t.title, block_kind: 'task', task_id: t.id,
+        ...(tag ? { tag } : {}), start_at: startAt, end_at: endAt,
+      });
+      try { await api.flightPlan.remove(t.id); refetchFlightPlan(); } catch { /* wasn't staged — fine */ }
+      refetchBlocks(); refetchTasks();
+      showToast(`Scheduled "${t.title}"`, 'success');
+      close();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setSchedulingId(null);
+    }
   }
   function addIntention(name: string) {
     const n = name.replace(/^#/, '').trim();
@@ -1002,6 +1056,20 @@ export function ElementWizard() {
                   }}
                 </For>
               </div>
+              {/* Search-existing-tasks toggle (owner request) — sits beside the type
+                  toggle, not buried in the "Describe it" input. Hidden during edit/
+                  routine, same scope as the NL line it repurposes. */}
+              <Show when={tab() !== 'routine' && !isEdit()}>
+                <button
+                  type="button"
+                  class="btn-icon"
+                  classList={{ 'text-primary': taskSearchMode() }}
+                  title={taskSearchMode() ? 'Back to describing a new item' : 'Search existing tasks to schedule one here'}
+                  onClick={() => { setTaskSearchMode((v) => !v); setTaskQuery(''); }}
+                >
+                  <Search size={15} />
+                </button>
+              </Show>
               <span class="text-[11px] text-muted-foreground ml-1">{isEdit() ? 'Editing' : ''}</span>
               <button onClick={close} class="btn-icon ml-auto"><X size={16} /></button>
             </div>
@@ -1009,35 +1077,79 @@ export function ElementWizard() {
             {/* T14 (#350) — NL quick line: describe the task/block (typed or spoken) and
                 the parse PREVIEWS into the fields below for approval; Add creates. Both
                 Task and Time Block add-modes (edits keep their loaded values; routines
-                are just a name). Sits between the type tabs and the title by design. */}
+                are just a name). Sits between the type tabs and the title by design.
+                A toggle button (owner request) flips this same line into a search over
+                EXISTING tasks — picking a result schedules that task here instead of
+                composing a new one, without needing a flight-plan drag gesture. */}
             <Show when={tab() !== 'routine' && !isEdit()}>
               <div class="mb-2">
                 <div class="relative">
-                  <Plus size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <Show
+                    when={taskSearchMode()}
+                    fallback={<Plus size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />}
+                  >
+                    <Search size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  </Show>
                   <input
                     class="input text-sm pl-8 pr-16 w-full"
-                    placeholder={tab() === 'timeblock'
-                      ? "Describe it… e.g. 'deep work 2pm ~90m #work'"
-                      : "Describe it… e.g. 'pay invoice fri 3pm #finance ~20m'"}
-                    value={nlText()}
-                    disabled={nlBusy()}
-                    onInput={(e) => setNlText(e.currentTarget.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void parseNl(); } }}
+                    placeholder={taskSearchMode()
+                      ? 'Search existing tasks…'
+                      : tab() === 'timeblock'
+                        ? "Describe it… e.g. 'deep work 2pm ~90m #work'"
+                        : "Describe it… e.g. 'pay invoice fri 3pm #finance ~20m'"}
+                    value={taskSearchMode() ? taskQuery() : nlText()}
+                    disabled={nlBusy() || !!schedulingId()}
+                    onInput={(e) => (taskSearchMode() ? setTaskQuery(e.currentTarget.value) : setNlText(e.currentTarget.value))}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      e.preventDefault();
+                      if (taskSearchMode()) { const first = taskSearchResults()[0]; if (first) void scheduleExisting(first); }
+                      else void parseNl();
+                    }}
                   />
                   <div class="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                    <Show when={nlLlm()}>
+                    <Show when={!taskSearchMode() && nlLlm()}>
                       <span title="Parsed with AI enrichment"><Sparkles size={11} class="text-accent-light" /></span>
                     </Show>
-                    <MicButton
-                      onTranscript={(t) => { setNlText(t); void parseNl(t); }}
-                      onError={(r) => setNlError(r)}
-                      disabled={nlBusy()}
-                      class="btn-icon p-1"
-                    />
+                    <Show when={!taskSearchMode()}>
+                      <MicButton
+                        onTranscript={(t) => { setNlText(t); void parseNl(t); }}
+                        onError={(r) => setNlError(r)}
+                        disabled={nlBusy()}
+                        class="btn-icon p-1"
+                      />
+                    </Show>
                   </div>
                 </div>
-                <Show when={nlError()}>
+                <Show when={!taskSearchMode() && nlError()}>
                   <p class="text-[11px] text-destructive mt-1">{nlError()}</p>
+                </Show>
+
+                {/* Search results — a real block bound to the picked task, at this
+                    wizard's current day/time (selDay/barStartMin below). */}
+                <Show when={taskSearchMode() && taskQuery().trim()}>
+                  <Show
+                    when={taskSearchResults().length > 0}
+                    fallback={<p class="text-[11px] text-muted-foreground mt-1.5 px-1">No matching open tasks.</p>}
+                  >
+                    <div class="mt-1.5 flex flex-col gap-1 rounded-md border border-border bg-popover max-h-48 overflow-auto">
+                      <For each={taskSearchResults()}>
+                        {(t) => (
+                          <button
+                            type="button"
+                            disabled={!!schedulingId()}
+                            onClick={() => void scheduleExisting(t)}
+                            class="flex items-center justify-between gap-2 text-left text-xs px-2.5 py-1.5 hover:bg-primary/10 transition-colors disabled:opacity-50"
+                          >
+                            <span class="truncate text-foreground">{t.title}</span>
+                            <span class="text-[10px] text-muted-foreground flex-shrink-0">
+                              {schedulingId() === t.id ? 'Scheduling…' : t.estimated_minutes ? `${t.estimated_minutes}m` : ''}
+                            </span>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                 </Show>
               </div>
             </Show>

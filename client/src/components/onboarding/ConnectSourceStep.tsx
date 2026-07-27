@@ -2,6 +2,7 @@ import { createResource, createSignal, Show, For } from 'solid-js';
 import { api } from '../../lib/api.js';
 import { integrations, runIngestNowAndRefetch, showToast } from '../../stores/index.js';
 import { FTUE_RESUME_KEY } from '../../lib/onboarding.js';
+import { GOOGLE_CONNECT_ENABLED } from '../../lib/flags.js';
 
 /**
  * FTUE · T12 (#348) — onboarding wizard Step 3: connect a real Google account, or
@@ -68,43 +69,55 @@ export function ConnectSourceStep(props: { onNext: () => void; onBack: () => voi
     <div class="flex flex-col gap-3">
       <div>
         <h2 class="text-base font-semibold text-foreground">Connect a source</h2>
-        <p class="text-xs text-muted-foreground mt-0.5">
-          Pull your email and calendar in automatically, or explore with sample data first.
-        </p>
+        <Show
+          when={GOOGLE_CONNECT_ENABLED}
+          fallback={
+            <p class="text-xs text-muted-foreground mt-0.5">
+              Google isn't connectable yet — for now, connect your Companion Memory from
+              Settings → Connections once you're in.
+            </p>
+          }
+        >
+          <p class="text-xs text-muted-foreground mt-0.5">
+            Pull your email and calendar in automatically, or explore with sample data first.
+          </p>
+        </Show>
       </div>
 
-      <button
-        type="button"
-        class="btn-primary text-sm"
-        disabled={!liveEnabled() || connecting()}
-        onClick={() => void connectGoogle()}
-      >
-        {connecting() ? 'Connecting…' : 'Connect Google'}
-      </button>
-      <Show when={!liveEnabled()}>
-        <p class="text-[11px] text-muted-foreground">Waiting on an operator to configure the Google connection.</p>
-      </Show>
-
-      <Show when={gcfg()}>
-        <button type="button" class="btn-secondary text-sm" disabled={tryingSample()} onClick={() => void trySampleData()}>
-          {tryingSample() ? 'Loading sample data…' : 'Try with sample data'}
+      <Show when={GOOGLE_CONNECT_ENABLED}>
+        <button
+          type="button"
+          class="btn-primary text-sm"
+          disabled={!liveEnabled() || connecting()}
+          onClick={() => void connectGoogle()}
+        >
+          {connecting() ? 'Connecting…' : 'Connect Google'}
         </button>
-      </Show>
-      <Show when={gcfg() === null}>
-        <p class="text-[11px] text-muted-foreground">Sample data is available to an operator account.</p>
-      </Show>
+        <Show when={!liveEnabled()}>
+          <p class="text-[11px] text-muted-foreground">Waiting on an operator to configure the Google connection.</p>
+        </Show>
 
-      <Show when={connections().length > 0}>
-        <div class="flex flex-col gap-1">
-          <For each={connections()}>
-            {(c) => (
-              <div class="flex items-center justify-between text-xs rounded-md border border-border px-2 py-1.5">
-                <span class="text-foreground truncate">{c.account}</span>
-                <span class="text-muted-foreground">{c.status}</span>
-              </div>
-            )}
-          </For>
-        </div>
+        <Show when={gcfg()}>
+          <button type="button" class="btn-secondary text-sm" disabled={tryingSample()} onClick={() => void trySampleData()}>
+            {tryingSample() ? 'Loading sample data…' : 'Try with sample data'}
+          </button>
+        </Show>
+        <Show when={gcfg() === null}>
+          <p class="text-[11px] text-muted-foreground">Sample data is available to an operator account.</p>
+        </Show>
+
+        <Show when={connections().length > 0}>
+          <div class="flex flex-col gap-1">
+            <For each={connections()}>
+              {(c) => (
+                <div class="flex items-center justify-between text-xs rounded-md border border-border px-2 py-1.5">
+                  <span class="text-foreground truncate">{c.account}</span>
+                  <span class="text-muted-foreground">{c.status}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
       </Show>
 
       <div class="flex justify-between items-center pt-1">
