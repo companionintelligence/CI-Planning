@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 /** Parse a positive integer env var, falling back when it's unset, non-numeric, or ≤ 0. */
@@ -174,6 +175,55 @@ const dbPath = process.env.DB_PATH ?? join(defaultDataDir, 'companion.db');
 // Ensure the directory containing the DB exists (better-sqlite3 won't create it).
 mkdirSync(dirname(dbPath), { recursive: true });
 
+/**
+ * Session secret (U2) — signs the login session cookie, and `AUTH_MODE=sso` refuses to
+ * boot without one. An explicit `SESSION_SECRET` is authoritative: an operator pins it
+ * deliberately, and any multi-replica deployment MUST pin it so every replica verifies
+ * the same cookies.
+ *
+ * When it is unset, generate one ONCE and persist it beside the database on the app's own
+ * data volume. This is the same "auto-provision an appliance secret" contract
+ * `services/vapid-config.ts` already uses for the VAPID keypair: a container/marketplace
+ * install boots without the operator having to invent and paste a random string, which is
+ * otherwise the difference between a working install and a crash-loop.
+ *
+ * Stability is the whole point — regenerating would silently sign every existing user out,
+ * so an existing readable file always wins, including when a concurrent boot wins the
+ * create race (`flag: 'wx'` → re-read rather than clobber).
+ *
+ * Filesystem, not the DB: config.ts is evaluated before the database module exists
+ * (`db/index.ts` imports config), so there is no table to write to yet.
+ *
+ * If the data dir is read-only the generate fails and this returns undefined — deliberately
+ * leaving the `AUTH_MODE=sso requires SESSION_SECRET` guard below to report the real
+ * problem, rather than silently serving unsigned (forgeable) session cookies.
+ */
+function resolveSessionSecret(): string | undefined {
+  const pinned = process.env.SESSION_SECRET;
+  if (pinned) return pinned;
+
+  const file = join(dirname(dbPath), '.session-secret');
+  const read = (): string | undefined => {
+    try {
+      return readFileSync(file, 'utf8').trim() || undefined;
+    } catch {
+      return undefined; // not created yet (or unreadable)
+    }
+  };
+
+  const existing = read();
+  if (existing) return existing;
+
+  try {
+    const generated = randomBytes(32).toString('base64');
+    // 'wx' = create-exclusive: a parallel boot that got there first keeps its secret.
+    writeFileSync(file, generated, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    return generated;
+  } catch {
+    return read(); // lost the race → use the winner's; read-only dir → undefined
+  }
+}
+
 // Derived once so the redirect-uri default can reference it.
 const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3848';
 // Fail-closed default: unset (or unrecognized) GOOGLE_MODE means NO Google integration.
@@ -225,7 +275,7 @@ export const config: Config = {
     disableOidc: process.env.DISABLE_OIDC === 'true',
     defaultUsername: process.env.AUTH_DEFAULT_USERNAME,
     defaultPassword: process.env.AUTH_DEFAULT_PASSWORD,
-    sessionSecret: process.env.SESSION_SECRET,
+    sessionSecret: resolveSessionSecret(),
     resetTokenTtlMs: Number(process.env.AUTH_RESET_TOKEN_TTL_MS ?? 3_600_000), // 60 min
   },
   ciportal: {

@@ -7,6 +7,9 @@ server/dist/
 *.db
 *.db-shm
 *.db-wal
+# Auto-provisioned session-cookie signing key (lib/config.ts). Lives beside the DB, so
+# it lands in the repo whenever a dev points DB_PATH at a working directory here.
+.session-secret
 .env
 config.local.json
 *.plist
