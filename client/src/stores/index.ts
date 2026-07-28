@@ -221,8 +221,17 @@ on('possible:promoted', () => refetchTasks());
 // ── Phase G: flight-plan, patterns, pattern types ──────────────────────────────
 // The flight-plan is the persisted, owner-scoped staging area the two-step Auto
 // runs over. It survives reloads; Reset clears it. SSE keeps every device in sync.
+/** Is the last Auto placement run still undoable? Rides the flight-plan read so the
+ *  Undo button reflects server state instead of "did THIS tab just run Auto" — the
+ *  latter vanished on every reload while the run stayed undoable. */
+const [canUndoAuto, setCanUndoAuto] = createSignal(false);
+export { canUndoAuto };
+
 export const [flightPlan, { refetch: refetchFlightPlan }] = createResource(() =>
-  api.flightPlan.list().then((r) => r.flight_plan)
+  api.flightPlan.list().then((r) => {
+    setCanUndoAuto(r.can_undo ?? false);
+    return r.flight_plan;
+  })
 );
 
 on('flight_plan:updated', () => refetchFlightPlan());

@@ -1,7 +1,7 @@
 import Router from '@koa/router';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
-import { fillByPriority, undoLastAuto, fillFlightPlanCandidates } from '../engine/autoplan.js';
+import { fillByPriority, undoLastAuto, canUndoLastAuto, fillFlightPlanCandidates } from '../engine/autoplan.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js'; // still used by the fill/priority/undo endpoints below
 import { listFlightPlan, stage, updateEntry, unstageEntry, resetFlightPlan } from '../services/flight-plan.js';
@@ -18,8 +18,12 @@ import { autoRun } from '../services/engine-ops.js';
 export function flightPlanRouter() {
   const router = new Router();
 
+  // `can_undo` rides this read so the Undo affordance survives a reload. Without it the
+  // client's only signal was the return value of its OWN Schedule call, i.e. component
+  // state — so a refresh hid the button while the run stayed fully undoable server-side.
   router.get('/api/flight-plan', async (ctx) => {
-    ctx.body = { flight_plan: listFlightPlan(currentOwnerId()) };
+    const owner = currentOwnerId();
+    ctx.body = { flight_plan: listFlightPlan(owner), can_undo: canUndoLastAuto(owner) };
   });
 
   // Add a task, or a whole pattern's member tasks (tagged with their source pattern).

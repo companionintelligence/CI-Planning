@@ -11,6 +11,8 @@ import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
 import { suggestTags } from '../agents/tags.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
+import { suggestSubtasks } from '../agents/subtasks.js';
+import { enrichTaskFromMemory } from '../services/task-enrich.js';
 import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { rescheduleTask } from '../engine/review.js';
 import { requestReplan } from '../engine/auto-defense.js';
@@ -373,9 +375,56 @@ export function tasksRouter() {
   // The bulk sweep is /auto-tag below — do NOT rebuild it by looping this endpoint.
   router.post('/api/tasks/suggest-tags', async (ctx) => {
     const { title } = (ctx.request.body ?? {}) as { title?: string };
-    const vocab = (sqlite.prepare('SELECT name FROM tags WHERE owner_id = ? ORDER BY name').all(currentOwnerId()) as { name: string }[]).map((r) => r.name);
-    const tags = await suggestTags(title ?? '', vocab);
+    // `kind` rides along so the prompt can name the direction axis and define it — the
+    // wizard path gets the same grounding as the bulk sweep (services/auto-tag.ts).
+    const rows = sqlite
+      .prepare('SELECT name, kind FROM tags WHERE owner_id = ? ORDER BY name')
+      .all(currentOwnerId()) as { name: string; kind: string }[];
+    const tags = await suggestTags(
+      title ?? '',
+      rows.map((r) => r.name),
+      rows.filter((r) => r.kind === 'direction').map((r) => r.name),
+    );
     ctx.body = { tags };
+  });
+
+  // POST /api/tasks/:id/enrich → { enriched, reason?, description?, direction?, sources? }
+  // On-demand memory enrichment for ONE task (D4). Shares its whole implementation with
+  // the nightly `enrich_tasks` job. Always 200: "memory is off" / "nothing related" are
+  // outcomes the UI reports, not errors — the caller shows `reason` verbatim.
+  router.post('/api/tasks/:id/enrich', async (ctx) => {
+    const owner = currentOwnerId();
+    const id = ctx.params.id;
+    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+      ctx.status = 404; ctx.body = { error: 'not found' }; return;
+    }
+    const res = await enrichTaskFromMemory(owner, id);
+    if (res.enriched) {
+      const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
+      if (task) {
+        broadcast(owner, 'task:updated', {
+          ...taskToApi(task),
+          tags: taskTagNames(id),
+          secondary_tags: taskSecondaryTags(id),
+          categories: entityCategoryNames('task', id),
+          depends_on: getDependencies(id),
+          blocked: blockedTaskIds().has(id),
+        });
+      }
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `task:${id}` });
+    }
+    ctx.body = res;
+  });
+
+  // POST /api/tasks/suggest-subtasks { title, context? } → { subtasks } — the brainstorm
+  // behind the wizard's chips (D5). ZERO WRITES, and deliberately so: this endpoint can
+  // only ever hand back strings, so there is no code path — here or in the agent — that
+  // creates a subtask the user did not pick. Creation stays on the normal parent_id path.
+  // Returns [] when Ollama is down; the wizard then shows no chips. Literal path.
+  router.post('/api/tasks/suggest-subtasks', async (ctx) => {
+    const { title, context } = (ctx.request.body ?? {}) as { title?: string; context?: string };
+    const subtasks = await suggestSubtasks(title ?? '', typeof context === 'string' ? context : '');
+    ctx.body = { subtasks };
   });
 
   // POST /api/tasks/auto-tag { task_ids? } → { tagged, total, log } — the Tasks view's
