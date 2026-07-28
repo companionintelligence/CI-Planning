@@ -123,6 +123,9 @@ export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Pro
   }
   const names = vocab.map((v) => v.name);
   const kindOf = new Map(vocab.map((v) => [v.name, v.kind]));
+  // The direction names, handed to the prompt so it classifies the life area semantically
+  // instead of string-matching the whole flat list (see agents/tags.ts).
+  const directions = vocab.filter((v) => v.kind === 'direction').map((v) => v.name);
 
   // The scope filter runs in JS rather than as an IN-list: the id set comes from a client
   // view of unbounded size, and binding it would blow SQLite's bound-parameter cap.
@@ -137,7 +140,7 @@ export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Pro
   let ollamaHit = false;
 
   for (const task of candidates) {
-    const llm = await suggestTags(task.title, names); // returns [] on any failure
+    const llm = await suggestTags(task.title, names, directions); // returns [] on any failure
     if (llm.length > 0) ollamaHit = true;
     const { primary, intentions } = levelByKind(
       mergeTags(llm, tagTitleFallback(task.title, names), names),

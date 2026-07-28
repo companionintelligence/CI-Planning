@@ -1,5 +1,5 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
-import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check } from 'lucide-solid';
+import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
 import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
@@ -295,6 +295,26 @@ export function TaskCard(props: Props) {
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
 
+  // D4 — memory enrichment for this one task. Always resolves; `enriched:false` carries a
+  // reason (memory off, nothing related), which we show verbatim rather than pretending
+  // something happened. Only ever FILLS BLANKS server-side — never rewrites the user's own
+  // description or replaces a direction they chose.
+  const [enriching, setEnriching] = createSignal(false);
+  async function enrich() {
+    setEnriching(true);
+    try {
+      const r = await api.tasks.enrich(props.task.id);
+      if (r.enriched) {
+        const bits = [r.description && 'description', r.direction && `direction (${r.direction})`].filter(Boolean);
+        showToast(`Filled in ${bits.join(' + ')}`, 'success');
+        refetchTasks();
+      } else {
+        showToast(r.reason ?? 'Nothing to add', 'default');
+      }
+    } catch (err) { showToast((err as Error).message, 'error'); }
+    finally { setEnriching(false); }
+  }
+
   async function remove() {
     // DELETE is a soft cancel (services/tasks.ts: status → 'cancelled'), so the task
     // lands in the Archive — but nothing restores it from there, so don't imply it.
@@ -540,6 +560,14 @@ export function TaskCard(props: Props) {
               <Show when={isInstance()}>
                 <button onClick={skip} class="btn-icon" title="Skip this occurrence"><SkipForward size={13} /></button>
               </Show>
+              {/* D4 — pull related items from Companion Memory to fill in this task's
+                  description (and its direction, if it has none). On demand rather than
+                  automatic: it costs a memory round-trip plus a model call. Reports its
+                  own no-ops honestly ("memory is off", "nothing related") instead of
+                  silently doing nothing. */}
+              <button onClick={enrich} disabled={enriching()} class="btn-icon" title="Fill in details from memory">
+                <Sparkles size={13} classList={{ 'animate-pulse': enriching() }} />
+              </button>
               <button class="btn-icon" title="Edit" onClick={() => setElementModal({ open: true, mode: 'edit', kind: props.task.is_habit ? 'habit' : 'task', editTarget: { kind: props.task.is_habit ? 'habit' : 'task', id: props.task.id } })}><Pencil size={13} /></button>
               <button onClick={remove} class="btn-icon hover:text-red-400" title="Cancel task"><Trash2 size={13} /></button>
             </div>

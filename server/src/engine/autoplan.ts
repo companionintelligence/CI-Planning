@@ -985,6 +985,24 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
 }
 
 /**
+ * Is there a placement run the owner could still undo right now?
+ *
+ * Deliberately checks for surviving BLOCKS, not just the `last_auto_run_id` pointer: the
+ * pointer outlives its blocks whenever something else deletes them (Clear Date Range, a
+ * manual block delete, a reflow), and a button offered on a dangling pointer would answer
+ * "Nothing to undo" — an affordance that lies. Cheap enough to ride every flight-plan read.
+ */
+export function canUndoLastAuto(owner: string = currentOwnerId()): boolean {
+  return !!sqlite
+    .prepare(
+      `SELECT 1 FROM time_blocks b JOIN owners o ON o.id = b.owner_id
+        WHERE b.owner_id = ? AND b.auto_run_id IS NOT NULL AND b.auto_run_id = o.last_auto_run_id
+        LIMIT 1`,
+    )
+    .get(owner);
+}
+
+/**
  * Undo the LAST placement run (D2 — single-step, no stack). Deletes only the blocks
  * stamped with the owner's most recent run_id (never manual or meeting blocks, which
  * carry no auto_run_id), re-stages those tasks onto the flight-plan (selected), and

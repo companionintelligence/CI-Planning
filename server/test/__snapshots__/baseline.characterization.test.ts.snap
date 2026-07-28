@@ -226,6 +226,7 @@ exports[`behavior baseline — read API serialization > serializes the canonical
 
 exports[`behavior baseline — read API serialization > serializes the canonical read surfaces stably (id/ts-normalized) > GET /api/flight-plan 1`] = `
 {
+  "can_undo": false,
   "flight_plan": [
     {
       "added_at": "<ts>",

@@ -13,6 +13,19 @@ export interface ParsedQuick {
   // Phase B: 1–3 of the owner's category names (Balance dimensions) — only ever
   // filled by optional enrichment (a constrained classifier), never the parser.
   categories?: string[];
+  /**
+   * D3 — the BAND the task is best done in, from optional enrichment. Deliberately not
+   * a clock time: `taskTime` stays the parser's, set only when the entry's own words
+   * gave one. The wizard turns a band into a concrete proposed slot via propose-slot.ts
+   * (which flows around real busy spans); writing `task_time` from a band instead would
+   * hard-pin the task through the AD1 pin pass and defeat conflict-aware placement.
+   */
+  timeOfDay?: 'morning' | 'afternoon' | 'evening' | 'any';
+  /** Why that band — one short clause, shown to the user, never persisted. */
+  timeOfDayReason?: string;
+  /** Enrichment's judgement that the task needs breaking down; gates the (separate,
+   *  suggest-only) subtask brainstorm. Never persisted on the task. */
+  isComplex?: boolean;
 }
 
 const TAG_RE = /#[\w-]+/g;
