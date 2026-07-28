@@ -1,7 +1,7 @@
 import { generateJson } from '../mcp/ollama.js';
 import type { ParsedQuick } from '../engine/quickadd.js';
 import {
-  directionGuide, isTimeOfDay,
+  directionGuide, isTimeOfDay, titleSuggestsComplex,
   PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC,
 } from './rubric.js';
 
@@ -133,7 +133,11 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
       : undefined;
 
   // Complexity only gates the separate subtask call — it is never written to the task.
-  const isComplex = parsed.isComplex ?? (out.isComplex === true ? true : undefined);
+  // Model OR deterministic verb signal: llama3.2 applies its own verb rule ~4/6, so the
+  // mechanical half of the rubric is enforced in code (titleSuggestsComplex) and the
+  // model can only ADD verdicts the verb list misses, never lose the obvious ones.
+  const isComplex =
+    parsed.isComplex ?? (out.isComplex === true || titleSuggestsComplex(parsed.title) ? true : undefined);
 
   return {
     ...parsed,
