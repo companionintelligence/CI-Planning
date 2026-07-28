@@ -108,7 +108,13 @@ export const api = {
     // parse in its own fields and the user approves via the normal Add path.
     quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
     // Best-effort LLM auto-tag for the wizard, constrained to existing tags ([] if Ollama down).
+    // SUGGEST-ONLY — writes nothing. For the bulk sweep use `autoTag` below, not a loop here.
     suggestTags: (title: string) => request<{ tags: string[] }>('POST', '/tasks/suggest-tags', { title }),
+    // Bulk auto-tag, server-side: one request tags every still-untagged task in `taskIds`
+    // (omit for owner-wide). Shares the `tag_tasks` cron's service, so the LLM call, the
+    // heuristic fallback, and the direction/intention leveling all live on the server.
+    autoTag: (taskIds?: string[]) =>
+      request<{ tagged: number; total: number; log: string }>('POST', '/tasks/auto-tag', taskIds ? { task_ids: taskIds } : {}),
     update: (
       id: string,
       // due_at / scheduled_for / task_time accept null so a "clear" sends an explicit

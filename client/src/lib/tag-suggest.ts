@@ -25,24 +25,9 @@ export function suggestTagsFromTitle(title: string, existing: string[]): string[
   return out;
 }
 
-/**
- * Merge LLM suggestions with the offline heuristic for the bulk auto-tag action,
- * keeping only names in the vocabulary (never invent a tag) and de-duping while
- * preserving order (LLM picks first). With Ollama down, `llm` is `[]` and this
- * degrades to the deterministic heuristic — the always-on baseline.
- */
-export function mergeSuggestedTags(llm: string[], heuristic: string[], vocabulary: string[]): string[] {
-  const allow = new Set(vocabulary);
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const t of [...llm, ...heuristic]) {
-    if (allow.has(t) && !seen.has(t)) {
-      seen.add(t);
-      out.push(t);
-    }
-  }
-  return out;
-}
+// The LLM/heuristic merge for the bulk auto-tag action used to live here too. It moved
+// server-side (services/auto-tag.ts `mergeTags`) when the Tasks Auto-tag button switched
+// to POST /api/tasks/auto-tag, so the button and the `tag_tasks` cron share one copy.
 
 /** Days-from-today YYYY-MM-DD in local time (start-day quick picks: 0/1/7). */
 export function localDayPlus(days: number, base = new Date()): string {
