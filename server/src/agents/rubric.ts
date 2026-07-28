@@ -99,11 +99,49 @@ export function isTimeOfDay(v: unknown): v is TimeOfDay {
 
 // Measured 2026-07-27 against llama3.2: the abstract phrasing alone returned false even
 // for "Plan a week-long trip to Japan" — the canonical complex task — which would have
-// left the subtask feature permanently dark. Concrete examples on BOTH sides fixed it.
+// left the subtask feature permanently dark. Concrete rules helped; worked EXAMPLES help
+// more (a 3B model imitates far better than it deduces), so both are here. The rubric is
+// still only half the protection — see titleSuggestsComplex below.
 export const COMPLEXITY_RUBRIC =
   'Set isComplex true when finishing the task takes several distinct steps that a person ' +
   'would want written out — planning a trip, organising an event, moving house, running ' +
   'a project, anything spanning days or involving several people. Verbs like plan, ' +
   'organise, launch, prepare, research, or build usually mean true. ' +
   'Set it false for anything done in one sitting: a call, an email, an errand, a payment, ' +
-  'a single chore.';
+  'a single chore. ' +
+  'Examples: "Plan a trip to Japan" → true; "Organize the team offsite" → true; ' +
+  '"Research and launch the pricing page" → true; "Call the dentist" → false; ' +
+  '"Pay the electricity bill" → false.';
+
+// The rubric's verb rule, enforced in code. Measured: llama3.2 applies its own verb rule
+// about 4 times in 6 — it missed "Organize the team offsite" and "Research and launch the
+// new pricing page" even with the rule in the prompt. Since the rule is mechanical
+// (leading verb + a real object), there is no reason to leave it to a 3B model at all:
+// the caller ORs this with the model's answer, so the model can only ADD complex verdicts
+// the verb list misses ("Move house", "Team offsite prep"), never lose these.
+// Kept to STRONG planning verbs on purpose — a false positive costs a background LLM call
+// and possibly silly chips; a broad list ("make", "get", "do") would fire constantly.
+// Every verb the RUBRIC names must be here — the code twin drifting from the prompt's
+// own list is how "Prepare the annual budget review" got missed on first measurement.
+const COMPLEX_LEAD_VERBS = new Set([
+  'plan', 'organize', 'organise', 'launch', 'prepare', 'research', 'build',
+  'coordinate', 'arrange', 'develop', 'migrate', 'renovate', 'host',
+]);
+
+// The rubric's "moving house" example, as lead phrases. Deliberately NOT a bare 'move'
+// verb — "Move the couch to the garage" is one action, and a generic 'move' would fire
+// on every such errand.
+const COMPLEX_LEAD_PHRASES = ['move house', 'move out', 'move into', 'move to a new'];
+
+/**
+ * Deterministic complexity signal from the title alone: a strong planning verb in lead
+ * position and enough words to name a real undertaking ("Plan a week-long trip to
+ * Japan"), not a bare verb-object pair ("plan dinner"). OR this with the model's
+ * `isComplex` — never use it to overrule a model's `true`.
+ */
+export function titleSuggestsComplex(title: string): boolean {
+  const lower = title.toLowerCase().trim();
+  const words = lower.split(/[^a-z0-9-]+/).filter(Boolean);
+  if (words.length >= 4 && COMPLEX_LEAD_VERBS.has(words[0])) return true;
+  return COMPLEX_LEAD_PHRASES.some((p) => lower.startsWith(p));
+}

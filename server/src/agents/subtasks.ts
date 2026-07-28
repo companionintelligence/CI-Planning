@@ -22,23 +22,35 @@ const MAX_SUBTASKS = 6;
 export async function suggestSubtasks(title: string, context = ''): Promise<string[]> {
   if (!title.trim()) return [];
   try {
-    const out = await generateJson<{ subtasks?: unknown }>(
+    // Refusal is a BOOLEAN FIELD, not an instruction. Measured 2026-07-28: "reply with
+    // {"subtasks": []} for single-action tasks" was ignored by llama3.2-3B AND llama3.1-8B
+    // alike — under format:json with an array in the schema, a model fills the array. Give
+    // it a boolean that licenses saying no and it uses it: with `isBreakdownUseful` +
+    // worked examples, the 3B refuses "Call the dentist" and still breaks down the real
+    // projects (residual false-positive: "Pay the electricity bill" pads steps — caught
+    // in practice by the caller's isComplex gate, which stays the FIRST protection).
+    const out = await generateJson<{ isBreakdownUseful?: unknown; subtasks?: unknown }>(
       `Break this task into the steps someone would actually do, in order. ` +
-        `Reply with JSON {"subtasks": ["...", "..."]}. ` +
-        `Give 3 to ${MAX_SUBTASKS} steps. Each step must be a short imperative phrase ` +
-        `(start with a verb), be doable on its own, and be a real part of finishing the ` +
-        `task — do not pad the list, and do not restate the task itself as a step. ` +
-        // Asked for, but do NOT rely on it: measured against llama3.2, "Call the dentist"
-        // still came back as "Dial the phone number" / "Leave a message". A 3B model wants
-        // to be helpful more than it wants to decline. The REAL protection against
-        // brainstorming a one-step task is the `isComplex` gate on the caller — this line
-        // only helps on stronger models and costs nothing when ignored.
-        `If the task is a single action one person finishes in one sitting, or you cannot ` +
-        `break it into meaningful steps, reply with {"subtasks": []} instead. ` +
+        `Reply with JSON {"isBreakdownUseful": <true|false>, "subtasks": ["...", "..."]}. ` +
+        `isBreakdownUseful is true when finishing the task takes several distinct steps a ` +
+        `person would want written out — planning a trip, organising an event, running a ` +
+        `project. It is false only for a single action done in one sitting — a call, an ` +
+        `email, an errand, a payment. Examples: "Plan a trip to Japan" → true; ` +
+        `"Organize the team offsite" → true; "Call the dentist" → false; "Pay a bill" → false. ` +
+        `When true, subtasks has 3 to ${MAX_SUBTASKS} steps. Each step must be a short ` +
+        `imperative phrase (start with a verb), be doable on its own, and be a real part ` +
+        `of finishing the task — do not pad the list, and do not restate the task itself ` +
+        `as a step. When false, subtasks is []. ` +
         (context ? `Background that may help: "${context.slice(0, 600)}". ` : '') +
         `Task: "${title.trim()}"`,
+      // Small tier: the boolean-gate refusal works at 3B (measured), and the 3B's steps
+      // for genuinely complex tasks were as good as the 8B's — no reason to pay 8B latency.
       { tier: 'small', temperature: 0.3, timeoutMs: 20_000 },
     );
+    // The model judged a breakdown unhelpful — honor it. (Explicit !== true: a missing or
+    // junk field from an older/looser model falls through to the array, which older
+    // prompts still fill; the cleanup below then applies as before.)
+    if (out.isBreakdownUseful === false) return [];
     if (!Array.isArray(out.subtasks)) return [];
     const seen = new Set<string>();
     const picked: string[] = [];
