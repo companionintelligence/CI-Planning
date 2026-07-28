@@ -123,7 +123,7 @@ export const api = {
     // D4 — memory-backed enrichment for one task (description + direction). Always 200;
     // `enriched:false` with a `reason` is the normal "memory off / nothing related" answer.
     enrich: (id: string) =>
-      request<{ enriched: boolean; reason?: string; description?: string; direction?: string; sources?: string[] }>(
+      request<{ enriched: boolean; reason?: string; description?: string; direction?: string; categories?: string[]; sources?: string[] }>(
         'POST', `/tasks/${id}/enrich`, {},
       ),
     // Bulk auto-tag, server-side: one request tags every still-untagged task in `taskIds`

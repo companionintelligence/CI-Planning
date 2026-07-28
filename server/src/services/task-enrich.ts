@@ -2,13 +2,18 @@ import { sqlite } from '../db/index.js';
 import { generateJson } from '../mcp/ollama.js';
 import { graphSearch, memoryMode, type MemoryNode } from '../connectors/memory.js';
 import { directionGuide } from '../agents/rubric.js';
-import { resolveTagId, taskHasLevel1Direction } from './tags.js';
+import {
+  resolveTagId, taskHasLevel1Direction,
+  entityCategoryIds, categoryIdsForOwner, setEntityCategories,
+} from './tags.js';
 import { logger } from '../lib/logger.js';
 
 /**
  * Memory-backed task enrichment (handoff D4/§4.5): pull what Companion Intelligence
  * already knows that relates to a task, and use it to write a short DESCRIPTION and — only
- * when the task still has none — pick its Work/Home/Community direction.
+ * when the task still has none — pick its Work/Home/Community direction and its 1–3
+ * Balance categories (the §4.5 "direction/category call"; entity_categories, never
+ * entity_tags).
  *
  * Deliberately NOT on the interactive quick-add path. Memory means a CI-Server round-trip,
  * and quick-add has to stay instant, so this runs from two entry points that share this
@@ -35,8 +40,32 @@ export interface EnrichTaskResult {
   reason?: string;
   description?: string;
   direction?: string;
+  /** Category names written (1–3, best fit first) — only when the task had none. */
+  categories?: string[];
   /** Names of the memory items the description was drawn from (provenance for the UI). */
   sources?: string[];
+}
+
+/**
+ * Constrain a model's category answer to the owner's real vocabulary: canonical casing
+ * from the vocab, unknown names dropped, deduped, capped at 3 (the entity_categories
+ * limit). Exported for its unit tests — the same never-invent rule as every classifier.
+ */
+export function constrainCategories(raw: unknown, vocabulary: string[]): string[] {
+  if (!Array.isArray(raw)) return [];
+  const byLower = new Map(vocabulary.map((c) => [c.toLowerCase(), c]));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of raw) {
+    if (out.length >= 3) break;
+    if (typeof v !== 'string') continue;
+    const canonical = byLower.get(v.trim().toLowerCase());
+    if (canonical && !seen.has(canonical)) {
+      seen.add(canonical);
+      out.push(canonical);
+    }
+  }
+  return out;
 }
 
 const selectTask = sqlite.prepare(
@@ -50,6 +79,9 @@ const insertDirection = sqlite.prepare(
 );
 const selectDirections = sqlite.prepare(
   `SELECT name FROM tags WHERE owner_id = ? AND kind = 'direction' AND muted = 0 ORDER BY name`,
+);
+const selectCategories = sqlite.prepare(
+  `SELECT name FROM tags WHERE owner_id = ? AND kind = 'category' AND muted = 0 ORDER BY name`,
 );
 
 // Words too common to identify anything — not worth a search round-trip each.
@@ -100,6 +132,7 @@ function describeNodes(nodes: MemoryNode[]): string {
 interface EnrichOut {
   description?: unknown;
   direction?: unknown;
+  categories?: unknown;
 }
 
 /**
@@ -112,12 +145,17 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   const task = selectTask.get(taskId, owner) as { id: string; title: string; notes: string | null } | undefined;
   if (!task) return { enriched: false, reason: 'Task not found' };
 
-  // Nothing to do when both fields this can fill are already set — skip the round-trips
+  // Nothing to do when every field this can fill is already set — skip the round-trips
   // entirely rather than asking the model for an answer that would be discarded.
+  // Categories count as "needed" only when the owner actually HAS a category vocabulary:
+  // with none, an empty entity_categories set is not a blank to fill, and treating it as
+  // one would make every task permanently enrichable.
+  const categories = (selectCategories.all(owner) as { name: string }[]).map((r) => r.name);
   const needsDescription = !task.notes?.trim();
   const needsDirection = !taskHasLevel1Direction(taskId, owner);
-  if (!needsDescription && !needsDirection) {
-    return { enriched: false, reason: 'Already has a description and a direction' };
+  const needsCategories = categories.length > 0 && entityCategoryIds('task', taskId).length === 0;
+  if (!needsDescription && !needsDirection && !needsCategories) {
+    return { enriched: false, reason: 'Already has a description, direction, and categories' };
   }
 
   let nodes: MemoryNode[] = [];
@@ -140,11 +178,17 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
         (needsDirection && directions.length
           ? `, "direction": <exactly one of ${JSON.stringify(directions)}>`
           : '') +
+        (needsCategories
+          ? `, "categories": <1-3 life areas from ${JSON.stringify(categories)}, best fit first, or []>`
+          : '') +
         `}. The description must say what this task is about USING ONLY the related items ` +
         `above — it adds the context the bare title is missing (who and what it concerns). ` +
         `If the related items do not actually pertain to this task, answer null; never ` +
         `invent details.` +
-        (needsDirection && directions.length ? directionGuide(directions) : ''),
+        (needsDirection && directions.length ? directionGuide(directions) : '') +
+        (needsCategories
+          ? ` Choose categories ONLY from the given list — never invent; [] when none fit.`
+          : ''),
       { tier: 'small', temperature: 0.2, timeoutMs: 20_000 },
     );
   } catch (err) {
@@ -175,15 +219,37 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
     }
   }
 
+  // Categories (§4.5's "category call"): same fill-blanks-only doctrine, on the
+  // entity_categories axis (Phase B) — NEVER entity_tags, where a category must not leak.
+  if (needsCategories) {
+    const picked = constrainCategories(out.categories, categories);
+    // Names → the owner's category-tag ids; then re-check the guard — a concurrent edit
+    // may have given the task categories since the read above, and setEntityCategories
+    // REPLACES the set, so writing over a user's picks would be destructive, not additive.
+    if (picked.length > 0 && entityCategoryIds('task', taskId).length === 0) {
+      setEntityCategories('task', taskId, categoryIdsForOwner(picked, owner));
+      result.categories = picked;
+      result.enriched = true;
+    }
+  }
+
   if (!result.enriched) return { enriched: false, reason: 'Memory had nothing to add' };
   result.sources = nodes.slice(0, GRAPH_LIMIT).map((n) => n.name);
-  logger.info('task-enrich', { taskId, description: !!result.description, direction: result.direction });
+  logger.info('task-enrich', {
+    taskId, description: !!result.description, direction: result.direction, categories: result.categories,
+  });
   return result;
 }
 
-// Candidates for the nightly sweep: recent, open, top-level tasks missing a description or
-// a direction. Bounded by design — an unbounded sweep would fan out one CI-Server call and
-// one model call per task across the entire backlog every night.
+// Candidates for the nightly sweep: recent, open, top-level tasks missing a description,
+// a direction, or (when the owner has a category vocabulary) categories. Bounded by
+// design — an unbounded sweep would fan out one CI-Server call and one model call per
+// task across the entire backlog every night.
+//
+// The category arm carries its own vocabulary EXISTS guard: without it, an owner with no
+// category tags would have every task match "no entity_categories rows" forever — a pool
+// of permanent candidates that can never be satisfied, crowding real work out of the
+// LIMIT. (Mirrors the `needsCategories` guard in enrichTaskFromMemory.)
 const selectSweepCandidates = sqlite.prepare(`
   SELECT t.id FROM tasks t
   WHERE t.owner_id = ?
@@ -195,6 +261,15 @@ const selectSweepCandidates = sqlite.prepare(`
       OR NOT EXISTS (
         SELECT 1 FROM entity_tags e JOIN tags g ON g.id = e.tag_id
         WHERE e.entity_kind = 'task' AND e.entity_id = t.id AND e.level = 1 AND g.kind = 'direction'
+      )
+      OR (
+        NOT EXISTS (
+          SELECT 1 FROM entity_categories ec
+          WHERE ec.entity_kind = 'task' AND ec.entity_id = t.id
+        )
+        AND EXISTS (
+          SELECT 1 FROM tags c WHERE c.owner_id = t.owner_id AND c.kind = 'category' AND c.muted = 0
+        )
       )
     )
   ORDER BY t.created_at DESC
