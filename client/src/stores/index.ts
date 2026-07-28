@@ -533,6 +533,15 @@ on('reminder:fire', () => refetchReminders());
 // shows the four-button type chooser first (Add mode); Edit mode passes a concrete
 // kind + editTarget so it jumps straight to that type's form.
 export type ElementKind = 'task' | 'habit' | 'routine' | 'timeblock';
+/**
+ * The close ritual's target task, or null when closed. APP-LEVEL on purpose (same reason
+ * as elementModal): completing a task refetches, the task leaves the open list, and the
+ * TaskCard that triggered the ritual UNMOUNTS — taking any card-local modal state with it.
+ * Measured: the sheet flashed and vanished. The task object is carried here (not just an
+ * id) so the sheet can still show a title/estimate for a task no longer in `tasks()`.
+ */
+export const [closeRitualTask, setCloseRitualTask] = createSignal<Task | null>(null);
+
 export const [elementModal, setElementModal] = createSignal<{
   open: boolean;
   mode: 'add' | 'edit';

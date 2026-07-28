@@ -3,6 +3,7 @@ import { A } from '@solidjs/router';
 import { Heart, Briefcase, Users, Brain, Smile, DollarSign, Edit, Sparkles, AlertCircle, Target, ListTodo, X } from 'lucide-solid';
 import { priorities, prefs, tasks, setElementModal } from '../stores/index.js';
 import type { Priority, Task } from '../lib/api.js';
+import { BalanceMetrics } from '../components/BalanceMetrics.js';
 
 interface CategoryConfig { key: string; name: string; icon: typeof Heart; colorClass: string; }
 
@@ -22,6 +23,7 @@ const CATEGORIES: CategoryConfig[] = [
 const FALLBACK: Omit<Priority, 'category'> = { satisfaction: 5, importance: 5, target_hours_per_week: 0 };
 
 export function Balance() {
+  const [tab, setTab] = createSignal<'balance' | 'metrics'>('balance');
   const byCategory = (key: string): Priority =>
     priorities()?.find((p) => p.category === key) ?? { category: key, ...FALLBACK };
   const hasData = () => (priorities()?.length ?? 0) > 0;
@@ -72,6 +74,31 @@ export function Balance() {
         <A href="/priorities" class="btn-secondary self-start"><Edit class="w-4 h-4 mr-1.5" /> Priorities Wizard</A>
       </div>
 
+      {/* Tabs — Balance is what you SAY matters (satisfaction vs importance); Metrics is
+          what actually happened (completions, tracked time, mood, estimation drift). */}
+      <div class="flex items-center gap-1 mb-6 border-b border-border">
+        <For each={[{ k: 'balance' as const, label: 'Balance' }, { k: 'metrics' as const, label: 'Metrics' }]}>
+          {(t) => (
+            <button
+              type="button"
+              onClick={() => setTab(t.k)}
+              class="px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
+              classList={{
+                'border-accent text-foreground': tab() === t.k,
+                'border-transparent text-muted-foreground hover:text-foreground': tab() !== t.k,
+              }}
+            >{t.label}</button>
+          )}
+        </For>
+      </div>
+
+      <Show when={tab() === 'metrics'}>
+        <BalanceMetrics />
+      </Show>
+
+      {/* Guarded by the tab OUTSIDE the hasData Show — otherwise the "no priorities yet"
+          fallback renders under the Metrics tab as well. */}
+      <Show when={tab() === 'balance'}>
       <Show
         when={hasData()}
         fallback={
@@ -233,6 +260,7 @@ export function Balance() {
             </div>
           </div>
         </div>
+      </Show>
       </Show>
 
       {/* Phase D — related open tasks for a dimension. Click-through opens the task's

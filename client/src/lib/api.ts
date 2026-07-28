@@ -24,6 +24,9 @@ export interface Task {
   defer_until?: string;
   task_time?: string;
   estimated_minutes?: number;
+  /** Timer truth: the summed minutes of finished time_entries (0 when never timed).
+   *  Always serialized (taskToApi spreads the row) — it was simply never declared here. */
+  actual_minutes?: number;
   priority: number;
   status: string;
   parent_id?: string;
@@ -34,6 +37,11 @@ export interface Task {
   tags: string[];                 // primary tags (entity_tags level 1) — incl. the home/work/community direction
   secondary_tags?: string[];      // Phase 5: secondary tags (entity_tags level>1)
   categories?: string[];          // Phase B (0134): 1–3 category names, position order (stripe order)
+  // Close ritual (0137) — all optional; a task closed by the plain checkbox has none.
+  completion_mood?: Mood | null;
+  completion_note?: string | null;
+  /** When the reflection was recorded — NOT completed_at (the assumed task end). */
+  reaction_at?: string | null;
   texture_enabled?: boolean;      // Phase B (0135): per-element texture toggle (default on)
   texture_color_token?: string | null; // Phase B (0135): colour override; null ⇒ derive from categories
   depends_on?: string[];
@@ -100,7 +108,50 @@ export interface ParsedQuick {
   isComplex?: boolean;
 }
 
+/** The four close-ritual "temperature" faces (server: services/task-close.ts MOODS). */
+export type Mood = 'happy' | 'flat' | 'frustrated' | 'stressed';
+
+export interface MoodBreakdown { happy: number; flat: number; frustrated: number; stressed: number }
+
+export interface AxisMetrics {
+  name: string;
+  open: number;
+  completed: number;
+  actualMinutes: number;
+  /** Median actual/estimated; null under 3 samples. >1 means you run long. */
+  estimateBias: number | null;
+  mood: MoodBreakdown;
+  moodSamples: number;
+  medianReactionLagMin: number | null;
+}
+
+export interface TaskMetrics {
+  window: { days: number; since: string };
+  directions: AxisMetrics[];
+  categories: AxisMetrics[];
+  totals: { open: number; completed: number; actualMinutes: number; mood: MoodBreakdown; moodSamples: number };
+}
+
+export interface CalibrationReading {
+  computed_date: string;
+  sample_count: number;
+  bias_ratio: number | null;
+  p25: number | null;
+  p50: number | null;
+  p75: number | null;
+}
+
 export const api = {
+  metrics: {
+    // Two-axis task rollup for the Balance → Metrics tab.
+    tasks: (days = 30) => request<TaskMetrics>('GET', `/metrics/tasks?days=${days}`),
+    // Dated estimate-bias readings (calibration_history), oldest→newest. The rollup table
+    // only ever holds today's numbers, so this is the only source for a trend.
+    calibration: (limit = 90) =>
+      request<{ scope_kind: string; scope_ref: string; readings: CalibrationReading[] }>(
+        'GET', `/metrics/calibration?limit=${limit}`,
+      ),
+  },
   tasks: {
     list: (params?: Record<string, string>) => {
       const q = params && Object.keys(params).filter(k => params[k]).length
@@ -113,6 +164,12 @@ export const api = {
     // T14 (#350) — parse-only twin of `quick`: zero writes; the wizard previews the
     // parse in its own fields and the user approves via the normal Add path.
     quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
+    // The close ritual: complete (if still open) + record mood/note/corrected duration.
+    // Accepted on an already-done task too — reflecting later is the normal case.
+    close: (id: string, body: { mood?: Mood; note?: string; actual_minutes?: number }) =>
+      request<{ task: Task; closed: { completed_at: string; reaction_at: string | null; mood: Mood | null; actual_minutes: number } }>(
+        'POST', `/tasks/${id}/close`, body,
+      ),
     // Best-effort LLM auto-tag for the wizard, constrained to existing tags ([] if Ollama down).
     // SUGGEST-ONLY — writes nothing. For the bulk sweep use `autoTag` below, not a loop here.
     suggestTags: (title: string) => request<{ tags: string[] }>('POST', '/tasks/suggest-tags', { title }),
