@@ -2,6 +2,7 @@ import { createSignal, createEffect, createMemo, createResource, onMount, onClea
 import {
   X, ChevronDown, ChevronLeft, ChevronRight, Plus, ListTodo, Flame, Boxes, Clock,
   Calendar, Timer, Flag, Lock, Repeat as RepeatIcon, Link2, Square, Sparkles, AlertTriangle, Search,
+  Check as CheckIcon,
 } from 'lucide-solid';
 import { MicButton } from './MicButton.js';
 import {
@@ -17,7 +18,7 @@ import { sortCategories, displayTag } from '../lib/tag-tax.js';
 import { PATTERN_COLORS, colorVar } from '../lib/pattern-meta.js';
 import { localISODate, shortDate, clockLabel, addDays, monthGridOf } from '../lib/dates.js';
 import { buildRule, rulePreset, describeRule, WEEKDAYS, DAY_INITIAL, type RepeatPreset } from '../lib/recurrence.js';
-import { proposeSlot } from '../lib/propose-slot.js';
+import { proposeSlot, narrowToBand } from '../lib/propose-slot.js';
 import { findSimilarTasks } from '../lib/similar-tasks.js';
 import { inheritedBlockTag } from '../lib/planner.js';
 import { api, type Task } from '../lib/api.js';
@@ -147,6 +148,16 @@ export function ElementWizard() {
   const [nlBusy, setNlBusy] = createSignal(false);
   const [nlLlm, setNlLlm] = createSignal(false);
   const [nlError, setNlError] = createSignal<string | null>(null);
+
+  // D5 — suggest-only subtask brainstorm. `ideas` is what the model offered; `picked` is
+  // what the USER tapped. Only `picked` is ever created (saveElement → subtaskTitles), so
+  // an ignored suggestion leaves no trace. Both reset with the modal.
+  const [subtaskIdeas, setSubtaskIdeas] = createSignal<string[]>([]);
+  const [pickedSubtasks, setPickedSubtasks] = createSignal<string[]>([]);
+  const [subtaskBusy, setSubtaskBusy] = createSignal(false);
+  const [timeHint, setTimeHint] = createSignal<string | null>(null);
+  const togglePicked = (t: string) =>
+    setPickedSubtasks((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
 
   // Search-existing-tasks mode (calendar-click ask): the "Describe it" line toggles
   // into a task search bar. Picking a result schedules that EXISTING task at the
@@ -317,6 +328,7 @@ export function ElementWizard() {
       const pf = st.prefill ?? {};
       setTitle(''); setPrimary(''); setIntentions([]); setTagDraft(''); setLlm([]);
       setNlText(''); setNlBusy(false); setNlLlm(false); setNlError(null);
+      setSubtaskIdeas([]); setPickedSubtasks([]); setSubtaskBusy(false); setTimeHint(null);
       setDay(pf.day || localISODate());
       setStart(pf.start || nextHalfHour());
       setDurMin(pf.durationMin ?? 60);
@@ -493,13 +505,40 @@ export function ElementWizard() {
         const nowMin = isToday ? now.getHours() * 60 + now.getMinutes() : null;
         const workStartMin = hhmmToMin(prefs()?.workday_start ?? '09:00') ?? 540;
         const workEndMin = hhmmToMin(prefs()?.workday_end ?? '18:00') ?? 1080;
+        // D3: bias the search to the enrichment's best-time band. narrowToBand hands the
+        // full window back when the band can't fit, so a hint never costs a proposal.
+        const band = narrowToBand({ startMin: workStartMin, endMin: workEndMin }, parsed.timeOfDay === 'any' ? undefined : parsed.timeOfDay, dur);
         const slot =
+          proposeSlot({ busy, durationMin: dur, workStartMin: band.startMin, workEndMin: band.endMin, nowMin }) ??
+          // Band came up empty against real busy spans — retry the whole workday before
+          // giving up, so the preference degrades to "any open slot", not "No time".
           proposeSlot({ busy, durationMin: dur, workStartMin, workEndMin, nowMin }) ??
           // Evening capture: today's workday window is already over (or full), but the
           // day isn't — still propose the next open quarter-hour before midnight, so an
           // 8pm "call mom" previews 8:15pm instead of "No time".
           (isToday ? proposeSlot({ busy, durationMin: dur, workStartMin, workEndMin: 24 * 60 - 5, nowMin }) : null);
         if (slot) { if (isBlock) setStart(slot); else setTaskTime(slot); }
+      }
+
+      // D3 — show WHY that band was chosen, so the proposed time reads as a suggestion
+      // with a reason rather than an unexplained jump. Display-only; never persisted.
+      setTimeHint(
+        parsed.timeOfDay && parsed.timeOfDay !== 'any'
+          ? `Best ${parsed.timeOfDay}${parsed.timeOfDayReason ? ` — ${parsed.timeOfDayReason}` : ''}`
+          : null,
+      );
+
+      // D5 — brainstorm subtasks ONLY when the classifier called the task complex, and
+      // only for a new task. Fire-and-forget: the chips arrive when they arrive, and a
+      // failure leaves the wizard exactly as it was.
+      setSubtaskIdeas([]); setPickedSubtasks([]);
+      if (!isBlock && !isEdit() && parsed.isComplex) {
+        setSubtaskBusy(true);
+        api.tasks
+          .suggestSubtasks(parsed.title, nlText())
+          .then(({ subtasks }) => { if (title() === parsed.title) setSubtaskIdeas(subtasks); })
+          .catch(() => { /* offline → no chips, no error surfaced */ })
+          .finally(() => setSubtaskBusy(false));
       }
     } catch (err) {
       setNlError((err as Error).message);
@@ -805,6 +844,8 @@ export function ElementWizard() {
         attachTaskIds: attachItems().filter((i) => i.kind !== 'routine').map((i) => i.id),
         attachRoutineIds: attachItems().filter((i) => i.kind === 'routine').map((i) => i.id),
         detachBlockIds: removedMemberIds(),
+        // D5 — only the chips the user tapped; an untouched suggestion never gets here.
+        subtaskTitles: pickedSubtasks(),
       };
       const msg = await saveElement(effectiveKind, m().mode, form, m().editTarget?.id);
       showToast(msg, 'success');
@@ -1123,6 +1164,49 @@ export function ElementWizard() {
                 </div>
                 <Show when={!taskSearchMode() && nlError()}>
                   <p class="text-[11px] text-destructive mt-1">{nlError()}</p>
+                </Show>
+
+                {/* D3 — why the proposed time landed where it did. Display-only. */}
+                <Show when={!taskSearchMode() && timeHint()}>
+                  <p class="text-[11px] text-muted-foreground mt-1 px-1">{timeHint()}</p>
+                </Show>
+
+                {/* D5 — suggest-only subtask chips. Nothing here creates anything: a tap
+                    only marks a title for creation WITH the parent on Add, and an
+                    untapped suggestion is discarded when the modal closes. */}
+                <Show when={!taskSearchMode() && (subtaskBusy() || subtaskIdeas().length > 0)}>
+                  <div class="mt-2">
+                    <div class="flex items-center gap-1.5 mb-1 px-1">
+                      <ListTodo size={11} class="text-muted-foreground" />
+                      <span class="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        {subtaskBusy() ? 'Thinking about steps…' : 'Suggested steps — tap to add'}
+                      </span>
+                    </div>
+                    <Show when={!subtaskBusy()}>
+                      <div class="flex flex-wrap gap-1.5">
+                        <For each={subtaskIdeas()}>
+                          {(s) => (
+                            <button
+                              type="button"
+                              onClick={() => togglePicked(s)}
+                              class={`${pill} ${pickedSubtasks().includes(s) ? chipOn : chipOff}`}
+                              title={pickedSubtasks().includes(s) ? 'Will be created as a subtask' : 'Add as a subtask'}
+                            >
+                              <Show when={pickedSubtasks().includes(s)} fallback={<Plus size={10} class="inline mr-1" />}>
+                                <CheckIcon size={10} class="inline mr-1" />
+                              </Show>
+                              {s}
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                      <Show when={pickedSubtasks().length > 0}>
+                        <p class="text-[10px] text-muted-foreground mt-1 px-1">
+                          {pickedSubtasks().length} will be created with this task.
+                        </p>
+                      </Show>
+                    </Show>
+                  </div>
                 </Show>
 
                 {/* Search results — a real block bound to the picked task, at this

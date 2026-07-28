@@ -92,6 +92,12 @@ export interface ParsedQuick {
   categories?: string[]; // Phase B: classifier's 1–3 category names (best fit first)
   estimatedMinutes?: number;
   priority?: number;
+  // D3 — best-time BAND (never a clock time; taskTime stays the parser's). Biases the
+  // wizard's slot proposal via narrowToBand; never persisted as task_time.
+  timeOfDay?: 'morning' | 'afternoon' | 'evening' | 'any';
+  timeOfDayReason?: string;
+  // D5 — the classifier thinks this needs breaking down; gates the subtask brainstorm.
+  isComplex?: boolean;
 }
 
 export const api = {
@@ -108,7 +114,23 @@ export const api = {
     // parse in its own fields and the user approves via the normal Add path.
     quickParse: (text: string) => request<{ parsed: ParsedQuick; llm: boolean }>('POST', '/tasks/quick/parse', { text }),
     // Best-effort LLM auto-tag for the wizard, constrained to existing tags ([] if Ollama down).
+    // SUGGEST-ONLY — writes nothing. For the bulk sweep use `autoTag` below, not a loop here.
     suggestTags: (title: string) => request<{ tags: string[] }>('POST', '/tasks/suggest-tags', { title }),
+    // D5 — SUGGEST-ONLY subtask brainstorm. Returns strings; creating any of them is a
+    // separate, explicit user action through the normal create path. [] when Ollama is down.
+    suggestSubtasks: (title: string, context?: string) =>
+      request<{ subtasks: string[] }>('POST', '/tasks/suggest-subtasks', { title, context }),
+    // D4 — memory-backed enrichment for one task (description + direction). Always 200;
+    // `enriched:false` with a `reason` is the normal "memory off / nothing related" answer.
+    enrich: (id: string) =>
+      request<{ enriched: boolean; reason?: string; description?: string; direction?: string; sources?: string[] }>(
+        'POST', `/tasks/${id}/enrich`, {},
+      ),
+    // Bulk auto-tag, server-side: one request tags every still-untagged task in `taskIds`
+    // (omit for owner-wide). Shares the `tag_tasks` cron's service, so the LLM call, the
+    // heuristic fallback, and the direction/intention leveling all live on the server.
+    autoTag: (taskIds?: string[]) =>
+      request<{ tagged: number; total: number; log: string }>('POST', '/tasks/auto-tag', taskIds ? { task_ids: taskIds } : {}),
     update: (
       id: string,
       // due_at / scheduled_for / task_time accept null so a "clear" sends an explicit
@@ -243,7 +265,9 @@ export const api = {
 
   // ── Flight-plan + two-step Auto (Phase G, G4) ────────────────────────────────
   flightPlan: {
-    list: () => request<{ flight_plan: FlightPlanItem[] }>('GET', '/flight-plan'),
+    // `can_undo` is SERVER state (is there a placement run whose blocks still exist?), not
+    // a memory of what this tab did — it is what lets the Undo button survive a reload.
+    list: () => request<{ flight_plan: FlightPlanItem[]; can_undo?: boolean }>('GET', '/flight-plan'),
     addTask: (task_id: string) =>
       request<{ flight_plan: FlightPlanItem[]; added: number }>('POST', '/flight-plan', { task_id }),
     // Dead surface (zero callers — see #392).
@@ -1130,7 +1154,20 @@ export interface Priority {
 }
 
 export interface Integrations {
-  ollama: { available: boolean; models: string[]; smallModel: string; mediumModel: string; embedModel: string };
+  // `available` = Ollama answered; `ready` = the models that will actually be used are
+  // pulled (gate AI surfaces on `ready` — see aiAvailable). `smallModel`/`mediumModel`/
+  // `embedModel` are the EFFECTIVE picks (Settings override → env pin → auto-selected),
+  // and `missingModels` lists any of them that aren't installed. `ready`/`missingModels`
+  // are optional so a client can talk to a server that predates them.
+  ollama: {
+    available: boolean;
+    ready?: boolean;
+    models: string[];
+    smallModel: string;
+    mediumModel: string;
+    embedModel: string;
+    missingModels?: string[];
+  };
   google: { mode: string; liveEnabled: boolean; source: 'env' | 'app' | 'off'; connections: ConnectionHealth[] };
   push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver
 }

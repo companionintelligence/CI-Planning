@@ -208,14 +208,29 @@ function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlan
 }
 
 /**
- * Staged tasks eligible for a category Plan (0069): a SECONDARY tag (entity_tags
- * level>1) that is a member of the category, AND a direction that is NOT fully opted
- * out for the category. Preserves `staged` order (deterministic — id-keyed, no clock/
- * randomness). NB: category matching reads entity_tags level>1 directly (the canonical
- * secondary-tag store); `staged.tags` (L1 ∪ L2 since AF-11) is used only for the
- * direction opt-out check below, where non-direction names drop out via patNameToId.
- * A direction-less task is included on the tag match alone. Post-0121 (intentions →
- * L2) this pass matches tasks for the first time — the AF-11 latent-bug fix (R4).
+ * Staged tasks eligible for a category Plan (0069), by EITHER route:
+ *
+ *   1. the task carries the category directly — an `entity_categories` row, i.e. what the
+ *      wizard's 1–3 category picker and the quick-add classifier write (Phase B, 0134/0135);
+ *   2. the task has a SECONDARY tag (entity_tags level>1) that is a member of the category
+ *      via the older `tag_categories` intention→category grouping (0069).
+ *
+ * …AND a direction that is NOT fully opted out for the category.
+ *
+ * Route 1 was missing, which made the two halves of a category block disagree: the BLOCK's
+ * category is read from `entity_categories` (dayCategoryPlans, and `entityCategoryIds` on
+ * the single-Plan path), but candidates were matched only through the intention grouping.
+ * So a task the user explicitly tagged "Relationships" with the picker was never placed
+ * into a Relationships block unless it also happened to carry a Relationships-grouped
+ * intention tag — the feature looked wired and silently did nothing. Both routes are a
+ * union, so the 0069 grouping keeps working exactly as before.
+ *
+ * Preserves `staged` order (deterministic — id-keyed, no clock/randomness). NB: the
+ * grouping route reads entity_tags level>1 directly (the canonical secondary-tag store);
+ * `staged.tags` (L1 ∪ L2 since AF-11) is used only for the direction opt-out check below,
+ * where non-direction names drop out via patNameToId. A direction-less task is included on
+ * the category match alone. Owner scoping comes from the `staged` intersection at the end
+ * (both queries are keyed on a category id that is already owner-scoped).
  */
 function categoryCandidates(staged: StagedTask[], categoryId: string, owner: string): StagedTask[] {
   const candIds = new Set(
@@ -223,9 +238,12 @@ function categoryCandidates(staged: StagedTask[], categoryId: string, owner: str
       .prepare(
         `SELECT DISTINCT entity_id FROM entity_tags
           WHERE entity_kind = 'task' AND level > 1
-            AND tag_id IN (SELECT intention_tag_id FROM tag_categories WHERE category_tag_id = ?)`
+            AND tag_id IN (SELECT intention_tag_id FROM tag_categories WHERE category_tag_id = ?)
+         UNION
+         SELECT entity_id FROM entity_categories
+          WHERE entity_kind = 'task' AND category_tag_id = ?`
       )
-      .all(categoryId) as { entity_id: string }[]).map((r) => r.entity_id),
+      .all(categoryId, categoryId) as { entity_id: string }[]).map((r) => r.entity_id),
   );
   if (candIds.size === 0) return [];
   const optOut = new Set(
@@ -964,6 +982,24 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
     broadcast(owner, 'flight_plan:updated', { removed: filled.size });
   }
   return { step: 'place', blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
+}
+
+/**
+ * Is there a placement run the owner could still undo right now?
+ *
+ * Deliberately checks for surviving BLOCKS, not just the `last_auto_run_id` pointer: the
+ * pointer outlives its blocks whenever something else deletes them (Clear Date Range, a
+ * manual block delete, a reflow), and a button offered on a dangling pointer would answer
+ * "Nothing to undo" — an affordance that lies. Cheap enough to ride every flight-plan read.
+ */
+export function canUndoLastAuto(owner: string = currentOwnerId()): boolean {
+  return !!sqlite
+    .prepare(
+      `SELECT 1 FROM time_blocks b JOIN owners o ON o.id = b.owner_id
+        WHERE b.owner_id = ? AND b.auto_run_id IS NOT NULL AND b.auto_run_id = o.last_auto_run_id
+        LIMIT 1`,
+    )
+    .get(owner);
 }
 
 /**

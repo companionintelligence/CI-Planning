@@ -182,6 +182,9 @@ export interface ElementForm {
   dependsOn?: string[];
   editScope?: 'instance' | 'series';  // recurring-task edits
   parentId?: string;          // subtask parent
+  /** D5 — titles the user picked from the suggest-only brainstorm; created as children
+   *  of this task on add. Empty/absent unless the user actually tapped a chip. */
+  subtaskTitles?: string[];
   // Routine membership (modal redesign): single-select "Routine" chip. Applied
   // after the task exists (works for add + edit); undefined = leave membership alone.
   routineAddId?: string;
@@ -279,9 +282,22 @@ export async function saveElement(
         await api.patterns.update(add.id, { task_ids: [...add.task_ids, taskId] });
       }
     }
+    // D5 — subtasks the user EXPLICITLY picked from the brainstorm chips. Created only
+    // here, only on add, and only for titles the wizard put in this array by user tap:
+    // there is no path from a model suggestion to a row without that tap. Failures are
+    // swallowed per-child so a flaky subtask create can't fail the parent that succeeded.
+    if (taskId && mode === 'add' && form.subtaskTitles?.length) {
+      for (const t of form.subtaskTitles) {
+        try {
+          await api.tasks.create({ title: t, parent_id: taskId, priority: form.priority ?? 3 });
+        } catch { /* parent is saved; a failed child is not worth losing it over */ }
+      }
+    }
     refetchTasks(); refetchTags(); refetchPatterns();
     if (placeOnSave) refetchBlocks(); // the placed start-anchored block shows on the Planner
-    return kind === 'habit' ? 'Habit saved' : 'Task saved';
+    const subCount = mode === 'add' ? (form.subtaskTitles?.length ?? 0) : 0;
+    const suffix = subCount ? ` + ${subCount} subtask${subCount === 1 ? '' : 's'}` : '';
+    return (kind === 'habit' ? 'Habit saved' : 'Task saved') + suffix;
   }
 
   if (kind === 'routine') {

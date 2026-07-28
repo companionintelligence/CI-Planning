@@ -1,0 +1,231 @@
+import { sqlite } from '../db/index.js';
+import { generateJson } from '../mcp/ollama.js';
+import { graphSearch, memoryMode, type MemoryNode } from '../connectors/memory.js';
+import { directionGuide } from '../agents/rubric.js';
+import { resolveTagId, taskHasLevel1Direction } from './tags.js';
+import { logger } from '../lib/logger.js';
+
+/**
+ * Memory-backed task enrichment (handoff D4/§4.5): pull what Companion Intelligence
+ * already knows that relates to a task, and use it to write a short DESCRIPTION and — only
+ * when the task still has none — pick its Work/Home/Community direction.
+ *
+ * Deliberately NOT on the interactive quick-add path. Memory means a CI-Server round-trip,
+ * and quick-add has to stay instant, so this runs from two entry points that share this
+ * one implementation:
+ *   - on demand, per task (POST /api/tasks/:id/enrich)
+ *   - the nightly `enrich_tasks` cron sweep
+ *
+ * Degradation is silent and total. Memory off/unreachable, Ollama down, no related nodes,
+ * unparseable answer → `{ enriched: false }` and the task is left exactly as it was. The
+ * caller reports honestly; nothing here throws and nothing here guesses. A description
+ * invented from an empty graph would be a fabrication attached to the user's own data,
+ * which is worse than leaving the field blank.
+ *
+ * NON-DESTRUCTIVE: it only ever fills blanks. An existing description is never rewritten
+ * and an existing level-1 direction is never replaced — those are the user's.
+ */
+
+/** How many graph nodes to feed the model. Enough for context, short enough to stay fast. */
+const GRAPH_LIMIT = 8;
+
+export interface EnrichTaskResult {
+  enriched: boolean;
+  /** Why not, when `enriched` is false — surfaced verbatim so a no-op is never mysterious. */
+  reason?: string;
+  description?: string;
+  direction?: string;
+  /** Names of the memory items the description was drawn from (provenance for the UI). */
+  sources?: string[];
+}
+
+const selectTask = sqlite.prepare(
+  `SELECT id, title, notes FROM tasks WHERE id = ? AND owner_id = ?`,
+);
+const updateNotes = sqlite.prepare(
+  `UPDATE tasks SET notes = ? WHERE id = ? AND owner_id = ? AND (notes IS NULL OR notes = '')`,
+);
+const insertDirection = sqlite.prepare(
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`,
+);
+const selectDirections = sqlite.prepare(
+  `SELECT name FROM tags WHERE owner_id = ? AND kind = 'direction' AND muted = 0 ORDER BY name`,
+);
+
+// Words too common to identify anything — not worth a search round-trip each.
+const STOPWORDS = new Set([
+  'the', 'for', 'and', 'with', 'about', 'from', 'into', 'that', 'this', 'prep',
+  'prepare', 'plan', 'call', 'email', 'send', 'review', 'meeting', 'task', 'todo',
+]);
+
+/**
+ * Search memory for a task title. A whole-title query alone is nearly useless: search
+ * implementations match the query as a unit (the fixture is a literal substring match),
+ * and a task title ("Prep for the quarterly planning review") is almost never a unit that
+ * appears verbatim in a memory item's name. So: try the full title first (it wins when it
+ * does match), then fall back to the title's distinctive words, unioning results. Bounded
+ * at 3 keyword queries so a long title cannot fan out a request storm.
+ */
+async function searchMemory(owner: string, title: string): Promise<MemoryNode[]> {
+  const seen = new Map<string, MemoryNode>();
+  const add = (nodes: MemoryNode[]) => { for (const n of nodes) if (!seen.has(n.id)) seen.set(n.id, n); };
+
+  add((await graphSearch(owner, title, { limit: GRAPH_LIMIT })).nodes);
+  if (seen.size < GRAPH_LIMIT) {
+    const keywords = title
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 4 && !STOPWORDS.has(w))
+      .sort((a, b) => b.length - a.length) // longest first — most distinctive
+      .slice(0, 3);
+    for (const w of keywords) {
+      if (seen.size >= GRAPH_LIMIT) break;
+      add((await graphSearch(owner, w, { limit: GRAPH_LIMIT })).nodes);
+    }
+  }
+  return [...seen.values()].slice(0, GRAPH_LIMIT);
+}
+
+/** Compact the graph into prompt-sized lines: name, type, and description when present. */
+function describeNodes(nodes: MemoryNode[]): string {
+  return nodes
+    .slice(0, GRAPH_LIMIT)
+    .map((n) => {
+      const desc = n.description?.trim();
+      return `- ${n.name} (${n.entityType})${desc ? `: ${desc.slice(0, 200)}` : ''}`;
+    })
+    .join('\n');
+}
+
+interface EnrichOut {
+  description?: unknown;
+  direction?: unknown;
+}
+
+/**
+ * Enrich ONE task from memory. Returns what changed (or why nothing did). Never throws.
+ */
+export async function enrichTaskFromMemory(owner: string, taskId: string): Promise<EnrichTaskResult> {
+  if (memoryMode() === 'off') {
+    return { enriched: false, reason: 'Memory is off (set MEMORY_MODE=live or fixture)' };
+  }
+  const task = selectTask.get(taskId, owner) as { id: string; title: string; notes: string | null } | undefined;
+  if (!task) return { enriched: false, reason: 'Task not found' };
+
+  // Nothing to do when both fields this can fill are already set — skip the round-trips
+  // entirely rather than asking the model for an answer that would be discarded.
+  const needsDescription = !task.notes?.trim();
+  const needsDirection = !taskHasLevel1Direction(taskId, owner);
+  if (!needsDescription && !needsDirection) {
+    return { enriched: false, reason: 'Already has a description and a direction' };
+  }
+
+  let nodes: MemoryNode[] = [];
+  try {
+    nodes = await searchMemory(owner, task.title);
+  } catch (err) {
+    // Unreachable CI-Server / bad credentials — the honest outcome is "no memory", not an error.
+    return { enriched: false, reason: `Memory unavailable: ${(err as Error).message}` };
+  }
+  if (nodes.length === 0) return { enriched: false, reason: 'No related memory found' };
+
+  const directions = (selectDirections.all(owner) as { name: string }[]).map((r) => r.name);
+  let out: EnrichOut;
+  try {
+    out = await generateJson<EnrichOut>(
+      `Here is a task and related items from the user's own knowledge graph.\n` +
+        `Related items:\n${describeNodes(nodes)}\n\n` +
+        `Task: "${task.title}"\n\n` +
+        `Reply with JSON {"description": <one or two sentences, or null>` +
+        (needsDirection && directions.length
+          ? `, "direction": <exactly one of ${JSON.stringify(directions)}>`
+          : '') +
+        `}. The description must say what this task is about USING ONLY the related items ` +
+        `above — it adds the context the bare title is missing (who and what it concerns). ` +
+        `If the related items do not actually pertain to this task, answer null; never ` +
+        `invent details.` +
+        (needsDirection && directions.length ? directionGuide(directions) : ''),
+      { tier: 'small', temperature: 0.2, timeoutMs: 20_000 },
+    );
+  } catch (err) {
+    return { enriched: false, reason: `AI unavailable: ${(err as Error).message}` };
+  }
+
+  const result: EnrichTaskResult = { enriched: false };
+
+  if (needsDescription && typeof out.description === 'string' && out.description.trim()) {
+    const description = out.description.trim().slice(0, 500);
+    // The guarded UPDATE (notes IS NULL OR '') is the real race protection: if the user
+    // typed notes between the read above and this write, changes is 0 and theirs stand.
+    if (updateNotes.run(description, taskId, owner).changes > 0) {
+      result.description = description;
+      result.enriched = true;
+    }
+  }
+
+  // Direction: constrained to the owner's real direction tags, canonical casing from the
+  // vocabulary — same never-invent rule as every other classifier here.
+  if (needsDirection && typeof out.direction === 'string') {
+    const canonical = directions.find((d) => d.toLowerCase() === out.direction!.toString().trim().toLowerCase());
+    // Re-check the guard: a concurrent edit may have given the task a direction since.
+    if (canonical && !taskHasLevel1Direction(taskId, owner)) {
+      insertDirection.run(taskId, resolveTagId(canonical, owner));
+      result.direction = canonical;
+      result.enriched = true;
+    }
+  }
+
+  if (!result.enriched) return { enriched: false, reason: 'Memory had nothing to add' };
+  result.sources = nodes.slice(0, GRAPH_LIMIT).map((n) => n.name);
+  logger.info('task-enrich', { taskId, description: !!result.description, direction: result.direction });
+  return result;
+}
+
+// Candidates for the nightly sweep: recent, open, top-level tasks missing a description or
+// a direction. Bounded by design — an unbounded sweep would fan out one CI-Server call and
+// one model call per task across the entire backlog every night.
+const selectSweepCandidates = sqlite.prepare(`
+  SELECT t.id FROM tasks t
+  WHERE t.owner_id = ?
+    AND t.status NOT IN ('cancelled', 'done')
+    AND t.parent_id IS NULL
+    AND t.recurrence_parent_id IS NULL
+    AND (
+      t.notes IS NULL OR t.notes = ''
+      OR NOT EXISTS (
+        SELECT 1 FROM entity_tags e JOIN tags g ON g.id = e.tag_id
+        WHERE e.entity_kind = 'task' AND e.entity_id = t.id AND e.level = 1 AND g.kind = 'direction'
+      )
+    )
+  ORDER BY t.created_at DESC
+  LIMIT ?
+`);
+
+export interface SweepResult {
+  enriched: number;
+  considered: number;
+  log: string;
+}
+
+/**
+ * Nightly sweep — enrich up to `limit` recent under-described tasks. Stops early and
+ * reports honestly when memory is off, so the Jobs page shows why rather than "0 done".
+ */
+export async function enrichRecentTasks(owner: string, limit = 20): Promise<SweepResult> {
+  if (memoryMode() === 'off') {
+    return { enriched: 0, considered: 0, log: 'Memory is off; skipped' };
+  }
+  const ids = (selectSweepCandidates.all(owner, limit) as { id: string }[]).map((r) => r.id);
+  if (ids.length === 0) return { enriched: 0, considered: 0, log: 'No tasks needed enrichment' };
+
+  let enriched = 0;
+  for (const id of ids) {
+    const r = await enrichTaskFromMemory(owner, id);
+    if (r.enriched) enriched++;
+  }
+  return {
+    enriched,
+    considered: ids.length,
+    log: `Enriched ${enriched} of ${ids.length} task(s) from memory`,
+  };
+}

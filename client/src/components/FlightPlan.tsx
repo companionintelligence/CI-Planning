@@ -6,7 +6,7 @@ import {
 import { api, type FlightPlanItem, type Task, type BlockTemplate } from '../lib/api.js';
 import {
   flightPlan, refetchFlightPlan, refetchBlocks, prefs, refetchPrefs, showToast, selectedDay,
-  blockTemplates, refetchBlockTemplates, flightPlanTaskIds, patterns,
+  blockTemplates, refetchBlockTemplates, flightPlanTaskIds, patterns, canUndoAuto,
 } from '../stores/index.js';
 import { isSelected, toggleSelection } from '../stores/selection.js';
 import { useDraggable } from '../lib/draggable.js';
@@ -47,7 +47,11 @@ import {
 export function FlightPlan() {
   const [running, setRunning] = createSignal(false);
   const [collapsed, setCollapsed] = createSignal(false);
+  // Seeded from the server (canUndoAuto rides the flight-plan read) so a reload keeps the
+  // button; the local signal stays so a run/undo can flip it optimistically before the
+  // refetch lands. Server truth re-syncs on every flight-plan read.
   const [canUndo, setCanUndo] = createSignal(false);
+  createEffect(() => setCanUndo(canUndoAuto()));
   const [undoConfirm, setUndoConfirm] = createSignal(false);
   const [tab, setTab] = createSignal<'plan' | 'saved'>('plan');
   const items = () => flightPlan() ?? [];

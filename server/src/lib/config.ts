@@ -147,6 +147,9 @@ export interface Config {
   ollamaSmallModel: string;
   ollamaMediumModel: string;
   ollamaEmbedModel: string;
+  /** Which model tiers an operator pinned via env. A pin is used verbatim; an unpinned
+   *  tier falls back to auto-selection from what's installed (lib/models.ts). */
+  ollamaPinned: { small: boolean; medium: boolean; embed: boolean };
   staticDir: string;
   vapidPublicKey: string;
   vapidPrivateKey: string;
@@ -243,12 +246,20 @@ export const config: Config = {
   trustProxy: process.env.TRUST_PROXY === 'true',
   dbPath,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
-  // Defaults are real, currently-pullable Ollama tags. They are only a fallback:
-  // set OLLAMA_SMALL/MEDIUM/EMBED in server/.env to any model from `ollama list`.
-  // If a configured model isn't pulled, generate/embed throw an actionable error.
+  // Last-resort names only. These tags are NOT installed on most machines, so when a
+  // tier is unpinned lib/models.ts auto-selects from what the device actually has and
+  // these are reached only while the installed set is still unknown (pre-probe/offline).
+  // Set OLLAMA_SMALL/MEDIUM/EMBED to pin a tier to a specific `ollama list` entry —
+  // a pin is used verbatim, and generate/embed then throw an actionable error if it
+  // turns out not to be pulled.
   ollamaSmallModel: process.env.OLLAMA_SMALL ?? 'qwen2.5:0.5b',
   ollamaMediumModel: process.env.OLLAMA_MEDIUM ?? 'gemma3n:e4b',
   ollamaEmbedModel: process.env.OLLAMA_EMBED ?? 'nomic-embed-text',
+  ollamaPinned: {
+    small: !!process.env.OLLAMA_SMALL,
+    medium: !!process.env.OLLAMA_MEDIUM,
+    embed: !!process.env.OLLAMA_EMBED,
+  },
   staticDir: join(packageRoot, 'public'),
   // Web Push (Phase H). Keys are AUTO-GENERATED on first boot and persisted to app_config
   // (services/vapid-config.ts hydrates them into this singleton after migrations), so push

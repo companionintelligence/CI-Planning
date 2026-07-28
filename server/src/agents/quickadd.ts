@@ -1,5 +1,9 @@
 import { generateJson } from '../mcp/ollama.js';
 import type { ParsedQuick } from '../engine/quickadd.js';
+import {
+  directionGuide, isTimeOfDay,
+  PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC,
+} from './rubric.js';
 
 /**
  * Optional best-effort overlay on the deterministic parse: a small local model
@@ -15,6 +19,17 @@ import type { ParsedQuick } from '../engine/quickadd.js';
  *    same constrained-vocabulary rule as agents/tags.ts suggestTags).
  * Dates stay deterministic on purpose: chrono owns them; a small model inventing
  * "next Tuesday" from "call mom" would be a lie, not an enrichment.
+ *
+ * 2026-07-27: the classification is now RUBRIC-GROUNDED (agents/rubric.ts) and returns
+ * three more fields —
+ *  - `priority` against explicit P1–Later qualifiers with an explicit "unsure ⇒ 3"
+ *    default (the old prompt said only "1 is highest", so the model guessed high and
+ *    the priority axis carried no signal);
+ *  - `timeOfDay`: a BAND (never a clock time — D3), dropped when the entry already
+ *    stated a time and when the answer is the contentless "any";
+ *  - `isComplex`: gates the separate suggest-only subtask call (agents/subtasks.ts).
+ * All three remain preview-only: /api/tasks/quick/parse writes nothing, so the wizard
+ * shows them for approval before anything is created.
  */
 
 export interface QuickVocab {
@@ -34,6 +49,9 @@ interface EnrichOut {
   direction?: string | null;
   tags?: unknown;
   categories?: unknown;
+  timeOfDay?: unknown;
+  timeOfDayReason?: unknown;
+  isComplex?: unknown;
 }
 
 /**
@@ -103,25 +121,35 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
     if (picked.length) categories = picked;
   }
 
-  return { ...parsed, estimatedMinutes, priority, tags, ...(categories !== undefined ? { categories } : {}) };
+  // D3 — band only, and only when the parser found no explicit clock time. An entry that
+  // said "standup at 9" already has taskTime; a band on top of it would be noise at best
+  // and a contradictory hint at worst. 'any' is dropped: it carries no information and a
+  // stored 'any' would render as a suggestion the user has to dismiss.
+  const band = isTimeOfDay(out.timeOfDay) && out.timeOfDay !== 'any' ? out.timeOfDay : undefined;
+  const timeOfDay = parsed.timeOfDay ?? (parsed.taskTime ? undefined : band);
+  const reason =
+    timeOfDay && typeof out.timeOfDayReason === 'string' && out.timeOfDayReason.trim()
+      ? out.timeOfDayReason.trim().slice(0, 120)
+      : undefined;
+
+  // Complexity only gates the separate subtask call — it is never written to the task.
+  const isComplex = parsed.isComplex ?? (out.isComplex === true ? true : undefined);
+
+  return {
+    ...parsed,
+    estimatedMinutes,
+    priority,
+    tags,
+    ...(categories !== undefined ? { categories } : {}),
+    ...(timeOfDay ? { timeOfDay } : {}),
+    ...(reason ? { timeOfDayReason: reason } : {}),
+    ...(isComplex ? { isComplex } : {}),
+  };
 }
 
-// The three directions are fixed by provisioning (owners.ts) — Work/Home/Community —
-// but bare labels alone under-specify the axis for a small model (e.g. "Dad's
-// birthday" reads as ambiguous and gets force-fit to "Work" without grounding).
-// Definitions give it the semantic split the owner actually means by each name.
-const DIRECTION_HINTS: Record<string, string> = {
-  work: 'Work — job/professional obligations (meetings, deliverables, career tasks).',
-  home: 'Home — personal, household, and family life (errands, chores, family events like birthdays, self-care).',
-  community: 'Community — social and civic life outside work/family (friends, volunteering, group events).',
-};
-
-function directionGuide(directions: string[]): string {
-  const lines = directions
-    .map((d) => DIRECTION_HINTS[d.toLowerCase()])
-    .filter((h): h is string => Boolean(h));
-  return lines.length ? ` Direction meanings — ${lines.join(' ')}` : '';
-}
+// The direction definitions moved to agents/rubric.ts (2026-07-27) so the Auto-tag sweep
+// and the memory pass classify the axis identically — three copies of "what Home means"
+// is exactly how a classifier starts contradicting itself between surfaces.
 
 export async function enrichQuick(
   text: string,
@@ -129,14 +157,24 @@ export async function enrichQuick(
   vocab: QuickVocab = { directions: [], others: [] },
 ): Promise<ParsedQuick> {
   const hasCats = (vocab.categories?.length ?? 0) > 0;
+  // Layout matters as much as wording here. Measured 2026-07-27 against llama3.2: with
+  // the schema up front and all four rubrics stacked at the end, the LAST rule
+  // (complexity) was reliably ignored — "Plan a week-long trip to Japan" came back
+  // isComplex:false, while the same rule in a short prompt answered true. So each rule
+  // now sits IMMEDIATELY AFTER the field it governs. A 3B model follows adjacent
+  // instructions far better than a rulebook it has to cross-reference.
   const out = await generateJson<EnrichOut>(
-    `Classify this quick task entry. Reply with JSON ` +
-      `{"estimatedMinutes": <minutes or null>, "priority": <1-5 or null>, ` +
-      `"direction": <REQUIRED — exactly one of ${JSON.stringify(vocab.directions)}, pick the closest fit>, ` +
-      (hasCats ? `"categories": <1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first>, ` : '') +
-      `"tags": <up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else []>}. ` +
-      `1 is highest priority. Every task has a direction — always choose one.${directionGuide(vocab.directions)} ` +
-      `Choose direction/categories/tags ONLY from the given lists — never invent. ` +
+    `Classify this quick task entry. Reply with JSON with exactly these keys.\n` +
+      `"direction": REQUIRED — exactly one of ${JSON.stringify(vocab.directions)}. ` +
+      `Every task has a direction, always choose one.${directionGuide(vocab.directions)}\n` +
+      `"isComplex": true or false. ${COMPLEXITY_RUBRIC}\n` +
+      `"priority": 1-4. ${PRIORITY_RUBRIC}\n` +
+      `"estimatedMinutes": a number or null. ${DURATION_RUBRIC}\n` +
+      `"timeOfDay": one of "morning","afternoon","evening","any". ${TIME_OF_DAY_RUBRIC}\n` +
+      `"timeOfDayReason": a few words on why, or null.\n` +
+      (hasCats ? `"categories": 1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first.\n` : '') +
+      `"tags": up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else [].\n` +
+      `Choose direction/categories/tags ONLY from the given lists — never invent.\n` +
       `Entry: "${text}"`,
     { tier: 'small', temperature: 0.1, timeoutMs: 15_000 }
   );
