@@ -27,6 +27,7 @@ import {
   type CreateTaskInput, type UpdateTaskInput,
 } from '../services/tasks.js';
 import { writeAudit } from '../lib/audit.js';
+import { closeTask } from '../services/task-close.js';
 
 // Task business logic lives in services/tasks.ts (Phase W step 3.1, shared with the
 // coming GraphQL resolvers). These handlers are thin HTTP shells: parse → call the
@@ -586,6 +587,31 @@ export function tasksRouter() {
     writeAudit({ ownerId: owner, actor: 'owner', action: 'timer:start', entity: `task:${taskId}` });
     ctx.status = 201;
     ctx.body = { entry };
+  });
+
+  // POST /api/tasks/:id/close { mood?, note?, actual_minutes? } — the close ritual.
+  // Completes the task if it is still open, records an optional mood/note, and stamps
+  // reaction_at (only when a mood or note was actually given — see services/task-close.ts).
+  // Also accepted on an ALREADY-DONE task, which is the point: reflecting later is normal,
+  // and the completed_at ↔ reaction_at gap is what makes the lag measurable.
+  router.post('/api/tasks/:id/close', async (ctx) => {
+    const owner = currentOwnerId();
+    const id = ctx.params.id;
+    const body = (ctx.request.body ?? {}) as { mood?: unknown; note?: unknown; actual_minutes?: unknown };
+    const res = closeTask(owner, id, { mood: body.mood, note: body.note, actualMinutes: body.actual_minutes });
+    if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
+
+    const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
+    const out = {
+      ...taskToApi(task),
+      tags: taskTagNames(id),
+      secondary_tags: taskSecondaryTags(id),
+      categories: entityCategoryNames('task', id),
+      depends_on: getDependencies(id),
+      blocked: blockedTaskIds().has(id),
+    };
+    broadcast(owner, 'task:updated', out);
+    ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, mood: res.mood, actual_minutes: res.actualMinutes } };
   });
 
   // POST /api/tasks/:id/timer/stop — stop the (single) running timer. 409 when

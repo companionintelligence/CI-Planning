@@ -1,7 +1,45 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
+import { localISODate } from '../lib/dates.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { computeScopedCalibration } from '../services/calibration.js';
+
+/** One dated reading per scope, appended to the history table (0138). */
+interface HistoryRow {
+  scope_kind: string;
+  scope_ref: string;
+  sample_count: number;
+  bias_ratio: number | null;
+  p25: number | null;
+  p50: number | null;
+  p75: number | null;
+}
+
+const insertHistory = sqlite.prepare(
+  `INSERT INTO calibration_history (owner_id, scope_kind, scope_ref, computed_date, sample_count, bias_ratio, p25, p50, p75)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+   ON CONFLICT(owner_id, scope_kind, scope_ref, computed_date) DO UPDATE SET
+     sample_count = excluded.sample_count,
+     bias_ratio   = excluded.bias_ratio,
+     p25          = excluded.p25,
+     p50          = excluded.p50,
+     p75          = excluded.p75`,
+);
+
+/**
+ * Append today's readings to `calibration_history` (owner ruling 2026-07-28: the history
+ * must NOT be recomputed away).
+ *
+ * The rollup table above is regenerable by design — its delete-then-insert is what lets a
+ * vanished scope disappear — so trend data cannot live there. This is the durable twin:
+ * keyed by DAY, so a manual re-run or a cron retry overwrites today's reading instead of
+ * stacking duplicates that would over-weight one day in a trend line. Never deletes.
+ */
+function recordHistory(owner: string, rows: HistoryRow[], date: string): void {
+  for (const r of rows) {
+    insertHistory.run(owner, r.scope_kind, r.scope_ref, date, r.sample_count, r.bias_ratio, r.p25, r.p50, r.p75);
+  }
+}
 
 export interface CalibrationResult {
   sample_count: number;
@@ -43,11 +81,14 @@ export function calibrateEstimates(): CalibrationResult {
       `INSERT INTO estimate_calibration (owner_id, scope_kind, scope_ref, computed_at, sample_count, bias_ratio, p25, p50, p75)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    const today = localISODate();
     sqlite.transaction(() => {
       sqlite.prepare(`DELETE FROM estimate_calibration WHERE owner_id = ?`).run(owner);
       for (const r of rows) {
         insert.run(owner, r.scope_kind, r.scope_ref, now, r.sample_count, r.bias_ratio, r.p25, r.p50, r.p75);
       }
+      // Same transaction: the rollup and its dated snapshot must never disagree.
+      recordHistory(owner, rows, today);
     })();
     const global = rows.find((r) => r.scope_kind === 'global')!;
     return {
@@ -99,6 +140,9 @@ export function calibrateEstimates(): CalibrationResult {
            p75          = NULL`,
       )
       .run(owner, now);
+    // A zero-sample day is still a reading: it records that the owner had nothing to
+    // calibrate on, which is what makes a later trend line start where the data does.
+    recordHistory(owner, [{ scope_kind: 'global', scope_ref: '', sample_count: 0, bias_ratio: null, p25: null, p50: null, p75: null }], localISODate());
     return { sample_count: 0, bias_ratio: null, p25: null, p50: null, p75: null };
   }
 
@@ -124,6 +168,8 @@ export function calibrateEstimates(): CalibrationResult {
          p75          = excluded.p75`,
     )
     .run(owner, now, n, p50, p25, p50, p75);
+
+  recordHistory(owner, [{ scope_kind: 'global', scope_ref: '', sample_count: n, bias_ratio: p50, p25, p50, p75 }], localISODate());
 
   return { sample_count: n, bias_ratio: p50, p25, p50, p75 };
 }
