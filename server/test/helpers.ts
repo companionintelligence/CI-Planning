@@ -56,6 +56,10 @@ export function resetDb(): void {
     DELETE FROM objective_tasks;
     DELETE FROM objectives;
     DELETE FROM estimate_calibration;
+    -- 0138: append-only in production BY DESIGN (nothing prunes it), which makes it a
+    -- cross-test contaminant unless cleared here — a backdated reading from one test
+    -- collides with the next test's on the (owner, scope, date) key.
+    DELETE FROM calibration_history;
     DELETE FROM calibration_combo_pins;
     DELETE FROM copy_history;
     DELETE FROM life_priorities;

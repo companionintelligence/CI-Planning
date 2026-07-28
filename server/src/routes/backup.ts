@@ -65,6 +65,10 @@ const OWNER_TABLES = [
   'plan_hints',
   'replan_suggestions',
   'estimate_calibration',
+  // 0138: append-only bias readings. Included so an export/restore keeps the trend —
+  // it is the one table here that CANNOT be regenerated (the nightly job only ever
+  // knows today's numbers).
+  'calibration_history',
   // Phase Z · Z0: user-confirmed tag-combo pins (0107). Purely additive — a new
   // table plus DEFAULT-backed scope columns on estimate_calibration; the restore
   // treats an absent payload key as empty, so an older dump lacking this table
@@ -293,6 +297,7 @@ export function backupRouter() {
       plan_hints: ownerData['plan_hints'],
       replan_suggestions: ownerData['replan_suggestions'],
       estimate_calibration: ownerData['estimate_calibration'],
+      calibration_history: ownerData['calibration_history'],
       calibration_combo_pins: ownerData['calibration_combo_pins'],
       // v8 (G-CASCADEXPORT): previously-omitted owner-scoped tables.
       copy_history: ownerData['copy_history'],
@@ -424,6 +429,7 @@ export function backupRouter() {
       counts['replan_suggestions']  = insertRows('replan_suggestions', g('replan_suggestions'), ownerId);
       counts['estimate_calibration']= insertRows('estimate_calibration', g('estimate_calibration'), ownerId);
       counts['calibration_combo_pins'] = insertRows('calibration_combo_pins', g('calibration_combo_pins'), ownerId);
+      counts['calibration_history'] = insertRows('calibration_history', g('calibration_history'), ownerId);
       // v8 (G-CASCADEXPORT). external_events/outbound_queue FK time_blocks(id); the blocks
       // above are re-inserted with original ids, and defer_foreign_keys=ON makes order moot.
       counts['copy_history']     = insertRows('copy_history', g('copy_history'), ownerId);

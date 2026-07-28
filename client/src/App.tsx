@@ -2,6 +2,7 @@ import { Navigate, Route, Router, useLocation, useNavigate, useSearchParams } fr
 import { ErrorBoundary, Show, createEffect, createResource, createSignal, onCleanup, onMount } from 'solid-js';
 import { Plus, Cpu, Loader2, RefreshCw } from 'lucide-solid';
 import { Nav }      from './components/Nav.js';
+import { CloseRitual } from './components/CloseRitual.js';
 import { Login }    from './views/Login.js';
 import { ResetPassword } from './views/ResetPassword.js';
 import { authGateActive } from './lib/api.js';
@@ -21,7 +22,7 @@ import { AllTasks } from './views/AllTasks.js';
 import { Tags }     from './views/Tags.js';
 import { Settings } from './views/Settings.js';
 import { Jobs }     from './views/Jobs.js';
-import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan } from './stores/index.js';
+import { setElementModal, blocks, taskOf, tags, patternPrefs, prefs, refetchPrefs, showToast, refetchTasks, refetchBlocks, refetchFlightPlan, closeRitualTask, setCloseRitualTask } from './stores/index.js';
 import { api } from './lib/api.js';
 import {
   requestNotificationPermission,
@@ -197,6 +198,8 @@ function Shell(props: { children?: any }) {
 
       {/* Unified Add/Edit Element wizard — self-driven by the elementModal signal. */}
       <ElementWizard />
+      {/* App-level like the wizard: the card that triggers it unmounts on completion. */}
+      <Show when={closeRitualTask()}>{(t) => <CloseRitual task={t()} onClose={() => setCloseRitualTask(null)} />}</Show>
       <PlanWeekAssistant />
       <OnboardingWizard />
 

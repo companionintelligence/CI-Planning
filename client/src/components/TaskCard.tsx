@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles } from 'lucide-solid';
 import { type Task, api } from '../lib/api.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs } from '../stores/index.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, setCloseRitualTask } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
@@ -289,6 +289,12 @@ export function TaskCard(props: Props) {
         await api.tasks.update(props.task.id, { status: 'open', completed_at: null });
       } else {
         await api.tasks.update(props.task.id, { completed: true });
+        // Close ritual (0137): offered AFTER the completion lands, never as a gate on it.
+        // Raised to the APP-LEVEL store because refetchTasks() below drops this task from
+        // the open list and unmounts this very card — a card-local modal would die with it.
+        // Habits and recurring instances are ticked off constantly and often in bulk;
+        // prompting on each would turn a ritual into a nag. One-off tasks only.
+        if (!props.task.is_habit && !props.task.recurrence_parent_id) setCloseRitualTask(props.task);
       }
       refetchTasks();
       refetchStreak();
