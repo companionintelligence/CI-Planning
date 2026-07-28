@@ -18,6 +18,7 @@ import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN } from '../lib/auth/types.js';
 import { writeAudit } from '../lib/audit.js';
 import { snapshot, pruneOldSnapshots, backupDir } from '../lib/backup.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
+import { enrichRecentTasks } from '../services/task-enrich.js';
 import { syncAll } from '../agents/sync.js';
 import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
@@ -249,6 +250,13 @@ async function execute(kind: string): Promise<JobOutcome> {
       const r = await tagUntaggedTasks(currentOwnerId());
       return { itemsCreated: 0, itemsUpdated: r.tagged, log: r.log };
     }
+    case 'enrich_tasks': {
+      // Nightly memory pass: fill description + direction for recent under-described
+      // tasks. Shared code path with the per-task enrich button. Skips honestly (and
+      // cheaply) when MEMORY_MODE is unset — the log says so rather than reporting 0.
+      const r = await enrichRecentTasks(currentOwnerId());
+      return { itemsCreated: 0, itemsUpdated: r.enriched, log: r.log };
+    }
     case 'sync_calendar': {
       // Same honest skip the ingest jobs have — getConnectors() also gates itself on
       // mode 'off' (defense in depth), but a skip here logs WHY nothing synced.
@@ -414,6 +422,7 @@ const OWNER_SCOPED_KINDS = new Set([
   'auto_schedule',
   'generate_recurrences',
   'tag_tasks',
+  'enrich_tasks',
   'sync_calendar',
   'advance_objectives',
   'calibrate_estimates',

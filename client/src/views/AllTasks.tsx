@@ -5,7 +5,6 @@ import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRout
 import { api, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
 import { localISODate } from '../lib/dates.js';
-import { suggestTagsFromTitle, mergeSuggestedTags } from '../lib/tag-suggest.js';
 import { TaskCard } from '../components/TaskCard.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { ShapeIcon } from '../components/ShapeIcon.js';
@@ -180,44 +179,26 @@ export function AllTasks() {
   );
 
   /**
-   * Auto-tag every untagged task in the CURRENT (active) view. Reuses the suggest-tags
-   * endpoint (LLM, vocabulary-constrained) unioned with the offline heuristic, so it
-   * still tags when Ollama is down and never invents a tag. Additive: only untagged
-   * tasks are touched.
+   * Auto-tag every untagged task in the CURRENT (active) view — ONE request to
+   * POST /api/tasks/auto-tag, scoped to the ids on screen. The LLM call, the offline
+   * heuristic fallback, and the direction/intention leveling all run server-side, in the
+   * same service the `tag_tasks` cron uses, so the button and the job can never drift.
+   * (It used to loop suggest-tags + PATCH per task from here — two round trips each, and
+   * its own private copy of the leveling rules.) Additive: only untagged tasks are touched.
    */
   async function autoTagUntagged() {
-    const vocab = (tags() ?? []).map((t) => t.name);
-    // AF-11: "untagged" = no tags at EITHER level — a task carrying only level-2
-    // intentions (tags: []) must not be re-tagged (the split write below replaces
-    // both levels, so touching it would wipe its intentions).
+    // Local pre-checks purely so the common no-op cases answer instantly; the server
+    // re-derives both (and owns the real decision — the view can be stale).
+    // AF-11: "untagged" = no tags at EITHER level, matching the service's NOT EXISTS gate.
     const untagged = shownList().filter((t) => (t.tags?.length ?? 0) === 0 && (t.secondary_tags?.length ?? 0) === 0);
-    if (vocab.length === 0) { showToast('No tags yet — create some first', 'default'); return; }
+    if ((tags() ?? []).length === 0) { showToast('No tags yet — create some first', 'default'); return; }
     if (untagged.length === 0) { showToast('No untagged tasks in view', 'default'); return; }
-    // AF-11: heuristic names are split BY KIND to match the task tag model — the first
-    // direction becomes the single level-1 primary (extras are dropped: a task has ONE
-    // direction), intentions land at level 2, and category names never attach (a
-    // category is a block axis, not an entity tag).
-    const kindOf = new Map((tags() ?? []).map((t) => [t.name.toLowerCase(), t.kind]));
     setTagging(true);
-    let tagged = 0;
     try {
-      for (const task of untagged) {
-        let llm: string[] = [];
-        try { llm = (await api.tasks.suggestTags(task.title)).tags; } catch { llm = []; }
-        const merged = mergeSuggestedTags(llm, suggestTagsFromTitle(task.title, vocab), vocab);
-        const directions = merged.filter((n) => kindOf.get(n.toLowerCase()) === 'direction');
-        const intentions = merged.filter((n) => {
-          const k = kindOf.get(n.toLowerCase());
-          return k !== 'direction' && k !== 'category';
-        });
-        if (directions.length || intentions.length) {
-          await api.tasks.update(task.id, { tags: directions.slice(0, 1), secondary_tags: intentions });
-          tagged++;
-        }
-      }
+      const { tagged, total } = await api.tasks.autoTag(untagged.map((t) => t.id));
       refetchTasks();
       showToast(
-        tagged ? `Tagged ${tagged} of ${untagged.length} task${untagged.length === 1 ? '' : 's'}` : 'No matching tags found',
+        tagged ? `Tagged ${tagged} of ${total} task${total === 1 ? '' : 's'}` : 'No matching tags found',
         tagged ? 'success' : 'default',
       );
     } catch (err) {

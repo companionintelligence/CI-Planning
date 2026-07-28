@@ -74,6 +74,88 @@ describe('category-Plan fill (0069)', () => {
     expect(r.placedInPlans).toBe(1);
   });
 
+  // ── Phase B route: the task carries the category directly (entity_categories) ──────
+  // The block's category has always come from entity_categories, but candidates were
+  // matched ONLY through the 0069 intention→tag_categories grouping. So a task tagged
+  // via the wizard's 1–3 category picker (or the quick-add classifier) was never placed
+  // into a matching category block — the picker looked wired and did nothing.
+
+  /** Tag a task with a category the way the picker/classifier does (Phase B, 0134). */
+  function pickCategory(taskId: string, categoryId: string, position = 0) {
+    sqlite
+      .prepare(`INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) VALUES ('task', ?, ?, ?)`)
+      .run(taskId, categoryId, position);
+  }
+
+  it('fills a category Plan from the task\'s OWN categories (entity_categories), with no intention grouping at all', async () => {
+    // Regression: this is the exact reported gap. `tag_categories` is left empty, so the
+    // only possible match is the direct one — before the fix nothing was placed.
+    const relationships = makeCategory('relationships');
+    const match = insertTask('Call Mum');
+    pickCategory(match, relationships);
+    const unrelated = insertTask('Unrelated');
+    [match, unrelated].forEach(stage);
+    const plan = await makeCategoryPlan(srv, relationships, at('14:00'), at('16:00'));
+
+    const r = placeFlightPlan(OWNER, { date: DAY });
+    expect(childOf(plan.id).map((c) => c.title)).toEqual(['Call Mum']);
+    expect(r.placedInPlans).toBe(1);
+  });
+
+  it('matches a task carrying the category at a non-zero position (1–3 picker, not just the first)', async () => {
+    const relationships = makeCategory('relationships');
+    const match = insertTask('Anniversary dinner');
+    pickCategory(match, makeCategory('health'), 0); // primary is a different category
+    pickCategory(match, relationships, 1);          // secondary — must still match
+    stage(match);
+    const plan = await makeCategoryPlan(srv, relationships, at('14:00'), at('16:00'));
+
+    placeFlightPlan(OWNER, { date: DAY });
+    expect(childOf(plan.id).map((c) => c.title)).toEqual(['Anniversary dinner']);
+  });
+
+  it('unions the two routes — a direct match and a grouping match both land, once each', async () => {
+    const family = makeCategory('family');
+    fileUnderCategory('kids', family);
+    const viaGrouping = insertTask('Grouping match', { secondary: ['kids'] });
+    const viaCategory = insertTask('Direct match');
+    pickCategory(viaCategory, family);
+    const both = insertTask('Both routes', { secondary: ['kids'] });
+    pickCategory(both, family); // UNION must not duplicate it
+    [viaGrouping, viaCategory, both].forEach(stage);
+    const plan = await makeCategoryPlan(srv, family, at('09:00'), at('17:00'));
+
+    placeFlightPlan(OWNER, { date: DAY });
+    expect(childOf(plan.id).map((c) => c.title).sort()).toEqual(['Both routes', 'Direct match', 'Grouping match']);
+  });
+
+  it('still honors the direction opt-out for a directly-tagged task', async () => {
+    // The new route must not become a bypass around category_direction_optouts.
+    const family = makeCategory('family');
+    optOut(family, 'work');
+    const workTask = insertTask('Work thing', { direction: 'work' });
+    pickCategory(workTask, family);
+    const homeTask = insertTask('Home thing', { direction: 'home' });
+    pickCategory(homeTask, family);
+    [workTask, homeTask].forEach(stage);
+    const plan = await makeCategoryPlan(srv, family, at('09:00'), at('17:00'));
+
+    placeFlightPlan(OWNER, { date: DAY });
+    expect(childOf(plan.id).map((c) => c.title)).toEqual(['Home thing']);
+  });
+
+  it('does not match a category the task does not carry', async () => {
+    const relationships = makeCategory('relationships');
+    const health = makeCategory('health');
+    const other = insertTask('Gym session');
+    pickCategory(other, health);
+    stage(other);
+    const plan = await makeCategoryPlan(srv, relationships, at('09:00'), at('17:00'));
+
+    placeFlightPlan(OWNER, { date: DAY });
+    expect(childOf(plan.id)).toEqual([]);
+  });
+
   it('excludes a task whose ONLY direction is opted out; keeps direction-less + enabled-direction tasks', async () => {
     const family = makeCategory('family');
     fileUnderCategory('kids', family);

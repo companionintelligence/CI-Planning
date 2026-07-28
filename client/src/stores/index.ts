@@ -221,8 +221,17 @@ on('possible:promoted', () => refetchTasks());
 // ── Phase G: flight-plan, patterns, pattern types ──────────────────────────────
 // The flight-plan is the persisted, owner-scoped staging area the two-step Auto
 // runs over. It survives reloads; Reset clears it. SSE keeps every device in sync.
+/** Is the last Auto placement run still undoable? Rides the flight-plan read so the
+ *  Undo button reflects server state instead of "did THIS tab just run Auto" — the
+ *  latter vanished on every reload while the run stayed undoable. */
+const [canUndoAuto, setCanUndoAuto] = createSignal(false);
+export { canUndoAuto };
+
 export const [flightPlan, { refetch: refetchFlightPlan }] = createResource(() =>
-  api.flightPlan.list().then((r) => r.flight_plan)
+  api.flightPlan.list().then((r) => {
+    setCanUndoAuto(r.can_undo ?? false);
+    return r.flight_plan;
+  })
 );
 
 on('flight_plan:updated', () => refetchFlightPlan());
@@ -321,8 +330,16 @@ export const [integrations, { refetch: refetchIntegrations }] = createResource((
   api.llm.integrations()
 );
 
-/** True when a reachable Ollama makes the AI features usable. Everything AI gates on this. */
-export const aiAvailable = () => integrations()?.ollama.available ?? false;
+/**
+ * True when AI features can actually run. Everything AI gates on this.
+ *
+ * Keys on `ready`, not `available`: `available` only means Ollama answered, and the
+ * built-in default model tags aren't pulled on most machines — so this used to report
+ * true while every call failed with `model '…' not found`, leaving AI controls visible
+ * as silent no-ops. `ready` additionally requires the models that will actually be used
+ * to be installed. Older servers don't send it, so fall back to `available`.
+ */
+export const aiAvailable = () => integrations()?.ollama.ready ?? integrations()?.ollama.available ?? false;
 
 // ── Connections (T13 #349) ─────────────────────────────────────────────────────
 // Provider-agnostic list of the owner's stored connections (provider/account/status),

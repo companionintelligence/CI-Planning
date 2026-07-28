@@ -571,6 +571,9 @@ export function Settings() {
 
   const ollamaModels = () => integrations()?.ollama.models ?? [];
   const ollamaUp = () => integrations()?.ollama.available ?? false;
+  /** Effective models that aren't pulled — the difference between "Ollama is up" and
+   *  "AI actually works". Empty on older servers that don't report it. */
+  const missingModels = () => integrations()?.ollama.missingModels ?? [];
 
   // Phase AA · AA0 — connect the CI-Server memory appliance (URL + API key). The key
   // travels once and is stored KEK-encrypted server-side; the status never echoes it.
@@ -1207,6 +1210,20 @@ export function Settings() {
                 }
               >
                 <div class="flex flex-col gap-4">
+                  {/* Ollama running but the selected model isn't pulled: the old UI showed a
+                      plain green "available" here while every AI call failed with
+                      `model '…' not found`. Name the missing model and what to do. */}
+                  <Show when={missingModels().length > 0}>
+                    <div class="flex items-start gap-2 text-[11px] text-amber-400">
+                      <AlertTriangle size={12} class="mt-0.5 flex-shrink-0" />
+                      <span>
+                        Ollama is running, but {missingModels().join(', ')}{' '}
+                        {missingModels().length === 1 ? 'is' : 'are'} not installed — AI features stay off.
+                        Pull {missingModels().length === 1 ? 'it' : 'them'} with <span class="font-mono">ollama pull</span>, or pick an
+                        installed model below.
+                      </span>
+                    </div>
+                  </Show>
                   <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.smallModel} />
                   <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.mediumModel} />
                   <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
@@ -1394,19 +1411,30 @@ export function Settings() {
             <Show when={integrations()} fallback={<div class="text-xs text-slate-500 animate-pulse2">Checking…</div>}>
               {(i) => (
                 <div class="flex flex-col gap-3">
+                  {/* Three states, not two. "Reachable" and "usable" are different: Ollama
+                      answering while the selected model isn't pulled used to render a plain
+                      green tick over completely dead AI features. Amber is that middle state. */}
                   <div class="flex items-center gap-3">
-                    <Cpu size={16} class={i().ollama.available ? 'text-green-400' : 'text-red-400'} />
+                    <Cpu size={16} classList={{
+                      'text-green-400': aiAvailable(),
+                      'text-amber-400': ollamaUp() && !aiAvailable(),
+                      'text-red-400': !ollamaUp(),
+                    }} />
                     <div class="flex-1">
                       <div class="text-sm text-slate-200 font-medium flex items-center gap-2">
                         Ollama
-                        {i().ollama.available
-                          ? <CheckCircle2 size={13} class="text-green-400" />
-                          : <XCircle size={13} class="text-red-400" />}
+                        <Show when={ollamaUp()} fallback={<XCircle size={13} class="text-red-400" />}>
+                          <Show when={aiAvailable()} fallback={<AlertTriangle size={13} class="text-amber-400" />}>
+                            <CheckCircle2 size={13} class="text-green-400" />
+                          </Show>
+                        </Show>
                       </div>
                       <div class="text-xs text-slate-500 mt-0.5">
-                        {i().ollama.available
-                          ? `${i().ollama.models.length} models · small: ${i().ollama.smallModel} · medium: ${i().ollama.mediumModel}`
-                          : 'Unavailable — start Ollama on localhost:11434'}
+                        {!ollamaUp()
+                          ? 'Unavailable — start Ollama on localhost:11434'
+                          : !aiAvailable()
+                            ? `Running, but ${missingModels().join(', ')} not installed — AI features are off`
+                            : `${i().ollama.models.length} models · small: ${i().ollama.smallModel} · medium: ${i().ollama.mediumModel}`}
                       </div>
                     </div>
                   </div>

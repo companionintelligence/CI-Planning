@@ -46,3 +46,35 @@ export function proposeSlot(opts: {
   if (cursor + dur > opts.workEndMin) return null; // day full within the window
   return minToHHMM(cursor);
 }
+
+/** The enrichment's best-time band (D3). 'any' carries no constraint and never reaches here. */
+export type TimeBand = 'morning' | 'afternoon' | 'evening';
+
+/** Minutes-of-day bounds for each band. Generous on purpose — this NARROWS the search
+ *  window, so tight bounds would reject slots the user would happily accept. */
+const BAND_BOUNDS: Record<TimeBand, { startMin: number; endMin: number }> = {
+  morning: { startMin: 5 * 60, endMin: 12 * 60 },
+  afternoon: { startMin: 12 * 60, endMin: 17 * 60 },
+  evening: { startMin: 17 * 60, endMin: 22 * 60 },
+};
+
+/**
+ * Narrow a search window to a band, for the "best time of day" hint (D3).
+ *
+ * The band is a PREFERENCE, not a constraint: when the intersection can't fit the
+ * duration (an evening task on a 09:00–18:00 workday with only an hour left, say) this
+ * returns the original window rather than null, so a band can never turn a proposal the
+ * user would have got into "No time". That is also why the hint never becomes `task_time`
+ * server-side — a band should bias placement, never pin it.
+ */
+export function narrowToBand(
+  window: { startMin: number; endMin: number },
+  band: TimeBand | undefined,
+  durationMin: number,
+): { startMin: number; endMin: number } {
+  if (!band) return window;
+  const b = BAND_BOUNDS[band];
+  const startMin = Math.max(window.startMin, b.startMin);
+  const endMin = Math.min(window.endMin, b.endMin);
+  return endMin - startMin >= Math.max(1, durationMin) ? { startMin, endMin } : window;
+}
