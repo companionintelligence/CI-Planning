@@ -25,8 +25,13 @@ export function tagTitleFallback(title: string, vocabulary: string[]): string[] 
   return out;
 }
 
-/** Union LLM + heuristic, constrained to vocabulary, deduped, LLM-first. */
-function mergeTags(llm: string[], heuristic: string[], vocabulary: string[]): string[] {
+/**
+ * Union LLM + heuristic, constrained to vocabulary, deduped, LLM-first. Exported for
+ * its unit tests only (same reason as `tagTitleFallback`) — callers use
+ * `tagUntaggedTasks`. Moved here from the client when the Tasks Auto-tag button stopped
+ * doing its own merging, so this and the cron job share one implementation.
+ */
+export function mergeTags(llm: string[], heuristic: string[], vocabulary: string[]): string[] {
   const allow = new Set(vocabulary);
   const seen = new Set<string>();
   const out: string[] = [];
@@ -36,13 +41,22 @@ function mergeTags(llm: string[], heuristic: string[], vocabulary: string[]): st
   return out;
 }
 
+/** A tag the auto-tagger may apply: its name plus the taxonomy kind that sets its level. */
+interface VocabTag { name: string; kind: string }
+
+// Category-kind tags are excluded at the SOURCE rather than dropped downstream: a
+// category is an orthogonal axis stored in entity_categories, never in entity_tags, so a
+// category suggestion could only ever be discarded — and offering one to the model just
+// spends tokens on an answer we can't use. Muted tags are out for the obvious reason.
 const selectVocab = sqlite.prepare(
-  `SELECT name FROM tags WHERE owner_id = ? AND muted = 0 ORDER BY name`,
+  `SELECT name, kind FROM tags WHERE owner_id = ? AND muted = 0 AND kind != 'category' ORDER BY name`,
 );
 
 // Only top-level, non-recurrence, open tasks — mirrors AllTasks.tsx baseList filter.
 // NOT EXISTS on entity_tags is the idempotency gate: tasks that already have tags are
-// never touched, so re-running never overwrites existing user-applied tags.
+// never touched, so re-running never overwrites existing user-applied tags. It spans ALL
+// levels on purpose — a task carrying only level-2 intentions still counts as tagged, so
+// the sweep can't quietly re-level a set the user chose by hand.
 const selectUntagged = sqlite.prepare(`
   SELECT t.id, t.title FROM tasks t
   WHERE t.owner_id = ?
@@ -56,20 +70,44 @@ const selectUntagged = sqlite.prepare(`
 `);
 
 const insertEntityTag = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`,
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`,
 );
+
+/**
+ * AF-11 task tag model — level the merged names BY KIND. The first direction becomes the
+ * single level-1 primary (a task has ONE direction, so later directions are dropped);
+ * every intention lands at level 2. This is the same split the New Task wizard applies,
+ * so a task tagged by this sweep is indistinguishable from a hand-tagged one.
+ */
+function levelByKind(
+  names: string[],
+  kindOf: Map<string, string>,
+): { primary: string | null; intentions: string[] } {
+  let primary: string | null = null;
+  const intentions: string[] = [];
+  for (const name of names) {
+    if (kindOf.get(name) === 'direction') primary ??= name;
+    else intentions.push(name);
+  }
+  return { primary, intentions };
+}
 
 export interface AutoTagResult {
   tagged: number;
   total: number;
   log: string;
+  /** The tasks actually written — the REST route broadcasts one task:updated per id. */
+  taggedIds: string[];
 }
 
 /**
- * Tag all untagged top-level open tasks for `ownerId`. Shared code path used by
- * both the auto-tag button (via the POST /api/tasks/auto-tag endpoint) and the
- * `tag_tasks` cron job.
+ * Tag untagged top-level open tasks for `ownerId`. The ONE code path behind both the
+ * Tasks view's Auto-tag button (POST /api/tasks/auto-tag) and the `tag_tasks` cron job,
+ * so the two cannot drift on vocabulary, leveling, or the idempotency gate.
  *
+ * - `taskIds` narrows the sweep to a caller-supplied set — the button passes what's on
+ *   screen, so a filtered view tags only what the user can actually see. Omit it for the
+ *   cron's owner-wide pass.
  * - Idempotent: the NOT EXISTS gate skips already-tagged tasks; INSERT OR IGNORE
  *   prevents duplicates even if called concurrently.
  * - Deterministic fallback: when Ollama is unavailable, suggestTags() returns []
@@ -78,32 +116,41 @@ export interface AutoTagResult {
  * - Non-destructive: only adds tags to tasks that have none; never removes or
  *   replaces existing user-applied tags.
  */
-export async function tagUntaggedTasks(ownerId: string): Promise<AutoTagResult> {
-  const vocabulary = (selectVocab.all(ownerId) as { name: string }[]).map((r) => r.name);
-  if (vocabulary.length === 0) {
-    return { tagged: 0, total: 0, log: 'No tag vocabulary yet; skipped' };
+export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Promise<AutoTagResult> {
+  const vocab = selectVocab.all(ownerId) as VocabTag[];
+  if (vocab.length === 0) {
+    return { tagged: 0, total: 0, taggedIds: [], log: 'No tag vocabulary yet; skipped' };
+  }
+  const names = vocab.map((v) => v.name);
+  const kindOf = new Map(vocab.map((v) => [v.name, v.kind]));
+
+  // The scope filter runs in JS rather than as an IN-list: the id set comes from a client
+  // view of unbounded size, and binding it would blow SQLite's bound-parameter cap.
+  const scope = taskIds ? new Set(taskIds) : null;
+  const candidates = (selectUntagged.all(ownerId) as { id: string; title: string }[])
+    .filter((t) => !scope || scope.has(t.id));
+  if (candidates.length === 0) {
+    return { tagged: 0, total: 0, taggedIds: [], log: 'No untagged tasks to process' };
   }
 
-  const tasks = selectUntagged.all(ownerId) as { id: string; title: string }[];
-  if (tasks.length === 0) {
-    return { tagged: 0, total: 0, log: 'No untagged tasks to process' };
-  }
-
-  let tagged = 0;
+  const taggedIds: string[] = [];
   let ollamaHit = false;
 
-  for (const task of tasks) {
-    const llm = await suggestTags(task.title, vocabulary); // returns [] on any failure
+  for (const task of candidates) {
+    const llm = await suggestTags(task.title, names); // returns [] on any failure
     if (llm.length > 0) ollamaHit = true;
-    const merged = mergeTags(llm, tagTitleFallback(task.title, vocabulary), vocabulary);
-    if (merged.length > 0) {
-      for (const name of merged) insertEntityTag.run(task.id, resolveTagId(name, ownerId));
-      tagged++;
-    }
+    const { primary, intentions } = levelByKind(
+      mergeTags(llm, tagTitleFallback(task.title, names), names),
+      kindOf,
+    );
+    if (!primary && intentions.length === 0) continue;
+    if (primary) insertEntityTag.run(task.id, resolveTagId(primary, ownerId), 1);
+    for (const name of intentions) insertEntityTag.run(task.id, resolveTagId(name, ownerId), 2);
+    taggedIds.push(task.id);
   }
 
   const note = ollamaHit ? '' : ' (Ollama unavailable — heuristic fallback used)';
-  const log = `Tagged ${tagged} of ${tasks.length} untagged task(s)${note}`;
-  logger.info('auto-tag', { tagged, total: tasks.length, ollamaHit });
-  return { tagged, total: tasks.length, log };
+  const log = `Tagged ${taggedIds.length} of ${candidates.length} untagged task(s)${note}`;
+  logger.info('auto-tag', { tagged: taggedIds.length, total: candidates.length, ollamaHit });
+  return { tagged: taggedIds.length, total: candidates.length, taggedIds, log };
 }

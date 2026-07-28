@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { taskTagNames } from '../src/services/tags.js';
-import { tagUntaggedTasks, tagTitleFallback } from '../src/services/auto-tag.js';
+import { taskTagNames, entityTagLevels } from '../src/services/tags.js';
+import { tagUntaggedTasks, tagTitleFallback, mergeTags } from '../src/services/auto-tag.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 
 const OWNER = SYSTEM_OWNER;
@@ -24,9 +24,20 @@ function insertTask(title: string, extra?: { parentId?: string; recurrenceParent
   ).id;
 }
 
-function seedTag(name: string): string {
-  sqlite.prepare(`INSERT OR IGNORE INTO tags (id, name, owner_id) VALUES (uuid7(), ?, ?)`).run(name, OWNER);
+// kind defaults to 'intention' (schema.ts) — pass 'direction' / 'category' explicitly to
+// exercise the AF-11 leveling, which is keyed off the tag's kind.
+function seedTag(name: string, kind = 'intention'): string {
+  sqlite.prepare(`INSERT OR IGNORE INTO tags (id, name, owner_id, kind) VALUES (uuid7(), ?, ?, ?)`).run(name, OWNER, kind);
   return (sqlite.prepare(`SELECT id FROM tags WHERE name = ?`).get(name) as { id: string }).id;
+}
+
+/** Level-keyed view of a task's tags — the AF-11 split this sweep must reproduce. */
+function levels(taskId: string): { l1: string[]; l2: string[] } {
+  const rows = entityTagLevels('task', taskId);
+  return {
+    l1: rows.filter((r) => r.level === 1).map((r) => r.name),
+    l2: rows.filter((r) => r.level === 2).map((r) => r.name),
+  };
 }
 
 function applyTag(taskId: string, tagId: string): void {
@@ -56,6 +67,30 @@ describe('tagTitleFallback', () => {
   });
 });
 
+// ── mergeTags (LLM ∪ heuristic, vocabulary-constrained) ──────────────────────
+// Ported from client/src/lib/tag-suggest.test.ts when the merge moved server-side.
+
+describe('mergeTags', () => {
+  const vocab = ['email', 'finance', 'deep-work', 'errands'];
+
+  it('unions LLM + heuristic, dedupes, and preserves LLM-first order', () => {
+    expect(mergeTags(['finance'], ['email', 'finance'], vocab)).toEqual(['finance', 'email']);
+  });
+
+  it('never lets a non-vocabulary tag through (no invented tags)', () => {
+    expect(mergeTags(['made-up'], ['email'], vocab)).toEqual(['email']);
+    expect(mergeTags(['made-up'], ['also-fake'], vocab)).toEqual([]);
+  });
+
+  it('degrades to the heuristic when the LLM list is empty (Ollama down)', () => {
+    expect(mergeTags([], ['email', 'deep-work'], vocab)).toEqual(['email', 'deep-work']);
+  });
+
+  it('returns nothing when both are empty', () => {
+    expect(mergeTags([], [], vocab)).toEqual([]);
+  });
+});
+
 // ── tagUntaggedTasks ─────────────────────────────────────────────────────────
 
 describe('tagUntaggedTasks', () => {
@@ -72,7 +107,77 @@ describe('tagUntaggedTasks', () => {
 
     expect(result.total).toBe(1);
     expect(result.tagged).toBe(1);
-    expect(taskTagNames(t)).toContain('email');
+    expect(result.taggedIds).toEqual([t]);
+    expect(levels(t).l2).toContain('email'); // an intention lands at level 2
+  });
+
+  // AF-11 leveling — the split the Tasks Auto-tag button used to do client-side.
+  it('levels by kind: one direction at level 1, intentions at level 2', async () => {
+    seedTag('work', 'direction');
+    seedTag('email');
+    seedTag('finance');
+    const t = insertTask('Work on the finance email');
+
+    await tagUntaggedTasks(OWNER);
+
+    expect(levels(t).l1).toEqual(['work']);
+    expect(levels(t).l2.sort()).toEqual(['email', 'finance']);
+  });
+
+  it('keeps only the FIRST direction — a task has one primary direction', async () => {
+    seedTag('work', 'direction');
+    seedTag('home', 'direction');
+    const t = insertTask('Work and home errands');
+
+    await tagUntaggedTasks(OWNER);
+
+    expect(levels(t).l1).toHaveLength(1);
+    expect(levels(t).l2).toEqual([]); // the dropped direction is NOT demoted to level 2
+  });
+
+  it('never attaches a category tag (categories live in entity_categories)', async () => {
+    seedTag('personal', 'category');
+    const t = insertTask('Personal admin');
+
+    const result = await tagUntaggedTasks(OWNER);
+
+    expect(result.tagged).toBe(0);
+    expect(entityTagLevels('task', t)).toEqual([]);
+  });
+
+  it('ignores muted tags', async () => {
+    const id = seedTag('email');
+    sqlite.prepare(`UPDATE tags SET muted = 1 WHERE id = ?`).run(id);
+    const t = insertTask('Send email to Bluepeak');
+
+    const result = await tagUntaggedTasks(OWNER);
+
+    expect(result.tagged).toBe(0);
+    expect(entityTagLevels('task', t)).toEqual([]);
+  });
+
+  // The Auto-tag button passes the ids on screen so a filtered view tags only what the
+  // user can see; the cron omits the argument and sweeps the whole owner.
+  it('honours the taskIds scope, leaving out-of-scope tasks untouched', async () => {
+    seedTag('email');
+    const inScope = insertTask('Send email to Bluepeak');
+    const outOfScope = insertTask('Email the invoice');
+
+    const result = await tagUntaggedTasks(OWNER, [inScope]);
+
+    expect(result.total).toBe(1); // only the scoped task was even considered
+    expect(levels(inScope).l2).toContain('email');
+    expect(entityTagLevels('task', outOfScope)).toEqual([]);
+  });
+
+  it('treats an empty scope as "nothing selected", not owner-wide', async () => {
+    seedTag('email');
+    const t = insertTask('Send email to Bluepeak');
+
+    const result = await tagUntaggedTasks(OWNER, []);
+
+    expect(result.total).toBe(0);
+    expect(entityTagLevels('task', t)).toEqual([]);
   });
 
   it('skips tasks that already have tags — does not overwrite or remove them', async () => {
@@ -92,12 +197,12 @@ describe('tagUntaggedTasks', () => {
     const t = insertTask('Email Bluepeak about the invoice');
 
     await tagUntaggedTasks(OWNER);
-    expect(taskTagNames(t)).toEqual(['email']);
+    expect(levels(t).l2).toEqual(['email']);
 
-    // Second run: task now has tags → NOT EXISTS excludes it → no-op
+    // Second run: task now has tags at SOME level → NOT EXISTS excludes it → no-op
     const second = await tagUntaggedTasks(OWNER);
     expect(second.total).toBe(0);
-    expect(taskTagNames(t)).toEqual(['email']); // still exactly one copy
+    expect(levels(t).l2).toEqual(['email']); // still exactly one copy
   });
 
   it('skips subtasks (parent_id set) and recurrence instances (recurrence_parent_id set)', async () => {
@@ -126,6 +231,59 @@ describe('tagUntaggedTasks', () => {
     const result = await tagUntaggedTasks(OWNER);
     expect(result.tagged).toBe(0);
     expect(result.log).toMatch(/vocabulary/i);
+  });
+});
+
+// ── POST /api/tasks/auto-tag (the Tasks view's Auto-tag button) ──────────────
+// The route is a thin shell over the service above; these cover the HTTP contract
+// (scoping + response shape), not the tagging rules.
+
+describe('POST /api/tasks/auto-tag', () => {
+  let srv: TestServer;
+  beforeAll(async () => { srv = await startTestServer(); });
+  afterAll(() => srv.close());
+  beforeEach(() => resetDb());
+
+  it('tags the scoped tasks and reports counts', async () => {
+    seedTag('work', 'direction');
+    const scoped = insertTask('Work on the report');
+    const other = insertTask('Work on the deck');
+
+    const { status, body } = await api(srv.url, '/api/tasks/auto-tag', {
+      method: 'POST',
+      json: { task_ids: [scoped] },
+    });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ tagged: 1, total: 1 });
+    expect(levels(scoped).l1).toEqual(['work']);
+    expect(entityTagLevels('task', other)).toEqual([]);
+  });
+
+  it('sweeps the whole owner when task_ids is omitted (the cron\'s scope)', async () => {
+    seedTag('work', 'direction');
+    const a = insertTask('Work on the report');
+    const b = insertTask('Work on the deck');
+
+    const { body } = await api(srv.url, '/api/tasks/auto-tag', { method: 'POST', json: {} });
+
+    expect(body.tagged).toBe(2);
+    expect(levels(a).l1).toEqual(['work']);
+    expect(levels(b).l1).toEqual(['work']);
+  });
+
+  it('ignores a non-array task_ids rather than 500ing', async () => {
+    seedTag('work', 'direction');
+    const t = insertTask('Work on the report');
+
+    const { status, body } = await api(srv.url, '/api/tasks/auto-tag', {
+      method: 'POST',
+      json: { task_ids: 'nope' },
+    });
+
+    expect(status).toBe(200);
+    expect(body.tagged).toBe(1); // fell back to owner-wide
+    expect(levels(t).l1).toEqual(['work']);
   });
 });
 

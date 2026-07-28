@@ -10,6 +10,7 @@ import { getDependencies, blockedTaskIds } from '../engine/deps.js';
 import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
 import { suggestTags } from '../agents/tags.js';
+import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { startTimer, stopTimer, getRunning } from '../services/timer.js';
 import { rescheduleTask } from '../engine/review.js';
 import { requestReplan } from '../engine/auto-defense.js';
@@ -368,11 +369,51 @@ export function tasksRouter() {
   // POST /api/tasks/suggest-tags { title } → { tags } — best-effort LLM auto-tag for
   // the New Task wizard, constrained to existing tags. Returns [] when Ollama is down
   // (the client still has its offline heuristic). Literal path; no clash with /:id/*.
+  // SUGGEST-ONLY: it writes nothing, so the wizard can rank tags while the user types.
+  // The bulk sweep is /auto-tag below — do NOT rebuild it by looping this endpoint.
   router.post('/api/tasks/suggest-tags', async (ctx) => {
     const { title } = (ctx.request.body ?? {}) as { title?: string };
     const vocab = (sqlite.prepare('SELECT name FROM tags WHERE owner_id = ? ORDER BY name').all(currentOwnerId()) as { name: string }[]).map((r) => r.name);
     const tags = await suggestTags(title ?? '', vocab);
     ctx.body = { tags };
+  });
+
+  // POST /api/tasks/auto-tag { task_ids? } → { tagged, total, log } — the Tasks view's
+  // Auto-tag button. Runs the SAME service as the `tag_tasks` cron job, so button and job
+  // can't drift on vocabulary (muted + category tags excluded), on the AF-11 kind split
+  // (one level-1 direction, intentions at level 2), or on the idempotency gate.
+  // `task_ids` narrows the sweep to what the caller has on screen; omitting it sweeps the
+  // whole owner. Literal path; no clash with /:id/*.
+  router.post('/api/tasks/auto-tag', async (ctx) => {
+    const owner = currentOwnerId();
+    const { task_ids } = (ctx.request.body ?? {}) as { task_ids?: unknown };
+    // An absent/garbage list means owner-wide, but an EMPTY array must stay an empty
+    // scope — "nothing selected" tags nothing, rather than silently sweeping everything.
+    const scope = Array.isArray(task_ids)
+      ? task_ids.filter((v): v is string => typeof v === 'string')
+      : undefined;
+    const res = await tagUntaggedTasks(owner, scope);
+
+    // The service writes entity_tags directly (no updateTask call), so nothing else
+    // broadcasts these — fan them out here or other open clients keep the stale tags.
+    const blocked = blockedTaskIds(); // hoisted: one dependency scan, not one per task
+    for (const id of res.taggedIds) {
+      const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
+      if (!task) continue;
+      broadcast(owner, 'task:updated', {
+        ...taskToApi(task),
+        tags: taskTagNames(id),
+        secondary_tags: taskSecondaryTags(id),
+        categories: entityCategoryNames('task', id),
+        depends_on: getDependencies(id),
+        blocked: blocked.has(id),
+      });
+      // One row per task, matching what the old PATCH-per-task path recorded — a bulk
+      // sweep must stay as traceable in the audit log as the hand edits it replaces.
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `task:${id}` });
+    }
+    // No requestReplan: a tag edit is not scheduling-relevant (same rule as PATCH).
+    ctx.body = { tagged: res.tagged, total: res.total, log: res.log };
   });
 
   // POST /api/tasks/:id/recall — DEAD SURFACE (zero client callers — see #392): no
