@@ -305,7 +305,11 @@ export function TaskCard(props: Props) {
     try {
       const r = await api.tasks.enrich(props.task.id);
       if (r.enriched) {
-        const bits = [r.description && 'description', r.direction && `direction (${r.direction})`].filter(Boolean);
+        const bits = [
+          r.description && 'description',
+          r.direction && `direction (${r.direction})`,
+          r.categories?.length && `categories (${r.categories.join(', ')})`,
+        ].filter(Boolean);
         showToast(`Filled in ${bits.join(' + ')}`, 'success');
         refetchTasks();
       } else {
