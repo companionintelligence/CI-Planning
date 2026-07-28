@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mergeEnrichment } from '../src/agents/quickadd.js';
 import type { ParsedQuick } from '../src/engine/quickadd.js';
 import {
-  directionGuide, isTimeOfDay,
+  directionGuide, isTimeOfDay, titleSuggestsComplex,
   PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC,
 } from '../src/agents/rubric.js';
 
@@ -41,6 +41,10 @@ describe('rubric text', () => {
     expect(COMPLEXITY_RUBRIC).toMatch(/several distinct steps/i);
     expect(COMPLEXITY_RUBRIC).toMatch(/trip/i); // the case that regressed live
     expect(COMPLEXITY_RUBRIC).toMatch(/false for anything done in one sitting/i);
+    // Worked examples on BOTH sides — a 3B model imitates far better than it deduces.
+    expect(COMPLEXITY_RUBRIC).toMatch(/Examples:/);
+    expect(COMPLEXITY_RUBRIC).toMatch(/→ true/);
+    expect(COMPLEXITY_RUBRIC).toMatch(/→ false/);
   });
 
   it('defines each direction the owner actually has', () => {
@@ -104,6 +108,48 @@ describe('mergeEnrichment · timeOfDay (D3)', () => {
   });
 });
 
+// ── titleSuggestsComplex — the rubric's verb rule, enforced in code ──────────
+// These pin the two LIVE misses: llama3.2 returned isComplex:false for both titles even
+// with the verb rule in the prompt. The heuristic makes them structurally impossible.
+
+describe('titleSuggestsComplex', () => {
+  it('catches the measured model misses', () => {
+    expect(titleSuggestsComplex('Organize the team offsite')).toBe(true);
+    expect(titleSuggestsComplex('Research and launch the new pricing page')).toBe(true);
+    expect(titleSuggestsComplex('Plan a week-long trip to Japan')).toBe(true);
+    // Round 2: every verb the rubric names is in the code twin (this one was missing).
+    expect(titleSuggestsComplex('Prepare the annual budget review for the department')).toBe(true);
+  });
+
+  it('covers the rubric\'s "moving house" example as lead phrases, not a bare verb', () => {
+    expect(titleSuggestsComplex('Move house at the end of the month')).toBe(true);
+    expect(titleSuggestsComplex('Move out by the 15th')).toBe(true);
+    expect(titleSuggestsComplex('Move the couch to the garage')).toBe(false); // one action
+  });
+
+  it('requires a real undertaking, not a bare verb-object pair', () => {
+    expect(titleSuggestsComplex('Plan dinner')).toBe(false);
+    expect(titleSuggestsComplex('Organize desk')).toBe(false);
+  });
+
+  it('ignores strong verbs that are not in lead position', () => {
+    // "the plan" / mid-sentence verbs are nouns or subordinate — not a planning intent.
+    expect(titleSuggestsComplex('Review the plan for the offsite')).toBe(false);
+    expect(titleSuggestsComplex('Email Sam about the launch')).toBe(false);
+  });
+
+  it('leaves ordinary single actions alone', () => {
+    expect(titleSuggestsComplex('Call the dentist')).toBe(false);
+    expect(titleSuggestsComplex('Pay the electricity bill')).toBe(false);
+    expect(titleSuggestsComplex('Send email to Rek')).toBe(false);
+  });
+
+  it('is case-insensitive and tolerant of punctuation', () => {
+    expect(titleSuggestsComplex('PLAN a big launch party!')).toBe(true);
+    expect(titleSuggestsComplex('')).toBe(false);
+  });
+});
+
 describe('mergeEnrichment · isComplex (D5)', () => {
   it('passes a true flag through', () => {
     expect(mergeEnrichment(base(), { isComplex: true }, VOCAB).isComplex).toBe(true);
@@ -113,6 +159,16 @@ describe('mergeEnrichment · isComplex (D5)', () => {
     for (const v of [false, undefined, 'yes', 1]) {
       expect(mergeEnrichment(base(), { isComplex: v }, VOCAB).isComplex).toBeUndefined();
     }
+  });
+
+  it('ORs in the verb heuristic — a model false cannot lose an obvious planning title', () => {
+    const parsed = base({ title: 'Organize the team offsite' });
+    expect(mergeEnrichment(parsed, { isComplex: false }, VOCAB).isComplex).toBe(true);
+    expect(mergeEnrichment(parsed, {}, VOCAB).isComplex).toBe(true);
+  });
+
+  it('the heuristic never fires on a plain title', () => {
+    expect(mergeEnrichment(base({ title: 'Call the dentist' }), { isComplex: false }, VOCAB).isComplex).toBeUndefined();
   });
 });
 
