@@ -31,6 +31,7 @@ import { reviewRouter } from './review.js';
 import { starsRouter } from './stars.js';
 import { plannerRouter } from './planner.js';
 import { calibrationRouter } from './calibration.js';
+import { metricsRouter } from './metrics.js';
 import { googleConfigRouter } from './google-config.js';
 import { accountsRouter } from './accounts.js';
 import { prioritiesRouter } from './priorities.js';
@@ -71,6 +72,7 @@ export function mountRoutes(app: Koa) {
     starsRouter(),
     plannerRouter(),
     calibrationRouter(),
+    metricsRouter(),
     googleConfigRouter(),
     accountsRouter(),
     prioritiesRouter(),

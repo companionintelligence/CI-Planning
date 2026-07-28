@@ -71,6 +71,12 @@ export const tasks = sqliteTable('tasks', {
   sourceRef: text('source_ref'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   completedAt: text('completed_at'),
+  // ── Close ritual (0137) — all optional; the plain checkbox never sets them. ──
+  completionMood: text('completion_mood'),   // 'happy' | 'flat' | 'frustrated' | 'stressed'
+  completionNote: text('completion_note'),   // the closing reflection — NOT `notes` (the description)
+  // WHEN the reflection was recorded. Distinct from completed_at (the assumed task end):
+  // reacting later is normal, and `reaction_at − completed_at` is the freshness of the read.
+  reactionAt: text('reaction_at'),
   // Phase L: monotonic per-record version (advances on every applied op or PATCH);
   // field_ts is a JSON { field: utcIso } map for per-field LWW; updated_at is the
   // server clock of the last write (informational, not a lock cursor).
