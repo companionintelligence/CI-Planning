@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
-import { enrichTaskFromMemory, enrichRecentTasks } from '../src/services/task-enrich.js';
+import { enrichTaskFromMemory, enrichRecentTasks, constrainCategories } from '../src/services/task-enrich.js';
 import { startTestServer, resetDb, api, type TestServer } from './helpers.js';
 
 const OWNER = SYSTEM_OWNER;
@@ -56,6 +56,32 @@ describe('enrichTaskFromMemory · memory off', () => {
     const r = await enrichRecentTasks(OWNER);
     expect(r).toMatchObject({ enriched: 0, considered: 0 });
     expect(r.log).toMatch(/memory is off/i);
+  });
+});
+
+// ── constrainCategories (§4.5's category call — the never-invent rule) ───────
+
+describe('constrainCategories', () => {
+  const VOCAB = ['Health', 'Career', 'Relationships', 'Leisure'];
+
+  it('keeps known names with the vocabulary\'s canonical casing', () => {
+    expect(constrainCategories(['health', ' CAREER '], VOCAB)).toEqual(['Health', 'Career']);
+  });
+
+  it('drops invented names entirely', () => {
+    expect(constrainCategories(['health', 'crypto', 'vibes'], VOCAB)).toEqual(['Health']);
+    expect(constrainCategories(['crypto'], VOCAB)).toEqual([]);
+  });
+
+  it('dedupes and caps at 3 (the entity_categories limit)', () => {
+    expect(constrainCategories(['health', 'Health', 'career', 'leisure', 'relationships'], VOCAB))
+      .toEqual(['Health', 'Career', 'Leisure']);
+  });
+
+  it('tolerates a non-array / junk-element answer', () => {
+    expect(constrainCategories('health', VOCAB)).toEqual([]);
+    expect(constrainCategories(undefined, VOCAB)).toEqual([]);
+    expect(constrainCategories([3, null, 'health'], VOCAB)).toEqual(['Health']);
   });
 });
 
