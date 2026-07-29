@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-21 · migration head `0135`
+**Status:** Living document · last updated 2026-07-29 · migration head `0138` (authoritative list: `server/src/db/migrations/index.ts`)
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -29,7 +29,7 @@ feature in §1.2; migration head 0135):** Tasks + scheduler · Rich semantics + 
 
 ## 1.1 Post-AG work (2026-07-14 → 07-16, migs 0127–0130)
 
-Two tracks landed after the AG close-out. Neither has a phase letter; §1.2 (Categories⇄Balance, migs 0134–0135) is now the current head.
+Two tracks landed after the AG close-out. Neither has a phase letter; §1.2 (Categories⇄Balance, migs 0134–0135) continues the line, and the head has since moved past it (see the status line at top).
 
 **Life priorities + the Priorities Wizard** (migs 0127/0128, #356). A `life_priorities` row per `(owner, category)` captures a self-audit — `satisfaction` (1–10), `importance` (1–10), `target_hours_per_week`. It backs two routed views: **`/priorities`** (the wizard) and **`/balance`** (the dashboard). `scheduling_prefs.sleep_hours_per_week` (0128, default 63 = 9h × 7) reserves sleep as unschedulable, so the wizard's weekly pool is `168 − sleep_hours_per_week`. `/balance` reads the self-audit back — a **Balance Index** (how far `satisfaction` tracks `importance`) plus the allocated weekly targets. Self-contained, and narrower than it may sound: **it reports stated intent, not measured time.** There is still no actual-vs-target tracking (`Balance.tsx` reads no `time_entries`/`actual_minutes`) or scheduling boosts — but the `no task.category` gap named here is now **closed by the Categories⇄Balance feature (§1.2)**.
 
@@ -133,7 +133,7 @@ graph TB
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
             Cron["Croner Jobs<br/>18 cron jobs (19 kinds)"]
-            Migrate["Migration runner<br/>0001–0135 on boot"]
+            Migrate["Migration runner<br/>0001 → head on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
         SW["Service Worker<br/>Web Push + offline shell"]
@@ -192,8 +192,8 @@ Companion-Planning/
 ├── server/
 │   └── src/
 │       ├── db/
-│       │   ├── migrations/   0001_baseline → 0135_categories_capture (0119 is an
-│       │   │                 intentional gap — see index.ts; do not "fix" it)
+│       │   ├── migrations/   0001_baseline → head, ordered in index.ts (0119 is an
+│       │   │                 intentional gap — do not "fix" it)
 │       │   └── index.ts      BetterSqlite3 open + uuid7 UDF + runMigrations
 │       ├── engine/           autoplan · review · reflow (auto-defense) · flight-plan
 │       ├── routes/           REST controllers (one file per resource)
@@ -250,7 +250,7 @@ erDiagram
 | Table | Purpose | Added |
 |---|---|---|
 | `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103) | 0001, 0101, 0103 |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2) | 0001, 0135 |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_mood`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137) | 0001, 0135, 0137 |
 | `task_dependencies` | Blocked-by edges between tasks | 0005 |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | 0007 |
 | `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099). `category_id`/`color_token` (0069) are legacy reads only — writes go through `entity_categories` (0134/§1.2); `texture_enabled`/`texture_color_token` (0135) per-element override | 0015, 0099, 0135 |
@@ -289,7 +289,8 @@ erDiagram
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | 0080, 0088 |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync. **Archive (0129):** `archived_at` (non-null ⇒ soft-deleted, absent from the live tree, `status` untouched), `archive_root_id` (the node whose archiving cascaded to this row; NULL on the root), `purge_after` (absolute reap deadline; server-owned — never client-authored) + `ix_objectives_purge_after`. See §1.1 | 0081, 0085, 0086, 0087, 0129 |
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
-| `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107) | 0083, 0107 |
+| `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107). Regenerable rollup — replaced wholesale each run | 0083, 0107 |
+| `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) from the same job; never recomputed or pruned | 0138 |
 | `daily_recap` | One row per `(owner, date)`: the day-briefing cache (`prose`/`stats`/`focus`/`inputs_hash`) + the frozen five-star score (`star_*`/`total`/`frozen_at`); today lives, past days permanent once frozen. Merged `daily_summaries` + `day_stars` | 0089, 0094, 0096 |
 
 ---
