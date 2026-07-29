@@ -29,6 +29,25 @@ client.
 [docs/ROADMAP.md](docs/ROADMAP.md) is the authoritative plan for future phases.
 SQLite is the single source of truth for data.
 
+## Quick start
+
+From a source checkout (Node ≥ 22 + pnpm):
+
+```bash
+corepack enable    # activates the pinned pnpm version
+pnpm install
+pnpm dev           # API server on :3848 + client dev server on :5173
+```
+
+Open **<http://localhost:5173>**. A dev run needs **no configuration and no login**
+(`AUTH_MODE=test` is the default outside production), and the AI features simply stay
+hidden until a local [Ollama](https://ollama.com) is reachable. In VS Code, the same
+thing is one keypress: open the repo folder and press **F5** (*Full stack (pnpm dev)*).
+
+The full guide — prerequisites, `server/.env`, the VS Code launch configurations, seed
+data, Ollama, production-style runs — is in **[Local development](#local-development)**.
+Prefer a container? See **[Run with Docker](#run-with-docker-ci-hub)**.
+
 ## Interface
 
 A screen-by-screen tour of the SolidJS PWA, on the
@@ -667,16 +686,108 @@ volume at `/data` (as above) and your tasks survive container recreation.
 
 ## Local development
 
-Runtime requirements:
+### Prerequisites
 
-- Node.js `>=22` (developed on 26; the Docker image ships Node 26)
-- pnpm `>=11 <12`
+- **Node.js `>=22`** (developed on 26; the Docker image ships Node 26)
+- **pnpm `>=11 <12`** — easiest via Corepack: `corepack enable` activates the exact
+  version pinned in `package.json`, no global install
+- **Ollama** (optional) — only for the AI features; everything else runs without it
+
+The repo is a two-package pnpm workspace: `server/` (Koa + TypeScript API) and
+`client/` (SolidJS + Vite PWA).
+
+### 1. Install
 
 ```bash
+git clone https://github.com/companionintelligence/Companion-Planning.git
+cd Companion-Planning
 corepack enable
 pnpm install
-pnpm dev          # server :3848 + Vite client :5173 (proxies /api)
 ```
+
+### 2. Configure (optional — dev runs with zero config)
+
+The dev defaults are deliberately friction-free: `AUTH_MODE=test` signs every request
+in as a local system owner (no login screen — never expose a dev instance beyond
+localhost), and every integration (Google, memory, Web Push) stays off until you
+configure it. To override anything, copy the annotated env template — the server
+auto-loads `server/.env` on start:
+
+```bash
+cp server/.env.example server/.env    # gitignored; every variable documented inline
+```
+
+The one variable Windows and Linux users should set right away is **`DB_PATH`** —
+where the single SQLite database lives. Unset, it falls back to
+`~/Library/Application Support/CompanionPlanning/companion.db` (the macOS
+convention; on other platforms this still works but drops a `Library/` folder in
+your home directory). Point it somewhere sensible in `server/.env`:
+
+```ini
+# server/.env
+DB_PATH=C:\Users\you\CompanionPlanning\companion.db    # Windows
+# DB_PATH=/home/you/.local/share/companion-planning/companion.db   # Linux
+```
+
+The containing directory is created automatically, and migrations run on every
+server boot — a fresh install just works.
+
+### 3. Run
+
+```bash
+pnpm dev
+```
+
+This starts both halves concurrently:
+
+| Process | Port | What it is |
+|---|---|---|
+| `server` | **3848** | Koa API, under `tsx watch` (restarts on file change) |
+| `client` | **5173** | Vite dev server with HMR, proxying `/api` → `:3848` |
+
+**Open <http://localhost:5173>** — that is the app in dev mode. Port `3848` serves
+the API plus whatever client build was last written to `server/public/`; in dev use
+it only for direct API calls (e.g. `curl http://localhost:3848/api/health`).
+
+To run the halves in separate terminals instead:
+
+```bash
+pnpm --filter server dev
+```
+
+```bash
+pnpm --filter client dev
+```
+
+The client respects `VITE_PORT` (dev-server port) and `VITE_API_TARGET` (proxy
+target) when you need a second instance or a non-local API.
+
+### Launching from VS Code
+
+Open the repo folder in VS Code. [.vscode/launch.json](.vscode/launch.json) ships
+four entries in the **Run and Debug** panel (`Ctrl+Shift+D`) — pick one and press
+**F5**:
+
+| Configuration | What it does |
+|---|---|
+| **Full stack (pnpm dev)** | Runs `pnpm dev` in the integrated terminal with the JS debugger auto-attached to the spawned Node processes. The everyday choice. |
+| **Server (debug)** | API server alone under the debugger (via `tsx`) — breakpoints in `server/src/**/*.ts` hit directly, no build step. |
+| **Client (Vite dev)** | Vite dev server alone. |
+| **Server (debug) + Client** | Compound of the two above — full stack with server-side breakpoints. |
+
+The server configurations load `server/.env` automatically when it exists, exactly
+like the CLI scripts. For client code, use the browser dev-tools (Vite serves source
+maps) or attach a browser-debug session to `http://localhost:5173`.
+
+### 4. Seed data (optional)
+
+Want a populated app to explore? Seed ~100 tasks from the bundled fixtures:
+
+```bash
+pnpm seed         # uses Ollama extraction when available, deterministic otherwise
+```
+
+### 5. Ollama (optional — enables the AI features)
 
 AI features (briefings, extraction, grooming, dedupe) are **optional** and need a
 local [Ollama](https://ollama.com) — the app degrades gracefully without it. To
@@ -694,17 +805,31 @@ Already have other models? Skip the pulls and set `OLLAMA_SMALL` / `OLLAMA_MEDIU
 at `GET /api/llm/status` (`available` + installed `models`). A model that's configured
 but not pulled fails with an actionable `ollama pull …` error.
 
-Production-style run (build client into `server/public`, serve everything on 3848):
+### Production-style run
+
+Build the client into `server/public/` and serve API + UI from the one Koa process
+on **3848** — the same shape as the Docker image:
 
 ```bash
 pnpm build && pnpm --filter server start
 ```
 
-Want a populated app to explore? Seed ~100 tasks from the bundled fixtures:
+### Script reference
 
-```bash
-pnpm seed         # uses Ollama extraction when available, deterministic otherwise
-```
+All from the repo root:
+
+| Command | Purpose |
+|---|---|
+| `pnpm dev` | Server (`:3848`) + client (`:5173`) concurrently |
+| `pnpm build` | Build the client into `server/public/` |
+| `pnpm start` | Build, then serve API + UI on `:3848` |
+| `pnpm test` | Server vitest suite |
+| `pnpm --filter client test` | Client vitest (unit + jsdom projects) |
+| `pnpm typecheck` | Server `tsc --noEmit` |
+| `pnpm seed` | Seed ~100 fixture tasks into the dev DB |
+| `pnpm migrate` | Apply migrations explicitly (they also run on every server boot) |
+| `pnpm --filter server snapshot` | Point-in-time DB backup into `<DB_DIR>/backups/` |
+| `pnpm --filter server restore -- <file>` | Restore a snapshot (server stopped) |
 
 ## HTTP API
 

@@ -1,17 +1,46 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    // Local launch configurations — documented in README.md → "Local development".
     "version": "0.2.0",
     "configurations": [
         {
+            // Everything at once: API server (:3848) + Vite client (:5173) — same as
+            // running `pnpm dev` in a terminal, with the JS debugger auto-attached to
+            // the Node processes it spawns. The everyday choice.
+            "type": "node-terminal",
+            "request": "launch",
+            "name": "Full stack (pnpm dev)",
+            "command": "pnpm dev",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            // API server alone, under the debugger via tsx — breakpoints in
+            // server/src/**/*.ts hit directly, no build step. Loads server/.env
+            // when present, same as the CLI scripts.
             "type": "node",
             "request": "launch",
-            "name": "Launch Program",
-            "skipFiles": [
-                "<node_internals>/**"
-            ],
-            "program": "${file}"
+            "name": "Server (debug)",
+            "cwd": "${workspaceFolder}/server",
+            "program": "${workspaceFolder}/server/src/index.ts",
+            "runtimeArgs": ["--import", "tsx", "--env-file-if-exists=.env"],
+            "console": "integratedTerminal",
+            "skipFiles": ["<node_internals>/**"]
+        },
+        {
+            // Vite dev server alone (pair with "Server (debug)", or an API server
+            // already running elsewhere).
+            "type": "node-terminal",
+            "request": "launch",
+            "name": "Client (Vite dev)",
+            "command": "pnpm --filter client dev",
+            "cwd": "${workspaceFolder}"
+        }
+    ],
+    "compounds": [
+        {
+            // Full stack with server-side breakpoints.
+            "name": "Server (debug) + Client",
+            "configurations": ["Server (debug)", "Client (Vite dev)"],
+            "stopAll": true
         }
     ]
 }
