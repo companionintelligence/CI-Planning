@@ -1,6 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { suggestTags } from '../agents/tags.js';
-import { resolveTagId } from './tags.js';
+import { resolveTagId, suggestibleVocabulary } from './tags.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -41,16 +41,11 @@ export function mergeTags(llm: string[], heuristic: string[], vocabulary: string
   return out;
 }
 
-/** A tag the auto-tagger may apply: its name plus the taxonomy kind that sets its level. */
-interface VocabTag { name: string; kind: string }
-
-// Category-kind tags are excluded at the SOURCE rather than dropped downstream: a
-// category is an orthogonal axis stored in entity_categories, never in entity_tags, so a
-// category suggestion could only ever be discarded — and offering one to the model just
-// spends tokens on an answer we can't use. Muted tags are out for the obvious reason.
-const selectVocab = sqlite.prepare(
-  `SELECT name, kind FROM tags WHERE owner_id = ? AND muted = 0 AND kind != 'category' ORDER BY name`,
-);
+// Vocabulary now comes from the shared `suggestibleVocabulary` (services/tags.ts), which
+// owns the muted rule for every suggester. Category-kind tags are dropped HERE rather
+// than there: a category is an orthogonal axis stored in entity_categories, never in
+// entity_tags, so a category suggestion could only ever be discarded — and offering one
+// to the model just spends tokens on an answer we can't use.
 
 // Only top-level, non-recurrence, open tasks — mirrors AllTasks.tsx baseList filter.
 // NOT EXISTS on entity_tags is the idempotency gate: tasks that already have tags are
@@ -117,15 +112,18 @@ export interface AutoTagResult {
  *   replaces existing user-applied tags.
  */
 export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Promise<AutoTagResult> {
-  const vocab = selectVocab.all(ownerId) as VocabTag[];
-  if (vocab.length === 0) {
+  const vocab = suggestibleVocabulary(ownerId);
+  // `directions` doubles as the prompt's semantic grounding (see agents/tags.ts) and as
+  // the level-1 key below; `others` are the intentions that land at level 2.
+  const directions = vocab.directions;
+  const names = [...directions, ...vocab.others];
+  if (names.length === 0) {
     return { tagged: 0, total: 0, taggedIds: [], log: 'No tag vocabulary yet; skipped' };
   }
-  const names = vocab.map((v) => v.name);
-  const kindOf = new Map(vocab.map((v) => [v.name, v.kind]));
-  // The direction names, handed to the prompt so it classifies the life area semantically
-  // instead of string-matching the whole flat list (see agents/tags.ts).
-  const directions = vocab.filter((v) => v.kind === 'direction').map((v) => v.name);
+  const kindOf = new Map<string, string>([
+    ...directions.map((n) => [n, 'direction'] as const),
+    ...vocab.others.map((n) => [n, 'intention'] as const),
+  ]);
 
   // The scope filter runs in JS rather than as an IN-list: the id set comes from a client
   // view of unbounded size, and binding it would blow SQLite's bound-parameter cap.

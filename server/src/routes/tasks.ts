@@ -19,7 +19,7 @@ import { requestReplan } from '../engine/auto-defense.js';
 import { placeStartAnchoredTask, type StartAnchoredOutcome } from '../engine/autoplan.js';
 import { computeStreak } from '../engine/recurrence-ops.js';
 import { objectiveIdsByTaskIds, ensureTaskPromoted } from '../services/task-promotion.js';
-import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, splitNamesByDirection, entityCategoryNames, entityCategoryNamesByIds } from '../services/tags.js';
+import { taskTagNames, taskTagNamesByIds, taskSecondaryTagNamesByIds, splitNamesByDirection, entityCategoryNames, entityCategoryNamesByIds, suggestibleVocabulary } from '../services/tags.js';
 import {
   createTask, createRecurringTask, updateTask, deleteTask,
   promoteToHabit, recallTask, skipRecurringInstance,
@@ -146,22 +146,10 @@ export function tasksRouter() {
     ctx.body = { task: out, ...(placement ? { placement } : {}) };
   });
 
-  // The owner's tag vocabulary, split by kind, for the quick-add enrichment overlay:
-  // the model classifies a direction (Work/Home/Community) and up to two existing
-  // secondary tags, constrained to these lists — it can never invent a tag.
-  function quickVocab(owner: string) {
-    const rows = sqlite
-      .prepare(`SELECT name, kind FROM tags WHERE owner_id = ? ORDER BY name`)
-      .all(owner) as { name: string; kind: string }[];
-    return {
-      directions: rows.filter((r) => r.kind === 'direction').map((r) => r.name),
-      // Phase B: categories are their OWN classifier axis — carved out of `others`
-      // so a category name can never be mis-filed as an intention secondary tag.
-      categories: rows.filter((r) => r.kind === 'category').map((r) => r.name),
-      others: rows.filter((r) => r.kind !== 'direction' && r.kind !== 'category').map((r) => r.name),
-    };
-  }
-
+  // The quick-add enrichment overlay draws from the SHARED suggestible vocabulary
+  // (services/tags.ts): direction / category / other, muted excluded. Its split-by-kind
+  // shape is exactly QuickVocab's, so it passes straight through — and quick-add now
+  // honours a mute the same way the nightly sweep always has.
   // POST /api/tasks/quick/parse — T14 (#350): the parse-only twin of /tasks/quick.
   // ZERO writes — the wizard's NL line (typed or spoken) previews the parse by
   // hydrating its own form fields, and the user approves via the wizard's Add
@@ -181,7 +169,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, quickVocab(currentOwnerId())); // additive overlay
+      enriched = await enrichQuick(text, parsed, suggestibleVocabulary(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -203,7 +191,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, quickVocab(currentOwnerId())); // additive overlay
+      enriched = await enrichQuick(text, parsed, suggestibleVocabulary(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -376,15 +364,15 @@ export function tasksRouter() {
   // The bulk sweep is /auto-tag below — do NOT rebuild it by looping this endpoint.
   router.post('/api/tasks/suggest-tags', async (ctx) => {
     const { title } = (ctx.request.body ?? {}) as { title?: string };
-    // `kind` rides along so the prompt can name the direction axis and define it — the
-    // wizard path gets the same grounding as the bulk sweep (services/auto-tag.ts).
-    const rows = sqlite
-      .prepare('SELECT name, kind FROM tags WHERE owner_id = ? ORDER BY name')
-      .all(currentOwnerId()) as { name: string; kind: string }[];
+    // Shared suggestible vocabulary: muted excluded, and CATEGORIES excluded from the
+    // offered list — a category lives in entity_categories, never entity_tags, so a
+    // category pick here could only ever be discarded (same rule as the bulk sweep).
+    // `directions` rides along separately so the prompt can name and define the axis.
+    const vocab = suggestibleVocabulary(currentOwnerId());
     const tags = await suggestTags(
       title ?? '',
-      rows.map((r) => r.name),
-      rows.filter((r) => r.kind === 'direction').map((r) => r.name),
+      [...vocab.directions, ...vocab.others],
+      vocab.directions,
     );
     ctx.body = { tags };
   });
