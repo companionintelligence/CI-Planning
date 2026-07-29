@@ -14,6 +14,12 @@ server/dist/
 config.local.json
 *.plist
 .codex/
+# The local data dir. `.data/` below has never matched anything — the app's actual
+# default is `data/`: local dev points DB_PATH at ./data/companion.db, and the container
+# uses /data/companion.db (Dockerfile). The *.db rules above already cover the databases
+# themselves, so this is what keeps the directory's OTHER contents — WAL/shm leftovers,
+# fuse strays from interrupted writes — out of `git status` permanently.
+data/
 .data/
 test-results/
 playwright-report/
