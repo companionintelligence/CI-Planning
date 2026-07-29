@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
-import type { Reminder, Task } from '../lib/api.js';
+import type { Reminder, Task, Block } from '../lib/api.js';
 
 /**
  * FocusReminders (#388) — the contracts worth pinning:
@@ -22,6 +22,7 @@ vi.mock('../lib/api.js', () => ({
 
 const [remindersSig, setRemindersSig] = createSignal<Reminder[]>([]);
 const [tasksSig, setTasksSig] = createSignal<Task[]>([]);
+const [blocksSig, setBlocksSig] = createSignal<Block[]>([]);
 const refetchRemindersMock = vi.fn();
 const toastMock = vi.fn();
 vi.mock('../stores/index.js', () => ({
@@ -29,7 +30,7 @@ vi.mock('../stores/index.js', () => ({
   refetchReminders: () => refetchRemindersMock(),
   tasks: () => tasksSig(),
   taskOf: (id: string) => tasksSig().find((t) => t.id === id),
-  blocks: () => [],
+  blocks: () => blocksSig(),
   showToast: (...a: unknown[]) => toastMock(...a),
 }));
 vi.mock('../lib/dates.js', () => ({ localISODate: () => '2026-07-19' }));
@@ -52,6 +53,7 @@ describe('FocusReminders — list, create, delete', () => {
     toastMock.mockReset();
     setRemindersSig([]);
     setTasksSig([TASK]);
+    setBlocksSig([]);
   });
 
   it('zero reminders → only the Add-reminder pill renders (no card chrome)', () => {
@@ -87,6 +89,55 @@ describe('FocusReminders — list, create, delete', () => {
     expect('fireAt' in (createMock.mock.calls[0][0] as Record<string, unknown>)).toBe(false);
     await waitFor(() => expect(refetchRemindersMock).toHaveBeenCalled());
     expect(screen.queryByText('Remind me')).toBeNull(); // form collapsed back to the pill
+  });
+
+  // ── Backlog-3 day-filter (#418): the picker offers TODAY's tasks only ──────────
+  const BLOCK = (over: Partial<Block> = {}): Block =>
+    ({ id: 'b1', task_id: 't1', status: 'planned', ...over } as unknown as Block);
+
+  const pickerOptions = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll('select option')).map((o) => o.textContent);
+
+  it('picker excludes tasks scheduled for another day', () => {
+    setTasksSig([
+      TASK, // scheduled today
+      { id: 't2', title: 'Someday task', status: 'open', scheduled_for: '2026-08-01' } as unknown as Task,
+    ]);
+    const { container } = render(() => <FocusReminders />);
+    fireEvent.click(screen.getByText('Add reminder'));
+    const opts = pickerOptions(container);
+    expect(opts).toContain('Write report');
+    expect(opts).not.toContain('Someday task');
+  });
+
+  it('picker INCLUDES a task not scheduled today but holding a live block today', () => {
+    setTasksSig([{ id: 't9', title: 'Blocked-in task', status: 'open', scheduled_for: '2026-08-01' } as unknown as Task]);
+    setBlocksSig([BLOCK({ task_id: 't9' })]);
+    const { container } = render(() => <FocusReminders />);
+    fireEvent.click(screen.getByText('Add reminder'));
+    expect(pickerOptions(container)).toContain('Blocked-in task');
+  });
+
+  it('picker excludes a task whose only block today is terminal (completed/cancelled)', () => {
+    setTasksSig([{ id: 't9', title: 'Done-block task', status: 'open', scheduled_for: '2026-08-01' } as unknown as Task]);
+    setBlocksSig([BLOCK({ task_id: 't9', status: 'completed' })]);
+    const { container } = render(() => <FocusReminders />);
+    fireEvent.click(screen.getByText('Add reminder'));
+    expect(pickerOptions(container)).not.toContain('Done-block task');
+  });
+
+  it('picker excludes tasks that are done/cancelled even when scheduled today', () => {
+    setTasksSig([{ id: 't3', title: 'Finished task', status: 'done', scheduled_for: '2026-07-19' } as unknown as Task]);
+    const { container } = render(() => <FocusReminders />);
+    fireEvent.click(screen.getByText('Add reminder'));
+    expect(pickerOptions(container)).not.toContain('Finished task');
+  });
+
+  it('no tasks on today\'s plate → the form shows the empty-day hint', () => {
+    setTasksSig([{ id: 't2', title: 'Someday task', status: 'open', scheduled_for: '2026-08-01' } as unknown as Task]);
+    render(() => <FocusReminders />);
+    fireEvent.click(screen.getByText('Add reminder'));
+    expect(screen.getByText(/Nothing on today's plate yet/i)).toBeTruthy();
   });
 
   it("a 422 surfaces the server's message via toast and keeps the form open", async () => {
