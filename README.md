@@ -129,7 +129,7 @@ graph TB
         GQL[GraphQL /api/graphql<br/>Apollo, alongside REST — Phase W]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>18 cron jobs · 19 kinds]
+        Cron[Croner Jobs<br/>19 cron jobs · 20 kinds]
         Migrate[Migration runner<br/>0001 → head on boot]
     end
 
@@ -312,11 +312,11 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   window** to change your mind — reaped hourly only once that deadline passes
 - **Life priorities + balance** — a Priorities wizard rates each life category on satisfaction
   and importance and sets a target hours/week (sleep is reserved first, so the pool is real).
-  The Balance dashboard reads that self-audit back: a **Balance Index** of how far your
-  satisfaction tracks what you said matters most, plus your allocated weekly targets per
-  category. It reports **stated intent, not measured time** — actual-vs-target tracking
-  doesn't exist yet, but each dimension's card now shows an **"N open"** button → the
-  tasks you've filed under it
+  The Balance dashboard reads that self-audit back on its **Balance** tab: a **Balance
+  Index** of how far your satisfaction tracks what you said matters most, plus your
+  allocated weekly targets per category, and an **"N open"** button per dimension → the
+  tasks you've filed under it. That tab is **stated intent**; the **Metrics** tab beside
+  it is **measured reality** — see below
 - **Categories, unified with Balance** — tasks and time blocks can carry **1–3 categories**
   (the same six Balance dimensions — health/career/relationships/growth/leisure/finance —
   picked in the Add/Edit wizard, or best-guessed by the natural-language quick-add). A
@@ -326,6 +326,30 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   toggle it off or override the colour per element. Adding/removing which six categories
   exist is deliberately locked for now (a feature flag, off); renaming and recolouring stay
   open
+- **Close ritual** — finish a task and an optional sheet asks how it went: a **mood face**
+  (Good · Fine · Frustrated · Stressed — a face answers honestly and instantly where a
+  1–5 self-score invites deliberation), a closing note, and how long it really took
+  (pre-filled from the timer, so the common case is *confirm*, not *compute*). Entirely
+  skippable — the checkbox already completed the task, and dismissing writes nothing. The
+  reflection is stamped with its own `reaction_at`, deliberately **not** `completed_at`:
+  the gap between them is signal, since a reflection written now reads the work more
+  accurately than one reconstructed days later
+- **Balance → Metrics** — the measured counterpart to the stated-intent Balance tab, over a
+  7 / 30 / 90-day window and both axes you think in (direction: Work / Home / Community;
+  category: the six life dimensions). Task counts and timed minutes come from real rows,
+  the mood mix only from tasks closed with the ritual, and estimate bias is the median
+  actual/estimated with a 3-sample floor. Where there's no data a tile says so instead of
+  rendering a confident zero — an empty axis and a genuinely balanced one must never look
+  alike
+- **Calibration history** — the weekly bias rollup is regenerable (replaced wholesale each
+  run, so a scope whose samples vanish stops serving stale numbers), which makes it useless
+  for "am I getting better?". So each run also appends one immutable row per (scope, day)
+  to a history table that is never recomputed and never pruned, keeping the trend intact
+- **Memory enrichment** — a per-task ✨ button (and a nightly `enrich_tasks` job) fills in a
+  thin task from your Companion Memory: description, direction, categories. It only ever
+  **fills blanks** — it never rewrites your own description or overrides a direction you
+  chose — and when it can't help it says why ("memory is off", "nothing related") rather
+  than silently no-opping
 - **Reminders, scoped to today** — the Focus view's reminder picker only offers tasks
   actually on today's plate (scheduled for today, or already placed in a time block today)
 - **Accounts + auth** — CI-Portal OIDC (OAuth 2.1 + PKCE) or local username/password, with
@@ -356,10 +380,10 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   end of each run (Phase AF); they land in the **New Today** section at the top of the
   Tasks view, and the staging rows are kept as an audit/dedup trail
 - **Background jobs** — Gmail / Calendar ingest, nightly grooming (embedding-based
-  dedupe), auto-schedule, and the hourly `purge_objectives` reaper; all visible and
-  manually runnable from the Jobs view. (Possible-task promotion no longer has a
-  scheduled row — Phase AF made ingestion auto-promote; `nightly_grooming` subsumes
-  the sweep. The kind stays runnable programmatically.)
+  dedupe), auto-schedule, memory enrichment, and the hourly `purge_objectives` reaper;
+  all visible and manually runnable from the Jobs view. (Possible-task promotion no
+  longer has a scheduled row — Phase AF made ingestion auto-promote; `nightly_grooming`
+  subsumes the sweep. The kind stays runnable programmatically.)
 - **AI day briefing** — Ollama-authored when available, deterministic template
   otherwise; the UI labels it honestly ("AI Briefing" vs. "Day Overview")
 - **Reminders & Web Push** — per-pattern reminder offsets generate reminders that a
@@ -494,9 +518,10 @@ consistent snapshot.
 - Notifications: a `reminders` store + 1-minute `fire_reminders` dispatcher (exactly-once),
   delivered in-app via SSE and via Web Push (VAPID) to subscribed devices; reminders are
   auto-derived from per-pattern reminder offsets, with a Settings opt-in toggle and snooze
-- Croner jobs: 18 cron-scheduled kinds — Gmail ingest, Calendar ingest, nightly
-  grooming/dedupe, auto-schedule, fire_reminders, purge_objectives, and the rest
-  (`promote_possibles` and `place_patterns` were retired by 0118 / 0026)
+- Croner jobs: 19 cron-scheduled rows out of 20 executable kinds — Gmail ingest,
+  Calendar ingest, nightly grooming/dedupe, auto-schedule, `enrich_tasks`,
+  fire_reminders, purge_objectives, and the rest. `promote_possibles` is the kind with
+  no cron row (runnable on demand only); `place_patterns` was retired by 0026
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: direction / intention hierarchy with many-to-many grouping
@@ -504,7 +529,9 @@ consistent snapshot.
 - **Reflections / FOCUS card** — today focus + up to 3 weekly goals per ISO week, each optionally linked (`source_kind`/`source_ref`) to a Task or Objective, with category color stripes and done/undone toggling; a **Today's Brief** pop-up carries the AI/deterministic prose + capacity + top tasks that used to be the standalone Morning Briefing section
 - **Day note + five-star day** (Phase O) — one note per day (`reflections.kind='day_note'`, PK-enforced uniqueness); `computeStars()` derives 5 booleans (intention/habits/tasks/bonus/reflection) with zero manual toggles, cached in `daily_recap` and frozen permanently by the nightly `freeze_stars` job; `GET /api/stars` serves the frozen row over a live recompute
 - **Weekly Review** — scheduled/focus minutes, capacity bar, completion rate, and calibration bias insight
-- **Estimate calibration** — weekly `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review
+- **Estimate calibration** — weekly `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review. The same run appends an immutable per-(scope, day) row to `calibration_history` (0138), so the regenerable rollup can keep being replaced without destroying the trend
+- **Close ritual + Balance Metrics** (0137/0138) — an optional post-completion sheet (mood face · note · real duration, stamped with its own `reaction_at`) feeding a measured **Metrics** tab on `/balance`: counts, timed minutes, mood mix, and estimate bias per direction and per category over 7/30/90 days, served by `GET /api/metrics/tasks` + `/api/metrics/calibration`
+- **Memory enrichment** (0136) — `POST /api/tasks/:id/enrich` (the task-card ✨ button) and the nightly `enrich_tasks` job fill blank description/direction/categories from Companion Memory; fill-blanks-only, and it reports an honest reason when it can't help
 - **Recurrence horizon + Clear Date Range** (Phase P) — `recurrence_horizon_days` bounds materialization in both recurrence engines (patterns + blocks); lowering it auto-prunes via a shared `clearPlannerRange` engine, which also backs `POST /api/planner/clear` (dry-run preview, DB snapshot on apply) and the original `clear-planner-from.ts` CLI script
 - **Multi-device sync** — field-level merge, `sync_events` append-only log, `Last-Event-ID` SSE catch-up; `POST /api/sync` applies offline op-log entries
 - **GraphQL CRUD layer** (Phase W) — a complete Apollo Server 5 surface at `POST /api/graphql` alongside REST (REST authoritative/untouched); Relay-style connections, `Node`/`DateTime`/`JSON` conventions, shared owner-scoped service layer, flag-gated GraphiQL sandbox
@@ -704,8 +731,8 @@ The repo is a two-package pnpm workspace: `server/` (Koa + TypeScript API) and
 ### 1. Install
 
 ```bash
-git clone https://github.com/companionintelligence/Companion-Planning.git
-cd Companion-Planning
+git clone https://github.com/companionintelligence/CI-Planning.git
+cd CI-Planning
 corepack enable
 pnpm install
 ```
@@ -729,13 +756,15 @@ convention; on other platforms this still works but drops a `Library/` folder in
 your home directory). Point it somewhere sensible in `server/.env`:
 
 ```ini
-# server/.env
-DB_PATH=C:\Users\you\CompanionPlanning\companion.db    # Windows
-# DB_PATH=/home/you/.local/share/companion-planning/companion.db   # Linux
+# server/.env — the conventional local-dev choice: `data/` is gitignored, so WAL
+# and shm leftovers never show up in `git status`
+DB_PATH=./data/companion.db
 ```
 
-The containing directory is created automatically, and migrations run on every
-server boot — a fresh install just works.
+Any absolute path works too (`C:\Users\you\CompanionPlanning\companion.db`,
+`/home/you/.local/share/companion-planning/companion.db`). The containing directory
+is created automatically, and migrations run on every server boot — a fresh install
+just works.
 
 ### 3. Run
 
@@ -844,6 +873,8 @@ All from the repo root:
 | POST | `/api/tasks` | Create a task (`title` required) |
 | PATCH | `/api/tasks/:id` | Update fields; `{"completed": true}` marks done |
 | DELETE | `/api/tasks/:id` | Soft delete (status → `cancelled`) |
+| POST | `/api/tasks/:id/close` | Record the close ritual on an already-completed task (mood · note · actual minutes); stamps `reaction_at` server-side |
+| POST | `/api/tasks/:id/enrich` | Fill blank description / direction / categories from Companion Memory; always resolves — `enriched:false` carries the reason |
 | GET | `/api/tasks/:id/subtasks` | List subtasks |
 | GET/POST/PATCH/DELETE | `/api/blocks` | Time blocks for a date range |
 | GET/POST/DELETE | `/api/block-templates` | Reusable Time-Block templates |
@@ -884,6 +915,7 @@ All from the repo root:
 | GET/POST | `/api/priorities` | Life-priorities self-audit — backs `/priorities` + `/balance` |
 | GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
 | GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
+| GET | `/api/metrics/tasks` · `/api/metrics/calibration` | Balance → Metrics: measured counts, timed minutes, mood mix, and estimate bias per direction / category over a 7 / 30 / 90-day window |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
