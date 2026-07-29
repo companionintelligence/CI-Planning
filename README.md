@@ -111,7 +111,7 @@ graph TB
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
         Cron[Croner Jobs<br/>18 cron jobs · 19 kinds]
-        Migrate[Migration runner<br/>0001 → 0130 on boot]
+        Migrate[Migration runner<br/>0001 → head on boot]
     end
 
     subgraph Data["Data Layer"]
@@ -171,7 +171,7 @@ BetterSqlite3(config.dbPath)        // synchronous open — SQLite single-writer
   .function('uuid7', () => newId()) // UDF for raw-SQL inserts (CON-1 UUIDv7 identity)
 
 runMigrations(sqlite)               // sequential, idempotent — applies any unapplied
-                                    // migrations from the 0001–0130 ordered list
+                                    // migrations from the ordered MIGRATIONS list
 drizzle(sqlite, { schema })         // exports `db` used by all route handlers
 ```
 
@@ -182,12 +182,15 @@ no `.sql` files, no external tool.
 
 ### Schema overview
 
-Migrations (current head: `0135_categories_capture`) produce the following tables:
+Migrations produce the tables below. The authoritative, ordered migration list — and
+therefore the current head — is
+[`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
+of writing (2026-07-29) the head is `0138_calibration_history`.
 
 | Table | Purpose |
 |---|---|
 | `owners` | User identity — `role` drives scopes (0125): `operator` (R+W+A) · `member` (R+W) · `viewer` (R) |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype; `texture_enabled`/`texture_color_token` (0135) per-element striped-texture override |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype; `texture_enabled`/`texture_color_token` (0135) per-element striped-texture override; close-ritual columns `completion_mood`/`completion_note`/`reaction_at` (0137, all nullable — the ritual is optional) |
 | `task_dependencies` | Blocked-by edges between tasks |
 | `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support; same `texture_enabled`/`texture_color_token` override (0135); legacy `category_id`/`color_token` (0069) are read-only now — writes go through `entity_categories` |
 | `block_templates` | Reusable Time-Block templates with saved task lists |
@@ -228,6 +231,7 @@ Migrations (current head: `0135_categories_capture`) produce the following table
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087). **Archive (0129):** `archived_at` soft-delete + `archive_root_id` (cascade unit) + `purge_after` (48h reap deadline) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083; scope columns 0107) |
+| `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) written by the same job; the rollup above is regenerable, this table is never recomputed or pruned (0138) |
 | `copy_history` | Time-Sense voice-loop anti-repetition log — not included in owner export (0109) |
 
 ## See it in action
@@ -445,13 +449,14 @@ consistent snapshot.
 **Working today:**
 
 - Koa + TypeScript backend serving both the API and the built client on port 3848
-- SQLite schema (migrations 0001–0130): tasks, subtasks, time blocks, tags,
-  entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs, flight_plan,
-  daily_plan, daily_recap, possible_tasks, scheduling_prefs, time_entries,
-  block_templates, scheduled_jobs, reminders, push_subscriptions,
+- SQLite schema (migrations 0001 → current head — the ordered list in
+  `server/src/db/migrations/index.ts` is authoritative): tasks, subtasks, time
+  blocks, tags, entity_tags, tag_directions, patterns, pattern_blocks, tag_prefs,
+  flight_plan, daily_plan, daily_recap, possible_tasks, scheduling_prefs,
+  time_entries, block_templates, scheduled_jobs, reminders, push_subscriptions,
   replan_suggestions, audit_log, sync_events, reflections, objectives,
-  objective_tasks, estimate_calibration, connection_tokens, external_events,
-  copy_history
+  objective_tasks, estimate_calibration, calibration_history, connection_tokens,
+  external_events, copy_history
 - All nine routed SolidJS views, with full task CRUD (tags, notes, priorities, due
   date/time, subtasks)
 - Deterministic auto-scheduler honoring work hours, pattern blocks, locked meetings,
