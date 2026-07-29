@@ -1,15 +1,17 @@
 # Companion Planning — Best-in-Class Roadmap (v2, resequenced)
 
-> ## ⚠️ Current status (2026-07-19, migration head **0132**)
+> ## ⚠️ Current status (2026-07-29, migration head **0138**)
 >
 > **Read this box, not the archaeology below.** The status paragraph that follows is a
 > stack of dated "Update:" parentheticals and **contradicts itself on the migration head
 > (it says 0126, 0117 and 0112 in three places) and on naming-Z W4 (both "planned/unbuilt"
 > and "shipped")**. It is kept for history. Where they disagree, this box wins.
 >
-> - **Migration head: `0132_owner_onboarded`** (0131 `planning_sessions`, 0132 T11's onboarding
->   flag; 0119 is an intentional gap — see `server/src/db/migrations/index.ts`). Every
->   "head = 0112/0117/0126/0130" claim below is stale.
+> - **Migration head: `0138_calibration_history`** (0133–0138: item colors, the
+>   Categories⇄Balance re-seed + capture, the enrich-tasks job, the close ritual,
+>   calibration history; 0119 stays an intentional gap). The authoritative ordered list is
+>   `server/src/db/migrations/index.ts` — whenever this box next goes stale, that file wins.
+>   Every "head = 0112/0117/0126/0130" claim below is stale.
 > - **Phases A–AG: shipped.** Naming-Z **W4 is shipped** (mig 0123); **W1** (`patterns`→`routines`)
 >   remains the only unbuilt naming item.
 > - **Post-AG, no phase letter** (see ARCHITECTURE §1.1):
