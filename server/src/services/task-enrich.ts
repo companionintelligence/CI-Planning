@@ -4,7 +4,7 @@ import { graphSearch, memoryMode, type MemoryNode } from '../connectors/memory.j
 import { directionGuide } from '../agents/rubric.js';
 import {
   resolveTagId, taskHasLevel1Direction,
-  entityCategoryIds, categoryIdsForOwner, setEntityCategories,
+  entityCategoryIds, categoryIdsForOwner, setEntityCategories, suggestibleVocabulary,
 } from './tags.js';
 import { logger } from '../lib/logger.js';
 
@@ -77,12 +77,8 @@ const updateNotes = sqlite.prepare(
 const insertDirection = sqlite.prepare(
   `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`,
 );
-const selectDirections = sqlite.prepare(
-  `SELECT name FROM tags WHERE owner_id = ? AND kind = 'direction' AND muted = 0 ORDER BY name`,
-);
-const selectCategories = sqlite.prepare(
-  `SELECT name FROM tags WHERE owner_id = ? AND kind = 'category' AND muted = 0 ORDER BY name`,
-);
+// Directions/categories come from the shared `suggestibleVocabulary` (services/tags.ts) —
+// same muted rule as every other suggester, in one place rather than re-stated here.
 
 // Words too common to identify anything — not worth a search round-trip each.
 const STOPWORDS = new Set([
@@ -150,7 +146,8 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   // Categories count as "needed" only when the owner actually HAS a category vocabulary:
   // with none, an empty entity_categories set is not a blank to fill, and treating it as
   // one would make every task permanently enrichable.
-  const categories = (selectCategories.all(owner) as { name: string }[]).map((r) => r.name);
+  const vocab = suggestibleVocabulary(owner);
+  const categories = vocab.categories;
   const needsDescription = !task.notes?.trim();
   const needsDirection = !taskHasLevel1Direction(taskId, owner);
   const needsCategories = categories.length > 0 && entityCategoryIds('task', taskId).length === 0;
@@ -167,7 +164,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   }
   if (nodes.length === 0) return { enriched: false, reason: 'No related memory found' };
 
-  const directions = (selectDirections.all(owner) as { name: string }[]).map((r) => r.name);
+  const directions = vocab.directions;
   let out: EnrichOut;
   try {
     out = await generateJson<EnrichOut>(

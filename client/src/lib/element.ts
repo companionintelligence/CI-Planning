@@ -27,10 +27,19 @@ export const ELEMENT_KINDS: { kind: ElementKind; label: string; blurb: string }[
 // ── Shared tag helpers (single source for the wizard + drawer) ──────────────────
 export const patternTagList = (): Tag[] => (tags() ?? []).filter((t) => t.kind === 'direction');
 
-/** Intention tags associated with a primary pattern, via their `directions`. */
+/**
+ * Intention tags associated with a primary pattern, via their `directions`.
+ *
+ * MUTED TAGS ARE EXCLUDED. This feeds `rankedSecondaryTags` — the chips the wizard
+ * *volunteers* — and muting is the user saying "set this aside" (the Tags manager
+ * collapses muted tags into a hidden section, and every server-side suggester honours
+ * it). It is not a filter on what can be applied: the tag typeahead still finds a muted
+ * tag by name, and existing applications are untouched.
+ */
 export const intentionTagsFor = (primaryName: string): Tag[] =>
   (tags() ?? []).filter(
-    (t) => t.kind === 'intention' && t.directions.some((d) => d.toLowerCase() === primaryName.toLowerCase()),
+    (t) => t.kind === 'intention' && !t.muted
+      && t.directions.some((d) => d.toLowerCase() === primaryName.toLowerCase()),
   );
 
 /** A pattern tag's saved default estimate (minutes), else 60. */
