@@ -319,6 +319,46 @@ export function splitNamesByDirection(owner: string, names: string[]): { directi
   return { directions, others };
 }
 
+// ── Suggestible vocabulary — ONE definition of "tags we may propose" ─────────
+
+/** The owner's suggestible tag names, split by axis. Every list excludes muted tags. */
+export interface TagVocabulary {
+  /** kind='direction' — Work / Home / Community. */
+  directions: string[];
+  /** kind='category' — the six Balance dimensions (entity_categories axis). */
+  categories: string[];
+  /** Everything else (intentions, and any future kind). */
+  others: string[];
+}
+
+const selectSuggestibleTags = sqlite.prepare(
+  `SELECT name, kind FROM tags WHERE owner_id = ? AND muted = 0 ORDER BY name`,
+);
+
+/**
+ * The tag vocabulary any SUGGESTER may draw from — the quick-add classifier, the
+ * Auto-tag sweep, the /suggest-tags endpoint, and the memory enrichment pass.
+ *
+ * `muted = 0` is the whole point. Muting is the user saying "set this aside": the Tags
+ * manager collapses muted tags into a hidden section, and the nightly sweep has always
+ * honoured it. Quick-add, /suggest-tags and the wizard's ranking did NOT — so muting a
+ * tag stopped the cron applying it while the interactive surfaces kept proposing it, and
+ * the same gesture meant different things depending on where you were standing. One
+ * query, one meaning.
+ *
+ * Muting is NOT deletion: existing applications are untouched, an explicitly typed name
+ * still resolves, and the taxonomy pickers still list muted tags. This governs only what
+ * the app volunteers on its own.
+ */
+export function suggestibleVocabulary(owner: string): TagVocabulary {
+  const rows = selectSuggestibleTags.all(owner) as { name: string; kind: string }[];
+  return {
+    directions: rows.filter((r) => r.kind === 'direction').map((r) => r.name),
+    categories: rows.filter((r) => r.kind === 'category').map((r) => r.name),
+    others: rows.filter((r) => r.kind !== 'direction' && r.kind !== 'category').map((r) => r.name),
+  };
+}
+
 // ── GraphQL Taggable forward edge (Phase W · W4a) ─────────────────────────────
 // The full EntityTagType shape (id + name + application time) for ONE entity. Returns
 // ALL levels — the honest "every tag applied to this entity"; the level distinction is
