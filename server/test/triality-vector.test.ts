@@ -137,9 +137,11 @@ describe('motivation_balance — tasks.motivation column guard', () => {
       expect(v.meta.active).not.toContain('motivation_balance');
     } finally {
       // Put the sibling ticket's columns back exactly as 0141 defines them — including
-      // cid ORDER (motivation before motivation_source): the baseline schema snapshot
-      // reads PRAGMA table_info on the shared DB, so re-appending only `motivation`
-      // would leave it after motivation_source for every later test file.
+      // cid ORDER (motivation before motivation_source). A bare ADD COLUMN appends at
+      // the last cid, and the baseline schema snapshot reads PRAGMA table_info on the
+      // shared sequential DB — so re-appending only `motivation` would leave it after
+      // motivation_source for every later test file and make that snapshot
+      // order-dependent (flaky). Dropping the column BEHIND it restores 0141's order.
       if (hadColumn && !hasMotivationColumn()) {
         sqlite.exec(`ALTER TABLE tasks DROP COLUMN motivation_source`);
         sqlite.exec(`ALTER TABLE tasks ADD COLUMN motivation TEXT`);
@@ -317,11 +319,30 @@ describe('memory_context (§3: only when memory_pull_enabled; off/nothing relate
     expect(v.meta.active).not.toContain('memory_context');
   });
 
-  it('flag on → still 0 in v1 (connector probe is a TODO), but the dim reports active', () => {
+  it('flag ON → still 0, and STILL INACTIVE: an unsensed dim never claims to be sensed', () => {
+    // This assertion was inverted until v2.1. `active` means "computable in
+    // principle this call", and the encoder consults no source in either flag
+    // state — so reporting active-when-enabled made this the one dim where
+    // meta.active lied. It is load-bearing rather than cosmetic: v2's confidence
+    // score divides non-zero dims by ACTIVE dims, so an inert-but-active dim
+    // would understate coverage permanently and invisibly (it always reads 0).
+    // When the v2.4 connector probe lands, `active` and `encode` must regain
+    // their memory_pull_enabled behavior in the SAME commit.
     sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1 WHERE owner_id = ?`).run(OWNER);
     const v = buildSituationVector(OWNER, NOW);
     expect(v.dims.memory_context).toBe(0);
-    expect(v.meta.active).toContain('memory_context');
+    expect(v.meta.active).not.toContain('memory_context');
+  });
+
+  it('no dim reports active while encoding a constant — meta.active is literally true', () => {
+    // A guard against the general shape of the bug, not just this instance: every
+    // dim the vector calls active must have a source it actually reads.
+    sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1 WHERE owner_id = ?`).run(OWNER);
+    const v = buildSituationVector(OWNER, NOW);
+    for (const name of v.meta.active) {
+      const entry = DIM_REGISTRY.find((d) => d.name === name)!;
+      expect(entry.encode.length, `${name} is active but its encoder ignores its context`).toBeGreaterThan(0);
+    }
   });
 });
 

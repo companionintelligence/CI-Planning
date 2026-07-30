@@ -97,6 +97,53 @@ export interface Streak {
   recent: { date: string; status: string }[];
 }
 
+// ── Triality (0139, design §8) ────────────────────────────────────────────────
+export type TrialitySlot = 'habitual' | 'contextual' | 'novel';
+export type TrialityOutcome = 'opened' | 'staged' | 'dismissed';
+export interface TrialityPick {
+  slot: TrialitySlot;
+  action_kind: 'task' | 'routine' | 'flight' | 'template';
+  action_ref: string;
+  title: string;
+  estimate_min: number | null;
+  direction: string | null;
+  categories: string[];
+  motivation: 'me' | 'us' | 'them' | null;
+  scores: { F: number; H: number; Q: number; N: number; C: number; total: number };
+  ternary: [number, number, number];
+  log_id: string | null;
+  /** T9 garnish: one short "why now" line. Optional on the wire only because a
+   *  cached/older response may predate the field — never absent from a fresh one. */
+  rationale?: string;
+  /** Honest labelling — the UI must show which clock wrote the line. */
+  rationale_source?: 'ai' | 'template';
+}
+export interface TrialityNext {
+  refused?: 'sparse_history';
+  have?: number;
+  need?: number;
+  /** habitual, contextual, novel order; a null entry is an honestly-empty slot. */
+  picks?: (TrialityPick | null)[];
+  empty_reasons?: Partial<Record<TrialitySlot, string>>;
+  /** The situation vector used — the breakdown popover's "which dims fired". */
+  vector?: { dims: Record<string, -1 | 0 | 1>; meta: { active: string[] } };
+  computed_at?: string;
+}
+
+export interface TrialitySlotAcceptance {
+  shown: number;
+  taken: number;
+  pending: number;
+  rate: number | null; // null = nothing decided yet — no data is not 0%
+}
+export interface TrialityMetrics {
+  windowDays: number;
+  acceptance: Record<TrialitySlot, TrialitySlotAcceptance>;
+  novelTrend: { current: number | null; prior: number | null };
+  deficitResponse: Array<{ category: string; takenPicks: number; currentShare: number | null; priorShare: number | null }>;
+  weights: Array<{ slot: string; weights: Record<string, number>; sampleCount: number; computedDate: string }> | null;
+}
+
 export interface ParsedQuick {
   title: string;
   dueAt?: string;
@@ -149,9 +196,22 @@ export interface CalibrationReading {
 }
 
 export const api = {
+  // Triality (0139, design §8) — the suggestion read + outcome write. Both 404
+  // while the flag is off: gate every call on prefs().triality_enabled, never probe.
+  triality: {
+    next: () => request<TrialityNext>('GET', '/triality/next'),
+    feedback: (logId: string, outcome: TrialityOutcome) =>
+      request<{ changed: boolean }>('POST', '/triality/feedback', { log_id: logId, outcome }),
+    // Deletes the owner's learned weights (T8's route; the tile's button only
+    // renders once weights exist, so this is never callable before the route is).
+    resetWeights: () => request<{ ok: boolean }>('DELETE', '/triality/weights'),
+  },
   metrics: {
     // Two-axis task rollup for the Balance → Metrics tab.
     tasks: (days = 30) => request<TaskMetrics>('GET', `/metrics/tasks?days=${days}`),
+    // Triality outcome metrics (design §9.2) — 404s while the flag is off; the
+    // tiles gate on prefs().triality_enabled and never probe.
+    triality: (days = 30) => request<TrialityMetrics>('GET', `/metrics/triality?days=${days}`),
     // Dated estimate-bias readings (calibration_history), oldest→newest. The rollup table
     // only ever holds today's numbers, so this is the only source for a trend.
     calibration: (limit = 90) =>

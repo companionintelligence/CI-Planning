@@ -2,6 +2,7 @@ import { createSignal, createMemo, createResource, Show, For, onCleanup } from '
 import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, CalendarRange, NotebookPen } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusReminders } from '../components/FocusReminders.js';
+import { TrialityBanner } from '../components/TrialityBanner.js';
 import { BriefMenu, FocusMenu } from '../components/DayGoals.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
 import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, setPlanWeekModal } from '../stores/index.js';
@@ -374,6 +375,12 @@ export function Focus() {
           </div>
         )}
       </Show>
+
+      {/* Triality (0139, design §9.1) — the suggestion banner, between the hero and
+          the list: Focus is the "what should I do right now" view, so this is the
+          acting home. Flag-gated inside the component; renders nothing when off,
+          collapsed for the day, or still loading. */}
+      <TrialityBanner />
 
       {/* #388: reminders — list, create, delete (the toast keeps Snooze). */}
       <FocusReminders />

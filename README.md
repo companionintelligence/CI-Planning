@@ -129,7 +129,7 @@ graph TB
         GQL[GraphQL /api/graphql<br/>Apollo, alongside REST — Phase W]
         SSE[SSE /api/events<br/>real-time push]
         Engine[Auto-scheduler<br/>engine/autoplan · review · reflow]
-        Cron[Croner Jobs<br/>19 cron jobs · 20 kinds]
+        Cron[Croner Jobs<br/>20 cron jobs · 21 kinds]
         Migrate[Migration runner<br/>0001 → head on boot]
     end
 
@@ -204,12 +204,12 @@ no `.sql` files, no external tool.
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-07-29) the head is `0138_calibration_history`.
+of writing (2026-07-30) the head is `0143_calibrate_triality_job`.
 
 | Table | Purpose |
 |---|---|
 | `owners` | User identity — `role` drives scopes (0125): `operator` (R+W+A) · `member` (R+W) · `viewer` (R) |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype; `texture_enabled`/`texture_color_token` (0135) per-element striped-texture override; close-ritual columns `completion_mood`/`completion_note`/`reaction_at` (0137, all nullable — the ritual is optional) |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, recurrence fields, subtype; `texture_enabled`/`texture_color_token` (0135) per-element striped-texture override; close-ritual columns `completion_mood`/`completion_note`/`reaction_at` (0137, all nullable — the ritual is optional); `motivation` (`me`/`us`/`them`, NULL = unlabeled — never read as `us`) + `motivation_source` (`user` \| `llm`; a user label wins permanently) (0141) |
 | `task_dependencies` | Blocked-by edges between tasks |
 | `time_blocks` | Named time spans — `scheduled` / `someday` / `saved` states; recurrence support; same `texture_enabled`/`texture_color_token` override (0135); legacy `category_id`/`color_token` (0069) are read-only now — writes go through `entity_categories` |
 | `block_templates` | Reusable Time-Block templates with saved task lists |
@@ -251,6 +251,8 @@ of writing (2026-07-29) the head is `0138_calibration_history`.
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
 | `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083; scope columns 0107) |
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) written by the same job; the rollup above is regenerable, this table is never recomputed or pruned (0138) |
+| `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140) |
+| `triality_weights` | Learned per-(owner, slot) Triality weights — regenerable, replaced wholesale by the weekly `calibrate_triality` job. A missing row means "score on the defaults", so deleting an owner's rows is the reset switch; the log above survives it (0142) |
 | `copy_history` | Time-Sense voice-loop anti-repetition log — not included in owner export (0109) |
 
 ## See it in action
@@ -345,6 +347,42 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   run, so a scope whose samples vanish stops serving stale numbers), which makes it useless
   for "am I getting better?". So each run also appends one immutable row per (scope, day)
   to a history table that is never recomputed and never pruned, keeping the trend intact
+- **Triality — three candidate next actions** (off by default, `triality_enabled`). With the
+  flag on, **Focus** carries a dismissable banner with exactly three picks, one per slot:
+  **Habitual** (the usual continuation), **Contextual** (a familiar action fitted to right
+  now), and **Novel** (a less typical one you could still actually do). They are **candidates,
+  not certainties**, and the copy says so — the ranking is local arithmetic over your own
+  SQLite rows: your current situation is encoded as a balanced-ternary vector (`−1` opposed ·
+  `0` **unknown** · `+1` supportive — an absent signal stays 0 rather than being guessed) and
+  dotted against each candidate, alongside habit strength, sequence fit, novelty, and a hard
+  capacity filter. **No generative model ever chooses, writes, or re-orders a pick.** One
+  honest asterisk, though: the *novelty* term is half categorical and half
+  cosine distance from the centroid of your recent completions, so a local **embedding** model
+  contributes to it whenever Ollama is reachable and you have at least 5 recent completions
+  (novelty carries weight 0.30 in the Contextual and Novel slots, and none at all in
+  Habitual). With Ollama down, novelty falls back to the categorical term alone, and the whole
+  embedding stage is bounded — a 40-candidate cap and a 4-second budget — so a slow local
+  model degrades the picks instead of stalling the banner. With too little history the banner
+  refuses out loud instead of inventing three. Each pick carries one "why now" line — a
+  deterministic template that a local model may replace, labeled either way, never blocking
+- **Bounded learning you can undo** — every suggestion shown is logged with the score
+  breakdown that produced it, and a weekly `calibrate_triality` job re-tunes the per-slot
+  weights from four signals: what you **staged** (+1), what you **opened** (+0.5), what you
+  **dismissed** (−1), and — the surprising one — what you **left alone for a day** (−0.25;
+  a suggestion still untouched after 24h argued weakly against itself). The log records every
+  time a suggestion was *shown*, not just what you did about it, so learning first collapses
+  those to **one vote per suggestion per day**: re-opening Focus cannot teach the system
+  anything. The bounds are the point: **batch only** (never mid-request, so a bad week can't
+  bend a live ranking), each weight **clamped to ½×–2× of its default, then renormalized so
+  the slot's weights still sum to the default total**, inert until a slot has **20 decided
+  outcomes**, **visible** on Balance → **Metrics** (the learned numbers per slot with the
+  sample count behind them, and an explicit "learning not started" while a slot is still on
+  defaults), and **clearable in one click** — the button says *Recompute from scratch*, which
+  is exactly what it does: it drops the derived weights, the outcome log survives untouched,
+  and the next weekly pass re-derives from that same log. It is a recompute, not a permanent
+  opt-out — turning the flag off is the way to stop learning. Tasks can also carry a
+  **motivation** — *me* · *us* · *them* (who the work is for). Unlabeled stays unlabeled: a
+  task nobody asked for is never recorded as shared
 - **Memory enrichment** — a per-task ✨ button (and a nightly `enrich_tasks` job) fills in a
   thin task from your Companion Memory: description, direction, categories. It only ever
   **fills blanks** — it never rewrites your own description or overrides a direction you
@@ -518,10 +556,11 @@ consistent snapshot.
 - Notifications: a `reminders` store + 1-minute `fire_reminders` dispatcher (exactly-once),
   delivered in-app via SSE and via Web Push (VAPID) to subscribed devices; reminders are
   auto-derived from per-pattern reminder offsets, with a Settings opt-in toggle and snooze
-- Croner jobs: 19 cron-scheduled rows out of 20 executable kinds — Gmail ingest,
+- Croner jobs: 20 cron-scheduled rows out of 21 executable kinds — Gmail ingest,
   Calendar ingest, nightly grooming/dedupe, auto-schedule, `enrich_tasks`,
-  fire_reminders, purge_objectives, and the rest. `promote_possibles` is the kind with
-  no cron row (runnable on demand only); `place_patterns` was retired by 0026
+  the weekly `calibrate_triality` (Monday 03:50), fire_reminders, purge_objectives, and
+  the rest. `promote_possibles` is the kind with no cron row (runnable on demand only);
+  `place_patterns` was retired by 0026
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: direction / intention hierarchy with many-to-many grouping
@@ -562,6 +601,12 @@ consistent snapshot.
   with no network. Flag-off is byte-identical — the memory layer ships dark.
 - **Time-Sense** (Phase Z — Focus Ritual + estimate-calibration loop) is behind the
   `time_sense_enabled` master flag (flag-off = behavior-neutral)
+- **Triality** (three candidate next actions + its learning loop) is behind the
+  `triality_enabled` master flag, **off by default** — with the flag off the Focus banner and
+  the Balance → Metrics tiles never mount, and the three `/api/triality/*` routes plus
+  `/api/metrics/triality` all 404. The `calibrate_triality` cron row exists either way and has
+  nothing to do for an owner who never turned the flag on — no suggestions were shown, so there
+  is no feedback to learn from
 - Later phases in [docs/ROADMAP.md](docs/ROADMAP.md) — auth and multi-device sync have since **shipped** (see *Working today*)
 
 ## Run with Docker (CI Hub)
@@ -916,6 +961,10 @@ All from the repo root:
 | GET | `/api/review/week?period=YYYY-MM-DD` | Weekly review stats — scheduled/focus minutes, capacity, completion %, calibration (Phase N) |
 | GET | `/api/calibration` | Personal estimate bias stats (bias ratio, quartiles, sample count) (Phase N) |
 | GET | `/api/metrics/tasks` · `/api/metrics/calibration` | Balance → Metrics: measured counts, timed minutes, mood mix, and estimate bias per direction / category over a 7 / 30 / 90-day window |
+| GET | `/api/triality/next` | The three candidate next actions (Habitual · Contextual · Novel) with every component score, the situation vector actually used, and a labeled "why now" line. Too little history is a typed refusal, not an error. **404 while `triality_enabled` is off** — a disabled feature's surface looks absent, not broken |
+| POST | `/api/triality/feedback` | `{log_id, outcome}` — stamp `opened` / `staged` / `dismissed` on a shown suggestion, at most once (this is the learning evidence). 404 while the flag is off |
+| DELETE | `/api/triality/weights` | Reset learning — drops this owner's learned slot weights, so scoring returns to the shipped defaults. The outcome log is untouched, and the next weekly pass re-derives weights from it: this is a recompute, not a permanent opt-out. 404 while the flag is off |
+| GET | `/api/metrics/triality?days=` | Balance → Metrics: acceptance per slot (a suggestion undecided for **less than 24h** is pending and excluded from the denominator; once it is 24h old and still untouched it counts as *ignored* — a decision, and a weak negative), the Novel uptake trend against the prior window, how under-served categories responded, and the learned weights with their sample counts (`null` until learning has run). 404 while the flag is off |
 | POST | `/api/sync` | Apply offline op-log entries from a device (Phase L) |
 | GET | `/api/export` | Download all owner data as a JSON file (import-compatible) |
 | POST | `/api/import` | Restore owner data from an export JSON body |
