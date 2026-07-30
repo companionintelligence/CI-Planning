@@ -125,6 +125,20 @@ export interface TrialityNext {
   computed_at?: string;
 }
 
+export interface TrialitySlotAcceptance {
+  shown: number;
+  taken: number;
+  pending: number;
+  rate: number | null; // null = nothing decided yet — no data is not 0%
+}
+export interface TrialityMetrics {
+  windowDays: number;
+  acceptance: Record<TrialitySlot, TrialitySlotAcceptance>;
+  novelTrend: { current: number | null; prior: number | null };
+  deficitResponse: Array<{ category: string; takenPicks: number; currentShare: number | null; priorShare: number | null }>;
+  weights: Array<{ slot: string; weights: Record<string, number>; sampleCount: number; computedDate: string }> | null;
+}
+
 export interface ParsedQuick {
   title: string;
   dueAt?: string;
@@ -183,10 +197,16 @@ export const api = {
     next: () => request<TrialityNext>('GET', '/triality/next'),
     feedback: (logId: string, outcome: TrialityOutcome) =>
       request<{ changed: boolean }>('POST', '/triality/feedback', { log_id: logId, outcome }),
+    // Deletes the owner's learned weights (T8's route; the tile's button only
+    // renders once weights exist, so this is never callable before the route is).
+    resetWeights: () => request<{ ok: boolean }>('DELETE', '/triality/weights'),
   },
   metrics: {
     // Two-axis task rollup for the Balance → Metrics tab.
     tasks: (days = 30) => request<TaskMetrics>('GET', `/metrics/tasks?days=${days}`),
+    // Triality outcome metrics (design §9.2) — 404s while the flag is off; the
+    // tiles gate on prefs().triality_enabled and never probe.
+    triality: (days = 30) => request<TrialityMetrics>('GET', `/metrics/triality?days=${days}`),
     // Dated estimate-bias readings (calibration_history), oldest→newest. The rollup table
     // only ever holds today's numbers, so this is the only source for a trend.
     calibration: (limit = 90) =>
