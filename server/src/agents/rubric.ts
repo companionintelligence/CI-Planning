@@ -39,6 +39,22 @@ export function directionGuide(directions: string[]): string {
   return lines.length ? ` Direction meanings — ${lines.join(' ')}` : '';
 }
 
+// ── Motivation (design §3b) — who the work is for ─────────────────────────────
+// The rule names the null default and bans the middle as a shrug: 'us' is a
+// POSITIVE claim of shared benefit, and a lazy classifier that drifts to the
+// middle would quietly destroy the axis's signal (the me↔them poles are what the
+// dot product reads; a wrong 'us' is merely inert, but a habitual 'us' is blind).
+export const MOTIVATION_VALUES = ['me', 'us', 'them'] as const;
+export type Motivation = (typeof MOTIVATION_VALUES)[number];
+export function isMotivation(v: unknown): v is Motivation {
+  return typeof v === 'string' && (MOTIVATION_VALUES as readonly string[]).includes(v);
+}
+export const MOTIVATION_RUBRIC =
+  `"me" = the user's own goals, growth, legacy, or personal success. ` +
+  `"them" = primarily for other people (helping, caregiving, volunteering, obligations to family/friends/colleagues). ` +
+  `"us" = genuinely BOTH at once — answer "us" only when the shared benefit is explicit, never as a middle-ground guess. ` +
+  `null when the entry does not say who it is for. When unsure, answer null — never guess.`;
+
 // ── Priority (1-5; the UI exposes four buckets) ───────────────────────────────
 // P1/P2/P3/Later per TaskCard.tsx. The "when unsure → 3" rule is load-bearing: without
 // it small models cluster on 1-2 and every task looks urgent.

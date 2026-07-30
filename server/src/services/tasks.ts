@@ -15,6 +15,8 @@ import { utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { localISODate } from '../lib/dates.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
+import { isMotivation } from '../agents/rubric.js';
+import { classifyMotivationKeyword } from './motivation.js';
 
 /**
  * Task CRUD orchestration (Phase W step 3.1) — extracted from routes/tasks.ts so
@@ -135,6 +137,12 @@ export type CreateTaskInput = {
   texture_enabled?: boolean;
   texture_color_token?: string | null;
   depends_on?: string[];
+  // Motivation axis (0141, §3b): who the work is for. A caller-supplied value is
+  // treated as user testimony unless motivation_source says otherwise — the ROUTE
+  // strips motivation_source from client bodies, so only server callers (quick-add's
+  // LLM overlay) can attribute a create to the machine.
+  motivation?: 'me' | 'us' | 'them' | null;
+  motivation_source?: 'user' | 'llm';
   // AB1: route-level opt-in — POST /api/tasks runs placeStartAnchoredTask after create
   // when true AND scheduled_for is set. Ignored by the service itself (default false;
   // the wizard client creates its own block explicitly, so no unconditional hook).
@@ -167,6 +175,17 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
   // is dropped (would otherwise be a dangling cross-tenant ref). null = top-level.
   const parentId = ownedTaskId(ownerId, input.parent_id);
 
+  // Motivation (0141, §3b) — LLM-first at the surfaces that can afford the model
+  // (quick-add's overlay passes it in); here only the CHEAP deterministic keyword
+  // fallback runs inline, so plain creates never wait on Ollama (two clocks).
+  // Unsure ⇒ NULL, and the fallback never answers 'us'.
+  const motivation = isMotivation(input.motivation)
+    ? input.motivation
+    : classifyMotivationKeyword(`${input.title} ${input.notes ?? ''}`);
+  const motivationSource = isMotivation(input.motivation)
+    ? input.motivation_source ?? 'user'
+    : motivation ? 'llm' : null;
+
   const [task] = await db
     .insert(tasks)
     .values({
@@ -183,6 +202,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
       ownerId, // W3.1b: always the authenticated caller — never a client body owner_id.
       ...(input.texture_enabled !== undefined ? { textureEnabled: input.texture_enabled } : {}),
       ...(input.texture_color_token !== undefined ? { textureColorToken: input.texture_color_token } : {}),
+      ...(motivation ? { motivation, motivationSource } : {}),
       ...(sw ?? {}),
     })
     .returning();
@@ -285,6 +305,10 @@ export type UpdateTaskInput = {
   // Phase B (0135): per-element texture override columns.
   texture_enabled?: boolean;
   texture_color_token?: string | null;
+  // Motivation axis (0141, §3b). A PATCH is always the client's testimony: setting a
+  // value stamps motivation_source='user' (permanent — machine passes never re-tag);
+  // an explicit null clears BOTH columns back to unlabeled.
+  motivation?: 'me' | 'us' | 'them' | null;
   depends_on?: string[];
   recurrence_rule?: string | null;
   recurrence_dtstart?: string | null;
@@ -375,6 +399,11 @@ export async function updateTask(
   if (input.completed_at !== undefined)      update.completedAt = input.completed_at;
   if (input.texture_enabled !== undefined)   update.textureEnabled = input.texture_enabled;
   if (input.texture_color_token !== undefined) update.textureColorToken = input.texture_color_token;
+  // Motivation (0141): a PATCHed value is user testimony; null un-labels entirely.
+  if (input.motivation !== undefined) {
+    update.motivation = input.motivation;
+    update.motivationSource = input.motivation === null ? null : 'user';
+  }
   // W3.1b: re-parenting must target a caller-owned task; a foreign parent_id is
   // dropped to null (an explicit null un-parents). `parentIdSet` remembers a
   // parent_id was in the PATCH; `newParentId` is the validated value written.

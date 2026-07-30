@@ -37,12 +37,13 @@ interface SettingsForm {
   time_sense_enabled: boolean; // Phase Z master flag
   focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
   ambient_color_enabled: boolean; calibration_loop_enabled: boolean;
+  triality_enabled: boolean; // Triality master flag (0139) — ships dark
 }
 
 /** The boolean fields of the form — for the reusable Toggle. */
 type BoolField =
   | 'auto_fill_workday' | 'plan_allday_always' | 'plan_daylong_for_promoted' | 'plan_autofill_gaps' | 'concept_autosurface' | 'recall_keeps_pattern' | 'time_sense_enabled'
-  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled';
+  | 'focus_ritual_enabled' | 'haptic_cues_enabled' | 'ambient_color_enabled' | 'calibration_loop_enabled' | 'triality_enabled';
 
 const DEFAULTS: SettingsForm = {
   auto_fill_workday: true,
@@ -60,6 +61,7 @@ const DEFAULTS: SettingsForm = {
   time_sense_enabled: false,
   focus_ritual_enabled: true, haptic_cues_enabled: true,
   ambient_color_enabled: true, calibration_loop_enabled: true,
+  triality_enabled: false,
 };
 
 export function Settings() {
@@ -187,6 +189,7 @@ export function Settings() {
       memory_sync_habits:         p.memory_sync_habits ?? true,
       memory_sync_reflections:    p.memory_sync_reflections ?? true,
       memory_pull_enabled:        p.memory_pull_enabled ?? false,
+      triality_enabled:           p.triality_enabled ?? false,
     });
   });
 
@@ -1078,6 +1081,11 @@ export function Settings() {
                 calibration, and the evening EOD Alignment while the phase ships dark. */}
             <Toggle field="time_sense_enabled" label="Time-Sense"
               hint="Focus Ritual block timers, tag-scoped estimate calibration, and the evening alignment. Experimental; off by default." />
+
+            {/* Triality master flag (0139) — the feature ships dark; until the banner
+                and metrics land, flipping this only changes the prefs payload. */}
+            <Toggle field="triality_enabled" label="Triality"
+              hint="Three next-action suggestions — Habitual · Contextual · Novel — as a dismissable banner on Focus, with outcome metrics on Balance. Experimental; off by default." />
 
             {/* Phase Z · Z5 — per-cue channel matrix. Only meaningful when Time-Sense
                 is on; the individual channels are configurable per §4 (every cue
