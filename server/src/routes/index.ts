@@ -37,6 +37,7 @@ import { accountsRouter } from './accounts.js';
 import { prioritiesRouter } from './priorities.js';
 import { planWeekRouter } from './plan-week.js';
 import { connectionsRouter } from './connections.js';
+import { trialityRouter } from './triality.js';
 
 export function mountRoutes(app: Koa) {
   for (const router of [
@@ -78,6 +79,7 @@ export function mountRoutes(app: Koa) {
     prioritiesRouter(),
     planWeekRouter(),
     connectionsRouter(),
+    trialityRouter(),
   ]) {
     app.use(router.routes()).use(router.allowedMethods());
   }
