@@ -97,6 +97,34 @@ export interface Streak {
   recent: { date: string; status: string }[];
 }
 
+// ── Triality (0139, design §8) ────────────────────────────────────────────────
+export type TrialitySlot = 'habitual' | 'contextual' | 'novel';
+export type TrialityOutcome = 'opened' | 'staged' | 'dismissed';
+export interface TrialityPick {
+  slot: TrialitySlot;
+  action_kind: 'task' | 'routine' | 'flight' | 'template';
+  action_ref: string;
+  title: string;
+  estimate_min: number | null;
+  direction: string | null;
+  categories: string[];
+  motivation: 'me' | 'us' | 'them' | null;
+  scores: { F: number; H: number; Q: number; N: number; C: number; total: number };
+  ternary: [number, number, number];
+  log_id: string | null;
+}
+export interface TrialityNext {
+  refused?: 'sparse_history';
+  have?: number;
+  need?: number;
+  /** habitual, contextual, novel order; a null entry is an honestly-empty slot. */
+  picks?: (TrialityPick | null)[];
+  empty_reasons?: Partial<Record<TrialitySlot, string>>;
+  /** The situation vector used — the breakdown popover's "which dims fired". */
+  vector?: { dims: Record<string, -1 | 0 | 1>; meta: { active: string[] } };
+  computed_at?: string;
+}
+
 export interface ParsedQuick {
   title: string;
   dueAt?: string;
@@ -149,6 +177,13 @@ export interface CalibrationReading {
 }
 
 export const api = {
+  // Triality (0139, design §8) — the suggestion read + outcome write. Both 404
+  // while the flag is off: gate every call on prefs().triality_enabled, never probe.
+  triality: {
+    next: () => request<TrialityNext>('GET', '/triality/next'),
+    feedback: (logId: string, outcome: TrialityOutcome) =>
+      request<{ changed: boolean }>('POST', '/triality/feedback', { log_id: logId, outcome }),
+  },
   metrics: {
     // Two-axis task rollup for the Balance → Metrics tab.
     tasks: (days = 30) => request<TaskMetrics>('GET', `/metrics/tasks?days=${days}`),
