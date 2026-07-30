@@ -6,6 +6,8 @@
 # `Motivation` is task.graphql's enum — one vocabulary, reused not redefined.
 
 enum TrialitySlot { HABITUAL CONTEXTUAL NOVEL }
+"Who authored the rationale line (T9, §8). TEMPLATE is the deterministic spec; AI means a local-model line replaced it."
+enum RationaleSource { AI TEMPLATE }
 enum TrialityOutcome { OPENED STAGED DISMISSED }
 enum TrialityActionKind { TASK ROUTINE FLIGHT TEMPLATE }
 
@@ -32,6 +34,10 @@ type TrialityPick {
   ternary: [Int!]!
   "triality_log row id for this shown event — feed it to trialityFeedback."
   logId: ID
+  "One short 'why now' line. Non-null by contract: the deterministic template always exists, so a pick is never unexplained."
+  rationale: String!
+  "Never rendered unlabeled — the honesty idiom carries the source to the UI."
+  rationaleSource: RationaleSource!
 }
 
 type TrialityRefusal {
