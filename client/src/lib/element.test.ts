@@ -333,3 +333,34 @@ describe('saveElement(task/habit) — split POST body shape', () => {
     expect(body.secondary_tags).toEqual(['deep']);
   });
 });
+
+// ── Motivation (0141, §3b) — the testimony gate in the save shape ─────────────
+// The wizard sends `motivation` ONLY when the user touched the control (form field
+// present). An untouched save must omit it entirely: sending the seeded value would
+// re-stamp a machine ('llm') label as user testimony on every unrelated edit.
+describe('motivation save shape (0141)', () => {
+  const taskForm = { title: 'Ship it', primary: '', intentions: [] as string[], scheduledFor: '', taskTime: '', priority: 3 };
+
+  it('untouched → the field is absent from the wire body', async () => {
+    await saveElement('task', 'add', { ...taskForm });
+    const wire = JSON.parse(JSON.stringify(lastTaskCreateBody()));
+    expect('motivation' in wire).toBe(false);
+  });
+
+  it('touched with a value → sent verbatim (user testimony)', async () => {
+    await saveElement('task', 'add', { ...taskForm, motivation: 'them' });
+    expect(lastTaskCreateBody().motivation).toBe('them');
+  });
+
+  it('touched to clear → explicit null un-labels on edit', async () => {
+    await saveElement('task', 'edit', { ...taskForm, motivation: null }, 'task-9');
+    const wire = JSON.parse(JSON.stringify(lastTaskUpdateBody()));
+    expect('motivation' in wire).toBe(true);
+    expect(wire.motivation).toBeNull();
+  });
+
+  it("'us' is a sendable positive claim, distinct from omitting the field", async () => {
+    await saveElement('task', 'add', { ...taskForm, motivation: 'us' });
+    expect(lastTaskCreateBody().motivation).toBe('us');
+  });
+});

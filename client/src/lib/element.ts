@@ -176,6 +176,10 @@ export interface ElementForm {
   // Phase B (0135): per-element texture override; undefined = leave alone.
   textureEnabled?: boolean;
   textureColorToken?: string | null; // null = derive from categories
+  // Motivation (0141, §3b): undefined = user never touched the control (leave alone —
+  // an unrelated edit must NOT re-stamp a machine label as user testimony); a value
+  // sets it as user testimony; explicit null un-labels.
+  motivation?: 'me' | 'us' | 'them' | null;
   // time-block membership (scheduled only): existing tasks/habits to scatter inside,
   // routines to place inside, and child blocks to detach — all applied on Save.
   attachTaskIds?: string[];
@@ -265,6 +269,9 @@ export async function saveElement(
       ...(form.categories !== undefined ? { categories: form.categories } : {}),
       ...(form.textureEnabled !== undefined ? { texture_enabled: form.textureEnabled } : {}),
       ...(form.textureColorToken !== undefined ? { texture_color_token: form.textureColorToken } : {}),
+      // Motivation (0141): only when touched — sending the seeded value on every save
+      // would silently convert an 'llm' label into user testimony.
+      ...(form.motivation !== undefined ? { motivation: form.motivation } : {}),
     };
     if (kind === 'habit') body.is_habit = true;
     if (rule) body.recurrence_rule = rule;

@@ -1,7 +1,8 @@
 import { sqlite } from '../db/index.js';
 import { generateJson } from '../mcp/ollama.js';
 import { graphSearch, memoryMode, type MemoryNode } from '../connectors/memory.js';
-import { directionGuide } from '../agents/rubric.js';
+import { directionGuide, isMotivation, MOTIVATION_RUBRIC } from '../agents/rubric.js';
+import { applyMachineMotivation } from './motivation.js';
 import {
   resolveTagId, taskHasLevel1Direction,
   entityCategoryIds, categoryIdsForOwner, setEntityCategories, suggestibleVocabulary,
@@ -42,6 +43,8 @@ export interface EnrichTaskResult {
   direction?: string;
   /** Category names written (1–3, best fit first) — only when the task had none. */
   categories?: string[];
+  /** Motivation written (0141, §3b) — only when the task was unlabeled. */
+  motivation?: 'me' | 'us' | 'them';
   /** Names of the memory items the description was drawn from (provenance for the UI). */
   sources?: string[];
 }
@@ -69,7 +72,7 @@ export function constrainCategories(raw: unknown, vocabulary: string[]): string[
 }
 
 const selectTask = sqlite.prepare(
-  `SELECT id, title, notes FROM tasks WHERE id = ? AND owner_id = ?`,
+  `SELECT id, title, notes, motivation FROM tasks WHERE id = ? AND owner_id = ?`,
 );
 const updateNotes = sqlite.prepare(
   `UPDATE tasks SET notes = ? WHERE id = ? AND owner_id = ? AND (notes IS NULL OR notes = '')`,
@@ -129,6 +132,7 @@ interface EnrichOut {
   description?: unknown;
   direction?: unknown;
   categories?: unknown;
+  motivation?: unknown;
 }
 
 /**
@@ -138,7 +142,9 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   if (memoryMode() === 'off') {
     return { enriched: false, reason: 'Memory is off (set MEMORY_MODE=live or fixture)' };
   }
-  const task = selectTask.get(taskId, owner) as { id: string; title: string; notes: string | null } | undefined;
+  const task = selectTask.get(taskId, owner) as
+    | { id: string; title: string; notes: string | null; motivation: string | null }
+    | undefined;
   if (!task) return { enriched: false, reason: 'Task not found' };
 
   // Nothing to do when every field this can fill is already set — skip the round-trips
@@ -151,8 +157,12 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   const needsDescription = !task.notes?.trim();
   const needsDirection = !taskHasLevel1Direction(taskId, owner);
   const needsCategories = categories.length > 0 && entityCategoryIds('task', taskId).length === 0;
-  if (!needsDescription && !needsDirection && !needsCategories) {
-    return { enriched: false, reason: 'Already has a description, direction, and categories' };
+  // Motivation (0141, §3b): a blank to fill only while unlabeled — a user OR earlier
+  // machine label stands (the never-re-tag contract; applyMachineMotivation re-guards
+  // in SQL against a concurrent write).
+  const needsMotivation = task.motivation === null;
+  if (!needsDescription && !needsDirection && !needsCategories && !needsMotivation) {
+    return { enriched: false, reason: 'Already has a description, direction, categories, and motivation' };
   }
 
   let nodes: MemoryNode[] = [];
@@ -178,6 +188,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
         (needsCategories
           ? `, "categories": <1-3 life areas from ${JSON.stringify(categories)}, best fit first, or []>`
           : '') +
+        (needsMotivation ? `, "motivation": <"me" | "us" | "them" | null>` : '') +
         `}. The description must say what this task is about USING ONLY the related items ` +
         `above — it adds the context the bare title is missing (who and what it concerns). ` +
         `If the related items do not actually pertain to this task, answer null; never ` +
@@ -185,7 +196,8 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
         (needsDirection && directions.length ? directionGuide(directions) : '') +
         (needsCategories
           ? ` Choose categories ONLY from the given list — never invent; [] when none fit.`
-          : ''),
+          : '') +
+        (needsMotivation ? ` For "motivation": ${MOTIVATION_RUBRIC}` : ''),
       { tier: 'small', temperature: 0.2, timeoutMs: 20_000 },
     );
   } catch (err) {
@@ -226,6 +238,15 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
     if (picked.length > 0 && entityCategoryIds('task', taskId).length === 0) {
       setEntityCategories('task', taskId, categoryIdsForOwner(picked, owner));
       result.categories = picked;
+      result.enriched = true;
+    }
+  }
+
+  // Motivation (0141): the SQL guard in applyMachineMotivation IS the concurrency
+  // re-check — a user label written since the read above wins and changes = 0.
+  if (needsMotivation && isMotivation(out.motivation)) {
+    if (applyMachineMotivation(owner, taskId, out.motivation)) {
+      result.motivation = out.motivation;
       result.enriched = true;
     }
   }

@@ -77,6 +77,13 @@ export const tasks = sqliteTable('tasks', {
   // WHEN the reflection was recorded. Distinct from completed_at (the assumed task end):
   // reacting later is normal, and `reaction_at − completed_at` is the freshness of the read.
   reactionAt: text('reaction_at'),
+  // ── Motivation axis (0141, design §3b) — who the work is for. ──
+  // 'me' | 'us' | 'them' | NULL(unlabeled). NULL ≠ 'us': "shared" is a positive
+  // claim, "never asked" is the absence of one; only SCORING collapses both to 0.
+  motivation: text('motivation'),
+  // 'user' (wins permanently, never re-tagged) | 'llm' (model or keyword fallback).
+  // NULL exactly when motivation is NULL.
+  motivationSource: text('motivation_source'),
   // Phase L: monotonic per-record version (advances on every applied op or PATCH);
   // field_ts is a JSON { field: utcIso } map for per-field LWW; updated_at is the
   // server clock of the last write (informational, not a lock cursor).

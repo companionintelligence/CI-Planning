@@ -19,6 +19,13 @@
 
 enum TaskSubtype { STANDARD HABIT QUICK }
 
+# Motivation axis (0141, design §3b): who the work is for. Nullable — NULL means
+# UNLABELED, which is deliberately distinct from US (shared benefit): "never asked"
+# is not a kind of "both". Source discloses whose testimony the label is; a USER
+# label wins permanently (machine passes never re-tag).
+enum Motivation { ME US THEM }
+enum MotivationSource { USER LLM }
+
 type TaskType implements Node & Taggable {
   id: ID!
   title: String!
@@ -40,6 +47,9 @@ type TaskType implements Node & Taggable {
   # Phase B (0135): per-element texture override.
   textureEnabled: Boolean!
   textureColorToken: String
+  # Motivation axis (0141): null = unlabeled (≠ US — see the enum note above).
+  motivation: Motivation
+  motivationSource: MotivationSource
   objective: ObjectiveType          # the first objective this task is linked to (objective_tasks, linked=1); null if none
 }
 
@@ -69,6 +79,8 @@ input CreateTaskInput {
   categories: [String!]
   textureEnabled: Boolean
   textureColorToken: String
+  "Motivation (0141): a caller-supplied value is user testimony (source stamps USER)."
+  motivation: Motivation
   dependsOn: [ID!]
   # NOTE: no `recurrenceRule` — recurring creation (the REST POST's createRecurringTask
   # branch) is out of scope for W3.3b; omitted so a rule can't be passed-and-ignored.
@@ -94,6 +106,8 @@ input UpdateTaskInput {
   categories: [String!]
   textureEnabled: Boolean
   textureColorToken: String
+  "Motivation (0141): absent preserves; explicit null un-labels (clears source too)."
+  motivation: Motivation
   dependsOn: [ID!]
 }
 
