@@ -5,9 +5,10 @@ import { resetDb, startTestServer, createOwner, SECOND_OWNER_ID, api, type TestS
 
 /**
  * Triality T4 — the REST surface (design §8). Thin-adapter contract: flag-off
- * 404s (the calibration posture), shown-rows-are-events (two GETs → two log
- * sets), once-only feedback, cross-tenant invisibility, and the WHO rule
- * (feedback audits; the read never does).
+ * 404s on all three verbs (the calibration posture), shown-rows-are-events (two
+ * GETs → two log sets), once-only feedback, reset-drops-the-rollup-not-the-
+ * evidence, cross-tenant invisibility, and the WHO rule (owner writes audit; the
+ * read never does).
  */
 
 let srv: TestServer;
@@ -38,17 +39,101 @@ function seedOpen(title: string, owner = OWNER): void {
 const logCount = (owner = OWNER) =>
   (sqlite.prepare(`SELECT COUNT(*) AS c FROM triality_log WHERE owner_id = ?`).get(owner) as { c: number }).c;
 
+const weightCount = (owner = OWNER) =>
+  (sqlite.prepare(`SELECT COUNT(*) AS c FROM triality_weights WHERE owner_id = ?`).get(owner) as { c: number }).c;
+
+/** Learned rows straight into the rollup: the reset route's only precondition is
+ *  that rows EXIST, and the learning job is under test in triality-learning. */
+function seedWeights(owner = OWNER, slots: string[] = ['habitual', 'contextual']): void {
+  const stmt = sqlite.prepare(
+    `INSERT INTO triality_weights (owner_id, slot, weights, sample_count, computed_date)
+     VALUES (?, ?, '{"F":0.5,"H":0.3,"Q":0.2,"N":0,"C":0}', 20, '2026-07-29')`,
+  );
+  for (const slot of slots) stmt.run(owner, slot);
+}
+
+const resetAudits = (owner = OWNER) =>
+  (
+    sqlite
+      .prepare(
+        `SELECT COUNT(*) AS c FROM audit_log
+          WHERE owner_id = ? AND actor = 'owner' AND action = 'reset' AND entity = 'triality:weights'`,
+      )
+      .get(owner) as { c: number }
+  ).c;
+
 describe('flag gate', () => {
-  it('404s both verbs while off; alive when on', async () => {
+  it('404s all THREE verbs while off; alive when on', async () => {
+    // The whole surface looks absent, not broken — read, feedback AND reset.
+    seedWeights();
     expect((await api(srv.url, '/api/triality/next')).status).toBe(404);
     expect((await api(srv.url, '/api/triality/feedback', { method: 'POST', json: { log_id: 'x', outcome: 'opened' } })).status).toBe(404);
-    expect(logCount()).toBe(0); // gated = zero side effects
+    expect((await api(srv.url, '/api/triality/weights', { method: 'DELETE' })).status).toBe(404);
+    expect(logCount()).toBe(0);      // gated = zero side effects
+    expect(weightCount()).toBe(2);   // …including the destructive verb: nothing was reset
 
     enableTriality();
     seedConfirmed(12);
     seedOpen('anything');
-    const res = await api(srv.url, '/api/triality/next');
+    expect((await api(srv.url, '/api/triality/next')).status).toBe(200);
+    expect((await api(srv.url, '/api/triality/weights', { method: 'DELETE' })).status).toBe(200);
+  });
+});
+
+describe('DELETE /api/triality/weights (reset learning, §6b)', () => {
+  it('clears the learned rollup and reports how many rows went', async () => {
+    enableTriality();
+    seedWeights(OWNER, ['habitual', 'contextual', 'novel']);
+    const res = await api(srv.url, '/api/triality/weights', { method: 'DELETE' });
     expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, cleared: 3 });
+    expect(weightCount()).toBe(0);
+  });
+
+  it("B's reset clears only B's rows, and neither owner's EVIDENCE is touched", async () => {
+    // The reset drops a REGENERABLE rollup. triality_log is the durable evidence and
+    // must survive, or the adaptation would be lost instead of merely re-earnable.
+    enableTriality(OWNER);
+    createOwner(SECOND_OWNER_ID);
+    enableTriality(SECOND_OWNER_ID);
+    seedConfirmed(12, OWNER);
+    seedOpen('mine', OWNER);
+    seedConfirmed(12, SECOND_OWNER_ID);
+    seedOpen('theirs', SECOND_OWNER_ID);
+    await api(srv.url, '/api/triality/next');
+    await api(srv.url, '/api/triality/next', { headers: { 'x-test-owner': SECOND_OWNER_ID } });
+    seedWeights(OWNER, ['habitual', 'novel']);
+    seedWeights(SECOND_OWNER_ID, ['habitual']);
+    const logsA = logCount(OWNER);
+    const logsB = logCount(SECOND_OWNER_ID);
+    expect(logsA).toBeGreaterThan(0);
+    expect(logsB).toBeGreaterThan(0);
+
+    const res = await api(srv.url, '/api/triality/weights', { method: 'DELETE', headers: { 'x-test-owner': SECOND_OWNER_ID } });
+    expect(res.status).toBe(200);
+    expect(res.body.cleared).toBe(1);
+    expect(weightCount(SECOND_OWNER_ID)).toBe(0);
+    expect(weightCount(OWNER)).toBe(2);           // A's learning is untouched
+    expect(logCount(OWNER)).toBe(logsA);          // …and the evidence survives a reset
+    expect(logCount(SECOND_OWNER_ID)).toBe(logsB);
+    expect(resetAudits(OWNER)).toBe(0);           // A's ledger records nothing B did
+  });
+
+  it('audits exactly the reset that cleared something — a no-op delete writes no row', async () => {
+    enableTriality();
+    seedWeights(OWNER, ['habitual']);
+    const before = (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c;
+
+    const first = await api(srv.url, '/api/triality/weights', { method: 'DELETE' });
+    expect(first.body.cleared).toBe(1);
+    expect(resetAudits()).toBe(1);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c).toBe(before + 1);
+
+    const repeat = await api(srv.url, '/api/triality/weights', { method: 'DELETE' });
+    expect(repeat.status).toBe(200);              // idempotent, not an error
+    expect(repeat.body).toEqual({ ok: true, cleared: 0 });
+    expect(resetAudits()).toBe(1);                // a no-op is not a mutation worth a row
+    expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c).toBe(before + 1);
   });
 });
 

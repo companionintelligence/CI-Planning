@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import {
@@ -224,6 +224,96 @@ describe('N — novelty fallback', () => {
     const res = await trialityNext(OWNER, NOW, { embedFn: null });
     if (res.refused) throw new Error('unexpected refusal');
     for (const p of res.picks) if (p) expect(p.scores.N).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('N — the embedding stage is bounded (the only I/O in the scoring path)', () => {
+  /**
+   * EMBED_CANDIDATE_CAP / EMBED_TIMEOUT_MS / NOVELTY_BUDGET_MS are module-private
+   * and stay that way — exporting a constant only so a test can read it turns the
+   * tunable into API. Every case below drives the bound through INPUTS (pool size,
+   * embedFn latency, embedFn failure) and asserts the observable contract instead:
+   * the result is byte-identical to the categorical-only result, for EVERY
+   * candidate, and the call still returns.
+   */
+
+  /** Deterministic, clearly non-degenerate vectors — so a run that DOES embed
+   *  provably differs from the categorical-only run. */
+  const fakeVec = (t: string): number[] => [t.length % 7, t.charCodeAt(0) % 5, 1];
+
+  it('a pool over the cap embeds NOTHING — categorical for all, embedFn never called', async () => {
+    seedConfirmedHistory(12);
+    // 41 open candidates: one past the documented cap of 40. No time_blocks ⇒
+    // rawFreeGapMinutes is null ⇒ the capacity filter drops nobody, so the pool
+    // the novelty stage sees is exactly what we inserted.
+    for (let i = 0; i < 41; i++) insertTask(`cand-${String(i).padStart(2, '0')}`, { estimate: 20 });
+
+    const categorical = await trialityNext(OWNER, NOW, { embedFn: null });
+    if (categorical.refused) throw new Error('unexpected refusal');
+
+    const embedFn = vi.fn(async (t: string) => fakeVec(t));
+    const capped = await trialityNext(OWNER, NOW, { embedFn });
+
+    // ALL-OR-NOTHING, not merely "capped": a half-embedded pool would be two
+    // rankings interleaved, so every score in the result must be the categorical
+    // one — deep equality over the whole result is the assertion.
+    expect(embedFn).not.toHaveBeenCalled();
+    expect(capped).toEqual(categorical);
+  });
+
+  it('positive control: a pool under the cap DOES embed and moves N', async () => {
+    // Guards the test above against passing for the wrong reason (e.g. too little
+    // history for a centroid, which also skips embedding).
+    seedConfirmedHistory(12);
+    insertTask('alpha', { estimate: 20 });
+    insertTask('beta', { estimate: 25 });
+    insertTask('gamma', { estimate: 30 });
+
+    const categorical = await trialityNext(OWNER, NOW, { embedFn: null });
+    const embedFn = vi.fn(async (t: string) => fakeVec(t));
+    const blended = await trialityNext(OWNER, NOW, { embedFn });
+
+    expect(embedFn).toHaveBeenCalled();
+    expect(blended).not.toEqual(categorical);
+  });
+
+  it('an embedFn that never resolves does not hang — one deadline, then categorical', async () => {
+    seedConfirmedHistory(12);
+    insertTask('alpha', { estimate: 20 });
+    insertTask('beta', { estimate: 25 });
+    insertTask('gamma', { estimate: 30 });
+
+    const categorical = await trialityNext(OWNER, NOW, { embedFn: null });
+
+    // FAKE TIMERS, setTimeout only: the stage's deadline is a real setTimeout, and
+    // faking just that lets us jump past it without a 4-second wall-clock sleep and
+    // without touching Date (every date here is derived from the frozen NOW).
+    // Safe because the stage registers its timer synchronously, before the first
+    // suspension — so it already exists when we advance.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const embedFn = vi.fn(() => new Promise<number[]>(() => {})); // never settles
+      const pending = trialityNext(OWNER, NOW, { embedFn });
+      await vi.advanceTimersByTimeAsync(10_000); // well past the stage budget
+      const timedOut = await pending;
+      expect(embedFn).toHaveBeenCalled(); // it really did enter the embedding stage
+      expect(timedOut).toEqual(categorical);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an embedFn that throws degrades to categorical without propagating', async () => {
+    seedConfirmedHistory(12);
+    insertTask('alpha', { estimate: 20 });
+    insertTask('beta', { estimate: 25 });
+
+    const categorical = await trialityNext(OWNER, NOW, { embedFn: null });
+    const embedFn = vi.fn(async () => {
+      throw new Error('ollama embed exploded');
+    });
+    await expect(trialityNext(OWNER, NOW, { embedFn })).resolves.toEqual(categorical);
+    expect(embedFn).toHaveBeenCalled();
   });
 });
 
