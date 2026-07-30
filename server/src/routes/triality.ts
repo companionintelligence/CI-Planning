@@ -5,6 +5,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
 import { trialityNext, logShown, stampOutcome, isOutcome, type ScoredPick } from '../services/triality.js';
+import { attachRationales, type Rationale } from '../services/triality-rationale.js';
 
 /**
  * Triality REST surface (design §8) — thin adapters over services/triality.ts;
@@ -29,7 +30,10 @@ export function trialityRouter() {
     return false;
   };
 
-  const pickToApi = (p: ScoredPick, logId: string | null) => ({
+  // The rationale is a GARNISH (T9, §8): computed after the engine returned, so
+  // nothing here can move a pick or a score. It is always present and always
+  // labeled — `template` is the spec, `ai` only when a model line replaced it.
+  const pickToApi = (p: ScoredPick, logId: string | null, rationale: Rationale) => ({
     slot: p.slot,
     action_kind: p.kind,
     action_ref: p.ref,
@@ -41,6 +45,8 @@ export function trialityRouter() {
     scores: p.scores,
     ternary: p.ternary,
     log_id: logId,
+    rationale: rationale.text,
+    rationale_source: rationale.source,
   });
 
   // GET /api/triality/next — the three candidates with full per-component score
@@ -57,8 +63,9 @@ export function trialityRouter() {
       return;
     }
     const logIds = logShown(owner, now, res.picks);
+    const rationales = await attachRationales(res.picks, res.vector);
     ctx.body = {
-      picks: res.picks.map((p, i) => (p ? pickToApi(p, logIds[i]) : null)),
+      picks: res.picks.map((p, i) => (p ? pickToApi(p, logIds[i], rationales[i]!) : null)),
       empty_reasons: res.emptyReasons,
       vector: res.vector,
       computed_at: now.toISOString(),
@@ -92,6 +99,22 @@ export function trialityRouter() {
       writeAudit({ ownerId: owner, actor: 'owner', action: 'feedback', entity: `triality:${body.log_id}` });
     }
     ctx.body = { changed: res.changed };
+  });
+
+  // DELETE /api/triality/weights — "reset learning" (§6b). Drops THIS owner's
+  // learned rows only; the triality_log evidence survives untouched, so the
+  // adaptation can be re-earned on the next weekly pass rather than being lost.
+  // Owner-initiated write ⇒ audited (WHO rule), unlike the job that writes them.
+  router.delete('/weights', (ctx) => {
+    if (!gate(ctx)) return;
+    const owner = currentOwnerId();
+    const res = sqlite.prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(owner);
+    // Audit only a real reset — a no-op delete is not a mutation worth a row
+    // (the same posture as the feedback stamp above).
+    if (res.changes > 0) {
+      writeAudit({ ownerId: owner, actor: 'owner', action: 'reset', entity: 'triality:weights' });
+    }
+    ctx.body = { ok: true, cleared: res.changes };
   });
 
   return router;

@@ -42,13 +42,62 @@ const TARGETS: Record<Slot, readonly [number, number, number]> = {
   novel:      [-1, +1, +1],
 };
 
+const COMPONENTS = ['F', 'H', 'Q', 'N', 'C'] as const;
+
 /**
- * The ONE seam the learning wave (T8, §6b) plugs into: today it returns the
- * defaults unconditionally, but every scoring call goes through it, so teaching
- * it to read `triality_weights` later cannot require an engine change.
+ * The ONE seam scoring reads weights through (§6b). A learned `triality_weights`
+ * row wins; ABSENCE means defaults, never zeros — that distinction is what lets
+ * the learning job simply not write a floored slot.
+ *
+ * A malformed/partial stored row degrades to the defaults rather than throwing:
+ * a corrupt derived row must never take the suggestion surface down, and the
+ * evidence to recompute it still sits in triality_log.
  */
-export function getWeights(_ownerId: string, slot: Slot): SlotWeights {
-  return DEFAULT_WEIGHTS[slot];
+const selectWeights = sqlite.prepare(
+  `SELECT weights FROM triality_weights WHERE owner_id = ? AND slot = ?`,
+);
+
+export function getWeights(ownerId: string, slot: Slot): SlotWeights {
+  // Every fallback returns a COPY: DEFAULT_WEIGHTS is exported, and handing out a
+  // reference to it makes a future caller's in-place tweak a global default change.
+  const defaults = () => ({ ...DEFAULT_WEIGHTS[slot] });
+  const row = selectWeights.get(ownerId, slot) as { weights: string } | undefined;
+  if (!row) return defaults();
+  try {
+    const parsed = JSON.parse(row.weights) as Record<string, unknown>;
+    const out = { ...DEFAULT_WEIGHTS[slot] };
+    let sum = 0;
+    for (const k of COMPONENTS) {
+      const v = parsed[k];
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return defaults();
+      // Enforce the §6b contract on READ, both ends: a legitimate written row is
+      // within [½·default, 2·default] (zero-default components exactly 0 — learning
+      // scales defaults, so it can never invent a component the slot doesn't use).
+      // The writer guarantees this; a restore or hand-edit does not, and an
+      // accepted 1e9 here shipped a 500000000 score total to the client in review.
+      // The 0.5/2 bounds are §6b's CLAMP_LO/CLAMP_HI (triality-learning.ts) — a
+      // deliberate two-site constant: this module cannot import them without a cycle.
+      const d = DEFAULT_WEIGHTS[slot][k];
+      if (d === 0 ? v !== 0 : v < 0.5 * d || v > 2 * d) {
+        logger.info('triality: learned weight outside its contract bounds — falling back to defaults', { ownerId, slot, k, v });
+        return defaults();
+      }
+      out[k] = v;
+      sum += v;
+    }
+    // An all-zero row is the one corrupt state the writer cannot produce but a
+    // restore or hand-edit can. It would zero every candidate's total and quietly
+    // reduce slot assignment to the id tie-break — so treat it as corrupt, which is
+    // what the fallback above already promises for every other malformed shape.
+    if (!(sum > 0)) {
+      logger.info('triality: learned weights sum to zero — falling back to defaults', { ownerId, slot });
+      return defaults();
+    }
+    return out;
+  } catch {
+    logger.info('triality: unparseable learned weights — falling back to defaults', { ownerId, slot });
+    return defaults();
+  }
 }
 export type GetWeightsFn = typeof getWeights;
 
@@ -60,6 +109,12 @@ const POOL_CAP = 60;           // max open tasks considered per run (priority-or
 const REFUSAL_FLOOR = 10;      // confirmed completions needed before ranking at all (§4)
 const EMBED_BLEND = 0.5;       // N = blend of categorical novelty and embedding distance
 const GAP_MARGIN_MIN = 5;      // capacity filter: estimate must fit the gap with this margin
+// Bounds on the ONLY I/O in the scoring path (embeddings for N). Both are documented
+// caps, not silent truncation: exceeding either logs and degrades the whole stage to
+// categorical novelty, never a partially-embedded pool.
+const EMBED_CANDIDATE_CAP = 40;   // pool size past which embedding is skipped entirely
+const EMBED_TIMEOUT_MS = 3_000;   // per-call ceiling (ollama.embed's own default is 30s)
+const NOVELTY_BUDGET_MS = 4_000;  // whole-stage deadline, centroid + candidates together
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -355,7 +410,9 @@ async function noveltyScores(
   embedFn: TrialityOpts['embedFn'],
 ): Promise<number[]> {
   const categorical = H.map((h) => 1 - h);
-  const embed = embedFn === null ? null : embedFn ?? (async (t: string) => ollama.embed(t));
+  // Explicit short per-call timeout: inheriting ollama.embed's 30s default put a
+  // 30-second-per-title ceiling on a request the banner is waiting for.
+  const embed = embedFn === null ? null : embedFn ?? (async (t: string) => ollama.embed(t, EMBED_TIMEOUT_MS));
   if (!embed) return categorical;
 
   try {
@@ -368,18 +425,54 @@ async function noveltyScores(
       .all(ownerId, since) as { title: string }[];
     if (recent.length < 5) return categorical; // too little signal for a meaningful centroid
 
-    const vecs = await Promise.all(recent.map((r) => embed(r.title)));
-    const dim = vecs[0]?.length ?? 0;
-    if (!dim) return categorical;
-    const centroid = new Array<number>(dim).fill(0);
-    for (const v of vecs) for (let i = 0; i < dim; i++) centroid[i] += v[i] / vecs.length;
-
-    const out: number[] = [];
-    for (let i = 0; i < cands.length; i++) {
-      const v = await embed(cands[i].title);
-      out.push(EMBED_BLEND * categorical[i] + (1 - EMBED_BLEND) * cosineDistance(v, centroid));
+    // A pool bigger than the cap is not embedded AT ALL, rather than partially:
+    // a half-embedded pool would rank some candidates on blended novelty and the
+    // rest on categorical, which is not a ranking — it is two rankings interleaved.
+    if (cands.length > EMBED_CANDIDATE_CAP) {
+      logger.info('triality: candidate pool over embed cap — categorical novelty only', {
+        ownerId, pool: cands.length, cap: EMBED_CANDIDATE_CAP,
+      });
+      return categorical;
     }
-    return out;
+
+    // ONE wall-clock budget for the whole stage, and the fallback is all-or-nothing
+    // for the same reason. Embeddings are the only I/O in the scoring path, and
+    // `ollama.embed`'s own default is 30s PER CALL — with a centroid plus one call
+    // per candidate that is an unbounded stall on a reachable-but-slow Ollama, on
+    // a request a human is waiting on. Racing the entire stage against one deadline
+    // makes the worst case bounded and the outcome shape deterministic.
+    let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+    const blended = await Promise.race([
+      (async () => {
+        const vecs = await Promise.all(recent.map((r) => embed(r.title)));
+        const dim = vecs[0]?.length ?? 0;
+        // Dimension agreement is validated for EVERY vector, and the fallback is
+        // all-or-nothing (the same doctrine as the cap): one short/empty vector
+        // would otherwise poison the centroid with NaN — which would ship "N": null
+        // on every pick AND silently delete N from the learning corpus — or hand
+        // one candidate a free N=0.5 outlier from a degenerate cosine.
+        if (!dim || vecs.some((v) => v.length !== dim)) return null;
+        const centroid = new Array<number>(dim).fill(0);
+        for (const v of vecs) for (let i = 0; i < dim; i++) centroid[i] += v[i] / vecs.length;
+        // Parallel, not sequential: the cap bounds the fan-out, and serial awaits
+        // multiplied the latency by the pool size for no benefit.
+        const cvecs = await Promise.all(cands.map((c) => embed(c.title)));
+        if (cvecs.some((v) => v.length !== dim)) return null;
+        return cvecs.map(
+          (v, i) => EMBED_BLEND * categorical[i] + (1 - EMBED_BLEND) * cosineDistance(v, centroid),
+        );
+      })(),
+      new Promise<null>((resolve) => {
+        budgetTimer = setTimeout(() => resolve(null), NOVELTY_BUDGET_MS);
+      }),
+    ]).finally(() => clearTimeout(budgetTimer));
+    // ^ the timer is CLEARED on the fast path — an uncleared 4s timeout per request
+    // held vitest workers open and added a measurable tail to graceful shutdown.
+    if (!blended) {
+      logger.info('triality: novelty embedding budget exceeded — categorical only', { ownerId, budgetMs: NOVELTY_BUDGET_MS });
+      return categorical;
+    }
+    return blended;
   } catch (err) {
     logger.info('triality: embeddings unavailable — categorical novelty only', { err: (err as Error).message });
     return categorical;
@@ -540,9 +633,14 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
   const pragmatism = ternarize(F);
   const capacity = ternarize(C);
 
+  // Resolve each slot's weights ONCE per run (they cannot change mid-pipeline —
+  // learning is batch by construction), so scoring is one table read per slot
+  // rather than one per candidate, and the whole run sees a single consistent
+  // weight set even if the job happened to land between two candidates.
   const weightsFor = opts.getWeightsFn ?? getWeights;
+  const resolvedWeights = Object.fromEntries(SLOTS.map((s) => [s, weightsFor(ownerId, s)])) as Record<Slot, SlotWeights>;
   const slotScore = (slot: Slot, i: number): number => {
-    const w = weightsFor(ownerId, slot);
+    const w = resolvedWeights[slot];
     return w.F * F[i] + w.H * H[i] + w.Q * Q[i] + w.N * N[i] + w.C * C[i];
   };
 
