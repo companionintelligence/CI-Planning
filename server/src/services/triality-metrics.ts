@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { buildSituationVector } from './triality-vector.js';
+import { collapseImpressions } from './triality-learning.js';
 import { SLOTS, type Slot } from './triality.js';
 
 /**
@@ -39,12 +40,21 @@ export interface TrialityMetrics {
 }
 
 function slotAcceptance(ownerId: string, slot: Slot, fromISO: string, toISO: string, now: Date): SlotAcceptance {
-  const rows = sqlite
+  const raw = sqlite
     .prepare(
-      `SELECT outcome, shown_at FROM triality_log
-        WHERE owner_id = ? AND slot = ? AND shown_at >= ? AND shown_at < ?`,
+      `SELECT outcome, shown_at, action_ref, local_date FROM triality_log
+        WHERE owner_id = ? AND slot = ? AND shown_at >= ? AND shown_at < ?
+        ORDER BY id ASC`,
     )
-    .all(ownerId, slot, fromISO, toISO) as { outcome: string; shown_at: string }[];
+    .all(ownerId, slot, fromISO, toISO) as { outcome: string; shown_at: string; action_ref: string; local_date: string }[];
+  // SAME collapse the learning job applies (one vote per suggestion per day, a
+  // decision beats an impression, else the EARLIEST showing represents the group).
+  // The log has TWO readers, and an independent prover caught this one still
+  // counting raw impressions: a day of banner remounts reported hundreds of
+  // "shown" for eight real suggestions and understated the acceptance rate ~3×.
+  // Whatever the learning corpus calls one vote, the tile must call one vote —
+  // divergent counts here would make the metrics dispute the weights they explain.
+  const rows = collapseImpressions(raw.map((r) => ({ ...r, slot, scores: '' })));
   let taken = 0, pending = 0, decided = 0;
   for (const r of rows) {
     if (r.outcome === 'shown' && now.getTime() - Date.parse(r.shown_at) < PENDING_MS) { pending++; continue; }
@@ -137,14 +147,11 @@ export function trialityMetrics(ownerId: string, now: Date, days = 30): Triality
   };
 }
 
-/** triality_weights ships with the learning wave — probe for the table the way
- *  optional sqlite-vec presence is probed, and return null (not []) before it
- *  exists so the tile can tell "learning not built/started" from "reset". */
+/** Null (not []) when the owner has no LEARNED ROWS yet, so the tile can render
+ *  "learning hasn't started" rather than an empty table. Migration 0142 always
+ *  creates the table, so there is nothing to probe for — absence of rows is the
+ *  only "not started" state, and it is also what a reset leaves behind. */
 function readWeights(ownerId: string): TrialityMetrics['weights'] {
-  const table = sqlite
-    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'triality_weights'`)
-    .get();
-  if (!table) return null;
   const rows = sqlite
     .prepare(`SELECT slot, weights, sample_count, computed_date FROM triality_weights WHERE owner_id = ?`)
     .all(ownerId) as { slot: string; weights: string; sample_count: number; computed_date: string }[];

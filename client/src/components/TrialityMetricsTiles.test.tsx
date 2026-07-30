@@ -8,7 +8,9 @@ import type { TrialityMetrics } from '../lib/api.js';
  *   2. null rate renders "no suggestions decided yet", never 0%;
  *   3. weights: null renders "learning not started" and NO reset button;
  *   4. weights present → rows + the reset button appears;
- *   5. deficit rows say "moved with", and pending counts are disclosed.
+ *   5. deficit rows say "moved with", and pending counts are disclosed;
+ *   6. the reset copy does not promise permanence — the endpoint deletes the
+ *      weights but not the log, so the weekly pass re-learns from it.
  */
 
 const metricsMock = vi.fn(async (_d?: number): Promise<TrialityMetrics> => EMPTY);
@@ -81,7 +83,8 @@ describe('gating + honest zeros', () => {
   it('weights null → "learning not started" and NO reset button', async () => {
     render(() => <TrialityMetricsTiles days={30} />);
     await waitFor(() => expect(screen.getByText(/learning not started/)).toBeTruthy());
-    expect(screen.queryByText('Reset learning')).toBeNull();
+    expect(screen.queryByText('Recompute from scratch')).toBeNull();
+    expect(screen.queryByTestId('triality-reset-hint')).toBeNull();
   });
 });
 
@@ -101,9 +104,20 @@ describe('lively fixture', () => {
   it('weights rows render and the reset button fires the DELETE + refetch', async () => {
     render(() => <TrialityMetricsTiles days={30} />);
     await waitFor(() => expect(screen.getByText(/41 outcomes/)).toBeTruthy());
-    const btn = screen.getByText('Reset learning');
+    const btn = screen.getByText('Recompute from scratch');
     btn.click();
     await waitFor(() => expect(resetMock).toHaveBeenCalledTimes(1));
     expect(toastMock).toHaveBeenCalled();
+  });
+
+  it('the reset copy claims a recompute, not a permanent erasure', async () => {
+    render(() => <TrialityMetricsTiles days={30} />);
+    await waitFor(() => expect(screen.getByTestId('triality-reset-hint')).toBeTruthy());
+    const hint = screen.getByTestId('triality-reset-hint').textContent!;
+    // The two load-bearing facts: the log survives, and the weekly pass re-learns.
+    expect(hint).toMatch(/log is kept/i);
+    expect(hint).toMatch(/weekly pass/i);
+    // And nothing anywhere claims "learning" itself was reset.
+    expect(screen.queryByText('Reset learning')).toBeNull();
   });
 });
