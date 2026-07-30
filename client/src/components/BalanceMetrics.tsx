@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from 'solid-js';
 import { Laugh, Meh, Frown, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-solid';
 import { api, type AxisMetrics, type MoodBreakdown } from '../lib/api.js';
+import { TrialityMetricsTiles } from './TrialityMetricsTiles.js';
 
 /**
  * Balance → Metrics: how the user's tasks actually land across the two axes they think
@@ -99,6 +100,8 @@ function AxisCard(props: { m: AxisMetrics }) {
 export function BalanceMetrics() {
   const [days, setDays] = createSignal<number>(30);
   const [metrics] = createResource(days, (d) => api.metrics.tasks(d));
+  // Triality tiles (design §9.2) ride the same window control; the component
+  // self-gates on the flag and renders nothing when off.
   const [trend] = createResource(() => api.metrics.calibration(90));
 
   // Readings with a real bias number — a zero-sample day is recorded (so a trend starts
@@ -235,6 +238,10 @@ export function BalanceMetrics() {
           </div>
         </Show>
       </div>
+
+      {/* Triality measurement tiles (design §9.2) — flag-gated inside; the window
+          buttons above drive them through the same `days` signal. */}
+      <TrialityMetricsTiles days={days()} />
     </div>
   );
 }

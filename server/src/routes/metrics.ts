@@ -1,7 +1,9 @@
 import Router from '@koa/router';
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
+import { trialityEnabled } from '../lib/flags.js';
 import { taskMetrics } from '../services/task-metrics.js';
+import { trialityMetrics } from '../services/triality-metrics.js';
 
 /**
  * Read-only metrics surface behind the Balance view's Metrics tab: task counts, timed
@@ -45,6 +47,22 @@ export function metricsRouter() {
       )
       .all(owner, scopeKind, scopeRef, limit) as Record<string, unknown>[];
     ctx.body = { scope_kind: scopeKind, scope_ref: scopeRef, readings: rows.reverse() };
+  });
+
+  // GET /api/metrics/triality?days=30 — what the suggestions DID (design §9.2):
+  // acceptance per slot (pending <24h rows excluded from denominators), the Novel
+  // uptake trend, deficit response ("moved with", never "because"), and learned
+  // weights (null until the learning wave writes them). 404 while the flag is
+  // off — same posture as every other Triality surface.
+  router.get('/api/metrics/triality', (ctx) => {
+    const owner = currentOwnerId();
+    if (!trialityEnabled(owner)) {
+      ctx.status = 404;
+      ctx.body = { error: 'Not found' };
+      return;
+    }
+    const days = Number((ctx.query.days as string) ?? '30');
+    ctx.body = trialityMetrics(owner, new Date(), days);
   });
 
   return router;

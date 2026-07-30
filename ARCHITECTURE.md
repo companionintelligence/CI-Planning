@@ -1,6 +1,6 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-29 · migration head `0138` (authoritative list: `server/src/db/migrations/index.ts`)
+**Status:** Living document · last updated 2026-07-30 · migration head `0143` (authoritative list: `server/src/db/migrations/index.ts`)
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -30,6 +30,8 @@ feature in §1.2; migration head 0135):** Tasks + scheduler · Rich semantics + 
 ## 1.1 Post-AG work (2026-07-14 → 07-16, migs 0127–0130)
 
 Two tracks landed after the AG close-out. Neither has a phase letter; §1.2 (Categories⇄Balance, migs 0134–0135) continues the line, and the head has since moved past it (see the status line at top).
+
+Also in this window, all flag-gated or additive: memory enrichment (`POST /api/tasks/:id/enrich` + the nightly `enrich_tasks` job, 0136), the close ritual + durable calibration history behind the Balance → Metrics tab (0137/0138), and **Triality** — three candidate next actions (Habitual · Contextual · Novel) ranked by local arithmetic over a balanced-ternary situation vector, a task `motivation` axis (me/us/them), an append-only outcome log, and a weekly weight-calibration job (each weight clamped to ½×–2× of its default, then renormalized so the slot's weights still sum to the default total), all behind `scheduling_prefs.triality_enabled` (default 0; migs 0139–0143; design record `docs/triality-design.md`). **No generative model chooses or re-orders a pick**; the one piece of I/O in the scoring path is a local *embedding* call that supplies half the novelty term when Ollama answers (bounded by a 40-candidate cap and a 4s stage budget, with a pure-arithmetic fallback when it does not) — so stopping Ollama can change the picks against identical SQLite state, and "deterministic" holds only for a fixed embedding availability. Flag-off = no routes, no UI, no suggestion computation; the `calibrate_triality` cron row is seeded unconditionally by 0143 and no-ops on an empty log, so it is not byte-identical: every owner still gets the weekly `job_runs` row, its `job:run` SSE broadcast, and the extra row in `/jobs`. Its surfaces are the Focus suggestion banner and the Balance → Metrics measurement tiles — **no new routed view**.
 
 **Life priorities + the Priorities Wizard** (migs 0127/0128, #356). A `life_priorities` row per `(owner, category)` captures a self-audit — `satisfaction` (1–10), `importance` (1–10), `target_hours_per_week`. It backs two routed views: **`/priorities`** (the wizard) and **`/balance`** (the dashboard). `scheduling_prefs.sleep_hours_per_week` (0128, default 63 = 9h × 7) reserves sleep as unschedulable, so the wizard's weekly pool is `168 − sleep_hours_per_week`. `/balance` reads the self-audit back — a **Balance Index** (how far `satisfaction` tracks `importance`) plus the allocated weekly targets. Self-contained, and narrower than it may sound: **it reports stated intent, not measured time.** There is still no actual-vs-target tracking (`Balance.tsx` reads no `time_entries`/`actual_minutes`) or scheduling boosts — but the `no task.category` gap named here is now **closed by the Categories⇄Balance feature (§1.2)**.
 
@@ -132,7 +134,7 @@ graph TB
             GQL["GraphQL<br/>/api/graphql (Apollo, alongside REST)"]
             SSE["SSE /api/events<br/>real-time push"]
             Engine["Scheduling Engine<br/>autoplan · reflow · review"]
-            Cron["Croner Jobs<br/>18 cron jobs (19 kinds)"]
+            Cron["Croner Jobs<br/>20 cron jobs (21 kinds)"]
             Migrate["Migration runner<br/>0001 → head on boot"]
         end
         FE["SolidJS PWA<br/>(built into server/public/)"]
@@ -199,7 +201,7 @@ Companion-Planning/
 │       ├── routes/           REST controllers (one file per resource)
 │       ├── graphql/          Apollo schema-first SDL + resolvers (Phase W, alongside routes/)
 │       ├── sync/             apply.ts — the field-LWW merge engine (§12)
-│       ├── jobs/             Croner job definitions (19 kinds; 18 cron-scheduled)
+│       ├── jobs/             Croner job definitions (21 kinds; 20 cron-scheduled)
 │       ├── services/         ~27 modules — the shared owner-scoped layer REST + GraphQL
 │       │                     both call (tasks · blocks · objectives · task-promotion ·
 │       │                     priorities · stars · timer · vapid-config · …)
@@ -250,7 +252,7 @@ erDiagram
 | Table | Purpose | Added |
 |---|---|---|
 | `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103) | 0001, 0101, 0103 |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_mood`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137) | 0001, 0135, 0137 |
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_mood`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137); `motivation` (`me`\|`us`\|`them`, NULL = unlabeled — and NULL is never read as `us`) + `motivation_source` (`user`\|`llm`; a user label is never re-tagged) (0141) | 0001, 0135, 0137, 0141 |
 | `task_dependencies` | Blocked-by edges between tasks | 0005 |
 | `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | 0007 |
 | `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099). `category_id`/`color_token` (0069) are legacy reads only — writes go through `entity_categories` (0134/§1.2); `texture_enabled`/`texture_color_token` (0135) per-element override | 0015, 0099, 0135 |
@@ -268,7 +270,7 @@ erDiagram
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
 | `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
 | `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs`. `category` rows are the six Balance-dimension hues (0134) | 0039, 0069, 0097, 0134 |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this) | 0001, 0091, 0106, 0108, 0111, 0113, 0128 |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139) | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139 |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
 | `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
 | `reminders` | Scheduled reminders — fired exactly once by the 1-min dispatcher | 0044 |
@@ -291,6 +293,8 @@ erDiagram
 | `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
 | `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107). Regenerable rollup — replaced wholesale each run | 0083, 0107 |
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) from the same job; never recomputed or pruned | 0138 |
+| `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)` | 0140 |
+| `triality_weights` | Learned Triality weights per `(owner_id, slot)` PK — `weights` JSON, `sample_count`, `computed_date`. Regenerable rollup replaced wholesale by `calibrate_triality`; **absence means "the default weights"**, so deleting an owner's rows is the reset switch. Raw SQL only | 0142 |
 | `daily_recap` | One row per `(owner, date)`: the day-briefing cache (`prose`/`stats`/`focus`/`inputs_hash`) + the frozen five-star score (`star_*`/`total`/`frozen_at`); today lives, past days permanent once frozen. Merged `daily_summaries` + `day_stars` | 0089, 0094, 0096 |
 
 ---
@@ -359,6 +363,7 @@ sequenceDiagram
     Cron->>DB: reset_routines (00:00) — reopen routine checklists
     Cron->>DB: freeze_stars (00:20) — snapshot yesterday's five-star score
     Cron->>DB: review_day (01:00) — defer or surface missed tasks
+    Cron->>DB: calibrate_estimates (01:30) — compute bias ratio (nightly since 0107)
     Cron->>DB: snapshot_db (02:00) — point-in-time SQLite backup
     Cron->>Mem: push_memory (02:00) — one-way push of completed/habit/reflection events
     Cron->>DB: auto_schedule (03:00) — re-place tomorrow's flight-plan
@@ -367,7 +372,7 @@ sequenceDiagram
     Cron->>DB: purge_objectives (hourly) — reap archived objectives past purge_after
 
     Note over Cron,DB: Weekly ─────────────────────────────────────
-    Cron->>DB: calibrate_estimates (Sun 04:00) — compute bias ratio
+    Cron->>DB: calibrate_triality (Mon 03:50) — re-tune Triality slot weights
     Cron->>DB: advance_objectives (Mon 05:00) — stage objective tasks
 ```
 
@@ -385,6 +390,7 @@ sequenceDiagram
 | `reset_routines` | daily 00:00 | Reopen completed Routine checklist tasks for the new day (AC) |
 | `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `daily_recap` (owner-tz day; idempotent, first-freeze-wins on `frozen_at`) |
 | `review_day` | daily 01:00 | Defer / surface missed planned tasks |
+| `calibrate_estimates` | daily 01:30 | Compute personal estimate bias ratio — **moved here from Sun 04:00 by 0107** (`UPDATE scheduled_jobs SET cron = '30 1 * * *'`, applied only to rows still on the old weekly cron so an operator-customized one is never clobbered) |
 | `promote_possibles` | — (manual only) | Unconditionally promote any pending inbox stragglers into Tasks, then hands-off auto-block — cron row retired by 0118 (AF-3: producers auto-promote at ingestion; `nightly_grooming` subsumes the sweep) |
 | `nightly_grooming` | daily 02:00 | Per owner: embedding-dedupe pending possibles · bump overdue open-task priority · unconditionally promote pending stragglers · hands-off auto-block the newly promoted |
 | `snapshot_db` | daily 02:00 | Write a point-in-time SQLite backup |
@@ -392,7 +398,8 @@ sequenceDiagram
 | `generate_recurrences` | daily 02:45 | Materialize recurring Task/Habit instances; flag missed habits |
 | `auto_schedule` | daily 03:00 | Re-place flight-plan items for the next day |
 | `prune_sync_events` | daily 03:00 | Trim old `sync_events` rows beyond retention window |
-| `calibrate_estimates` | Sun 04:00 | Compute personal estimate bias ratio |
+| `enrich_tasks` | daily 03:20 | Per owner: fill blank description / direction / categories on thin tasks from Companion Memory (fill-blanks-only; no-op when memory is off) (0136) |
+| `calibrate_triality` | Mon 03:50 | Re-tune the per-slot Triality weights from 90 days of `triality_log` outcomes — batch, each weight clamped to ½×–2× of its default and then renormalized so the slot's weights still sum to the default total, and inert below 20 decided rows for a slot. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): weights are per-owner by construction, and pooling one owner's feedback into another's ranking is ruled out absolutely (0143) |
 | `advance_objectives` | Mon 05:00 | Stage tasks for active objectives into flight-plan |
 
 ---
