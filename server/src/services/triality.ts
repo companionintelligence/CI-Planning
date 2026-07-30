@@ -194,7 +194,7 @@ function directionIfDirectionTag(name: string | null, ownerId: string): string |
   return row ? name.toLowerCase() : null;
 }
 
-function collectCandidates(ownerId: string): Candidate[] {
+function collectCandidates(ownerId: string, now: Date): Candidate[] {
   const out: Candidate[] = [];
 
   const staged = new Set(
@@ -204,12 +204,17 @@ function collectCandidates(ownerId: string): Candidate[] {
   );
 
   // Open tasks — dependency-blocked ones excluded (a blocked pick is not an
-  // action the owner can take now, so it must never survive to scoring).
+  // action the owner can take now, so it must never survive to scoring), and
+  // DEFERRED ones excluded for a stronger reason: `defer_until` is the owner
+  // explicitly saying "not until then". The rest of the app honors that by
+  // hiding the task from the today-set; surfacing it as a *suggestion* would
+  // contradict an instruction they gave, which is worse than merely listing it.
   // Priority-ordered, bounded: POOL_CAP is a documented bound, logged when hit.
   const taskRows = sqlite
     .prepare(
       `SELECT t.id, t.title, t.estimated_minutes, t.motivation FROM tasks t
         WHERE t.owner_id = ? AND t.status IN ('open', 'scheduled') AND t.parent_id IS NULL
+          AND (t.defer_until IS NULL OR t.defer_until <= ?)
           AND NOT EXISTS (
             SELECT 1 FROM task_dependencies d
               JOIN tasks b ON b.id = d.depends_on_id
@@ -217,7 +222,7 @@ function collectCandidates(ownerId: string): Candidate[] {
         ORDER BY t.priority ASC, t.id ASC
         LIMIT ${POOL_CAP + 1}`,
     )
-    .all(ownerId) as { id: string; title: string; estimated_minutes: number | null; motivation: Candidate['motivation'] }[];
+    .all(ownerId, now.toISOString()) as { id: string; title: string; estimated_minutes: number | null; motivation: Candidate['motivation'] }[];
   if (taskRows.length > POOL_CAP) {
     logger.info('triality: open-task pool capped', { ownerId, cap: POOL_CAP });
     taskRows.length = POOL_CAP;
@@ -604,7 +609,7 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
 
   // Stage 1 — hard capacity filter (§1: pipeline order is normative). Only a
   // KNOWN misfit drops: unknown gap or unknown estimate cannot honestly exclude.
-  const all = collectCandidates(ownerId);
+  const all = collectCandidates(ownerId, now);
   const cands = all.filter(
     (c) => !(gapMin != null && c.estimateMin != null && c.estimateMin > gapMin - GAP_MARGIN_MIN),
   );

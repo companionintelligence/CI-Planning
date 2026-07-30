@@ -158,6 +158,30 @@ describe('capacity filter (§1 pipeline order)', () => {
     const refs = res.picks.filter((p): p is ScoredPick => !!p).map((p) => p.ref);
     expect(refs).not.toContain(blocked);
   });
+
+  it('deferred tasks never reach scoring — the owner already said "not until then"', async () => {
+    // defer_until is an explicit instruction, not a preference: the rest of the app
+    // hides the task from the today-set until it passes. Suggesting it anyway would
+    // contradict the owner rather than merely list something they filed away.
+    seedConfirmedHistory(12);
+    const deferred = insertTask('deferred task');
+    sqlite
+      .prepare(`UPDATE tasks SET defer_until = ? WHERE id = ?`)
+      .run(new Date(NOW.getTime() + 3 * 86_400_000).toISOString(), deferred);
+    const elapsed = insertTask('defer window already passed');
+    sqlite
+      .prepare(`UPDATE tasks SET defer_until = ? WHERE id = ?`)
+      .run(new Date(NOW.getTime() - 86_400_000).toISOString(), elapsed);
+    insertTask('never deferred');
+
+    const res = await trialityNext(OWNER, NOW, { embedFn: null });
+    if (res.refused) throw new Error('unexpected refusal');
+    const refs = res.picks.filter((p): p is ScoredPick => !!p).map((p) => p.ref);
+    expect(refs).not.toContain(deferred);
+    // …and an ELAPSED deferral is just a normal task again — the filter is a
+    // point-in-time comparison, not a permanent exclusion.
+    expect(refs).toContain(elapsed);
+  });
 });
 
 describe('H — habit strength recency (§5)', () => {
