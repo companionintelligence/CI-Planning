@@ -136,8 +136,15 @@ describe('motivation_balance — tasks.motivation column guard', () => {
       expect(v.dims.motivation_balance).toBe(0);
       expect(v.meta.active).not.toContain('motivation_balance');
     } finally {
-      // Put the sibling ticket's column back exactly as 0141 defines it.
-      if (hadColumn && !hasMotivationColumn()) sqlite.exec(`ALTER TABLE tasks ADD COLUMN motivation TEXT`);
+      // Put the sibling ticket's columns back exactly as 0141 defines them — including
+      // cid ORDER (motivation before motivation_source): the baseline schema snapshot
+      // reads PRAGMA table_info on the shared DB, so re-appending only `motivation`
+      // would leave it after motivation_source for every later test file.
+      if (hadColumn && !hasMotivationColumn()) {
+        sqlite.exec(`ALTER TABLE tasks DROP COLUMN motivation_source`);
+        sqlite.exec(`ALTER TABLE tasks ADD COLUMN motivation TEXT`);
+        sqlite.exec(`ALTER TABLE tasks ADD COLUMN motivation_source TEXT`);
+      }
     }
   });
 
