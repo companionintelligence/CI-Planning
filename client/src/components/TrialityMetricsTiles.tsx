@@ -9,8 +9,14 @@ import { prefs, showToast } from '../stores/index.js';
  *
  * Honest-zero rules mirror the server's: a null rate renders "no suggestions
  * decided yet", never 0%; a null weights block renders "learning not started";
- * deficit deltas say "moved with", never "because". The reset-learning button
- * exists only once weights exist — no dead buttons.
+ * deficit deltas say "moved with", never "because". The reset button exists only
+ * once weights exist — no dead buttons.
+ *
+ * WORDING CONSTRAINT (why this is not just copy): the reset DELETES the weights
+ * rows and nothing else. The §6b log it was derived from is untouched, so the
+ * weekly `calibrate_triality` pass re-derives byte-identical weights on its next
+ * run. "Reset learning" therefore promised a permanence the endpoint cannot
+ * deliver; the label and its hint say what actually happens instead.
  */
 
 const SLOT_LABEL = { habitual: 'HABITUAL', contextual: 'CONTEXTUAL', novel: 'NOVEL' } as const;
@@ -26,7 +32,7 @@ export function TrialityMetricsTiles(props: { days: number }) {
   async function resetLearning() {
     try {
       await api.triality.resetWeights();
-      showToast('Learning reset — back to default weights', 'success');
+      showToast('Weights cleared — defaults until the next weekly pass', 'success');
       void refetch();
     } catch (err) {
       showToast((err as Error).message, 'error');
@@ -99,7 +105,7 @@ export function TrialityMetricsTiles(props: { days: number }) {
             <span class="text-[9px] tracking-[0.1em] text-muted-foreground">LEARNED WEIGHTS</span>
             <Show when={m()!.weights}>
               <button class="text-[10px] text-accent hover:underline" onClick={() => void resetLearning()}>
-                Reset learning
+                Recompute from scratch
               </button>
             </Show>
           </div>
@@ -115,6 +121,11 @@ export function TrialityMetricsTiles(props: { days: number }) {
                 </div>
               )}
             </For>
+            {/* The reset clears the weights, not the evidence — say so. */}
+            <div class="text-[10px] text-muted-foreground italic mt-1" data-testid="triality-reset-hint">
+              Recomputing drops these weights back to the defaults. Your feedback log is kept, so the next weekly
+              pass learns from it again.
+            </div>
           </Show>
         </div>
       </div>

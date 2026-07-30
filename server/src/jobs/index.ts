@@ -22,6 +22,7 @@ import { enrichRecentTasks } from '../services/task-enrich.js';
 import { syncAll } from '../agents/sync.js';
 import { advanceObjectives } from './advance-objectives.js';
 import { calibrateEstimates } from './calibrate-estimates.js';
+import { calibrateTriality } from '../services/triality-learning.js';
 import { freezeStars } from './freeze-stars.js';
 import { resetRoutineTasks } from './reset-routines.js';
 import { config } from '../lib/config.js';
@@ -330,6 +331,17 @@ async function execute(kind: string): Promise<JobOutcome> {
         log: `Nominated ${r.nominated} objective next-action task(s); skipped ${r.skipped}`,
       };
     }
+    case 'calibrate_triality': {
+      // §6b — bounded batch learning. Owner-scoped (see OWNER_SCOPED_KINDS): the
+      // cron fans this out per owner, and each pass reads only that owner's log.
+      // A cron/agent write, so it deliberately does NOT stamp owner attribution
+      // (WHO rule, owner ruling 2026-07-16).
+      const r = calibrateTriality(currentOwnerId(), new Date());
+      const label = r.slotsWritten > 0
+        ? `${r.slotsWritten} slot(s) tuned from ${r.outcomeRows} outcome(s)`
+        : `no slot cleared the ${r.floor}-outcome floor (${r.outcomeRows} outcome(s)) — defaults stand`;
+      return { itemsCreated: 0, itemsUpdated: r.slotsWritten, log: `Triality calibration: ${label}` };
+    }
     case 'calibrate_estimates': {
       const r = calibrateEstimates();
       const label = r.bias_ratio != null
@@ -426,6 +438,10 @@ const OWNER_SCOPED_KINDS = new Set([
   'sync_calendar',
   'advance_objectives',
   'calibrate_estimates',
+  // Triality learning (§6b): weights are per-owner by construction — a shared
+  // pass would pool one owner's feedback into another's ranking, which the design
+  // rules out absolutely (no cross-owner learning, ever).
+  'calibrate_triality',
   'freeze_stars',
   'reset_routines',
 ]);

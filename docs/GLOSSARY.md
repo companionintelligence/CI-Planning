@@ -1,6 +1,6 @@
 # Companion Planning — Canonical Vocabulary (GLOSSARY)
 
-> **Status:** canonical, 2026-07-07 (updated: `kind='direction'` for the grouping axis — 0038/0043 briefly renamed it `'pattern'`, reverted in 0105 / Phase Z W2; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). Phase T makes multi-tenant real (`owner_id` scoping across time_blocks/tags/sync_events, 0098–0100) and ratifies **owner ≡ user** (decision #1); Phase U adds auth-identity columns to `owners` (U0 / 0101). Phase Z "Time-Sense" (Focus Ritual + Calibration Loop) adds only **non-noun support state**: `reflections(kind='evening')`, the scope columns on `estimate_calibration` + `calibration_combo_pins` (0107), the per-cue prefs matrix + experiment arm on `scheduling_prefs` (Z5 / 0108), the Focus-Ritual `reminders` rows, and the Voice loop's `copy_history` anti-repetition memory (Z7 / 0109). Phases **AA–AE** (2026-07) likewise add **no noun**: the CI-Server `companion-memory` link is another **Connection** (a Setting, like a connected Google account — its data surfaces as existing nouns: memory events → **Inbox** suggestions / **Time Block** placements); natural scheduling (AB), the Today/Tasks UI overhaul (AC), calendar reliability (AD), and reflow correctness (AE) are behavior/UI/engine changes over the existing nouns. **None of Phase O/P/T/U/Z/AA–AE adds a noun** — owner is an internal model concept, budget stays 9). The single source of truth for user-facing
+> **Status:** canonical, 2026-07-07 (updated: `kind='direction'` for the grouping axis — 0038/0043 briefly renamed it `'pattern'`, reverted in 0105 / Phase Z W2; Phase N adds Objective — noun budget raised to 9; Phase O renames the Today "Goals" card → **FOCUS** with source-linked focus (0088), adds a one-per-day note reusing the same `reflections` table with no new migration, and adds a derived five-star day score cached in `day_stars` + a nightly freeze job (0089/0090); Phase O also retires the standalone Morning Briefing section. Phase P adds a `recurrence_horizon_days` Setting and a "Clear Date Range" Settings tool; Objectives joined the multi-device sync layer (0087). Phase T makes multi-tenant real (`owner_id` scoping across time_blocks/tags/sync_events, 0098–0100) and ratifies **owner ≡ user** (decision #1); Phase U adds auth-identity columns to `owners` (U0 / 0101). Phase Z "Time-Sense" (Focus Ritual + Calibration Loop) adds only **non-noun support state**: `reflections(kind='evening')`, the scope columns on `estimate_calibration` + `calibration_combo_pins` (0107), the per-cue prefs matrix + experiment arm on `scheduling_prefs` (Z5 / 0108), the Focus-Ritual `reminders` rows, and the Voice loop's `copy_history` anti-repetition memory (Z7 / 0109). Phases **AA–AE** (2026-07) likewise add **no noun**: the CI-Server `companion-memory` link is another **Connection** (a Setting, like a connected Google account — its data surfaces as existing nouns: memory events → **Inbox** suggestions / **Time Block** placements); natural scheduling (AB), the Today/Tasks UI overhaul (AC), calendar reliability (AD), and reflow correctness (AE) are behavior/UI/engine changes over the existing nouns. **None of Phase O/P/T/U/Z/AA–AE adds a noun** — owner is an internal model concept, budget stays 9. **Triality** (2026-07-30, migs 0139–0143, behind `triality_enabled`) likewise adds **no noun**: its three picks are a derived ranking over existing nouns, and its new vocabulary is slots (Habitual · Contextual · Novel) plus a per-Task **motivation** axis (me/us/them) — both demoted below, both with a mandatory disambiguation; budget stays 9). The single source of truth for user-facing
 > nouns. Companion to [ROADMAP.md](ROADMAP.md) (consolidation history in [archive/consolidation-plan.md](archive/consolidation-plan.md)). Every label
 > in the UI and every entity in the data model must map to a term here.
 
@@ -75,6 +75,52 @@ much smaller set. This glossary fixes the canon at **9 nouns** and demotes every
   deep-link star on task cards (`EightPointStar`, 8-pointed, accent color) — the day-stars
   are 5-pointed and gold, and only ever appear as the header tally or the calendar heatmap,
   never on a task card.
+- **Triality (the three candidate next actions):** **not a noun** — a derived *ranking* by
+  local arithmetic over nouns that already exist: a pick is a Task (flagged when it is already
+  staged in the Flight-plan), a Routine, or a *saved* Time Block (a block template) —
+  Triality creates no entity of its own. Behind `triality_enabled`
+  (`scheduling_prefs`, default 0; migs 0139–0143). Surfaces: a dismissable **suggestion**
+  banner on Focus and **measurement** tiles on Balance → Metrics — **no new routed view, so
+  the nine-view count is unchanged**. Internal: `services/triality.ts`, `triality_log`
+  (append-only outcomes), `triality_weights` (learned weights). No generative model chooses,
+  writes, or re-orders a pick; a local **embedding** model contributes half the novelty term
+  when Ollama is reachable, with a pure-arithmetic fallback when it is not — so the ranking is
+  reproducible against a fixed embedding availability, not unconditionally. Design record:
+  [triality-design.md](triality-design.md).
+- **Slots — Habitual · Contextual · Novel:** **not nouns** — the three scoring postures a
+  Triality pick is chosen under, one pick each. Canonical spelling in the UI *and* in
+  storage (`triality_log.slot`, the weight keys) — one spelling everywhere except GraphQL's
+  mandatory SCREAMING_CASE enum values, cased at the wire edge in
+  `graphql/triality-resolvers.ts`, so there is no **semantic** translation layer. A slot
+  answers **how this pick was chosen**, never what the picked thing is.
+
+  > **Disambiguation (mandatory):** **Habitual** *(a slot)* is **not** **Habit** *(what a
+  > thing is)*. Habit is the load-bearing type name — the built-in `pattern_types` row
+  > **Habit ◯** (0013, *do not rename*) and the Task subtype `tasks.subtype='habit'`. A
+  > Habitual pick need not be a Habit, and a Habit can be picked into any slot. Slot =
+  > how it was chosen; Habit = what it is.
+- **Motivation — me · us · them:** **not a noun** — an optional per-Task axis
+  (`tasks.motivation`, mig 0141) recording **who the work is for**: *me* (the owner's own
+  legacy) · *us* (genuinely shared) · *them* (other people). `NULL` = **unlabeled**, and
+  unlabeled is never read as *us* — "shared" is a positive claim, "never asked" is the
+  absence of one. `tasks.motivation_source` records `user` vs `llm` (a local-model or
+  keyword label); a user's own label wins permanently and is never re-tagged.
+
+  > **Disambiguation (mandatory):** **us** *(a motivation — who benefits)* is **not**
+  > **Community** *(a direction Tag — which life sphere the work happens in;
+  > `tags.kind='direction'`, brand-set Home / Work / Community)*. They are independent
+  > axes: volunteering at a shelter is **direction = Community, motivation = them**.
+- **Learned weights:** **not a noun** — the per-`(owner, slot)` component weights Triality
+  scores with (`triality_weights`, mig 0142), recomputed weekly by the `calibrate_triality`
+  job from `triality_log` outcomes. A *regenerable rollup* in the `estimate_calibration`
+  sense: **absence of a row means "the shipped defaults"**, never zero, so deleting an
+  owner's rows is the reset switch and the append-only log survives it — which makes a reset a
+  **recompute, not a permanent opt-out**: the next weekly pass re-derives weights from that
+  untouched log. Bounded by contract — batch only, each weight clamped to ½×–2× of its default
+  and then renormalized so the slot's weights still sum to the default total, inert below 20
+  decided outcomes for a slot, and shown on Balance → Metrics with the sample count behind
+  each slot (never
+  hand-editable: there is no weights pref).
 - **Pattern-block day types:** `workday` (Mon–Fri) · `weekend` (Sat–Sun). Each direction has
   0–N time ranges per day type. direction-less tasks fall back to the general `workday_start`/
   `workday_end` window from scheduling\_prefs.

@@ -112,6 +112,11 @@ export interface TrialityPick {
   scores: { F: number; H: number; Q: number; N: number; C: number; total: number };
   ternary: [number, number, number];
   log_id: string | null;
+  /** T9 garnish: one short "why now" line. Optional on the wire only because a
+   *  cached/older response may predate the field — never absent from a fresh one. */
+  rationale?: string;
+  /** Honest labelling — the UI must show which clock wrote the line. */
+  rationale_source?: 'ai' | 'template';
 }
 export interface TrialityNext {
   refused?: 'sparse_history';

@@ -406,14 +406,27 @@ export const DIM_REGISTRY: readonly DimEntry[] = [
     },
   },
   {
-    // §3: only meaningful when memory_pull_enabled. v1 encodes 0 in BOTH states —
-    // TODO(triality): when the memory wiring ships, probe the Phase AA connector
-    // (connectors/memory.ts graphData(owner, { from: now, to: now+48h })) for a related
-    // upcoming event → +1. Flag off must never touch the connector, so this module
-    // deliberately does not import it.
+    // §3: the memory dim is DECLARED but not yet sensed — the encoder returns 0
+    // unconditionally, in both flag states.
+    //
+    // `active` therefore reports FALSE, not `ctx.memoryPullEnabled`. The registry's
+    // contract for `active` is "computable in principle this call", and a stub that
+    // consults no source is not computable in any state — claiming otherwise made
+    // this dim the one place `meta.active` lied. That matters beyond tidiness:
+    // v2's confidence score defines coverage as (non-zero dims ÷ active dims), so
+    // an inert dim counted as active would silently understate coverage forever,
+    // and the error would be invisible precisely because the dim always reads 0.
+    // Fix the truthfulness before anything is built on it (v2 design §1, wave 2.1).
+    //
+    // TODO(triality v2.4): when the memory wiring ships, probe the Phase AA
+    // connector (connectors/memory.ts graphData(owner, { from: now, to: now+48h }))
+    // for a related upcoming event → +1, and restore `active: ctx.memoryPullEnabled`
+    // in the same commit — the two must move together or the lie comes back.
+    // Flag off must never touch the connector, so this module deliberately does not
+    // import it; v2 reads a cached snapshot rather than calling it inline.
     name: 'memory_context',
     encode: () => 0,
-    active: (ctx) => ctx.memoryPullEnabled,
+    active: () => false,
   },
   {
     // §3b, homeostatic against the owner's own norm: recent window drifted them-ward

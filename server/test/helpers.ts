@@ -64,6 +64,9 @@ export function resetDb(): void {
     -- 0140: append-only by design (the Triality learning corpus) — same
     -- cross-test contamination argument as calibration_history above.
     DELETE FROM triality_log;
+    -- 0142: learned weights are derived state, but a row left behind would
+    -- silently re-weight another test file's scoring (the engine reads them).
+    DELETE FROM triality_weights;
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;

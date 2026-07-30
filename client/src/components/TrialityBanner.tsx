@@ -168,6 +168,23 @@ export function TrialityBanner() {
                       <span class="text-foreground font-medium"> S {p.scores.total}</span>
                       <span> · [{p.ternary.join(', ')}]</span>
                     </div>
+                    {/* T9 garnish, under the arithmetic and never instead of it: the
+                        line is always labeled with who wrote it (the "AI Briefing" vs
+                        "Day Overview" honesty idiom). No rationale — or a rationale
+                        with no source — renders NO line: an unlabeled explanation is
+                        worse than none. */}
+                    <Show when={p.rationale && p.rationale_source}>
+                      <div class="mt-0.5 ml-2 text-[10px] text-muted-foreground" data-testid="triality-rationale">
+                        <span
+                          class="mr-1 rounded px-1 text-[8px] tracking-[0.1em] uppercase border border-border"
+                          classList={{ 'text-accent-hi': p.rationale_source === 'ai' }}
+                          title={p.rationale_source === 'ai' ? 'written by the local model' : 'deterministic explanation'}
+                        >
+                          {p.rationale_source === 'ai' ? 'AI' : 'template'}
+                        </span>
+                        {p.rationale}
+                      </div>
+                    </Show>
                   </Show>
                 </div>
               )}

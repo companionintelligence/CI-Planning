@@ -131,6 +131,46 @@ describe('rendering', () => {
   });
 });
 
+describe('rationale garnish (T9)', () => {
+  /** Expand the first pill — the rationale sits under the arithmetic, not on the pill. */
+  async function expandFirst() {
+    render(() => <TrialityBanner />);
+    await waitFor(() => expect(screen.getByText('Reply to sprint thread')).toBeTruthy());
+    fireEvent.click(screen.getByText('Reply to sprint thread'));
+    return screen.findByTestId('triality-breakdown');
+  }
+
+  it("an 'ai' line renders, labelled AI", async () => {
+    nextMock.mockResolvedValue({
+      ...THREE,
+      picks: [pick({ rationale: 'You usually start here after standup.', rationale_source: 'ai' })],
+    });
+    await expandFirst();
+    const line = await screen.findByTestId('triality-rationale');
+    expect(line.textContent).toContain('You usually start here after standup.');
+    expect(line.textContent).toContain('AI');
+    expect(line.textContent).not.toContain('template');
+  });
+
+  it("a 'template' line renders, labelled template", async () => {
+    nextMock.mockResolvedValue({
+      ...THREE,
+      picks: [pick({ rationale: 'Something you do often, and today is a work day.', rationale_source: 'template' })],
+    });
+    await expandFirst();
+    const line = await screen.findByTestId('triality-rationale');
+    expect(line.textContent).toContain('Something you do often, and today is a work day.');
+    expect(line.textContent).toContain('template');
+  });
+
+  it('a pick with no rationale renders no rationale line at all', async () => {
+    nextMock.mockResolvedValue({ ...THREE, picks: [pick()] });
+    const breakdown = await expandFirst();
+    expect(breakdown.textContent).toContain('H 0.9'); // the arithmetic is still there
+    expect(screen.queryByTestId('triality-rationale')).toBeNull();
+  });
+});
+
 describe('actions', () => {
   it('stage → flight-plan POST then staged feedback, in that order, with a toast', async () => {
     render(() => <TrialityBanner />);
