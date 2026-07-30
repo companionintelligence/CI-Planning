@@ -4,6 +4,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
 import { trialityNext, logShown, stampOutcome, isOutcome, type ScoredPick } from '../services/triality.js';
+import { attachRationales, type Rationale } from '../services/triality-rationale.js';
 
 /**
  * Triality GraphQL resolvers (T5) — parity with routes/triality.ts by shared
@@ -22,7 +23,9 @@ function gate(): string {
   return owner;
 }
 
-const pickToNode = (p: ScoredPick, logId: string | null) => ({
+// T9 parity: the same garnish, attached the same way (after the engine), with the
+// wire style this file already uses — camelCase fields, SCREAMING enum values.
+const pickToNode = (p: ScoredPick, logId: string | null, rationale: Rationale) => ({
   slot: p.slot.toUpperCase(),
   actionKind: p.kind.toUpperCase(),
   actionRef: p.ref,
@@ -37,6 +40,8 @@ const pickToNode = (p: ScoredPick, logId: string | null) => ({
   },
   ternary: p.ternary,
   logId,
+  rationale: rationale.text,
+  rationaleSource: rationale.source.toUpperCase(),
 });
 
 export const trialityResolvers = {
@@ -55,9 +60,10 @@ export const trialityResolvers = {
         };
       }
       const logIds = logShown(owner, now, res.picks);
+      const rationales = await attachRationales(res.picks, res.vector);
       return {
         refused: null,
-        picks: res.picks.map((p, i) => (p ? pickToNode(p, logIds[i]) : null)),
+        picks: res.picks.map((p, i) => (p ? pickToNode(p, logIds[i], rationales[i]!) : null)),
         emptyReasons: res.emptyReasons,
         vector: res.vector,
         computedAt: now,
