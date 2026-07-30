@@ -1008,6 +1008,7 @@ export interface Prefs {
   memory_account?: string | null; memory_last_synced_at?: string | null;
   // Companion Memory pull (Phase AA): feed the CI-Server memory graph into suggestions.
   memory_pull_enabled?: boolean;
+  triality_enabled?: boolean; // Triality master flag (0139); default false — banner + tiles hidden
   // Onboarding Priorities Wizard (0128): weekly hours reserved for sleep (unschedulable,
   // attributed to Health). Default 63 = 9h/night × 7; schedulable pool = 168 − this.
   sleep_hours_per_week?: number;
