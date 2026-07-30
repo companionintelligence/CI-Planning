@@ -299,6 +299,10 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // agentic surfaces (inbox suggestions). Default OFF — flag-off is byte-identical.
   // Distinct from memorySyncEnabled (the one-way PUSH toggle above, AA4).
   memoryPullEnabled: integer('memory_pull_enabled', { mode: 'boolean' }).default(false),
+  // Triality master flag (0139). Default OFF — gates the Focus suggestion banner,
+  // the Balance→Metrics Triality tiles, and every /api/triality/* route while the
+  // feature lands dark (docs/triality-design.md §7). Flag-off = byte-identical.
+  trialityEnabled: integer('triality_enabled', { mode: 'boolean' }).default(false),
   // Onboarding Priorities Wizard (0128): weekly hours reserved for SLEEP — unschedulable,
   // attributed to Health. Default 63 = 9h/night × 7; the wizard's schedulable pool = 168 − this.
   sleepHoursPerWeek: integer('sleep_hours_per_week').notNull().default(63),
