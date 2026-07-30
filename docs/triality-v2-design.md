@@ -1,22 +1,42 @@
 # Triality v2 — sensing what v1 can't, and knowing what it doesn't know
 
-> ## ⚠️ Status: DESIGN (2026-07-30). Wave v2.1 is SHIPPED; everything else is unbuilt.
+> ## ⚠️ Status: DESIGN (2026-07-30). Waves v2.1 and v2.2 are SHIPPED; everything else is unbuilt.
 >
 > **v2.1 landed on main the same day this was drafted** (`5625329`, merged with the
 > wave-5 stack via #438): `collectCandidates` now honors `defer_until` (§3.1) and the
 > `memory_context` dim no longer claims to be sensed (§1's bug). The audit table below
 > is kept as written — it is the record of what the audit *found*, and those two rows
-> now read as pre-fix history. Waves v2.2+ remain design only.
+> now read as pre-fix history.
+>
+> **v2.2 (§4 confidence) is built — derive, store and report, with no gating.** As
+> shipped it is `server/src/services/triality-confidence.ts` (the whole arithmetic, with
+> zero runtime imports), `DecisionTelemetry` + `evidenceRows` + runner-up capture in
+> `services/triality.ts`, migration `0144_triality_confidence`, a `confidence` object on
+> every non-null pick in **both** `/next` surfaces, and `calibration` on
+> `GET /api/metrics/triality`. **A `guess` still fills its slot** — nothing suppresses,
+> reorders or filters a pick. §4's "may render empty instead" is v2.5 work and did *not*
+> ship here; §13 carries the gate it has to clear first.
+>
+> **One §4 formula was written against a ranking the engine does not use.**
+> `margin = (S_top − S_runner_up) / max(S_top, ε)` assumed the slot score ranks the pool.
+> It is a **tie-break** in a lexicographic `[dot, S, ref]` key, so that subtraction goes
+> negative in the ordinary case rather than an exotic one. §4 below is narrowed to the
+> four-branch form that shipped and keeps the superseded line on the record with its
+> counter-example. Two `coverage` claims and one `evidence` claim are narrowed there too.
+> Waves v2.3+ remain design only.
 >
 > v1 is built and shipping dark behind `triality_enabled` (waves 1–5, PRs #433–#436
 > plus `feat/triality-wave-5`, all merged via #438). This document extends
 > [triality-design.md](triality-design.md);
-> where the two disagree about v1 behavior, **v1's doc wins** — this one only ever
-> describes what is *proposed*.
+> where the two disagree about v1 behavior, **v1's doc wins**. Every section still
+> describes what is *proposed* except the two marked ✅ SHIPPED (§3.1 and §4), which
+> now describe what was built — and where those two disagree with the code, **the code
+> wins and this doc is wrong**.
 >
 > Migration numbers are written as `next-free` — check
 > `server/src/db/migrations/index.ts` first, always. The v1 head at drafting was
-> `0143_calibrate_triality_job`.
+> `0143_calibrate_triality_job`; v2.2 moved it to `0144_triality_confidence`. That
+> sentence is the only copy of the number in this file, and `index.ts` outranks it.
 >
 > **Doctrines that do NOT change in v2** are listed in §9 and are not up for
 > negotiation by any track below: deterministic ranking, honest zeros, bounded
@@ -57,7 +77,9 @@ blanket — never crank the rate*, and v2 is that rule taken seriously.
    real constraints, hierarchical frequency, and the dims only the memory graph
    can supply (people, places, commitments).
 2. **Know what it doesn't know** (§4) — per-pick confidence, and the honesty to
-   render an empty slot rather than a confident guess.
+   render an empty slot rather than a confident guess. *(As built, v2.2 delivered
+   the first half only: it reports and hedges. Suppressing a slot is v2.5, and §13
+   states what has to be true before it is allowed to.)*
 3. **Learn where it was wrong, not just that it was wrong** (§7) — a dismissal
    reason turns one aggregate signal into targeted, per-dim-group attribution.
 
@@ -116,44 +138,153 @@ arithmetic). Two consequences worth stating: direction-type frequency becomes a
 first-class signal, and `N = 1 − H_class` inherits the improvement, so novelty
 stops mistaking "unusual combination" for "unfamiliar activity".
 
-## 4. Track B — confidence scoring
+## 4. Track B — confidence scoring — ✅ SHIPPED in v2.2 (report only, no gating)
 
 The headline capability, and the one that most changes how the feature *feels*.
 Confidence is **derived, deterministic, reported — and never fed back into the
-ranking** (a score that both ranks and rates itself is circular).
+ranking** (a score that both ranks and rates itself is circular). As built that
+guarantee is structural rather than intended: `services/triality-confidence.ts`
+reaches `services/triality.ts` through `import type` only and holds no DB handle,
+no clock and no I/O, and `services/triality.ts` never names it back in either
+direction of the type graph.
 
-Three orthogonal components, each already computable from state v1 has:
+Three orthogonal components, each computable from state v1 already has. **As shipped:**
 
 ```
-coverage = (non-zero dims among meta.active) / |meta.active|
-           — how much of the claimed blanket was actually sensed
-margin   = (S_top − S_runner_up) / max(S_top, ε)
+coverage = (non-zero dims among meta.active) / |meta.active|       // |meta.active| = 0 ⇒ 0
+           — how many of the dims the vector says it can sense are pulling in a direction
+margin   = four branches on the key the engine actually compares (table below)
            — how decisively this candidate won ITS slot
-evidence = min(1, decisions(signature) / EVIDENCE_FULL)
-           — how much real history backs this candidate's H and Q
+evidence = min(1, evidenceRows / EVIDENCE_FULL)                    // EVIDENCE_FULL = 8
+           — how many 90-day completions match this candidate under H's own predicate
 ```
 
-Combined by the **weakest link, not the average**:
-`confidence = min(coverage, margin_scaled, evidence)`. Averaging lets a
-decisive margin hide the fact that nothing was sensed; a minimum cannot. Banded
-into three labels — **firm · tentative · guess** — with the thresholds as named
-constants.
+`|meta.active|` is **12** once the owner has work hours configured and **11**
+without — and **never 13**, because v2.1's truthfulness fix took `memory_context`
+out of `active` permanently until something actually senses it. The band
+constants are set so `firm` and `tentative` mean the same *dim counts* at both
+denominators (≥5 and ≥3), so a band means one thing in English either way.
+
+Combined by the **weakest link, not the average**. Averaging lets a decisive
+margin hide the fact that nothing was sensed; a minimum cannot. Each component
+is rounded to 3dp **first**, then `value = min(coverage, margin, evidence)`, then
+the band is a pure function of that stored `value` — **firm** at ≥ `FIRM_AT`
+(0.4), **tentative** at ≥ `TENTATIVE_AT` (0.2), **guess** below. Rounding before
+the minimum is load-bearing, not tidiness: it is what lets a reviewer verify a
+stored row with a calculator, where banding an unrounded minimum would let a
+printed `0.400` carry `tentative`.
+
+### 4.1 `margin = (S_top − S_runner_up) / max(S_top, ε)` is SUPERSEDED
+
+That formula assumed the engine ranks by slot score. **It does not.** Stage 4
+compares `[dot, S, ref]` lexicographically and `S` is only the **tie-break**, so
+the subtraction is not measuring the decision that was made. It fails in the
+*ordinary* case, not an exotic one: a winner at dot 3 / S 0.4 legitimately beats
+a runner-up at dot 2 / S 0.9, and the formula returns a **negative** margin on a
+pick that was in fact decisive. The ε denominator is not a safety net either — a
+block template provably carries `H = 0` and `Q = 0` (no completion trail, and no
+history row can share its signature), and in Habitual `N` and `C` carry weight
+zero, so `S` collapses to the `F` term alone and an all-opposed `contextFit` puts
+it at exactly 0. The clamp then manufactures a confident `1.0` out of a pool
+where nothing scored at all.
+
+What shipped measures the same lexicographic key the loop uses, with the
+runner-up defined as the second-best under **that** key, in that slot's
+**post-veto, post-`taken`** pool — never second-best-by-S:
+
+| situation | margin | `marginBasis` |
+|---|---|---|
+| no runner-up — the winner was alone in the eligible pool | **0** | `uncontested` |
+| the winner's `dot` is higher | `min(1, MARGIN_PER_DOT_STEP × Δdot)` | `dot` |
+| `dot` tied, the winner's `S` is higher | `MARGIN_TIER_CAP × min(1, (S − S_r) / S)` | `score` |
+| `dot` tied and `S` tied — or non-finite, or `S ≈ 0` | **0** | `tie` |
+
+Both constants are `0.5` today, which is what makes the dot tier `{0.5, 1.0}` and
+the score tier `(0, 0.5]` — read them from
+`server/src/services/triality-confidence.ts`, not from this sentence.
+
+The score tier is capped below the smallest dot credit on purpose: the two are
+different kinds of certainty. A dot win means the winner matched a ternary pole
+the runner-up did not; a score win means the triple did not discriminate at all
+and the pick rode a tie-break. The ratio is relative rather than a gap over a
+constant because `getWeights` validates each learned weight but never their
+**sum**, so a restored `triality_weights` row can scale every `S` by up to 2× —
+an absolute gap would scale with it and manufacture confidence.
+
+Two consequences the doc should not have needed a build to learn:
+
+- **An uncontested pick has margin `0`, not `1`.** Margin is a comparison
+  quantity and no comparison happened; no data must never render as a confident
+  number. It is also **not the same state as a tie**, which is why `marginBasis`
+  ships beside the number — "nothing else was eligible" and "tied with another
+  candidate, and the id order decided" are different sentences and earn different
+  hedges. Reachable in practice, not in theory: `taken` consumes the earlier
+  slots' winners, so a small pool empties.
+- **Margin can never be negative on any input**, including a corrupt one. The
+  reversed comparisons are unreachable by construction — the runner-up is the
+  best of the rest under the same comparator — and fall through to `tie` rather
+  than being subtracted.
+
+### 4.2 What `coverage` and `evidence` do NOT claim
+
+`coverage` keeps the formula and the `|meta.active|` denominator above; its
+**claim** is narrower than the original line, and both narrowings ship as product
+copy rather than as buried comments:
+
+- **A sensed neutral is indistinguishable from an unsensed hole**, so this is not
+  "how much of the blanket was sensed". `day_energy` 'flat', `free_gap` 15–45m,
+  `momentum` 'no signal', `motivation_balance` in-band and an on-target
+  `cat_deficit` are genuine readings encoded as `0`. v1 §3 chose a ternary with
+  no third state and `contextFit` drops a zero pair from its denominator either
+  way, so the distinction does not exist for *any* consumer — coverage inherits
+  that honestly rather than manufacturing a distinction the encoder threw away.
+  The bias is **downward**, the safe direction under a weakest link. The real fix
+  is a `sensed` predicate beside `active` on `DimEntry`; that widens the registry
+  contract and belongs to a later wave.
+- **It is not "how much entered the score" either — but only `momentum` is sensed
+  and scored by nothing.** `vector.dims` has exactly two consumers in the engine,
+  `contextFit` and `capacityScore`'s energy factor, and reading that grep
+  carelessly overstates the hole. `day_energy` feeds **C** as well as **F**, and
+  `free_gap`'s *dim* is unread but its information reaches the pick as raw
+  minutes via `rawFreeGapMinutes` → the hard capacity filter and C. So the gap is
+  **one** dim of the twelve, disclosed in the tooltip — not three. Coverage can
+  therefore move without any pick moving, which the copy says out loud.
+
+`evidence` backs **`H` only, not `H` and `Q`.** It counts the rows
+`historyMatches` matched — the one predicate `habitStrengths` itself uses,
+evaluated in the same pass so both numbers provably describe the same rows — and
+Q's transition counts are a different corpus that nothing here measures. It is
+deliberately **unweighted**: H already prices recency, and weighting twice would
+collapse the evidence for a habit done fifty times but paused a month. The lapse
+belongs in the *score*, not in our *certainty about the score*. The raw count
+ships uncapped beside the ratio, so a reader can see that 43 is not 8.
 
 **The product rules are the point:**
 
-- A **guess** renders with visible hedging ("a shot in the dark — thin history").
-- A slot whose best candidate is only a guess **may render empty instead**,
-  reusing v1 §5's empty-slot honesty. An empty slot is information; a confident
-  wrong answer is a lie. Whether Novel is exempt (its whole job is the low-
-  confidence probe) is an owner question — §12.
-- Confidence is surfaced in the breakdown popover alongside the arithmetic, and
-  aggregated on Balance → Metrics as **calibration**: do `firm` picks actually
-  get taken more often than `tentative` ones? If they don't, the confidence
-  model is wrong and the tile will say so. This is the honest counterpart to
-  v1's acceptance-rate tiles.
+- A **guess** renders with visible hedging, and the hedge names the *binding*
+  component — the one that actually set the minimum — rather than a generic line.
+  The marker sits on the pill itself, always visible, because hedging behind a
+  tap is not hedging; the arithmetic it came from sits inline in the breakdown
+  expansion beside F·H·Q·N·C, not behind a popover. `firm` gets **no** marker: a
+  badge on every pill trains the eye to ignore all of them, and boasting about a
+  model the calibration tile has not validated is the failure this wave exists to
+  avoid.
+- A slot whose best candidate is only a guess **may render empty instead** —
+  **deferred to v2.5, and not shipped in v2.2.** An empty slot is information and
+  a confident wrong answer is a lie, but suppression is the half of this that can
+  hurt an owner, so it waits on evidence the bands mean anything (§13). Whether
+  Novel is exempt (its whole job is the low-confidence probe) is still an owner
+  question — §12.
+- Confidence is aggregated on Balance → Metrics as **calibration**: do `firm`
+  picks actually get taken more often than `tentative` ones? If they don't, the
+  confidence model is wrong and the tile says so in those words. This is the
+  honest counterpart to v1's acceptance-rate tiles, and its reader **collapses
+  impressions before it counts anything** — a per-band rate over raw rows would
+  reproduce the ~3× overcount this file's own history records, in the one metric
+  whose purpose is detecting that the model lies.
 
-**Prerequisite:** fix the `memory_context` active-but-blind bug (§1), or
-`coverage` starts out overstated by exactly one dim.
+**Prerequisite** *(met in v2.1)*: fix the `memory_context` active-but-blind bug
+(§1), or `coverage` starts out overstated by exactly one dim.
 
 ## 5. Track C — the Companion Memory engine as the missing dims
 
@@ -276,8 +407,9 @@ which it becomes safe:
 - it may **never** fill Habitual (a synthesized action cannot be habitual — the
   slot's own definition forbids it), and it is always labeled as generated.
 
-Until §4 ships there is no principled way to hold that higher bar, which is the
-real reason this stays last.
+§4's reporting half shipped in v2.2, so the bar is now *measurable* — but nothing
+yet *holds* it, because holding it means declining to fill a slot, and that is
+v2.5's gating. This still stays last.
 
 ## 9. Doctrines that do not change
 
@@ -304,10 +436,12 @@ must be redesigned instead:
 | Change | Shape |
 |---|---|
 | `memory_situation` (next-free migration) | per-owner cached memory dims: `owner_id` PK, `dims` JSON, `computed_at`, `source_mode`. Regenerable — deletable, like `triality_weights`. ⚠️ add to `resetDb`. |
-| `triality_log.confidence` | new nullable column: the band + the three components as JSON, stamped at show time so calibration (§4) is measurable retrospectively |
+| `triality_log.confidence` ✅ SHIPPED (`0144_triality_confidence`) | **ONE** nullable TEXT column, not two: the band, the three components, their raw counts and a model version `v`, as a single JSON blob. Stamped at show time so calibration (§4) is measurable retrospectively — and NULL therefore means "shown before v2.2", **permanently**: the vector is never persisted, so a backfill could only stamp today's reading on an old row. Readers exclude those rows; they are never coerced to `guess`. A separate `band` column would buy no read (the calibration reader must collapse impressions in JS before it counts anything, so SQLite never sees a `GROUP BY`) and cost a denormalization invariant. Deliberately **not** folded into the existing `scores` column, which would leave the learning corpus untouched only by accident. |
+| `resetDb` | **NO CHANGE for 0144.** The ⚠️ above belongs to v2.4's `memory_situation` **table**; `confidence` is a *column* on `triality_log`, which `server/test/helpers.ts` already clears unconditionally. (`server/src/db/reset.ts` does not exist — the helper is the test one.) |
+| index on `triality_log(owner_id, shown_at)` | **Deliberately deferred.** Both pre-existing readers already range-scan that pair against an index on `(owner_id, local_date)` and the calibration reader is a third — but that is a pre-existing, behavior-neutral, unmeasured cost unrelated to confidence, and a wave whose core promise is being provably minimal is not where it belongs. Its own migration when it is measured. |
 | `triality_log.dismiss_reason` | new nullable column (`not_now` \| `not_relevant` \| `already_handled`), NULL = unattributed ✕ |
 | `triality_weights` | unchanged shape; §7's attribution adds *rows* (dim-group channels), not columns |
-| Flags | no new master flag. Sub-flags for the two riskiest tracks (`triality_confidence_gating`, `triality_memory_dims`) so they can be enabled independently of each other — the Phase Z per-channel precedent. |
+| Flags | no new master flag. Sub-flags for the two riskiest tracks (`triality_confidence_gating`, `triality_memory_dims`) so they can be enabled independently of each other — the Phase Z per-channel precedent. **v2.2 added neither**: it ships entirely behind the existing `triality_enabled`, because reporting a number nothing acts on has no risk to gate. `triality_confidence_gating` arrives with the suppression it names, in v2.5 (§12 Q4). |
 
 ## 11. Test plan (per track, TDD as usual)
 
@@ -318,8 +452,11 @@ must be redesigned instead:
 2. **Track B** — coverage arithmetic on a hand-built vector; margin on a
    near-tie vs. a blowout; evidence floor; **weakest-link** combination proven
    (a decisive margin with zero coverage must NOT read as firm); band
-   thresholds; a guess-only slot renders empty (or hedged, per §12); the
-   `meta.active` truthfulness regression test.
+   thresholds; a guess-only slot renders **hedged and still filled** — the empty
+   variant is v2.5 — plus the `meta.active` truthfulness regression test. *(The
+   plan under-specified one class: §4's guarantees are structural, so the
+   one-way import graph, the module's purity and `attachConfidence` leaving its
+   inputs alone each need a test of their own — none of them is a number.)*
 3. **Track C** — every dim's honest-zero state (memory off, snapshot stale, no
    place data); **the scoring path performs zero network calls** (assert with a
    throwing connector stub — this is the wave-5 lesson as an executable test);
@@ -336,7 +473,8 @@ must be redesigned instead:
 
 ## 12. Open questions for the owner
 
-1. **Should a `guess` fill a slot at all, or render it empty?** My
+1. **Should a `guess` fill a slot at all, or render it empty?** *(v2.2 fills it,
+   hedged — the question is live for v2.5's gating, not for what shipped.)* My
    recommendation: empty for Habitual and Contextual, hedged-but-shown for
    Novel — the Novel slot's job *is* the low-confidence probe (v1 §2b's
    epistemic action), so suppressing its guesses would remove the point of it.
@@ -345,16 +483,33 @@ must be redesigned instead:
    pass over the last week?
 3. **Location via memory** (§5.3): worth building if the graph has place data
    for this owner, dead weight if not. Do you have place-typed nodes in practice?
-4. **Confidence in the API contract** — add to the existing `/next` payload
-   (breaking nothing, since it is additive) or behind its own sub-flag until
-   the calibration tile says the model is trustworthy?
+4. **Confidence in the API contract** — ✅ **ANSWERED (v2.2, as built): additive
+   on the existing `/next` payload, with no sub-flag.** A number nothing acts on
+   cannot mis-serve an owner, and gating the *report* would have meant shipping a
+   calibration tile with no corpus to fill it — the tile is the only thing that
+   can falsify the bands. The sub-flag `triality_confidence_gating` (§10) arrives
+   in **v2.5**, where it gates the *suppression*: the half that can be wrong in a
+   way an owner notices.
 
-## 13. Wave plan (proposed)
+**Escalated by the v2.2 build (2026-07-30), still open:**
+
+1. **Does the `guess` marker say the word `GUESS`, or wear a muted glyph?** v2.2
+   ships the word. By construction (§13) Novel picks and every block template
+   read `guess` most days, so whichever is chosen is the label the banner wears
+   most of the time.
+2. **Should v2.5 gating be hard-blocked on `verdict === 'ordered' && !confounded`
+   persisting across two windows**, or is a single window enough to switch
+   suppression on?
+3. **Is a permanent `guess` on every block template acceptable** — v2.2 bands
+   them like anything else — or should a template render with no band at all
+   rather than one it can never leave?
+
+## 13. Wave plan
 
 | Wave | Tracks | Why this order |
 |---|---|---|
 | **v2.1** ✅ SHIPPED (`5625329`) | §3.1 `defer_until` · §1's `memory_context` truthfulness fix | Two small correctness fixes with no new concepts; §3.1 is arguably a v1 backport and the truthfulness fix is a §4 prerequisite. Landed with the wave-5 stack merge (#438). |
-| **v2.2** | §4 confidence (derive + report only, no gating) | Reporting first, gating second: the calibration tile must show the model is right before it is allowed to suppress a slot. |
+| **v2.2** ✅ SHIPPED | §4 confidence (derive + report only, no gating) | Reporting first, gating second: the calibration tile must show the model is right before it is allowed to suppress a slot. Built as `services/triality-confidence.ts` + migration `0144`, carried on both `/next` surfaces and on the metrics payload as `calibration`. **A `guess` still fills its slot** — nothing was suppressed, reordered or filtered. |
 | **v2.3** | §3.2/§3.3 time dims · §3.4 back-off H | The cheapest real sensing gains; both feed §4's coverage and evidence immediately. |
 | **v2.4** | §5 memory dims + the snapshot cache | The biggest gain and the biggest risk; lands after the confidence machinery can report what the new dims did to coverage. |
 | **v2.5** | §7 targeted feedback · §4 gating switched on | Attribution needs the reason column and a trustworthy confidence model. |
@@ -362,3 +517,32 @@ must be redesigned instead:
 
 Every wave leaves `main` shippable and flag-off byte-identical, exactly as v1's
 five waves did.
+
+### Release gate on v2.5 — three conditions, two of them structural
+
+v2.2 deliberately shipped the half that cannot hurt anyone. Switching gating on
+in v2.5 removes suggestions the owner would otherwise have seen, so it is
+allowed only when all three of these hold:
+
+1. **An `inverted` calibration verdict is a hard block.** If lower-confidence
+   picks are taken *more* often than higher-confidence ones by more than the
+   minimum gap on any adjacent pair, the bands are not measuring what they claim
+   and suppressing on them would delete the *better* suggestions. v2.5 should
+   additionally require `verdict === 'ordered' && !confounded` to persist across
+   **two** windows before it flips — one window can be a slot effect the
+   acceptance tiles already show (whether two is the right number is an owner
+   question, §12).
+2. **Block templates need an explicit exemption.** `historyMatches` excludes
+   `kind === 'template'` by construction — a saved block has no completion trail
+   — so `evidenceRows` is `0` forever and the weakest link pins **every template
+   pick to a permanent `guess`**. Gating without an exemption would silently
+   delete templates from the Novel slot: no error, no log line, and a feature
+   that just quietly stops offering saved blocks.
+3. **Novel needs its own exemption.** Its axis veto selects the low-H tail, so
+   the slot is **structurally** low-evidence. That is the slot doing its
+   epistemic job (v1 §2b), not a defect.
+
+Conditions 2 and 3 are **structural, not thresholds**: no retune of `FIRM_AT`,
+`TENTATIVE_AT` or `EVIDENCE_FULL` reaches them, because the counts they depend on
+are zero and low *by construction*. Whoever builds v2.5 must write both
+exemptions explicitly, or discover them by watching the two slots empty.

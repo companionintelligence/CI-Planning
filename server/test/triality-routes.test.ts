@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
+import { bandFor, parseConfidence, CONFIDENCE_MODEL_VERSION } from '../src/services/triality-confidence.js';
 import { resetDb, startTestServer, createOwner, SECOND_OWNER_ID, api, type TestServer } from './helpers.js';
 
 /**
@@ -9,6 +10,11 @@ import { resetDb, startTestServer, createOwner, SECOND_OWNER_ID, api, type TestS
  * GETs → two log sets), once-only feedback, reset-drops-the-rollup-not-the-
  * evidence, cross-tenant invisibility, and the WHO rule (owner writes audit; the
  * read never does).
+ *
+ * v2.2 adds R1: the confidence block on the wire and in the log column. What is
+ * pinned here is the ADAPTER, not the arithmetic (that is triality-confidence.test.ts) —
+ * that pickToApi renders every field in snake_case, that the rendered numbers are the
+ * ones stored, and that a payload with nothing to say says nothing rather than 0.
  */
 
 let srv: TestServer;
@@ -172,6 +178,112 @@ describe('GET /api/triality/next', () => {
     await api(srv.url, '/api/triality/next');
     const after = (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c;
     expect(after).toBe(before);
+  });
+});
+
+describe('confidence on GET /api/triality/next (v2.2 §8)', () => {
+  /** The wire contract, spelled out: pickToApi maps every field by hand, so an exact key
+   *  set is what catches a spread of the internal object leaking `marginBasis` in
+   *  camelCase — a presence check would pass that and the client would render nothing. */
+  const WIRE_KEYS = ['band', 'binding', 'counts', 'coverage', 'evidence', 'margin', 'margin_basis', 'v', 'value'];
+  const COUNT_KEYS = ['dims_active', 'dims_informative', 'eligible', 'evidence_rows'];
+
+  function seedRankable(): void {
+    seedConfirmed(12);
+    seedOpen('alpha');
+    seedOpen('beta');
+  }
+
+  it('every rendered pick carries a full, self-verifying block', async () => {
+    enableTriality();
+    seedRankable();
+    const res = await api(srv.url, '/api/triality/next');
+    expect(res.status).toBe(200);
+    const picks = res.body.picks.filter(Boolean);
+    expect(picks.length).toBeGreaterThan(0);
+
+    const active = res.body.vector.meta.active as string[];
+    for (const p of picks) {
+      const c = p.confidence;
+      expect(Object.keys(c).sort()).toEqual(WIRE_KEYS);
+      expect(Object.keys(c.counts).sort()).toEqual(COUNT_KEYS);
+      expect(['firm', 'tentative', 'guess']).toContain(c.band);
+      expect(['uncontested', 'dot', 'score', 'tie']).toContain(c.margin_basis);
+      expect(['coverage', 'margin', 'evidence']).toContain(c.binding);
+      expect(c.v).toBe(CONFIDENCE_MODEL_VERSION);
+
+      // Self-verifying FROM THE SAME RESPONSE — the arithmetic IS the explanation
+      // (routes/triality.ts), so a reader with a calculator can check every number the
+      // payload shows against the vector the payload also shipped.
+      expect(c.value).toBe(Math.min(c.coverage, c.margin, c.evidence));   // weakest link, never an average
+      expect(c.band).toBe(bandFor(c.value));                              // band is a pure fn of the STORED value
+      expect(c.counts.dims_active).toBe(active.length);
+      expect(c.counts.dims_informative).toBe(active.filter((d) => res.body.vector.dims[d] !== 0).length);
+      // The winner is in its own eligible pool, and evidence rows ship UNCAPPED (the
+      // ratio must not pretend 43 completions is the same as 8).
+      expect(c.counts.eligible).toBeGreaterThan(0);
+      expect(c.counts.evidence_rows).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('stores the blob it rendered — the log column round-trips', async () => {
+    enableTriality();
+    seedRankable();
+    const res = await api(srv.url, '/api/triality/next');
+    const picks = res.body.picks.filter(Boolean);
+    expect(logCount()).toBe(picks.length);
+
+    // NULL is load-bearing and permanent: it means "shown before v2.2", and the
+    // calibration reader excludes those rows rather than banding them. A row this build
+    // wrote may therefore never carry one.
+    const unbanded = (
+      sqlite.prepare(`SELECT COUNT(*) AS c FROM triality_log WHERE confidence IS NULL`).get() as { c: number }
+    ).c;
+    expect(unbanded).toBe(0);
+
+    for (const p of picks) {
+      const row = sqlite.prepare(`SELECT confidence FROM triality_log WHERE id = ?`).get(p.log_id) as {
+        confidence: string | null;
+      };
+      // Parsed, not string-compared: the stored blob is the camelCase internal shape and
+      // the wire is snake_case, so this pins the adapter in BOTH directions at once.
+      expect(parseConfidence(row.confidence)).toEqual({
+        band: p.confidence.band,
+        value: p.confidence.value,
+        coverage: p.confidence.coverage,
+        margin: p.confidence.margin,
+        evidence: p.confidence.evidence,
+        marginBasis: p.confidence.margin_basis,
+        binding: p.confidence.binding,
+        counts: {
+          dimsInformative: p.confidence.counts.dims_informative,
+          dimsActive: p.confidence.counts.dims_active,
+          evidenceRows: p.confidence.counts.evidence_rows,
+          eligible: p.confidence.counts.eligible,
+        },
+        v: p.confidence.v,
+      });
+    }
+  });
+
+  it('is absent where there is no pick — the refusal arm and an all-empty payload', async () => {
+    enableTriality();
+    seedConfirmed(5);
+    const refusal = await api(srv.url, '/api/triality/next');
+    // Exact body: the refusal arm is unchanged by v2.2, and "not enough history" must not
+    // acquire a confidence — there is no pick for one to be about.
+    expect(refusal.body).toEqual({ refused: 'sparse_history', have: 5, need: 10 });
+
+    // Over the floor, but nothing to suggest: three honestly-empty slots. A null pick
+    // carries no block at all rather than a 0-valued `guess` — no data must never render
+    // as a number, not even the lowest one.
+    seedConfirmed(7);
+    const empty = await api(srv.url, '/api/triality/next');
+    expect(empty.body.picks).toEqual([null, null, null]);
+    expect(Object.keys(empty.body.empty_reasons).sort()).toEqual(['contextual', 'habitual', 'novel']);
+    expect(empty.body.vector?.dims).toBeTruthy();          // the vector still ships; only the picks are empty
+    expect(JSON.stringify(empty.body)).not.toContain('confidence');
+    expect(logCount()).toBe(0);
   });
 });
 

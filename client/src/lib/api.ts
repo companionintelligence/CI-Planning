@@ -100,6 +100,41 @@ export interface Streak {
 // ── Triality (0139, design §8) ────────────────────────────────────────────────
 export type TrialitySlot = 'habitual' | 'contextual' | 'novel';
 export type TrialityOutcome = 'opened' | 'staged' | 'dismissed';
+
+// ── Confidence (v2.2 §4) — derived, reported, and never fed back into ranking.
+// A `guess` still fills its slot: nothing on this wire suppresses, reorders or
+// filters a pick, and no client code may start doing so on the strength of a band.
+export type TrialityConfidenceBand = 'firm' | 'tentative' | 'guess';
+/** Which level of the engine's lexicographic key [dot, S, ref] separated the winner
+ *  from the runner-up. `uncontested` is NOT a tie: nothing else was eligible, so no
+ *  comparison happened at all. Both arrive as margin 0 and they hedge differently, which
+ *  is the whole reason this rides alongside the number. */
+export type TrialityMarginBasis = 'uncontested' | 'dot' | 'score' | 'tie';
+/** snake_case because this is the REST payload verbatim (routes/triality.ts pickToApi);
+ *  the GraphQL surface carries the same fields camelCased. */
+export interface TrialityConfidence {
+  band: TrialityConfidenceBand;
+  /** min(coverage, margin, evidence) — the WEAKEST LINK, never an average. */
+  value: number;
+  /** How many situation dims are pulling in a direction. NOT "how much was sensed": a
+   *  quiet day and an unread day are the same 0 to the vector. */
+  coverage: number;
+  margin: number;
+  evidence: number;
+  margin_basis: TrialityMarginBasis;
+  /** Which component set the minimum — the one the hedging copy names. */
+  binding: 'coverage' | 'margin' | 'evidence';
+  counts: {
+    dims_informative: number;
+    dims_active: number;
+    /** UNCAPPED — the ratio must not pretend 43 completions is the same as 8. */
+    evidence_rows: number;
+    eligible: number;
+  };
+  /** Confidence model version; bumped when a server constant or formula changes. */
+  v: number;
+}
+
 export interface TrialityPick {
   slot: TrialitySlot;
   action_kind: 'task' | 'routine' | 'flight' | 'template';
@@ -117,6 +152,10 @@ export interface TrialityPick {
   rationale?: string;
   /** Honest labelling — the UI must show which clock wrote the line. */
   rationale_source?: 'ai' | 'template';
+  /** Optional on the wire only because a cached/older response may predate the field —
+   *  never absent from a fresh one. Absence renders NO marker: an unlabeled pill must
+   *  never imply `firm`. */
+  confidence?: TrialityConfidence;
 }
 export interface TrialityNext {
   refused?: 'sparse_history';
@@ -136,12 +175,47 @@ export interface TrialitySlotAcceptance {
   pending: number;
   rate: number | null; // null = nothing decided yet — no data is not 0%
 }
+
+export type TrialityCalibrationVerdict = 'insufficient' | 'ordered' | 'flat' | 'inverted';
+export interface TrialityCalibrationBand {
+  band: TrialityConfidenceBand;
+  shown: number;   // decided rows — pending excluded, the acceptance tiles' exact rule
+  taken: number;
+  pending: number;
+  rate: number | null; // null = nothing decided in this band — no data is not 0%
+  /** Decided rows per slot. Disclosed because `firm` skews Habitual and `guess` skews
+   *  Novel BY CONSTRUCTION (Novel's veto selects the low-history tail), so an `ordered`
+   *  verdict may be the slot effect the acceptance tiles already show. */
+  slotMix: Record<TrialitySlot, number>;
+}
+export interface TrialityCalibration {
+  bands: TrialityCalibrationBand[]; // always three, firm → tentative → guess
+  /** Shown before v2.2 — excluded from every band, never coerced to `guess`: those rows
+   *  skew toward the feature's earliest period, so folding them in would bias the very
+   *  comparison this measures. */
+  unbanded: number;
+  /** Scored by a different confidence model version — excluded, not mixed. */
+  otherModel: number;
+  /** The server's own thresholds, on the wire so the tile can name the adjacent pair an
+   *  `inverted` verdict refers to without re-deriving them. The verdict itself is never
+   *  recomputed here. */
+  floor: number;
+  minGap: number;
+  verdict: TrialityCalibrationVerdict;
+  confounded: boolean;
+}
+
 export interface TrialityMetrics {
   windowDays: number;
   acceptance: Record<TrialitySlot, TrialitySlotAcceptance>;
   novelTrend: { current: number | null; prior: number | null };
   deficitResponse: Array<{ category: string; takenPicks: number; currentShare: number | null; priorShare: number | null }>;
   weights: Array<{ slot: string; weights: Record<string, number>; sampleCount: number; computedDate: string }> | null;
+  /** null when no row in the window carries a confidence at all; optional on the wire only
+   *  because a cached/older response may predate the field. Both render the same
+   *  "not measured yet" state — a third state would be a distinction the owner cannot act
+   *  on. */
+  calibration?: TrialityCalibration | null;
 }
 
 export interface ParsedQuick {
