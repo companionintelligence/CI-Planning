@@ -51,6 +51,8 @@ function toSvcCreate(input: Record<string, unknown>): SvcCreateInput {
     notes: input.notes == null ? undefined : (input.notes as string),
     priority: input.priority == null ? undefined : (input.priority as number),
     subtype: input.subtype ? (String(input.subtype).toLowerCase() as SvcCreateInput['subtype']) : undefined,
+    // Motivation (0141): wire enum → lowercase storage; a GraphQL caller is user testimony.
+    motivation: input.motivation ? (String(input.motivation).toLowerCase() as SvcCreateInput['motivation']) : undefined,
     estimated_minutes: input.estimatedMinutes == null ? undefined : (input.estimatedMinutes as number),
     due_at: input.dueAt == null ? undefined : (input.dueAt as string),
     scheduled_for: input.scheduledFor == null ? undefined : (input.scheduledFor as string),
@@ -83,6 +85,10 @@ function toSvcUpdate(input: Record<string, unknown>): SvcUpdateInput {
     out.priority = input.priority as number;
   }
   if ('subtype' in input && input.subtype != null) out.subtype = String(input.subtype).toLowerCase() as SvcUpdateInput['subtype'];
+  // Motivation (0141): absent preserves; explicit null clears value + source (the
+  // textureColorToken 'in' idiom — null is a meaningful write here, not a skip).
+  if ('motivation' in input)
+    out.motivation = input.motivation == null ? null : (String(input.motivation).toLowerCase() as Exclude<SvcUpdateInput['motivation'], null | undefined>);
   if ('estimatedMinutes' in input) out.estimated_minutes = input.estimatedMinutes as number | null;
   if ('dueAt' in input) out.due_at = input.dueAt as string | null;
   if ('scheduledFor' in input) out.scheduled_for = input.scheduledFor as string | null;
@@ -171,6 +177,9 @@ export const taskResolvers = {
 
   TaskType: {
     subtype: (t: TaskRow) => (t.subtype ?? 'standard').toUpperCase(),
+    // Motivation (0141): lowercase storage → SCREAMING enum; null (unlabeled) passes through.
+    motivation: (t: TaskRow) => (t.motivation ? t.motivation.toUpperCase() : null),
+    motivationSource: (t: TaskRow) => (t.motivationSource ? t.motivationSource.toUpperCase() : null),
     parent: async (t: TaskRow) => (t.parentId ? (await getTask(currentOwnerId(), t.parentId)) ?? null : null),
     subtasks: (t: TaskRow, args: ConnArgs) => {
       const owner = currentOwnerId();

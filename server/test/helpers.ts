@@ -61,6 +61,9 @@ export function resetDb(): void {
     -- collides with the next test's on the (owner, scope, date) key.
     DELETE FROM calibration_history;
     DELETE FROM calibration_combo_pins;
+    -- 0140: append-only by design (the Triality learning corpus) — same
+    -- cross-test contamination argument as calibration_history above.
+    DELETE FROM triality_log;
     DELETE FROM copy_history;
     DELETE FROM life_priorities;
     DELETE FROM planning_sessions;
@@ -107,6 +110,7 @@ export function resetDb(): void {
       z_experiment_arm = NULL,
       view_prefs = NULL,
       memory_pull_enabled = 0,
+      triality_enabled = 0,
       sleep_hours_per_week = 63;
   `);
 }

@@ -77,6 +77,13 @@ export const tasks = sqliteTable('tasks', {
   // WHEN the reflection was recorded. Distinct from completed_at (the assumed task end):
   // reacting later is normal, and `reaction_at − completed_at` is the freshness of the read.
   reactionAt: text('reaction_at'),
+  // ── Motivation axis (0141, design §3b) — who the work is for. ──
+  // 'me' | 'us' | 'them' | NULL(unlabeled). NULL ≠ 'us': "shared" is a positive
+  // claim, "never asked" is the absence of one; only SCORING collapses both to 0.
+  motivation: text('motivation'),
+  // 'user' (wins permanently, never re-tagged) | 'llm' (model or keyword fallback).
+  // NULL exactly when motivation is NULL.
+  motivationSource: text('motivation_source'),
   // Phase L: monotonic per-record version (advances on every applied op or PATCH);
   // field_ts is a JSON { field: utcIso } map for per-field LWW; updated_at is the
   // server clock of the last write (informational, not a lock cursor).
@@ -299,6 +306,10 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // agentic surfaces (inbox suggestions). Default OFF — flag-off is byte-identical.
   // Distinct from memorySyncEnabled (the one-way PUSH toggle above, AA4).
   memoryPullEnabled: integer('memory_pull_enabled', { mode: 'boolean' }).default(false),
+  // Triality master flag (0139). Default OFF — gates the Focus suggestion banner,
+  // the Balance→Metrics Triality tiles, and every /api/triality/* route while the
+  // feature lands dark (docs/triality-design.md §7). Flag-off = byte-identical.
+  trialityEnabled: integer('triality_enabled', { mode: 'boolean' }).default(false),
   // Onboarding Priorities Wizard (0128): weekly hours reserved for SLEEP — unschedulable,
   // attributed to Health. Default 63 = 9h/night × 7; the wizard's schedulable pool = 168 − this.
   sleepHoursPerWeek: integer('sleep_hours_per_week').notNull().default(63),

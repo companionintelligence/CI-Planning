@@ -9,6 +9,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { getDependencies, blockedTaskIds } from '../engine/deps.js';
 import { parseQuick } from '../engine/quickadd.js';
 import { enrichQuick } from '../agents/quickadd.js';
+import { isMotivation } from '../agents/rubric.js';
 import { suggestTags } from '../agents/tags.js';
 import { tagUntaggedTasks } from '../services/auto-tag.js';
 import { suggestSubtasks } from '../agents/subtasks.js';
@@ -93,6 +94,16 @@ export function tasksRouter() {
   router.post('/api/tasks', async (ctx) => {
     const body = ctx.request.body as CreateTaskInput;
     const owner = currentOwnerId();
+
+    // Motivation (0141, §3b): reject junk early, and strip motivation_source — it is
+    // server-derived ONLY (a client claiming 'llm' would launder its own testimony as
+    // the machine's; the z_experiment_arm strip is the precedent).
+    delete (body as Record<string, unknown>).motivation_source;
+    if (body.motivation !== undefined && body.motivation !== null && !isMotivation(body.motivation)) {
+      ctx.status = 422;
+      ctx.body = { error: "motivation must be 'me', 'us', 'them', or null" };
+      return;
+    }
 
     // Recurring task → create a TEMPLATE (status 'recurring', never scheduled
     // directly) and materialize its instances now so the series appears immediately.
@@ -220,6 +231,9 @@ export function tasksRouter() {
       // Phase B: the classifier's best-guess categories (1–3 names, best fit first)
       // ride createTask's categories field → entity_categories.
       ...(enriched.categories?.length ? { categories: enriched.categories } : {}),
+      // Motivation (0141): the overlay's constrained pick, attributed to the machine —
+      // quick-add is the one create path where the model already runs inline.
+      ...(enriched.motivation ? { motivation: enriched.motivation, motivation_source: 'llm' as const } : {}),
     });
     if (!res.ok) {
       // Only title_required is reachable (no depends_on here) — defensive mapping.
@@ -503,6 +517,15 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     // Accept both snake_case (client/API convention) and camelCase (drizzle) field names.
     const body = (ctx.request.body ?? {}) as UpdateTaskInput;
+
+    // Motivation (0141): same early validation as POST; a PATCHed value is user
+    // testimony (the service stamps motivation_source='user'), null un-labels.
+    delete (body as Record<string, unknown>).motivation_source;
+    if (body.motivation !== undefined && body.motivation !== null && !isMotivation(body.motivation)) {
+      ctx.status = 422;
+      ctx.body = { error: "motivation must be 'me', 'us', 'them', or null" };
+      return;
+    }
 
     // scope=series edits the whole recurring series (the template); scope=instance
     // (default) edits just this row. For a non-recurring task the two coincide.
