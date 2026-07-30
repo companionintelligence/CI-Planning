@@ -136,11 +136,12 @@ describe('motivation_balance — tasks.motivation column guard', () => {
       expect(v.dims.motivation_balance).toBe(0);
       expect(v.meta.active).not.toContain('motivation_balance');
     } finally {
-      // Put the sibling ticket's column back exactly as 0141 defines it — INCLUDING
-      // its position. A bare ADD COLUMN appends at the last cid, which silently
-      // reorders PRAGMA table_info for every later file on the shared sequential DB
-      // and made the baseline characterization snapshot order-dependent (flaky).
-      // DROP + re-ADD of the column BEHIND it restores 0141's true order.
+      // Put the sibling ticket's columns back exactly as 0141 defines them — including
+      // cid ORDER (motivation before motivation_source). A bare ADD COLUMN appends at
+      // the last cid, and the baseline schema snapshot reads PRAGMA table_info on the
+      // shared sequential DB — so re-appending only `motivation` would leave it after
+      // motivation_source for every later test file and make that snapshot
+      // order-dependent (flaky). Dropping the column BEHIND it restores 0141's order.
       if (hadColumn && !hasMotivationColumn()) {
         sqlite.exec(`ALTER TABLE tasks DROP COLUMN motivation_source`);
         sqlite.exec(`ALTER TABLE tasks ADD COLUMN motivation TEXT`);
