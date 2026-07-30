@@ -1,8 +1,8 @@
 import { generateJson } from '../mcp/ollama.js';
 import type { ParsedQuick } from '../engine/quickadd.js';
 import {
-  directionGuide, isTimeOfDay, titleSuggestsComplex,
-  PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC,
+  directionGuide, isTimeOfDay, titleSuggestsComplex, isMotivation,
+  PRIORITY_RUBRIC, DURATION_RUBRIC, TIME_OF_DAY_RUBRIC, COMPLEXITY_RUBRIC, MOTIVATION_RUBRIC,
 } from './rubric.js';
 
 /**
@@ -52,6 +52,7 @@ interface EnrichOut {
   timeOfDay?: unknown;
   timeOfDayReason?: unknown;
   isComplex?: unknown;
+  motivation?: unknown;
 }
 
 /**
@@ -139,6 +140,11 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
   const isComplex =
     parsed.isComplex ?? (out.isComplex === true || titleSuggestsComplex(parsed.title) ? true : undefined);
 
+  // Motivation (0141, §3b): vocabulary-constrained like everything else here — an
+  // answer outside me/us/them (incl. the model "explaining" instead) is dropped,
+  // never coerced. A parse that already carries one (future syntax) wins.
+  const motivation = parsed.motivation ?? (isMotivation(out.motivation) ? out.motivation : undefined);
+
   return {
     ...parsed,
     estimatedMinutes,
@@ -148,6 +154,7 @@ export function mergeEnrichment(parsed: ParsedQuick, out: EnrichOut, vocab: Quic
     ...(timeOfDay ? { timeOfDay } : {}),
     ...(reason ? { timeOfDayReason: reason } : {}),
     ...(isComplex ? { isComplex } : {}),
+    ...(motivation ? { motivation } : {}),
   };
 }
 
@@ -176,6 +183,7 @@ export async function enrichQuick(
       `"estimatedMinutes": a number or null. ${DURATION_RUBRIC}\n` +
       `"timeOfDay": one of "morning","afternoon","evening","any". ${TIME_OF_DAY_RUBRIC}\n` +
       `"timeOfDayReason": a few words on why, or null.\n` +
+      `"motivation": one of "me","us","them", or null. ${MOTIVATION_RUBRIC}\n` +
       (hasCats ? `"categories": 1-3 life areas from ${JSON.stringify(vocab.categories)}, best fit first.\n` : '') +
       `"tags": up to 2 from ${JSON.stringify(vocab.others.slice(0, 60))}, else [].\n` +
       `Choose direction/categories/tags ONLY from the given lists — never invent.\n` +

@@ -138,6 +138,12 @@ export function ElementWizard() {
   // Phase B (0135): per-element texture override (on by default; null colour = derive).
   const [textureEnabled, setTextureEnabled] = createSignal(true);
   const [textureColorToken, setTextureColorToken] = createSignal<string | null>(null);
+  // Motivation (0141, §3b): who the work is for. `motivationTouched` is the testimony
+  // gate — only a user interaction sends the field on save, so an unrelated edit never
+  // re-stamps a machine ('llm') label as user's. Source is display-only ("suggested").
+  const [motivation, setMotivation] = createSignal<'me' | 'us' | 'them' | null>(null);
+  const [motivationSource, setMotivationSource] = createSignal<'user' | 'llm' | null>(null);
+  const [motivationTouched, setMotivationTouched] = createSignal(false);
   const [locked, setLocked] = createSignal(false);
   const [allDay, setAllDay] = createSignal(false);
   const [depDraft, setDepDraft] = createSignal('');
@@ -343,6 +349,7 @@ export function ElementWizard() {
       setDeferUntil(''); setDependsOn([]); setDepDraft(''); setEditScope('instance'); setWasRecurring(false);
       setNote(''); setNoteExpanded(false); setTbRepeat('none'); setTbWeekdays([]); setTbCustomRule(''); setCategoryIds([]); setMakeHabit(false);
       setTextureEnabled(true); setTextureColorToken(null);
+      setMotivation(null); setMotivationSource(null); setMotivationTouched(false);
       setLocked(false); setAllDay(false); setRoutineId(''); setInitialRoutineId('');
       setAttachDraft(''); setAttachItems([]); setRemovedMemberIds([]);
       setPopover(null); setCalendarOpen(false); setCalTarget('start');
@@ -391,6 +398,9 @@ export function ElementWizard() {
       seedCategories(t.categories ?? []);
       setTextureEnabled(t.texture_enabled ?? true);
       setTextureColorToken(t.texture_color_token ?? null);
+      setMotivation(t.motivation ?? null);
+      setMotivationSource(t.motivation_source ?? null);
+      setMotivationTouched(false); // seeded, not testimony — only a tap makes it send
       setNote(t.notes ?? ''); setNoteExpanded(!!t.notes);
       setScheduledFor(t.scheduled_for ?? localISODate());
       setTaskTime(t.task_time ?? '');
@@ -479,6 +489,10 @@ export function ElementWizard() {
       // Phase B: the classifier's best-guess categories seed the picker (best fit
       // first = position 0 = first stripe) — reviewable chips, like every NL field.
       if (parsed.categories?.length) seedCategories(parsed.categories);
+      // Motivation (0141): the overlay's pick seeds as SUGGESTED (source 'llm', not
+      // touched) — the user's Add is approval of the task, not testimony about who
+      // it's for; only tapping the control itself makes it user's.
+      if (parsed.motivation) { setMotivation(parsed.motivation); setMotivationSource('llm'); setMotivationTouched(false); }
       // An explicit ~Nm beats the direction's default duration (applied after).
       if (parsed.estimatedMinutes != null) { if (isBlock) setDurMin(parsed.estimatedMinutes); else setEstimate(parsed.estimatedMinutes); }
       // dueAt: untouched — the Due=Start mirror keeps it on the scheduled day, which
@@ -830,6 +844,8 @@ export function ElementWizard() {
         categories: categoryNames(),
         textureEnabled: textureEnabled(),
         textureColorToken: textureColorToken(),
+        // Motivation (0141): only when the user touched the control this session.
+        ...(motivationTouched() ? { motivation: motivation() } : {}),
         scheduledFor: scheduledFor(), taskTime: taskTime() || undefined, estimatedMinutes: estimate(),
         dueAt: dueAt() || undefined, priority: priority(),
         deferUntil: deferUntil() || undefined, dependsOn: dependsOn(),
@@ -1287,6 +1303,33 @@ export function ElementWizard() {
                     </Show>
                   </div>
                 </div>
+
+                {/* Motivation (0141, §3b) — who is this for? Three-way; tapping the
+                    active pill again clears back to unset (NULL, distinct from "us").
+                    An 'llm' label renders a "suggested" hint until the user confirms
+                    or changes it — only a tap sends the field on save. Task tab only:
+                    blocks inherit their linked task's motivation (no own column). */}
+                <Show when={tab() !== 'timeblock'}>
+                  <div class="flex flex-col gap-1.5">
+                    <div class={sectionLabel}>Who is this for?
+                      <Show when={motivation() && motivationSource() === 'llm' && !motivationTouched()}>
+                        <span class="normal-case tracking-normal text-muted-foreground"> (suggested)</span>
+                      </Show>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                      <For each={[['me', '● me'], ['us', '◐ us'], ['them', '○ them']] as const}>
+                        {([val, label]) => (
+                          <button type="button"
+                            onClick={() => { setMotivationTouched(true); setMotivation(motivation() === val ? null : val); }}
+                            class={pill}
+                            classList={{ [chipOn]: motivation() === val, [chipOff]: motivation() !== val }}>
+                            {label}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
 
                 {/* Texture — Phase B (0135): per-element on/off + colour override.
                     "Auto" (null) derives the colour from the categories above. */}

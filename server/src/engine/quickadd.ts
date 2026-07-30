@@ -13,6 +13,9 @@ export interface ParsedQuick {
   // Phase B: 1–3 of the owner's category names (Balance dimensions) — only ever
   // filled by optional enrichment (a constrained classifier), never the parser.
   categories?: string[];
+  // Motivation axis (0141, design §3b): who the work is for — only ever filled by
+  // optional enrichment (the LLM classifier; unsure ⇒ absent), never the parser.
+  motivation?: 'me' | 'us' | 'them';
   /**
    * D3 — the BAND the task is best done in, from optional enrichment. Deliberately not
    * a clock time: `taskTime` stays the parser's, set only when the entry's own words

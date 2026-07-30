@@ -44,6 +44,10 @@ export interface Task {
   reaction_at?: string | null;
   texture_enabled?: boolean;      // Phase B (0135): per-element texture toggle (default on)
   texture_color_token?: string | null; // Phase B (0135): colour override; null ⇒ derive from categories
+  // Motivation axis (0141, §3b): who the work is for. null = UNLABELED (≠ 'us' —
+  // "shared" is a positive claim). source: 'user' wins permanently; 'llm' = machine.
+  motivation?: 'me' | 'us' | 'them' | null;
+  motivation_source?: 'user' | 'llm' | null;
   depends_on?: string[];
   blocked?: boolean;
   // Recurrence (Phase E): a template has recurrence_rule set + no parent; an
@@ -76,6 +80,8 @@ export interface TaskInput {
   categories?: string[];
   texture_enabled?: boolean;
   texture_color_token?: string | null;
+  /** Motivation (0141): a client-set value is user testimony; null un-labels. */
+  motivation?: 'me' | 'us' | 'them' | null;
   depends_on?: string[];
   recurrence_rule?: string | null;
   is_habit?: boolean;
@@ -98,6 +104,7 @@ export interface ParsedQuick {
   taskTime?: string;
   tags: string[];
   categories?: string[]; // Phase B: classifier's 1–3 category names (best fit first)
+  motivation?: 'me' | 'us' | 'them'; // 0141: overlay's constrained pick (unsure ⇒ absent)
   estimatedMinutes?: number;
   priority?: number;
   // D3 — best-time BAND (never a clock time; taskTime stays the parser's). Biases the
