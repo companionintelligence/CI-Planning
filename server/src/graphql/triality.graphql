@@ -1,0 +1,67 @@
+# Triality (design §8) — the suggestion read + outcome write, GraphQL twin of
+# routes/triality.ts over the SAME service layer (parity by construction; a
+# behavioral divergence from REST is a bug by definition). Flag-off surfaces as
+# a NOT_FOUND error, matching the routes' 404 posture.
+#
+# `Motivation` is task.graphql's enum — one vocabulary, reused not redefined.
+
+enum TrialitySlot { HABITUAL CONTEXTUAL NOVEL }
+enum TrialityOutcome { OPENED STAGED DISMISSED }
+enum TrialityActionKind { TASK ROUTINE FLIGHT TEMPLATE }
+
+type TrialityScores {
+  f: Float!
+  h: Float!
+  q: Float!
+  n: Float!
+  c: Float!
+  total: Float!
+}
+
+type TrialityPick {
+  slot: TrialitySlot!
+  actionKind: TrialityActionKind!
+  actionRef: ID!
+  title: String!
+  estimateMin: Int
+  direction: String
+  categories: [String!]!
+  motivation: Motivation
+  scores: TrialityScores!
+  "The [normality, pragmatism, capacity] triple the slot targets dot against."
+  ternary: [Int!]!
+  "triality_log row id for this shown event — feed it to trialityFeedback."
+  logId: ID
+}
+
+type TrialityRefusal {
+  reason: String!
+  have: Int!
+  need: Int!
+}
+
+type TrialityNextPayload {
+  "Set when there is not enough confirmed history to rank honestly (§4 floor)."
+  refused: TrialityRefusal
+  "Exactly three entries when not refused — habitual, contextual, novel order; a null entry is an honestly-empty slot."
+  picks: [TrialityPick]
+  "slot → why it rendered empty (only for null entries)."
+  emptyReasons: JSON
+  "The situation vector used — dims and which were active (the explanation)."
+  vector: JSON
+  computedAt: DateTime
+}
+
+type TrialityFeedbackPayload {
+  "False when the row was already stamped (once-only, append-only discipline)."
+  changed: Boolean!
+  success: Boolean!
+}
+
+extend type Query {
+  trialityNext: TrialityNextPayload!
+}
+
+extend type Mutation {
+  trialityFeedback(logId: ID!, outcome: TrialityOutcome!): TrialityFeedbackPayload!
+}
