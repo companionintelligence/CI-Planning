@@ -130,10 +130,38 @@ export interface Candidate {
   motivation: 'me' | 'us' | 'them' | null;
 }
 
+/** Which level of the lexicographic key `[dot, S, ref]` separated the winner from the
+ *  runner-up — the vocabulary services/triality-confidence.ts reports margin in. */
+export type MarginBasis = 'uncontested' | 'dot' | 'score' | 'tie';
+
+/**
+ * How this pick won its slot. DESCRIPTIVE ONLY: raw numbers the stage-4 loop already
+ * computed, captured once the winner is fixed. This module derives no band, no component
+ * and no basis from them — services/triality-confidence.ts does, and nothing here imports
+ * it. The one-way import graph IS the "confidence never feeds ranking" guarantee.
+ *
+ * `score` is the UNROUNDED slotScore the comparison key used, never `scores.total`
+ * (round3'd below): a margin computed from the rounded total disagrees with the decision
+ * the engine actually made, and can invert a genuine sub-0.001 tie into an apparent win.
+ */
+export interface DecisionTelemetry {
+  /** Candidates this slot chose among: post-veto, post-`taken`, winner included. */
+  eligible: number;
+  dot: number;
+  score: number;
+  /** null ⇔ the winner was alone in the eligible pool — no comparison happened at all. */
+  runnerUpDot: number | null;
+  runnerUpScore: number | null;
+}
+
 export interface ScoredPick extends Candidate {
   slot: Slot;
   scores: { F: number; H: number; Q: number; N: number; C: number; total: number };
   ternary: [number, number, number];
+  decision: DecisionTelemetry;
+  /** Completions matching this candidate under `historyMatches`, raw and UNCAPPED —
+   *  the evidence behind H, which confidence divides by EVIDENCE_FULL. */
+  evidenceRows: number;
 }
 
 export type TrialityResult =
@@ -316,7 +344,23 @@ export function signature(c: Pick<Candidate, 'kind' | 'direction' | 'categories'
   return `${c.kind}|${c.direction ?? ''}|${[...c.categories].sort().join(',')}`;
 }
 
-interface CompletionRow { id: string; completed_at: string; sig: string; pattern_ids: string[] }
+/** Exported because evidence (v2.2 confidence) counts the very rows H sums. */
+export interface CompletionRow { id: string; completed_at: string; sig: string; pattern_ids: string[] }
+
+/**
+ * The ONE definition of "this history row is an instance of this candidate".
+ *
+ * H weights these rows by recency and normalizes by the pool max; v2.2's `evidence`
+ * just counts them. Two consumers, one predicate, evaluated in the SAME pass — a
+ * divergence would make "the evidence behind H" a false claim rather than a measurable
+ * one. That is the PENDING_MS lesson (triality-learning.ts) applied before the fact
+ * rather than after it.
+ */
+export function historyMatches(c: Candidate, h: CompletionRow): boolean {
+  return c.kind === 'routine'
+    ? h.pattern_ids.includes(c.ref)
+    : c.kind !== 'template' && h.sig === signature({ ...c, kind: 'task' });
+}
 
 /** The owner's completion history in the window, each with its signature —
  *  one scan feeds H, Q, and the routine special case. */
@@ -355,21 +399,31 @@ function recencyWeight(completedAt: string, now: Date): number {
  * normalized by the pool max so the top habitual class sits at 1. Routines match
  * by MEMBERSHIP (completing any member task is doing the routine); templates
  * have no completion trail and stay 0 — honestly, not accidentally.
+ *
+ * `counts` is the same match, unweighted and un-normalized. It rides along rather than
+ * being recomputed because the two numbers MUST describe the same rows (v2.2 evidence
+ * qualifies H), and because neither is recoverable from the other: pool-max
+ * normalization pins the top candidate at 1.0 whether it has 200 completions or 1.
  */
-function habitStrengths(cands: Candidate[], history: CompletionRow[], now: Date): number[] {
+function habitStrengths(
+  cands: Candidate[],
+  history: CompletionRow[],
+  now: Date,
+): { strengths: number[]; counts: number[] } {
+  const counts: number[] = [];
   const raw = cands.map((c) => {
     let sum = 0;
+    let n = 0;
     for (const h of history) {
-      const match =
-        c.kind === 'routine'
-          ? h.pattern_ids.includes(c.ref)
-          : c.kind !== 'template' && h.sig === signature({ ...c, kind: 'task' });
-      if (match) sum += recencyWeight(h.completed_at, now);
+      if (!historyMatches(c, h)) continue;
+      sum += recencyWeight(h.completed_at, now);
+      n++;
     }
+    counts.push(n);
     return sum;
   });
   const max = Math.max(...raw, 0);
-  return raw.map((v) => (max > 0 ? v / max : 0));
+  return { strengths: raw.map((v) => (max > 0 ? v / max : 0)), counts };
 }
 
 /** Q: first-order transition frequency — of all historical (prev → next)
@@ -534,6 +588,20 @@ function capacityScore(c: Candidate, gapMin: number | null, dayEnergy: number): 
 
 // ── Ternary triple + slot assignment (§5) ─────────────────────────────────────
 
+/** The slot-assignment comparison key: dot desc, S desc, ref asc. */
+type PickKey = [number, number, string];
+
+/**
+ * ONE comparator, used for both the winner and the runner-up.
+ *
+ * Extracted verbatim from the inline expression it replaces — deliberately not
+ * "improved" — because v2.2's runner-up must be the second-best under exactly the
+ * ordering that chose the winner. Two implementations of this predicate is how a
+ * reported margin quietly stops describing the decision it claims to describe.
+ */
+const keyBetter = (a: PickKey, b: PickKey | null): boolean =>
+  !b || a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && a[2] < b[2])));
+
 /**
  * Ternarization by VALUE SPREAD, not rank: top third of the pool's value range
  * → +1, bottom third → −1. Ties always share a band (rank-thirds would split
@@ -558,14 +626,28 @@ export function logShown(
   ownerId: string,
   now: Date,
   picks: (ScoredPick | null)[],
+  /**
+   * Pre-serialized confidence blobs (0144), parallel to `picks`.
+   *
+   * DELIBERATELY OPAQUE. A typed parameter would force this module to import
+   * services/triality-confidence.ts, and the one-way import graph — the whole of the
+   * "confidence never feeds ranking" guarantee — would be traded away for ergonomics
+   * in a persistence helper. Nothing here interprets the string.
+   *
+   * REQUIRED, not optional: a missed call site has to be a type error. Defaulted, it
+   * would silently write NULL, and NULL is load-bearing — it means "shown before
+   * v2.2" forever, and the calibration tile excludes those rows rather than banding
+   * them.
+   */
+  confidenceJson: readonly (string | null)[],
 ): (string | null)[] {
   const tz = ownerTimezone(ownerId);
   const localDate = localDateInTZ(now.toISOString(), tz);
   const insert = sqlite.prepare(
-    `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores)
-     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence)
+     VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
   );
-  return picks.map((p) => {
+  return picks.map((p, i) => {
     if (!p) return null;
     const row = insert.get(
       ownerId,
@@ -575,6 +657,7 @@ export function logShown(
       p.kind,
       p.ref,
       JSON.stringify({ ...p.scores, ternary: p.ternary }),
+      confidenceJson[i] ?? null,
     ) as { id: string };
     return row.id;
   });
@@ -627,7 +710,7 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
 
   // Stage 2 — component scores.
   const history = completionHistory(ownerId, now);
-  const H = habitStrengths(cands, history, now);
+  const { strengths: H, counts: histCounts } = habitStrengths(cands, history, now);
   const Q = sequenceFits(cands, history);
   const N = await noveltyScores(cands, H, ownerId, now, opts.embedFn);
   const F = cands.map((c) => contextFit(vector, c));
@@ -662,8 +745,10 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
 
   for (const slot of SLOTS) {
     const target = TARGETS[slot];
+    let eligible = 0;
     let best: number | null = null;
-    let bestKey: [number, number, string] | null = null; // [dot, S, id] — dot desc, S desc, id asc
+    let bestKey: PickKey | null = null;
+    let runnerKey: PickKey | null = null;
     for (let i = 0; i < cands.length; i++) {
       if (taken.has(i)) continue;
       // Axis veto on the slot-defining normality pole (target[0]) only. Capacity
@@ -672,14 +757,17 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
       // vetoing relative-low C would empty slots whenever the pool is small.
       if (target[0] === 1 && normality[i] === -1) continue;   // habitual can't be their least-done class
       if (target[0] === -1 && normality[i] === 1) continue;   // novel can't be their top habit
+      eligible++;
       const dot =
         target[0] * normality[i] + target[1] * pragmatism[i] + target[2] * capacity[i];
-      const key: [number, number, string] = [dot, slotScore(slot, i), cands[i].ref];
-      const better =
-        !bestKey ||
-        key[0] > bestKey[0] ||
-        (key[0] === bestKey[0] && (key[1] > bestKey[1] || (key[1] === bestKey[1] && key[2] < bestKey[2])));
-      if (better) { best = i; bestKey = key; }
+      const key: PickKey = [dot, slotScore(slot, i), cands[i].ref];
+      // A displaced bestKey was the maximum of everything seen so far, so it is
+      // necessarily better than the incumbent runner-up — promoted directly, with no
+      // second comparison. The winner's own update is byte-identical to the pre-v2.2
+      // expression (now named `keyBetter`), which is what keeps runner-up capture a
+      // pure addition rather than a re-ranking.
+      if (keyBetter(key, bestKey)) { runnerKey = bestKey; best = i; bestKey = key; }
+      else if (keyBetter(key, runnerKey)) { runnerKey = key; }
     }
     if (best == null) {
       picks.push(null);
@@ -695,6 +783,15 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
         N: round3(N[best]), C: round3(C[best]), total: round3(slotScore(slot, best)),
       },
       ternary: [normality[best], pragmatism[best], capacity[best]],
+      decision: {
+        eligible,
+        // Unrounded on purpose — see DecisionTelemetry.
+        dot: bestKey![0],
+        score: bestKey![1],
+        runnerUpDot: runnerKey ? runnerKey[0] : null,
+        runnerUpScore: runnerKey ? runnerKey[1] : null,
+      },
+      evidenceRows: histCounts[best],
     });
   }
 

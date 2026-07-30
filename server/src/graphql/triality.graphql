@@ -20,6 +20,42 @@ type TrialityScores {
   total: Float!
 }
 
+enum TrialityConfidenceBand { FIRM TENTATIVE GUESS }
+
+"Which level of the lexicographic key [dot, S, id] separated the winner from the runner-up. UNCONTESTED = nothing else was eligible, so there was no comparison at all. TIE = the id order decided, which is a coin flip."
+enum TrialityMarginBasis { UNCONTESTED DOT SCORE TIE }
+
+enum TrialityConfidenceComponent { COVERAGE MARGIN EVIDENCE }
+
+type TrialityConfidenceCounts {
+  "Non-zero dims among meta.active, and |meta.active| — the ratio never travels without its denominator."
+  dimsInformative: Int!
+  dimsActive: Int!
+  "Completions matching this candidate in the 90-day window. UNCAPPED."
+  evidenceRows: Int!
+  "Candidates this slot chose among, after the veto and after earlier slots took theirs."
+  eligible: Int!
+}
+
+"Derived, deterministic, reported — and never fed back into ranking (v2 design §4)."
+type TrialityConfidence {
+  band: TrialityConfidenceBand!
+  "min(coverage, margin, evidence) — the WEAKEST LINK, never an average."
+  value: Float!
+  "How many situation dims are pulling in a direction. NOT how much was sensed: a quiet day and an unread day read the same."
+  coverage: Float!
+  "How decisively this won ITS slot, on the key the engine actually compares."
+  margin: Float!
+  "How much 90-day completion history backs this candidate's H."
+  evidence: Float!
+  marginBasis: TrialityMarginBasis!
+  "Which component set the minimum — the one the hedging copy names."
+  binding: TrialityConfidenceComponent!
+  counts: TrialityConfidenceCounts!
+  "Confidence model version. Bumped when a constant or formula changes, so calibration can refuse to mix two models."
+  v: Int!
+}
+
 type TrialityPick {
   slot: TrialitySlot!
   actionKind: TrialityActionKind!
@@ -32,6 +68,8 @@ type TrialityPick {
   scores: TrialityScores!
   "The [normality, pragmatism, capacity] triple the slot targets dot against."
   ternary: [Int!]!
+  "Non-null by contract: every rendered pick carries one (v2.2 §4)."
+  confidence: TrialityConfidence!
   "triality_log row id for this shown event — feed it to trialityFeedback."
   logId: ID
   "One short 'why now' line. Non-null by contract: the deterministic template always exists, so a pick is never unexplained."

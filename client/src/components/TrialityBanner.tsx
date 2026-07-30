@@ -1,6 +1,6 @@
 import { createResource, createSignal, For, Show } from 'solid-js';
 import { X } from 'lucide-solid';
-import { api, type TrialityPick, type TrialityNext } from '../lib/api.js';
+import { api, type TrialityPick, type TrialityNext, type TrialityConfidence, type TrialityMarginBasis } from '../lib/api.js';
 import { prefs, tags, categoryPrefs, showToast, setElementModal } from '../stores/index.js';
 import { colorVar } from '../lib/pattern-meta.js';
 
@@ -10,6 +10,10 @@ import { colorVar } from '../lib/pattern-meta.js';
  * score breakdown behind a tap (inline expansion, deliberately card-local and
  * read-only — the 0137 CloseRitual mount lesson: never attach flows to a node
  * a refetch can unmount), open/stage per pill, feedback stamped per action.
+ *
+ * v2.2 adds the confidence band ON the pill, never behind the tap — hedging
+ * behind a tap is not hedging. It LABELS only: a `guess` still fills its slot,
+ * and nothing here suppresses, reorders or filters a pick on a band.
  *
  * Dismissal is BANNER-level (owner ruling, no per-pill ✕): the ✕ stamps
  * `dismissed` on every still-unactioned shown row, then collapses until the
@@ -38,6 +42,77 @@ const MOTIVATION_GLYPH: Record<string, { glyph: string; title: string }> = {
   them: { glyph: '○', title: 'for them' },
 };
 
+/** The denominator the SERVER's evidence component divides by (EVIDENCE_FULL in
+ *  services/triality-confidence.ts). Duplicated because the wire ships the finished
+ *  ratio, never the constant. DISPLAY ONLY — nothing here re-derives a component or a
+ *  band from it, so a server retune costs a stale denominator in one printed line, not a
+ *  wrong badge. */
+// ⚠️ TWO-SITE CONSTANT. The other site is EVIDENCE_FULL in
+// server/src/services/triality-confidence.ts, and it is pinned by name in
+// server/test/triality-confidence.test.ts so a server-side retune fails there with a
+// message pointing back at this line. Change both in one commit, or the expansion prints
+// an impossible sentence like "evidence 12 of 8".
+const EVIDENCE_FULL = 8;
+
+/** Verbatim from the design's §2. It says what the count does NOT claim, which is the
+ *  part a bare "3 of 12" gets wrong: a sensed neutral and an unsensed hole are the same
+ *  0 to the vector, and one active dim reaches no score at all — so this number can move
+ *  while every pick stands still. */
+const COVERAGE_TOOLTIP =
+  'A signal counts here only when it leans one way. A quiet day and an unread day look identical to the vector. ' +
+  'One of them (momentum) is sensed but nothing scores it, so this count can move without any pick moving.';
+// ^ "one of them", not "one of the twelve": the denominator is 12 only when the owner has
+// configured work hours and 11 when they have not, so a spelled-out count would be wrong
+// for exactly the owners who never set them up. The live number is already on screen.
+
+/** Only the two bases that mean "no comparison happened" carry a caveat. `dot` and
+ *  `score` describe a comparison the number already reports, and annotating them would
+ *  be narration. */
+const BASIS_CAVEAT: Partial<Record<TrialityMarginBasis, string>> = {
+  uncontested: ' — nothing else was eligible for this slot',
+  tie: ' — a tie the id order broke; this is a coin flip',
+};
+
+/**
+ * The one-line hedge behind the band marker, composed from the BINDING component — the
+ * one that set the minimum. Naming any other component would be an advertisement: under
+ * a weakest link the binding one is the only thing standing between this pick and a
+ * higher band, and it is the only sentence the owner can do anything about.
+ *
+ * `uncontested` and `tie` are deliberately different sentences even though both arrive as
+ * margin 0: "nothing else was eligible" is a statement about the pool, "the id order
+ * decided" is a coin flip, and collapsing them would hide which one happened.
+ */
+function hedgeFor(p: TrialityPick, c: TrialityConfidence): string {
+  if (c.binding === 'evidence') {
+    const n = c.counts.evidence_rows;
+    if (n === 0) {
+      // A block template can never accrue a completion trail — the server's matcher
+      // excludes it by construction — so "you haven't done this" would blame the owner
+      // for a structural zero.
+      return p.action_kind === 'template'
+        ? 'saved blocks have no completion trail, so nothing backs this'
+        : "you haven't done this kind of thing in the last 90 days";
+    }
+    return `only ${n} completion${n === 1 ? '' : 's'} of this kind in 90 days`;
+  }
+  if (c.binding === 'margin') {
+    if (c.margin_basis === 'uncontested') return 'nothing else was eligible for this slot';
+    if (c.margin_basis === 'tie') return 'tied with another candidate — the id order decided, not the evidence';
+    return 'the runner-up was almost as good';
+  }
+  return `only ${c.counts.dims_informative} of ${c.counts.dims_active} situation signals are pointing anywhere right now`;
+}
+
+/** Composed as a string rather than inline JSX so the format is one readable line and the
+ *  separators cannot drift with the markup. */
+function confidenceLine(c: TrialityConfidence): string {
+  return (
+    `confidence ${c.value} · ${c.band} — coverage ${c.coverage} · margin ${c.margin} (${c.margin_basis})` +
+    ` · evidence ${c.counts.evidence_rows} of ${EVIDENCE_FULL}${BASIS_CAVEAT[c.margin_basis] ?? ''}`
+  );
+}
+
 export function TrialityBanner() {
   const enabled = () => !!prefs()?.triality_enabled;
   const [dismissedDate, setDismissedDate] = createSignal(localStorage.getItem(DISMISS_KEY));
@@ -58,6 +133,14 @@ export function TrialityBanner() {
   const [expanded, setExpanded] = createSignal<string | null>(null);
 
   const picks = () => (next()?.picks ?? []).filter((p): p is TrialityPick => !!p);
+
+  // All three picks are scored against ONE situation vector, so coverage is a
+  // banner-level fact and gets printed ONCE — three copies of the same fraction would
+  // read as a coincidence rather than the shared fact it is. Taken off the first pick
+  // that carries a confidence rather than recounted from `next().vector`: the server
+  // already did the counting the band was derived from, and a second implementation here
+  // could disagree with the badge sitting next to it.
+  const coverage = () => picks().find((p) => p.confidence)?.confidence ?? null;
 
   function stamp(logId: string | null, outcome: 'opened' | 'staged' | 'dismissed') {
     if (!logId) return;
@@ -145,6 +228,34 @@ export function TrialityBanner() {
                       </span>
                     </Show>
                     <span class="text-[9px] tracking-[0.1em] text-muted-foreground">{SLOT_LABEL[p.slot]}</span>
+                    {/* v2.2 — the band, ALWAYS visible: hedging behind a tap is not
+                        hedging. `firm` renders NOTHING, deliberately — a marker on every
+                        pill trains the eye to ignore all of them, and badging `firm` is
+                        the app boasting about a model the calibration tile has not
+                        validated yet. A guess still fills its slot; this labels, it does
+                        not suppress. aria-label is required, not decoration: a bare `~`
+                        is meaningless read aloud (the motivation glyph above sets the
+                        precedent). */}
+                    <Show when={p.confidence}>
+                      <Show when={p.confidence!.band === 'tentative'}>
+                        <span
+                          class="text-[9px] text-muted-foreground"
+                          title={hedgeFor(p, p.confidence!)}
+                          aria-label={`tentative — ${hedgeFor(p, p.confidence!)}`}
+                        >
+                          ~
+                        </span>
+                      </Show>
+                      <Show when={p.confidence!.band === 'guess'}>
+                        <span
+                          class="text-[9px] tracking-[0.1em] italic text-muted-foreground"
+                          title={hedgeFor(p, p.confidence!)}
+                          aria-label={`a guess — ${hedgeFor(p, p.confidence!)}`}
+                        >
+                          GUESS
+                        </span>
+                      </Show>
+                    </Show>
                     <Show when={p.action_kind === 'task' || p.action_kind === 'flight'}>
                       <button
                         class="text-accent-hi hover:underline"
@@ -168,6 +279,16 @@ export function TrialityBanner() {
                       <span class="text-foreground font-medium"> S {p.scores.total}</span>
                       <span> · [{p.ternary.join(', ')}]</span>
                     </div>
+                    {/* The band's own arithmetic, under the score line and above the
+                        rationale: value, the three components it is the minimum of, and
+                        the raw evidence count. Same contract as the line above — the
+                        arithmetic IS the explanation, so every number the band was
+                        derived from is printable and checkable by hand. */}
+                    <Show when={p.confidence}>
+                      <div class="mt-0.5 ml-2 text-[10px] text-muted-foreground" data-testid="triality-confidence">
+                        {confidenceLine(p.confidence!)}
+                      </div>
+                    </Show>
                     {/* T9 garnish, under the arithmetic and never instead of it: the
                         line is always labeled with who wrote it (the "AI Briefing" vs
                         "Day Overview" honesty idiom). No rationale — or a rationale
@@ -193,6 +314,11 @@ export function TrialityBanner() {
               <span class="text-xs text-muted-foreground">Nothing fits right now.</span>
             </Show>
           </div>
+          <Show when={coverage()}>
+            <div class="text-[10px] text-muted-foreground mt-2" data-testid="triality-coverage" title={COVERAGE_TOOLTIP}>
+              {coverage()!.counts.dims_informative} of {coverage()!.counts.dims_active} signals are pointing somewhere right now.
+            </div>
+          </Show>
           <div class="text-[9px] text-muted-foreground mt-2">
             candidates, not certainties · tap a pill for the arithmetic · ✕ hides this until tomorrow
           </div>
