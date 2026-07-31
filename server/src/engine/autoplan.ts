@@ -19,7 +19,7 @@
  */
 import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
-import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { inheritContainerDirection, removeEntityTags, entityTagLevels, splitTagString, entityCategoryIds } from '../services/tags.js';
 import { localISODate } from '../lib/dates.js';
@@ -614,7 +614,7 @@ function placeHintWindows(
  *  fill/exclusion day must be too — comparing it to a server-tz `localISODate()` would
  *  mis-window scheduled tasks around midnight for owners in a different timezone. */
 function ownerToday(owner: string): string {
-  return localDateInTZ(new Date().toISOString(), prefsOf(owner)?.timezone || serverTimezone());
+  return todayInTZ(prefsOf(owner)?.timezone || serverTimezone());
 }
 
 export function fillFlightPlanCandidates(

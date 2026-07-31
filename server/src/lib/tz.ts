@@ -91,6 +91,22 @@ export function localDateInTZ(utcISO: string, tz: string): string {
 }
 
 /**
+ * Today's calendar date (YYYY-MM-DD) in `tz`.
+ *
+ * Every day-boundary rule in this app means the OWNER's day, not the server's:
+ * `scheduled_for` and `occurrence_date` are owner-local, habits roll over at the owner's
+ * midnight, and the nightly jobs are described in the owner's terms. Anchoring any of
+ * that on a server-tz `localISODate()` mis-windows the day for an owner in a different
+ * zone — and the documented Docker shape is a UTC container with a non-UTC owner, so
+ * that is the DEFAULT configuration, not an exotic one.
+ *
+ * Callers pass the owner's timezone (falling back to serverTimezone() when unset).
+ */
+export function todayInTZ(tz: string): string {
+  return localDateInTZ(new Date().toISOString(), tz);
+}
+
+/**
  * ISO-8601 week key — `YYYY-Www` — for a local calendar date (YYYY-MM-DD).
  * Monday-start; Thursday rule: a week belongs to the year that contains its Thursday.
  * Uses the noon-UTC pivot so arithmetic is DST-safe. Mirror of the client's isoWeekKey.
