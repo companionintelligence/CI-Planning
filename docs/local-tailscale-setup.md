@@ -59,12 +59,23 @@ device under one proxy IP.
 
 ### Auth: pick deliberately
 
-`AUTH_MODE=test` means **no login at all** — every request is auto-owned by the system
-owner carrying `read`+`write`+`admin`. It is the default outside production and it is
-correct for a laptop-only dev loop. It is *not* automatically correct once
-`tailscale serve` is on, because **every device on the tailnet can then read and write
-your data with no credential** — including other people's machines if you share a
-tailnet. The alternatives:
+> ⚠ **The default is fail-open, and it is not only a tailnet problem.** `AUTH_MODE`
+> defaults to `test` (`server/src/lib/config.ts`), which skips every credential check and
+> binds each request to the system owner with `read`+`write`+`admin`. The only thing that
+> refuses it is the `NODE_ENV=production` boot guard, and the server binds `0.0.0.0` — so
+> a bare-metal install that sets neither serves an unauthenticated `GET /api/export` of
+> your entire dataset to anything that can route to the host: a tailnet peer, another
+> machine on the café Wi-Fi your laptop just joined, anything on your LAN. The Docker
+> image escapes this only because its Dockerfile pins `NODE_ENV=production`.
+>
+> **Always set `NODE_ENV=production` in the unit file** (the shipped template does) **and
+> `AUTH_MODE` explicitly in `server/.env`.** With the guard armed, an unset or `test`
+> auth mode fails the boot loudly instead of quietly serving an open instance.
+
+`AUTH_MODE=test` is correct for a laptop-only dev loop on loopback. It is *not*
+automatically correct once `tailscale serve` is on, because **every device on the tailnet
+can then read and write your data with no credential** — including other people's machines
+if you share a tailnet. The alternatives:
 
 | Mode | Set | Notes |
 |---|---|---|
