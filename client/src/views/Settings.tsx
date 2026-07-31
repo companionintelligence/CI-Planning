@@ -577,6 +577,9 @@ export function Settings() {
   /** Effective models that aren't pulled — the difference between "Ollama is up" and
    *  "AI actually works". Empty on older servers that don't report it. */
   const missingModels = () => integrations()?.ollama.missingModels ?? [];
+  /** Cautions about models the server AUTO-SELECTED (never about a deliberate choice).
+   *  Empty on older servers that don't report it. */
+  const modelWarnings = () => integrations()?.ollama.modelWarnings ?? [];
 
   // Phase AA · AA0 — connect the CI-Server memory appliance (URL + API key). The key
   // travels once and is stored KEK-encrypted server-side; the status never echoes it.
@@ -1232,6 +1235,19 @@ export function Settings() {
                       </span>
                     </div>
                   </Show>
+                  {/* Installed and reachable, but the app had to GUESS which model to use
+                      and the best it found does not advertise tool use. Distinct from the
+                      missing-model case above: every call succeeds, the answers are just
+                      quietly poor — which is exactly how a 1B vision model ended up
+                      driving tagging and quick-add on a real install. */}
+                  <For each={modelWarnings()}>
+                    {(warning) => (
+                      <div class="flex items-start gap-2 text-[11px] text-amber-400">
+                        <AlertTriangle size={12} class="mt-0.5 flex-shrink-0" />
+                        <span>{warning}</span>
+                      </div>
+                    )}
+                  </For>
                   <ModelSelect label="Fast model" hint="extraction & triage" field="fast_model" fallback={integrations()!.ollama.smallModel} />
                   <ModelSelect label="Quality model" hint="briefings" field="quality_model" fallback={integrations()!.ollama.mediumModel} />
                   <ModelSelect label="Embedding model" hint="dedupe" field="embed_model" fallback={integrations()!.ollama.embedModel} />
