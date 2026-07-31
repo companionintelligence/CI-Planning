@@ -1,7 +1,7 @@
 import { sqlite } from '../db/index.js';
 import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
-import { localDateInTZ } from '../lib/tz.js';
+import { localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { renderCopy } from '../agents/render-copy.js';
 
@@ -237,7 +237,7 @@ const clampHorizon = (n: unknown): number => Math.max(1, Math.min(60, Math.floor
  * owner in a different zone.
  */
 function ownerToday(owner: string): string {
-  return localDateInTZ(new Date().toISOString(), ownerTimezone(owner));
+  return todayInTZ(ownerTimezone(owner));
 }
 
 /**
