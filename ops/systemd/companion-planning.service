@@ -24,6 +24,17 @@ Type=simple
 WorkingDirectory=/home/CHANGEME/devel/ci/CI-Planning/server
 Environment=HOME=/home/CHANGEME
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# SECURITY — do not remove. AUTH_MODE defaults to `test` (lib/config.ts), which skips
+# every credential check and binds the request to the system owner with read+write+admin.
+# The ONLY thing that refuses that default is the NODE_ENV=production boot guard, and the
+# server listens on 0.0.0.0 — so a unit without this line serves an unauthenticated
+# /api/export of the entire dataset to anything that can reach the host.
+# Node gives the real environment precedence over --env-file, so this also overrides a
+# stale NODE_ENV in server/.env.
+Environment=NODE_ENV=production
+# Set the auth mode explicitly in server/.env (AUTH_MODE=sso with DISABLE_OIDC=true for
+# local username/password). With NODE_ENV=production above, leaving it unset fails the
+# boot guard loudly instead of silently serving an open instance.
 ExecStart=/home/CHANGEME/devel/ci/CI-Planning/server/node_modules/.bin/tsx --env-file-if-exists=.env src/index.ts
 Restart=on-failure
 RestartSec=5
