@@ -6,6 +6,7 @@ import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
 import { trialityNext, logShown, stampOutcome, isOutcome, type ScoredPick } from '../services/triality.js';
 import { attachRationales, type Rationale } from '../services/triality-rationale.js';
+import { attachConfidence, serializeConfidence, type PickConfidence } from '../services/triality-confidence.js';
 
 /**
  * Triality REST surface (design §8) — thin adapters over services/triality.ts;
@@ -33,7 +34,12 @@ export function trialityRouter() {
   // The rationale is a GARNISH (T9, §8): computed after the engine returned, so
   // nothing here can move a pick or a score. It is always present and always
   // labeled — `template` is the spec, `ai` only when a model line replaced it.
-  const pickToApi = (p: ScoredPick, logId: string | null, rationale: Rationale) => ({
+  const pickToApi = (
+    p: ScoredPick,
+    logId: string | null,
+    rationale: Rationale,
+    confidence: PickConfidence,
+  ) => ({
     slot: p.slot,
     action_kind: p.kind,
     action_ref: p.ref,
@@ -47,6 +53,24 @@ export function trialityRouter() {
     log_id: logId,
     rationale: rationale.text,
     rationale_source: rationale.source,
+    // v2.2 (§4) — derived, reported, and never fed back into ranking. Additive: the
+    // envelope and the refusal arm are unchanged, so an older client simply ignores it.
+    confidence: {
+      band: confidence.band,
+      value: confidence.value,
+      coverage: confidence.coverage,
+      margin: confidence.margin,
+      evidence: confidence.evidence,
+      margin_basis: confidence.marginBasis,
+      binding: confidence.binding,
+      counts: {
+        dims_informative: confidence.counts.dimsInformative,
+        dims_active: confidence.counts.dimsActive,
+        evidence_rows: confidence.counts.evidenceRows,
+        eligible: confidence.counts.eligible,
+      },
+      v: confidence.v,
+    },
   });
 
   // GET /api/triality/next — the three candidates with full per-component score
@@ -62,10 +86,14 @@ export function trialityRouter() {
       ctx.body = { refused: res.refused, have: res.have, need: res.need };
       return;
     }
-    const logIds = logShown(owner, now, res.picks);
+    // Confidence is stamped AT SHOW TIME, so it must be computed before the insert: the
+    // situation vector is never persisted, and a later reader could only reconstruct
+    // today's — a fabricated reading on an old row.
+    const confidences = attachConfidence(res.picks, res.vector);
+    const logIds = logShown(owner, now, res.picks, confidences.map(serializeConfidence));
     const rationales = await attachRationales(res.picks, res.vector);
     ctx.body = {
-      picks: res.picks.map((p, i) => (p ? pickToApi(p, logIds[i], rationales[i]!) : null)),
+      picks: res.picks.map((p, i) => (p ? pickToApi(p, logIds[i], rationales[i]!, confidences[i]!) : null)),
       empty_reasons: res.emptyReasons,
       vector: res.vector,
       computed_at: now.toISOString(),

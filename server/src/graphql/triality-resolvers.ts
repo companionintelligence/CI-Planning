@@ -5,6 +5,7 @@ import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
 import { trialityNext, logShown, stampOutcome, isOutcome, type ScoredPick } from '../services/triality.js';
 import { attachRationales, type Rationale } from '../services/triality-rationale.js';
+import { attachConfidence, serializeConfidence, type PickConfidence } from '../services/triality-confidence.js';
 
 /**
  * Triality GraphQL resolvers (T5) — parity with routes/triality.ts by shared
@@ -25,7 +26,12 @@ function gate(): string {
 
 // T9 parity: the same garnish, attached the same way (after the engine), with the
 // wire style this file already uses — camelCase fields, SCREAMING enum values.
-const pickToNode = (p: ScoredPick, logId: string | null, rationale: Rationale) => ({
+const pickToNode = (
+  p: ScoredPick,
+  logId: string | null,
+  rationale: Rationale,
+  confidence: PickConfidence,
+) => ({
   slot: p.slot.toUpperCase(),
   actionKind: p.kind.toUpperCase(),
   actionRef: p.ref,
@@ -42,6 +48,15 @@ const pickToNode = (p: ScoredPick, logId: string | null, rationale: Rationale) =
   logId,
   rationale: rationale.text,
   rationaleSource: rationale.source.toUpperCase(),
+  // v2.2 parity: the same numbers the REST route ships, in this file's wire style.
+  // Typed on the schema rather than smuggled through the untyped `vector` JSON scalar,
+  // where it would need no SDL change and would therefore skip review.
+  confidence: {
+    ...confidence,
+    band: confidence.band.toUpperCase(),
+    marginBasis: confidence.marginBasis.toUpperCase(),
+    binding: confidence.binding.toUpperCase(),
+  },
 });
 
 export const trialityResolvers = {
@@ -59,11 +74,14 @@ export const trialityResolvers = {
           computedAt: null,
         };
       }
-      const logIds = logShown(owner, now, res.picks);
+      // Same three-call ordering as routes/triality.ts — confidence is stamped at show
+      // time, so it is computed before the insert.
+      const confidences = attachConfidence(res.picks, res.vector);
+      const logIds = logShown(owner, now, res.picks, confidences.map(serializeConfidence));
       const rationales = await attachRationales(res.picks, res.vector);
       return {
         refused: null,
-        picks: res.picks.map((p, i) => (p ? pickToNode(p, logIds[i], rationales[i]!) : null)),
+        picks: res.picks.map((p, i) => (p ? pickToNode(p, logIds[i], rationales[i]!, confidences[i]!) : null)),
         emptyReasons: res.emptyReasons,
         vector: res.vector,
         computedAt: now,
