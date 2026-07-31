@@ -37,11 +37,20 @@ function parseArgs(argv: string[]): Args {
   return {
     target: Number(get('target') ?? 100),
     tier: (get('tier') as ModelTier) ?? 'medium',
-    reset: !argv.includes('--no-reset'),
+    // OPT-IN, deliberately. This used to be `!argv.includes('--no-reset')`, i.e. a bare
+    // `pnpm seed` — the exact command the README hands a new owner — silently ran
+    // resetData(), which DELETEs every task, possible, block and tag in the database with
+    // no owner filter and no confirmation. Seeding is additive by default now; wiping is
+    // something you have to ask for by name.
+    reset: argv.includes('--reset'),
     useLlm: !argv.includes('--no-llm'),
   };
 }
 
+/**
+ * DESTRUCTIVE. Deletes every task, possible, block and tag in the database — for ALL
+ * owners, not just the seed owner. Only ever reached via an explicit `--reset`.
+ */
 function resetData() {
   sqlite.exec(`
     DELETE FROM possible_task_tags;

@@ -8,6 +8,9 @@ import {
   setInstalledModels,
   autoSelectModel,
   autoSelectEmbedModel,
+  explainModel,
+  explainModelDefault,
+  generationSelectionWarnings,
   isInstalled,
   parseParamB,
   type InstalledModel,
@@ -21,9 +24,17 @@ import { resetDb } from './helpers.js';
  * most machines never pulled, and nothing noticed — `/api/tags` answered, so the app
  * advertised "Ollama available ✓" while every call died with `model '…' not found`.
  *
- * The `thinking` exclusion is not a style preference: verified against a live Ollama, a
- * thinking model asked for `format:"json"` returns an EMPTY string, which is precisely the
- * silent-nothing failure quick-add and plan ordering suffered.
+ * The `thinking` exclusion is not a style preference. Re-measured against Ollama 0.30.10
+ * (2026-07-30): 3 of 5 installed thinking models answered `format:"json"` with an EMPTY
+ * `response` and their content diverted into the separate `thinking` field — precisely the
+ * silent-nothing failure quick-add and plan ordering suffered. It is not predictable from
+ * capabilities (`qwen3:8b` works, `qwen3-vl:8b` does not, and they differ only by
+ * `vision`), and `think:false` does not rescue it, so the blunt exclusion stays. See the
+ * measurement table in src/lib/models.ts.
+ *
+ * The `tools` preference exists because exclusion alone is not enough: on a box whose only
+ * non-thinking models were `moondream:latest` (1B, vision, no tools) and a 30B coder, the
+ * smallest-wins rule handed the latency-sensitive fast tier to the vision model.
  */
 
 const OWNER = SYSTEM_OWNER;
@@ -37,6 +48,11 @@ const QWEN_THINK: InstalledModel = {
   paramB: 0.87344,
 };
 const EMBEDDER: InstalledModel = { name: 'nomic-embed-text:latest', capabilities: ['embedding'], paramB: 0.137 };
+
+/** The real shapes from the box that motivated the `tools` preference (Ollama 0.30.10). */
+const MOONDREAM: InstalledModel = { name: 'moondream:latest', capabilities: ['completion', 'vision'], paramB: 1 };
+const CODER_30B: InstalledModel = { name: 'qwen3-coder:30b', capabilities: ['completion', 'tools'], paramB: 30.5 };
+const QWEN25_7B: InstalledModel = { name: 'qwen2.5:7b', capabilities: ['completion', 'tools'], paramB: 7.6 };
 
 const REALISTIC = [LLAMA_32, LLAMA_31, QWEN_THINK, EMBEDDER];
 
@@ -94,6 +110,96 @@ describe('auto-selection', () => {
     // Older Ollama omits `capabilities`; excluding on that would select nothing.
     setInstalledModels([{ name: 'mystery:7b', capabilities: [], paramB: 7 }]);
     expect(autoSelectModel('small')).toBe('mystery:7b');
+  });
+
+  it('does not hand the fast tier to a small vision model over a tool-capable one', () => {
+    // The reported regression: smallest-wins alone picked moondream (1B, vision, no
+    // tools) for the tier that drives tagging and quick-add enrichment.
+    setInstalledModels([MOONDREAM, CODER_30B, QWEN25_7B]);
+    expect(autoSelectModel('small')).toBe(QWEN25_7B.name);
+    expect(autoSelectModel('medium')).toBe(CODER_30B.name);
+  });
+
+  it('still uses a no-tools model when it is genuinely the only option', () => {
+    // Deprioritized, not banned — a bad model beats no model at all.
+    setInstalledModels([MOONDREAM]);
+    expect(autoSelectModel('small')).toBe(MOONDREAM.name);
+    expect(autoSelectModel('medium')).toBe(MOONDREAM.name);
+  });
+
+  it('does not demote a vision model that also advertises tools', () => {
+    // `vision` is not the signal — `tools` is. A multimodal instruct model is fine.
+    const VISION_TOOLS = { name: 'gemma4:9b', capabilities: ['completion', 'vision', 'tools'], paramB: 9 };
+    setInstalledModels([MOONDREAM, VISION_TOOLS]);
+    expect(autoSelectModel('small')).toBe(VISION_TOOLS.name); // 9B beats a preferred-band-less 1B
+  });
+
+  it('prefers the size rule within the preferred band, not across bands', () => {
+    // A 1B no-tools model must not win the small tier just for being smallest.
+    setInstalledModels([MOONDREAM, QWEN25_7B, CODER_30B]);
+    expect(autoSelectModel('small')).not.toBe(MOONDREAM.name);
+  });
+});
+
+describe('selection reporting', () => {
+  it('reports auto-selection distinctly from a pin, a default and an unknown set', () => {
+    setInstalledModels(null);
+    expect(explainModelDefault('small').source).toBe('unknown');
+
+    setInstalledModels([{ name: config.ollamaSmallModel, capabilities: ['completion', 'tools'], paramB: 0.5 }]);
+    expect(explainModelDefault('small').source).toBe('default');
+
+    setInstalledModels(REALISTIC); // configured default not installed → rescue
+    expect(explainModelDefault('small')).toEqual({ name: LLAMA_32.name, source: 'auto' });
+
+    setInstalledModels([QWEN_THINK]); // nothing qualifies
+    expect(explainModelDefault('small')).toEqual({ name: config.ollamaSmallModel, source: 'unresolved' });
+  });
+
+  it('reports an env pin as a pin, without consulting the installed set', () => {
+    setInstalledModels(REALISTIC);
+    const pinned = { ...config.ollamaPinned };
+    const saved = config.ollamaSmallModel;
+    try {
+      (config as { ollamaSmallModel: string }).ollamaSmallModel = 'pinned-by-operator:9b';
+      config.ollamaPinned.small = true;
+      expect(explainModelDefault('small')).toEqual({ name: 'pinned-by-operator:9b', source: 'pin' });
+    } finally {
+      (config as { ollamaSmallModel: string }).ollamaSmallModel = saved;
+      Object.assign(config.ollamaPinned, pinned);
+    }
+  });
+
+  it('warns when an auto-selected tier fell through to a model with no tool use', () => {
+    setInstalledModels([MOONDREAM]);
+    const warnings = generationSelectionWarnings([
+      { tier: 'small', model: { name: MOONDREAM.name, source: 'auto' } },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('moondream:latest');
+    expect(warnings[0]).toContain('tool use');
+  });
+
+  it('reports a per-owner Settings choice as an override, distinct from an env pin', () => {
+    setInstalledModels(REALISTIC);
+    setPrefs({ fast_model: 'hand-picked:1b' });
+    expect(explainModel('small', OWNER)).toEqual({ name: 'hand-picked:1b', source: 'override' });
+  });
+
+  it('stays silent for a deliberate choice, however bad — pins are never second-guessed', () => {
+    setInstalledModels([MOONDREAM]);
+    for (const source of ['pin', 'override'] as const) {
+      expect(
+        generationSelectionWarnings([{ tier: 'small', model: { name: MOONDREAM.name, source } }]),
+      ).toEqual([]);
+    }
+  });
+
+  it('stays silent when the auto-selected model is tool-capable', () => {
+    setInstalledModels([QWEN25_7B]);
+    expect(
+      generationSelectionWarnings([{ tier: 'small', model: { name: QWEN25_7B.name, source: 'auto' } }]),
+    ).toEqual([]);
   });
 });
 

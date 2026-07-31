@@ -3,12 +3,16 @@ import { logger } from '../lib/logger.js';
 import {
   resolveModel,
   resolveEmbedModel,
-  resolveModelDefault,
-  resolveEmbedModelDefault,
+  explainModel,
+  explainEmbedModel,
+  explainModelDefault,
+  explainEmbedModelDefault,
+  generationSelectionWarnings,
   setInstalledModels,
   isInstalled,
   parseParamB,
   type InstalledModel,
+  type ModelSource,
 } from '../lib/models.js';
 
 /** Thrown when Ollama is unreachable or a model isn't available. Callers may catch and degrade. */
@@ -163,6 +167,14 @@ export interface OllamaStatus {
   embedModel: string;
   /** Effective models that are NOT installed, so the UI can name them. */
   missingModels: string[];
+  /**
+   * How each effective model was chosen. `auto` means nothing was pinned or picked and
+   * the app guessed from what is installed — worth showing, because an auto-selected name
+   * otherwise looks identical to a deliberate one in the UI.
+   */
+  modelSources: { small: ModelSource; medium: ModelSource; embed: ModelSource };
+  /** Cautions about auto-selected picks (e.g. no tool-use capability). Empty when fine. */
+  modelWarnings: string[];
   error?: string;
 }
 
@@ -181,23 +193,30 @@ export interface OllamaStatus {
 export async function status(owner?: string): Promise<OllamaStatus> {
   /** Effective models — resolved AFTER the cache refresh so auto-selection is applied. */
   const effective = () => {
+    // No owner context (boot health logging): drop only the per-owner override and still
+    // apply env-pin → installed-default → auto-selection. Returning the raw configured
+    // names here would report `qwen2.5:0.5b` as effective while every request actually
+    // used the auto-selected model.
+    let small, medium, embed;
     try {
-      return {
-        smallModel: resolveModel('small', owner),
-        mediumModel: resolveModel('medium', owner),
-        embedModel: resolveEmbedModel(owner),
-      };
-      // No owner context (boot health logging): drop only the per-owner override and
-      // still apply env-pin → installed-default → auto-selection. Returning the raw
-      // configured names here would report `qwen2.5:0.5b` as effective while every
-      // request actually used the auto-selected model.
+      small = explainModel('small', owner);
+      medium = explainModel('medium', owner);
+      embed = explainEmbedModel(owner);
     } catch {
-      return {
-        smallModel: resolveModelDefault('small'),
-        mediumModel: resolveModelDefault('medium'),
-        embedModel: resolveEmbedModelDefault(),
-      };
+      small = explainModelDefault('small');
+      medium = explainModelDefault('medium');
+      embed = explainEmbedModelDefault();
     }
+    return {
+      smallModel: small.name,
+      mediumModel: medium.name,
+      embedModel: embed.name,
+      modelSources: { small: small.source, medium: medium.source, embed: embed.source },
+      modelWarnings: generationSelectionWarnings([
+        { tier: 'small' as const, model: small },
+        { tier: 'medium' as const, model: medium },
+      ]),
+    };
   };
 
   try {
