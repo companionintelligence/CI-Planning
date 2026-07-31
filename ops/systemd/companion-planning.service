@@ -1,0 +1,39 @@
+# Companion Planning as a systemd USER service (Linux home-server install).
+#
+#   cp ops/systemd/companion-planning.service ~/.config/systemd/user/
+#   # edit WorkingDirectory + ExecStart to your checkout path
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now companion-planning
+#   journalctl --user -u companion-planning -f
+#
+# Run `loginctl enable-linger <user>` to have it start before anyone logs in.
+# Config is read from server/.env — see docs/local-tailscale-setup.md.
+
+[Unit]
+Description=Companion Planning (API + PWA on :3848)
+Documentation=https://github.com/companionintelligence/CI-Planning
+# Ollama powers the AI features (briefings, task extraction, auto-scheduling).
+# Wanted, not Required: the app boots fine without it and just hides those features.
+Wants=ollama-local.service
+After=network-online.target ollama-local.service
+
+[Service]
+Type=simple
+# MUST be server/ — CP_MCP_COMMAND is a path relative to the process cwd, so the
+# Calendar MCP child fails to spawn from anywhere else.
+WorkingDirectory=/home/CHANGEME/devel/ci/CI-Planning/server
+Environment=HOME=/home/CHANGEME
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/CHANGEME/devel/ci/CI-Planning/server/node_modules/.bin/tsx --env-file-if-exists=.env src/index.ts
+Restart=on-failure
+RestartSec=5
+# SQLite needs a clean shutdown to checkpoint the WAL; a hard kill mid-write leaves
+# a large -wal beside the database.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=companion-planning
+
+[Install]
+WantedBy=default.target
