@@ -10,9 +10,10 @@ import { pushEnabled } from './lib/push.js';
 import { status as ollamaStatus } from './mcp/ollama.js';
 
 // DB is initialised on import (runs setup + seed).
-import './db/index.js';
+import { sqlite } from './db/index.js';
 import { recoverStaleFreezeLocks } from './engine/auto-defense.js';
 import { ensureLocalAuthBootstrap } from './lib/auth/localBootstrap.js';
+import { writePidFile, removePidFile } from './lib/pidfile.js';
 
 // Local-auth mode (AUTH_MODE=sso + DISABLE_OIDC): seed the default owner or fail
 // closed if there's no way to log in. No-op in every other mode. Awaited before we
@@ -29,6 +30,10 @@ const app = await buildApp();
 const server = app.listen(config.port, () => {
   logger.info(`Companion Planning running on http://localhost:${config.port}`);
 });
+
+// Claim the database for offline tools (restore.ts refuses to run while we hold it).
+// Best-effort: a read-only data dir must not stop the server from booting.
+writePidFile(config.dbPath);
 
 // Warm the installed-model cache so the FIRST inference already auto-selects a model that
 // is really pulled (lib/models.ts). Deliberately not awaited: Ollama is optional and may
@@ -60,11 +65,38 @@ if (!pushEnabled()) {
 
 // Graceful shutdown: docker stop / Hub restarts send SIGTERM. Exit 0 so the
 // container stops cleanly instead of surfacing a pnpm ELIFECYCLE failure.
+//
+// Closing the SQLite handle is the load-bearing part, not a tidy-up. better-sqlite3
+// checkpoints the WAL back into the main database file on close; `process.exit()`
+// without it leaves a hot `-wal` beside the db as the GUARANTEED post-stop state. That
+// is what turns `restore.ts` into a corruption tool (a stale WAL from the OLD database
+// replays onto a freshly-copied snapshot), and it is why an operator who does exactly
+// the documented thing — stop the server, then restore — is the one who gets bitten.
+// Idempotent and never throws, so a double signal or an already-closed handle is safe.
+let closed = false;
+function closeDb(): void {
+  if (closed) return;
+  closed = true;
+  try {
+    sqlite.close(); // checkpoints the WAL into the main db file
+  } catch (err) {
+    logger.warn(`shutdown: closing the database failed — a -wal file may remain: ${(err as Error).message}`);
+  }
+  removePidFile(config.dbPath);
+}
+
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     logger.info(`${signal} received — shutting down`);
-    server.close(() => process.exit(0));
-    // Open SSE streams keep the server alive; don't wait on them forever.
-    setTimeout(() => process.exit(0), 3_000).unref();
+    server.close(() => {
+      closeDb();
+      process.exit(0);
+    });
+    // Open SSE streams keep the server alive; don't wait on them forever. Still
+    // checkpoint on this path — it is the one systemd/docker actually hits.
+    setTimeout(() => {
+      closeDb();
+      process.exit(0);
+    }, 3_000).unref();
   });
 }
