@@ -29,7 +29,7 @@ import { sqlite } from '../db/index.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { localISODate } from '../lib/dates.js';
-import { serverTimezone, utcDayBounds } from '../lib/tz.js';
+import { serverTimezone, utcDayBounds, todayInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
 import { occurrencesBetween, instanceStartUTC, type Template } from './recurrence.js';
 import { syncTaskReminders } from './reminders.js';
@@ -113,7 +113,15 @@ export function flagMissedHabits(templateId: string, today: string): number {
 export function generateRecurrences(opts: { today?: string; horizonDays?: number } = {}): GenerateResult {
   const owner = currentOwnerId();
   const tz = ownerTimezone(owner);
-  const today = opts.today ?? localISODate();
+  // Owner's today, NOT the server's. `tz` already drives every day WINDOW below
+  // (utcDayBounds, instanceStartUTC) — anchoring the window on a server-tz date while
+  // the windows are owner-tz is what marked an owner's CURRENT-day habits as missed:
+  // markMissed() sweeps `occurrence_date < today`, so a UTC server past midnight sees a
+  // Los_Angeles owner's still-open evening habit as yesterday's and flips it to missed.
+  // review_day then refuses to sweep it back, the streak breaks, and freeze_stars makes
+  // it immutable. The documented Docker shape is exactly this: UTC container, non-UTC
+  // owner.
+  const today = opts.today ?? todayInTZ(tz);
   const horizon = addDaysISO(today, opts.horizonDays ?? HORIZON_DAYS);
 
   const templates = sqlite
