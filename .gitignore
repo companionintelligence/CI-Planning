@@ -11,6 +11,10 @@ server/dist/
 # it lands in the repo whenever a dev points DB_PATH at a working directory here.
 .session-secret
 .env
+# Sibling env files for extra local instances (e.g. .env.ssotest). `.env` alone does
+# not match them, so one could otherwise be committed by accident.
+.env.*
+!.env.example
 config.local.json
 *.plist
 .codex/
