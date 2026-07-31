@@ -301,7 +301,7 @@ describe('backup restore isolation (time_blocks wipe scoping)', () => {
     await api(srv.url, '/api/blocks', { method: 'POST', json: { title: 'A block', start_at: at('10:00'), end_at: at('11:00') } });
     const exported = await api(srv.url, '/api/export');
     expect(exported.status).toBe(200);
-    expect(exported.body.version).toBe('9');
+    expect(exported.body.version).toBe('10');
     const imported = await api(srv.url, '/api/import', { method: 'POST', json: exported.body });
     expect(imported.status).toBe(200);
     // The owner-scoped `DELETE FROM time_blocks WHERE owner_id = ?` never touched B.
