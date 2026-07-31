@@ -32,7 +32,10 @@ import { httpError } from '../lib/http-error.js';
 // self-audit) and planning_sessions (0131, the FTUE weekly-assistant session log) landed
 // after v8's audit (which covered migrations 0001–0114) and were silently dropped by a
 // round-trip. Purely additive — an '8' dump restores with these keys treated as empty.
-const EXPORT_VERSION = '9';
+// '10': +entity_categories. Category assignments (migration 0134) were in the schema but
+// never in the payload, so every round-trip silently dropped them and reported success.
+// Purely additive — a '9' or older dump restores with the key treated as empty.
+const EXPORT_VERSION = '10';
 
 // Owner-scoped tables exported/restored via a direct `WHERE owner_id = ?` query.
 // (Junctions, the tag axis, and full-table dumps are handled explicitly in the payload.)
@@ -178,10 +181,13 @@ const ENTITY_KIND_PARENT: Record<string, string> = { task: 'tasks', routine: 'pa
  */
 function insertJunctionRows(table: string, rows: Record<string, unknown>[], ownerId: string): number {
   const owned = rows.filter((row) => {
-    if (table === 'entity_tags') {
+    // The two polymorphic junctions resolve their parent table through entity_kind, so
+    // they cannot be expressed in JUNCTION_FKS. They differ only in the tag column.
+    if (table === 'entity_tags' || table === 'entity_categories') {
       const parent = ENTITY_KIND_PARENT[String(row['entity_kind'])];
       if (!parent) return false;
-      return ownsParent(parent, row['entity_id'], ownerId) && ownsParent('tags', row['tag_id'], ownerId);
+      const tagCol = table === 'entity_tags' ? 'tag_id' : 'category_tag_id';
+      return ownsParent(parent, row['entity_id'], ownerId) && ownsParent('tags', row[tagCol], ownerId);
     }
     return (JUNCTION_FKS[table] ?? []).every(([col, parent]) => ownsParent(parent, row[col], ownerId));
   });
@@ -238,6 +244,19 @@ export function backupRouter() {
           .all(entityTagIds)
       : [];
 
+    // entity_categories (migration 0134) is entity_tags' twin — polymorphic, owner-less,
+    // scoped through its parents. It was added to the schema but never here, so every
+    // round-trip silently dropped all task/block category assignments. Only 'task' and
+    // 'time_block' are valid entity_kinds for it, so patternIds are deliberately absent.
+    const entityCategoryIds = [...taskIds, ...blockIds];
+    const entityCategories = entityCategoryIds.length
+      ? sqlite
+          .prepare(
+            `SELECT * FROM entity_categories WHERE entity_id IN (${entityCategoryIds.map(() => '?').join(',')})`,
+          )
+          .all(entityCategoryIds)
+      : [];
+
     const possibleTasks = sqlite
       .prepare('SELECT * FROM possible_tasks WHERE proposed_owner_id = ?')
       .all(ownerId) as { id: string }[];
@@ -280,6 +299,7 @@ export function backupRouter() {
       flight_plan: ownerData['flight_plan'],
       time_entries: ownerData['time_entries'],
       entity_tags: entityTags,
+      entity_categories: entityCategories,
       possible_tasks: possibleTasks,
       possible_task_tags: possibleTaskTags,
       reminders: ownerData['reminders'],
@@ -332,7 +352,7 @@ export function backupRouter() {
     // Accept the current version plus prior v6 (pre-Phase-Z, grouping axis kind='pattern'),
     // v7 (pre-v8 tables), and v8 (pre-v9 tables). A v6 dump is remapped below; v7/v8/v9
     // dumps differ only by additive keys, which the restore treats as empty if absent.
-    const SUPPORTED_VERSIONS = ['6', '7', '8', EXPORT_VERSION];
+    const SUPPORTED_VERSIONS = ['6', '7', '8', '9', EXPORT_VERSION];
     if (!SUPPORTED_VERSIONS.includes(String(body['version']))) {
       ctx.status = 400;
       ctx.body = { error: `Unsupported export version '${body['version']}'; expected one of ${SUPPORTED_VERSIONS.join(', ')}` };
@@ -411,6 +431,7 @@ export function backupRouter() {
       counts['flight_plan']      = insertRows('flight_plan', g('flight_plan'), ownerId);
       counts['time_entries']     = insertRows('time_entries', g('time_entries'), ownerId);
       counts['entity_tags']      = insertJunctionRows('entity_tags', g('entity_tags'), ownerId);
+      counts['entity_categories'] = insertJunctionRows('entity_categories', g('entity_categories'), ownerId);
       counts['possible_tasks']   = insertRows('possible_tasks', g('possible_tasks'), ownerId);
       counts['possible_task_tags'] = insertJunctionRows('possible_task_tags', g('possible_task_tags'), ownerId);
       counts['reminders']        = insertRows('reminders', g('reminders'), ownerId);

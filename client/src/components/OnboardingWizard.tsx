@@ -54,6 +54,26 @@ export function OnboardingWizard() {
     if (m) { setName(m.name ?? ''); setEmail(m.email ?? ''); }
   });
 
+  /**
+   * The identity inputs are ALSO read straight from the DOM on submit, not only from the
+   * signals above.
+   *
+   * Browser autofill sets `input.value` without dispatching an `input` event, so `onInput`
+   * never runs and the signal stays ''. The submit path then reads an empty name, takes
+   * its "nothing to write" branch, and advances to step 2 having saved nothing — the form
+   * looks filled, the wizard looks like it worked, and the account details are silently
+   * dropped. Chrome does this for its own address/email autofill and for password-manager
+   * fills that land before the first user interaction.
+   *
+   * Reading the element is the only reliable source of truth here: it covers autofill,
+   * extensions, and any other programmatic write, none of which are obliged to fire events.
+   */
+  let nameEl: HTMLInputElement | undefined;
+  let emailEl: HTMLInputElement | undefined;
+  /** Signal value, or the DOM value when something set it without firing `input`. */
+  const liveName = () => (nameEl?.value ?? name()) || name();
+  const liveEmail = () => (emailEl?.value ?? email()) || email();
+
   // Step 2 — time + place. Defaults only matter pre-completion (nothing saved yet);
   // once onboarding has finished, `openOnboardingAt` can reopen this same wizard
   // (the empty-state CTA), and Back/Next through this step must not silently
@@ -113,9 +133,10 @@ export function OnboardingWizard() {
   }
 
   function nextFromIdentity() {
-    const trimmed = name().trim();
-    if (!trimmed) { setOnboardingStep(2); return Promise.resolve(); } // nothing to write — move on rather than 400
-    return advance(() => api.owner.updateProfile({ name: trimmed, email: email().trim() || null }), 2);
+    // liveName/liveEmail, not the signals — see the autofill note above.
+    const trimmed = liveName().trim();
+    if (!trimmed) { setOnboardingStep(2); return Promise.resolve(); } // genuinely blank — move on rather than 400
+    return advance(() => api.owner.updateProfile({ name: trimmed, email: liveEmail().trim() || null }), 2);
   }
 
   function nextFromTimePlace() {
@@ -183,11 +204,11 @@ export function OnboardingWizard() {
               </div>
               <label class="flex flex-col gap-1 text-sm">
                 <span class="text-xs text-muted-foreground">Your name</span>
-                <input class="input" value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Your name" />
+                <input ref={nameEl} class="input" value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Your name" />
               </label>
               <label class="flex flex-col gap-1 text-sm">
                 <span class="text-xs text-muted-foreground">Email</span>
-                <input class="input" type="email" value={email()} onInput={(e) => setEmail(e.currentTarget.value)} placeholder="you@example.com" />
+                <input ref={emailEl} class="input" type="email" value={email()} onInput={(e) => setEmail(e.currentTarget.value)} placeholder="you@example.com" />
               </label>
               <div class="flex justify-between items-center pt-1">
                 <button type="button" class="btn-ghost text-xs" disabled={busy()} onClick={() => void completeOnboarding()}>Skip</button>

@@ -126,8 +126,26 @@ export async function updatePrefs(ownerId: string, rawBody: Record<string, unkno
     }
   }
 
-  // Convert incoming snake_case keys to camelCase for Drizzle
-  const update = fromApi<Partial<typeof schedulingPrefs.$inferInsert>>(body);
+  // Convert incoming snake_case keys to camelCase for Drizzle.
+  //
+  // `fromApi` is a blind key rename with no allowlist, and Drizzle emits a SET clause for
+  // every real column present — so before this strip, the request body could write ANY
+  // scheduling_prefs column, including the two that are not preferences at all:
+  //
+  //   owner_id — a tenant-isolation hole. The column has no UNIQUE constraint, so
+  //              reassigning it silently succeeds and leaves the victim with TWO prefs
+  //              rows; the many `… WHERE owner_id = ?` single-row `.get()` reads (owner
+  //              timezone, block services, autoplan) then return whichever SQLite yields
+  //              first, applying attacker-chosen scheduling config to another owner. The
+  //              sentinel id is a hardcoded public constant AND the row provisionOwner()
+  //              clones for every new owner, so it is a standing target.
+  //   id       — re-points the row itself.
+  //
+  // Deny-listing the two rather than allow-listing the rest is deliberate: a new
+  // preference column then stays writable by default (which is what every caller expects),
+  // while the two columns that must never be client-set are named explicitly.
+  const { id: _ignoredId, owner_id: _ignoredOwnerId, ownerId: _ignoredOwnerIdCamel, ...writable } = body;
+  const update = fromApi<Partial<typeof schedulingPrefs.$inferInsert>>(writable);
   const [prefs] = await db
     .update(schedulingPrefs)
     .set(update)
