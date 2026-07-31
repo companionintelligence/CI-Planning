@@ -209,6 +209,60 @@ describe('OnboardingWizard', () => {
       await screen.findByText('Time and place');
     });
 
+    /**
+     * Browser autofill sets `input.value` WITHOUT dispatching an `input` event, so a
+     * controlled Solid input's signal stays at its old value. Step 1 previously read only
+     * the signal: an autofilled form therefore looked blank, took the "nothing to write"
+     * branch, and advanced to step 2 having saved nothing — the wizard appeared to work
+     * while silently discarding the account details.
+     *
+     * Assigning `.value` directly (no fireEvent.input) is exactly what the browser does,
+     * so this reproduces it faithfully rather than approximating it.
+     */
+    it('Step 1 saves values the browser AUTOFILLED, which fire no input event', async () => {
+      meMock.mockResolvedValueOnce({
+        ownerId: 'o1', name: '', email: '', username: null,
+        backupEmail: null, role: 'operator' as const, isOperator: true,
+      });
+      setPrefs({ onboarded_at: null });
+      mount();
+      await screen.findByText('Welcome');
+
+      const nameEl = screen.getByPlaceholderText('Your name') as HTMLInputElement;
+      const emailEl = screen.getByPlaceholderText('you@example.com') as HTMLInputElement;
+      await waitFor(() => expect(nameEl.value).toBe(''));
+
+      nameEl.value = 'Liam';
+      emailEl.value = 'liam@example.com';
+
+      fireEvent.click(screen.getByText('Next'));
+
+      await waitFor(() =>
+        expect(updateProfileMock).toHaveBeenCalledWith({ name: 'Liam', email: 'liam@example.com' }),
+      );
+      await screen.findByText('Time and place');
+    });
+
+    it('Step 1 still advances without writing when the field is genuinely blank', async () => {
+      // The guard the autofill fix must not break: a real empty name skips the write
+      // rather than sending a 400.
+      meMock.mockResolvedValueOnce({
+        ownerId: 'o1', name: '', email: '', username: null,
+        backupEmail: null, role: 'operator' as const, isOperator: true,
+      });
+      setPrefs({ onboarded_at: null });
+      mount();
+      await screen.findByText('Welcome');
+      await waitFor(() =>
+        expect((screen.getByPlaceholderText('Your name') as HTMLInputElement).value).toBe(''),
+      );
+
+      fireEvent.click(screen.getByText('Next'));
+
+      await screen.findByText('Time and place');
+      expect(updateProfileMock).not.toHaveBeenCalled();
+    });
+
     it('Step 2 Next calls prefs.update with timezone + workday_start + workday_end, then lands on Connect', async () => {
       setPrefs({ onboarded_at: null });
       mount();

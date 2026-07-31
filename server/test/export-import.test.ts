@@ -12,7 +12,7 @@ describe('GET /api/export', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toMatch(/attachment.*filename="companion-export/);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.version).toBe('9'); // '9': +life_priorities, planning_sessions (post-v8-audit tables)
+    expect(body.version).toBe('10'); // '10': +entity_categories (category assignments were never exported)
     expect(typeof body.owner_id).toBe('string');
     expect(typeof body.exported_at).toBe('string');
     for (const key of ['tasks', 'patterns', 'tags', 'scheduling_prefs']) {
@@ -296,5 +296,107 @@ describe('POST /api/import', () => {
     const rowsAfter = (sqlite.prepare('SELECT count(*) as n FROM tasks').get() as { n: number }).n;
     // Transaction rolled back — original row count restored.
     expect(rowsAfter).toBe(rowsBefore);
+  });
+});
+
+/**
+ * Category assignments live in `entity_categories`, a polymorphic junction added by
+ * migration 0134 (entity_kind + entity_id → tags.id, with a display position). It is
+ * structurally the twin of `entity_tags`, which the backup has always carried — but it was
+ * never added to the export, so a round-trip silently dropped every task and block
+ * category and reported success in `{imported: …}`.
+ *
+ * Unrecoverable, not merely lossy: tasks have no fallback category column, so the
+ * assignment exists nowhere else once the source database is gone. The failure mode this
+ * pins is "restore succeeded and my data is subtly wrong", which is exactly the shape a
+ * user does not check for.
+ */
+describe('export/import round-trip — category assignments', () => {
+  /** Create a category tag + a task carrying it, returning both ids. */
+  function seedCategorisedTask(title: string, categoryName: string) {
+    const ownerId = (sqlite.prepare('SELECT id FROM owners LIMIT 1').get() as { id: string }).id;
+    const tagId = (
+      sqlite
+        .prepare(`INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id`)
+        .get(ownerId, categoryName) as { id: string }
+    ).id;
+    const taskId = (
+      sqlite
+        .prepare(`INSERT INTO tasks (id, title, owner_id) VALUES (uuid7(), ?, ?) RETURNING id`)
+        .get(title, ownerId) as { id: string }
+    ).id;
+    sqlite
+      .prepare(
+        `INSERT INTO entity_categories (entity_kind, entity_id, category_tag_id, position)
+         VALUES ('task', ?, ?, 0)`,
+      )
+      .run(taskId, tagId);
+    return { ownerId, tagId, taskId };
+  }
+
+  it('carries entity_categories through export → wipe → import', async () => {
+    seedCategorisedTask('categorised-task', 'Health');
+
+    const exported = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+
+    // The export must actually contain the assignment — the original bug was an omission
+    // here, and asserting only on the post-import DB would let a silent no-op pass.
+    expect(Array.isArray(exported.entity_categories)).toBe(true);
+    expect((exported.entity_categories as unknown[]).length).toBe(1);
+
+    resetDb();
+    expect((sqlite.prepare('SELECT count(*) AS n FROM entity_categories').get() as { n: number }).n).toBe(0);
+
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: exported });
+    expect(status).toBe(200);
+
+    const restored = sqlite
+      .prepare(
+        `SELECT t.title AS title, g.name AS category, ec.position AS position
+           FROM entity_categories ec
+           JOIN tasks t ON t.id = ec.entity_id
+           JOIN tags  g ON g.id = ec.category_tag_id
+          WHERE ec.entity_kind = 'task'`,
+      )
+      .all() as { title: string; category: string; position: number }[];
+
+    expect(restored).toEqual([{ title: 'categorised-task', category: 'Health', position: 0 }]);
+  });
+
+  it('reports the restored assignments in the import counts', async () => {
+    seedCategorisedTask('counted-task', 'Career');
+    const exported = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+    resetDb();
+
+    const { body } = await api<{ imported: Record<string, number> }>(
+      srv.url,
+      '/api/import',
+      { method: 'POST', json: exported },
+    );
+
+    // Silence is what made this survive so long: the response listed every other table.
+    expect(body.imported.entity_categories).toBe(1);
+  });
+
+  it('drops a category row whose parent task belongs to another owner', async () => {
+    // entity_categories carries no owner_id, so isolation rides on its parents — the same
+    // rule insertJunctionRows already enforces for entity_tags.
+    const { tagId } = seedCategorisedTask('mine', 'Finance');
+    const exported = (await (await fetch(`${srv.url}/api/export`)).json()) as Record<string, unknown>;
+    resetDb();
+
+    const forged = {
+      ...exported,
+      entity_categories: [
+        ...(exported.entity_categories as unknown[]),
+        { entity_kind: 'task', entity_id: 'not-a-task-of-mine', category_tag_id: tagId, position: 0 },
+      ],
+    };
+
+    const { status } = await api(srv.url, '/api/import', { method: 'POST', json: forged });
+    expect(status).toBe(200);
+
+    const rows = sqlite.prepare('SELECT entity_id FROM entity_categories').all() as { entity_id: string }[];
+    expect(rows.every((r) => r.entity_id !== 'not-a-task-of-mine')).toBe(true);
   });
 });
