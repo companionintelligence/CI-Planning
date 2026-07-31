@@ -1292,6 +1292,10 @@ export interface Integrations {
     mediumModel: string;
     embedModel: string;
     missingModels?: string[];
+    /** How each pick was chosen — `auto` means the server guessed from what is installed. */
+    modelSources?: { small: string; medium: string; embed: string };
+    /** Cautions about AUTO-SELECTED picks only (e.g. no tool-use capability). */
+    modelWarnings?: string[];
   };
   google: { mode: string; liveEnabled: boolean; source: 'env' | 'app' | 'off'; connections: ConnectionHealth[] };
   push?: { configured: boolean }; // Phase H: VAPID keys present → Web Push can deliver

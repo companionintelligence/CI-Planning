@@ -28,6 +28,11 @@ export function llmRouter() {
         mediumModel: ollama.mediumModel,
         embedModel: ollama.embedModel,
         missingModels: ollama.missingModels,
+        // How each pick was chosen, plus cautions about the AUTO-selected ones. A model
+        // the app guessed reads identically to one the operator chose without this —
+        // which is how a 1B vision model drove tagging on a real install unnoticed.
+        modelSources: ollama.modelSources,
+        modelWarnings: ollama.modelWarnings,
       },
       // WP7: widen the google block with the live toggle + read-only connection
       // health (one entry per connected account; [] when none). connectionHealth

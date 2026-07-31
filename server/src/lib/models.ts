@@ -21,12 +21,37 @@
  *
  *   - `embedding` capability → embedding models. Only ever used for the embed tier, and
  *     excluded from the generation tiers.
- *   - `thinking` capability → EXCLUDED from generation. Verified against a live Ollama:
- *     a thinking model asked for `format:"json"` returns an EMPTY string (its reasoning
- *     stream is suppressed and nothing else is emitted), so quick-add enrichment, plan
- *     ordering and every other `generateJson` caller silently get nothing. `qwen3.5:0.8b`
- *     reproduces this; `llama3.2` (no `thinking`) answers correctly.
- *   - remaining `completion` models are ranked by parameter count: the small/fast tier
+ *   - `thinking` capability → EXCLUDED from generation. A thinking model asked for
+ *     `format:"json"` can return an EMPTY `response` with its reasoning diverted into the
+ *     separate `thinking` field, so quick-add enrichment, plan ordering and every other
+ *     `generateJson` caller silently get nothing. Re-measured against Ollama 0.30.10
+ *     (2026-07-30), where 3 of 5 installed thinking models reproduce it:
+ *
+ *       qwen3:8b            completion,tools,thinking          response=54  OK
+ *       gemma4:31b          completion,vision,tools,thinking   response=57  OK
+ *       qwen3-vl:8b         completion,vision,tools,thinking   response=0   EMPTY
+ *       qwen3.6:27b         completion,vision,tools,thinking   response=0   EMPTY
+ *       nemotron-cascade-2  completion,tools,thinking          response=0   EMPTY
+ *
+ *     Two things that measurement settles. It is NOT predictable from the capability
+ *     set — `qwen3:8b` and `qwen3-vl:8b` differ only by `vision` and behave oppositely —
+ *     so no cheap metadata rule can replace the blunt exclusion. And passing
+ *     `think:false` does NOT rescue it: `qwen3-vl:8b` still answers empty. The only
+ *     reliable test is to actually run the model, which costs a full load (tens of
+ *     seconds for a 30B) and so cannot happen on the `status()` path. The exclusion is
+ *     therefore deliberately over-broad: it wrongly benches `qwen3:8b`/`gemma4:31b`,
+ *     which is cheap, rather than risk selecting a model that silently returns nothing,
+ *     which is the failure this whole file exists to prevent. An operator who wants a
+ *     specific thinking model can still force it — a Settings override and an env pin
+ *     both bypass every filter here.
+ *   - `tools` capability → PREFERRED. Instruction/function-calling tuning is the best
+ *     available proxy for "can follow a structured-output prompt". Without this the fast
+ *     tier is just "smallest completion model", which on a real box handed the
+ *     latency-sensitive tagging/quick-add tier to `moondream:latest` — a 1B VISION model
+ *     that is a valid `completion` model and a poor triage one. Models with no capability
+ *     metadata at all rank as preferred too (degrade open, see below); anything left
+ *     (vision-only, no tools) is used only when nothing better is installed.
+ *   - within a preference band, models are ranked by parameter count: the small/fast tier
  *     takes the smallest (latency dominates triage work), the medium/quality tier the
  *     largest (headroom matters for briefings).
  *
@@ -142,10 +167,31 @@ function bySize(dir: 'asc' | 'desc') {
   };
 }
 
+/**
+ * Is this model plausibly instruction-tuned for structured output? `tools` is the signal;
+ * absent capability metadata (older Ollama) counts as yes so we degrade open rather than
+ * demoting every model on an older build. See the `tools` note in the header.
+ */
+export function isPreferredForGeneration(m: InstalledModel): boolean {
+  return m.capabilities.length === 0 || m.capabilities.includes('tools');
+}
+
+/**
+ * Generation candidates split into the preferred band and the last-resort band, each
+ * ranked for `tier`. Selection always drains the preferred band first, so a vision-only
+ * model is reached only when nothing tool-capable is installed.
+ */
+function rankedGenerationBands(tier: 'small' | 'medium'): InstalledModel[] {
+  const sort = bySize(tier === 'small' ? 'asc' : 'desc');
+  const all = generationCandidates();
+  const preferred = all.filter(isPreferredForGeneration).sort(sort);
+  const fallback = all.filter((m) => !isPreferredForGeneration(m)).sort(sort);
+  return [...preferred, ...fallback];
+}
+
 /** Best installed generation model for a tier, or null when nothing qualifies. */
 export function autoSelectModel(tier: 'small' | 'medium'): string | null {
-  const ranked = generationCandidates().sort(bySize(tier === 'small' ? 'asc' : 'desc'));
-  return ranked[0]?.name ?? null;
+  return rankedGenerationBands(tier)[0]?.name ?? null;
 }
 
 /** Best installed embedding model, or null when nothing qualifies. */
@@ -154,12 +200,42 @@ export function autoSelectEmbedModel(): string | null {
   return embeddingCandidates().sort(bySize('asc'))[0]?.name ?? null;
 }
 
+/**
+ * Where an effective model name came from. Reported to Settings so an auto-selected
+ * model is never mistaken for one the operator chose — the whole class of bug this file
+ * addresses is a plausible-looking model name with nothing good behind it.
+ */
+export type ModelSource =
+  /** This owner's explicit choice in Settings, used verbatim. */
+  | 'override'
+  /** An operator env pin (OLLAMA_*), used verbatim. */
+  | 'pin'
+  /** Installed set never probed (Ollama offline / pre-boot / tests) — configured name as-is. */
+  | 'unknown'
+  /** The built-in default, which really is installed. */
+  | 'default'
+  /** Auto-selected from what the device actually has. */
+  | 'auto'
+  /** Nothing installed qualified; the default is kept so the eventual error names it. */
+  | 'unresolved';
+
+export interface ResolvedModel {
+  name: string;
+  source: ModelSource;
+}
+
 /** Shared tail of the resolution order: env pin → installed default → auto-pick. */
+function resolveConfiguredDetailed(configured: string, pinned: boolean, auto: () => string | null): ResolvedModel {
+  if (pinned) return { name: configured, source: 'pin' }; // operator said so, verbatim
+  if (installed === null) return { name: configured, source: 'unknown' }; // behave exactly as before
+  if (matchInstalled(configured)) return { name: configured, source: 'default' }; // really is here
+  const picked = auto();
+  if (picked) return { name: picked, source: 'auto' }; // rescue
+  return { name: configured, source: 'unresolved' }; // keep the default so errors name it
+}
+
 function resolveConfigured(configured: string, pinned: boolean, auto: () => string | null): string {
-  if (pinned) return configured; // operator said so, verbatim
-  if (installed === null) return configured; // unknown → behave exactly as before
-  if (matchInstalled(configured)) return configured; // the default really is here
-  return auto() ?? configured; // rescue; else keep the default so errors name it
+  return resolveConfiguredDetailed(configured, pinned, auto).name;
 }
 
 /**
@@ -190,4 +266,55 @@ export function resolveModel(tier: 'small' | 'medium', owner: string = currentOw
 /** Embedding model — same order as resolveModel. */
 export function resolveEmbedModel(owner: string = currentOwnerId()): string {
   return modelPrefs(owner)?.embed_model?.trim() || resolveEmbedModelDefault();
+}
+
+/** `resolveModel` plus the reason, without the per-owner override. */
+export function explainModelDefault(tier: 'small' | 'medium'): ResolvedModel {
+  return tier === 'medium'
+    ? resolveConfiguredDetailed(config.ollamaMediumModel, config.ollamaPinned.medium, () => autoSelectModel('medium'))
+    : resolveConfiguredDetailed(config.ollamaSmallModel, config.ollamaPinned.small, () => autoSelectModel('small'));
+}
+
+/** Embedding equivalent of explainModelDefault. */
+export function explainEmbedModelDefault(): ResolvedModel {
+  return resolveConfiguredDetailed(config.ollamaEmbedModel, config.ollamaPinned.embed, autoSelectEmbedModel);
+}
+
+/** As `explainModelDefault`, but a per-owner Settings override wins and reports as such. */
+export function explainModel(tier: 'small' | 'medium', owner: string = currentOwnerId()): ResolvedModel {
+  const override = (tier === 'medium' ? modelPrefs(owner)?.quality_model : modelPrefs(owner)?.fast_model)?.trim();
+  return override ? { name: override, source: 'override' } : explainModelDefault(tier);
+}
+
+/** Embedding equivalent of explainModel. */
+export function explainEmbedModel(owner: string = currentOwnerId()): ResolvedModel {
+  const override = modelPrefs(owner)?.embed_model?.trim();
+  return override ? { name: override, source: 'override' } : explainEmbedModelDefault();
+}
+
+/**
+ * Cautions about the models actually in force — the "silently poor pick" surface.
+ *
+ * Only auto-selected tiers are reported: a pin or an explicit Settings choice is a
+ * deliberate act and is never second-guessed (same rule as resolution itself). A tier
+ * that fell through to the last-resort band means nothing tool-capable was installed,
+ * which is exactly the state that quietly handed a 1B vision model the fast tier.
+ */
+export function generationSelectionWarnings(
+  resolved: { tier: 'small' | 'medium'; model: ResolvedModel }[],
+): string[] {
+  const warnings: string[] = [];
+  for (const { tier, model } of resolved) {
+    if (model.source !== 'auto') continue;
+    const entry = matchInstalled(model.name);
+    if (entry && !isPreferredForGeneration(entry)) {
+      const label = tier === 'small' ? 'Fast' : 'Quality';
+      warnings.push(
+        `${label} model auto-selected ${model.name}, which does not advertise tool use — ` +
+          `it may handle structured-output prompts poorly. Pull an instruction-tuned model ` +
+          `(e.g. \`ollama pull qwen2.5:7b\`) or pick one explicitly below.`,
+      );
+    }
+  }
+  return warnings;
 }
