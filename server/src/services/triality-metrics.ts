@@ -1,6 +1,7 @@
 import { sqlite } from '../db/index.js';
 import { buildSituationVector } from './triality-vector.js';
-import { collapseImpressions } from './triality-learning.js';
+import { collapseImpressions, OUTCOME_FLOOR, PENDING_MS } from './triality-learning.js';
+import { CONFIDENCE_MODEL_VERSION, parseConfidence, type ConfidenceBand } from './triality-confidence.js';
 import { SLOTS, type Slot } from './triality.js';
 
 /**
@@ -15,7 +16,51 @@ import { SLOTS, type Slot } from './triality.js';
  * reward map draws the same line).
  */
 
-const PENDING_MS = 24 * 3600_000;
+/** Decided rows a BAND needs before its rate enters the verdict. Reuses §6b's number
+ *  rather than inventing a fourth floor, and the two arguments cancel: this tile only
+ *  ORDERS three rates (weaker than fitting a covariance, which argues for less), but
+ *  coverage is PER-VECTOR, so whenever it binds all three picks of one impression carry
+ *  the same band and rows within a band are correlated at roughly n/3 effective (which
+ *  argues for more). */
+const CALIBRATION_FLOOR = OUTCOME_FLOOR;
+
+/** Rate gap below which two bands are "the same". At the floor one flipped outcome moves
+ *  a rate by 1/20 = 0.05, and correlated rows often flip in threes — so a smaller spread
+ *  is literally within one impression's leverage, and calling it an ordering would be
+ *  reading noise as a result. */
+const CALIBRATION_MIN_GAP = 0.1;
+
+/** Rendering order, and the order the verdict scans adjacent pairs in. */
+const BANDS = ['firm', 'tentative', 'guess'] as const;
+
+export type CalibrationVerdict = 'insufficient' | 'ordered' | 'flat' | 'inverted';
+
+export interface ConfidenceBandStats {
+  band: ConfidenceBand;
+  shown: number;       // decided rows (pending excluded) — SlotAcceptance's exact rule
+  taken: number;       // staged + opened
+  pending: number;     // still-shown, <24h
+  rate: number | null; // taken/shown, null when shown === 0 — no data is not 0%
+  /** Decided rows per slot. Disclosed because firm will be Habitual-heavy and guess
+   *  Novel-heavy BY CONSTRUCTION (Novel's veto selects the low-H, low-evidence tail), so
+   *  an `ordered` verdict may be the slot effect the tiles above already show. */
+  slotMix: Record<Slot, number>;
+}
+
+export interface TrialityCalibration {
+  bands: ConfidenceBandStats[]; // always three, firm → tentative → guess
+  /** Collapsed groups whose row carries no confidence — shown before v2.2. Counted
+   *  separately and NEVER coerced to `guess`: those rows skew toward the feature's
+   *  earliest period, so folding them in would bias the very comparison this measures. */
+  unbanded: number;
+  /** Scored by a different CONFIDENCE_MODEL_VERSION — excluded so a retune cannot
+   *  silently destroy the evidence that motivated it. */
+  otherModel: number;
+  floor: number;
+  minGap: number;
+  verdict: CalibrationVerdict;
+  confounded: boolean;
+}
 
 export interface SlotAcceptance {
   shown: number;      // decided rows (pending excluded)
@@ -37,6 +82,10 @@ export interface TrialityMetrics {
   /** null until triality_weights exists AND has rows (T8) — the tile renders
    *  its "learning not started" state on null. */
   weights: Array<{ slot: string; weights: Record<string, number>; sampleCount: number; computedDate: string }> | null;
+  /** v2.2 (§4): do `firm` picks actually get taken more than `tentative` ones? null when
+   *  no row in the window carries a confidence at all. If the ordering is INVERTED the
+   *  confidence model is wrong, and this is what says so. */
+  calibration: TrialityCalibration | null;
 }
 
 function slotAcceptance(ownerId: string, slot: Slot, fromISO: string, toISO: string, now: Date): SlotAcceptance {
@@ -62,6 +111,110 @@ function slotAcceptance(ownerId: string, slot: Slot, fromISO: string, toISO: str
     if (r.outcome === 'staged' || r.outcome === 'opened') taken++;
   }
   return { shown: decided, taken, pending, rate: decided > 0 ? Math.round((taken / decided) * 1000) / 1000 : null };
+}
+
+/**
+ * Acceptance grouped by confidence band — the tile whose entire purpose is to falsify
+ * the confidence model (v2.2 §4). If `firm` picks are not taken more often than
+ * `tentative` ones, the bands are decoration and this says so out loud.
+ *
+ * `collapseImpressions` is MANDATORY here, and this is the THIRD reader of triality_log.
+ * The comment above slotAcceptance records why: an independent prover caught this file
+ * counting raw impressions, and a day of banner remounts reported hundreds of "shown"
+ * for eight real suggestions, understating acceptance roughly 3×. The banner refetches
+ * on every mount and GET /next appends three fresh rows each time — so a per-band rate
+ * over raw rows would reproduce that bug in the one metric that exists to detect the
+ * model lying, and would inflate exactly the bands the owner sees most.
+ *
+ * WHICH impression's band gets credit: the collapse keeps one representative per
+ * (slot, action, owner-local day) — a decision beats an impression, else the earliest
+ * `shown`. The same suggestion re-shown at 09:00 and 16:00 can carry DIFFERENT bands
+ * (in_work_hours, momentum and free_gap all move within a day). The credited band is the
+ * band on the row the collapse KEPT — never averaged, never re-derived. That is correct
+ * on both arms: a decided representative carries the reading that was in front of the
+ * owner when they decided, and an earliest-shown representative carries the reading they
+ * had for the whole span the pending-vs-ignored judgement measures.
+ */
+function bandCalibration(ownerId: string, fromISO: string, toISO: string, now: Date): TrialityCalibration | null {
+  const raw = sqlite
+    .prepare(
+      `SELECT slot, outcome, shown_at, action_ref, local_date, confidence FROM triality_log
+        WHERE owner_id = ? AND shown_at >= ? AND shown_at < ?
+        ORDER BY id ASC`,
+    )
+    .all(ownerId, fromISO, toISO) as {
+      slot: string; outcome: string; shown_at: string; action_ref: string;
+      local_date: string; confidence: string | null;
+    }[];
+  if (raw.length === 0) return null;
+
+  const rows = collapseImpressions(raw.map((r) => ({ ...r, scores: '' })));
+
+  const emptySlotMix = (): Record<Slot, number> =>
+    Object.fromEntries(SLOTS.map((s) => [s, 0])) as Record<Slot, number>;
+  const stats = Object.fromEntries(
+    BANDS.map((b) => [b, { band: b, shown: 0, taken: 0, pending: 0, rate: null, slotMix: emptySlotMix() } as ConfidenceBandStats]),
+  ) as Record<ConfidenceBand, ConfidenceBandStats>;
+
+  let unbanded = 0;
+  let otherModel = 0;
+  for (const r of rows) {
+    // An unparseable or off-enum band is indistinguishable from a pre-v2.2 row for our
+    // purposes: it is not a reading this version can interpret, so it never buckets.
+    const c = parseConfidence(r.confidence);
+    if (!c) { unbanded++; continue; }
+    if (c.v !== CONFIDENCE_MODEL_VERSION) { otherModel++; continue; }
+    const s = stats[c.band];
+    // The exact pending/decided line SlotAcceptance draws, from the one imported constant.
+    if (r.outcome === 'shown' && now.getTime() - Date.parse(r.shown_at) < PENDING_MS) { s.pending++; continue; }
+    s.shown++;
+    if (SLOTS.includes(r.slot as Slot)) s.slotMix[r.slot as Slot]++;
+    if (r.outcome === 'staged' || r.outcome === 'opened') s.taken++;
+  }
+  // Null means "confidence isn't measured yet", so it must key on whether any row CARRIES
+  // a confidence — not on whether any row carries a CURRENT-MODEL one. A window holding
+  // only older-model rows still has something to disclose (`otherModel`), and collapsing
+  // that to null would hide the fact that a retune orphaned the evidence.
+  if (unbanded === rows.length) return null;
+
+  for (const b of BANDS) {
+    const s = stats[b];
+    s.rate = s.shown > 0 ? Math.round((s.taken / s.shown) * 1000) / 1000 : null;
+  }
+
+  // Verdict on the ROUNDED rates, so it is hand-checkable from what actually renders.
+  const present = BANDS.filter((b) => stats[b].shown >= CALIBRATION_FLOOR);
+  let verdict: CalibrationVerdict = 'insufficient';
+  if (present.length >= 2) {
+    let inverted = false;
+    let ordered = true;
+    // ADJACENT pairs, not the extremes: a middle-band inversion is still the model
+    // falsifying itself, and comparing only firm-vs-guess would hide it.
+    for (let i = 1; i < present.length; i++) {
+      const hi = stats[present[i - 1]].rate as number;
+      const lo = stats[present[i]].rate as number;
+      if (lo - hi >= CALIBRATION_MIN_GAP) inverted = true;
+      if (!(hi - lo >= CALIBRATION_MIN_GAP)) ordered = false;
+    }
+    // `inverted` beats `ordered`: if ANY adjacent pair is reversed beyond the gap, the
+    // model does not get to claim it works because a different pair happened to line up.
+    verdict = inverted ? 'inverted' : ordered ? 'ordered' : 'flat';
+  }
+
+  const modalSlot = (b: ConfidenceBand): Slot =>
+    SLOTS.reduce((best, s) => (stats[b].slotMix[s] > stats[b].slotMix[best] ? s : best), SLOTS[0]);
+  const confounded =
+    present.length >= 2 && modalSlot(present[0]) !== modalSlot(present[present.length - 1]);
+
+  return {
+    bands: BANDS.map((b) => stats[b]),
+    unbanded,
+    otherModel,
+    floor: CALIBRATION_FLOOR,
+    minGap: CALIBRATION_MIN_GAP,
+    verdict,
+    confounded,
+  };
 }
 
 /** Timed-minutes share of one category within [from, to) — NULL-safe: no timed
@@ -144,6 +297,7 @@ export function trialityMetrics(ownerId: string, now: Date, days = 30): Triality
     novelTrend: { current: acceptance.novel.rate, prior: novelPrior.rate },
     deficitResponse,
     weights: readWeights(ownerId),
+    calibration: bandCalibration(ownerId, from, to, now),
   };
 }
 

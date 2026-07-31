@@ -106,6 +106,10 @@ function pick(slot: Slot, over: Partial<ScoredPick> = {}): ScoredPick {
     slot,
     scores: { F: 0.2, H: 0.9, Q: 0.1, N: 0.1, C: 0.3, total: 0.5 },
     ternary: [1, 0, 1],
+    // v2.2 telemetry. Present only because ScoredPick requires it — the garnish reads
+    // neither field, and every assertion in this file must stay true whatever these say.
+    decision: { eligible: 2, dot: 2, score: 0.5, runnerUpDot: 1, runnerUpScore: 0.4 },
+    evidenceRows: 5,
     ...over,
   };
 }
