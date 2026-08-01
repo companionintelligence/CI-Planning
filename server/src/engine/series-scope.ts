@@ -1,0 +1,108 @@
+import { sqlite } from '../db/index.js';
+import { boundRuleBefore } from './recurrence.js';
+import { serverTimezone } from '../lib/tz.js';
+import { removeEntityTags } from '../services/tags.js';
+import { logger } from '../lib/logger.js';
+
+/**
+ * "This and all following" on a recurring series, for both time blocks and tasks.
+ *
+ * The operation is a TRUNCATION of the original series at the clicked occurrence:
+ *   1. bound the template's rule to stop the day before that occurrence, and
+ *   2. drop the already-materialized instances on/after it.
+ *
+ * It is deliberately NOT an edit of the template in place. A template edit rewrites the
+ * whole series including occurrences BEFORE the one the user clicked — which is what the
+ * old `scope=series` path did while calling itself "This & future".
+ *
+ * Occurrences before the split are left completely untouched, including their status and
+ * per-occurrence tags: "following" is a statement about the future, and silently
+ * rewriting history would lose work the owner already did.
+ */
+
+export type SeriesEntity = 'time_blocks' | 'tasks';
+
+export interface TruncateResult {
+  ok: boolean;
+  /** Materialized instances removed (on/after the split). */
+  removed: number;
+  /** True when the split landed on the first occurrence, so the template itself went. */
+  templateRemoved: boolean;
+  reason?: 'not_found' | 'not_recurring' | 'bad_rule';
+}
+
+function ownerTimezone(owner: string): string {
+  const row = sqlite
+    .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { timezone: string | null } | undefined;
+  return row?.timezone || serverTimezone();
+}
+
+/**
+ * Truncate `templateId`'s series so nothing occurs on or after `fromLocalDate`.
+ *
+ * `table` selects the entity; the two schemas carry identical recurrence columns
+ * (recurrence_rule / recurrence_dtstart / recurrence_parent_id / occurrence_date), which
+ * is why one implementation serves both rather than two that can drift.
+ */
+export function truncateSeriesFrom(
+  owner: string,
+  table: SeriesEntity,
+  templateId: string,
+  fromLocalDate: string,
+): TruncateResult {
+  const tpl = sqlite
+    .prepare(`SELECT id, recurrence_rule FROM ${table} WHERE id = ? AND owner_id = ?`)
+    .get(templateId, owner) as { id: string; recurrence_rule: string | null } | undefined;
+  if (!tpl) return { ok: false, removed: 0, templateRemoved: false, reason: 'not_found' };
+  if (!tpl.recurrence_rule) return { ok: false, removed: 0, templateRemoved: false, reason: 'not_recurring' };
+
+  const bounded = boundRuleBefore(tpl.recurrence_rule, fromLocalDate, ownerTimezone(owner));
+  if (!bounded.ok) {
+    // Fail CLOSED. Leaving the rule unbounded here would silently convert "this and
+    // following" into "nothing changes", and the caller would report success.
+    logger.warn('truncateSeriesFrom: could not bound rule', { table, templateId, err: bounded.error });
+    return { ok: false, removed: 0, templateRemoved: false, reason: 'bad_rule' };
+  }
+
+  // Drop the materialized instances from the split forward. Instances are hard rows and
+  // a single occurrence can carry its own tags (CON-3), so clear those first.
+  const entityKind = table === 'tasks' ? 'task' : 'time_block';
+  const dropped = sqlite
+    .prepare(
+      `DELETE FROM ${table}
+        WHERE owner_id = ? AND recurrence_parent_id = ?
+          AND occurrence_date IS NOT NULL AND occurrence_date >= ?
+        RETURNING id`,
+    )
+    .all(owner, templateId, fromLocalDate) as { id: string }[];
+  for (const r of dropped) removeEntityTags(entityKind, r.id);
+
+  // Does anything remain before the split? If the split is at//before the first
+  // occurrence the bounded rule covers nothing, and a template that can never
+  // materialize is just an invisible orphan — remove it outright.
+  const survivors = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ${table}
+        WHERE owner_id = ? AND recurrence_parent_id = ?
+          AND occurrence_date IS NOT NULL AND occurrence_date < ?`,
+    )
+    .get(owner, templateId, fromLocalDate) as { n: number };
+
+  const dtstartRow = sqlite
+    .prepare(`SELECT recurrence_dtstart FROM ${table} WHERE id = ?`)
+    .get(templateId) as { recurrence_dtstart: string | null } | undefined;
+  const startsAfterSplit = (dtstartRow?.recurrence_dtstart ?? '').slice(0, 10) >= fromLocalDate;
+
+  if (survivors.n === 0 && startsAfterSplit) {
+    sqlite.prepare(`DELETE FROM ${table} WHERE id = ? AND owner_id = ?`).run(templateId, owner);
+    removeEntityTags(entityKind, templateId);
+    return { ok: true, removed: dropped.length, templateRemoved: true };
+  }
+
+  sqlite
+    .prepare(`UPDATE ${table} SET recurrence_rule = ? WHERE id = ? AND owner_id = ?`)
+    .run(bounded.rule, templateId, owner);
+
+  return { ok: true, removed: dropped.length, templateRemoved: false };
+}

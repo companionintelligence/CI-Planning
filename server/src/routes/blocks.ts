@@ -353,7 +353,13 @@ export function blocksRouter() {
     // CASCADE-removed — stays route-side (same reasoning as broadcast/enqueueOutbound).
     await pushOutboundDeletes(id);
 
-    const result = await deleteBlock(owner, id, { deleteChildren: (ctx.query.children as string) === 'delete' });
+    // ?scope=following truncates the recurring series at this occurrence; the default
+    // ('instance') removes only this one, as it always has.
+    const scope = (ctx.query.scope as string) === 'following' ? 'following' : 'instance';
+    const result = await deleteBlock(owner, id, {
+      deleteChildren: (ctx.query.children as string) === 'delete',
+      scope,
+    });
     if (!result.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     broadcast(owner, 'block:deleted', { id });
