@@ -11,6 +11,8 @@ import { serverTimezone, utcToZonedWallTime } from '../lib/tz.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { enqueueOutbound, pushOutboundDeletes } from '../agents/sync.js';
+import { forkSeriesAt } from '../engine/series-scope.js';
+import { newId } from '../lib/ids.js';
 import { syncTaskFromBlock, revertTaskPlacementStatus } from '../services/block-task-sync.js';
 import {
   fetchBlocksForRange,
@@ -122,7 +124,31 @@ export function blocksRouter() {
     }>;
 
     const owner = currentOwnerId();
-    const result = await updateBlock(owner, id, body);
+
+    // ?scope=following — apply the edit to this occurrence AND every later one, by
+    // FORKING the series here: the original keeps everything before this day, and a new
+    // template (which the edit lands on) carries the rest. Editing the existing template
+    // instead would rewrite earlier occurrences too.
+    let targetId = id;
+    if ((ctx.query.scope as string) === 'following') {
+      const inst = sqlite
+        .prepare(`SELECT recurrence_parent_id, occurrence_date FROM time_blocks WHERE id = ? AND owner_id = ?`)
+        .get(id, owner) as { recurrence_parent_id: string | null; occurrence_date: string | null } | undefined;
+      if (inst?.recurrence_parent_id && inst.occurrence_date) {
+        const fork = forkSeriesAt(owner, 'time_blocks', inst.recurrence_parent_id, inst.occurrence_date, newId());
+        if (!fork.ok) {
+          ctx.status = 422;
+          ctx.body = { error: 'Could not split this series — its repeat rule could not be bounded' };
+          return;
+        }
+        targetId = fork.newTemplateId!;
+      }
+      // A non-recurring block falls through to a plain single-row edit: "following" is
+      // meaningless without a series, and erroring would be a worse answer than doing
+      // exactly what the user asked for on the one item.
+    }
+
+    const result = await updateBlock(owner, targetId, body);
     if (!result.ok) {
       if (result.error === 'not_found') { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
       if (result.error === 'inbound_readonly') {

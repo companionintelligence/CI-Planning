@@ -573,7 +573,9 @@ export function tasksRouter() {
   router.delete('/api/tasks/:id', async (ctx) => {
     const id = ctx.params.id;
     const owner = currentOwnerId();
-    const res = await deleteTask(owner, id);
+    // ?scope=following also truncates the recurring series at this occurrence.
+    const scope = (ctx.query.scope as string) === 'following' ? 'following' : 'instance';
+    const res = await deleteTask(owner, id, scope);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const out = { ...taskToApi(res.task), tags: [] as string[] };
     broadcast(owner, 'task:updated', out);

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { randomUUID } from 'node:crypto';
 import { SYSTEM_OWNER, ALL_SCOPES, runWithOwner } from '../src/lib/context.js';
-import { truncateSeriesFrom } from '../src/engine/series-scope.js';
+import { truncateSeriesFrom, forkSeriesAt } from '../src/engine/series-scope.js';
 import { deleteBlock } from '../src/services/blocks.js';
 import { resetDb } from './helpers.js';
 
@@ -130,5 +130,59 @@ describe('deleteBlock scope', () => {
     expect(exists(instanceIds['2026-08-21'])).toBe(false);
     expect(exists(instanceIds['2026-08-28'])).toBe(false);
     expect(ruleOf(templateId)).toMatch(/UNTIL=/i);
+  });
+});
+
+describe('forkSeriesAt', () => {
+  const DAYS = ['2026-08-07', '2026-08-14', '2026-08-21', '2026-08-28'];
+
+  it('splits into two independent templates at the chosen day', () => {
+    const { templateId, instanceIds } = seedSeries(DAYS);
+    const newId = randomUUID();
+
+    const r = forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
+
+    expect(r.ok).toBe(true);
+    expect(r.newTemplateId).toBe(newId);
+    // Old half: bounded, keeps its earlier occurrences.
+    expect(ruleOf(templateId)).toMatch(/UNTIL=/i);
+    expect(exists(instanceIds['2026-08-07'])).toBe(true);
+    expect(exists(instanceIds['2026-08-14'])).toBe(true);
+    // New half: an independent template anchored at the split, unbounded.
+    const fresh = sqlite
+      .prepare(`SELECT recurrence_rule, recurrence_dtstart, recurrence_parent_id, occurrence_date FROM time_blocks WHERE id = ?`)
+      .get(newId) as { recurrence_rule: string; recurrence_dtstart: string; recurrence_parent_id: string | null; occurrence_date: string | null };
+    expect(fresh.recurrence_rule).toBe('FREQ=WEEKLY;BYDAY=FR');
+    expect(fresh.recurrence_dtstart.slice(0, 10)).toBe('2026-08-21');
+    expect(fresh.recurrence_parent_id).toBeNull();
+    expect(fresh.occurrence_date).toBeNull();
+  });
+
+  it('copies the template payload onto the new half', () => {
+    const { templateId } = seedSeries(DAYS);
+    const newId = randomUUID();
+    forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
+    const fresh = sqlite.prepare(`SELECT title, block_kind, owner_id FROM time_blocks WHERE id = ?`).get(newId) as
+      { title: string; block_kind: string; owner_id: string };
+    expect(fresh.title).toBe('Standup');
+    expect(fresh.block_kind).toBe('timeblock');
+    expect(fresh.owner_id).toBe(SYSTEM_OWNER);
+  });
+
+  it('does not carry the old half\'s EXDATEs into the new series', () => {
+    const { templateId } = seedSeries(DAYS);
+    sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ?`).run(JSON.stringify(['2026-08-14']), templateId);
+    const newId = randomUUID();
+    forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, '2026-08-21', newId);
+    const ex = (sqlite.prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ?`).get(newId) as { recurrence_exdates: string | null }).recurrence_exdates;
+    expect(ex).toBeNull();
+  });
+
+  it('leaves the original series intact when it cannot split', () => {
+    const { templateId, instanceIds } = seedSeries(DAYS);
+    const r = forkSeriesAt(SYSTEM_OWNER, 'time_blocks', templateId, 'garbage', randomUUID());
+    expect(r.ok).toBe(false);
+    expect(ruleOf(templateId)).toBe('FREQ=WEEKLY;BYDAY=FR');
+    expect(exists(instanceIds['2026-08-21'])).toBe(true);
   });
 });

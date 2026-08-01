@@ -3,9 +3,10 @@ import { Pencil, Repeat, Unlink, LockOpen, Lock, Trash2, X, Save, Star, Sparkles
 import {
   tasks, taskOf, blocks, tags, patternPrefs, categoryPrefs, patterns, patternTypes, blockTemplates,
   setElementModal, showToast, refetchBlocks, refetchFlightPlan, refetchTasks,
+  askRecurringScope, isRecurringOccurrence,
 } from '../stores/index.js';
 import { activeTask, activeBlock, clearActiveEntity } from '../stores/selection.js';
-import { api, type Block, type Task } from '../lib/api.js';
+import { api, type Block, type Task, type RecurringScope } from '../lib/api.js';
 import { directionColorForTask, BASE_TAG_DEFAULTS } from '../lib/pattern-meta.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { blockColorVar } from '../lib/textures.js';
@@ -243,8 +244,15 @@ export function PlannerEntityCard(props: {
     // visible when the store is stale.
     if (isContainer() && b) { clearActiveEntity(); props.onRequestDeletePlan(b); return; }
     if (!b) { clearActiveEntity(); return; }
+    // A repeating occurrence is ambiguous — ask before destroying anything.
+    let scope: RecurringScope | undefined;
+    if (isRecurringOccurrence(b)) {
+      const answer = await askRecurringScope({ title: b.title, verb: 'delete' });
+      if (answer === null) return; // backed out — nothing is touched
+      scope = answer;
+    }
     try {
-      await api.blocks.delete(b.id);
+      await api.blocks.delete(b.id, scope ? { scope } : undefined);
       if (b.task_id) await api.flightPlan.addTask(b.task_id); // re-stage the task
       refetchBlocks(); refetchFlightPlan();
       showToast(b.task_id ? 'Removed — sent back to the flight-plan' : 'Removed', 'default');
