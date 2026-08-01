@@ -126,11 +126,27 @@ overrides to bypass discovery (air-gapped / a provider without a discovery doc).
 - Only an **RS256** signature is accepted — `alg:none`, `HS256`, `ES256`, `EdDSA` are all rejected.
 - Signature is checked against the portal's JWKS (matched by `kid`); a token signed by any other key
   is rejected.
-- `iss` must equal the **discovery document's `issuer`** (not the configured discovery URL); `aud`
-  must equal `CIPORTAL_CLIENT_ID`; `exp` must be future. This distinction is load-bearing: CI-Portal
-  runs **better-auth**, which serves discovery at `…/api/auth` but stamps the **bare origin**
-  (`https://hub.companionintelligence.com`) as the token `iss` — validating against `doc.issuer`
-  is what makes real tokens verify.
+- `iss` must equal the **discovery document's `issuer`** (not the configured discovery URL). This
+  distinction is load-bearing: CI-Portal runs **better-auth**, which serves discovery at `…/api/auth`
+  but stamps the **bare origin** (`https://hub.companionintelligence.com`) as the token `iss` —
+  validating against `doc.issuer` is what makes real tokens verify.
+- `aud` must **contain** `CIPORTAL_CLIENT_ID` — it may be a single string or an array (§3.1.3.7).
+  When it names more than one audience, `azp` must additionally identify **us**; without that check a
+  token minted for a different client at the same provider, merely listing us among its audiences,
+  would verify. A present-but-mismatched `azp` is rejected even for a single-valued `aud`.
+- `exp` must be future, and `nbf`/`iat` (when present) must not be. Each bound allows **60s of clock
+  skew** in the forgiving direction — provider and server clocks drift, and a token rejected purely
+  for a one-second disagreement is a support ticket, not a security win.
+- Every endpoint taken from the discovery document (`authorization_endpoint`, `token_endpoint`,
+  `jwks_uri`, and `issuer` itself) must sit on the **same origin as `CIPORTAL_ISSUER`**. The document
+  is fetched from a configured host but its contents are provider-supplied, so without this it is an
+  open redirect into the flow: `token_endpoint` receives the code + PKCE verifier and `jwks_uri`
+  decides which key may sign an identity. Validation runs **before** the 1h cache write. Stricter
+  than the spec (which permits a cross-host `jwks_uri`, as Google uses) — safe because discovery is
+  CI-Portal-only; a provider that needs cross-origin endpoints sets the three `CIPORTAL_*_URI`
+  overrides, which bypass discovery.
+- The JWKS fetch is bounded (5s, matching discovery) and fails **closed** — no keys means no
+  candidate key, so the token is rejected rather than the signature check being skipped.
 - The **nonce is always enforced** (`auth_states.nonce` is `NOT NULL`), so a token minted for a
   different flow can't be spliced in.
 - `state` is single-use (`DELETE … RETURNING`) and expires (10 min). It is also **bound to the
@@ -228,9 +244,11 @@ All auth env vars (see [`server/.env.example`](../server/.env.example) for the a
 > **better-auth**; the discovery issuer is `https://hub.companionintelligence.com/api/auth` (now the
 > default); consumers are **public PKCE clients** (CI-Import-Tools registers `ci-import-tools`).
 > **The one thing still needed from the CI-Portal team**: register a client for this app (public PKCE)
-> and set `CIPORTAL_CLIENT_ID`. Until then, use the fixture portal below. The older generic
-> `AUTH_JWKS_URL`/`AUTH_ISSUER` vars predate the `CIPORTAL_*` set and are unused — repoint-or-retire is
-> an open dev-team decision.
+> and set `CIPORTAL_CLIENT_ID`. This is an EXTERNAL dependency — it cannot be resolved from this
+> repo, and until it lands production SSO is not live (there is no default client id, and the boot
+> guard fails closed on `sso` + OIDC without one). Use the fixture portal below in the meantime.
+> The older generic `AUTH_JWKS_URL`/`AUTH_ISSUER`/`AUTH_AUDIENCE`/`AUTH_CONTRACT_VERSION` vars have
+> been **retired** — they were parsed into config but read by no code path.
 
 ---
 

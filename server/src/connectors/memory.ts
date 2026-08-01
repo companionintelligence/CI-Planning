@@ -83,6 +83,10 @@ interface OidcBlob {
   tokenEndpoint: string;
   clientId: string;
   clientSecret?: string;
+  /** The CI-Portal `sub` this connection was established with. Absent on rows sealed
+   *  before the binding landed — those are treated as unbound and claimed on the next
+   *  connect (trust-on-first-use). See `memoryOidcSubject`. */
+  subject?: string;
 }
 type MemoryBlob = ManualBlob | OidcBlob;
 
@@ -220,6 +224,35 @@ export interface MemoryOidcConnection {
   tokenEndpoint: string;
   clientId: string;
   clientSecret?: string;
+  /** CI-Portal `sub` behind this grant — pinned so a later connect can't silently
+   *  swap the connection to a different portal identity (see memoryOidcSubject). */
+  subject?: string;
+}
+
+/**
+ * The CI-Portal subject an owner's memory connection is currently bound to, or null when
+ * there is none (not connected, a manual key/bearer connection, a pre-binding row, or a
+ * blob that won't decrypt).
+ *
+ * This exists because `owners.external_subject` only pins the identity of owners
+ * PROVISIONED through CI-Portal. A local-login owner (`DISABLE_OIDC`) has it NULL, so the
+ * callback's external_subject guard is vacuous for them and any portal identity could be
+ * bound — and, since a reconnect replaces the row wholesale, silently re-bound afterwards.
+ * Recording the subject on the connection itself gives that case a trust-on-first-use
+ * anchor without inventing an SSO identity for a local owner (writing a real
+ * `external_subject` would also make them resolvable by the LOGIN flow, which is a
+ * different and much larger claim than "this is the mailbox I connected").
+ *
+ * Never throws — a decrypt failure reads as "unbound", matching how `memoryCreds`
+ * degrades rather than breaking the availability probe.
+ */
+export function memoryOidcSubject(owner: string): string | null {
+  try {
+    const blob = readMemoryBlob(owner);
+    return blob?.kind === 'oidc' ? blob.subject ?? null : null;
+  } catch {
+    return null;
+  }
 }
 export function storeMemoryOidcConnection(owner: string, conn: MemoryOidcConnection): string {
   const account = new URL(conn.url).host;
