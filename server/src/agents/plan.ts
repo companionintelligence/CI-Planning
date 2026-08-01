@@ -31,7 +31,7 @@ import { runLoop, type Defect, type JudgeScore } from './loop.js';
 import { logger } from '../lib/logger.js';
 import { broadcast } from '../routes/sse.js';
 import { writeAudit } from '../lib/audit.js';
-import { serverTimezone, zonedWallTimeToUTC, utcDayBounds } from '../lib/tz.js';
+import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { graphData, MemoryUnavailable, type MemoryGraph } from '../connectors/memory.js';
 import { memoryConnectorAvailable } from '../services/memory.js';
 
@@ -53,6 +53,8 @@ export interface PlanTask {
   priority: number;
   due_at: string | null;
   estimated_minutes: number | null;
+  /** UTC ISO — read only to build the `fill_order='new_today'` band. */
+  created_at?: string | null;
   tags: string[];
   primary_tags?: string[];
 }
@@ -163,6 +165,23 @@ export function memoryRelatedTasks(tasks: PlanTask[], terms: MemoryTerms): Set<s
   return related;
 }
 
+/**
+ * The staged tasks created on the owner's local today — the same set the Tasks tab shows
+ * as "New Today" (pure). Only consulted for `fill_order='new_today'`; every other value
+ * passes an empty set, which makes the band inert.
+ *
+ * `created_at` is converted to the OWNER's local day rather than compared as raw UTC, so
+ * a task created late in the evening stays in its own day for owners east/west of UTC —
+ * the same rule the client's partition uses. Returns an empty set when nothing qualifies.
+ */
+export function newTodayTasks(tasks: PlanTask[], tz: string, todayISO: string): Set<string> {
+  const fresh = new Set<string>();
+  for (const t of tasks) {
+    if (t.created_at && localDateInTZ(t.created_at, tz) === todayISO) fresh.add(t.task_id);
+  }
+  return fresh;
+}
+
 function memoryPullEnabled(owner: string): boolean {
   const row = sqlite.prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
     | { memory_pull_enabled?: number }
@@ -210,7 +229,7 @@ function memoryOrderLine(tasks: PlanTask[], related: Set<string>): string {
 function getStagedTasks(owner: string): PlanTask[] {
   const rows = sqlite
     .prepare(
-      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at
+      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.created_at
          FROM flight_plan fp JOIN tasks t ON t.id = fp.task_id
         WHERE fp.owner_id = ? AND fp.selected = 1
         ORDER BY fp.position, t.priority, fp.task_id`
@@ -282,6 +301,13 @@ export function todayThemeTag(dayTheme: Record<string, string> | null | undefine
  * theme band (maps the user-facing `fill_order` pref onto authoring):
  *   • 'overdue' (default) → theme → due_at → priority → id
  *   • 'priority'          → theme → priority → due_at → id
+ *   • 'new_today'         → theme → created-today → due_at → priority → id
+ *
+ * 'new_today' adds a band rather than replacing the sort: today's arrivals lead, and
+ * BOTH halves stay deadline-first inside. Authoring has to honor it for the same reason
+ * the other two values do — placement skips its own fill_order branch whenever a
+ * daily_plan exists for the day, so a value authoring ignored would be silently inert on
+ * exactly the days the owner planned deliberately.
  *
  * `checkOrder` is theme-aware so this lead is not flagged as a priority/deadline
  * inversion (a themed task may legitimately precede a higher-priority or
@@ -292,6 +318,7 @@ export function deterministicIndices(
   themeTag?: string | null,
   fillOrder?: string,
   memoryRelated?: Set<string>,
+  newToday?: Set<string>,
 ): number[] {
   const priorityFirst = fillOrder === 'priority';
   const themeCmp = (a: number, b: number): number => {
@@ -308,6 +335,14 @@ export function deterministicIndices(
     const relB = memoryRelated.has(tasks[b].task_id) ? 0 : 1;
     return relA - relB;
   };
+  // fill_order='new_today': today's arrivals lead within their theme band. Inert when
+  // the set is absent/empty, so the other two fill orders keep a byte-identical order.
+  const newCmp = (a: number, b: number): number => {
+    if (!newToday || newToday.size === 0) return 0;
+    const newA = newToday.has(tasks[a].task_id) ? 0 : 1;
+    const newB = newToday.has(tasks[b].task_id) ? 0 : 1;
+    return newA - newB;
+  };
   const dueCmp = (a: number, b: number): number =>
     (tasks[a].due_at ?? '9999').localeCompare(tasks[b].due_at ?? '9999');
   const priCmp = (a: number, b: number): number => tasks[a].priority - tasks[b].priority;
@@ -319,6 +354,8 @@ export function deterministicIndices(
       if (theme !== 0) return theme;
       const mem = memCmp(a, b);
       if (mem !== 0) return mem;
+      const fresh = newCmp(a, b);
+      if (fresh !== 0) return fresh;
       const primary = priorityFirst ? priCmp(a, b) : dueCmp(a, b);
       if (primary !== 0) return primary;
       const secondary = priorityFirst ? dueCmp(a, b) : priCmp(a, b);
@@ -660,12 +697,20 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // AA3a: the tasks related to today's memory context (empty when the flag is off / the
   // connector is unavailable → every use below is inert, order byte-identical to today).
   const memoryRelated = await loadMemoryRelated(owner, date, staged);
+  // fill_order='new_today' only: the staged tasks that arrived on the owner's real today.
+  // Keyed on the owner's today rather than `date` for the same reason placement is —
+  // authoring tomorrow must still let today's arrivals lead, and nothing is ever created
+  // on a future date. Any other fill_order passes an empty set, so the band is inert.
+  const newToday =
+    fillOrder === 'new_today'
+      ? newTodayTasks(staged, ownerTimezone(owner), todayInTZ(ownerTimezone(owner)))
+      : new Set<string>();
 
   // Deterministic authoring — basic mode, AI off, Ollama unreachable at the pre-flight
   // check, OR (via the catch below) an LLM call that fails MID-loop. Centralised here so
   // the "never throws / always lands a valid order" invariant holds for every caller.
   const persistDeterministic = () => {
-    const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated);
+    const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday);
     const postPassed = tagGroupPostPass(detIndices, staged);
     const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated);
     const final = defects.length === 0 ? postPassed : detIndices;
@@ -740,7 +785,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
           return safeOrder(raw, staged);
         },
 
-        baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated),
+        baseline: () => deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday),
       },
       {
         onEscape: (ownerId, stage, info) => {

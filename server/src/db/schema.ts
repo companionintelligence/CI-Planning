@@ -306,6 +306,14 @@ export const schedulingPrefs = sqliteTable('scheduling_prefs', {
   // agentic surfaces (inbox suggestions). Default OFF — flag-off is byte-identical.
   // Distinct from memorySyncEnabled (the one-way PUSH toggle above, AA4).
   memoryPullEnabled: integer('memory_pull_enabled', { mode: 'boolean' }).default(false),
+  // Ingestion windows (0147) — how much of each upstream source a pull reads. The two
+  // point in OPPOSITE directions on purpose: memory suggestions mirror UPCOMING events
+  // into tasks, so its window looks forward; an inbox is only ever read backwards.
+  // Default 2 = the 48h that memory-suggest/summarize used to hardcode (no-op upgrade).
+  memoryWindowDays: integer('memory_window_days').notNull().default(2),
+  // Floor on how far back a Gmail ingest may reach. Applied even when the sync_state
+  // watermark is older, so reconnecting after a long outage pulls a week — not a year.
+  emailLookbackDays: integer('email_lookback_days').notNull().default(7),
   // Triality master flag (0139). Default OFF — gates the Focus suggestion banner,
   // the Balance→Metrics Triality tiles, and every /api/triality/* route while the
   // feature lands dark (docs/triality-design.md §7). Flag-off = byte-identical.

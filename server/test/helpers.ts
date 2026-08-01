@@ -113,6 +113,11 @@ export function resetDb(): void {
       z_experiment_arm = NULL,
       view_prefs = NULL,
       memory_pull_enabled = 0,
+      -- 0147: both windows gate what an ingest READS, so a leaked value silently
+      -- resizes another file's fixture expectations (a widened memory window pulls
+      -- an extra event; a narrowed email lookback filters every message away).
+      memory_window_days = 2,
+      email_lookback_days = 7,
       triality_enabled = 0,
       sleep_hours_per_week = 63;
   `);

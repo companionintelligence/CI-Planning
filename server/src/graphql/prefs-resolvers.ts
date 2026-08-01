@@ -7,7 +7,13 @@ import { clearPlannerRange } from '../engine/clear-range.js';
 import { snapshot, backupDir } from '../lib/backup.js';
 import { assignExperimentArmIfNeeded } from '../lib/experiment.js';
 import { broadcast } from '../routes/sse.js';
-import { getPrefs, updatePrefs, type SchedulingPrefsRow } from '../services/prefs.js';
+import {
+  getPrefs,
+  updatePrefs,
+  MEMORY_WINDOW_DAYS_RANGE,
+  EMAIL_LOOKBACK_DAYS_RANGE,
+  type SchedulingPrefsRow,
+} from '../services/prefs.js';
 
 /**
  * SchedulingPrefsType resolvers (Phase W · W11). Reuses services/prefs.ts
@@ -90,6 +96,12 @@ const FLAT_PASSTHROUGH: [gqlKey: string, snakeKey: string][] = [
   ['autoFillWorkday', 'auto_fill_workday'],
   ['conceptAutosurface', 'concept_autosurface'],
   ['conceptHorizonDays', 'concept_horizon_days'],
+  // Ingestion windows (0147) — flat, NOT inside the `memory` group: that group is
+  // documented as the memory SYNC (push) toggles + connection state, and the pull side
+  // (memory_pull_enabled) is likewise not in it. These two also pair with each other
+  // across two different sources, which no single group would capture.
+  ['memoryWindowDays', 'memory_window_days'],
+  ['emailLookbackDays', 'email_lookback_days'],
   ['focusRitualEnabled', 'focus_ritual_enabled'],
   ['hapticCuesEnabled', 'haptic_cues_enabled'],
   ['ambientColorEnabled', 'ambient_color_enabled'],
@@ -165,6 +177,18 @@ export const prefsResolvers = {
         if (res.error === 'bad_recurrence_horizon') {
           throw new GraphQLError('planning.recurrenceHorizonDays must be one of 7, 15, 30, 60, 90, 180', { extensions: { code: 'BAD_USER_INPUT' } });
         }
+        if (res.error === 'bad_memory_window') {
+          throw new GraphQLError(
+            `memoryWindowDays must be an integer between ${MEMORY_WINDOW_DAYS_RANGE.min} and ${MEMORY_WINDOW_DAYS_RANGE.max}`,
+            { extensions: { code: 'BAD_USER_INPUT' } },
+          );
+        }
+        if (res.error === 'bad_email_lookback') {
+          throw new GraphQLError(
+            `emailLookbackDays must be an integer between ${EMAIL_LOOKBACK_DAYS_RANGE.min} and ${EMAIL_LOOKBACK_DAYS_RANGE.max}`,
+            { extensions: { code: 'BAD_USER_INPUT' } },
+          );
+        }
         if (res.error === 'view_prefs_not_serializable') {
           throw new GraphQLError('viewPrefs is not serializable', { extensions: { code: 'BAD_USER_INPUT' } });
         }
@@ -237,6 +261,8 @@ export const prefsResolvers = {
     autoFillWorkday: (p: Row) => !!p.autoFillWorkday,
     conceptAutosurface: (p: Row) => !!p.conceptAutosurface,
     conceptHorizonDays: (p: Row) => p.conceptHorizonDays ?? 30,
+    memoryWindowDays: (p: Row) => p.memoryWindowDays ?? 2,
+    emailLookbackDays: (p: Row) => p.emailLookbackDays ?? 7,
     focusRitualEnabled: (p: Row) => !!p.focusRitualEnabled,
     hapticCuesEnabled: (p: Row) => !!p.hapticCuesEnabled,
     ambientColorEnabled: (p: Row) => !!p.ambientColorEnabled,

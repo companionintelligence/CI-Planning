@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from './api.js';
+import { localISODate } from './dates.js';
 import { headerOpenCount, isCreatedOnDay, isTopLevelTask, partitionTaskSections } from './task-sections.js';
 
 // Minimal Task factory — only the fields the partition reads matter.
@@ -26,6 +27,21 @@ describe('isCreatedOnDay', () => {
   it('does not match a different day', () => {
     expect(isCreatedOnDay('2026-07-10T12:00:00.000Z', '2026-07-11')).toBe(false);
     expect(isCreatedOnDay('2026-07-12T12:00:00.000Z', '2026-07-11')).toBe(false);
+  });
+
+  // tasks.created_at is defaulted by SQLite CURRENT_TIMESTAMP → 'YYYY-MM-DD HH:MM:SS',
+  // a UTC instant with no zone marker. Parsed raw it reads as LOCAL time, which behind
+  // UTC pushed evening-created tasks into tomorrow's bucket — they missed New Today on
+  // the day they arrived. Both spellings of the same instant must agree.
+  it('reads the zone-less SQLite CURRENT_TIMESTAMP spelling as UTC', () => {
+    const iso = '2026-07-11T22:11:43.000Z';
+    const sqliteSpelling = '2026-07-11 22:11:43';
+    const localDay = localISODate(new Date(iso));
+    expect(isCreatedOnDay(sqliteSpelling, localDay)).toBe(true);
+    // Identical verdict for both spellings, on any day, in any runner TZ.
+    for (const day of ['2026-07-10', '2026-07-11', '2026-07-12']) {
+      expect(isCreatedOnDay(sqliteSpelling, day)).toBe(isCreatedOnDay(iso, day));
+    }
   });
 
   it('is false for empty / invalid input', () => {
@@ -63,7 +79,7 @@ describe('partitionTaskSections', () => {
     todayISO: TODAY,
   };
 
-  it('routes a task created today into New Today (not Open/Scheduled)', () => {
+  it('routes an UNSCHEDULED task created today into New Today (not Open/Scheduled)', () => {
     const t = task({ id: 'new1', created_at: '2026-07-11T08:00:00.000Z' });
     const s = partitionTaskSections([t], preds);
     expect(s.newToday.map((x) => x.id)).toEqual(['new1']);
@@ -81,18 +97,39 @@ describe('partitionTaskSections', () => {
     expect(after.open.map((x) => x.id)).toEqual(['roll']);
   });
 
-  it('New Today wins over Scheduled for a task both created-today and scheduled', () => {
+  // The precedence swap: scheduling a task the same day it was created must move its
+  // card to Scheduled RIGHT AWAY. Under the original AF-7 order New Today won and the
+  // card sat there until the local midnight, so placing it looked like a no-op.
+  it('Scheduled wins over New Today for a task both created-today and scheduled', () => {
     const t = task({ id: 'both', status: 'scheduled', created_at: '2026-07-11T08:00:00.000Z' });
     const s = partitionTaskSections([t], preds);
-    expect(s.newToday.map((x) => x.id)).toEqual(['both']);
-    expect(s.scheduled).toEqual([]);
+    expect(s.scheduled.map((x) => x.id)).toEqual(['both']);
+    expect(s.newToday).toEqual([]);
   });
 
-  it('Routine wins over New Today (a routine task created today stays in Routine)', () => {
+  it('moves a New Today task to Scheduled on placement alone — same day, no rollover', () => {
+    // Identical task and identical `todayISO`; only the placement predicate flips. This
+    // is the whole point of the swap: the section changes because the task was placed,
+    // not because the day advanced.
+    const t = task({ id: 'place-me', created_at: '2026-07-11T08:00:00.000Z' });
+    const before = partitionTaskSections([t], preds);
+    expect(before.newToday.map((x) => x.id)).toEqual(['place-me']);
+
+    const after = partitionTaskSections([t], { ...preds, isScheduled: () => true });
+    expect(after.scheduled.map((x) => x.id)).toEqual(['place-me']);
+    expect(after.newToday).toEqual([]);
+  });
+
+  it('Routine wins over New Today AND Scheduled (a scheduled routine task stays in Routine)', () => {
     const t = task({ id: 'routine-a', created_at: '2026-07-11T08:00:00.000Z' });
     const s = partitionTaskSections([t], preds);
     expect(s.routine.map((x) => x.id)).toEqual(['routine-a']);
     expect(s.newToday).toEqual([]);
+
+    const sched = task({ id: 'routine-b', status: 'scheduled', created_at: '2026-07-11T08:00:00.000Z' });
+    const s2 = partitionTaskSections([sched], preds);
+    expect(s2.routine.map((x) => x.id)).toEqual(['routine-b']);
+    expect(s2.scheduled).toEqual([]);
   });
 
   it('partitions a mixed backlog with every task in exactly one section', () => {
@@ -144,7 +181,7 @@ describe('headerOpenCount', () => {
     todayISO: TODAY,
   };
   // Mirrors production: partition once, count from the shared result.
-  const count = (list: Task[], p = preds) => headerOpenCount(partitionTaskSections(list, p), p.isScheduled);
+  const count = (list: Task[], p = preds) => headerOpenCount(partitionTaskSections(list, p));
 
   it('counts a created-today open task immediately (New Today section)', () => {
     const t = task({ id: 'new1', created_at: '2026-07-11T08:00:00.000Z' });
@@ -159,13 +196,15 @@ describe('headerOpenCount', () => {
     expect(count(list)).toBe(2);
   });
 
-  it('excludes scheduled tasks — even one sitting in New Today because it was created today', () => {
+  it('excludes scheduled tasks, including one created today', () => {
     const list = [
-      task({ id: 'sched-new', status: 'scheduled', created_at: '2026-07-11T08:00:00.000Z' }), // → New Today section
+      task({ id: 'sched-new', status: 'scheduled', created_at: '2026-07-11T08:00:00.000Z' }), // → Scheduled (was New Today)
       task({ id: 'sched-old', status: 'scheduled', created_at: '2026-07-01T08:00:00.000Z' }), // → Scheduled section
       task({ id: 'plain-new', created_at: '2026-07-11T08:00:00.000Z' }),
     ];
     // plain-new is open-status and created today → counts; both scheduled tasks don't.
+    // The total is the SAME as under the old precedence — sched-new was previously
+    // excluded by headerOpenCount's filter and is now excluded by its section.
     expect(count(list)).toBe(1);
   });
 

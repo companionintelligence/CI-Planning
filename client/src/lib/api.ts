@@ -1152,7 +1152,9 @@ export interface Prefs {
   // 'balanced'; 'cautious' also displays as Suggest. (Replaced the vestigial
   // auto_mode column, dropped in 0123.)
   trust_mode?: 'cautious' | 'balanced' | 'hands_off';
-  fill_order?: 'priority' | 'overdue'; // leftover fill ordering (0055); default 'priority'
+  // Leftover workday fill ordering (0055); default 'priority'. 'new_today' gives tasks
+  // created on the owner's today the earliest slots, each half still deadline-first.
+  fill_order?: 'priority' | 'overdue' | 'new_today';
   deep_work_windows?: { start: string; end: string }[];
   max_focus_block_minutes: number; min_break_minutes: number;
   // Time-Block container duration bounds (0017); default duration (0072).
@@ -1182,6 +1184,10 @@ export interface Prefs {
   memory_account?: string | null; memory_last_synced_at?: string | null;
   // Companion Memory pull (Phase AA): feed the CI-Server memory graph into suggestions.
   memory_pull_enabled?: boolean;
+  // Ingestion windows (0147). Opposite directions on purpose: the memory pull surfaces
+  // UPCOMING events so it looks forward; an inbox is only ever read backwards.
+  memory_window_days?: number;  // days ahead the memory pull reads (1–30)
+  email_lookback_days?: number; // days back a Gmail ingest may reach (1–90)
   triality_enabled?: boolean; // Triality master flag (0139); default false — banner + tiles hidden
   // Onboarding Priorities Wizard (0128): weekly hours reserved for sleep (unschedulable,
   // attributed to Health). Default 63 = 9h/night × 7; schedulable pool = 168 − this.

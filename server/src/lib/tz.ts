@@ -76,15 +76,33 @@ export function utcToZonedWallTime(utcISO: string, tz: string): string {
 }
 
 /**
+ * Normalize a stored timestamp to something `new Date()` reads as UTC.
+ *
+ * Columns defaulted with SQLite's `CURRENT_TIMESTAMP` (tasks.created_at among them)
+ * hold `'YYYY-MM-DD HH:MM:SS'` — a UTC instant with NO zone designator, which
+ * `new Date()` then parses as LOCAL time. On a UTC-7 server that shifts the instant by
+ * 7 hours and can move it across a day boundary, so a date derived from it lands on the
+ * wrong day. Values already carrying `T`/`Z` (the `strftime('…T…Z','now')` columns and
+ * anything set from JS) pass through untouched, so this is safe to apply anywhere.
+ */
+export function sqliteUtcToISO(ts: string): string {
+  // Space-separated and no zone suffix ⇒ SQLite CURRENT_TIMESTAMP; stamp it as UTC.
+  return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(ts) ? `${ts.replace(' ', 'T')}Z` : ts;
+}
+
+/**
  * The local calendar date (YYYY-MM-DD) of a UTC instant in `tz`. The owner-tz
  * counterpart of `localISODate` (which uses the *server* zone) — required so a
  * block's `start_at` maps to the right `scheduled_for` for an owner whose zone
  * differs from the server's, including near local midnight and across DST.
+ *
+ * Tolerates the zone-less `CURRENT_TIMESTAMP` spelling via {@link sqliteUtcToISO} — a
+ * no-op for the proper ISO strings every existing caller passes.
  */
 export function localDateInTZ(utcISO: string, tz: string): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(new Date(utcISO));
+  }).formatToParts(new Date(sqliteUtcToISO(utcISO)));
   const p: Record<string, string> = {};
   for (const part of parts) if (part.type !== 'literal') p[part.type] = part.value;
   return `${p.year}-${p.month}-${p.day}`;

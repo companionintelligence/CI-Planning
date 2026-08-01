@@ -10,7 +10,13 @@ import { clearPlannerRange } from '../engine/clear-range.js';
 import { snapshot, backupDir } from '../lib/backup.js';
 import { assignExperimentArmIfNeeded } from '../lib/experiment.js';
 import { broadcast } from './sse.js';
-import { getPrefs, updatePrefs, serializePrefs } from '../services/prefs.js';
+import {
+  getPrefs,
+  updatePrefs,
+  serializePrefs,
+  MEMORY_WINDOW_DAYS_RANGE,
+  EMAIL_LOOKBACK_DAYS_RANGE,
+} from '../services/prefs.js';
 
 export function prefsRouter() {
   const router = new Router();
@@ -37,9 +43,13 @@ export function prefsRouter() {
         error:
           res.error === 'bad_recurrence_horizon'
             ? 'recurrence_horizon_days must be one of 7, 15, 30, 60, 90, 180'
-            : res.error === 'view_prefs_not_serializable'
-              ? 'view_prefs is not serializable'
-              : 'view_prefs must be a plain object',
+            : res.error === 'bad_memory_window'
+              ? `memory_window_days must be an integer between ${MEMORY_WINDOW_DAYS_RANGE.min} and ${MEMORY_WINDOW_DAYS_RANGE.max}`
+              : res.error === 'bad_email_lookback'
+                ? `email_lookback_days must be an integer between ${EMAIL_LOOKBACK_DAYS_RANGE.min} and ${EMAIL_LOOKBACK_DAYS_RANGE.max}`
+                : res.error === 'view_prefs_not_serializable'
+                  ? 'view_prefs is not serializable'
+                  : 'view_prefs must be a plain object',
       };
       return;
     }

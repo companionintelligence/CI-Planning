@@ -30,6 +30,18 @@ const run = <T>(fn: () => Promise<T>) => runWithOwner(SYSTEM_OWNER, ALL_SCOPES, 
 
 const ACCOUNT = 'primary';
 
+/**
+ * Message times are RELATIVE to now, not fixed ISO strings. `email_lookback_days` (0147)
+ * floors the ingest window at now−N days, so a hardcoded date would silently age past the
+ * floor and make every one of these tests read zero messages — the repo's time-bomb-date
+ * gotcha, the same reason the memory fixture uses `now±Nh`. Everything here sits inside
+ * the 7-day default window; the floor itself is covered in email-lookback.test.ts.
+ */
+const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
+const T1 = hoursAgo(72);
+const T2 = hoursAgo(48);
+const T3 = hoursAgo(24);
+
 function fakeClient(emails: EmailMessage[]): GoogleClient {
   return {
     mode: 'fixture',
@@ -68,14 +80,14 @@ describe('gmail watermark cursor + dead-letter (WP5)', () => {
 
   it('advances the gmail_since watermark to the newest processed receivedAt', async () => {
     const client = fakeClient([
-      { id: 'm-1', from: 'a@x.io', subject: 'First', body: 'do thing', receivedAt: '2026-06-01T10:00:00.000Z' },
-      { id: 'm-2', from: 'b@x.io', subject: 'Second', body: 'do other thing', receivedAt: '2026-06-02T10:00:00.000Z' },
+      { id: 'm-1', from: 'a@x.io', subject: 'First', body: 'do thing', receivedAt: T1 },
+      { id: 'm-2', from: 'b@x.io', subject: 'Second', body: 'do other thing', receivedAt: T2 },
     ]);
 
     const r = await run(() => ingestEmails(client));
 
     expect(r.possiblesCreated).toBe(2);
-    expect(readCursor('gmail_since')?.cursor).toBe('2026-06-02T10:00:00.000Z');
+    expect(readCursor('gmail_since')?.cursor).toBe(T2);
 
     // REVIEW-GATED (services/review-gate.ts): email possibles are NOT promoted at
     // ingestion — they wait for the owner. Rows stay 'pending' (or 'duplicate' when live
@@ -95,28 +107,29 @@ describe('gmail watermark cursor + dead-letter (WP5)', () => {
     sqlite
       .prepare(
         `INSERT INTO sync_state (id, owner_id, provider, account, resource, cursor)
-         VALUES ('seed-since', ?, 'google', ?, 'gmail_since', '2026-06-01T10:00:00.000Z')`,
+         VALUES ('seed-since', ?, 'google', ?, 'gmail_since', ?)`,
       )
-      .run(SYSTEM_OWNER, ACCOUNT);
+      .run(SYSTEM_OWNER, ACCOUNT, T1);
 
     const client = fakeClient([
-      { id: 'm-1', from: 'a@x.io', subject: 'Old', body: 'old', receivedAt: '2026-06-01T10:00:00.000Z' },
-      { id: 'm-2', from: 'b@x.io', subject: 'New', body: 'new', receivedAt: '2026-06-03T10:00:00.000Z' },
+      { id: 'm-1', from: 'a@x.io', subject: 'Old', body: 'old', receivedAt: T1 },
+      { id: 'm-2', from: 'b@x.io', subject: 'New', body: 'new', receivedAt: T3 },
     ]);
 
     const r = await run(() => ingestEmails(client));
 
-    // Only the newer message was seen (since-filter applied).
+    // Only the newer message was seen (since-filter applied). The watermark is newer
+    // than the lookback floor, so the floor does not interfere.
     expect(r.itemsProcessed).toBe(1);
     expect(r.possiblesCreated).toBe(1);
-    expect(readCursor('gmail_since')?.cursor).toBe('2026-06-03T10:00:00.000Z');
+    expect(readCursor('gmail_since')?.cursor).toBe(T3);
   });
 
   it('dead-letters a poison message (queryable), continues, and still advances the watermark', async () => {
     const client = fakeClient([
-      { id: 'm-1', from: 'a@x.io', subject: 'Good A', body: 'ok', receivedAt: '2026-06-01T10:00:00.000Z' },
-      { id: POISON_ID, from: 'b@x.io', subject: 'Bad', body: 'explodes', receivedAt: '2026-06-02T10:00:00.000Z' },
-      { id: 'm-3', from: 'c@x.io', subject: 'Good C', body: 'ok', receivedAt: '2026-06-03T10:00:00.000Z' },
+      { id: 'm-1', from: 'a@x.io', subject: 'Good A', body: 'ok', receivedAt: T1 },
+      { id: POISON_ID, from: 'b@x.io', subject: 'Bad', body: 'explodes', receivedAt: T2 },
+      { id: 'm-3', from: 'c@x.io', subject: 'Good C', body: 'ok', receivedAt: T3 },
     ]);
 
     const r = await run(() => ingestEmails(client));
@@ -134,6 +147,6 @@ describe('gmail watermark cursor + dead-letter (WP5)', () => {
     expect(JSON.parse(dl!.cursor!)).toContain(POISON_ID);
 
     // The watermark advanced PAST the poison message (not wedged, not lost forever).
-    expect(readCursor('gmail_since')?.cursor).toBe('2026-06-03T10:00:00.000Z');
+    expect(readCursor('gmail_since')?.cursor).toBe(T3);
   });
 });
