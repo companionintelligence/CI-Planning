@@ -699,10 +699,6 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `OLLAMA_EMBED` | `nomic-embed-text` | Embedding model for dedupe |
 | `TZ` | UTC | Container timezone — set it so "today" and cron schedules match your day. Safety net: if the stored scheduling timezone is still the un-chosen UTC default, the web app adopts the browser's timezone on first load (once per browser). |
 | `AUTH_MODE` | `test` | Auth mode: `test` (dev/CI — system owner injected, **forbidden in production**), `standalone` (hashed `x-api-key` stored in the `api_keys` table), `sso` (CI-Portal OIDC login or local username/password — mints a signed session cookie). |
-| `AUTH_JWKS_URL` | (unset) | **Currently unused.** Predates the CI-Portal OIDC (`CIPORTAL_*`) vars from Phase U; parsed into `config.auth` but that field is consumed by no code path. SSO derives the JWKS endpoint from CI-Portal discovery (`CIPORTAL_ISSUER`). Retained pending a repoint-or-retire decision. |
-| `AUTH_ISSUER` | (unset) | **Currently unused** (see `AUTH_JWKS_URL`). Parsed into `config.auth` but that field is consumed by no code path — the expected token `iss` comes from the discovered CI-Portal document. |
-| `AUTH_AUDIENCE` | `companion-planning` | Legacy/unused. The effective `aud` check uses the OIDC client_id (`CIPORTAL_CLIENT_ID` for portal login, the Google client id for Google OAuth), not this value. |
-| `AUTH_CONTRACT_VERSION` | `1` | Reserved — populated into config but not currently enforced (no JWT contract-version assertion is performed). |
 | `AUTH_AUTO_PROVISION` | `false` | When `true`, an unknown SSO `sub` automatically provisions a new owner row instead of returning 403. |
 | `AUTH_RATE_WINDOW_MS` | `60000` | Rate-limit sliding window in milliseconds. |
 | `AUTH_RATE_MAX` | `60` | Max requests per window per IP across all endpoints. |
@@ -713,7 +709,7 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `AUTH_DEFAULT_PASSWORD` | (unset) | Password for that seeded owner. **Required** to seed it (`DISABLE_OIDC=true` + zero local owners) — fail-closed if unset. Never commit it. |
 | `AUTH_RESET_TOKEN_TTL_MS` | `3600000` | Password-reset link lifetime for local login (default 60 min, single-use). |
 | `CIPORTAL_ISSUER` | `https://hub.companionintelligence.com/api/auth` | CI-Portal SSO discovery base (OAuth 2.1 + PKCE). Endpoints and the token `iss` are read from `<issuer>/.well-known/openid-configuration`. Meaningful when `AUTH_MODE=sso` and `DISABLE_OIDC` is not `true`. |
-| `CIPORTAL_CLIENT_ID` | (unset) | Our client registered with CI-Portal (public PKCE). **Required** for prod `sso`+OIDC — fails closed without it. |
+| `CIPORTAL_CLIENT_ID` | `ci-planning` | Our client registered with CI-Portal as a first-party public (PKCE) client. A fixed first-party identity, so it defaults rather than needing to be looked up; override only for a fixture portal or a differently-registered fork. |
 | `CIPORTAL_CLIENT_SECRET` | (unset) | Only if registered as a confidential client; leave unset for public/PKCE. Never commit it. |
 | `CIPORTAL_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` | Must match the URI registered with CI-Portal. |
 | `CIPORTAL_SCOPES` | `openid profile email` | Scopes requested at authorize. |

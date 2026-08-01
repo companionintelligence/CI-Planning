@@ -17,6 +17,7 @@ import {
   storeMemoryConnection,
   deleteMemoryConnection,
   storeMemoryOidcConnection,
+  memoryOidcSubject,
   MEMORY_PROVIDER,
 } from '../connectors/memory.js';
 import { suggestFromMemory } from '../agents/memory-suggest.js';
@@ -310,6 +311,23 @@ export function memoryRouter() {
       return;
     }
 
+    // That guard is VACUOUS for a local-login owner (`DISABLE_OIDC`), whose
+    // external_subject is NULL by construction — there is no SSO identity to match
+    // against, so the first connect may legitimately name any CI-Portal account. What
+    // must not happen is a SILENT re-bind afterwards: a reconnect replaces the stored
+    // row wholesale, so without this the connection could move to a different portal
+    // identity with no signal. Trust-on-first-use closes that: once bound, a callback
+    // carrying a different `sub` is refused until the owner explicitly disconnects.
+    // A distinct reason so the UI can say what to do, rather than reusing the SSO one.
+    const boundSubject = memoryOidcSubject(row.owner_id);
+    if (boundSubject && boundSubject !== claims.sub) {
+      logger.warn('memory CI-Portal connect rejected: connection already bound to another subject', {
+        owner: row.owner_id,
+      });
+      ctx.redirect(settingsRedirect('memory=error&reason=already_bound_disconnect_first'));
+      return;
+    }
+
     const url = process.env.CI_SERVER_URL;
     if (!url) {
       ctx.redirect(settingsRedirect('memory=error&reason=ci_server_url_unset'));
@@ -329,6 +347,7 @@ export function memoryRouter() {
           tokenEndpoint: doc.token_endpoint,
           clientId: config.ciportal.clientId!,
           clientSecret: config.ciportal.clientSecret,
+          subject: claims.sub, // pins the connection for the guard above
         }),
       );
     } catch (err) {
