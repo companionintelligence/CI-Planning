@@ -16,8 +16,9 @@ import {
   minAt as axisMinAt,
   visibleExtent,
 } from '../lib/day-axis.js';
-import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom } from '../stores/index.js';
+import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom, connectionPrefs } from '../stores/index.js';
 import { isAllDay, isTimed, isTaskBlock, showsBlockLabel } from '../lib/overlay.js';
+import { connectionTextureStyle, type TextureStyle } from '../lib/textures.js';
 import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
 import { localISODate, addDays } from '../lib/dates.js';
 
@@ -143,7 +144,10 @@ function NowLine(props: { day: string; state: () => AxisState }) {
 //                  revealing the name on hover (native `title`).
 function BlockChip(props: { placed: Placed; day: string; state: () => AxisState }) {
   const b = () => props.placed.block;
-  const color = () => kindColor[b().block_kind] ?? '#152637';
+  // A configured connection colour wins over the block-kind palette: the owner set it
+  // precisely so events from THIS calendar are identifiable at a glance.
+  const color = () => connectionColor(b()) ?? kindColor[b().block_kind] ?? '#152637';
+  const texture = () => connectionTextureFor(b());
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
   const isTask = () => isTaskBlock(b());
@@ -214,11 +218,16 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
       onClick={openTaskEditor}
       onKeyDown={handleKeyDown}
     >
+      {/* Per-connection stripe texture, under the label. Absolutely positioned so it
+          tints the chip without disturbing its own background-color. */}
+      <Show when={texture()}>
+        <div aria-hidden="true" style={texture()} />
+      </Show>
       {/* Tasks and meetings keep their label — a calendar of unlabeled entries is
           unusable. Anonymous containers render no body text; the thick colored left
-          edge is the label. */}
+          edge is the label. `relative` lifts it above the texture overlay. */}
       <Show when={labelled()}>
-        <div class="px-1.5 py-0.5">
+        <div class="relative px-1.5 py-0.5">
           <div class="flex items-center gap-1 font-medium text-slate-100 truncate">
             <Show when={b().is_locked}><Lock size={9} class="text-slate-400 flex-shrink-0" /></Show>
             <span class="truncate">{b().title}</span>
@@ -235,11 +244,12 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
 
 // ── All-day chip (pinned header lane; not on the minute axis) ──────────────────
 function AllDayChip(props: { block: Block }) {
-  const color = () => kindColor[props.block.block_kind] ?? '#152637';
+  const color = () => connectionColor(props.block) ?? kindColor[props.block.block_kind] ?? '#152637';
+  const texture = () => connectionTextureFor(props.block);
   const done = () => ['completed', 'skipped'].includes(props.block.status);
   return (
     <div
-      class="rounded px-1.5 py-0.5 text-[10px] leading-tight truncate border-l-2"
+      class="relative overflow-hidden rounded px-1.5 py-0.5 text-[10px] leading-tight truncate border-l-2"
       classList={{ 'opacity-40': done() }}
       style={{
         'background-color': `${color()}26`,
@@ -247,9 +257,34 @@ function AllDayChip(props: { block: Block }) {
       }}
       title={props.block.title}
     >
-      <span class="text-slate-200">{props.block.title}</span>
+      <Show when={texture()}>
+        <div aria-hidden="true" style={texture()} />
+      </Show>
+      <span class="relative text-slate-200">{props.block.title}</span>
     </div>
   );
+}
+
+// ── Per-connection styling ────────────────────────────────────────────────────
+// A block mirrored from a connected calendar can carry an owner-chosen colour and
+// stripe texture, keyed by `provider:account`. Both resolve to undefined for locally
+// created blocks and for connections the owner hasn't configured, so the default look
+// is untouched until a choice is made.
+
+function connectionPrefOf(b: Block) {
+  if (!b.source_provider || !b.source_account) return undefined;
+  return connectionPrefs()?.prefs[`${b.source_provider}:${b.source_account}`];
+}
+
+function connectionColor(b: Block): string | undefined {
+  const token = connectionPrefOf(b)?.color_token;
+  return token ? `var(--${token})` : undefined;
+}
+
+function connectionTextureFor(b: Block): TextureStyle | undefined {
+  const pref = connectionPrefOf(b);
+  if (!pref) return undefined;
+  return connectionTextureStyle(pref.texture, `var(--${pref.color_token})`);
 }
 
 // An hour label/line is drawn only when its minute lies in an EXPANDED region

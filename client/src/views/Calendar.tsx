@@ -1,5 +1,5 @@
 import { createSignal, createMemo, createEffect, createResource, onCleanup, For, Show } from 'solid-js';
-import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange, Palette } from 'lucide-solid';
+import { ChevronLeft, ChevronRight, Zap, Filter, X, Download, ClipboardList, CalendarRange, Palette, CalendarCheck, CalendarClock } from 'lucide-solid';
 import { useNavigate } from '@solidjs/router';
 import {
   visibleBlocks,
@@ -16,9 +16,12 @@ import {
   setPlanWeekModal,
   refetchBlocks,
   categoryPrefs,
+  calendarEventsOnly,
+  setCalendarEventsOnly,
 } from '../stores/index.js';
 import { sortDirections, sortCategories, displayTag } from '../lib/tag-tax.js';
 import type { TagAxis } from '../lib/overlay.js';
+import { isCommitment } from '../lib/overlay.js';
 import { tagColorVar } from '../lib/textures.js';
 import { api } from '../lib/api.js';
 import { showToast } from '../stores/index.js';
@@ -80,7 +83,12 @@ export function Calendar() {
     const map: Record<string, Block[]> = {};
     const days = visibleDays();
     if (!days.length) return map;
-    const list = visibleBlocks(); // overlay-filtered + optimistic-override applied
+    // overlay-filtered + optimistic-override applied. The events-only narrowing is
+    // applied HERE rather than in the shared visibleBlocks memo because it is a
+    // Calendar-view mode — the Planner must keep showing the task blocks it exists to
+    // arrange.
+    const all = visibleBlocks();
+    const list = calendarEventsOnly() ? all.filter(isCommitment) : all;
     for (const b of list) {
       // Find the visible day whose local midnight..midnight window contains the start.
       // minutesIntoDay against days[0] gives offset from the first column's midnight;
@@ -335,9 +343,29 @@ export function Calendar() {
         <button onClick={() => shift(1)} class="btn-icon"><ChevronRight size={15} /></button>
         <button onClick={goToday} class="btn-ghost text-xs">Today</button>
         <span class="text-sm font-medium text-slate-300">{rangeLabel()}</span>
+        {/* Events-only ("free time") mode. Hides movable task blocks so what's left is
+            only what genuinely constrains the day — the gaps between them are the
+            answer the owner is after. Persisted with the other calendar view prefs. */}
+        <button
+          type="button"
+          aria-pressed={calendarEventsOnly()}
+          onClick={() => setCalendarEventsOnly((v) => !v)}
+          class="btn-ghost text-xs gap-1 ml-auto"
+          classList={{ 'text-accent-light': calendarEventsOnly() }}
+          title={
+            calendarEventsOnly()
+              ? 'Showing only calendar events and locked blocks — click to show tasks again'
+              : 'Hide task blocks to see free time — only calendar events and locked blocks remain'
+          }
+        >
+          <Show when={calendarEventsOnly()} fallback={<CalendarCheck size={13} />}>
+            <CalendarClock size={13} />
+          </Show>
+          {calendarEventsOnly() ? 'Events only' : 'All blocks'}
+        </button>
         <button
           onClick={() => setShowFilters((s) => !s)}
-          class="btn-ghost text-xs gap-1 ml-auto"
+          class="btn-ghost text-xs gap-1"
           classList={{ 'text-accent-light': activeFilters() > 0 }}
         >
           <Filter size={13} />

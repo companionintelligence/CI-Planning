@@ -129,15 +129,46 @@ function enrichApi(rows: BlockRow[]): Record<string, unknown>[] {
   // so re-categorizing a task re-stripes its blocks with zero engine writes.
   const ownCats = entityCategoryNamesByIds('time_block', rows.map((r) => r.id));
   const taskCats = entityCategoryNamesByIds('task', [...new Set(rows.map((r) => r.taskId).filter((t): t is string => t != null))]);
+  const source = externalSourceByBlockId(rows.map((r) => r.id));
   return toApiList(rows).map((b) => {
     const own = ownCats.get(b.id as string);
+    const src = source.get(b.id as string);
     return {
       ...b,
       secondary_tags: secondaryTagsOf(b.id as string),
       rationale: rationaleOf(b.id as string),
       categories: (own?.length ? own : taskCats.get(b.task_id as string)) ?? [],
+      // Which connection mirrored this block in, so the client can colour/texture it
+      // per source and tell a synced event apart from a local one. null for anything
+      // the owner created here. `source_kind` already says 'google', but NOT which
+      // account — and per-connection styling is meaningless without the account.
+      source_provider: src?.provider ?? null,
+      source_account: src?.account ?? null,
     };
   });
+}
+
+/**
+ * Batched block_id → (provider, account) lookup over external_events. One query for the
+ * whole page rather than a per-row join, matching how categories are attached above.
+ * Blocks with no external row simply don't appear in the map.
+ */
+function externalSourceByBlockId(blockIds: string[]): Map<string, { provider: string; account: string }> {
+  const out = new Map<string, { provider: string; account: string }>();
+  if (!blockIds.length) return out;
+  // Chunked to stay clear of SQLite's variable limit on very wide ranges.
+  const CHUNK = 500;
+  for (let i = 0; i < blockIds.length; i += CHUNK) {
+    const slice = blockIds.slice(i, i + CHUNK);
+    const rows = sqlite
+      .prepare(
+        `SELECT block_id, provider, account FROM external_events
+          WHERE block_id IN (${slice.map(() => '?').join(',')})`,
+      )
+      .all(...slice) as { block_id: string; provider: string; account: string }[];
+    for (const r of rows) out.set(r.block_id, { provider: r.provider, account: r.account });
+  }
+  return out;
 }
 
 /**

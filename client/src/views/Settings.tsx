@@ -12,6 +12,7 @@ import { CategorySettings } from '../components/CategorySettings.js';
 import { enablePush, disablePush, pushState } from '../lib/push.js';
 import { on } from '../lib/sse.js';
 import { GOOGLE_CONNECT_ENABLED } from '../lib/flags.js';
+import { ConnectionAppearance } from '../components/ConnectionAppearance.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
@@ -1641,6 +1642,8 @@ export function Settings() {
                             </>
                           )}
                         </Show>
+                        {/* 0145 — how this source's events look on the calendar. */}
+                        <ConnectionAppearance provider={c.provider} account={c.account} />
                       </div>
                     );
                   }}
