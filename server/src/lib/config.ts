@@ -22,12 +22,15 @@ function positiveIntOr(value: string | undefined, fallback: number): number {
  */
 export type AuthMode = 'test' | 'standalone' | 'sso';
 
+// RETIRED (see the CIPORTAL_* set): AUTH_JWKS_URL, AUTH_ISSUER, AUTH_AUDIENCE and
+// AUTH_CONTRACT_VERSION were parsed into this object but read by NO code path — the JWKS
+// endpoint and the expected `iss` both come from CI-Portal discovery, and the live `aud`
+// check uses the OIDC client_id. Four config fields that look like security controls but
+// enforce nothing are worse than absent ones: they invite an operator to "harden" the
+// deployment by setting them and get no protection at all. Removed rather than wired up,
+// because each already has a real, consulted equivalent.
 export interface AuthConfig {
   mode: AuthMode;
-  jwksUrl?: string;        // DEPRECATED/unused — SSO JWKS comes from CIPORTAL_ISSUER discovery, not this var
-  issuer?: string;         // DEPRECATED/unused — expected `iss` comes from the discovered CI-Portal doc, not this var
-  audience: string;        // LEGACY/unused — live aud check uses the OIDC client_id, not this value
-  contractVersion: string; // RESERVED — populated but NOT asserted; no JWT contract-version check is wired
   autoProvision: boolean;  // first unknown SSO `sub` → provision owner row vs 403
   kekB64?: string;         // DEPRECATED/unused — parsed from CP_KEK_B64 but never read; the KEK
                            //   consumer (lib/crypto loadKek/rotateKek) reads process.env.CP_KEK_B64
@@ -89,9 +92,9 @@ export interface GoogleConfig {
  * Tailscale) — the same consumer role CI-Import Tools and CI-Hub play. Endpoint
  * values come from CI-Portal's discovery document
  * (`/.well-known/openid-configuration`) or the CI-Portal team; there are NO
- * invented defaults — a deployment must set them explicitly. Deliberately separate
- * from the older generic AUTH_JWKS_URL/AUTH_ISSUER vars (kept for now; repoint or
- * retire is the dev team's call — flagged in docs, not silently decided here).
+ * invented defaults — a deployment must set them explicitly. This set REPLACED the
+ * older generic AUTH_JWKS_URL/AUTH_ISSUER/AUTH_AUDIENCE/AUTH_CONTRACT_VERSION vars,
+ * which have now been retired (see the note above AuthConfig).
  */
 export interface CiPortalConfig {
   // Discovery-driven (matches CI-Import-Tools, the sibling consumer): the only
@@ -272,10 +275,6 @@ export const config: Config = {
   snapshotRetain: Number(process.env.SNAPSHOT_RETAIN ?? 7),
   auth: {
     mode: (process.env.AUTH_MODE as AuthMode) ?? 'test',
-    jwksUrl: process.env.AUTH_JWKS_URL,
-    issuer: process.env.AUTH_ISSUER,
-    audience: process.env.AUTH_AUDIENCE ?? 'companion-planning',
-    contractVersion: process.env.AUTH_CONTRACT_VERSION ?? '1',
     autoProvision: process.env.AUTH_AUTO_PROVISION === 'true',
     kekB64: process.env.CP_KEK_B64,
     rateLimit: {
