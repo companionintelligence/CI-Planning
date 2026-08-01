@@ -498,7 +498,56 @@ function allOwnerIds(): string[] {
  * The manual POST /api/jobs/:id/run path calls runJob directly under the requesting
  * owner's context — it does NOT fan out (a user "run now" is for their own account).
  */
+/**
+ * Kinds whose previous scheduled run hasn't returned yet.
+ *
+ * A cron tick must never start a job kind that is still running. `ingest_gcal` over a
+ * freshly-connected calendar takes far longer than its 30-minute period (it embeds every
+ * pending possible through Ollama one at a time), so without this each tick piled a fresh
+ * fan-out on top of the last — nine concurrent runs, each spawning its own MCP child, all
+ * grinding the same rows.
+ *
+ * In-process rather than a DB flag ON PURPOSE: the thing being guarded is "this server is
+ * already doing it", and a row can outlive the process that wrote it. A DB lock would
+ * need its own liveness story (see the restart sweep in boot) and could wedge the
+ * scheduler permanently after an unclean exit.
+ */
+const inFlight = new Set<string>();
+
+/**
+ * Mark job_runs left `running` by a previous process as errored.
+ *
+ * A run row is only ever finished by the process that created it, so any `running` row at
+ * startup belongs to a process that is gone. Left alone they accumulate forever and make
+ * the Jobs view claim work is in progress that nothing is doing. Called once at boot.
+ */
+export function failInterruptedJobRuns(): number {
+  const { changes } = sqlite
+    .prepare(
+      `UPDATE job_runs SET status = 'error', finished_at = ?, log = 'interrupted — server restarted'
+        WHERE status = 'running'`,
+    )
+    .run(new Date().toISOString());
+  if (changes > 0) logger.warn('Cleared interrupted job runs from a previous process', { count: changes });
+  return changes;
+}
+
 export async function runScheduledJob(kind: string): Promise<void> {
+  // Skip rather than queue: these are periodic refreshes, so the next tick is a better
+  // answer than a backlog of identical runs racing each other.
+  if (inFlight.has(kind)) {
+    logger.warn(`Scheduled job ${kind} skipped — the previous run is still going`);
+    return;
+  }
+  inFlight.add(kind);
+  try {
+    await runScheduledJobInner(kind);
+  } finally {
+    inFlight.delete(kind);
+  }
+}
+
+async function runScheduledJobInner(kind: string): Promise<void> {
   if (OWNER_SCOPED_KINDS.has(kind)) {
     for (const ownerId of allOwnerIds()) {
       try {
