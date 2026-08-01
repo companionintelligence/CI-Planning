@@ -353,7 +353,8 @@ export const api = {
       >,
       scope?: 'instance' | 'series',
     ) => request<{ task: Task }>('PATCH', `/tasks/${id}${scope === 'series' ? '?scope=series' : ''}`, body),
-    delete: (id: string) => request<{ task: Task }>('DELETE', `/tasks/${id}`),
+    delete: (id: string, scope?: RecurringScope) =>
+      request<{ task: Task }>('DELETE', `/tasks/${id}${scope === 'following' ? '?scope=following' : ''}`),
     subtasks: (id: string) => request<{ subtasks: Task[] }>('GET', `/tasks/${id}/subtasks`),
     skip: (id: string) => request<{ task: Task; skipped: string }>('POST', `/tasks/${id}/skip`, {}),
     streak: (id: string) => request<Streak>('GET', `/tasks/${id}/streak`),
@@ -388,14 +389,24 @@ export const api = {
     },
     create: (body: Partial<Block> & { title: string; start_at: string; end_at: string }) =>
       request<{ block: Block }>('POST', '/blocks', body),
-    update: (id: string, body: Partial<Block>) => request<{ block: Block }>('PATCH', `/blocks/${id}`, body),
+    // `scope:'following'` forks the series here so the edit lands on this occurrence and
+    // every later one, leaving earlier ones untouched.
+    update: (id: string, body: Partial<Block>, scope?: RecurringScope) =>
+      request<{ block: Block }>('PATCH', `/blocks/${id}${scope === 'following' ? '?scope=following' : ''}`, body),
     // Attach existing tasks to a Time-Block container: scatters them into its free time
     // as child task blocks (parent_block_id set). Used by the New/Edit Time-Block modal.
     addTasks: (id: string, task_ids: string[]) =>
       request<{ ok: boolean; blocksCreated: number; placed: number; unplaced: number; skipped: number }>('POST', `/blocks/${id}/add-tasks`, { task_ids }),
     // children:'delete' also removes a Plan's member task blocks; default keeps them (FK SET NULL).
-    delete: (id: string, opts?: { children?: 'delete' }) =>
-      request<{ ok: boolean }>('DELETE', `/blocks/${id}${opts?.children === 'delete' ? '?children=delete' : ''}`),
+    // `scope:'following'` also stops the series from this occurrence onward; the default
+    // removes only this one.
+    delete: (id: string, opts?: { children?: 'delete'; scope?: RecurringScope }) => {
+      const q = new URLSearchParams();
+      if (opts?.children === 'delete') q.set('children', 'delete');
+      if (opts?.scope === 'following') q.set('scope', 'following');
+      const qs = q.toString();
+      return request<{ ok: boolean }>('DELETE', `/blocks/${id}${qs ? `?${qs}` : ''}`);
+    },
     // Shift a Plan + all its members by one minute delta, atomically (PR-C). `id` may
     // be the Plan or any member; returns the whole moved group.
     moveGroup: (id: string, delta_minutes: number) =>
@@ -1453,6 +1464,9 @@ export interface CategoryPref {
 export interface CategoryPrefsResponse {
   prefs: Record<string, CategoryPref>;
 }
+
+/** Which occurrences of a repeating item an edit or delete applies to. */
+export type RecurringScope = 'instance' | 'following';
 
 // ── Possible tasks — the review-gated suggestion queue (email) ──
 /** An ingest-produced suggestion awaiting the owner's approval. Snake_case read shape. */

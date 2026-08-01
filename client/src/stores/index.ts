@@ -1,5 +1,5 @@
 import { createSignal, createMemo, createResource, createEffect } from 'solid-js';
-import { api } from '../lib/api.js';
+import { api, type RecurringScope } from '../lib/api.js';
 import type { Block, Task, Pattern, PatternType, ReplanSuggestion, RunNowOutcome } from '../lib/api.js';
 import { on } from '../lib/sse.js';
 import { localISODate, dayRangeUTC } from '../lib/dates.js';
@@ -610,4 +610,56 @@ export async function runIngestNowAndRefetch(): Promise<RunNowOutcome[]> {
   const { ran } = await api.jobs.runNow();
   await Promise.all([refetchTasks(), refetchBlocks(), refetchFlightPlan(), refetchIntegrations()]);
   return ran;
+}
+
+// ── Repeating-item scope prompt ────────────────────────────────────────────────
+// Changing or deleting ONE occurrence of a repeating item is ambiguous — the user may
+// mean just that day, or that day and everything after it. Guessing is the one thing we
+// must not do: guessing "just this" makes a series edit look like it silently failed,
+// and guessing "following" destroys occurrences the user never mentioned. So we ask.
+//
+// Promise-shaped so a call site reads as a normal await in the middle of its handler,
+// rather than being turned inside out into modal callbacks. The dialog itself is mounted
+// once (App.tsx) and driven by this signal.
+
+export interface RecurringScopeAsk {
+  open: boolean;
+  /** The item's title, shown so the user knows exactly what they're about to change. */
+  title: string;
+  /** Drives the wording — 'delete' reads very differently from 'change'. */
+  verb: 'delete' | 'change';
+  resolve?: (v: RecurringScope | null) => void;
+}
+
+export const [recurringScopeAsk, setRecurringScopeAsk] = createSignal<RecurringScopeAsk>({
+  open: false,
+  title: '',
+  verb: 'change',
+});
+
+/** Ask which occurrences to act on. Resolves null when the user backs out. */
+export function askRecurringScope(opts: { title: string; verb: 'delete' | 'change' }): Promise<RecurringScope | null> {
+  return new Promise((resolve) => {
+    setRecurringScopeAsk({ open: true, title: opts.title, verb: opts.verb, resolve });
+  });
+}
+
+/** Answer the open prompt (or dismiss it with null). */
+export function answerRecurringScope(v: RecurringScope | null): void {
+  const cur = recurringScopeAsk();
+  cur.resolve?.(v);
+  setRecurringScopeAsk({ open: false, title: '', verb: 'change' });
+}
+
+/**
+ * True when this row is one occurrence of a repeating series the app owns — the only
+ * case where the question is meaningful.
+ *
+ * Calendar events mirrored from Google are deliberately NOT included: every occurrence
+ * arrives as an independent block with no recurrence link, and they are read-only
+ * server-side (updateBlock rejects them with `inbound_readonly`). Offering a series
+ * choice for them would promise something the sync cannot deliver.
+ */
+export function isRecurringOccurrence(row: { recurrence_parent_id?: string | null }): boolean {
+  return !!row.recurrence_parent_id;
 }

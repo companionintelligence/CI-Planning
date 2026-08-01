@@ -8,6 +8,7 @@ import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { ensurePatternsForRange } from '../engine/patterns-place.js';
 import { ensureRecurringBlocksForRange, excludeBlockOccurrence } from '../engine/blocks-recur.js';
+import { truncateSeriesFrom } from '../engine/series-scope.js';
 import { placeTasksInBlock, type PlaceTasksResult } from '../engine/blocks-place.js';
 import { removeEntityTags, splitTagString, syncLeveledEntityTags, entityTagLevels, setEntityCategories, categoryIdsForOwner, entityCategoryNames, entityCategoryNamesByIds } from './tags.js';
 import { getCategoryPrefs } from './category-prefs.js';
@@ -653,7 +654,16 @@ export async function promoteBlockToScheduled(ownerId: string, id: string, input
   return { ok: true, block, api: out, syncedTaskId };
 }
 
-export type DeleteBlockOpts = { deleteChildren?: boolean };
+export type DeleteBlockOpts = {
+  deleteChildren?: boolean;
+  /**
+   * Recurring instances only. 'instance' (default) removes just this occurrence via the
+   * template's EXDATE — the long-standing behaviour. 'following' additionally truncates
+   * the series at this occurrence, so nothing recurs from this day onward. Occurrences
+   * BEFORE it are never touched.
+   */
+  scope?: 'instance' | 'following';
+};
 
 export type DeleteBlockResult =
   | { ok: true; block: BlockRow; affectedTaskIds: string[]; revertedTaskIds: string[] }
@@ -725,6 +735,12 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
   // won't re-materialize it on the next read. Without this, recurring blocks with
   // no tasks inside (e.g. a "Deep-focus" block) were impossible to delete.
   if (block.recurrenceParentId && block.occurrenceDate) {
+    if (opts.scope === 'following') {
+      // Truncate the series here. The EXDATE below is still written for THIS day: the
+      // bounded rule already excludes it, but the exdate keeps the intent explicit and
+      // makes the operation idempotent if the rule is later widened by hand.
+      truncateSeriesFrom(ownerId, 'time_blocks', block.recurrenceParentId, block.occurrenceDate);
+    }
     excludeBlockOccurrence(ownerId, block.recurrenceParentId, block.occurrenceDate);
   }
   // REQ2: a task with no remaining active placement returns to the open backlog.

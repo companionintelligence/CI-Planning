@@ -1,11 +1,11 @@
 import { createSignal, createMemo, createResource, Show, For, onCleanup } from 'solid-js';
-import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, CalendarRange, NotebookPen } from 'lucide-solid';
+import { ChevronDown, ChevronRight, Crosshair, Play, Check, RotateCcw, NotebookPen } from 'lucide-solid';
 import { FocusRitual } from '../components/FocusRitual.js';
 import { FocusReminders } from '../components/FocusReminders.js';
 import { TrialityBanner } from '../components/TrialityBanner.js';
 import { BriefMenu, FocusMenu } from '../components/DayGoals.js';
 import { EmptyStateConnectCTA } from '../components/EmptyStateConnectCTA.js';
-import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay, setPlanWeekModal } from '../stores/index.js';
+import { blocks, tasks, taskOf, prefs, tags, patternPrefs, refetchTasks, refetchBlocks, showToast, setSelectedDay } from '../stores/index.js';
 import { api, type Block, type Task } from '../lib/api.js';
 import { localISODate } from '../lib/dates.js';
 import { focusState, formatRemaining } from '../lib/focus.js';
@@ -280,8 +280,8 @@ export function Focus() {
       {/* Header — the Today-style card container (backlog-3 parity, 2026-07-21): same
           rounded card + right-column button cluster (Brief · Focus goals · day note).
           No day-stepper on purpose: FOCUS is today-only by design (see the view doc
-          comment) — other days live in Today/Calendar. "Plan my week" moved to the
-          Calendar header; the empty-day contextual nudge below stays. */}
+          comment) — other days live in Today/Calendar. "Plan my week" lives only in
+          the Calendar header now; FOCUS carries no planning entry point at all. */}
       <div class="rounded-xl border border-border bg-card p-4 mb-5">
         <div class="flex items-start justify-between gap-3">
           <div class="flex items-baseline gap-2">
@@ -408,16 +408,8 @@ export function Focus() {
         <For each={upcoming()}>{(e) => <Row entry={e} />}</For>
         <Show when={upcoming().length === 0}>
           <div class="text-sm text-muted-foreground text-center py-10 flex flex-col items-center gap-3">
-            {/* T2: a truly-empty day is the strongest moment to offer planning, so the
-                copy now points at the assistant instead of sending the user to Today. */}
             <Show when={entries().length === 0} fallback={<span>All done for today. 🎉</span>}>
               <span>Nothing scheduled today.</span>
-              <button
-                class="btn-primary text-xs inline-flex items-center gap-1.5"
-                onClick={() => setPlanWeekModal({ open: true })}
-              >
-                <CalendarRange size={14} /> Plan my week
-              </button>
               <EmptyStateConnectCTA />
             </Show>
           </div>
