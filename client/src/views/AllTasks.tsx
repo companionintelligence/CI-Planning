@@ -1,6 +1,6 @@
 import { createSignal, createResource, createMemo, onCleanup, Show, For } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
-import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight, X, CalendarRange } from 'lucide-solid';
+import { SlidersHorizontal, Search, Archive, ChevronDown, ChevronRight, X, CalendarRange } from 'lucide-solid';
 import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
@@ -19,7 +19,6 @@ import { SuggestionsSection } from '../components/SuggestionsSection.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
-  const [tagging, setTagging] = createSignal(false);
   const [showArchive, setShowArchive] = createSignal(false);
   const [order, setOrder] = createSignal<SortOrder>('priority');
   const [direction, setDirection] = createSignal('');
@@ -179,36 +178,6 @@ export function AllTasks() {
     },
   );
 
-  /**
-   * Auto-tag every untagged task in the CURRENT (active) view — ONE request to
-   * POST /api/tasks/auto-tag, scoped to the ids on screen. The LLM call, the offline
-   * heuristic fallback, and the direction/intention leveling all run server-side, in the
-   * same service the `tag_tasks` cron uses, so the button and the job can never drift.
-   * (It used to loop suggest-tags + PATCH per task from here — two round trips each, and
-   * its own private copy of the leveling rules.) Additive: only untagged tasks are touched.
-   */
-  async function autoTagUntagged() {
-    // Local pre-checks purely so the common no-op cases answer instantly; the server
-    // re-derives both (and owns the real decision — the view can be stale).
-    // AF-11: "untagged" = no tags at EITHER level, matching the service's NOT EXISTS gate.
-    const untagged = shownList().filter((t) => (t.tags?.length ?? 0) === 0 && (t.secondary_tags?.length ?? 0) === 0);
-    if ((tags() ?? []).length === 0) { showToast('No tags yet — create some first', 'default'); return; }
-    if (untagged.length === 0) { showToast('No untagged tasks in view', 'default'); return; }
-    setTagging(true);
-    try {
-      const { tagged, total } = await api.tasks.autoTag(untagged.map((t) => t.id));
-      refetchTasks();
-      showToast(
-        tagged ? `Tagged ${tagged} of ${total} task${total === 1 ? '' : 's'}` : 'No matching tags found',
-        tagged ? 'success' : 'default',
-      );
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setTagging(false);
-    }
-  }
-
   return (
     <div class="flex-1 overflow-auto p-6 page-enter max-w-3xl mx-auto w-full">
       {/* Header */}
@@ -227,15 +196,6 @@ export function AllTasks() {
               title="Plan your week with the assistant"
             >
               <CalendarRange size={14} /> Plan my week
-            </button>
-            <button
-              onClick={autoTagUntagged}
-              disabled={tagging() || showArchive()}
-              class="btn-secondary gap-2 whitespace-nowrap"
-              classList={{ 'opacity-40 pointer-events-none': showArchive() }}
-              title="Tag untagged tasks in this view using your existing tag vocabulary"
-            >
-              <Sparkles size={14} classList={{ 'animate-pulse': tagging() }} /> {tagging() ? 'Tagging…' : 'Auto-tag'}
             </button>
             <button onClick={() => setShowFilters((v) => !v)} disabled={showArchive()} class="btn-secondary gap-2 whitespace-nowrap" classList={{ 'opacity-40 pointer-events-none': showArchive() }}>
               <SlidersHorizontal size={14} /> Filters
