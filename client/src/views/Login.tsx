@@ -46,7 +46,15 @@ export function Login() {
     setSubmitting(true);
     try {
       await api.auth.login(username().trim(), password());
-      navigate('/', { replace: true });
+      // FULL-DOCUMENT load, not navigate() — the session only exists as of this response.
+      // stores/index.ts creates ~19 module-scope resources at import time, so every one of
+      // them already fired and 401'd while this login screen was on show. A client-side
+      // route change mounts Shell against those *errored* resources; Solid rethrows the
+      // stored 'unauthenticated' error, the router transition never settles, and the app
+      // hangs on the SessionGate spinner until a manual refresh. Reloading re-creates the
+      // resources with the cookie present. This also matches the CI-Portal branch above,
+      // which is a top-level navigation and so was never affected.
+      window.location.assign('/');
     } catch {
       // The server returns a deliberately generic 401 — mirror it (no enumeration).
       showToast('Invalid username or password', 'error');
