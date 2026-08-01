@@ -293,7 +293,12 @@ export const config: Config = {
     // for the fixture portal / other providers. The token `iss` claim is validated
     // against the DISCOVERED doc's issuer, not this URL (see the interface note).
     issuer: process.env.CIPORTAL_ISSUER ?? 'https://hub.companionintelligence.com/api/auth',
-    clientId: process.env.CIPORTAL_CLIENT_ID, // must be registered with CI-Portal; no default
+    // Registered with CI-Portal as a first-party PUBLIC (PKCE, no secret) client —
+    // CI-Portal PR #444, `PUBLIC_CLIENTS` in apps/hono-app/.../createAuth.ts. This is a
+    // fixed first-party identity, not per-deployment config, so it defaults like
+    // `issuer` does rather than being an invented value every operator must discover.
+    // Overridable for a fixture portal or a differently-registered fork.
+    clientId: process.env.CIPORTAL_CLIENT_ID ?? 'ci-planning',
     clientSecret: process.env.CIPORTAL_CLIENT_SECRET,
     redirectUri: process.env.CIPORTAL_REDIRECT_URI ?? `${publicBaseUrl}/api/auth/ciportal/callback`,
     // AA0b — the memory connector's OWN callback (distinct from the login redirect;
