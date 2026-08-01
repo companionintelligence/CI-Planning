@@ -17,7 +17,7 @@ import {
   visibleExtent,
 } from '../lib/day-axis.js';
 import { setElementModal, calendarAxisState, toggleCalendarTop, toggleCalendarBottom } from '../stores/index.js';
-import { isAllDay, isTimed, isTaskBlock } from '../lib/overlay.js';
+import { isAllDay, isTimed, isTaskBlock, showsBlockLabel } from '../lib/overlay.js';
 import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js';
 import { localISODate, addDays } from '../lib/dates.js';
 
@@ -147,6 +147,9 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
   const conflict = () => props.placed.cols > 1;
   const done = () => ['completed', 'skipped'].includes(b().status);
   const isTask = () => isTaskBlock(b());
+  // Labelling is decided separately from interaction: a synced meeting shows its name
+  // but is not clickable (there is no task behind it to open).
+  const labelled = () => showsBlockLabel(b());
 
   // Clamp the block's [start, end) extent to the currently-visible portion of the
   // piecewise axis. `null` ⇒ the block sits entirely inside a collapsed region →
@@ -192,9 +195,10 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
         width: `calc(${100 / props.placed.cols}% - 2px)`,
         'background-color': `${color()}26`,       // ~15% alpha fill
         'border-color': color(),
-        // Containers wear a thick left edge in place of a visible label; tasks keep
-        // the slim accent so their (still-shown) title reads cleanly.
-        'border-left-width': isTask() ? '3px' : '15px',
+        // The thick edge STANDS IN for a missing label, so it applies only to chips
+        // that render no title. Anything showing its name keeps the slim accent, which
+        // also leaves the width for the text to read cleanly.
+        'border-left-width': labelled() ? '3px' : '15px',
       }}
       // The name always lives in the tooltip. For a container the thick left edge is
       // the affordance the owner asked for; the whole chip carries `title` so a hover
@@ -210,9 +214,10 @@ function BlockChip(props: { placed: Placed; day: string; state: () => AxisState 
       onClick={openTaskEditor}
       onKeyDown={handleKeyDown}
     >
-      {/* Task chips keep their label — a calendar of unlabeled tasks is unusable.
-          Containers render no body text; the thick colored left edge is the label. */}
-      <Show when={isTask()}>
+      {/* Tasks and meetings keep their label — a calendar of unlabeled entries is
+          unusable. Anonymous containers render no body text; the thick colored left
+          edge is the label. */}
+      <Show when={labelled()}>
         <div class="px-1.5 py-0.5">
           <div class="flex items-center gap-1 font-medium text-slate-100 truncate">
             <Show when={b().is_locked}><Lock size={9} class="text-slate-400 flex-shrink-0" /></Show>
