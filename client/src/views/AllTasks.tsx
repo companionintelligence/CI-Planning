@@ -1,7 +1,7 @@
 import { createSignal, createResource, createMemo, onCleanup, Show, For } from 'solid-js';
 import { useSearchParams } from '@solidjs/router';
-import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight, X } from 'lucide-solid';
-import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask } from '../stores/index.js';
+import { SlidersHorizontal, Search, Sparkles, Archive, ChevronDown, ChevronRight, X, CalendarRange } from 'lucide-solid';
+import { tasks, tags, taskFilter, setTaskFilter, refetchTasks, showToast, isRoutineTask, scheduledByTaskId, patternForTask, setPlanWeekModal } from '../stores/index.js';
 import { api, type Task } from '../lib/api.js';
 import { colorVar } from '../lib/pattern-meta.js';
 import { localISODate } from '../lib/dates.js';
@@ -219,22 +219,31 @@ export function AllTasks() {
         </div>
         <Show when={isTaskTab()}>
           <div class="flex items-center gap-2">
+            {/* Planning entry point. Lives here rather than in FOCUS (which is
+                today-only) — the Tasks view is where the week's backlog actually is. */}
+            <button
+              onClick={() => setPlanWeekModal({ open: true })}
+              class="btn-secondary gap-2 whitespace-nowrap"
+              title="Plan your week with the assistant"
+            >
+              <CalendarRange size={14} /> Plan my week
+            </button>
             <button
               onClick={autoTagUntagged}
               disabled={tagging() || showArchive()}
-              class="btn-secondary gap-2"
+              class="btn-secondary gap-2 whitespace-nowrap"
               classList={{ 'opacity-40 pointer-events-none': showArchive() }}
               title="Tag untagged tasks in this view using your existing tag vocabulary"
             >
               <Sparkles size={14} classList={{ 'animate-pulse': tagging() }} /> {tagging() ? 'Tagging…' : 'Auto-tag'}
             </button>
-            <button onClick={() => setShowFilters((v) => !v)} disabled={showArchive()} class="btn-secondary gap-2" classList={{ 'opacity-40 pointer-events-none': showArchive() }}>
+            <button onClick={() => setShowFilters((v) => !v)} disabled={showArchive()} class="btn-secondary gap-2 whitespace-nowrap" classList={{ 'opacity-40 pointer-events-none': showArchive() }}>
               <SlidersHorizontal size={14} /> Filters
             </button>
             {/* Archive — toggle to the done + thrown-away view. */}
             <button
               onClick={() => setShowArchive((v) => !v)}
-              class="btn-secondary gap-2"
+              class="btn-secondary gap-2 whitespace-nowrap"
               classList={{ 'border-primary text-primary': showArchive() }}
               title="View completed and thrown-away tasks"
             >
