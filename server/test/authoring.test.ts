@@ -163,6 +163,28 @@ describe('authorPlanOrder — deterministic path (planning_mode = basic)', () =>
     expect(rows[0].task_id).toBe(p1NoDue);
     expect(rows[1].task_id).toBe(p3WithDue);
   });
+
+  // Authoring must honor fill_order='new_today' for the same reason it honors the other
+  // two: placement skips its own fill_order branch whenever a daily_plan exists, so a
+  // value only the engine understood would be inert on every deliberately-planned day.
+  it('fill_order=new_today leads with tasks created today, deadline-first within each half', async () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET fill_order = 'new_today' WHERE owner_id = ?`).run(OWNER);
+    const oldUrgent = insertTask('Old but urgent', 3, DATE);
+    sqlite
+      .prepare(`UPDATE tasks SET created_at = ? WHERE id = ?`)
+      .run(new Date(Date.now() - 9 * 86_400_000).toISOString(), oldUrgent);
+    const freshLater = insertTask('Arrived today, later deadline', 3, '2026-12-31T00:00:00.000Z');
+    stage(oldUrgent, 0);
+    stage(freshLater, 1);
+
+    await authorPlanOrder(OWNER, DATE);
+
+    const rows = dailyPlanRows();
+    // Today's arrival leads even though the older task is the more urgent one — under
+    // the 'overdue' default (this suite's baseline) the order would be reversed.
+    expect(rows[0].task_id).toBe(freshLater);
+    expect(rows[1].task_id).toBe(oldUrgent);
+  });
 });
 
 describe('placeFlightPlan — reads daily_plan.position (§0 seam)', () => {

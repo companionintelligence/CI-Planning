@@ -9,7 +9,7 @@ import { currentOwnerId } from '../lib/context.js';
 import { addDays } from '../lib/dates.js';
 import { detectComboSuggestions, scopeLabel, CONFIDENCE_FLOOR, type ComboSuggestion, type ScopeKind } from '../services/calibration.js';
 import { graphData, graphContext, nodeStartTime, MemoryUnavailable, type MemoryNode } from '../connectors/memory.js';
-import { memoryConnectorAvailable } from '../services/memory.js';
+import { memoryConnectorAvailable, memoryWindowMs } from '../services/memory.js';
 
 interface TaskRow {
   id: string;
@@ -220,8 +220,8 @@ function eventLine(node: MemoryNode, startISO: string, people: string[], tz: str
 /**
  * A short, human-readable excerpt of the owner's memory graph for `date`, or '' when
  * the pull flag is off, the connector is unavailable, or anything throws. Prefers
- * 1–3 dated event lines from the day forward (windowed start-of-day → +48h so a
- * late-evening event just over the local-midnight boundary still surfaces); falls
+ * 1–3 dated event lines from the day forward (windowed start-of-day → +memory_window_days
+ * so a late-evening event just over the local-midnight boundary still surfaces); falls
  * back to a trimmed graphContext when there are no dated nodes. Never throws.
  */
 export async function memoryBriefExcerpt(owner: string, date: string): Promise<string> {
@@ -235,9 +235,11 @@ export async function memoryBriefExcerpt(owner: string, date: string): Promise<s
     // the EOD path passes tomorrow, so its events must read "Tomorrow:", not "Today:".
     const dayLabel = relativeDayLabel(date, tz);
     const { start } = utcDayBounds(date, tz);
-    // Window: the day's start through +48h, so a late-evening event that rolls just
-    // over the local-midnight boundary is still caught for the day's brief.
-    const to = new Date(Date.parse(start) + 48 * 3_600_000).toISOString();
+    // Window: the day's start through +memory_window_days (0147; default 2 = the 48h
+    // this used to hardcode), so a late-evening event that rolls just over the local-
+    // midnight boundary is still caught for the day's brief. Shares the setting with the
+    // suggest agent — one knob moves every memory pull surface together.
+    const to = new Date(Date.parse(start) + memoryWindowMs(owner)).toISOString();
     const graph = await graphData(owner, { from: start, to });
 
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));
