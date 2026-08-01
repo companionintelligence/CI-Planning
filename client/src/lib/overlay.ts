@@ -35,6 +35,20 @@ export const isTimed = (b: Pick<Block, 'all_day'>): boolean => !isAllDay(b);
 export const isTaskBlock = (b: Pick<Block, 'block_kind' | 'task_id'>): boolean =>
   b.block_kind === 'task' && !!b.task_id;
 
+/**
+ * Whether a block renders a VISIBLE title on the calendar, as opposed to standing in
+ * for one with a thick hover-reveal left edge.
+ *
+ * Deliberately separate from isTaskBlock, which governs *interaction* (only a real task
+ * chip opens the task editor). The label-hiding treatment was designed for anonymous
+ * time-block containers, but `meeting` is the one container kind anything actually
+ * writes — and every meeting is a real, externally-named event mirrored from a
+ * connected calendar. Hiding those names left the whole week rendering as blank
+ * rectangles once a Google account was connected.
+ */
+export const showsBlockLabel = (b: Pick<Block, 'block_kind' | 'task_id'>): boolean =>
+  isTaskBlock(b) || b.block_kind === 'meeting';
+
 /** The three tag axes the calendar overlay filters on (tags.kind, post Z/W2 revert). */
 export type TagAxis = 'direction' | 'intention' | 'category';
 export const TAG_AXES: TagAxis[] = ['direction', 'intention', 'category'];
