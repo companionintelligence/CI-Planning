@@ -73,7 +73,7 @@ export interface GoogleConfig {
   revokeUri: string;
   redirectUri: string;
   publicBaseUrl: string;
-  scopes: { gmail: string[]; calendar: string[] };
+  scopes: { identity: string[]; gmail: string[]; calendar: string[] };
   /** When true, /start requests the Gmail scope in addition to Calendar. */
   enableGmail: boolean;
   mcp: { command: string; timeoutMs: number; retries: number };
@@ -332,6 +332,12 @@ export const config: Config = {
     redirectUri: process.env.CP_OAUTH_REDIRECT_URI ?? `${publicBaseUrl}/api/oauth/google/callback`,
     publicBaseUrl,
     scopes: {
+      // OIDC identity. REQUIRED, not optional: the callback resolves the connected
+      // account solely from the id_token's `email` claim, and Google only returns an
+      // id_token when `openid` is requested. Without these two the token response
+      // carries no identity at all and every connect dies on
+      // `could_not_verify_account_identity` — the flow can never complete.
+      identity: ['openid', 'email'],
       gmail: ['https://www.googleapis.com/auth/gmail.readonly'],
       calendar: ['https://www.googleapis.com/auth/calendar.events'],
     },
