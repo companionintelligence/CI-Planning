@@ -54,6 +54,7 @@ interface StagedTask {
   due_at: string | null;
   scheduled_for: string | null; // AD1: START-day intent (owner-local YYYY-MM-DD)
   task_time: string | null;     // AD1: wall-clock HH:MM pin — placed exactly at (day, time)
+  created_at: string | null;    // UTC ISO — read only by the 'new_today' fill order
   tags: string[];
 }
 interface PrefsRow {
@@ -104,7 +105,7 @@ function tagsOf(taskId: string): string[] {
 function selectedStaged(owner: string, date: string): StagedTask[] {
   const rows = sqlite
     .prepare(
-      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.scheduled_for, t.task_time
+      `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.scheduled_for, t.task_time, t.created_at
          FROM flight_plan fp
          JOIN tasks t ON t.id = fp.task_id
          LEFT JOIN daily_plan dp
@@ -129,7 +130,7 @@ function stagedFromTaskIds(owner: string, ids: readonly string[]): StagedTask[] 
   if (ids.length === 0) return [];
   const rows = sqlite
     .prepare(
-      `SELECT id AS task_id, title, estimated_minutes, priority, due_at, scheduled_for, task_time
+      `SELECT id AS task_id, title, estimated_minutes, priority, due_at, scheduled_for, task_time, created_at
          FROM tasks WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
     )
     .all(owner, ...ids) as Omit<StagedTask, 'tags'>[];
@@ -319,6 +320,28 @@ function orderByOverdue(cands: StagedTask[]): StagedTask[] {
     (a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id),
   );
   return [...dated, ...undated];
+}
+
+/**
+ * Order the workday leftover fill by ARRIVAL: everything created on the owner's today —
+ * the Tasks tab's "New Today" set — takes the earliest slots, then the rest of the
+ * backlog follows in the standard deadline-first order.
+ *
+ * `todayISO` is the owner's ACTUAL today, deliberately not the `date` being placed:
+ * planning tomorrow must still give today's arrivals first claim, whereas keying off
+ * `date` would make the mode a silent no-op on every day but today (nothing is ever
+ * created on a future date).
+ *
+ * Membership matches the client's New Today partition — `created_at` converted to the
+ * OWNER's local day, never a raw UTC compare, or a task created late evening would fall
+ * out of its own bucket for anyone east/west of UTC. Within each half the existing
+ * overdue ordering still applies, so this layers on top of deadline-first rather than
+ * discarding it. A NULL `created_at` sorts with the older half (fail-safe: an undated
+ * row never displaces a task the owner can see is new).
+ */
+function orderByNewToday(cands: StagedTask[], todayISO: string, tz: string): StagedTask[] {
+  const isNew = (c: StagedTask) => !!c.created_at && localDateInTZ(c.created_at, tz) === todayISO;
+  return [...orderByOverdue(cands.filter(isNew)), ...orderByOverdue(cands.filter((c) => !isNew(c)))];
 }
 
 const insBlock = () =>
@@ -882,7 +905,11 @@ export function placeFlightPlan(
       const fillOrder = prefs?.fill_order ?? 'priority';
       const ordered = hasDailyPlan
         ? remaining // selectedStaged already ordered by daily_plan.position
-        : fillOrder === 'overdue' ? orderByOverdue(remaining) : orderForPlan(remaining);
+        : fillOrder === 'overdue' ? orderByOverdue(remaining)
+        // 'new_today': today's arrivals take the earliest slots (see orderByNewToday).
+        // Keyed on the owner's real today, not `date`, so planning ahead still honors it.
+        : fillOrder === 'new_today' ? orderByNewToday(remaining, ownerToday(owner), tz)
+        : orderForPlan(remaining);
       const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
       const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
       const r = placeIntoWindow(owner, ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });

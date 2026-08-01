@@ -20,6 +20,25 @@ import { writeAudit } from '../lib/audit.js';
 // else rather than silently storing an out-of-range value the UI can't represent.
 export const ALLOWED_RECURRENCE_HORIZON = new Set([7, 15, 30, 60, 90, 180]);
 
+/**
+ * Ingestion-window bounds (0147). These are free integers rather than a fixed set, so
+ * they're range-checked instead of allow-listed. Rejecting (422) rather than clamping is
+ * deliberate and matches the recurrence horizon: a silently-clamped value leaves the UI
+ * showing a number the server never stored.
+ *
+ * The ceilings are cost ceilings, not taste: `memory_window_days` widens a /graph/data
+ * fetch that the suggest agent turns into staged tasks, and `email_lookback_days` bounds
+ * how much mailbox a first ingest feeds through the extraction LLM.
+ */
+export const MEMORY_WINDOW_DAYS_RANGE = { min: 1, max: 30 } as const;
+export const EMAIL_LOOKBACK_DAYS_RANGE = { min: 1, max: 90 } as const;
+
+/** An integer inside [min,max]. Rejects NaN, floats, and numeric-looking junk. */
+function inRange(v: unknown, { min, max }: { min: number; max: number }): boolean {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= min && n <= max;
+}
+
 /** A plain (non-null, non-array) object — what `view_prefs` must be. */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -70,7 +89,16 @@ export type UpdatePrefsResult =
        *  inside the same call; see `assignExperimentArmIfNeeded` note below). */
       timeSenseNewlyEnabledUnassigned: boolean;
     }
-  | { ok: false; error: 'bad_recurrence_horizon' | 'view_prefs_not_object' | 'view_prefs_not_serializable' | 'not_found' };
+  | {
+      ok: false;
+      error:
+        | 'bad_recurrence_horizon'
+        | 'bad_memory_window'
+        | 'bad_email_lookback'
+        | 'view_prefs_not_object'
+        | 'view_prefs_not_serializable'
+        | 'not_found';
+    };
 
 /**
  * Validate + write a PATCH body (snake_case in, matching the REST wire format) to
@@ -88,6 +116,22 @@ export async function updatePrefs(ownerId: string, rawBody: Record<string, unkno
   const newHorizon = horizonPatched ? Number(body.recurrence_horizon_days) : null;
   if (horizonPatched && (newHorizon === null || !ALLOWED_RECURRENCE_HORIZON.has(newHorizon))) {
     return { ok: false, error: 'bad_recurrence_horizon' };
+  }
+
+  // Ingestion windows (0147). Range-checked here rather than at either transport so REST
+  // and GraphQL cannot drift, and normalized to a real number — `fromApi` is a blind key
+  // rename, so a string "5" would otherwise reach Drizzle and land in an INTEGER column.
+  if (body.memory_window_days !== undefined) {
+    if (!inRange(body.memory_window_days, MEMORY_WINDOW_DAYS_RANGE)) {
+      return { ok: false, error: 'bad_memory_window' };
+    }
+    body.memory_window_days = Number(body.memory_window_days);
+  }
+  if (body.email_lookback_days !== undefined) {
+    if (!inRange(body.email_lookback_days, EMAIL_LOOKBACK_DAYS_RANGE)) {
+      return { ok: false, error: 'bad_email_lookback' };
+    }
+    body.email_lookback_days = Number(body.email_lookback_days);
   }
 
   // Snapshot the old horizon + tz BEFORE the update so the caller can detect a

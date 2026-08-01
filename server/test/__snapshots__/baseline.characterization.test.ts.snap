@@ -1334,6 +1334,8 @@ exports[`behavior baseline — schema shape > preserves every table and column n
       "sleep_hours_per_week",
       "onboarded_at",
       "triality_enabled",
+      "memory_window_days",
+      "email_lookback_days",
     ],
     "table": "scheduling_prefs",
   },

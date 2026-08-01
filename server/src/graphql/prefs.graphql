@@ -88,6 +88,10 @@ type SchedulingPrefsType implements Node {
   autoFillWorkday: Boolean!
   conceptAutosurface: Boolean!
   conceptHorizonDays: Int!
+  # Ingestion windows (0147). Opposite directions on purpose: memory suggestions mirror
+  # UPCOMING events, so its window looks forward; an inbox is only read backwards.
+  memoryWindowDays: Int!            # days AHEAD the Companion Memory pull reads (1–30)
+  emailLookbackDays: Int!           # days BACK a Gmail ingest may reach (1–90)
   focusRitualEnabled: Boolean!
   hapticCuesEnabled: Boolean!
   ambientColorEnabled: Boolean!
@@ -157,6 +161,8 @@ input UpdateSchedulingPrefsInput {
   autoFillWorkday: Boolean
   conceptAutosurface: Boolean
   conceptHorizonDays: Int
+  memoryWindowDays: Int             # 1–30, else BAD_USER_INPUT
+  emailLookbackDays: Int            # 1–90, else BAD_USER_INPUT
   focusRitualEnabled: Boolean
   hapticCuesEnabled: Boolean
   ambientColorEnabled: Boolean

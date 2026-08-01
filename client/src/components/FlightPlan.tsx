@@ -24,7 +24,7 @@ import {
  *    Never places anything on the calendar.
  *  - **Auto Schedule**: always places the selected staged tasks — tag-matched into
  *    Plans, then direction windows, then leftover workday capacity ordered by the
- *    Priority / Over-Due toggle. Never proposes candidates.
+ *    Priority / Due Date / New Today toggle. Never proposes candidates.
  *
  * The Suggest / Schedule toggle has moved to the Day Overview header (Today.tsx).
  * Per-direction fill is configured in Settings → Schedule Patterns.
@@ -58,7 +58,7 @@ export function FlightPlan() {
   const selectedCount = () => items().filter((i) => i.selected).length;
 
   const fillOrder = () => prefs()?.fill_order ?? 'priority';
-  async function setFillOrder(o: 'priority' | 'overdue') {
+  async function setFillOrder(o: 'priority' | 'overdue' | 'new_today') {
     if (o === fillOrder()) return;
     try { await api.prefs.update({ fill_order: o }); refetchPrefs(); }
     catch (err) { showToast((err as Error).message, 'error'); }
@@ -386,12 +386,14 @@ export function FlightPlan() {
 
         {/* The action cluster drives the Plan tab; hidden while browsing Saved blocks. */}
         <Show when={tab() === 'plan'}>
-          {/* Priority / Due Date toggle — workday fill ordering. The "Due Date" value is
-              the existing `fill_order='overdue'` (Phase M places soonest-due first). */}
+          {/* Priority / Due Date / New Today toggle — workday fill ordering. "Due Date"
+              is the existing `fill_order='overdue'` (Phase M places soonest-due first);
+              "New Today" is `fill_order='new_today'`, which gives the Tasks tab's New
+              Today set the earliest slots and orders each half by due date. */}
           <div
             class="inline-flex rounded-full border border-border overflow-hidden text-[11px] flex-shrink-0"
             role="group"
-            title="Priority: place highest-priority tasks first. Due Date: place soonest-due tasks first."
+            title="Priority: place highest-priority tasks first. Due Date: place soonest-due tasks first. New Today: give tasks that arrived today the earliest slots."
           >
             <button
               onClick={() => setFillOrder('priority')}
@@ -403,6 +405,11 @@ export function FlightPlan() {
               class="px-2 py-0.5 transition-colors"
               classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'overdue', 'text-muted-foreground hover:text-foreground': fillOrder() !== 'overdue' }}
             >Due Date</button>
+            <button
+              onClick={() => setFillOrder('new_today')}
+              class="px-2 py-0.5 transition-colors"
+              classList={{ 'bg-primary text-primary-foreground': fillOrder() === 'new_today', 'text-muted-foreground hover:text-foreground': fillOrder() !== 'new_today' }}
+            >New Today</button>
           </div>
 
           {/* T-FP-1: empty → Fill Plan (propose candidates, never places); has items →

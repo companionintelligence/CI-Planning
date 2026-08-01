@@ -62,11 +62,11 @@ export function AllTasks() {
 
   // Header "N open" count — owner decision (AF-7 follow-up): a task created today is
   // open IMMEDIATELY, so the count spans the New Today AND Open sections (a task sits in
-  // exactly one, so no double-count). Scheduled/Routine stay excluded exactly as before —
-  // even when a scheduled task is sitting in New Today — and done/cancelled rows never
-  // count. The midnight rollover (New Today → Open) leaves this number unchanged.
+  // exactly one, so no double-count). Scheduled/Routine are excluded by the partition
+  // itself now that Scheduled outranks New Today, and done/cancelled rows never count.
+  // The midnight rollover (New Today → Open) leaves this number unchanged.
   // Derived from the shared `sections` memo (defined below) — no second partition run.
-  const activeTaskCount = () => headerOpenCount(sections(), isScheduledish);
+  const activeTaskCount = () => headerOpenCount(sections());
 
   // Tasks/Objectives/Habits/Routines/Timeblock tabs. Tasks & Habits list the backlog
   // (both exclude subtasks + recurrence instances — a series collapses to its template);
@@ -102,11 +102,12 @@ export function AllTasks() {
 
   // §E / AF-7: partition the (already filtered+sorted) Tasks-tab backlog into four
   // sections. Precedence: Routine wins (a routine task can also be scheduled — it still
-  // lands here); then New Today (anything created on the owner-local today — manual,
-  // quick-add, or an AF-3 auto-promoted suggestion); then scheduled/in-progress; then
-  // Open. New Today drains from Open/Scheduled so nothing is listed twice, and yesterday's
-  // New Today tasks fall into Open/Scheduled purely because the local day rolled over — no
-  // schema column, no nightly job (see lib/task-sections.ts).
+  // lands here); then scheduled/in-progress, so placing a task moves its card out of New
+  // Today ON PLACEMENT rather than at midnight; then New Today (anything created on the
+  // owner-local today and still unscheduled — manual, quick-add, or an AF-3 auto-promoted
+  // suggestion); then Open. Nothing is listed twice, and an unscheduled New Today task
+  // falls into Open purely because the local day rolled over — no schema column, no
+  // nightly job (see lib/task-sections.ts).
   const hasStatusFilter = () => !!taskFilter().status;
   // "Scheduled" = a real placement on the planner (any engine) OR a persisted scheduled/
   // in_progress status — so auto-placed tasks group correctly, not just manual ones.
