@@ -3,6 +3,7 @@ import { embed } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
 import { promotePossible } from '../services/possibles.js';
+import { EXCLUDE_REVIEWED_SQL, ONLY_REVIEWED_SQL, REVIEW_SOURCE_PARAMS } from '../services/review-gate.js';
 
 export interface PromoteResult {
   promoted: number;
@@ -43,12 +44,16 @@ export async function promotePossibles(
   owner: string = currentOwnerId(),
   opts: { claimLegacy?: boolean } = {},
 ): Promise<PromoteResult> {
+  // Review-gated sources (email) are excluded HERE, not at the producer: this sweeper
+  // runs unconditionally from nightly_grooming and promote_possibles, so an email
+  // suggestion merely left `pending` by ingest would still be promoted at 02:00.
   const pending = sqlite
     .prepare(
       `SELECT id, proposed_owner_id FROM possible_tasks
-        WHERE status = 'pending' AND (proposed_owner_id = ?${opts.claimLegacy ? ' OR proposed_owner_id IS NULL' : ''})`,
+        WHERE status = 'pending' AND (proposed_owner_id = ?${opts.claimLegacy ? ' OR proposed_owner_id IS NULL' : ''})
+          AND ${EXCLUDE_REVIEWED_SQL}`,
     )
-    .all(owner) as { id: string; proposed_owner_id: string | null }[];
+    .all(owner, ...REVIEW_SOURCE_PARAMS) as { id: string; proposed_owner_id: string | null }[];
 
   let promoted = 0;
   let failed = 0;
@@ -147,18 +152,37 @@ export interface DedupeResult {
  * so one owner's batch never compares against (or marks) another owner's rows.
  * AF-CU1: the nightly grooming call is owner-scoped too (the job fans out per owner);
  * omitting `opts.owner` keeps the historical whole-table sweep for ad-hoc use.
+ *
+ * `opts.scope` partitions the pool by review gate, and is REQUIRED once email
+ * suggestions linger as `pending`: an unpartitioned pass compares a fresh gcal/text
+ * possible against a lingering email one and — because rows are ordered `id ASC` and
+ * uuid7 is time-ordered — marks the NEWER, non-email row `duplicate`. That would be a
+ * silent regression for a producer this feature never meant to touch. Omitting `scope`
+ * keeps the historical whole-pool behaviour for ad-hoc callers.
  */
 export async function dedupePossibles(
-  opts: { threshold?: number; embedFn?: (text: string) => Promise<number[]>; owner?: string } = {},
+  opts: {
+    threshold?: number;
+    embedFn?: (text: string) => Promise<number[]>;
+    owner?: string;
+    scope?: 'auto' | 'review';
+  } = {},
 ): Promise<DedupeResult> {
   const threshold = opts.threshold ?? 0.92;
   const embedFn = opts.embedFn ?? embed; // injectable for tests (avoids cross-file module mocks)
+  const scopeSql =
+    opts.scope === 'auto' ? ` AND ${EXCLUDE_REVIEWED_SQL}` : opts.scope === 'review' ? ` AND ${ONLY_REVIEWED_SQL}` : '';
+  const scopeParams = opts.scope ? REVIEW_SOURCE_PARAMS : [];
   const pending = (
     opts.owner
       ? sqlite
-          .prepare("SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' AND proposed_owner_id = ? ORDER BY id ASC")
-          .all(opts.owner)
-      : sqlite.prepare("SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' ORDER BY id ASC").all()
+          .prepare(
+            `SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' AND proposed_owner_id = ?${scopeSql} ORDER BY id ASC`,
+          )
+          .all(opts.owner, ...scopeParams)
+      : sqlite
+          .prepare(`SELECT id, raw_title FROM possible_tasks WHERE status = 'pending'${scopeSql} ORDER BY id ASC`)
+          .all(...scopeParams)
   ) as { id: string; raw_title: string }[];
 
   if (pending.length < 2) return { compared: 0, duplicates: 0, available: true };

@@ -15,6 +15,7 @@ import { TimeBlocksPanel } from '../components/TimeBlocksPanel.js';
 import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
 import { parseTasksTab, type TasksTab } from '../lib/tasks-tabs.js';
 import { partitionTaskSections, headerOpenCount } from '../lib/task-sections.js';
+import { SuggestionsSection } from '../components/SuggestionsSection.js';
 
 export function AllTasks() {
   const [showFilters, setShowFilters] = createSignal(false);
@@ -335,6 +336,14 @@ export function AllTasks() {
               </select>
               <button class="btn-ghost text-xs" onClick={() => setTaskFilter({})}>Clear</button>
             </div>
+          </Show>
+
+          {/* Email review queue. Sits ABOVE the list branch (not inside it) so it is
+              equally visible when the owner has no tasks at all — otherwise the
+              "No tasks found." fallback would hide the entire queue. Renders nothing
+              when empty. Tasks view only; the Habits view is a different lens. */}
+          <Show when={view() === 'tasks'}>
+            <SuggestionsSection />
           </Show>
 
           {/* List — top-level only; recurring series collapse to their template.

@@ -111,7 +111,9 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
-        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new, ${r.possiblesUpdated} updated possibles; auto-promoted ${r.promoted} (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
+        // Email is review-gated: nothing is auto-promoted, so the log says "awaiting
+        // review" rather than claiming a promotion count that is now always 0.
+        log: `Processed ${r.itemsProcessed} emails → ${r.possiblesCreated} new suggestion(s) awaiting review, ${r.possiblesUpdated} updated (${r.duplicates} duplicate(s))${r.failed ? `, ${r.failed} failed` : ''}${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'ingest_gcal': {
@@ -206,7 +208,16 @@ async function execute(kind: string): Promise<JobOutcome> {
       // unscoped pass would let the first owner's run process (and be credited for)
       // every owner's rows. NULL-owner legacy rows: default owner's run only (claimLegacy).
       const owner = currentOwnerId();
-      const dedupe = await dedupePossibles({ owner });
+      // TWO dedupe passes, partitioned by review gate. Without the 'review' pass the
+      // email queue never gets semantic dedupe at all; without the partition, a lingering
+      // pending email row can mark a NEWER auto-pool row duplicate (rows sort id ASC and
+      // uuid7 is time-ordered). See dedupePossibles' docstring.
+      const dedupeAuto = await dedupePossibles({ owner, scope: 'auto' });
+      const dedupeReview = await dedupePossibles({ owner, scope: 'review' });
+      const dedupe = {
+        duplicates: dedupeAuto.duplicates + dedupeReview.duplicates,
+        available: dedupeAuto.available && dedupeReview.available,
+      };
       const overdue = surfaceOverdue(owner);
       const promote = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
       const blocked = autoBlockAfterPromote();

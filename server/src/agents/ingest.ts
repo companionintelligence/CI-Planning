@@ -7,6 +7,8 @@ import { currentOwnerId } from '../lib/context.js';
 import { newId } from '../lib/ids.js';
 import { logger } from '../lib/logger.js';
 import { promoteAllPending } from '../services/possibles.js';
+import { dedupePossibles } from './groom.js';
+import { broadcast } from '../routes/sse.js';
 
 export interface IngestResult {
   itemsProcessed: number;
@@ -27,10 +29,14 @@ function emptyResult(): IngestResult {
 }
 
 /**
- * AF-3 — hands-off pipeline: at the end of every producer batch, dedupe + promote ALL
- * of the owner's pending possibles into real tasks (services/possibles.ts). The Inbox
- * review step is gone; possible_tasks remains as the dedup/audit trail. Mutates
+ * AF-3 — hands-off pipeline: at the end of an AUTO-PROMOTED producer batch (calendar
+ * events, pasted text), dedupe + promote the owner's pending possibles into real tasks
+ * (services/possibles.ts). possible_tasks remains as the dedup/audit trail. Mutates
  * `result` with the batch counts.
+ *
+ * NOT used by ingestEmails — email is review-gated (services/review-gate.ts) and its
+ * possibles wait for the owner. promoteAllPending would skip them anyway; ingestEmails
+ * simply doesn't call this so its `promoted` count stays honestly 0.
  */
 async function promoteBatch(result: IngestResult): Promise<void> {
   const r = await promoteAllPending(currentOwnerId());
@@ -311,8 +317,19 @@ export async function ingestEmails(
   // Advance-after-commit: only after the loop's possibles are committed.
   if (newestProcessed) advanceGmailSince(ownerId, account, newestProcessed);
 
-  // AF-3: auto-promote the batch (dedupe → promote ALL pending) before returning.
-  await promoteBatch(result);
+  // Email is REVIEW-GATED (services/review-gate.ts): unlike every other producer these
+  // possibles are NOT promoted here — they stay `pending` for the owner to approve. An
+  // inbox is other people's agenda, so a message that merely mentions a commitment must
+  // not silently become a task. Dedupe still runs, scoped to the review pool so it can
+  // neither compare against nor mark the auto-promoted producers' rows.
+  const dd = await dedupePossibles({ owner: ownerId, scope: 'review' });
+  result.duplicates += dd.duplicates;
+
+  // Tell any open client that the review queue grew, so the 15-minute tick surfaces
+  // live rather than waiting for a refetch.
+  if (result.possiblesCreated > 0) {
+    broadcast(ownerId, 'possible:suggested', { count: result.possiblesCreated });
+  }
 
   logger.info('ingestEmails done', result);
   return result;
