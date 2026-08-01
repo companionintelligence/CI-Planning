@@ -21,8 +21,8 @@ describe('jobs', () => {
     sqlite
       .prepare(
         `INSERT INTO possible_tasks (id, raw_title, proposed_priority, source_kind, source_ref, confidence, status)
-         VALUES (uuid7(), 'Sign the contract', 2, 'gmail', 'm1#0', 0.9, 'pending'),
-                (uuid7(), 'Maybe look into X', 3, 'gmail', 'm2#0', 0.3, 'pending')`
+         VALUES (uuid7(), 'Sign the contract', 2, 'gcal', 'm1#0', 0.9, 'pending'),
+                (uuid7(), 'Maybe look into X', 3, 'gcal', 'm2#0', 0.3, 'pending')`
       )
       .run();
 
@@ -209,7 +209,7 @@ describe('ingestion jobs (require Ollama)', () => {
     await runJob('ingest_gmail');
     const run = lastRun('ingest_gmail');
     expect(run?.status).toBe('done');
-    const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gmail'").get() as { n: number };
+    const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gcal'").get() as { n: number };
     expect(possibles.n).toBeGreaterThan(0);
   });
 
@@ -220,7 +220,7 @@ describe('ingestion jobs (require Ollama)', () => {
       await runJob('ingest_gmail');
       const run = lastRun('ingest_gmail');
       expect(run?.log).toContain('skipped');
-      const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gmail'").get() as { n: number };
+      const possibles = sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE source_kind='gcal'").get() as { n: number };
       expect(possibles.n).toBe(0);
     } finally {
       config.google.mode = 'fixture';

@@ -48,7 +48,7 @@ function seedPossible(title: string, confidence: number): string {
     sqlite
       .prepare(
         `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id)
-         VALUES (uuid7(), ?, 'gmail', ?, ?, 'pending', ?) RETURNING id`,
+         VALUES (uuid7(), ?, 'gcal', ?, ?, 'pending', ?) RETURNING id`,
       )
       .get(title, title, confidence, OWNER) as { id: string }
   ).id;
@@ -136,16 +136,16 @@ describe('promotePossibles is unconditional (AF-3 — promotion facet deliberate
     expect(t).toEqual({ estimated_minutes: 45, scheduled_for: '2026-06-23', task_time: '14:30' });
   });
   it('poison isolation: one failing row is left pending, the rest sweep (no wrapping transaction)', async () => {
-    // An existing task already claims (gmail, poison#0) — the 0027 partial UNIQUE on
+    // An existing task already claims (gcal, poison#0) — the 0027 partial UNIQUE on
     // tasks(source_kind, source_ref) makes the swept INSERT throw for that row only.
     sqlite
-      .prepare(`INSERT INTO tasks (id, title, owner_id, status, source_kind, source_ref) VALUES (uuid7(), 'Claimed', ?, 'open', 'gmail', 'poison#0')`)
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, source_kind, source_ref) VALUES (uuid7(), 'Claimed', ?, 'open', 'gcal', 'poison#0')`)
       .run(OWNER);
-    seedPossible('Healthy item', 0.9); // helper: kind gmail, ref = title — no collision
+    seedPossible('Healthy item', 0.9); // helper: kind gcal, ref = title — no collision
     sqlite
       .prepare(
         `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, confidence, status, proposed_owner_id)
-         VALUES (uuid7(), 'Poison item', 'gmail', 'poison#0', 0.9, 'pending', ?)`,
+         VALUES (uuid7(), 'Poison item', 'gcal', 'poison#0', 0.9, 'pending', ?)`,
       )
       .run(OWNER);
 
