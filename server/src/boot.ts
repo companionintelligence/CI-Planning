@@ -5,7 +5,7 @@
 import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { buildApp } from './app.js';
-import { startCronJobs } from './jobs/index.js';
+import { startCronJobs, failInterruptedJobRuns } from './jobs/index.js';
 import { pushEnabled } from './lib/push.js';
 import { status as ollamaStatus } from './mcp/ollama.js';
 
@@ -52,6 +52,10 @@ void ollamaStatus().then((s) => {
   }
 });
 
+// Any job_run still marked `running` belongs to a process that no longer exists —
+// settle those before the scheduler starts so the Jobs view isn't claiming work is
+// in flight that nothing is doing.
+failInterruptedJobRuns();
 startCronJobs();
 
 // Phase H: VAPID keys are now auto-provisioned at boot (services/vapid-config.ts), so push
