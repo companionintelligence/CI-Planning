@@ -204,6 +204,23 @@ export class GoogleCalendarConnector extends BaseOAuth2Client {
   }
 
   /**
+   * Reap the MCP child this connector spawned, if any. Idempotent and non-throwing:
+   * getConnectors() hands out a fresh connector per sync cycle, so without this the
+   * 15-minute sync would leave a child process (holding a live bearer token in its
+   * env) behind on every run.
+   */
+  async close(): Promise<void> {
+    const s = this._session;
+    this._session = undefined;
+    if (!s) return;
+    try {
+      await s.close();
+    } catch (err) {
+      logger.warn('MCP session close failed', { provider: this.provider, account: this.account, err: (err as Error).message });
+    }
+  }
+
+  /**
    * List events via the MCP session, mapping the provider envelope into RemoteEvents.
    * Cancelled/removed events surface with `deleted: true` (R3) so WP5's incremental
    * delete-sweep has a real tombstone signal. ISO-UTC start/end and etag pass through
