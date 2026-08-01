@@ -82,6 +82,13 @@ export interface CalendarConnector {
   updateEvent(externalId: string, input: RemoteEventInput, ifMatch: string | null): Promise<RemoteEvent>;
   /** Throws EtagConflictError if ifMatch is non-null and doesn't match the remote etag. */
   deleteEvent(externalId: string, ifMatch: string | null): Promise<void>;
+  /**
+   * Release any transport the connector is holding (optional — connectors backed by
+   * plain HTTP have nothing to free). The Google connector holds an McpGoogleSession
+   * whose child process must be reaped after each sync cycle, otherwise every 15-minute
+   * run leaks one. Implementations MUST be idempotent and MUST NOT throw.
+   */
+  close?(): Promise<void>;
 }
 
 /**

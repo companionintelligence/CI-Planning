@@ -17,9 +17,24 @@ import type { RemoteEvent, RemoteEventInput } from '../connectors/base.js';
  * the same way (catch by name, fall back / skip rather than crash).
  */
 export class McpUnavailable extends Error {
-  constructor(message: string) {
+  /** Upstream HTTP-ish status when one could be determined (0/undefined when not). */
+  readonly status?: number;
+  /**
+   * The provider's CURRENT etag for the contested resource, when a 412 surfaced one.
+   *
+   * This exists because every provider error is funnelled through this class: callers
+   * only ever see an McpUnavailable, so anything not copied onto it is lost. The etag
+   * is what lets an outbound conflict converge — without it `agents/sync.ts` records
+   * the conflict but can never refresh the stored etag, so the next push re-conflicts
+   * with the same stale value and the row never resolves.
+   */
+  readonly freshEtag?: string | null;
+
+  constructor(message: string, opts: { status?: number; freshEtag?: string | null } = {}) {
     super(message);
     this.name = 'McpUnavailable';
+    if (opts.status !== undefined) this.status = opts.status;
+    if (opts.freshEtag !== undefined) this.freshEtag = opts.freshEtag;
   }
 }
 
@@ -152,6 +167,48 @@ function statusFromToolResult(result: unknown): number {
     }
   }
   return 0;
+}
+
+/**
+ * Best-effort extraction of the provider's current etag from a failed call, so a 412
+ * can be resolved instead of merely counted.
+ *
+ * Checked in order of trustworthiness: a structured `freshEtag`/`etag` property on the
+ * error, then the same keys inside an MCP tool-result payload, and finally a regex over
+ * whatever text we have (the stdio MCP servers commonly stringify the upstream Google
+ * error rather than modelling it). Returns null when nothing credible is present —
+ * callers must treat null as "unknown", never as "no etag".
+ */
+export function etagFromFailure(err: unknown, result?: unknown): string | null {
+  const fromObject = (v: unknown): string | null => {
+    if (!v || typeof v !== 'object') return null;
+    const o = v as Record<string, unknown>;
+    if (typeof o.freshEtag === 'string' && o.freshEtag) return o.freshEtag;
+    if (typeof o.etag === 'string' && o.etag) return o.etag;
+    return null;
+  };
+
+  const direct = fromObject(err) ?? fromObject(result) ?? fromObject(structuredOf(result));
+  if (direct) return direct;
+
+  const texts: string[] = [];
+  if (err && typeof err === 'object' && typeof (err as { message?: unknown }).message === 'string') {
+    texts.push((err as { message: string }).message);
+  }
+  if (result && typeof result === 'object') {
+    const content = (result as { content?: unknown }).content;
+    if (Array.isArray(content)) {
+      for (const c of content) {
+        if (c && typeof c === 'object' && 'text' in c) texts.push(String((c as { text: unknown }).text));
+      }
+    }
+  }
+  for (const t of texts) {
+    // Matches "etag":"\"abc\"" / etag: 'abc' / etag=abc — the quoting varies by server.
+    const m = t.match(/["']?(?:fresh)?etag["']?\s*[:=]\s*["']([^"']+)["']/i);
+    if (m?.[1]) return m[1];
+  }
+  return null;
 }
 
 /** Circuit-breaker phases. */
@@ -475,8 +532,11 @@ export class McpGoogleSession {
         // Tool-level error surfaced via isError → treat like an HTTP status.
         const toolStatus = statusFromToolResult(result);
         if (toolStatus) {
+          // Carry the etag off the result and onto the error — this is the only point
+          // where the payload is still in scope, and a 412's whole value is that etag.
           throw Object.assign(new Error(`MCP tool ${name} returned error status ${toolStatus}`), {
             status: toolStatus,
+            freshEtag: etagFromFailure(result, result),
           });
         }
         this.recordSuccess();
@@ -514,12 +574,22 @@ export class McpGoogleSession {
           continue;
         }
 
-        // Non-retryable (4xx other than 401, or exhausted retries).
+        // Non-retryable (4xx other than 401, or exhausted retries). Propagate the status
+        // and any fresh etag: this class is the ONLY error callers see, so whatever
+        // isn't copied here is gone (connectors/google.ts maps 412 → EtagConflictError
+        // and needs the etag to let the conflict converge).
         this.recordFailure();
+        const freshEtag = etagFromFailure(err);
         if (isRetryableStatus(status)) {
-          throw new McpUnavailable(`MCP tool ${name} failed after ${retries} retries (status ${status})`);
+          throw new McpUnavailable(`MCP tool ${name} failed after ${retries} retries (status ${status})`, {
+            status,
+            freshEtag,
+          });
         }
-        throw new McpUnavailable(`MCP tool ${name} failed (status ${status || 'unknown'}): ${(err as Error).message}`);
+        throw new McpUnavailable(
+          `MCP tool ${name} failed (status ${status || 'unknown'}): ${(err as Error).message}`,
+          { status, freshEtag },
+        );
       } finally {
         clearTimeout(timer);
       }

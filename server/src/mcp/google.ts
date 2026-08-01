@@ -30,6 +30,14 @@ export interface GoogleClient {
   readonly mode: 'fixture' | 'live';
   listEmails(opts?: { since?: string; limit?: number }): Promise<EmailMessage[]>;
   listEvents(opts?: { from?: string; to?: string; limit?: number }): Promise<CalendarEvent[]>;
+  /**
+   * Release the underlying transport. REQUIRED on the live path: each client owns an
+   * McpGoogleSession that spawns a child process holding a live bearer token in its
+   * env, and the scheduled ingest/sync jobs build a fresh client every cycle. Without
+   * a close on the interface those children can never be reaped — they accumulate for
+   * as long as the server runs. Idempotent, and a no-op for the fixture client.
+   */
+  close(): Promise<void>;
 }
 
 const _dir = dirname(fileURLToPath(import.meta.url));
@@ -72,6 +80,8 @@ export function createFixtureGoogleClient(): GoogleClient {
       if (opts.to) events = events.filter((e) => e.start <= opts.to!);
       return opts.limit ? events.slice(0, opts.limit) : events;
     },
+    // Nothing to release — fixtures are plain file reads.
+    async close() {},
   };
 }
 
@@ -124,6 +134,9 @@ export function createLiveGoogleClient(opts: LiveGoogleClientOpts = {}): GoogleC
       }));
       return o.limit ? mapped.slice(0, o.limit) : mapped;
     },
+    // Tears down the spawned MCP child. McpGoogleSession.close() is idempotent, so a
+    // caller closing in a finally block is safe even if no call ever spawned one.
+    close: () => session.close(),
   };
 }
 

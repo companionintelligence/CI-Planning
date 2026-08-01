@@ -424,17 +424,25 @@ export async function syncAll(): Promise<SyncResult[]> {
 
   const results: SyncResult[] = [];
   for (const connector of connectors) {
-    const r = await syncConnector(connector);
-    results.push(r);
-    broadcast(ownerId, 'sync:done', {
-      provider: r.provider,
-      account: r.account,
-      created: r.created,
-      updated: r.updated,
-      deleted: r.deleted,
-      conflicts: r.conflicts,
-      errors: r.errors,
-    });
+    try {
+      const r = await syncConnector(connector);
+      results.push(r);
+      broadcast(ownerId, 'sync:done', {
+        provider: r.provider,
+        account: r.account,
+        created: r.created,
+        updated: r.updated,
+        deleted: r.deleted,
+        conflicts: r.conflicts,
+        errors: r.errors,
+      });
+    } finally {
+      // Reap the connector's transport every cycle. getConnectors() builds fresh
+      // connectors per call, so a Google connector that spawned an MCP child would
+      // otherwise leak one process (holding a live bearer token) per sync — ~96/day
+      // at the 15-minute cadence. In a finally so a thrown sync still releases it.
+      await connector.close?.();
+    }
   }
 
   return results;
