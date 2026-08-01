@@ -119,7 +119,10 @@ export function SchedulePatternEditor(props: SchedulePatternEditorProps) {
                 />
               </button>
               <div>
-                <div class="text-sm text-foreground leading-tight">Fill work hours</div>
+                {/* The label names the direction this row is for. It read "work" for
+                    every direction, so the Home and Community rows both claimed to be
+                    about work hours — the subtext below already interpolated correctly. */}
+                <div class="text-sm text-foreground leading-tight capitalize">Fill {dir.name} hours</div>
                 <div class="text-[11px] text-muted-foreground capitalize">
                   Auto Schedule fills open {dir.name} windows with leftover tasks
                 </div>

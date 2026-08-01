@@ -8,7 +8,7 @@
  * platform where sqlite-vec can't load, forcing the vec path errors → falls back to
  * cosine → identical result.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { sqlite } from '../src/db/index.js';
 import { resetDb, createOwner, SECOND_OWNER_ID } from './helpers.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
@@ -28,6 +28,9 @@ const statusOf = (id: string): string =>
 
 describe('dedupePossibles (C3)', () => {
   beforeEach(() => { resetDb(); _setVecForTest(null); });
+  // The override is module-global: without this, the last test to force a path
+  // leaves it forced for every file sharing this worker.
+  afterEach(() => _setVecForTest(null));
 
   it('marks a near-duplicate pending possible, keeps distinct ones', async () => {
     const a = insertPossible('Buy milk');

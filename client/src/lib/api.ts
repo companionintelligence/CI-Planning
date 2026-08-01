@@ -293,6 +293,14 @@ export const api = {
         'GET', `/metrics/calibration?limit=${limit}`,
       ),
   },
+  // Review-gated suggestions (email). `?review=1` narrows to the sources that wait for
+  // approval; promote/dismiss are the pre-existing explicit endpoints.
+  possibles: {
+    list: () => request<{ possibles: PossibleTask[] }>('GET', '/possible-tasks?review=1'),
+    promote: (id: string, body: { title?: string; due_at?: string; priority?: number } = {}) =>
+      request<{ task: Task }>('POST', `/possible-tasks/${id}/promote`, body),
+    dismiss: (id: string) => request<{ ok: boolean }>('POST', `/possible-tasks/${id}/dismiss`),
+  },
   tasks: {
     list: (params?: Record<string, string>) => {
       const q = params && Object.keys(params).filter(k => params[k]).length
@@ -828,8 +836,8 @@ export const api = {
   owner: {
     setBackupEmail: (backupEmail: string | null) =>
       request<{ ok: boolean; backup_email: string | null }>('PATCH', '/owner/backup-email', { backup_email: backupEmail }),
-    updateProfile: (body: { name?: string; email?: string | null }) =>
-      request<{ ok: boolean; name: string; email: string | null }>('PATCH', '/owner/profile', body),
+    updateProfile: (body: { name?: string; email?: string | null; username?: string }) =>
+      request<{ ok: boolean; name: string; email: string | null; username: string | null }>('PATCH', '/owner/profile', body),
   },
 
   // In-app Google connection setup (admin-gated; GET 403s for non-admin credentials).
@@ -1444,6 +1452,24 @@ export interface CategoryPref {
 
 export interface CategoryPrefsResponse {
   prefs: Record<string, CategoryPref>;
+}
+
+// ── Possible tasks — the review-gated suggestion queue (email) ──
+/** An ingest-produced suggestion awaiting the owner's approval. Snake_case read shape. */
+export interface PossibleTask {
+  id: string;
+  raw_title: string;
+  raw_summary?: string | null;
+  proposed_due_at?: string | null;
+  proposed_priority?: number | null;
+  proposed_estimated_minutes?: number | null;
+  proposed_scheduled_for?: string | null;
+  proposed_task_time?: string | null;
+  source_kind?: string | null;
+  source_ref?: string | null;
+  confidence?: number | null;
+  status: string;
+  created_at: string;
 }
 
 // ── Connection-prefs (0145): per-source colour + stripe texture ──
