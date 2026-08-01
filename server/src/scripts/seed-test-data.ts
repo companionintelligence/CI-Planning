@@ -20,7 +20,7 @@ import { promotePossibles } from '../agents/groom.js';
 import { createFixtureGoogleClient, type EmailMessage, type CalendarEvent } from '../mcp/google.js';
 import { isAvailable, type ModelTier } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
-import { SYSTEM_OWNER } from '../lib/context.js';
+import { SYSTEM_OWNER, runWithOwner, ALL_SCOPES } from '../lib/context.js';
 
 const _dir = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(_dir, '..', '..', 'test', 'fixtures');
@@ -177,12 +177,14 @@ async function main() {
   if (fillerNeeded > 0) {
     const fillerTagId = (sqlite.prepare("INSERT OR IGNORE INTO tags (id, owner_id, name) VALUES (uuid7(), ?, 'seed-filler')").run(SYSTEM_OWNER),
       sqlite.prepare("SELECT id FROM tags WHERE owner_id = ? AND name='seed-filler'").get(SYSTEM_OWNER) as { id: string }).id;
+    // owner_id was a hardcoded `1` from the pre-0030 integer-id era — no owner row
+    // '1' exists post-uuidv7, so with foreign_keys=ON every filler insert would fail.
     const insert = sqlite.prepare(
-      `INSERT INTO tasks (id, title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (uuid7(), ?, ?, 1, 'agent', 'open', ?) RETURNING id`
+      `INSERT INTO tasks (id, title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (uuid7(), ?, ?, ?, 'agent', 'open', ?) RETURNING id`
     );
     const tx = sqlite.transaction((n: number) => {
       for (let i = 1; i <= n; i++) {
-        const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), 15 + (i % 4) * 15) as { id: string };
+        const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), SYSTEM_OWNER, 15 + (i % 4) * 15) as { id: string };
         // entity_tags is the sole task-tag store (CON-3 / migration 0041).
         sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)").run(r.id, fillerTagId);
       }
@@ -211,7 +213,10 @@ async function main() {
   }
 }
 
-main()
+// Owner-scoped writes (upsertPossible, promotePossibles) resolve the owner via
+// currentOwnerId(), which fails loud outside a runWithOwner scope — bind the system
+// owner + trusted scopes for the whole run, mirroring the cron/job dispatcher.
+runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => main())
   .then(() => process.exit(0))
   .catch((err) => {
     logger.error('seed failed', { err: (err as Error).message, stack: (err as Error).stack });
