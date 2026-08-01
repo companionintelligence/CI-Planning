@@ -1,8 +1,10 @@
 # Companion Planning — Architecture Reference
 
-**Status:** Living document · last updated 2026-07-30 · migration head `0143` (authoritative list: `server/src/db/migrations/index.ts`)
+**Status:** Living document · last updated 2026-08-01 · migration head `0146` in `main`; `0147` is **unreleased** on the current branch (§1.3) (authoritative list: `server/src/db/migrations/index.ts`)
 
 > This document describes the **as-built** system — what is actually running, not what was planned. For future phases, see [docs/ROADMAP.md](docs/ROADMAP.md).
+>
+> Anything that is finished but **not yet merged to `main`** is collected in **§1.3** and cross-referenced from the section it changes, so "as-built" keeps meaning `main`.
 
 ---
 
@@ -95,6 +97,90 @@ drives an optional per-element striped background. Full session record + owner d
   they never appear, so the row was inert) plus a brand-monochrome ↔ colourful-per-tag
   palette toggle. Tags view: a per-chip Category `<select>` on both tabs (writes
   `tag_categories`), alongside the existing drag-to-refile.
+
+## 1.3 UNRELEASED — ingestion windows, New Today precedence, New Today fill order (mig 0147)
+
+> **Not in `main`.** Everything in this section is complete and tested on the current
+> branch but has not merged. Sections §5.2, §6, §7, §7.1 and §8 carry a pointer back here.
+
+Three related changes to *how work arrives and gets ordered*, plus one real bug found on
+the way. The through-line is arrival time: two settings bound how much of each source a
+pull reads, one precedence change fixes what "arrived today" means in the UI, and one fill
+order lets arrival drive placement.
+
+**Ingestion windows (0147).** Two per-owner columns on `scheduling_prefs`, both surfaced in
+**Settings → Connections**:
+
+| Column | Range | Default | Direction | Bounds |
+|---|---|---|---|---|
+| `memory_window_days` | 1–30 | 2 | **ahead** | how far forward the Companion Memory pull reads |
+| `email_lookback_days` | 1–90 | 7 | **back** | how far back a Gmail ingest may reach |
+
+The two directions are deliberate and **not symmetric**: memory suggestions mirror
+*upcoming* events into tasks, so a backward memory window would stage work for things that
+already happened; an inbox is only ever read backwards.
+
+- The memory half is a **no-op upgrade** — default 2 is exactly the 48h that
+  `agents/memory-suggest.ts` (`MEMORY_WINDOW_HOURS`, now deleted) and
+  `agents/summarize.ts` (`memoryBriefExcerpt`) each hardcoded separately.
+  `memoryWindowMs(owner)` in `services/memory.ts` becomes the single authority both read,
+  so one setting moves the suggestion agent and the daily brief together. A non-positive
+  stored value is treated as unset, so a bad row can never collapse the window to zero and
+  silently stop all suggestions.
+- The email half is **not** a no-op. The `gmail_since` cursor had **no floor at all**, so a
+  first ingest — or the first run after a long outage — read as far back as the MCP Gmail
+  tool would return. `ingestEmails` now takes `since = max(watermark, now − N days)` via
+  `gmailLookbackFloor()`. On the healthy 15-minute cadence the watermark is always newer,
+  so the steady state is byte-identical. An explicit `opts.since` is a manual replay and
+  bypasses the floor deliberately — the caller has named the window.
+- **Validation lives in `services/prefs.ts`** (`MEMORY_WINDOW_DAYS_RANGE`,
+  `EMAIL_LOOKBACK_DAYS_RANGE`, `inRange`) so REST and GraphQL cannot drift, and it
+  **rejects** (422 / `BAD_USER_INPUT`) rather than clamping — the same rule as
+  `recurrence_horizon_days`, and for the same reason: a clamped value leaves the Settings
+  input showing a number the server never stored. Values are also `Number()`-normalized
+  there, because `fromApi` is a blind key rename and a string `"5"` would otherwise reach
+  Drizzle and land in an INTEGER column.
+- **Known trade-off:** the email floor applies always, not only on first run. A reconnect
+  after a long outage pulls the configured window and the watermark jumps past the older
+  backlog. That is the plain meaning of "look back N days", but it is a deliberate skip in
+  a pipeline otherwise engineered never to skip.
+
+**Tasks-tab precedence.** Membership order becomes **Routine › Scheduled › New Today ›
+Open** (was Routine › New Today › Scheduled › Open) in `client/src/lib/task-sections.ts`
+`partitionTaskSections`. Scheduling a task the same day it was created now moves its card
+to Scheduled *immediately*; previously it sat in New Today until local midnight, so the
+placement produced no visible movement and the section read as "created today" rather than
+"not yet dealt with". New Today now means **arrived today and still needs a decision**.
+The unscheduled New Today → Open rollover at local midnight is unchanged and still pure
+derivation — no column, no job. `headerOpenCount`'s `isScheduled` parameter is **dropped**:
+it existed only to strip scheduled tasks back out of New Today under the old order, and the
+partition now drains them first — the header NUMBER is unchanged by the swap.
+
+**New Today fill order.** `fill_order` gains a third value, `new_today`, alongside Priority
+and Due Date in the flight-plan toggle. Today's arrivals take the earliest slots and each
+half stays deadline-first, so it **layers on** `overdue` rather than replacing it. Keyed on
+the owner's **real today**, not the date being placed — otherwise planning ahead would make
+the mode a silent no-op, since nothing is ever created on a future date. Membership matches
+the client's New Today partition (`created_at` converted to the owner's local day, never a
+raw UTC compare); a NULL `created_at` sorts with the older half, so an undated row never
+displaces a task the owner can see is new.
+
+Wired into **both** ordering paths, which is necessary rather than thorough:
+`placeFlightPlan` skips its own `fill_order` branch whenever a `daily_plan` exists for the
+day (`engine/autoplan.ts` `orderByNewToday`), so a value only the engine understood would
+be inert on exactly the days the owner planned deliberately; `deterministicIndices`
+(`agents/plan.ts`) gains a matching band — after theme/memory, before deadline/priority —
+which is the same parity the existing two values already have.
+
+**Bug: `CURRENT_TIMESTAMP` parsed as local time.** `tasks.created_at` is defaulted by
+SQLite's `CURRENT_TIMESTAMP`, which stores `'YYYY-MM-DD HH:MM:SS'` — a UTC instant with
+**no zone designator** that `new Date()` parses as LOCAL. Behind UTC that shifted every
+timestamp by the server offset, so a task created after ~17:00 local never appeared in New
+Today on the day it actually arrived; it showed up the next day. **Every task row in a real
+database uses this spelling.** Fixed at both ends with the identical rule so the Tasks tab
+and the new fill order cannot disagree about the set: `sqliteUtcToISO()` (`lib/tz.ts`)
+folded into `localDateInTZ`, and the same normalization in `isCreatedOnDay` client-side. A
+no-op for the proper ISO strings every other caller passes.
 
 ---
 
@@ -270,7 +356,7 @@ erDiagram
 | `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
 | `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
 | `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs`. `category` rows are the six Balance-dimension hues (0134) | 0039, 0069, 0097, 0134 |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139) | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139 |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139), **UNRELEASED (§1.3, 0147):** the ingestion windows `memory_window_days` (1–30, default 2 — how far AHEAD the memory pull reads) and `email_lookback_days` (1–90, default 7 — how far BACK a Gmail ingest may reach) | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139, *0147* |
 | `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
 | `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
 | `reminders` | Scheduled reminders — fired exactly once by the 1-min dispatcher | 0044 |
@@ -312,7 +398,9 @@ Two clocks drive the day:
 
 **Anti-thrash rules:** never move an in-progress block, never move user-locked or recently-moved blocks (`last_moved_at`), debounce bursts into one pass. On a big disruption the fast clock surfaces a single "Re-plan with AI?" nudge — never auto-calls the LLM.
 
-**Review job** (`review_day`, nightly 01:00): scans for planned task-blocks whose end time passed un-started (locked pins excluded — a deliberate pin is not "missed work"). Low-priority tasks (`priority ≥ 3`) are auto-deferred with a +1/3/7-day backoff; high-priority tasks (`priority ≤ 2`) are surfaced as `status='missed'`. Before the stale block is hard-deleted, `daily_plan.outcome` is stamped `'deferred'` or `'missed'` so plan-outcome history isn't lost (the N4 lossy-slip fix).
+**Leftover fill order** (`scheduling_prefs.fill_order`). Applies to Pass 2b — the workday fallback fill — and **only when the day has no authored `daily_plan`**, since an authored day already encodes its sequence. `'priority'` places P1 first then by deadline; `'overdue'` (the authoring default) places soonest-due first then by priority. **UNRELEASED (§1.3):** a third value `'new_today'` gives the Tasks tab's New Today set the earliest slots with each half still deadline-first, wired into both `engine/autoplan.ts` (`orderByNewToday`) and `agents/plan.ts` (`deterministicIndices`) so it is not inert on deliberately-planned days.
+
+**Review job** (`review_day`, nightly 01:00): scans for planned task-blocks whose end time passed un-started (locked pins excluded — a deliberate pin is not "missed work"). **Every priority now auto-defers** with a +1/3/7-day backoff by prior `defer_count` — `scheduled_for` moves out, `status` returns to `open`, and the stale block is consumed. The old hybrid that parked `priority ≤ 2` tasks as `status='missed'` for manual review was **retired by owner ruling on 2026-07-20** (the Missed review surface only arrived in #409, so years of P1/P2 tasks silently starved Fill/Auto in a black hole); the same run also sweeps any still-stuck `status='missed'` one-offs back to `open`. The **`daily_plan.outcome` stamp keeps the priority split** (`'missed'` for P≤2, `'deferred'` for P≥3) before the stale block is dropped, so the nightly aggregates can still distinguish an important miss from a routine slip (the N4 lossy-slip fix). Owners on `trust_mode='hands_off'` get each deferred/revived task booked into its new day via `placeStartAnchoredTask` (best-effort — a placement failure never fails the sweep); Suggest-mode owners get it back as `open` with a dated `scheduled_for` and nothing placed. Same engine behind the top-bar sweep button (`POST /api/review/sweep`).
 
 ---
 
@@ -345,7 +433,9 @@ sequenceDiagram
     participant DB as SQLite
 
     Cron->>Ing: ingest_gcal (every 30m) / ingest_gmail (every 15m)
-    Ing->>MCP: fetch deltas since last sync cursor
+    Ing->>DB: read (owner, google, account) sync cursor
+    Note over Ing,DB: UNRELEASED §1.3 — floor the Gmail cursor:<br/>since = max(watermark, now − email_lookback_days)
+    Ing->>MCP: fetch deltas since that instant
     MCP-->>Ing: events / messages
     loop each item
         Ing->>LLM: extract action items (small model)
@@ -355,19 +445,21 @@ sequenceDiagram
 
     Note over Cron,Mem: Memory layer (memory_pull_enabled) ─────────
     Cron->>Ing: memory_suggest (every 6h)
-    Ing->>Mem: pull next-48h graph (read-only)
+    Note over Ing,Mem: window = now .. now + 48h<br/>UNRELEASED §1.3 — now + memory_window_days,<br/>via the shared memoryWindowMs(owner)
+    Ing->>Mem: pull upcoming graph (read-only)
     Mem-->>Ing: events + participants
     Ing->>DB: stage possible_tasks (idempotent on source_ref)
 
     Note over Cron,DB: Nightly ──────────────────────────────────
     Cron->>DB: reset_routines (00:00) — reopen routine checklists
     Cron->>DB: freeze_stars (00:20) — snapshot yesterday's five-star score
-    Cron->>DB: review_day (01:00) — defer or surface missed tasks
+    Cron->>DB: review_day (01:00) — auto-defer missed tasks (+1/3/7 backoff)
     Cron->>DB: calibrate_estimates (01:30) — compute bias ratio (nightly since 0107)
+    Cron->>LLM: nightly_grooming (02:00) — embedding dedupe + overdue bump + straggler promote
     Cron->>DB: snapshot_db (02:00) — point-in-time SQLite backup
     Cron->>Mem: push_memory (02:00) — one-way push of completed/habit/reflection events
-    Cron->>DB: auto_schedule (03:00) — re-place tomorrow's flight-plan
-    Cron->>LLM: nightly_grooming (02:00) — embedding dedupe + overdue bump + straggler promote
+    Cron->>DB: generate_recurrences (02:45) — materialize RRULE instances
+    Cron->>DB: auto_schedule (03:00) — propose flight-plan candidates + sweep missed blocks
 
     Cron->>DB: purge_objectives (hourly) — reap archived objectives past purge_after
 
@@ -382,21 +474,21 @@ sequenceDiagram
 |---|---|---|
 | `fire_reminders` | every 1m | Fire due reminders exactly once (SSE + Web Push) |
 | `sync_calendar` | every 15m | Two-way Google Calendar sync — meeting mirror + placement (Phase J) |
-| `ingest_gmail` | every 15m | Extract possible-task candidates from Gmail messages (review-gated — they wait for approval, see services/review-gate.ts) |
+| `ingest_gmail` | every 15m | Extract possible-task candidates from Gmail messages (review-gated — they wait for approval, see services/review-gate.ts). **UNRELEASED (§1.3):** the `since` watermark is floored at `now − email_lookback_days`, so a first ingest or a post-outage run can't replay months of mail through the extraction LLM |
 | `ingest_gcal` | every 30m | Extract possible-task candidates from Calendar events |
-| `memory_suggest` | every 6h | Pull the next-48h CI-Server memory graph, stage events as Inbox suggestions (AA1; no-op unless `memory_pull_enabled` + connector creds) |
+| `memory_suggest` | every 6h | Pull the upcoming CI-Server memory graph, stage events as suggestions (AA1; no-op unless `memory_pull_enabled` + connector creds). Window is a hardcoded 48h — **UNRELEASED (§1.3):** becomes `memory_window_days`, shared with the daily brief via `memoryWindowMs(owner)` |
 | `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
 | `purge_objectives` | hourly | Reap archived objectives past their `purge_after` deadline — the ONLY path to permanent removal (0130). **Global, not per-owner** — deliberately absent from `OWNER_SCOPED_KINDS`, since a purge deadline is an absolute wall-clock instant, not an owner-local one |
 | `reset_routines` | daily 00:00 | Reopen completed Routine checklist tasks for the new day (AC) |
 | `freeze_stars` | daily 00:20 | Snapshot yesterday's five-star score into `daily_recap` (owner-tz day; idempotent, first-freeze-wins on `frozen_at`) |
-| `review_day` | daily 01:00 | Defer / surface missed planned tasks |
+| `review_day` | daily 01:00 | Auto-defer missed planned tasks with the +1/3/7-day backoff (every priority, since the 2026-07-20 ruling — see §6), revive stuck `status='missed'` rows, and stamp `daily_plan.outcome` before dropping the stale block |
 | `calibrate_estimates` | daily 01:30 | Compute personal estimate bias ratio — **moved here from Sun 04:00 by 0107** (`UPDATE scheduled_jobs SET cron = '30 1 * * *'`, applied only to rows still on the old weekly cron so an operator-customized one is never clobbered) |
 | `promote_possibles` | — (manual only) | Unconditionally promote any pending inbox stragglers into Tasks, then hands-off auto-block — cron row retired by 0118 (AF-3: producers auto-promote at ingestion; `nightly_grooming` subsumes the sweep) |
 | `nightly_grooming` | daily 02:00 | Per owner: embedding-dedupe pending possibles · bump overdue open-task priority · unconditionally promote pending stragglers · hands-off auto-block the newly promoted |
 | `snapshot_db` | daily 02:00 | Write a point-in-time SQLite backup |
 | `push_memory` | daily 02:00 | One-way push of completed tasks / habit occurrences / reflections to CI-Server as `POST /v1/events` (AA4; gated by `memory_sync_enabled` + per-entity scope toggles; watermarked by `memory_last_synced_at`) |
 | `generate_recurrences` | daily 02:45 | Materialize recurring Task/Habit instances; flag missed habits |
-| `auto_schedule` | daily 03:00 | Re-place flight-plan items for the next day |
+| `auto_schedule` | daily 03:00 | **Proposes** open-task candidates into the flight-plan (`fillFlightPlanCandidates`) and sweeps blocks whose planned time passed un-started (`sweepMissedBlocks` → mark `skipped`, revert the task to `open`, re-stage at the END of the plan), then `requestReplan('missed')`. It does **not** pack the backlog — Auto stopped doing that in Phase G; placement is user-triggered via `POST /api/auto/run` |
 | `prune_sync_events` | daily 03:00 | Trim old `sync_events` rows beyond retention window |
 | `enrich_tasks` | daily 03:20 | Per owner: fill blank description / direction / categories on thin tasks from Companion Memory (fill-blanks-only; no-op when memory is off) (0136) |
 | `calibrate_triality` | Mon 03:50 | Re-tune the per-slot Triality weights from 90 days of `triality_log` outcomes — batch, each weight clamped to ½×–2× of its default and then renormalized so the slot's weights still sum to the default total, and inert below 20 decided rows for a slot. **Owner-scoped** (in `OWNER_SCOPED_KINDS`): weights are per-owner by construction, and pooling one owner's feedback into another's ranking is ruled out absolutely (0143) |
@@ -411,11 +503,11 @@ sequenceDiagram
 | **Today** | `/` | Single header row (Today's Brief · Focus bullseye · Note, each a popover) + FAB · collapsible DUE card · day-stars tally · PLANNER (8h/expand, drag-reorder; Alt-drag = free placement) · Flight-plan staging · ElementWizard drawer (AC/AD) |
 | **Focus** | `/focus` | Today-only single-column list (upcoming / collapsed past); Time-Sense hero + Focus Ritual launcher; header mirrors Today's card (Brief · Focus goals · day note) + FAB; reminders card offers only today's tasks |
 | **Calendar** | `/calendar` | Day / week / month grid · five-star heatmap + note dots · Weekly Review panel (week toggle) · overlay filter (Direction + **Category**, brand ↔ colourful palette toggle — §1.2) · "Schedule Day" (fill-then-place intake) |
-| **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies; task-chip merged direction-icon/done toggle; Routine tasks grouped by routine with end-of-day archive (AC). Hosts the **Objectives** tree (Goal › Project › Objective) and **Routines** as URL-synced **tabs** (`?focus`, AF), plus a date-derived **New Today** section for auto-promoted suggestions |
+| **Tasks** | `/tasks` | Filterable backlog with priorities, tags, notes, subtasks, dependencies; task-chip merged direction-icon/done toggle; Routine tasks grouped by routine with end-of-day archive (AC). Hosts the **Objectives** tree (Goal › Project › Objective) and **Routines** as URL-synced **tabs** (`?focus`, AF), plus a date-derived **New Today** section for auto-promoted suggestions. Section membership is pure derivation (`lib/task-sections.ts`), precedence Routine › New Today › Scheduled › Open — **UNRELEASED (§1.3):** Scheduled moves ahead of New Today, so placing a task retires its New Today card on placement rather than at midnight |
 | **Balance** | `/balance` | Core-Dimension satisfaction/importance bars + Balance Index; each dimension's "N open" button opens a client-joined modal of its related open tasks (§1.2) |
 | **Tags** | `/tags` | direction / intention / category taxonomy; weighted cloud; mute / delete; per-chip **Category** select on both tabs (§1.2) |
 | **Jobs** | `/jobs` | Scheduled job registry; run any job on demand, or **Run all**; execution log |
-| **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · Google/CI-memory connections · Profile · Accounts (operator-only, AG) · export/import · recurrence duration · Clear Date Range |
+| **Settings** | `/settings` | Work hours · model picker · Web Push opt-in · MCP connections · Google/CI-memory connections · Profile · Accounts (operator-only, AG) · export/import · recurrence duration · Clear Date Range. **UNRELEASED (§1.3):** Connections also carries the two ingestion windows — a **Look ahead** field under the memory-pull toggle, and an **Email suggestions** card with **Look back** (Google-visibility-gated like the rest of that surface) |
 
 The nine routed views are `/`, `/focus`, `/calendar`, `/tasks`, `/tags`, `/priorities`, `/balance`, `/settings`, `/jobs` (`client/src/App.tsx`), plus the unauthenticated `/login` and `/reset-password`. Legacy paths `/inbox`, `/objectives`, `/patterns` **redirect** into their host tab — the Inbox surface was retired in Phase AF (ingested `possible_tasks` auto-promote, no manual triage), and Objectives/Routines became Tasks-view tabs. (`/routines` is **not** a route and never redirected — it 404s.) `/priorities` (wizard) and `/balance` (dashboard) are the life-priorities layer, §1.1.
 
