@@ -344,7 +344,7 @@ sequenceDiagram
     participant LLM as Ollama
     participant DB as SQLite
 
-    Cron->>Ing: ingest_gcal / ingest_gmail (every 30m)
+    Cron->>Ing: ingest_gcal (every 30m) / ingest_gmail (every 15m)
     Ing->>MCP: fetch deltas since last sync cursor
     MCP-->>Ing: events / messages
     loop each item
@@ -382,7 +382,7 @@ sequenceDiagram
 |---|---|---|
 | `fire_reminders` | every 1m | Fire due reminders exactly once (SSE + Web Push) |
 | `sync_calendar` | every 15m | Two-way Google Calendar sync — meeting mirror + placement (Phase J) |
-| `ingest_gmail` | every 30m | Extract possible-task candidates from Gmail messages |
+| `ingest_gmail` | every 15m | Extract possible-task candidates from Gmail messages (review-gated — they wait for approval, see services/review-gate.ts) |
 | `ingest_gcal` | every 30m | Extract possible-task candidates from Calendar events |
 | `memory_suggest` | every 6h | Pull the next-48h CI-Server memory graph, stage events as Inbox suggestions (AA1; no-op unless `memory_pull_enabled` + connector creds) |
 | `tag_tasks` | hourly | Auto-tag every untagged open task for the owner |
