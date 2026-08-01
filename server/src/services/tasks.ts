@@ -17,6 +17,7 @@ import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
 import { isMotivation } from '../agents/rubric.js';
 import { classifyMotivationKeyword } from './motivation.js';
+import { truncateSeriesFrom } from '../engine/series-scope.js';
 
 /**
  * Task CRUD orchestration (Phase W step 3.1) — extracted from routes/tasks.ts so
@@ -579,7 +580,13 @@ export async function updateTask(
   return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds, generated };
 }
 
-export type DeleteTaskResult = { ok: true; task: TaskRow; cancelledBlockIds: string[] } | { ok: false; error: 'not_found' };
+export type DeleteTaskResult =
+  | { ok: true; task: TaskRow; cancelledBlockIds: string[]; seriesTruncated?: boolean }
+  | { ok: false; error: 'not_found' };
+
+/** Recurring instances only: 'instance' cancels just this occurrence; 'following' also
+ *  truncates the series so nothing recurs from this day onward. */
+export type DeleteTaskScope = 'instance' | 'following';
 
 /**
  * Soft-delete a task (status → 'cancelled'): drops its auto reminders, settles its
@@ -588,7 +595,7 @@ export type DeleteTaskResult = { ok: true; task: TaskRow; cancelledBlockIds: str
  * GC its parent's objective when now empty; and recompute any objective still
  * linking it so progress doesn't count the abandoned task.
  */
-export async function deleteTask(ownerId: string, id: string): Promise<DeleteTaskResult> {
+export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskScope = 'instance'): Promise<DeleteTaskResult> {
   const [task] = await db
     .update(tasks)
     .set({ status: 'cancelled' })
@@ -607,8 +614,16 @@ export async function deleteTask(ownerId: string, id: string): Promise<DeleteTas
   dropSourceObjective(id, ownerId);
   if (task.parentId) unpromoteIfEmpty(task.parentId, ownerId);
   recomputeObjectivesForTask(id);
+  // 'following': truncate the series at this occurrence so it stops recurring from here.
+  // Done AFTER the row is cancelled so the clicked occurrence settles the same way it
+  // would under 'instance' — the truncation only governs what comes after it.
+  let seriesTruncated = false;
+  if (scope === 'following' && task.recurrenceParentId && task.occurrenceDate) {
+    const r = truncateSeriesFrom(ownerId, 'tasks', task.recurrenceParentId, task.occurrenceDate);
+    seriesTruncated = r.ok;
+  }
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `task:${id}` });
-  return { ok: true, task, cancelledBlockIds };
+  return { ok: true, task, cancelledBlockIds, seriesTruncated };
 }
 
 export type PromoteToHabitResult = { ok: true; task: TaskRow } | { ok: false; error: 'not_found' };

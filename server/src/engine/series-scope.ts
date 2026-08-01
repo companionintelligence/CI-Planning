@@ -106,3 +106,73 @@ export function truncateSeriesFrom(
 
   return { ok: true, removed: dropped.length, templateRemoved: false };
 }
+
+export interface ForkResult {
+  ok: boolean;
+  /** The new template carrying the series from `fromLocalDate` onward. */
+  newTemplateId?: string;
+  reason?: 'not_found' | 'not_recurring' | 'bad_rule';
+}
+
+/**
+ * Fork a series at `fromLocalDate` — the edit counterpart of the delete truncation.
+ *
+ * The original template is bounded to stop the day before and keeps every earlier
+ * occurrence; a COPY of it becomes a new, independent template anchored at the split,
+ * which the caller then applies the user's edits to. That is what makes "this and all
+ * following" mean what it says: the edit lands only on the new half.
+ *
+ * Columns are copied via PRAGMA rather than a hand-written list. A hand-list silently
+ * stops copying anything added later — the new half would quietly lose fields — and this
+ * table is wide enough that nobody would notice for a long time.
+ */
+export function forkSeriesAt(
+  owner: string,
+  table: SeriesEntity,
+  templateId: string,
+  fromLocalDate: string,
+  newId: string,
+): ForkResult {
+  const tpl = sqlite
+    .prepare(`SELECT * FROM ${table} WHERE id = ? AND owner_id = ?`)
+    .get(templateId, owner) as Record<string, unknown> | undefined;
+  if (!tpl) return { ok: false, reason: 'not_found' };
+  if (!tpl.recurrence_rule) return { ok: false, reason: 'not_recurring' };
+
+  // The forward half keeps the ORIGINAL rule (the user may or may not also be changing
+  // it); only its anchor moves to the split day. Validate before mutating anything.
+  const rule = String(tpl.recurrence_rule);
+  const tz = ownerTimezone(owner);
+  if (!boundRuleBefore(rule, fromLocalDate, tz).ok) return { ok: false, reason: 'bad_rule' };
+
+  const cols = (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
+    .map((c) => c.name)
+    .filter((c) => c !== 'id');
+
+  // Anchor the new series at the split day, preserving the original wall-clock time.
+  const dtstart = String(tpl.recurrence_dtstart ?? tpl.start_at ?? '');
+  const timePart = dtstart.slice(10); // 'THH:MM:SS.sssZ'
+  const overrides: Record<string, unknown> = {
+    recurrence_dtstart: timePart ? `${fromLocalDate}${timePart}` : dtstart,
+    recurrence_parent_id: null,
+    occurrence_date: null,
+    // EXDATEs belong to the old half's calendar; carrying them forward would re-skip
+    // days the owner never excluded in the new series.
+    recurrence_exdates: null,
+  };
+
+  const values = cols.map((c) => (c in overrides ? overrides[c] : (tpl[c] ?? null)));
+  sqlite
+    .prepare(`INSERT INTO ${table} (id, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`)
+    .run(newId, ...(values as never[]));
+
+  // Only now truncate the original — if the insert above throws, the old series is
+  // still intact rather than silently cut short with no replacement.
+  const t = truncateSeriesFrom(owner, table, templateId, fromLocalDate);
+  if (!t.ok) {
+    sqlite.prepare(`DELETE FROM ${table} WHERE id = ?`).run(newId);
+    return { ok: false, reason: t.reason ?? 'bad_rule' };
+  }
+
+  return { ok: true, newTemplateId: newId };
+}

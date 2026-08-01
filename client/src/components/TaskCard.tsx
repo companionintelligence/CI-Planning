@@ -1,7 +1,7 @@
 import { createSignal, Show, For, createResource } from 'solid-js';
 import { ChevronRight, ChevronDown, Plus, Pencil, Trash2, Repeat, Flame, SkipForward, CalendarDays, Rocket, X, Shapes, Target, Check, Sparkles } from 'lucide-solid';
-import { type Task, api } from '../lib/api.js';
-import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, setCloseRitualTask } from '../stores/index.js';
+import { type Task, type RecurringScope, api } from '../lib/api.js';
+import { tasks, refetchTasks, showToast, setElementModal, tags, patternPrefs, patterns, patternTypes, refetchPatterns, patternForTask, isRoutineTask, flightPlanTaskIds, scheduledByTaskId, texturesEnabled, categoryPrefs, setCloseRitualTask, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
 import { buildPickerRows, leafObjectives, PICKER_SEARCH_THRESHOLD } from '../lib/objective-picker.js';
 import { isPromotableToObjective } from '../lib/objective-promote.js';
 import { directionColorForTask, directionShapeForTask, colorVar, resolveItemColor } from '../lib/pattern-meta.js';
@@ -326,11 +326,20 @@ export function TaskCard(props: Props) {
   }
 
   async function remove() {
-    // DELETE is a soft cancel (services/tasks.ts: status → 'cancelled'), so the task
-    // lands in the Archive — but nothing restores it from there, so don't imply it.
-    if (!confirm(`Cancel "${props.task.title}"? It moves to the Archive.`)) return;
+    // A repeating occurrence is ambiguous — ask which occurrences this applies to. The
+    // dialog carries its own confirmation, so the blunt confirm() is only for one-offs.
+    let deleteScope: RecurringScope | undefined;
+    if (isRecurringOccurrence(props.task)) {
+      const answer = await askRecurringScope({ title: props.task.title, verb: 'delete' });
+      if (answer === null) return;
+      deleteScope = answer;
+    } else {
+      // DELETE is a soft cancel (services/tasks.ts: status → 'cancelled'), so the task
+      // lands in the Archive — but nothing restores it from there, so don't imply it.
+      if (!confirm(`Cancel "${props.task.title}"? It moves to the Archive.`)) return;
+    }
     try {
-      await api.tasks.delete(props.task.id);
+      await api.tasks.delete(props.task.id, deleteScope);
       showToast('Task cancelled', 'default');
       refetchTasks();
     } catch (err) { showToast((err as Error).message, 'error'); }

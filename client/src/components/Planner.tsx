@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, createResource, onCleanup } from 'solid-js';
 import { Lock, AlertTriangle, Play, Star, Pentagon, Pencil, Trash2, Repeat, Check, CheckCircle2, ArrowUpRight, Eraser, X, ListChecks, ChevronRight, ChevronDown } from 'lucide-solid';
-import { api, type Block } from '../lib/api.js';
+import { api, type Block, type RecurringScope } from '../lib/api.js';
 import { PX_PER_MIN, MINUTES_PER_DAY, SNAP_MIN, minutesIntoDay } from '../lib/grid.js';
 import {
   type AxisState,
@@ -19,7 +19,7 @@ import { snapToSlot, minuteToHHMM, isSlotOccupied } from '../lib/create-click.js
 import { useDropZone } from '../lib/draggable.js';
 import { isSelected, toggleSelection, setActiveTask, setActiveBlock, selection, setRoutineModal } from '../stores/selection.js';
 import { layoutBlocks } from './CalendarGrid.js';
-import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock } from '../stores/index.js';
+import { blocks, concepts, flightPlan, taskOf, patternForTask, setElementModal, refetchBlocks, refetchFlightPlan, refetchConcepts, showToast, selectedDay, tags, categoryPrefs, patternPrefs, patternBlocks, tasks, plannerAxisState, togglePlannerTop, togglePlannerBottom, texturesEnabled, objectiveAccentByBlock, askRecurringScope, isRecurringOccurrence } from '../stores/index.js';
 import { accentColor } from '../lib/objective-accent.js';
 import { isAllDay } from '../lib/overlay.js';
 import { elementTextureStyle, blockColorVar, doneHatchStyle } from '../lib/textures.js';
@@ -613,10 +613,28 @@ function PlannerChip(props: { placed: Placed; day: string; state: () => AxisStat
 // ── Delete-a-Plan confirm: keep the member tasks (detach) or remove them too ────
 function DeletePlanDialog(props: { plan: Block; childCount: number; onClose: () => void }) {
   async function run(children: boolean) {
+    // A repeating Plan is ambiguous the same way a repeating chip is — ask before
+    // destroying anything. This is a SECOND delete path (containers route here instead
+    // of through PlannerEntityCard), so the question has to be asked here too or a
+    // recurring Plan would silently take the single-occurrence branch.
+    let scope: RecurringScope | undefined;
+    if (isRecurringOccurrence(props.plan)) {
+      const answer = await askRecurringScope({ title: props.plan.title, verb: 'delete' });
+      if (answer === null) return;
+      scope = answer;
+    }
     try {
-      await api.blocks.delete(props.plan.id, children ? { children: 'delete' } : undefined);
+      await api.blocks.delete(props.plan.id, {
+        ...(children ? { children: 'delete' as const } : {}),
+        ...(scope ? { scope } : {}),
+      });
       refetchBlocks();
-      showToast(children ? 'Plan and its tasks removed' : 'Plan removed — tasks kept', 'default');
+      showToast(
+        scope === 'following'
+          ? 'Removed this and all following'
+          : children ? 'Plan and its tasks removed' : 'Plan removed — tasks kept',
+        'default',
+      );
       props.onClose();
     } catch (err) { showToast((err as Error).message, 'error'); }
   }
@@ -868,12 +886,25 @@ export function Planner() {
     if (it) void createBlockAt(e.clientY, it);
   });
 
-  function requestDeletePlan(plan: Block) {
+  async function requestDeletePlan(plan: Block) {
     const childCount = (blocks() ?? []).filter((b) => b.parent_block_id === plan.id).length;
     if (childCount === 0) {
       // Childless plan — no DeletePlanDialog to ask about member tasks, so ask here.
-      if (!confirm(`Delete "${plan.title}"?`)) return;
-      api.blocks.delete(plan.id).then(() => { refetchBlocks(); showToast('Plan removed', 'default'); })
+      // A repeating occurrence asks the scope question INSTEAD of the blunt confirm:
+      // the scope dialog is itself a confirmation, and stacking both is nagging.
+      let scope: RecurringScope | undefined;
+      if (isRecurringOccurrence(plan)) {
+        const answer = await askRecurringScope({ title: plan.title, verb: 'delete' });
+        if (answer === null) return;
+        scope = answer;
+      } else if (!confirm(`Delete "${plan.title}"?`)) {
+        return;
+      }
+      api.blocks.delete(plan.id, scope ? { scope } : undefined)
+        .then(() => {
+          refetchBlocks();
+          showToast(scope === 'following' ? 'Removed this and all following' : 'Plan removed', 'default');
+        })
         .catch((err) => showToast((err as Error).message, 'error'));
       return;
     }
