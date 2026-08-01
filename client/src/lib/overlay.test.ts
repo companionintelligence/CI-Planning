@@ -7,6 +7,7 @@ import {
   isAllDay,
   isTimed,
   isTaskBlock,
+  showsBlockLabel,
 } from './overlay.js';
 import type { AxisDeselected, TagAxis, TagKindLookup } from './overlay.js';
 import type { Block, Task } from './api.js';
@@ -169,6 +170,31 @@ describe('task-block vs container partitioning', () => {
     for (const kind of ['timeblock', 'meeting', 'focus', 'habit', 'break', 'buffer']) {
       expect(isTaskBlock(blk({ block_kind: kind, task_id: '10' }))).toBe(false);
     }
+  });
+});
+
+describe('which blocks render a visible label', () => {
+  it('a synced meeting shows its name', () => {
+    // Every calendar event mirrored from a connected Google account lands as
+    // block_kind='meeting' with NO task_id. Suppressing its label rendered the whole
+    // week as blank rectangles.
+    expect(showsBlockLabel(blk({ block_kind: 'meeting', task_id: undefined }))).toBe(true);
+  });
+
+  it('a task block still shows its name', () => {
+    expect(showsBlockLabel(blk({ block_kind: 'task', task_id: '10' }))).toBe(true);
+  });
+
+  it('anonymous containers keep the hidden-label treatment', () => {
+    for (const kind of ['timeblock', 'focus', 'habit', 'break', 'buffer']) {
+      expect(showsBlockLabel(blk({ block_kind: kind, task_id: undefined }))).toBe(false);
+    }
+  });
+
+  it('labelling is independent of interaction — a meeting is labelled but not a task chip', () => {
+    const meeting = blk({ block_kind: 'meeting', task_id: undefined });
+    expect(showsBlockLabel(meeting)).toBe(true);
+    expect(isTaskBlock(meeting)).toBe(false);
   });
 });
 
