@@ -126,11 +126,27 @@ overrides to bypass discovery (air-gapped / a provider without a discovery doc).
 - Only an **RS256** signature is accepted — `alg:none`, `HS256`, `ES256`, `EdDSA` are all rejected.
 - Signature is checked against the portal's JWKS (matched by `kid`); a token signed by any other key
   is rejected.
-- `iss` must equal the **discovery document's `issuer`** (not the configured discovery URL); `aud`
-  must equal `CIPORTAL_CLIENT_ID`; `exp` must be future. This distinction is load-bearing: CI-Portal
-  runs **better-auth**, which serves discovery at `…/api/auth` but stamps the **bare origin**
-  (`https://hub.companionintelligence.com`) as the token `iss` — validating against `doc.issuer`
-  is what makes real tokens verify.
+- `iss` must equal the **discovery document's `issuer`** (not the configured discovery URL). This
+  distinction is load-bearing: CI-Portal runs **better-auth**, which serves discovery at `…/api/auth`
+  but stamps the **bare origin** (`https://hub.companionintelligence.com`) as the token `iss` —
+  validating against `doc.issuer` is what makes real tokens verify.
+- `aud` must **contain** `CIPORTAL_CLIENT_ID` — it may be a single string or an array (§3.1.3.7).
+  When it names more than one audience, `azp` must additionally identify **us**; without that check a
+  token minted for a different client at the same provider, merely listing us among its audiences,
+  would verify. A present-but-mismatched `azp` is rejected even for a single-valued `aud`.
+- `exp` must be future, and `nbf`/`iat` (when present) must not be. Each bound allows **60s of clock
+  skew** in the forgiving direction — provider and server clocks drift, and a token rejected purely
+  for a one-second disagreement is a support ticket, not a security win.
+- Every endpoint taken from the discovery document (`authorization_endpoint`, `token_endpoint`,
+  `jwks_uri`, and `issuer` itself) must sit on the **same origin as `CIPORTAL_ISSUER`**. The document
+  is fetched from a configured host but its contents are provider-supplied, so without this it is an
+  open redirect into the flow: `token_endpoint` receives the code + PKCE verifier and `jwks_uri`
+  decides which key may sign an identity. Validation runs **before** the 1h cache write. Stricter
+  than the spec (which permits a cross-host `jwks_uri`, as Google uses) — safe because discovery is
+  CI-Portal-only; a provider that needs cross-origin endpoints sets the three `CIPORTAL_*_URI`
+  overrides, which bypass discovery.
+- The JWKS fetch is bounded (5s, matching discovery) and fails **closed** — no keys means no
+  candidate key, so the token is rejected rather than the signature check being skipped.
 - The **nonce is always enforced** (`auth_states.nonce` is `NOT NULL`), so a token minted for a
   different flow can't be spliced in.
 - `state` is single-use (`DELETE … RETURNING`) and expires (10 min). It is also **bound to the
@@ -215,22 +231,29 @@ All auth env vars (see [`server/.env.example`](../server/.env.example) for the a
 | `AUTH_AUTO_PROVISION` | — | `true` ⇒ an unknown CI-Portal `sub` provisions a new owner; else 403 |
 | `AUTH_DEFAULT_USERNAME` / `AUTH_DEFAULT_PASSWORD` | local, first boot | seed the first local owner (fails closed if no login path) |
 | `CIPORTAL_ISSUER` | — | discovery base; **default `https://hub.companionintelligence.com/api/auth`**. Endpoints + canonical `iss` come from `<issuer>/.well-known/openid-configuration` |
-| `CIPORTAL_CLIENT_ID` | prod `sso`+OIDC | our client registered at CI-Portal (public PKCE); no default |
+| `CIPORTAL_CLIENT_ID` | — | our client at CI-Portal (public PKCE). **Default `ci-planning`** — a fixed first-party registration, so a deployment no longer has to set it |
 | `CIPORTAL_CLIENT_SECRET` | confidential clients only | omit for public/PKCE-only |
 | `CIPORTAL_REDIRECT_URI` | — | default `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` — must match the URI registered at CI-Portal |
 | `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | — | **optional** overrides — set all three to bypass discovery (then `CIPORTAL_ISSUER` must equal the token's actual `iss`) |
 
 **Boot guards** (`config.ts`, fail-closed): `AUTH_MODE=test` forbidden in production;
 `AUTH_MODE=sso` requires `SESSION_SECRET`; production `sso`+OIDC requires `CIPORTAL_ISSUER` +
-`CIPORTAL_CLIENT_ID` (endpoints are discovered, so they're no longer required up front).
+`CIPORTAL_CLIENT_ID` (endpoints are discovered, so they're no longer required up front). Both now
+have real defaults, so that last guard is satisfied out of the box — it stays as a guard against a
+deployment that deliberately blanks either one.
 
 > **Confirmed against CI-Import-Tools** (the sibling consumer, `backend/src/auth/`): CI-Portal runs
 > **better-auth**; the discovery issuer is `https://hub.companionintelligence.com/api/auth` (now the
 > default); consumers are **public PKCE clients** (CI-Import-Tools registers `ci-import-tools`).
-> **The one thing still needed from the CI-Portal team**: register a client for this app (public PKCE)
-> and set `CIPORTAL_CLIENT_ID`. Until then, use the fixture portal below. The older generic
-> `AUTH_JWKS_URL`/`AUTH_ISSUER` vars predate the `CIPORTAL_*` set and are unused — repoint-or-retire is
-> an open dev-team decision.
+> **Client registration: DONE.** CI-Portal registered this app as the first-party public (PKCE)
+> client `ci-planning` — CI-Portal PR #444, `PUBLIC_CLIENTS` in `apps/hono-app/.../createAuth.ts` —
+> so `CIPORTAL_CLIENT_ID` now defaults to it and production SSO no longer needs an operator to
+> discover a value. Both of this app's redirect paths are registered against the provisioned
+> `ci-planning` host: `/api/auth/ciportal/callback` (sign-in, #444) and
+> `/api/memory/ciportal/callback` (the AA0b memory connector, CI-Portal PR #447). Self-hosted
+> `*.ts.net` installs match on host alone and never needed either registration.
+> The older generic `AUTH_JWKS_URL`/`AUTH_ISSUER`/`AUTH_AUDIENCE`/`AUTH_CONTRACT_VERSION` vars have
+> been **retired** — they were parsed into config but read by no code path.
 
 ---
 

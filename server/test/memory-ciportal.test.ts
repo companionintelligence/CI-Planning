@@ -12,6 +12,8 @@ import {
   storeMemoryOidcConnection,
   resolveLiveMemoryCreds,
   memoryCreds,
+  memoryOidcSubject,
+  deleteMemoryConnection,
   MemoryUnavailable,
   MEMORY_PROVIDER,
 } from '../src/connectors/memory.js';
@@ -287,5 +289,54 @@ describe('AA0b routes', () => {
     const res = await rawGet(srv, '/api/memory/ciportal/callback?state=nope&code=CODE');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'unknown_or_consumed_state' });
+  });
+
+  // ── trust-on-first-use for LOCAL-login owners ────────────────────────────────
+  // owners.external_subject is NULL for a DISABLE_OIDC owner, so the guard above is
+  // vacuous for them: the first connect may name any portal account (intended). What
+  // must not happen is a silent re-bind on a later connect, since storing replaces the
+  // row wholesale.
+  async function connectAs(owner: string, sub: string) {
+    const nonce = `nonce-${sub}`;
+    const state = seedState(owner, nonce);
+    const { idToken, jwks } = makeIdToken({ sub, nonce });
+    stubPortal({ access_token: 'AT', refresh_token: 'RT', id_token: idToken, expires_in: 3600 }, jwks);
+    return rawGet(srv, `/api/memory/ciportal/callback?state=${state}&code=CODE`);
+  }
+
+  it('a local-login owner (no external_subject) CAN connect any portal account first time', async () => {
+    const owner = provisionOwner({ name: 'Local only' }); // externalSubject deliberately unset
+    const res = await connectAs(owner, 'whichever-portal-account');
+    expect(res.location).toBe('/settings?memory=connected');
+    expect(memoryOidcSubject(owner)).toBe('whichever-portal-account'); // now pinned
+  });
+
+  it('reconnecting the SAME subject still works (refresh / re-consent)', async () => {
+    const owner = provisionOwner({ name: 'Local only' });
+    expect((await connectAs(owner, 'sub-a')).location).toBe('/settings?memory=connected');
+    expect((await connectAs(owner, 'sub-a')).location).toBe('/settings?memory=connected');
+    expect(memoryOidcSubject(owner)).toBe('sub-a');
+  });
+
+  it('refuses a SILENT re-bind to a different portal identity once connected', async () => {
+    const owner = provisionOwner({ name: 'Local only' });
+    await connectAs(owner, 'sub-a');
+    const before = memoryCreds(owner);
+
+    const res = await connectAs(owner, 'sub-b');
+    expect(res.location).toBe('/settings?memory=error&reason=already_bound_disconnect_first');
+    // The original connection is intact — a refused rebind must not damage what works.
+    expect(memoryOidcSubject(owner)).toBe('sub-a');
+    expect(memoryCreds(owner)).toEqual(before);
+  });
+
+  it('disconnecting releases the binding so a different account can be connected', async () => {
+    const owner = provisionOwner({ name: 'Local only' });
+    await connectAs(owner, 'sub-a');
+    deleteMemoryConnection(owner);
+    expect(memoryOidcSubject(owner)).toBeNull();
+
+    expect((await connectAs(owner, 'sub-b')).location).toBe('/settings?memory=connected');
+    expect(memoryOidcSubject(owner)).toBe('sub-b');
   });
 });

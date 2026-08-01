@@ -65,8 +65,20 @@ token so the connector self-refreshes its CI-Server bearer:
   state row). The callback exchanges the code, REQUIRES a refresh token (else refuses),
   fully verifies the id_token (nonce/iss/aud/JWKS), and — when the owner has an SSO subject
   — binds the connection to it (`claims.sub === owners.external_subject`, else rejects).
+- **Subject binding, both cases.** The `external_subject` check above is VACUOUS for a
+  local-login owner (`DISABLE_OIDC`), whose `external_subject` is NULL by construction —
+  there is no SSO identity to compare against, so the first connect may legitimately name
+  any CI-Portal account. That is intended; what must not happen is a SILENT re-bind, since
+  a reconnect replaces the stored row wholesale. So the connection also records the `sub`
+  it was established with, and a later callback carrying a DIFFERENT one is refused
+  (`reason=already_bound_disconnect_first`) until the owner explicitly disconnects —
+  trust-on-first-use. The subject is pinned on the connection rather than written to
+  `owners.external_subject`, because that column also makes an owner resolvable by the
+  LOGIN flow: "this is the mailbox I connected" must not silently become "this portal
+  identity may sign in as me". Rows sealed before this landed carry no subject and are
+  claimed on their next connect.
 - Storage: an `oidc` blob in `connection_tokens` (`provider='ci_memory'`, KEK-encrypted)
-  `{ url, kind:'oidc', accessToken, refreshToken, expiresAt, tokenEndpoint, clientId }`.
+  `{ url, kind:'oidc', accessToken, refreshToken, expiresAt, tokenEndpoint, clientId, subject }`.
   `resolveLiveMemoryCreds` (the live-request path) refreshes it via the `refresh_token`
   grant when within 60s of expiry — single-flighted, rotation-safe; a dead refresh token
   surfaces `MemoryUnavailable`. `memoryCreds` (sync availability/status) returns the stored

@@ -60,7 +60,8 @@ async function startFlow(): Promise<{ state: string; cookie: string; nonce: stri
 }
 
 interface TokenPayloadOverrides {
-  iss?: string; aud?: string; sub?: string | null; exp?: number; nonce?: string; name?: string; email?: string;
+  iss?: string; aud?: string | string[]; azp?: string; sub?: string | null; exp?: number;
+  iat?: number; nbf?: number; nonce?: string; name?: string; email?: string;
 }
 
 /** Mint a keypair + RS256-sign an id_token; return it plus the public JWK to serve. */
@@ -72,8 +73,11 @@ function makeIdToken(overrides: TokenPayloadOverrides, opts?: { alg?: string; si
     JSON.stringify({
       iss: overrides.iss ?? PORTAL.issuer,
       aud: overrides.aud ?? PORTAL.clientId,
+      ...(overrides.azp !== undefined ? { azp: overrides.azp } : {}),
       ...(overrides.sub === null ? {} : { sub: overrides.sub ?? 'portal-sub-1' }),
       exp: overrides.exp ?? Math.floor(Date.now() / 1000) + 300,
+      ...(overrides.iat !== undefined ? { iat: overrides.iat } : {}),
+      ...(overrides.nbf !== undefined ? { nbf: overrides.nbf } : {}),
       nonce: overrides.nonce,
       name: overrides.name ?? 'Portal User',
       email: overrides.email ?? 'portal.user@ci.test',
@@ -298,6 +302,44 @@ describe('GET /api/auth/ciportal/callback — id_token verification', () => {
     expect(res.body).toEqual({ error: 'no_id_token' });
   });
 
+  // The JWKS fetch sits on the synchronous path of this callback and `fetch` has no
+  // default timeout, so an endpoint that accepts the connection and then never answers
+  // would hold the request open forever. Two properties are locked here: the call is
+  // given an AbortSignal at all (delete it and this fails), and an aborted fetch is
+  // fail-CLOSED — no keys, no candidate, token rejected. Never a skipped signature check.
+  it('bounds the JWKS fetch with an abort signal and rejects the token when it times out', async () => {
+    const { state, cookie, nonce } = await startFlow();
+    const { idToken } = makeIdToken({ nonce });
+    let jwksSignal: AbortSignal | undefined;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const u = String(input);
+        if (u.startsWith(PORTAL.tokenUri)) {
+          return new Response(JSON.stringify({ access_token: 'A', id_token: idToken }), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (u.startsWith(PORTAL.jwksUri)) {
+          jwksSignal = init?.signal ?? undefined;
+          // What a real hang looks like once the deadline fires. Thrown immediately so
+          // the test asserts the contract without burning the real timeout.
+          throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+        }
+        throw new Error(`unexpected fetch in test: ${u}`);
+      }),
+    );
+
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+
+    expect(jwksSignal).toBeInstanceOf(AbortSignal); // the deadline is actually wired
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_id_token' });
+    expect(res.setCookies.join('')).not.toContain('cp_session='); // no session on a dead JWKS
+    expect((sqlite.prepare('SELECT COUNT(*) n FROM owners').get() as { n: number }).n).toBe(1); // sentinel only
+  });
+
   it('rejects alg:none', async () => {
     await expectRejected((nonce) => ({ idToken: rawToken('none', '', nonce), jwks: [] }));
   });
@@ -319,8 +361,43 @@ describe('GET /api/auth/ciportal/callback — id_token verification', () => {
     await expectRejected((nonce) => makeIdToken({ aud: 'some-other-app', nonce }));
   });
 
+  // Expired by an hour — comfortably outside the 60s clock-skew allowance, so this
+  // asserts "expired" rather than "expired by less than the leeway" (it previously used
+  // −10s, which the skew now deliberately forgives; see the boundary tests below).
   it('rejects an expired token', async () => {
-    await expectRejected((nonce) => makeIdToken({ exp: Math.floor(Date.now() / 1000) - 10, nonce }));
+    await expectRejected((nonce) => makeIdToken({ exp: Math.floor(Date.now() / 1000) - 3600, nonce }));
+  });
+
+  it('rejects a token whose exp is just past the skew allowance', async () => {
+    await expectRejected((nonce) => makeIdToken({ exp: Math.floor(Date.now() / 1000) - 120, nonce }));
+  });
+
+  it('rejects a not-yet-valid token (nbf in the future beyond the skew)', async () => {
+    await expectRejected((nonce) => makeIdToken({ nbf: Math.floor(Date.now() / 1000) + 600, nonce }));
+  });
+
+  it('rejects a token issued in the future (iat beyond the skew) — fabricated, not drift', async () => {
+    await expectRejected((nonce) => makeIdToken({ iat: Math.floor(Date.now() / 1000) + 600, nonce }));
+  });
+
+  it('rejects an aud array that does not contain our client_id', async () => {
+    await expectRejected((nonce) => makeIdToken({ aud: ['someone-else', 'third-party'], nonce }));
+  });
+
+  // The point of the azp check: this token is genuinely signed by the portal and DOES
+  // list us in `aud` — but it was minted FOR another client. Without azp it would log
+  // that provider's other-client user straight into this app.
+  it('rejects a multi-audience token minted for a DIFFERENT client (azp mismatch)', async () => {
+    await expectRejected((nonce) =>
+      makeIdToken({ aud: [PORTAL.clientId, 'other-app'], azp: 'other-app', nonce }));
+  });
+
+  it('rejects a multi-audience token with no azp at all', async () => {
+    await expectRejected((nonce) => makeIdToken({ aud: [PORTAL.clientId, 'other-app'], nonce }));
+  });
+
+  it('rejects a single-aud token whose azp names someone else', async () => {
+    await expectRejected((nonce) => makeIdToken({ aud: PORTAL.clientId, azp: 'other-app', nonce }));
   });
 
   it('rejects a nonce mismatch (token spliced from another flow)', async () => {
@@ -329,6 +406,39 @@ describe('GET /api/auth/ciportal/callback — id_token verification', () => {
 
   it('rejects a verified token with no sub', async () => {
     await expectRejected((nonce) => makeIdToken({ sub: null, nonce }));
+  });
+
+  // ── the ACCEPT side of the same rules — over-tightening would lock real users out ──
+  async function expectAccepted(extra: TokenPayloadOverrides) {
+    const { state, cookie, nonce } = await startFlow();
+    const { idToken, jwks } = makeIdToken({ nonce, ...extra });
+    stubPortal({ access_token: 'A', id_token: idToken }, jwks);
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+    expect(res.status).toBe(302);
+    expect(res.setCookies.join('')).toContain('cp_session=');
+  }
+
+  it('accepts a spec-legal aud ARRAY containing our client_id (with matching azp)', async () => {
+    await expectAccepted({ aud: [PORTAL.clientId, 'other-app'], azp: PORTAL.clientId });
+  });
+
+  it('accepts a single-element aud array', async () => {
+    await expectAccepted({ aud: [PORTAL.clientId] });
+  });
+
+  it('accepts a matching azp alongside a single-string aud', async () => {
+    await expectAccepted({ aud: PORTAL.clientId, azp: PORTAL.clientId });
+  });
+
+  it('accepts sane iat/nbf in the past', async () => {
+    const nowS = Math.floor(Date.now() / 1000);
+    await expectAccepted({ iat: nowS - 30, nbf: nowS - 30 });
+  });
+
+  // The deliberate leeway: a provider clock a few seconds behind ours must not lock a
+  // user out. Beyond the allowance it is rejected (see the −120s case above).
+  it('accepts a token that expired within the clock-skew allowance', async () => {
+    await expectAccepted({ exp: Math.floor(Date.now() / 1000) - 10 });
   });
 });
 
@@ -506,6 +616,47 @@ describe('GET /api/auth/ciportal — discovery-driven', () => {
     const res = await rawGet('/api/auth/ciportal/start');
     expect(res.status).toBe(503);
     expect(sqlite.prepare('SELECT COUNT(*) n FROM auth_states').get()).toEqual({ n: 0 });
+  });
+
+  // The document is fetched from a configured host but its CONTENTS are provider-supplied,
+  // so an off-origin endpoint in it is an open redirect into the middle of the flow: the
+  // token_endpoint receives the code + PKCE verifier, and jwks_uri decides which key may
+  // sign an identity we then trust. Each is refused, and nothing is cached.
+  it.each([
+    ['token_endpoint', { ...DISCOVERY, token_endpoint: 'https://evil.test/token' }],
+    ['jwks_uri', { ...DISCOVERY, jwks_uri: 'https://evil.test/jwks' }],
+    ['authorization_endpoint', { ...DISCOVERY, authorization_endpoint: 'https://evil.test/authorize' }],
+    ['issuer', { ...DISCOVERY, issuer: 'https://evil.test' }],
+  ])('/start 503s when the discovery doc points %s off-origin', async (_field, doc) => {
+    stubDisc({ doc: doc as typeof DISCOVERY });
+    const res = await rawGet('/api/auth/ciportal/start');
+    expect(res.status).toBe(503);
+    expect(sqlite.prepare('SELECT COUNT(*) n FROM auth_states').get()).toEqual({ n: 0 });
+  });
+
+  it('a rejected discovery doc is NOT cached — a later good doc still works', async () => {
+    stubDisc({ doc: { ...DISCOVERY, jwks_uri: 'https://evil.test/jwks' } });
+    expect((await rawGet('/api/auth/ciportal/start')).status).toBe(503);
+    // Same issuer, now serving a clean document: validation must have skipped the cache
+    // write, or this would keep 503ing (or worse, serve the poisoned doc) for the full TTL.
+    const { location } = await startDisc();
+    expect(location.startsWith('https://portal.test/authorize?')).toBe(true);
+  });
+
+  it('accepts endpoints on a deeper PATH of the same origin (the better-auth shape)', async () => {
+    // better-auth serves discovery at …/api/auth and its endpoints under …/api/auth/*;
+    // the check is per-ORIGIN, so a differing path must not be mistaken for a redirect.
+    config.ciportal.issuer = 'https://portal.test/api/auth';
+    stubDisc({
+      doc: {
+        issuer: 'https://portal.test',
+        authorization_endpoint: 'https://portal.test/api/auth/authorize',
+        token_endpoint: 'https://portal.test/api/auth/token',
+        jwks_uri: 'https://portal.test/api/auth/jwks',
+      },
+    });
+    const res = await rawGet('/api/auth/ciportal/start');
+    expect(res.status).toBe(302);
   });
 
   it('validates `iss` against the discovery doc issuer, NOT the configured URL (better-auth quirk)', async () => {
