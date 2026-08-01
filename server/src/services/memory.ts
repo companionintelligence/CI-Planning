@@ -85,6 +85,27 @@ export function memoryConnectorAvailable(owner: string): boolean {
   return memoryCreds(owner) !== null;
 }
 
+/** Column default (0147) — also the 48h the pull agents used to hardcode. */
+const DEFAULT_MEMORY_WINDOW_DAYS = 2;
+
+/**
+ * How far AHEAD the memory pull reads, in ms (`scheduling_prefs.memory_window_days`).
+ * Forward, not back: the pull surfaces UPCOMING events — the suggest agent mirrors them
+ * into tasks and the brief lists them — so a backward window would stage work for things
+ * that already happened. Shared by every pull consumer so one setting moves them together.
+ *
+ * Falls back to the column default for an owner with no seeded prefs row, and treats a
+ * non-positive stored value as "unset" so a bad row can never collapse the window to zero
+ * and silently stop all suggestions.
+ */
+export function memoryWindowMs(owner: string): number {
+  const row = sqlite
+    .prepare(`SELECT memory_window_days FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(owner) as { memory_window_days?: number | null } | undefined;
+  const days = Number(row?.memory_window_days);
+  return (Number.isFinite(days) && days > 0 ? days : DEFAULT_MEMORY_WINDOW_DAYS) * 86_400_000;
+}
+
 /**
  * Whether the PUSH backend is reachable for this owner: true iff creds resolve —
  * the SAME creds-driven rule as the pull side (memoryConnectorAvailable). Real as

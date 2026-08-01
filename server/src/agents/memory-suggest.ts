@@ -10,15 +10,17 @@ import {
   type MemoryGraph,
   type MemoryNode,
 } from '../connectors/memory.js';
-import { memoryConnectorAvailable } from '../services/memory.js';
+import { memoryConnectorAvailable, memoryWindowMs } from '../services/memory.js';
 import { CONFIDENCE_FLOOR } from '../services/calibration.js';
 import { upsertPossible } from './ingest.js';
 import { promoteAllPending } from '../services/possibles.js';
 import type { ExtractedTask } from './extract.js';
 
 /**
- * Phase AA · AA1 — memory suggestion agent. Pulls the owner's next-48h CI-Server
- * memory graph (events + participants) and stages candidate tasks as possible_tasks
+ * Phase AA · AA1 — memory suggestion agent. Pulls the owner's upcoming CI-Server
+ * memory graph (events + participants) over `scheduling_prefs.memory_window_days`
+ * (0147; default 2 = the 48h this agent used to hardcode) and stages candidate tasks
+ * as possible_tasks
  * via the existing `upsertPossible()` seam. AF-3: at the end of each run the batch is
  * auto-promoted (`promoteAllPending`) — every staged suggestion becomes a real task
  * immediately; possible_tasks remains as the dedup/audit trail.
@@ -42,9 +44,6 @@ import type { ExtractedTask } from './extract.js';
 
 /** Max PENDING possibles with source_kind='memory' per owner — new staging stops here. */
 export const MEMORY_PENDING_CAP = 5;
-
-/** How far ahead the agent looks for upcoming events. */
-export const MEMORY_WINDOW_HOURS = 48;
 
 export const MEMORY_SOURCE_KIND = 'memory';
 
@@ -269,7 +268,7 @@ export async function suggestFromMemory(
   if (!memoryConnectorAvailable(owner)) return skipped('unavailable');
 
   const from = new Date().toISOString();
-  const to = new Date(Date.now() + MEMORY_WINDOW_HOURS * 3_600_000).toISOString();
+  const to = new Date(Date.now() + memoryWindowMs(owner)).toISOString();
   let graph: MemoryGraph;
   try {
     graph = await graphData(owner, { from, to });

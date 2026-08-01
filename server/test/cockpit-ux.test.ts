@@ -123,6 +123,71 @@ describe('fill_order toggle', () => {
     expect(blocks[0].title).toBe('Older due'); // oldest due_at → earliest slot
   });
 
+  // fill_order='new_today' — tasks that arrived on the owner's REAL today take the
+  // earliest slots. `created_at` is forced via SQL because the column is defaulted by
+  // CURRENT_TIMESTAMP; the helper leaves it as "now", which IS today.
+  const backdate = (taskId: string, days: number) =>
+    sqlite
+      .prepare(`UPDATE tasks SET created_at = ? WHERE id = ?`)
+      .run(new Date(Date.now() - days * 86_400_000).toISOString(), taskId);
+
+  it('new_today → a task created today beats an older task with an earlier due date', () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET fill_order = 'new_today' WHERE owner_id = ?`).run(OWNER);
+    // The old task is MORE overdue, so under 'overdue' it would win the earliest slot —
+    // which is exactly what makes this assertion prove the new band is doing the work.
+    const old = insertTask('Old but overdue', 60, { dueAt: '2026-06-01T00:00:00.000Z' });
+    backdate(old, 10);
+    const fresh = insertTask('Arrived today', 60, { dueAt: '2026-12-31T00:00:00.000Z' });
+    stage(old); stage(fresh);
+
+    placeFlightPlan(OWNER, { date: DAY });
+    const blocks = agentBlocks();
+    expect(blocks.length).toBe(2);
+    expect(blocks[0].title).toBe('Arrived today');
+    expect(blocks[1].title).toBe('Old but overdue');
+  });
+
+  it('new_today keeps each half deadline-first (it layers on overdue, not replaces it)', () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET fill_order = 'new_today' WHERE owner_id = ?`).run(OWNER);
+    const freshLate = insertTask('Today late-due', 30, { dueAt: '2026-12-31T00:00:00.000Z' });
+    const freshSoon = insertTask('Today soon-due', 30, { dueAt: '2026-06-05T00:00:00.000Z' });
+    const oldSoon = insertTask('Old soon-due', 30, { dueAt: '2026-06-02T00:00:00.000Z' });
+    backdate(oldSoon, 5);
+    stage(freshLate); stage(freshSoon); stage(oldSoon);
+
+    placeFlightPlan(OWNER, { date: DAY });
+    // Both of today's arrivals lead, ordered by due date between themselves; the older
+    // task follows despite having the earliest due date of all three.
+    expect(agentBlocks().map((b) => b.title)).toEqual(['Today soon-due', 'Today late-due', 'Old soon-due']);
+  });
+
+  it('new_today with nothing created today degrades to plain deadline-first', () => {
+    sqlite.prepare(`UPDATE scheduling_prefs SET fill_order = 'new_today' WHERE owner_id = ?`).run(OWNER);
+    const newer = insertTask('Newer due', 60, { dueAt: '2026-06-20T00:00:00.000Z' });
+    const older = insertTask('Older due', 60, { dueAt: '2026-06-01T00:00:00.000Z' });
+    backdate(newer, 3); backdate(older, 3);
+    stage(newer); stage(older);
+
+    placeFlightPlan(OWNER, { date: DAY });
+    expect(agentBlocks().map((b) => b.title)).toEqual(['Older due', 'Newer due']);
+  });
+
+  it('new_today reads the zone-less CURRENT_TIMESTAMP spelling as UTC, not local', () => {
+    // The stored default spelling ('YYYY-MM-DD HH:MM:SS', UTC, no zone marker) must be
+    // recognised as today. Parsed as LOCAL it shifts by the server offset and an
+    // evening-created task would fall out of its own day.
+    sqlite.prepare(`UPDATE scheduling_prefs SET fill_order = 'new_today' WHERE owner_id = ?`).run(OWNER);
+    const fresh = insertTask('Arrived today', 60, { dueAt: '2026-12-31T00:00:00.000Z' });
+    const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19); // UTC, no zone
+    sqlite.prepare(`UPDATE tasks SET created_at = ? WHERE id = ?`).run(stamp, fresh);
+    const old = insertTask('Old but overdue', 60, { dueAt: '2026-06-01T00:00:00.000Z' });
+    backdate(old, 10);
+    stage(old); stage(fresh);
+
+    placeFlightPlan(OWNER, { date: DAY });
+    expect(agentBlocks()[0].title).toBe('Arrived today');
+  });
+
   it('overdue with no overdue tasks does not throw, places undated tasks last', () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET fill_order = 'overdue' WHERE owner_id = ?`).run(OWNER);
     const a = insertTask('No due A', 30, { priority: 1 });

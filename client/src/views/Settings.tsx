@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
-import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText } from 'lucide-solid';
+import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText, Mail } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable, connections, refetchConnections } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
@@ -34,6 +34,8 @@ interface SettingsForm {
   memory_sync_enabled: boolean; memory_sync_completed: boolean;
   memory_sync_habits: boolean; memory_sync_reflections: boolean;
   memory_pull_enabled: boolean; // Phase AA — pull memory graph into suggestions
+  // Ingestion windows (0147). memory looks FORWARD (upcoming events), email looks BACK.
+  memory_window_days: number; email_lookback_days: number;
   recall_keeps_pattern: boolean; // cockpit-v2 Phase 6
   time_sense_enabled: boolean; // Phase Z master flag
   focus_ritual_enabled: boolean; haptic_cues_enabled: boolean; // Phase Z · Z5 per-cue matrix
@@ -58,6 +60,7 @@ const DEFAULTS: SettingsForm = {
   memory_sync_enabled: false, memory_sync_completed: true,
   memory_sync_habits: true, memory_sync_reflections: true,
   memory_pull_enabled: false,
+  memory_window_days: 2, email_lookback_days: 7,
   recall_keeps_pattern: false,
   time_sense_enabled: false,
   focus_ritual_enabled: true, haptic_cues_enabled: true,
@@ -215,6 +218,8 @@ export function Settings() {
       memory_sync_habits:         p.memory_sync_habits ?? true,
       memory_sync_reflections:    p.memory_sync_reflections ?? true,
       memory_pull_enabled:        p.memory_pull_enabled ?? false,
+      memory_window_days:         p.memory_window_days ?? 2,
+      email_lookback_days:        p.email_lookback_days ?? 7,
       triality_enabled:           p.triality_enabled ?? false,
     });
   });
@@ -1578,6 +1583,24 @@ export function Settings() {
                 </div>
               </div>
             </label>
+
+            {/* How far AHEAD the pull reads. Forward, not back: suggestions mirror
+                upcoming events into tasks, so a backward window would stage work for
+                things that already happened. Same setting drives the daily brief. */}
+            <Show when={form().memory_pull_enabled}>
+              <label class="flex items-center justify-between gap-3 mb-4 -mt-2 pl-12">
+                <span class="text-xs text-muted-foreground">
+                  Look ahead
+                  <span class="block text-[11px] opacity-70">How many days of upcoming events to pull in.</span>
+                </span>
+                <span class="flex items-center gap-1.5 flex-shrink-0">
+                  <input type="number" class="input py-1 text-sm w-20" min={1} max={30} step={1}
+                    value={form().memory_window_days}
+                    onInput={(e) => setField('memory_window_days', Number(e.currentTarget.value))} />
+                  <span class="text-xs text-muted-foreground">days</span>
+                </span>
+              </label>
+            </Show>
             </Show>
 
             {/* Master toggle (one-way push) */}
@@ -1627,6 +1650,37 @@ export function Settings() {
               </div>
             </Show>
           </section>
+
+          {/* Email suggestions — the one knob on the Gmail ingest. Sits beside Companion
+              Memory because both are ingestion windows, and follows the same visibility
+              rule as the rest of the Google surface (flags.ts). The ingest itself is
+              review-gated, so this bounds what reaches the queue, not what becomes a task. */}
+          <Show when={GOOGLE_CONNECT_ENABLED}>
+            <section class="card">
+              <div class="flex items-center justify-between mb-3">
+                <div class="section-label flex items-center gap-1.5"><Mail size={12} /> Email suggestions</div>
+                <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+              </div>
+              <label class="flex items-center justify-between gap-3">
+                <span class="text-xs text-muted-foreground">
+                  Look back
+                  <span class="block text-[11px] opacity-70">
+                    How far back to read a connected mailbox. Applies when email is first connected
+                    (or after an outage) — routine checks only pick up what has arrived since the last one.
+                  </span>
+                </span>
+                <span class="flex items-center gap-1.5 flex-shrink-0">
+                  <input type="number" class="input py-1 text-sm w-20" min={1} max={90} step={1}
+                    value={form().email_lookback_days}
+                    onInput={(e) => setField('email_lookback_days', Number(e.currentTarget.value))} />
+                  <span class="text-xs text-muted-foreground">days</span>
+                </span>
+              </label>
+              <p class="text-[11px] text-muted-foreground mt-3">
+                Suggestions from email wait for your approval in the Tasks tab — nothing becomes a task on its own.
+              </p>
+            </section>
+          </Show>
 
           {/* Integrations */}
           <section class="card">

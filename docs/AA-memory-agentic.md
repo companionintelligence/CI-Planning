@@ -82,7 +82,12 @@ token so the connector self-refreshes its CI-Server bearer:
 `server/src/agents/memory-suggest.ts`:
 
 - Scheduled job (W12 `scheduled_jobs` infra) per owner with memory pull enabled.
-- Pull `graphData` for the next 48h (events, participants) + recent high-signal nodes.
+- Pull `graphData` for the next `scheduling_prefs.memory_window_days` (mig 0147; default
+  2 = the 48h this was hardcoded to before) — events, participants + recent high-signal
+  nodes. Settings → Connections → Companion Memory → "Look ahead", shown once the pull
+  toggle is on. The same setting sizes the AA2 brief excerpt, so one knob moves every
+  pull surface together. FORWARD-looking by definition: suggestions mirror upcoming
+  events into tasks, so a backward window would stage work for things already past.
 - Draft candidate tasks: deterministic templates (e.g. event → "Prep for <title>") with
   optional Ollama `generateJson` polish; Ollama down ⇒ templates only (never blocks).
   Templates carry a default 30m prep estimate, persisted as

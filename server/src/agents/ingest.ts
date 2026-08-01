@@ -181,6 +181,28 @@ const GMAIL_DEADLETTER = 'gmail_deadletter';
  */
 const GMAIL_DEFAULT_ACCOUNT = 'primary';
 
+/** Column default (0147) for an owner with no seeded scheduling_prefs row. */
+const DEFAULT_EMAIL_LOOKBACK_DAYS = 7;
+
+/**
+ * The oldest instant a Gmail ingest may reach: now − `scheduling_prefs.email_lookback_days`
+ * (0147). Applied as a FLOOR on the watermark, not just a first-run seed, so reconnecting
+ * after a long outage pulls the configured window rather than replaying months of mail
+ * through the extraction LLM. On the normal 15-minute cadence the watermark is always
+ * newer than this, so the floor never bites and the steady state is unchanged.
+ *
+ * A non-positive stored value is treated as unset — a bad row must not collapse the
+ * window to "now" and silently stop ingesting.
+ */
+function gmailLookbackFloor(ownerId: string): string {
+  const row = sqlite
+    .prepare(`SELECT email_lookback_days FROM scheduling_prefs WHERE owner_id = ?`)
+    .get(ownerId) as { email_lookback_days?: number | null } | undefined;
+  const days = Number(row?.email_lookback_days);
+  const effective = Number.isFinite(days) && days > 0 ? days : DEFAULT_EMAIL_LOOKBACK_DAYS;
+  return new Date(Date.now() - effective * 86_400_000).toISOString();
+}
+
 /** Read the persisted `since` watermark for (owner, google, account), or undefined. */
 function readGmailSince(ownerId: string, account: string): string | undefined {
   const row = sqlite
@@ -272,9 +294,10 @@ async function runExtraction(
 /**
  * Ingest emails → possible_tasks, advancing a persisted `since` watermark.
  *
- * Cursor: reads the (owner, google, account) `since` watermark from sync_state and passes
- * it to client.listEmails so each cycle only sees messages newer than the last processed
- * one. After the batch commits, advances the watermark to the newest processed receivedAt
+ * Cursor: reads the (owner, google, account) `since` watermark from sync_state, floors it
+ * at `scheduling_prefs.email_lookback_days` (0147 — see gmailLookbackFloor), and passes
+ * the result to client.listEmails so each cycle only sees messages newer than the last
+ * processed one. After the batch commits, advances the watermark to the newest receivedAt
  * (advance-AFTER-commit — a crash re-reads the old watermark and reprocesses idempotently
  * rather than skipping). NOTE: a Gmail historyId cursor is a later refinement (WP8/live);
  * the GoogleClient interface is mcp-owned, so we use its existing { since, limit } param.
@@ -291,7 +314,12 @@ export async function ingestEmails(
   const result = emptyResult();
   const ownerId = currentOwnerId();
   const account = opts.account ?? GMAIL_DEFAULT_ACCOUNT;
-  const since = opts.since ?? readGmailSince(ownerId, account);
+  // An explicit opts.since is a manual replay and bypasses the floor deliberately — the
+  // caller has named the window. Otherwise take the LATER of the watermark and the
+  // lookback floor, so a first run (no watermark at all) is bounded too.
+  const floor = gmailLookbackFloor(ownerId);
+  const watermark = readGmailSince(ownerId, account);
+  const since = opts.since ?? (watermark && watermark > floor ? watermark : floor);
 
   const emails = await client.listEmails({ since, limit: opts.limit });
   let newestProcessed: string | undefined;
