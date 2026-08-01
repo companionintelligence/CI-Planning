@@ -77,11 +77,18 @@ export function buildCalendarViewPrefs(
   axes: AxisDeselected,
   prio: number[],
   axisState: AxisState,
+  eventsOnly = false,
 ): NonNullable<ViewPrefs['calendar']> {
   return {
     deselected: serializeDeselected(axes),
     prio: [...prio].sort((a, b) => a - b),
     topExpanded: axisState.topExpanded,
     bottomExpanded: axisState.bottomExpanded,
+    eventsOnly,
   };
+}
+
+/** Persisted events-only flag → boolean. Missing/non-boolean → false (show everything). */
+export function deserializeEventsOnly(saved: ViewPrefs['calendar'] | undefined): boolean {
+  return saved?.eventsOnly === true;
 }

@@ -49,6 +49,24 @@ export const isTaskBlock = (b: Pick<Block, 'block_kind' | 'task_id'>): boolean =
 export const showsBlockLabel = (b: Pick<Block, 'block_kind' | 'task_id'>): boolean =>
   isTaskBlock(b) || b.block_kind === 'meeting';
 
+/**
+ * A block mirrored in from a connected external calendar. Keyed on `source_account`
+ * rather than `source_kind`, because source_kind only says WHICH PROVIDER and is also
+ * stamped on things the owner created here; the account is present only on rows
+ * external_events actually maps.
+ */
+export const isExternalBlock = (b: Pick<Block, 'source_account'>): boolean => !!b.source_account;
+
+/**
+ * Events-only ("free time") view: show what genuinely constrains the day and hide
+ * everything the owner could move. That is external calendar events plus anything
+ * explicitly locked — a locked block is a commitment regardless of where it came from,
+ * so hiding it would paint busy time as free, which is the one error this view must
+ * never make. Unlocked task blocks (including auto-placed work) drop out.
+ */
+export const isCommitment = (b: Pick<Block, 'source_account' | 'is_locked'>): boolean =>
+  isExternalBlock(b) || b.is_locked === true;
+
 /** The three tag axes the calendar overlay filters on (tags.kind, post Z/W2 revert). */
 export type TagAxis = 'direction' | 'intention' | 'category';
 export const TAG_AXES: TagAxis[] = ['direction', 'intention', 'category'];

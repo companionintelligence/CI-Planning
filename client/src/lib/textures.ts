@@ -170,6 +170,58 @@ export function stripeStyle(colors: readonly string[]): TextureStyle | undefined
   };
 }
 
+// ── Connection textures (0145): per-source stripes on synced events ──────────
+// A DIFFERENT job from the category stripes above, and deliberately not sharing their
+// constants. Category texture is a whisper that must never compete with the content;
+// this is an identity marker whose entire purpose is to let the owner tell one calendar
+// from another at a glance across a dense week — so it is bold on purpose.
+
+/** Stripe ink width for a connection texture (owner spec: "2px wide lines"). */
+const CONNECTION_LINE_PX = 2;
+/** Transparent gap between lines. Equal to the line width — an even, readable 50% duty. */
+const CONNECTION_GAP_PX = 2;
+/** Owner spec: "15% less transparent" read as 85% opaque. One constant, easy to retune. */
+export const CONNECTION_TEXTURE_OPACITY = 0.85;
+
+/** Stripe angle per named geometry. `grid` is the one that layers two gradients. */
+const CONNECTION_ANGLE: Record<string, number[]> = {
+  diagonal: [45],
+  reverse: [-45],
+  vertical: [90],
+  horizontal: [0],
+  grid: [45, -45],
+};
+
+/**
+ * The stripe overlay for a connection's events. `texture: 'none'` (or an unknown name)
+ * yields undefined, so an unconfigured connection renders exactly as it did before —
+ * this feature is opt-in per source and visually inert until chosen.
+ *
+ * Returned as an absolutely-positioned overlay (same shape as stripeStyle) so it layers
+ * over the chip fill without disturbing its own background colour.
+ */
+export function connectionTextureStyle(
+  texture: string | null | undefined,
+  color: string,
+): TextureStyle | undefined {
+  const angles = CONNECTION_ANGLE[texture ?? ''];
+  if (!angles) return undefined;
+  const period = CONNECTION_LINE_PX + CONNECTION_GAP_PX;
+  const image = angles
+    .map(
+      (a) =>
+        `repeating-linear-gradient(${a}deg, ${color} 0 ${CONNECTION_LINE_PX}px, transparent ${CONNECTION_LINE_PX}px ${period}px)`,
+    )
+    .join(', ');
+  return {
+    position: 'absolute',
+    inset: '0',
+    'pointer-events': 'none',
+    'background-image': image,
+    opacity: CONNECTION_TEXTURE_OPACITY,
+  };
+}
+
 /** The element fields the texture reads (snake_case API shape, tasks + blocks). */
 export interface TexturedElement {
   texture_enabled?: boolean;

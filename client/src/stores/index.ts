@@ -11,6 +11,7 @@ import { DEFAULT_AXIS_STATE } from '../lib/day-axis.js';
 import type { AxisState } from '../lib/day-axis.js';
 import {
   buildCalendarViewPrefs,
+  deserializeEventsOnly,
   buildPlannerViewPrefs,
   deserializeAxisState,
   deserializeDeselected,
@@ -125,6 +126,11 @@ export const [overlayPrio, setOverlayPrio] = createSignal<number[]>([]); // prio
 // the overlay filter. Default = BOTH collapsed (DEFAULT_AXIS_STATE). CalendarGrid
 // reads/toggles these; the view_prefs effect below hydrates + persists them.
 export const [calendarAxisState, setCalendarAxisState] = createSignal<AxisState>({ ...DEFAULT_AXIS_STATE });
+
+// Events-only ("free time") calendar view: hide movable task blocks so only real
+// commitments — external events + anything locked — remain. Persisted with the rest of
+// the calendar view prefs so the mode survives a reload.
+export const [calendarEventsOnly, setCalendarEventsOnly] = createSignal(false);
 export function toggleCalendarTop() {
   setCalendarAxisState((s) => ({ ...s, topExpanded: !s.topExpanded }));
 }
@@ -414,13 +420,14 @@ createEffect(() => {
   setOverlayAxes(deserializeDeselected(cal));
   setOverlayPrio(deserializePrio(cal));
   setCalendarAxisState(deserializeAxisState(cal));
+  setCalendarEventsOnly(deserializeEventsOnly(cal));
   setPlannerAxisState(deserializeAxisState(p.view_prefs?.planner));
   _viewPrefsHydrated = true;
 });
 
 let _viewPrefsTimer: ReturnType<typeof setTimeout> | undefined;
 function persistViewPrefs() {
-  const calendar = buildCalendarViewPrefs(overlayAxes(), overlayPrio(), calendarAxisState());
+  const calendar = buildCalendarViewPrefs(overlayAxes(), overlayPrio(), calendarAxisState(), calendarEventsOnly());
   const planner = buildPlannerViewPrefs(plannerAxisState());
   clearTimeout(_viewPrefsTimer);
   _viewPrefsTimer = setTimeout(() => {
@@ -440,6 +447,7 @@ createEffect(() => {
   overlayAxes();
   overlayPrio();
   calendarAxisState();
+  calendarEventsOnly();
   plannerAxisState();
   if (!_viewPrefsHydrated) return;
   // The hydration setters above re-trigger this effect once; that first post-hydration
@@ -469,6 +477,11 @@ export const [patternPrefs, { refetch: refetchPatternPrefs }] = createResource((
 // ── Category-prefs (0069): per-(Time Block Category) color + default block length ──
 export const [categoryPrefs, { refetch: refetchCategoryPrefs }] = createResource(() =>
   api.categoryPrefs.list()
+);
+
+// ── Connection-prefs (0145): per-source colour + stripe texture on synced events ──
+export const [connectionPrefs, { refetch: refetchConnectionPrefs }] = createResource(() =>
+  api.connectionPrefs.list()
 );
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
