@@ -298,6 +298,44 @@ describe('GET /api/auth/ciportal/callback — id_token verification', () => {
     expect(res.body).toEqual({ error: 'no_id_token' });
   });
 
+  // The JWKS fetch sits on the synchronous path of this callback and `fetch` has no
+  // default timeout, so an endpoint that accepts the connection and then never answers
+  // would hold the request open forever. Two properties are locked here: the call is
+  // given an AbortSignal at all (delete it and this fails), and an aborted fetch is
+  // fail-CLOSED — no keys, no candidate, token rejected. Never a skipped signature check.
+  it('bounds the JWKS fetch with an abort signal and rejects the token when it times out', async () => {
+    const { state, cookie, nonce } = await startFlow();
+    const { idToken } = makeIdToken({ nonce });
+    let jwksSignal: AbortSignal | undefined;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const u = String(input);
+        if (u.startsWith(PORTAL.tokenUri)) {
+          return new Response(JSON.stringify({ access_token: 'A', id_token: idToken }), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (u.startsWith(PORTAL.jwksUri)) {
+          jwksSignal = init?.signal ?? undefined;
+          // What a real hang looks like once the deadline fires. Thrown immediately so
+          // the test asserts the contract without burning the real timeout.
+          throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+        }
+        throw new Error(`unexpected fetch in test: ${u}`);
+      }),
+    );
+
+    const res = await rawGet(`/api/auth/ciportal/callback?state=${state}&code=C`, { Cookie: cookie });
+
+    expect(jwksSignal).toBeInstanceOf(AbortSignal); // the deadline is actually wired
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid_id_token' });
+    expect(res.setCookies.join('')).not.toContain('cp_session='); // no session on a dead JWKS
+    expect((sqlite.prepare('SELECT COUNT(*) n FROM owners').get() as { n: number }).n).toBe(1); // sentinel only
+  });
+
   it('rejects alg:none', async () => {
     await expectRejected((nonce) => ({ idToken: rawToken('none', '', nonce), jwks: [] }));
   });

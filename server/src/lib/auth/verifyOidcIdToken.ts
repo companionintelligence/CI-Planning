@@ -49,14 +49,25 @@ interface Jwk {
   e?: string;
 }
 
+/**
+ * Bounded like the discovery fetch (lib/auth/oidcDiscovery.ts): this call sits on the
+ * synchronous path of the login and memory-connector callbacks, so an unresponsive JWKS
+ * endpoint — one that accepts the connection and then never answers — would otherwise
+ * hold the request open indefinitely. `fetch` has no default timeout.
+ */
+const JWKS_TIMEOUT_MS = 5_000;
+
 /** Fetch the provider's signing keys (JWKS). Returns [] on any failure (treated as unverifiable). */
 async function fetchJwks(jwksUri: string): Promise<Jwk[]> {
   try {
-    const res = await fetch(jwksUri);
+    const res = await fetch(jwksUri, { signal: AbortSignal.timeout(JWKS_TIMEOUT_MS) });
     if (!res.ok) return [];
     const json = (await res.json()) as { keys?: Jwk[] };
     return Array.isArray(json.keys) ? json.keys : [];
   } catch {
+    // Includes the abort: a timed-out JWKS fetch yields no keys, so the caller finds no
+    // candidate and rejects the token. Fail-CLOSED — a slow provider can never be the
+    // reason a signature check is skipped.
     return [];
   }
 }
