@@ -1,10 +1,14 @@
 name: CI
 
+# >>> ci-local:gated original triggers below, restore with `ci-local restore`
+# on:
+#   push:
+#     branches: [main, 'companion/**']
+#   pull_request:
+#     branches: [main]
+# <<< ci-local:gated
 on:
-  push:
-    branches: [main, 'companion/**']
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   typecheck-test:
