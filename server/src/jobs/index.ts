@@ -94,7 +94,15 @@ async function execute(kind: string): Promise<JobOutcome> {
           return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
         }
         for (const account of accounts) {
-          r = addIngestTotals(r, await ingestEmails(createGoogleClient({ account }), { account }));
+          // finally-close: the live client owns an MCP child process holding a bearer
+          // token; this job runs every 30 minutes per account, so skipping the close
+          // leaks one child per run for the lifetime of the server.
+          const client = createGoogleClient({ account });
+          try {
+            r = addIngestTotals(r, await ingestEmails(client, { account }));
+          } finally {
+            await client.close();
+          }
         }
       } else {
         r = addIngestTotals(r, await ingestEmails());
@@ -120,7 +128,12 @@ async function execute(kind: string): Promise<JobOutcome> {
           return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
         }
         for (const account of accounts) {
-          r = addIngestTotals(r, await ingestEvents(createGoogleClient({ account })));
+          const client = createGoogleClient({ account });
+          try {
+            r = addIngestTotals(r, await ingestEvents(client));
+          } finally {
+            await client.close();
+          }
         }
       } else {
         r = addIngestTotals(r, await ingestEvents());
@@ -271,9 +284,22 @@ async function execute(kind: string): Promise<JobOutcome> {
           updated: acc.updated + r.updated,
           deleted: acc.deleted + r.deleted,
           conflicts: acc.conflicts + r.conflicts,
+          errors: acc.errors + r.errors.length,
         }),
-        { created: 0, updated: 0, deleted: 0, conflicts: 0 },
+        { created: 0, updated: 0, deleted: 0, conflicts: 0, errors: 0 },
       );
+      // Fail loudly when EVERY connector failed. Previously the reducer ignored
+      // r.errors entirely, so a wholly dead integration returned status 'done' with
+      // all-zero counts — indistinguishable from "nothing to sync", which is how a
+      // broken calendar can look healthy in the Jobs UI indefinitely. A partial
+      // failure still reports done (some work landed) but names the failures.
+      const failed = results.filter((r) => r.errors.length > 0);
+      if (results.length > 0 && failed.length === results.length) {
+        throw new Error(
+          `all ${results.length} calendar connector(s) failed: ` +
+            failed.map((r) => `${r.provider}/${r.account}: ${r.errors[0]}`).join('; '),
+        );
+      }
       // WP5: place AFTER inbound so the Auto engine packs around the freshly-synced meeting
       // obstacles (the locked inbound blocks applyInbound just created). D1: no-op in suggest.
       const placed = autoScheduleOnIngest();
@@ -283,7 +309,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return {
         itemsCreated: totals.created,
         itemsUpdated: totals.updated + totals.deleted,
-        log: `Synced ${results.length} connector(s): ${totals.created} created, ${totals.updated} updated, ${totals.deleted} deleted, ${totals.conflicts} conflicts${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
+        log: `Synced ${results.length} connector(s): ${totals.created} created, ${totals.updated} updated, ${totals.deleted} deleted, ${totals.conflicts} conflicts${totals.errors ? `, ${totals.errors} error(s) on ${failed.length} connector(s)` : ''}${placed ? `; auto-placed ${placed.blocksCreated ?? 0}` : ''}`,
       };
     }
     case 'snapshot_db': {
