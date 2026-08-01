@@ -679,6 +679,13 @@ export const api = {
       request<{ pref: PatternPref }>('PUT', `/pattern-prefs/${patternTagId}`, patch),
   },
 
+  connectionPrefs: {
+    list: (): Promise<ConnectionPrefsResponse> =>
+      request<ConnectionPrefsResponse>('GET', '/connection-prefs'),
+    // Accounts are email addresses — encode so '@'/'+' survive the path.
+    set: (provider: string, account: string, patch: Partial<ConnectionPref>): Promise<{ pref: ConnectionPref }> =>
+      request<{ pref: ConnectionPref }>('PUT', `/connection-prefs/${encodeURIComponent(provider)}/${encodeURIComponent(account)}`, patch),
+  },
   categoryPrefs: {
     list: (): Promise<CategoryPrefsResponse> =>
       request<CategoryPrefsResponse>('GET', '/category-prefs'),
@@ -943,6 +950,11 @@ export interface Block {
   start_at: string; end_at: string; is_locked: boolean; is_auto: boolean;
   all_day?: boolean; // all-day events render in a pinned header lane (0010); absent ⇒ false (pre-migration)
   source_kind: string; status: string; created_at: string;
+  // Which connection mirrored this block in (null for anything created locally).
+  // `source_kind` says 'google' but not WHICH account, and per-connection colour /
+  // texture is meaningless without the account.
+  source_provider?: string | null;
+  source_account?: string | null;
 }
 
 // ── Phase G: patterns, flight-plan, block templates ───────────────────────────
@@ -1096,6 +1108,8 @@ export interface ViewPrefs {
     prio?: number[];
     topExpanded?: boolean;
     bottomExpanded?: boolean;
+    /** Events-only ("free time") view: hide movable task blocks. Absent = off (show all). */
+    eventsOnly?: boolean;
   };
   planner?: {
     topExpanded?: boolean;
@@ -1430,6 +1444,21 @@ export interface CategoryPref {
 
 export interface CategoryPrefsResponse {
   prefs: Record<string, CategoryPref>;
+}
+
+// ── Connection-prefs (0145): per-source colour + stripe texture ──
+/** Stripe geometries a connection can be given. Mirrors CONNECTION_TEXTURES server-side. */
+export const CONNECTION_TEXTURES = ['none', 'diagonal', 'reverse', 'vertical', 'horizontal', 'grid'] as const;
+export type ConnectionTexture = (typeof CONNECTION_TEXTURES)[number];
+
+export interface ConnectionPref {
+  color_token: string;         // CI-Hub token key (never hex)
+  texture: ConnectionTexture;  // 'none' ⇒ unstyled, exactly as before it was configured
+}
+
+/** Keyed `provider:account` — the same key the block's source_provider/source_account form. */
+export interface ConnectionPrefsResponse {
+  prefs: Record<string, ConnectionPref>;
 }
 
 // ── Phase N0: reflections (today + weekly goals) ─────────────────────────────

@@ -6,6 +6,7 @@ import {
   deserializeAxisState,
   buildCalendarViewPrefs,
   buildPlannerViewPrefs,
+  deserializeEventsOnly,
 } from './view-prefs.js';
 import { emptyAxisDeselected } from './overlay.js';
 import type { AxisDeselected } from './overlay.js';
@@ -89,7 +90,26 @@ describe('view-prefs (de)serialization', () => {
         prio: [1, 3], // sorted
         topExpanded: false,
         bottomExpanded: true,
+        eventsOnly: false, // defaulted — callers opt in explicitly
       });
+    });
+
+    it('carries the events-only flag when set', () => {
+      const blob = buildCalendarViewPrefs(emptyAxisDeselected(), [], DEFAULT_AXIS_STATE, true);
+      expect(blob.eventsOnly).toBe(true);
+    });
+  });
+
+  describe('deserializeEventsOnly — forgiving, defaults to showing everything', () => {
+    it('true only for a literal true', () => {
+      expect(deserializeEventsOnly({ eventsOnly: true })).toBe(true);
+    });
+    it('false for absent, malformed, or explicitly false', () => {
+      expect(deserializeEventsOnly(undefined)).toBe(false);
+      expect(deserializeEventsOnly({})).toBe(false);
+      expect(deserializeEventsOnly({ eventsOnly: false })).toBe(false);
+      // A stale/garbage blob must never strand the owner in a filtered view.
+      expect(deserializeEventsOnly({ eventsOnly: 'yes' } as never)).toBe(false);
     });
   });
 

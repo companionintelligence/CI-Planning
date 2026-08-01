@@ -8,6 +8,8 @@ import {
   isTimed,
   isTaskBlock,
   showsBlockLabel,
+  isExternalBlock,
+  isCommitment,
 } from './overlay.js';
 import type { AxisDeselected, TagAxis, TagKindLookup } from './overlay.js';
 import type { Block, Task } from './api.js';
@@ -170,6 +172,30 @@ describe('task-block vs container partitioning', () => {
     for (const kind of ['timeblock', 'meeting', 'focus', 'habit', 'break', 'buffer']) {
       expect(isTaskBlock(blk({ block_kind: kind, task_id: '10' }))).toBe(false);
     }
+  });
+});
+
+describe('events-only (free time) visibility', () => {
+  it('keeps blocks mirrored from a connected calendar', () => {
+    expect(isExternalBlock(blk({ source_account: 'liam@example.com' }))).toBe(true);
+    expect(isCommitment(blk({ source_account: 'liam@example.com', is_locked: false }))).toBe(true);
+  });
+
+  it('keeps a locked block even though it is local — a lock is still a commitment', () => {
+    // The one error this view must never make is painting busy time as free.
+    expect(isCommitment(blk({ source_account: undefined, is_locked: true }))).toBe(true);
+  });
+
+  it('drops movable local work', () => {
+    expect(isCommitment(blk({ source_account: undefined, is_locked: false }))).toBe(false);
+  });
+
+  it('source_kind alone does not make a block external — the ACCOUNT does', () => {
+    // source_kind is stamped on locally created rows too, so keying on it would leak
+    // non-events into the free-time view.
+    const b = blk({ source_kind: 'google', source_account: undefined, is_locked: false });
+    expect(isExternalBlock(b)).toBe(false);
+    expect(isCommitment(b)).toBe(false);
   });
 });
 
