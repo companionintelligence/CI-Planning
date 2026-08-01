@@ -56,10 +56,10 @@ function readCursor(resource: string) {
 
 describe('gmail watermark cursor + dead-letter (WP5)', () => {
   beforeEach(() => {
-    // AF-3: ingestEmails now auto-promotes its batch into tasks, and tasks carry the
-    // partial UNIQUE(source_kind, source_ref) WHERE source_kind IN ('gmail','gcal')
-    // (0027 ingest dedupe) — clear tasks (and their referencing tables) between tests
-    // or re-ingesting the same message ids collides.
+    // ingestEmails no longer promotes (email is review-gated), but the manual-approve
+    // path in other tests still creates tasks carrying the partial
+    // UNIQUE(source_kind, source_ref) WHERE source_kind IN ('gmail','gcal') (0027) —
+    // clear tasks (and their referencing tables) between tests regardless.
     sqlite.exec(
       'DELETE FROM possible_task_tags; DELETE FROM possible_tasks; DELETE FROM tags; DELETE FROM sync_state;'
       + 'DELETE FROM time_blocks; DELETE FROM flight_plan; DELETE FROM entity_tags; DELETE FROM tasks;',
@@ -77,18 +77,17 @@ describe('gmail watermark cursor + dead-letter (WP5)', () => {
     expect(r.possiblesCreated).toBe(2);
     expect(readCursor('gmail_since')?.cursor).toBe('2026-06-02T10:00:00.000Z');
 
-    // AF-3: the batch auto-promoted at ingestion — nothing stays pending; every row is
-    // settled ('promoted' or, when embeddings are live and titles collide, 'duplicate')
-    // and each promoted row points at a real task.
+    // REVIEW-GATED (services/review-gate.ts): email possibles are NOT promoted at
+    // ingestion — they wait for the owner. Rows stay 'pending' (or 'duplicate' when live
+    // embeddings collapse two near-identical titles) and NO task exists yet.
     const rows = sqlite
       .prepare(`SELECT status, promoted_task_id FROM possible_tasks`)
       .all() as { status: string; promoted_task_id: string | null }[];
     expect(rows.length).toBe(2);
-    expect(rows.every((x) => x.status !== 'pending')).toBe(true);
-    for (const row of rows.filter((x) => x.status === 'promoted')) {
-      expect(sqlite.prepare(`SELECT id FROM tasks WHERE id = ?`).get(row.promoted_task_id)).toBeDefined();
-    }
-    expect(r.promoted + r.duplicates).toBe(2);
+    expect(rows.every((x) => x.status === 'pending' || x.status === 'duplicate')).toBe(true);
+    expect(rows.every((x) => x.promoted_task_id === null)).toBe(true);
+    expect(r.promoted).toBe(0);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM tasks`).get() as { n: number }).n).toBe(0);
   });
 
   it('reads the persisted watermark and only processes newer messages on the next cycle', async () => {
@@ -124,9 +123,10 @@ describe('gmail watermark cursor + dead-letter (WP5)', () => {
 
     // The two healthy messages still produced possibles — the poison didn't wedge the batch.
     expect(r.possiblesCreated).toBe(2);
-    // AF-3: and both were settled at batch end (promoted, or duplicate under live embeddings).
-    const pendingLeft = (sqlite.prepare(`SELECT COUNT(*) AS n FROM possible_tasks WHERE status = 'pending'`).get() as { n: number }).n;
-    expect(pendingLeft).toBe(0);
+    // Review-gated: they are NOT promoted, so they remain awaiting the owner. (Under
+    // live embeddings a near-duplicate pair can collapse, so assert "no task created"
+    // rather than an exact pending count.)
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM tasks`).get() as { n: number }).n).toBe(0);
 
     // The poison id is recorded in the dead-letter list (queryable JSON array).
     const dl = readCursor('gmail_deadletter');

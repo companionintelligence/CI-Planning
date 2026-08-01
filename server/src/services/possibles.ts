@@ -7,6 +7,7 @@ import { taskToApi } from '../lib/serialize.js';
 import { logger } from '../lib/logger.js';
 import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
 import { dedupePossibles } from '../agents/groom.js';
+import { requiresReview } from './review-gate.js';
 
 /**
  * Possible-task inbox CRUD (Phase W · W9) — extracted from routes/possibles.ts so
@@ -164,11 +165,16 @@ export interface PromoteAllResult {
 }
 
 /**
- * AF-3 — auto-promote EVERY pending possible for an owner (the server half of "remove
- * the inbox"). Producers (agents/ingest.ts, agents/memory-suggest.ts) call this at the
- * end of each batch, so a suggestion becomes a real task at ingestion with no manual
- * review step. `possible_tasks` remains as the dedup/audit trail (rows flip to
- * 'promoted'/'duplicate'; the REST/GraphQL promote+dismiss surface is untouched).
+ * AF-3 — auto-promote every pending possible for an owner EXCEPT review-gated sources
+ * (the server half of "remove the inbox"). Producers (agents/ingest.ts,
+ * agents/memory-suggest.ts) call this at the end of each batch, so a suggestion becomes
+ * a real task at ingestion with no manual review step. `possible_tasks` remains as the
+ * dedup/audit trail (rows flip to 'promoted'/'duplicate'; the REST/GraphQL
+ * promote+dismiss surface is untouched).
+ *
+ * Email is the one exception (services/review-gate.ts): those rows stay `pending` for
+ * the owner to approve, because an inbox is other people's agenda and a message that
+ * merely mentions a commitment must not silently become one.
  *
  * Order per the module docstring's SSE contract: (1) inline semantic dedupe (the
  * nightly groom step moved up; owner-scoped; embeddings unavailable → skip gracefully
@@ -186,8 +192,10 @@ export async function promoteAllPending(
   owner: string,
   opts: { embedFn?: (text: string) => Promise<number[]> } = {},
 ): Promise<PromoteAllResult> {
-  const dd = await dedupePossibles({ owner, embedFn: opts.embedFn });
-  const pending = await listPossibles(owner, 'pending');
+  // 'auto' scope on BOTH halves: review-gated sources (email) are never auto-promoted,
+  // and must not be compared against the auto pool either — see dedupePossibles' docstring.
+  const dd = await dedupePossibles({ owner, embedFn: opts.embedFn, scope: 'auto' });
+  const pending = (await listPossibles(owner, 'pending')).filter((p) => !requiresReview(p.sourceKind));
 
   let promoted = 0;
   let failed = 0;

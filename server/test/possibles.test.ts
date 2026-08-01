@@ -182,13 +182,13 @@ describe('promoteAllPending (AF-3)', () => {
     // An existing task already claims (gmail, poison#0) — the 0027 partial
     // UNIQUE(source_kind, source_ref) on tasks makes that row's promote throw.
     sqlite
-      .prepare(`INSERT INTO tasks (id, title, owner_id, status, source_kind, source_ref) VALUES (uuid7(), 'Claimed', ?, 'open', 'gmail', 'poison#0')`)
+      .prepare(`INSERT INTO tasks (id, title, owner_id, status, source_kind, source_ref) VALUES (uuid7(), 'Claimed', ?, 'open', 'gcal', 'poison#0')`)
       .run(OWNER);
     const healthy = insertPossible('Healthy item');
     const poison = (sqlite
       .prepare(
         `INSERT INTO possible_tasks (id, raw_title, source_kind, source_ref, status, proposed_owner_id)
-         VALUES (uuid7(), 'Poison item', 'gmail', 'poison#0', 'pending', ?) RETURNING id`,
+         VALUES (uuid7(), 'Poison item', 'gcal', 'poison#0', 'pending', ?) RETURNING id`,
       )
       .get(OWNER) as { id: string }).id;
 
@@ -208,7 +208,7 @@ describe('promoteAllPending (AF-3)', () => {
                                      proposed_estimated_minutes, proposed_scheduled_for, proposed_task_time,
                                      source_kind, source_ref, status, proposed_owner_id)
          VALUES (uuid7(), 'Review contract', 'From legal', '2026-08-01T12:00:00.000Z', 2, 45, '2026-07-20', '09:30',
-                 'gmail', 'm9#0', 'pending', ?) RETURNING id`,
+                 'gcal', 'm9#0', 'pending', ?) RETURNING id`,
       )
       .get(OWNER) as { id: string }).id;
     const dirTag = (sqlite
@@ -233,7 +233,7 @@ describe('promoteAllPending (AF-3)', () => {
       scheduled_for: '2026-07-20',
       task_time: '09:30',
       owner_id: OWNER,
-      source_kind: 'gmail',
+      source_kind: 'gcal',
       source_ref: 'm9#0',
     });
     // Tag carry-over levels: direction → 1 (placement-relevant), content → 2.

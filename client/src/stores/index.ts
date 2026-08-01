@@ -216,13 +216,20 @@ export function taskOf(taskId?: string): Task | undefined {
   return taskId ? taskById().get(taskId) : undefined;
 }
 
-// ── Auto-promoted suggestions (AF-3 / AF-7) ────────────────────────────────────
-// There is no Inbox surface anymore (AF-7): a promoted suggestion becomes a real task
-// that lands in the Tasks tab's "New Today" section. The server still broadcasts
-// `possible:promoted` when AF-3 auto-promotes a staged suggestion at ingestion, so we
-// keep a slim handler that refetches tasks — the new task then appears live with no
-// user action. (`possible:dismissed` no longer has a client surface to update.)
-on('possible:promoted', () => refetchTasks());
+// ── Suggestions (AF-3 / AF-7, + the email review gate) ─────────────────────────
+// Most producers still auto-promote: a suggestion becomes a real task that lands in the
+// Tasks tab's "New Today" section, so `possible:promoted` refetches tasks.
+//
+// Email is review-gated server-side (services/review-gate.ts) and waits for the owner,
+// so it DOES have a surface again — the suggestions section at the top of the Tasks tab.
+// `possible:suggested` fires on each ingest tick that produced something.
+export const [suggestions, { refetch: refetchSuggestions, mutate: mutateSuggestions }] = createResource(() =>
+  api.possibles.list().then((r) => r.possibles),
+);
+
+on('possible:suggested', () => refetchSuggestions());
+on('possible:promoted', () => { refetchTasks(); refetchSuggestions(); });
+on('possible:dismissed', () => refetchSuggestions());
 
 // ── Phase G: flight-plan, patterns, pattern types ──────────────────────────────
 // The flight-plan is the persisted, owner-scoped staging area the two-step Auto

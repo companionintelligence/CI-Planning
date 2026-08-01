@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, createResource, For, onMount } from 'solid-js';
-import { Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText } from 'lucide-solid';
+import { BellRing, Save, Cpu, Globe, CheckCircle2, XCircle, Brain, Link2, Unlink, RefreshCw, Star, Pentagon, Shapes, Plus, Trash2, Tags, X, Database, AlertTriangle, Users, KeyRound, ScrollText, Eye, FileJson, FileText } from 'lucide-solid';
 import { prefs, refetchPrefs, tags, patternPrefs, refetchPatternPrefs, showToast, texturesEnabled, setTexturesEnabled, plannerAxisState, setPlannerCollapseBounds, integrations, refetchIntegrations, aiAvailable, connections, refetchConnections } from '../stores/index.js';
 import { api, type PlanningSession } from '../lib/api.js';
 import { sessionToMarkdown, sessionToJson, exportFilename } from '../lib/plan-week-export.js';
@@ -66,7 +66,7 @@ const DEFAULTS: SettingsForm = {
 };
 
 export function Settings() {
-  const [activeTab, setActiveTab] = createSignal<'preferences' | 'connections' | 'logs'>('preferences');
+  const [activeTab, setActiveTab] = createSignal<'profile' | 'preferences' | 'connections' | 'logs'>('profile');
   const [form, setForm] = createSignal<SettingsForm>({ ...DEFAULTS });
 
   // V8 — account (local sign-in only): the backup reset-email. Fetch auth config + the
@@ -86,18 +86,43 @@ export function Settings() {
   // self-hosted owner is stuck as the seeded 'System' identity forever.
   const [profileName, setProfileName] = createSignal('');
   const [profileEmail, setProfileEmail] = createSignal('');
+  // The local-login handle. Separate from `name` on purpose: it is UNIQUE (partial index
+  // ux_owners_username) and case-sensitive, whereas the display name is neither — forcing
+  // them equal would make two people called "Liam" impossible. Null for SSO owners, who
+  // have no local handle at all, so the field is hidden for them.
+  const [profileUsername, setProfileUsername] = createSignal('');
   const [profileSaving, setProfileSaving] = createSignal(false);
-  createEffect(() => { if (me()) { setProfileName(me()!.name ?? ''); setProfileEmail(me()!.email ?? ''); } });
+  createEffect(() => {
+    if (me()) {
+      setProfileName(me()!.name ?? '');
+      setProfileEmail(me()!.email ?? '');
+      setProfileUsername(me()!.username ?? '');
+    }
+  });
+  const hasUsername = () => me()?.username != null;
   const profileDirty = () =>
-    profileName().trim() !== (me()?.name ?? '') || profileEmail().trim() !== (me()?.email ?? '');
+    profileName().trim() !== (me()?.name ?? '')
+    || profileEmail().trim() !== (me()?.email ?? '')
+    || (hasUsername() && profileUsername().trim() !== (me()?.username ?? ''));
   async function saveProfile() {
     setProfileSaving(true);
     try {
-      await api.owner.updateProfile({ name: profileName().trim(), email: profileEmail().trim() || null });
+      // Only send `username` when this owner actually has one AND it changed — an SSO
+      // owner has none, and resending an unchanged handle would pointlessly re-run the
+      // uniqueness check.
+      const changedUsername = hasUsername() && profileUsername().trim() !== (me()?.username ?? '');
+      await api.owner.updateProfile({
+        name: profileName().trim(),
+        email: profileEmail().trim() || null,
+        ...(changedUsername ? { username: profileUsername().trim() } : {}),
+      });
       await refetchMe();
       showToast('Profile saved', 'success');
     } catch (err) {
       showToast((err as Error).message, 'error');
+      // A rejected rename (409) must not leave the field showing a handle that isn't
+      // stored — snap back to the server's truth.
+      setProfileUsername(me()?.username ?? '');
     } finally {
       setProfileSaving(false);
     }
@@ -657,6 +682,17 @@ export function Settings() {
       <div class="flex gap-1 mb-5 border-b border-border">
         <button
           type="button"
+          onClick={() => setActiveTab('profile')}
+          class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+          classList={{
+            'border-primary text-foreground': activeTab() === 'profile',
+            'border-transparent text-muted-foreground hover:text-foreground': activeTab() !== 'profile',
+          }}
+        >
+          Profile
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('preferences')}
           class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
           classList={{
@@ -692,17 +728,20 @@ export function Settings() {
 
       <form onSubmit={save} class="flex flex-col gap-5">
 
-        {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
-        <Show when={activeTab() === 'preferences'}>
+        {/* ── PROFILE TAB ─────────────────────────────────────────────────────── */}
+        <Show when={activeTab() === 'profile'}>
 
-          {/* Profile — all auth modes: the owner's display name + primary email. */}
+          {/* Your Profile — the owner's own identity. Merges what used to be two cards
+              ("Profile" + "Account"): the split put the display name and the login
+              handle on separate cards for no reason a user could see. */}
           <Show when={me()}>
             <section class="card">
-              <div class="section-label mb-1">Profile</div>
-              <p class="text-xs text-muted-foreground mb-3">
-                Your name and email. The email is also where password-reset links go on
-                local-login deployments.
-              </p>
+              <div
+                class="section-label mb-3"
+                title="Your name, sign-in handle and email. The email is where password-reset links go on local-login deployments."
+              >
+                Your Profile
+              </div>
               <div class="flex flex-col gap-2">
                 <label class="flex flex-col gap-1">
                   <span class="text-[11px] text-muted-foreground">Name</span>
@@ -714,6 +753,24 @@ export function Settings() {
                     onInput={(e) => setProfileName(e.currentTarget.value)}
                   />
                 </label>
+                {/* Local-login only: an SSO owner has no username to change. */}
+                <Show when={hasUsername()}>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-[11px] text-muted-foreground">Username</span>
+                    <input
+                      type="text"
+                      class="input py-1 text-sm font-mono"
+                      autocomplete="off"
+                      spellcheck={false}
+                      placeholder="your-handle"
+                      value={profileUsername()}
+                      onInput={(e) => setProfileUsername(e.currentTarget.value)}
+                    />
+                    <span class="text-[10px] text-muted-foreground">
+                      This is what you sign in with. Case-sensitive, and must be unique.
+                    </span>
+                  </label>
+                </Show>
                 <label class="flex flex-col gap-1">
                   <span class="text-[11px] text-muted-foreground">Email</span>
                   <input
@@ -734,57 +791,202 @@ export function Settings() {
                     {profileSaving() ? 'Saving…' : 'Save profile'}
                   </button>
                 </div>
+
+                {/* Backup reset address — a separate endpoint, so its own Save. */}
+                <Show when={localAuth()}>
+                  <label class="flex flex-col gap-1 pt-3 mt-1 border-t border-border">
+                    <span
+                      class="text-[11px] text-muted-foreground"
+                      title="Password-reset links go to your account email above. A backup address is used as a fallback when the primary is unavailable."
+                    >
+                      Backup email
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="email"
+                        class="input py-1 text-sm flex-1"
+                        placeholder="backup@example.com"
+                        value={backupEmail()}
+                        onInput={(e) => setBackupEmail(e.currentTarget.value)}
+                      />
+                      <button
+                        type="button"
+                        class="btn-primary text-sm px-3 py-1.5"
+                        onClick={saveBackupEmail}
+                        disabled={backupSaving() || backupEmail().trim() === (me()?.backupEmail ?? '')}
+                      >
+                        {backupSaving() ? 'Saving…' : 'Save'}
+                      </button>
+                    </div>
+                  </label>
+                </Show>
               </div>
             </section>
           </Show>
 
-          {/* V8 — Account (local sign-in only): backup password-reset email. */}
-          <Show when={localAuth()}>
+          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
+              and the server 403s them anyway). Only rendered behind the auth gate:
+              test/standalone deployments have no login accounts to manage. */}
+          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator && accounts()}>
             <section class="card">
-              <div class="section-label mb-1">Account</div>
-              <p class="text-xs text-muted-foreground mb-3">
-                Your password-reset link is emailed to your account address (set in Profile above). Add a backup
-                address as a fallback in case the primary is unavailable.
-              </p>
-              <Show when={me()?.username}>
-                <div class="flex items-center justify-between gap-3 mb-2">
-                  <span class="text-sm text-foreground">Username</span>
-                  <span class="text-sm text-muted-foreground font-mono">{me()!.username}</span>
+              <div class="flex items-center justify-between mb-3">
+                <div class="section-label flex items-center gap-1.5" title="Operators manage accounts, system jobs, and the Google connection. Members plan their own days. Viewers are read-only. Role changes sign the user out everywhere."><Users size={12} /> Team</div>
+                <Show when={localAuth() && !acctFormOpen()}>
+                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
+                    <Plus size={12} /> New account
+                  </button>
+                </Show>
+              </div>
+              {/* Create form (local login only — SSO users are provisioned on first portal sign-in) */}
+              <Show when={acctFormOpen()}>
+                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Username</span>
+                      <input class="input py-1 text-sm" type="text" autocomplete="off"
+                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
+                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
+                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                      <span class="text-[11px] text-muted-foreground">Role</span>
+                      <select class="input py-1 text-sm" value={acctRole()}
+                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
+                        <option value="member">Member</option>
+                        <option value="viewer">Viewer</option>
+                        <option value="operator">Operator</option>
+                      </select>
+                    </label>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">
+                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
+                  </p>
+                  <div class="flex items-center gap-2 justify-end">
+                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
+                    <button type="button" onClick={createAccount}
+                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
+                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
+                    </button>
+                  </div>
                 </div>
               </Show>
-              <label class="flex flex-col gap-1">
-                <span class="text-[11px] text-muted-foreground">Backup email</span>
-                <div class="flex items-center gap-2">
-                  <input
-                    type="email"
-                    class="input py-1 text-sm flex-1"
-                    placeholder="backup@example.com"
-                    value={backupEmail()}
-                    onInput={(e) => setBackupEmail(e.currentTarget.value)}
-                  />
-                  <button
-                    type="button"
-                    class="btn-primary text-sm px-3 py-1.5"
-                    onClick={saveBackupEmail}
-                    disabled={backupSaving() || backupEmail().trim() === (me()?.backupEmail ?? '')}
-                  >
-                    {backupSaving() ? 'Saving…' : 'Save'}
-                  </button>
+
+              {/* SMTP-free fallback: the server handed the link back — shown once. */}
+              <Show when={inviteLink()}>
+                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-foreground font-medium">
+                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
+                    </span>
+                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
+                  </div>
+                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
+                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
                 </div>
-              </label>
+              </Show>
+
+              <div class="flex flex-col gap-2">
+                <For each={accounts() ?? []}>
+                  {(a) => (
+                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div class="min-w-0">
+                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
+                          <span class="text-[11px] text-muted-foreground ml-2">
+                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
+                            {!a.username ? ' · signs in via CI-Portal' : ''}
+                          </span>
+                          <Show when={a.username && !a.hasPassword}>
+                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-full bg-amber-500/15 text-amber-400">invite pending</span>
+                          </Show>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                          <select
+                            class="input py-0.5 text-xs w-auto"
+                            value={a.role}
+                            disabled={a.id === me()!.ownerId}
+                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
+                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
+                          >
+                            <option value="operator">Operator</option>
+                            <option value="member">Member</option>
+                            <option value="viewer">Viewer</option>
+                          </select>
+                          <Show when={a.username}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
+                              title={a.hasPassword
+                                ? 'Email them a single-use password-reset link'
+                                : 'Send the set-password invite again (replaces the previous link)'}
+                              onClick={() => sendInvite(a)}>
+                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
+                            </button>
+                          </Show>
+                          <Show when={a.id !== me()!.ownerId}>
+                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
+                              title="Delete this account and all of its data"
+                              onClick={() => deleteAccount(a)}>
+                              <Trash2 size={12} />
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
             </section>
           </Show>
+
+
+          {/* Backup / Restore / Export */}
+          <section class="card">
+            <div class="section-label flex items-center gap-1.5 mb-3"><Database size={12} /> Backup &amp; Export</div>
+            <div class="flex flex-col gap-4">
+              <div class="flex items-center gap-3 flex-wrap">
+                <a
+                  href="/api/export"
+                  download="companion-export.json"
+                  class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
+                >
+                  <Database size={12} /> Export JSON
+                </a>
+                <label class={`btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 cursor-pointer ${importBusy() ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {importBusy() ? 'Importing…' : 'Import JSON'}
+                  <input
+                    type="file"
+                    accept=".json"
+                    class="sr-only"
+                    onChange={(e) => {
+                      const f = e.currentTarget.files?.[0];
+                      if (f) { e.currentTarget.value = ''; handleImport(f); }
+                    }}
+                  />
+                </label>
+              </div>
+              <div class="flex items-start gap-1.5 text-[11px] text-amber-400/80">
+                <AlertTriangle size={11} class="mt-0.5 flex-shrink-0" />
+                <span>
+                  Do not sync the live <code class="font-mono">.db</code> file with Syncthing or rsync — WAL mode writes across multiple files and a partial sync can corrupt the database. Use Export or <code class="font-mono">pnpm snapshot</code> instead.
+                </span>
+              </div>
+            </div>
+          </section>
+
+        </Show>
+
+        {/* ── PREFERENCES TAB ─────────────────────────────────────────────────── */}
+        <Show when={activeTab() === 'preferences'}>
 
           {/* Schedule Patterns — per-direction availability windows */}
           <section class="card">
             <div class="flex items-center justify-between mb-1">
-              <div class="section-label">Schedule Patterns</div>
+              <div class="section-label" title="Define day types, assign them to each weekday, and set per-direction availability windows. Auto places direction-tagged tasks only inside these windows. Changes save as you make them.">Schedule Patterns</div>
               <button type="button" onClick={doSave} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
             </div>
-            <p class="text-xs text-muted-foreground mb-3">
-              Define day types, assign them to each weekday, and set per-direction availability windows.
-              Auto places direction-tagged tasks only inside these windows. Changes save as you make them.
-            </p>
             <DayTypeManager />
             {/* General fallback: fill open workday time for tasks with no direction tag */}
             <div class="mt-4 pt-3 border-t border-border">
@@ -848,10 +1050,7 @@ export function Settings() {
           {/* Planner display — appearance + configurable night-collapse boundaries.
               These write straight through (view_prefs; no migration) and apply live. */}
           <section class="card">
-            <div class="section-label mb-1">Planner display</div>
-            <p class="text-xs text-muted-foreground mb-3">
-              Visual options for the Today planner. Changes apply immediately.
-            </p>
+            <div class="section-label mb-1" title="Visual options for the Today planner. Changes apply immediately.">Planner display</div>
             {/* Direction textures (view_prefs.appearance.direction_textures) */}
             <label class="flex items-start gap-2 cursor-pointer select-none">
               <button type="button" role="switch" aria-checked={texturesEnabled()}
@@ -899,15 +1098,13 @@ export function Settings() {
 
           {/* Pattern Tags — expandable rows (shape, colour, default minutes per direction tag) */}
           <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-1"><Shapes size={12} /> Pattern Tags</div>
-            <p class="text-xs text-muted-foreground mb-3">Shape, colour, and default estimate for each direction tag. The default time is used when a task has no intention tag.</p>
+            <div class="section-label flex items-center gap-1.5 mb-1" title="Shape, colour, and default estimate for each direction tag. The default time is used when a task has no intention tag."><Shapes size={12} /> Pattern Tags</div>
             <PatternBlockSettings />
           </section>
 
           {/* Time Block Categories — the kind='category' catalog (0069/0126): colour + name (duration lives on Pattern Tags) */}
           <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-1"><Tags size={12} /> Time Block Categories</div>
-            <p class="text-xs text-muted-foreground mb-3">Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the <span class="text-primary">Tags → Time Block Categories</span> tab.</p>
+            <div class="section-label flex items-center gap-1.5 mb-1" title={'Quick "types of time" for time blocks (Personal, Professional, Social + your own). Pick a colour; the defaults can be renamed and recoloured but not deleted. Group their intention tags on the Tags → Time Block Categories tab.'}><Tags size={12} /> Time Block Categories</div>
             <CategorySettings />
           </section>
 
@@ -1014,58 +1211,66 @@ export function Settings() {
 
             </div>
 
-            {/* Reminder Defaults — ONE shared config for Home / Community / Work. */}
-            <div class="pt-4 mt-4 border-t border-border">
-              <div class="flex items-center justify-between mb-1">
-                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Reminder Defaults</div>
-                <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
-              </div>
-              <p class="text-xs text-muted-foreground mb-3">Shared by Home, Community, and Work. Reminders fire in-app; enable push below for backgrounded delivery.</p>
-              <div class="flex flex-col gap-3">
-                {/* Push notifications — opt-in browser delivery (Phase H). */}
-                <label class="flex items-start gap-2 cursor-pointer select-none">
-                  <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
-                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
-                    classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
-                  </button>
-                  <div>
-                    <div class="text-sm text-foreground leading-tight">Push notifications</div>
-                    <div class="text-[11px] text-muted-foreground">Deliver reminders to this device even when the app is closed.</div>
-                  </div>
-                </label>
-                {/* Start-time reminder */}
-                <label class="flex items-start gap-2 cursor-pointer select-none">
-                  <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
-                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
-                    classList={{ 'bg-primary': remStartOn(), 'bg-muted border border-border': !remStartOn() }}>
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
-                  </button>
-                  <div>
-                    <div class="text-sm text-foreground leading-tight">Start-time reminder</div>
-                    <div class="text-[11px] text-muted-foreground">Notify exactly when the task starts.</div>
-                  </div>
-                </label>
-                {/* Advance reminder (advanced timer) */}
-                <label class="flex items-start gap-2 cursor-pointer select-none">
-                  <button type="button" role="switch" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
-                    class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
-                    classList={{ 'bg-primary': remAdvOn(), 'bg-muted border border-border': !remAdvOn() }}>
-                    <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
-                  </button>
-                  <div class="flex-1">
-                    <div class="text-sm text-foreground leading-tight">Advance reminder</div>
-                    <div class="text-[11px] text-muted-foreground">Notify ahead of the start time.</div>
-                    <Show when={remAdvOn()}>
-                      <div class="flex items-center gap-1.5 mt-1.5">
-                        <input type="number" min="1" step="5" class="input py-1 text-sm w-20"
-                          value={remAdvMin()} onInput={(e) => setRemAdvMin(Number(e.currentTarget.value) || 0)} />
-                        <span class="text-[11px] text-muted-foreground">minutes before start</span>
-                      </div>
-                    </Show>
-                  </div>
-                </label>
-              </div>
+          </section>
+
+          {/* Reminders — deliberately NOT inside Time-Block Settings. Reminders are a
+              TASK concept, not a block one: engine/reminders.ts anchors on the task's
+              scheduled_for+task_time OR its due_at, so a task with a due date and no
+              block at all still gets one, and the offsets are unioned across every
+              direction row so even an untagged task is covered. Blocks are a reminder
+              target only for the three Focus-Ritual cues. */}
+          <section class="card">
+            <div class="flex items-center justify-between mb-3">
+              <div
+                class="section-label flex items-center gap-1.5"
+                title="Applies to every task with a time or a due date — not just ones on the planner. Shared by Home, Community and Work. Reminders fire in-app; enable push for delivery when the app is closed."
+              ><BellRing size={12} /> Reminders</div>
+              <button type="button" onClick={saveReminderDefaults} class="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"><Save size={11} /> Save</button>
+            </div>
+            <div class="flex flex-col gap-3">
+              {/* Push notifications — opt-in browser delivery (Phase H). */}
+              <label class="flex items-start gap-2 cursor-pointer select-none">
+                <button type="button" role="switch" aria-checked={pushOn()} disabled={pushBusy()} onClick={togglePush}
+                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 disabled:opacity-50"
+                  classList={{ 'bg-primary': pushOn(), 'bg-muted border border-border': !pushOn() }}>
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': pushOn() }} />
+                </button>
+                <div>
+                  <div class="text-sm text-foreground leading-tight">Push notifications</div>
+                  <div class="text-[11px] text-muted-foreground">Deliver reminders to this device even when the app is closed.</div>
+                </div>
+              </label>
+              {/* Start-time reminder */}
+              <label class="flex items-start gap-2 cursor-pointer select-none">
+                <button type="button" role="switch" aria-checked={remStartOn()} onClick={() => setRemStartOn((v) => !v)}
+                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                  classList={{ 'bg-primary': remStartOn(), 'bg-muted border border-border': !remStartOn() }}>
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remStartOn() }} />
+                </button>
+                <div>
+                  <div class="text-sm text-foreground leading-tight">Start-time reminder</div>
+                  <div class="text-[11px] text-muted-foreground">Notify exactly when the task starts.</div>
+                </div>
+              </label>
+              {/* Advance reminder (advanced timer) */}
+              <label class="flex items-start gap-2 cursor-pointer select-none">
+                <button type="button" role="switch" aria-checked={remAdvOn()} onClick={() => setRemAdvOn((v) => !v)}
+                  class="relative w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5"
+                  classList={{ 'bg-primary': remAdvOn(), 'bg-muted border border-border': !remAdvOn() }}>
+                  <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card transition-transform" classList={{ 'translate-x-4': remAdvOn() }} />
+                </button>
+                <div class="flex-1">
+                  <div class="text-sm text-foreground leading-tight">Advance reminder</div>
+                  <div class="text-[11px] text-muted-foreground">Notify ahead of the start time.</div>
+                  <Show when={remAdvOn()}>
+                    <div class="flex items-center gap-1.5 mt-1.5">
+                      <input type="number" min="1" step="5" class="input py-1 text-sm w-20"
+                        value={remAdvMin()} onInput={(e) => setRemAdvMin(Number(e.currentTarget.value) || 0)} />
+                      <span class="text-[11px] text-muted-foreground">minutes before start</span>
+                    </div>
+                  </Show>
+                </div>
+              </label>
             </div>
           </section>
 
@@ -1653,162 +1858,6 @@ export function Settings() {
           </section>
           </Show>
 
-          {/* Phase AG — Accounts (operator-only; non-operators never see this card,
-              and the server 403s them anyway). Only rendered behind the auth gate:
-              test/standalone deployments have no login accounts to manage. */}
-          <Show when={authCfg()?.mode === 'sso' && me()?.isOperator && accounts()}>
-            <section class="card">
-              <div class="flex items-center justify-between mb-3">
-                <div class="section-label flex items-center gap-1.5"><Users size={12} /> Accounts</div>
-                <Show when={localAuth() && !acctFormOpen()}>
-                  <button type="button" onClick={() => setAcctFormOpen(true)} class="btn-secondary text-xs px-3 py-1.5">
-                    <Plus size={12} /> New account
-                  </button>
-                </Show>
-              </div>
-              <p class="text-xs text-muted-foreground mb-3">
-                Operators manage accounts, system jobs, and the Google connection. Members plan their own days.
-                Viewers are read-only. Role changes sign the user out everywhere.
-              </p>
-
-              {/* Create form (local login only — SSO users are provisioned on first portal sign-in) */}
-              <Show when={acctFormOpen()}>
-                <div class="flex flex-col gap-2 p-3 mb-3 rounded-md bg-muted/40 border border-border">
-                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Username</span>
-                      <input class="input py-1 text-sm" type="text" autocomplete="off"
-                        value={acctUsername()} onInput={(e) => setAcctUsername(e.currentTarget.value)} />
-                    </label>
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Email <span class="opacity-70">· the invite goes there</span></span>
-                      <input class="input py-1 text-sm" type="email" autocomplete="off" placeholder="them@example.com"
-                        value={acctEmail()} onInput={(e) => setAcctEmail(e.currentTarget.value)} />
-                    </label>
-                    <label class="flex flex-col gap-1">
-                      <span class="text-[11px] text-muted-foreground">Role</span>
-                      <select class="input py-1 text-sm" value={acctRole()}
-                        onChange={(e) => setAcctRole(e.currentTarget.value as import('../lib/api.js').OwnerRole)}>
-                        <option value="member">Member</option>
-                        <option value="viewer">Viewer</option>
-                        <option value="operator">Operator</option>
-                      </select>
-                    </label>
-                  </div>
-                  <p class="text-[11px] text-muted-foreground">
-                    They get a single-use link to set their own password (valid 7 days) — you never handle it.
-                  </p>
-                  <div class="flex items-center gap-2 justify-end">
-                    <button type="button" onClick={() => setAcctFormOpen(false)} class="btn-ghost text-xs px-2 py-1">Cancel</button>
-                    <button type="button" onClick={createAccount}
-                      disabled={acctBusy() || !acctUsername().trim() || !acctEmail().trim().includes('@')}
-                      class="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <Plus size={12} /> {acctBusy() ? 'Creating…' : 'Create & send invite'}
-                    </button>
-                  </div>
-                </div>
-              </Show>
-
-              {/* SMTP-free fallback: the server handed the link back — shown once. */}
-              <Show when={inviteLink()}>
-                <div class="flex flex-col gap-1.5 p-3 mb-3 rounded-md border border-amber-500/40 bg-amber-500/10">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-xs text-foreground font-medium">
-                      Set-password link for “{inviteLink()!.username}” — no outgoing email is configured, so send it to them yourself.
-                    </span>
-                    <button type="button" onClick={() => setInviteLink(null)} class="btn-ghost text-xs px-2 py-1"><X size={12} /></button>
-                  </div>
-                  <code class="text-[11px] font-mono break-all select-all">{inviteLink()!.link}</code>
-                  <span class="text-[11px] text-muted-foreground">Single use · shown only once — it isn't stored anywhere else.</span>
-                </div>
-              </Show>
-
-              <div class="flex flex-col gap-2">
-                <For each={accounts() ?? []}>
-                  {(a) => (
-                    <div class="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2">
-                      <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <div class="min-w-0">
-                          <span class="text-xs text-foreground font-medium truncate">{a.name}</span>
-                          <span class="text-[11px] text-muted-foreground ml-2">
-                            {a.username ?? a.email ?? '—'}{a.id === me()!.ownerId ? ' · you' : ''}
-                            {!a.username ? ' · signs in via CI-Portal' : ''}
-                          </span>
-                          <Show when={a.username && !a.hasPassword}>
-                            <span class="text-[10px] px-1.5 py-0.5 ml-2 rounded-full bg-amber-500/15 text-amber-400">invite pending</span>
-                          </Show>
-                        </div>
-                        <div class="flex items-center gap-1.5 shrink-0">
-                          <select
-                            class="input py-0.5 text-xs w-auto"
-                            value={a.role}
-                            disabled={a.id === me()!.ownerId}
-                            title={a.id === me()!.ownerId ? 'Another operator must change your role' : 'Set this account\'s role'}
-                            onChange={(e) => changeRole(a.id, e.currentTarget.value as import('../lib/api.js').OwnerRole)}
-                          >
-                            <option value="operator">Operator</option>
-                            <option value="member">Member</option>
-                            <option value="viewer">Viewer</option>
-                          </select>
-                          <Show when={a.username}>
-                            <button type="button" class="btn-ghost text-xs px-2 py-1" disabled={acctBusy()}
-                              title={a.hasPassword
-                                ? 'Email them a single-use password-reset link'
-                                : 'Send the set-password invite again (replaces the previous link)'}
-                              onClick={() => sendInvite(a)}>
-                              <KeyRound size={12} /> {a.hasPassword ? 'Send reset link' : 'Resend invite'}
-                            </button>
-                          </Show>
-                          <Show when={a.id !== me()!.ownerId}>
-                            <button type="button" class="btn-ghost text-xs px-2 py-1 text-destructive"
-                              title="Delete this account and all of its data"
-                              onClick={() => deleteAccount(a)}>
-                              <Trash2 size={12} />
-                            </button>
-                          </Show>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </section>
-          </Show>
-
-          {/* Backup / Restore / Export */}
-          <section class="card">
-            <div class="section-label flex items-center gap-1.5 mb-3"><Database size={12} /> Backup &amp; Export</div>
-            <div class="flex flex-col gap-4">
-              <div class="flex items-center gap-3 flex-wrap">
-                <a
-                  href="/api/export"
-                  download="companion-export.json"
-                  class="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
-                >
-                  <Database size={12} /> Export JSON
-                </a>
-                <label class={`btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 cursor-pointer ${importBusy() ? 'opacity-50 pointer-events-none' : ''}`}>
-                  {importBusy() ? 'Importing…' : 'Import JSON'}
-                  <input
-                    type="file"
-                    accept=".json"
-                    class="sr-only"
-                    onChange={(e) => {
-                      const f = e.currentTarget.files?.[0];
-                      if (f) { e.currentTarget.value = ''; handleImport(f); }
-                    }}
-                  />
-                </label>
-              </div>
-              <div class="flex items-start gap-1.5 text-[11px] text-amber-400/80">
-                <AlertTriangle size={11} class="mt-0.5 flex-shrink-0" />
-                <span>
-                  Do not sync the live <code class="font-mono">.db</code> file with Syncthing or rsync — WAL mode writes across multiple files and a partial sync can corrupt the database. Use Export or <code class="font-mono">pnpm snapshot</code> instead.
-                </span>
-              </div>
-            </div>
-          </section>
-
           <button type="submit" class="btn-primary self-start px-5">
             <Save size={14} /> Save Settings
           </button>
@@ -1821,7 +1870,7 @@ export function Settings() {
         <Show when={activeTab() === 'logs'}>
           <section class="card">
             <div class="flex items-center justify-between mb-1 gap-2">
-              <div class="section-label flex items-center gap-1.5"><ScrollText size={12} /> Planning-session logs</div>
+              <div class="section-label flex items-center gap-1.5" title="Every Weekly-Planning-Assistant session — fill week, schedule tasks, and review — recorded for your own reference. Select sessions below to consolidate them into one summary."><ScrollText size={12} /> Planning-session logs</div>
               <div class="flex items-center gap-1.5 flex-shrink-0">
                 <button
                   type="button"
@@ -1841,10 +1890,6 @@ export function Settings() {
                 </button>
               </div>
             </div>
-            <p class="text-xs text-muted-foreground mb-3">
-              Every Weekly-Planning-Assistant session — fill week, schedule tasks, and review — recorded for your own reference.
-              Select sessions below to consolidate them into one summary.
-            </p>
 
             <Show when={consolidateResult()}>
               {(result) => (

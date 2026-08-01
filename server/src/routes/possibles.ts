@@ -4,6 +4,7 @@ import { logger } from '../lib/logger.js';
 import { toApiList, taskToApi } from '../lib/serialize.js';
 import { currentOwnerId } from '../lib/context.js';
 import { listPossibles, promotePossible, dismissPossible } from '../services/possibles.js';
+import { requiresReview } from '../services/review-gate.js';
 import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan.js';
 
 /**
@@ -20,11 +21,15 @@ import { autoScheduleOnIngest, placeStartAnchoredTask } from '../engine/autoplan
 export function possiblesRouter() {
   const router = new Router();
 
-  // GET /api/possible-tasks
+  // GET /api/possible-tasks[?review=1]
+  // `review=1` narrows to the review-gated sources (email) — the queue the client's
+  // suggestions surface renders. Without it the response is unchanged, so every
+  // existing consumer (and the characterization snapshot) sees exactly what it did.
   router.get('/api/possible-tasks', async (ctx) => {
-    const { status = 'pending' } = ctx.query as Record<string, string>;
+    const { status = 'pending', review } = ctx.query as Record<string, string>;
     const rows = await listPossibles(currentOwnerId(), status);
-    ctx.body = { possibles: toApiList(rows) };
+    const filtered = review ? rows.filter((r) => requiresReview(r.sourceKind)) : rows;
+    ctx.body = { possibles: toApiList(filtered) };
   });
 
   // POST /api/possible-tasks/:id/promote

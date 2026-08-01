@@ -338,7 +338,7 @@ describe('PATCH /api/owner/profile', () => {
     const { cookie } = await login(USER, PW);
     const res = await patchProfile(cookie, { name: '  Alex Hartman  ', email: 'alex@example.com' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, name: 'Alex Hartman', email: 'alex@example.com' });
+    expect(await res.json()).toEqual({ ok: true, name: 'Alex Hartman', email: 'alex@example.com', username: USER });
     const ownerId = findOwnerByUsername(USER)!.id;
     const row = sqlite.prepare(`SELECT name, email FROM owners WHERE id = ?`).get(ownerId) as { name: string; email: string | null };
     expect(row).toEqual({ name: 'Alex Hartman', email: 'alex@example.com' });
@@ -349,13 +349,13 @@ describe('PATCH /api/owner/profile', () => {
     const { cookie } = await login(USER, PW);
     await patchProfile(cookie, { name: 'Alex', email: 'alex@example.com' });
     const r1 = await patchProfile(cookie, { name: 'Alexandra' });
-    expect(await r1.json()).toEqual({ ok: true, name: 'Alexandra', email: 'alex@example.com' });
+    expect(await r1.json()).toEqual({ ok: true, name: 'Alexandra', email: 'alex@example.com', username: USER });
     const r2 = await patchProfile(cookie, { email: null });
-    expect(await r2.json()).toEqual({ ok: true, name: 'Alexandra', email: null });
+    expect(await r2.json()).toEqual({ ok: true, name: 'Alexandra', email: null, username: USER });
     // '' is an accepted clear value too (mirrors backup-email) — documented in the 400 message.
     await patchProfile(cookie, { email: 'alex@example.com' });
     const r3 = await patchProfile(cookie, { email: '' });
-    expect(await r3.json()).toEqual({ ok: true, name: 'Alexandra', email: null });
+    expect(await r3.json()).toEqual({ ok: true, name: 'Alexandra', email: null, username: USER });
   });
 
   it('rejects an empty name, a malformed email, and an empty PATCH with 400', async () => {
@@ -373,5 +373,75 @@ describe('PATCH /api/owner/profile', () => {
       body: JSON.stringify({ name: 'X' }),
     });
     expect(res.status).toBe(401);
+  });
+
+  // ── username changes ────────────────────────────────────────────────────────
+  // The login handle itself. Uniqueness is enforced by the ux_owners_username partial
+  // index; case is significant everywhere (findOwnerByUsername and the index are both
+  // binary-collated), so a rename must preserve it exactly.
+
+  it('changes the username, and the owner can log in with the new one', async () => {
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+    const res = await patchProfile(cookie, { username: 'liam' });
+    expect(res.status).toBe(200);
+    expect((await res.json()).username).toBe('liam');
+
+    // The real proof: the new handle authenticates and the old one no longer does.
+    const relogin = await fetch(`${srv.url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'liam', password: PW }),
+    });
+    expect(relogin.status).toBe(200);
+    const stale = await fetch(`${srv.url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: USER, password: PW }),
+    });
+    expect(stale.status).toBe(401);
+  });
+
+  it('preserves case exactly — never lower-cases the handle', async () => {
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+    await patchProfile(cookie, { username: 'Liam' });
+    const row = sqlite.prepare(`SELECT username FROM owners WHERE username = 'Liam'`).get() as { username: string };
+    expect(row.username).toBe('Liam');
+    // Case-sensitive login: the lower-cased form must NOT authenticate.
+    const wrongCase = await fetch(`${srv.url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'liam', password: PW }),
+    });
+    expect(wrongCase.status).toBe(401);
+  });
+
+  it('409s when the username is already taken', async () => {
+    await seedUser();
+    await provisionOwner({ name: 'Other', username: 'taken', passwordHash: await hashPassword(PW) });
+    const { cookie } = await login(USER, PW);
+    const res = await patchProfile(cookie, { username: 'taken' });
+    expect(res.status).toBe(409);
+    // The original handle is untouched after a rejected rename.
+    expect(findOwnerByUsername(USER)).toBeDefined();
+  });
+
+  it('rejects an empty or whitespace-bearing username with 400', async () => {
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+    expect((await patchProfile(cookie, { username: '  ' })).status).toBe(400);
+    expect((await patchProfile(cookie, { username: 'two words' })).status).toBe(400);
+    expect((await patchProfile(cookie, { username: 'x'.repeat(65) })).status).toBe(400);
+  });
+
+  it('does not sign the owner out — the session survives a rename', async () => {
+    await seedUser();
+    const { cookie } = await login(USER, PW);
+    await patchProfile(cookie, { username: 'renamed' });
+    // Same cookie, still authenticated: the session is keyed by owner id, not username.
+    const me = await fetch(`${srv.url}/api/auth/me`, { headers: { Cookie: cookie } });
+    expect(me.status).toBe(200);
+    expect((await me.json()).username).toBe('renamed');
   });
 });
