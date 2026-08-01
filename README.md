@@ -89,6 +89,12 @@ in a **New Today** section at the top and flows into the normal sections at the
 owner-local midnight rollover (the standalone Inbox view was retired in Phase AF:
 suggestions now auto-promote, so there is nothing left to triage).
 
+> **Unreleased:** the section precedence is changing from Routine › New Today ›
+> Scheduled › Open to **Routine › Scheduled › New Today › Open**, so scheduling a task
+> the same day it arrived moves its card to **Scheduled** immediately instead of leaving
+> it in New Today until midnight. New Today then means *arrived today and still needs a
+> decision*. See [Unreleased on this branch](#unreleased-on-this-branch).
+
 | Light | Dark |
 |-------|------|
 | ![Companion Planning — Tasks view, light theme](docs/ui/planning-tasks-light.png) | ![Companion Planning — Tasks view, dark theme](docs/ui/planning-tasks-dark.png) |
@@ -172,6 +178,437 @@ graph TB
     API -->|Web Push| SW
 ```
 
+### Domain model (UML)
+
+The class diagrams below are the **domain model as the code actually declares it**
+([`server/src/db/schema.ts`](server/src/db/schema.ts) plus the raw-SQL tables created by
+[the migrations](server/src/db/migrations/index.ts)). Every entity is owner-scoped —
+`owner_id` is the tenant boundary, and it is omitted from the field lists below only to
+keep them readable. Identifiers are **UUIDv7 TEXT** (CON-1), timestamps are ISO-8601 TEXT
+(UTC unless a field name says local), and booleans are SQLite integers.
+
+**1. Core planning domain** — the entities you touch on Today, Calendar, and Tasks:
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Owner {
+        +string id
+        +string name
+        +string role  operator|member|viewer
+        +string externalSubject  OIDC sub
+        +string username
+        +string lastAutoRunId  for Undo
+    }
+
+    class SchedulingPrefs {
+        +string timezone  IANA
+        +string workdayStart  HH:MM
+        +string workdayEnd  HH:MM
+        +int maxFocusBlockMinutes
+        +int minBreakMinutes
+        +int planningHorizonDays
+        +int recurrenceHorizonDays
+        +string planningMode  basic|smart
+        +string trustMode  cautious|balanced|hands_off
+        +string fillOrder  priority|overdue|new_today †
+        +int memoryWindowDays  1-30, reads AHEAD †
+        +int emailLookbackDays  1-90, reads BACK †
+        +bool autoFillWorkday
+        +bool autoDefenseEnabled
+    }
+
+    class Task {
+        +string id
+        +string title
+        +string status
+        +int priority  1..5
+        +string dueAt  deadline
+        +string scheduledFor  local YYYY-MM-DD START intent
+        +string taskTime  HH:MM START intent
+        +int estimatedMinutes
+        +int actualMinutes
+        +string subtype  standard|habit|quick
+        +string parentId  subtask link
+        +string recurrenceRule  RRULE
+        +string motivation  me|us|them|null
+        +string completionMood
+        +string reactionAt
+        +int version
+    }
+
+    class TimeBlock {
+        +string id
+        +string title
+        +string blockKind  task|meeting|habit|focus|break|buffer|timeblock
+        +string blockType  scheduled|someday
+        +string startAt
+        +string endAt
+        +bool isLocked  user pin
+        +bool isAuto  engine-chosen slot
+        +string status  planned|completed|skipped|overrun
+        +string parentBlockId  container
+        +string autoRunId  placement run
+        +string lastMovedAt  anti-thrash
+        +int version
+    }
+
+    class TimeEntry {
+        +string id
+        +string startedAt
+        +string endedAt  null = running
+        +string source  timer|manual|block
+    }
+
+    class TaskDependency {
+        +string taskId
+        +string dependsOnId
+    }
+
+    class FlightPlanEntry {
+        +bool selected
+        +int position
+        +string sourceKind
+    }
+
+    class DailyPlan {
+        +string date
+        +int position
+        +string rationale  why now
+        +string source  llm|deterministic
+        +string outcome
+        +string blockId
+    }
+
+    class Tag {
+        +string id
+        +string name
+        +string kind  direction|intention|category
+        +bool muted
+        +bool isBase
+    }
+
+    class EntityTag {
+        +string entityKind  task|time_block|routine
+        +string entityId
+        +int level  1 primary, 2 secondary
+    }
+
+    class EntityCategory {
+        +string entityKind  task|time_block
+        +string entityId
+        +int position  0..2 stripe order
+    }
+
+    class TagPref {
+        +string kind  direction|category
+        +string colorToken
+        +int defaultMinutes
+        +bool autoFill
+        +int[] reminderOffsets
+        +string iconShape
+    }
+
+    class Pattern {
+        +string id
+        +string name
+        +string recurrenceRule
+        +string colorToken
+    }
+
+    class PatternType {
+        +string name  Habit|Routine|Ritual
+        +string iconShape
+        +bool catchAll
+    }
+
+    class PatternBlock {
+        +string dayType
+        +string startTime  HH:MM
+        +string endTime  HH:MM
+    }
+
+    class DayType {
+        +string key  workday|weekend|custom
+        +string name
+        +bool isBuiltin
+    }
+
+    class BlockTemplate {
+        +string name
+        +string tag
+        +int defaultMinutes
+    }
+
+    Owner "1" --> "1" SchedulingPrefs : configures
+    Owner "1" --> "*" Task : owns
+    Owner "1" --> "*" TimeBlock : owns
+    Owner "1" --> "*" Tag : owns
+    Owner "1" --> "*" DayType : defines
+    Owner "1" --> "*" BlockTemplate : saves
+
+    Task "1" --> "*" TimeBlock : placed as
+    Task "1" --> "*" TimeEntry : timed by
+    Task "1" --> "*" Task : subtask of
+    Task "1" --> "*" TaskDependency : blocked by
+    Task "1" --> "0..1" FlightPlanEntry : staged in
+    Task "1" --> "*" DailyPlan : ordered in
+    TimeBlock "1" --> "*" TimeBlock : contains
+
+    Tag "1" --> "*" EntityTag : labels
+    Tag "1" --> "*" EntityCategory : categorizes
+    Tag "1" --> "0..1" TagPref : configured by
+    Tag "1" --> "*" PatternBlock : scopes
+    Task ..> EntityTag : polymorphic, app-enforced
+    TimeBlock ..> EntityTag : polymorphic, app-enforced
+    Task ..> EntityCategory : 1..3 per entity
+    TimeBlock ..> EntityCategory : 1..3, else inherits task
+
+    PatternType "1" --> "*" Pattern : types
+    Pattern "1" --> "*" Task : collects
+    DayType "1" --> "*" PatternBlock : selects windows
+```
+
+**2. Life planning, reflection, and learning** — the layer above the day:
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Objective {
+        +string id
+        +string title
+        +string parentId  Goal-Project-Objective by height
+        +real progressCache  null = nothing to measure
+        +string sourceTaskId  auto-promoted
+        +string archivedAt  soft delete
+        +string archiveRootId  cascade unit
+        +string purgeAfter  48h reap deadline
+        +int version
+    }
+
+    class ObjectiveTask {
+        +bool linked
+    }
+
+    class Reflection {
+        +string kind  today_goal|weekly_goal|day_note
+        +int position  0..2 for weekly
+        +string text
+        +string sourceKind  task|objective
+        +string sourceRef
+        +string doneAt
+    }
+
+    class DailyRecap {
+        +string date
+        +string prose  briefing cache
+        +string inputsHash
+        +bool starIntention
+        +bool starHabits
+        +bool starTasks
+        +bool starBonus
+        +bool starReflection
+        +int total  0..5
+        +string frozenAt  permanent once set
+    }
+
+    class LifePriority {
+        +string category  health|career|relationships|growth|leisure|finance
+        +int satisfaction  1..10
+        +int importance  1..10
+        +int targetHoursPerWeek
+    }
+
+    class EstimateCalibration {
+        +string scope
+        +real biasRatio  median actual/estimated
+        +real p25
+        +real p75
+        +int sampleCount
+    }
+
+    class CalibrationHistory {
+        +string scope
+        +string day
+        +real biasRatio
+        +int sampleCount
+    }
+
+    class TrialityLog {
+        +string slot  habitual|contextual|novel
+        +string actionKind
+        +string actionRef
+        +string scores  per-component JSON
+        +string confidence
+        +string shownAt
+        +string outcome  opened|staged|dismissed
+    }
+
+    class TrialityWeights {
+        +string slot
+        +string weights  JSON
+        +int sampleCount
+        +string computedDate
+    }
+
+    Owner "1" --> "*" Objective : owns
+    Owner "1" --> "*" Reflection : writes
+    Owner "1" --> "*" DailyRecap : one per day
+    Owner "1" --> "*" LifePriority : one per category
+    Owner "1" --> "*" EstimateCalibration : regenerable rollup
+    Owner "1" --> "*" CalibrationHistory : append-only trend
+    Owner "1" --> "*" TrialityLog : append-only evidence
+    Owner "1" --> "*" TrialityWeights : learned, resettable
+
+    Objective "1" --> "*" Objective : parent of
+    Objective "1" --> "*" ObjectiveTask : progressed by
+    Task "1" --> "*" ObjectiveTask : rolls up into
+    Reflection ..> Task : optional source link
+    Reflection ..> Objective : optional source link
+    TrialityLog ..> TrialityWeights : weekly calibration
+```
+
+**3. Automation, integrations, and sync** — everything that runs without you:
+
+```mermaid
+classDiagram
+    direction LR
+
+    class ScheduledJob {
+        +string name
+        +string kind
+        +string cron
+        +bool enabled
+        +string lastRunAt
+    }
+
+    class JobRun {
+        +string startedAt
+        +string finishedAt
+        +string status  running|done|error
+        +int itemsCreated
+        +int itemsUpdated
+        +string log
+    }
+
+    class PossibleTask {
+        +string rawTitle
+        +string sourceKind  gmail|gcal|memory
+        +string sourceRef
+        +real confidence
+        +string status  pending|promoted|dismissed|duplicate
+        +string promotedTaskId
+        +int proposedEstimatedMinutes
+        +string proposedScheduledFor
+        +string proposedTaskTime
+    }
+
+    class Reminder {
+        +string fireAt
+        +string status  pending|fired|snoozed|cancelled
+        +string source  manual|auto
+    }
+
+    class PushSubscription {
+        +string endpoint
+        +string p256dh
+        +string auth
+    }
+
+    class ConnectionToken {
+        +string provider  google|ci_memory
+        +string account
+        +string ciphertext  AES-256-GCM
+        +int keyVersion
+        +string status  active|revoked|error
+    }
+
+    class ConnectionPref {
+        +string provider
+        +string account
+        +string colorToken
+        +string texture
+    }
+
+    class ExternalEvent {
+        +string provider
+        +string account
+        +string externalId
+        +string etag
+        +string direction  inbound|outbound
+    }
+
+    class OutboundQueue {
+        +string provider
+        +string account
+        +string createdAt
+    }
+
+    class SyncState {
+        +string provider
+        +string account
+        +string resource
+        +string cursor
+    }
+
+    class SyncEvent {
+        +int seq
+        +string entity
+        +string entityId
+        +int version
+        +string event
+        +string payload
+    }
+
+    class AuditLog {
+        +string actor  owner|system|agent
+        +string action
+        +string entity
+        +string at
+    }
+
+    class ReplanSuggestion {
+        +string date
+        +string reason
+        +string summary
+        +int atRisk
+    }
+
+    class PlanHint {
+        +string date
+        +string kind  tag_before|tag_after|batch
+        +string tag
+        +string time
+    }
+
+    ScheduledJob "1" --> "*" JobRun : logs
+    ScheduledJob ..> PossibleTask : ingest creates
+    PossibleTask "1" --> "0..1" Task : auto-promotes into
+    Owner "1" --> "*" Reminder : scheduled for
+    Owner "1" --> "*" PushSubscription : devices
+    Owner "1" --> "*" ConnectionToken : sealed creds
+    ConnectionToken ..> ConnectionPref : same provider+account key
+    ConnectionToken ..> SyncState : per-resource cursor
+    ExternalEvent "1" --> "1" TimeBlock : mirrors
+    TimeBlock "1" --> "*" OutboundQueue : pending push
+    Owner "1" --> "*" SyncEvent : SSE replay log
+    Owner "1" --> "*" AuditLog : append-only
+    Owner "1" --> "0..1" ReplanSuggestion : one nudge
+    Owner "1" --> "*" PlanHint : NL day windows
+    Reminder ..> Task : task XOR block target
+    Reminder ..> TimeBlock : task XOR block target
+```
+
+> Two relationships are **app-enforced, not FK-enforced**, because their `entity_id`
+> spans several tables: `entity_tags` (task · time block · routine) and
+> `entity_categories` (task · time block). `services/tags.ts` owns every entity-delete
+> path, and the orphan-free tests are the gate.
+>
+> **†** marks fields that are **not yet in `main`** — see
+> [Unreleased on this branch](#unreleased-on-this-branch).
+
 ### How the server finds and connects to the database
 
 `server/src/lib/config.ts` resolves `DB_PATH` at startup:
@@ -204,7 +641,8 @@ no `.sql` files, no external tool.
 Migrations produce the tables below. The authoritative, ordered migration list — and
 therefore the current head — is
 [`server/src/db/migrations/index.ts`](server/src/db/migrations/index.ts); at the time
-of writing (2026-07-30) the head is `0143_calibrate_triality_job`.
+of writing (2026-08-01) `main` is at `0146_ingest_gmail_15m`, and
+`0147_ingest_windows` is [unreleased](#unreleased-on-this-branch).
 
 | Table | Purpose |
 |---|---|
@@ -224,9 +662,10 @@ of writing (2026-07-30) the head is `0143_calibrate_triality_job`.
 | `pattern_types` | Routine taxonomy: Habit ◯ · Routine ▢ · Ritual △ — **load-bearing, do not rename** |
 | `pattern_tasks` | Routine membership (pattern ↔ task many-to-many) |
 | `pattern_blocks` | Direction-scoped scheduling windows (`workday` / `weekend` time ranges) |
+| `day_types` · `day_of_week_map` · `day_assignments` | Which day-type a date is (0068): a per-date assignment beats the weekly map, which beats the weekend heuristic. The resolved key selects the `pattern_blocks` windows Auto places into |
 | `tag_prefs` | Per-owner × per-tag config, partitioned by `kind` (`direction` \| `category`): shared `color_token`/`default_minutes`, plus direction-only `auto_fill`/`reminder_offsets`/`icon_shape`; merged from `pattern_prefs` + `category_prefs` (0097). `category` rows are the six Balance-dimension hues (0134) |
 | `flight_plan` | Staged task list for the two-step Auto (select → schedule); composite PK `(owner_id, task_id)` with `owner_id` `TEXT NOT NULL` (0093) |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128) |
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (materialization ceiling, default 7; 0091), `sleep_hours_per_week` (default 63 — reserved as unschedulable; 0128), and the **ingestion windows** `memory_window_days` / `email_lookback_days` (**unreleased**, 0147 — see [below](#unreleased-on-this-branch)) |
 | `app_config` | Server-owned singleton config set in-app rather than via env — Google connection setup + the auto-provisioned Web Push VAPID keypair (0124) |
 | `life_priorities` | Life-priorities self-audit per (owner, category) — satisfaction · importance · target hours/week; backs `/priorities` + `/balance` (0127). `/balance` also joins tasks by their `entity_categories` to show each dimension's related open tasks (0134) |
 | `scheduled_jobs` | Croner job registry (name, cron expression, enabled) |
@@ -242,16 +681,18 @@ of writing (2026-07-30) the head is `0143_calibrate_triality_job`.
 | `outbound_queue` | Local blocks pending push to a provider — one row per `(block, provider, account)`, drained by the sync agent when `CP_SYNC_WRITEBACK` is on (Phase J 0057) |
 | `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at the callback (0058) |
 | `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` — calendar syncToken, Gmail watermark, dead-letter (0060) |
+| `connection_prefs` | Per-`(owner, provider, account)` display config — the colour token and stripe texture the calendar paints that source's mirrored events with. Deliberately keyed on the natural key, **not** an FK to `connection_tokens`, so a disconnect/reconnect cycle restores your choice (0145) |
 | `daily_plan` | AI-authored task order for a day — one row per `(owner, date, task)` with a "why now" rationale and `outcome` stamp (0062, 0084) |
+| `plan_hints` | Transient per-tag day windows parsed out of the natural-language planner bar ("mornings for Deep Work") — placement reads them as a hard window, the LLM ordering folds them in as a soft constraint (0071) |
 | `replan_suggestions` | Pending "re-plan with AI?" nudges surfaced on big-disruption reflows (0067) |
 | `daily_recap` | One row per `(owner, date)` — the day-briefing cache (`prose`/`stats`/`focus`, keyed by `inputs_hash`) **and** the frozen five-star score (`star_*`/`total`/`frozen_at`); merged from `daily_summaries` + `day_stars` (0096) |
 | `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay (Phase L, 0077) |
 | `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week, with optional category, done-at stamp, and an optional source link to a Task/Objective (`source_kind`/`source_ref`, 0088); also holds the one-per-day `kind='day_note'` row — no migration, reuses the same table + the PK's existing uniqueness (Phase N, 0080; linked focus 0088) |
 | `objectives` | Hierarchical life goals — Goal › Project › Objective (by tree height); progress derived from task completion; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for multi-device sync (Phase N, 0081; 0085–0086; sync versioning 0087). **Archive (0129):** `archived_at` soft-delete + `archive_root_id` (cascade unit) + `purge_after` (48h reap deadline) |
 | `objective_tasks` | Links objectives to Tasks; enables progress roll-up (Phase N, 0081) |
-| `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) computed weekly by `calibrate_estimates` job (Phase N, 0083; scope columns 0107) |
+| `estimate_calibration` | Per-owner bias stats (median actual/estimated ratio + quartiles) recomputed nightly (01:30) by the `calibrate_estimates` job (Phase N, 0083; scope columns + the move off a weekly cron, 0107) |
 | `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) written by the same job; the rollup above is regenerable, this table is never recomputed or pruned (0138) |
-| `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140) |
+| `triality_log` | Append-only Triality outcome log — one row per suggestion **shown**, stamped at most once more when it is opened / staged / dismissed. Each row keeps that pick's full per-component score breakdown as JSON, which is what makes the weekly weight calibration evidence-based rather than guesswork; never recomputed, never pruned (0140). A `confidence` reading is stamped at *show* time (0144) — reported, never fed back into ranking; `NULL` means "shown before that column existed" permanently, and readers must exclude those rows rather than coerce them |
 | `triality_weights` | Learned per-(owner, slot) Triality weights — regenerable, replaced wholesale by the weekly `calibrate_triality` job. A missing row means "score on the defaults", so deleting an owner's rows is the reset switch; the log above survives it (0142) |
 | `copy_history` | Time-Sense voice-loop anti-repetition log — not included in owner export (0109) |
 
@@ -343,7 +784,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   actual/estimated with a 3-sample floor. Where there's no data a tile says so instead of
   rendering a confident zero — an empty axis and a genuinely balanced one must never look
   alike
-- **Calibration history** — the weekly bias rollup is regenerable (replaced wholesale each
+- **Calibration history** — the nightly bias rollup is regenerable (replaced wholesale each
   run, so a scope whose samples vanish stops serving stale numbers), which makes it useless
   for "am I getting better?". So each run also appends one immutable row per (scope, day)
   to a history table that is never recomputed and never pruned, keeping the trend intact
@@ -417,6 +858,13 @@ planner place it on your calendar — no cloud round-trip, all on-device.
   inline (embedding-based when available) and **auto-promoted into real tasks** at the
   end of each run (Phase AF); they land in the **New Today** section at the top of the
   Tasks view, and the staging rows are kept as an audit/dedup trail
+- **Ingestion windows** *(unreleased — see [below](#unreleased-on-this-branch))* — two
+  per-owner settings bounding how much of each source a pull reads: **Look ahead**
+  (`memory_window_days`, 1–30, default 2) for the Companion Memory pull, and **Look back**
+  (`email_lookback_days`, 1–90, default 7) for a Gmail ingest. They point in opposite
+  directions on purpose — memory mirrors *upcoming* events into tasks, an inbox is only
+  ever read backwards — and the email one is a real floor: before it, a first ingest read
+  as far back as Gmail would return
 - **Background jobs** — Gmail / Calendar ingest, nightly grooming (embedding-based
   dedupe), auto-schedule, memory enrichment, and the hourly `purge_objectives` reaper;
   all visible and manually runnable from the Jobs view. (Possible-task promotion no
@@ -436,7 +884,7 @@ planner place it on your calendar — no cloud round-trip, all on-device.
 - **Day note** — one free-text note per day (enforced structurally, not by convention — reuses the FOCUS card's `reflections` table with a dedicated `kind`); a header affordance and a calendar dot open/indicate it
 - **Five-star day** — a gamified daily score derived entirely from existing signal, never a manual toggle: a star each for the day's Intention, clearing all Habits, clearing all planned Tasks, an unplanned Bonus completion, and a Reflection (a done task + a saved day note). Shown as a small live tally in the Today header and as a heatmap on the Calendar (a perfect 5/5 day gets a single glowing star). Today computes live; once a day ends, a nightly job freezes its score — permanent, never recomputed
 - **Weekly Review** — summary stats (scheduled vs focus minutes, capacity, block completion %) with calibration insights and objectives progress for the week; available inside the Calendar week view
-- **Estimate calibration** — a weekly job computes your personal bias ratio (median actual/estimated), surfaced as an amber label in the Weekly Review when your pattern deviates more than 10%; helps you plan more accurately over time
+- **Estimate calibration** — a nightly job computes your personal bias ratio (median actual/estimated), surfaced as an amber label in the Weekly Review when your pattern deviates more than 10%; helps you plan more accurately over time
 - **Recurrence horizon** — a Settings control (7/15/30/60/90/180 days) bounding how far ahead recurring Routines/Habits/Time-Blocks materialize; lowering it prunes future auto-placed instances (snapshotted first, reversible by raising it back) without touching the underlying recurrence rule
 - **Clear Date Range** — a Settings tool to preview-then-clear any date range from the Planner (bounded → skips just that window and stays reversible; open-ended → permanently caps the recurrence rule); every apply snapshots the DB first and is fully audited
 - **Multi-device sync** — IndexedDB offline write log, field-level merge (not whole-record LWW) covering Tasks, Time Blocks, and Objectives (+ objective↔task links), monotonic guards so a stale offline op can't un-complete a task or revert a `scheduled` task to `open`, `Last-Event-ID` SSE catch-up replay for reconnecting devices (Phase L)
@@ -475,7 +923,363 @@ want and by deciding when the plan runs.
    (`sqlite-vec` KNN when available, an exact cosine pass otherwise) and tidies the backlog.
 
 Every step runs locally. The single SQLite file is the whole system of record.
-See **[Backup and restore](#backup-and-restore)** below for safe copy and recovery options.
+**[Lifecycle of a to-do item](#lifecycle-of-a-to-do-item)** traces one task through that
+pipeline end to end, and **[Scheduling system](#scheduling-system)** covers steps 3–4 in
+detail. See **[Backup and restore](#backup-and-restore)** for safe copy and recovery options.
+
+## Lifecycle of a to-do item
+
+The Task is the app's core work atom, and every surface — quick-add, the wizard, an
+auto-promoted email suggestion, an agent over GraphQL — funnels through the **same
+owner-scoped service layer** (`server/src/services/tasks.ts`). The routes are transport;
+the service is where the rules live, which is why REST and GraphQL cannot drift.
+
+### Status lifecycle
+
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    [*] --> recurring : POST /api/tasks with recurrence_rule
+    [*] --> open : create · quick-add · auto-promoted suggestion
+
+    recurring --> open : generate_recurrences materializes<br/>one instance per occurrence
+
+    open --> scheduled : a block is placed<br/>Auto · start-anchored pin · drag · routine
+    scheduled --> open : last active block cleared<br/>unscheduled · missed-sweep · Undo
+    scheduled --> open : nightly review defers a missed block<br/>scheduled_for moves out +1/3/7 days
+
+    open --> in_progress : explicit status PATCH
+    scheduled --> in_progress : explicit status PATCH
+
+    open --> done : checkbox or PATCH completed true
+    scheduled --> done : checkbox or PATCH completed true
+    in_progress --> done : checkbox or PATCH completed true
+
+    done --> open : reopen — revives its blocks
+    done --> scheduled : reopen when a block revives with it
+
+    open --> cancelled : DELETE — soft delete, row kept
+    scheduled --> cancelled : DELETE — active blocks cancelled too
+    done --> cancelled : DELETE
+
+    missed --> open : nightly review revives<br/>with a +1/3/7 day backoff
+
+    cancelled --> [*] : terminal — the row, its tags,<br/>and its audit trail are all kept
+
+    note right of done
+        Optional close ritual:
+        mood face · closing note · real duration.
+        reaction_at is stamped only when a mood
+        or note was actually written — its gap
+        from completed_at is the signal.
+    end note
+
+    note right of scheduled
+        Placement status parity: every engine path
+        flips open to scheduled, and reverts it when
+        the last active block goes away. deferred and
+        missed remain in the status vocabulary and in
+        the Tasks filter, but no server path writes
+        them any more — the nightly review sweeps
+        anything still stuck there back to open.
+    end note
+```
+
+### CRUD end to end
+
+What actually happens on each verb — including the parts that are easy to miss (the
+audit row, the sync version stamp, the SSE fan-out, and the debounced re-plan):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as SolidJS PWA
+    participant API as Koa route
+    participant Svc as services/tasks.ts
+    participant Eng as Scheduling engine
+    participant DB as SQLite
+    participant SSE as SSE /api/events
+    participant Dev as Other open devices
+
+    rect rgb(240, 248, 248)
+    Note over UI,Dev: CREATE
+    UI->>API: POST /api/tasks
+    API->>API: strip motivation_source — server-derived only
+    API->>Svc: createTask owner, input
+    Svc->>DB: INSERT tasks — UUIDv7 id, status open
+    Svc->>DB: entity_tags L1 direction plus L2 intentions
+    Svc->>DB: entity_categories, 1 to 3 of the six dimensions
+    Svc->>DB: task_dependencies — a cycle is a 409, task row already written
+    Svc->>DB: derive reminders from the Reminder Defaults
+    Svc->>DB: audit_log create
+    opt auto_place, or Hands-off trust mode
+        API->>Eng: placeStartAnchoredTask
+        Eng->>DB: INSERT time_blocks at scheduled_for plus task_time
+        Eng->>DB: status open becomes scheduled
+    end
+    API->>SSE: broadcast task:created
+    API->>Eng: requestReplan task:created — debounced 1.5s
+    SSE-->>Dev: task:created
+    API-->>UI: 201 task with tags, categories, depends_on, blocked
+    end
+
+    rect rgb(244, 244, 248)
+    Note over UI,DB: READ
+    UI->>API: GET /api/tasks with status, tag, q, priority, due_before
+    API->>DB: owner-scoped SELECT plus tag, category, dependency hydration
+    API-->>UI: tasks with blocked computed from the dependency graph
+    end
+
+    rect rgb(248, 246, 240)
+    Note over UI,Dev: UPDATE
+    UI->>API: PATCH /api/tasks/:id, scope instance or series
+    API->>Svc: updateTask
+    Svc->>DB: UPDATE columns — cross-owner id matches nothing, 404
+    alt scheduled_for cleared
+        Svc->>Eng: clearTaskPlacement — task leaves the Planner
+        Eng->>DB: delete placement, status back to open
+    else day, time, or estimate changed
+        Svc->>Eng: syncBlockFromTask — the placed block moves in lockstep
+    end
+    Svc->>DB: stampRow — version plus field_ts for field-level merge
+    Svc->>DB: audit_log update
+    API->>SSE: task:updated plus block:updated per moved block
+    API->>Eng: requestReplan only when the change touches scheduling
+    SSE-->>Dev: task:updated
+    end
+
+    rect rgb(240, 246, 240)
+    Note over UI,DB: COMPLETE
+    UI->>API: PATCH completed true
+    Svc->>DB: status done, completed_at stamped
+    Svc->>DB: mirror the task's blocks to completed
+    Svc->>DB: tick any FOCUS slot linked to this task
+    Svc->>DB: recompute linked objectives progress
+    opt close ritual — entirely skippable
+        UI->>API: POST /api/tasks/:id/close
+        Svc->>DB: completion_mood, completion_note, actual_minutes, reaction_at
+    end
+    end
+
+    rect rgb(250, 242, 242)
+    Note over UI,Dev: DELETE — soft
+    UI->>API: DELETE /api/tasks/:id, scope instance or following
+    API->>Svc: deleteTask
+    Svc->>DB: status cancelled — the row is kept
+    Svc->>DB: active blocks cancelled, auto reminders dropped
+    Svc->>DB: objectives upkeep, then audit_log delete
+    API->>SSE: task:updated plus block:updated
+    API->>Eng: requestReplan task:deleted — the freed slot re-packs
+    SSE-->>Dev: task:updated
+    end
+```
+
+A few properties worth calling out, because they are what make the loop safe:
+
+- **Nothing is hard-deleted.** `DELETE /api/tasks/:id` sets `status='cancelled'`; the row,
+  its tags, its time entries, and its audit trail all survive. On a recurring instance,
+  `?scope=following` additionally truncates the series from that occurrence onward.
+- **The block is the source of truth for placement; the task carries the intent.**
+  Editing a task's day/time/estimate moves its placed block, and dragging the block
+  back-writes `scheduled_for`/`task_time` — but only the *earliest* session block owns
+  the task's intent, so dragging a later session never re-anchors the task or its reminders.
+- **Every mutation is versioned and audited.** `version` + `field_ts` back the field-level
+  offline merge (a stale device's queued edit can't un-complete a task or revert a
+  `scheduled` task to `open`), and `audit_log` gets an append-only row from every mutating
+  route. `sync_events` gives reconnecting devices `Last-Event-ID` catch-up replay.
+- **The re-plan is debounced and gated.** A burst of edits collapses into one reflow,
+  a title or notes edit never churns the day (`updateTouchesSchedule` decides), and the
+  whole reactive path is opt-out per owner via `auto_defense_enabled`.
+- **Where the card lands is derived, never stored.** A task's Tasks-tab section is
+  recomputed from `created_at`, its placement, and today's date — there is no section
+  column and no job that moves anything. *Unreleased:* placing a task now moves it out of
+  **New Today** on placement rather than at midnight, and `created_at` is normalized as
+  UTC on both ends so an evening-created task lands in the right day. See
+  [Unreleased on this branch](#unreleased-on-this-branch).
+
+## Scheduling system
+
+Placement is **deterministic**: the same inputs produce the same plan, every time. Where a
+local LLM is involved at all, it decides *order* — never *where a block lands*.
+
+### Two clocks
+
+| Clock | What it does | When it runs | Touches the LLM? |
+|---|---|---|---|
+| **Slow — authoring** | Orders the day's staged tasks into a durable `daily_plan`, one row per task with a "why now" rationale | Once per day, author-once: on the first Auto run, or forced by an accepted "re-plan with AI?" nudge | Yes, when `planning_mode='smart'` **and** Ollama is reachable — otherwise a deterministic deadline/priority sort, and the row records honestly which it was |
+| **Fast — placement + defence** | Packs blocks into the day's real gaps, and re-packs when the day shifts | Explicitly on Auto, and reactively (debounced 1.5s) on a scheduling-relevant task edit, a calendar sync, or a missed block | **Never.** The hot path is pure arithmetic over SQLite rows |
+
+The split is the whole design: a slow, fallible model can take 25 seconds to think about
+sequence, while the thing that defends your calendar has to answer in milliseconds and be
+reproducible.
+
+### The three taps
+
+Auto is deliberately staged — you build a list, then commit it — so nothing lands on your
+calendar that you didn't look at first. `POST /api/auto/undo` reverses the last placement
+run in one click (each run stamps its blocks with an `auto_run_id`).
+
+| Tap | Endpoint | What it does |
+|---|---|---|
+| **1 · Fill** | `POST /api/auto/fill` | Proposes up to 20 candidates into the **flight plan** staging area — `open`, top-level, not a habit, not a recurrence instance, and either undated or already dated for the target day without a live block. They arrive selected (deselect to exclude). Schedules nothing. |
+| **2 · Schedule** | `POST /api/auto/run` | Authors the day's order (once), then **places** the selected staged tasks through the pass ladder below. Placed tasks leave the staging area. |
+| **3 · Priority top-up** | `POST /api/auto/priority` | Optional, never automatic: fills leftover workday capacity with the highest-priority still-unplaced tasks, flowing around everything already placed. |
+
+In the **Hands-off** trust mode, tap 2 spans `planning_horizon_days` (default 7, clamped
+1–60) instead of one day — leftovers fan onto the next day — and only day 0 may use the
+LLM, so a week's plan never fires seven model calls. (A caller can pass `smart: true` to
+re-author every day in the horizon; nothing does by default.)
+
+### How a day gets packed
+
+Each pass places into a window; every pass flows around the same live obstacle set, so
+nothing ever stacks on existing work — manual or auto:
+
+```mermaid
+flowchart TD
+    A[Selected staged tasks<br/>ordered by daily_plan.position] --> B{task_time set, and its target day<br/>is the day being packed?}
+    B -->|yes| P0["Pass 0 · Pin exactly at day + time<br/>is_auto=0, so Auto never clears a stated time<br/>on conflict: nearest open gap that same day"]
+    B -->|no| C[Gap packer]
+    P0 --> C
+
+    C --> P1["Pass 1 · Tag-matched Plan containers<br/>tag-matched Plans first, catch-all Plans last<br/>placed tasks become the Plan's members"]
+    P1 --> P15["Pass 1.5 · Category Plans<br/>filled by their position-0 category"]
+    P15 --> P175["Pass 1.75 · Natural-language hint windows<br/>a same-day instruction outranks a recurring window<br/>HARD: a full window leaves the task unplaced"]
+    P175 --> P2A["Pass 2a · Direction windows for the day-type<br/>pattern_blocks, union, earliest first<br/>honours the per-direction auto_fill gate"]
+    P2A --> P2B{auto_fill_workday on?}
+    P2B -->|yes| P2BB["Pass 2b · Workday fallback<br/>ordered by daily_plan, else by fill_order<br/>priority-first · overdue-first · new-today-first †"]
+    P2B -->|no| U
+    P2BB --> U[Anything still unplaced<br/>reverts to the open backlog]
+
+    subgraph OBS["Obstacles every pass routes around"]
+        O1[locked blocks]
+        O2[meetings]
+        O3[every non-completed task block]
+        O4[Plan containers, in the fallback passes]
+    end
+    OBS -.-> C
+```
+
+**Leftover fill order** is the `fill_order` pref, exposed as the toggle above the
+flight plan. It only applies to Pass 2b, and only when the day has *no* authored
+`daily_plan` (an authored day already encodes its sequence):
+
+| Value | Toggle label | Order |
+|---|---|---|
+| `priority` | Priority | P1 first, then due date |
+| `overdue` | Due Date | Soonest-due first, then priority |
+| `new_today` **†** | New Today | Today's arrivals take the earliest slots; each half stays deadline-first |
+
+**†** unreleased — see [Unreleased on this branch](#unreleased-on-this-branch).
+
+**The gap math** (`server/src/engine/scheduler.ts`) is small and shared by every path:
+
+1. **Carve** the window into free gaps between fixed obstacles, inserting
+   `min_break_minutes` after each one.
+2. **Split** a task's estimate into focus-sized sessions capped at
+   `max_focus_block_minutes` (default 90); the last session may be shorter. A task with no
+   estimate is treated as 30 minutes.
+3. **Pick** a gap **best-fit** — the one leaving the least leftover, which reduces
+   fragmentation. If nothing fits, fall back to the largest remaining gap and truncate,
+   but never carve a sliver under **15 minutes**. All gaps are scanned, so a small task
+   backfills a hole a bigger one skipped.
+4. **Clamp** — on the owner-local *current* day, no engine-chosen slot may start before
+   now. A late-afternoon re-pack fills the remaining day instead of shoving work into
+   past morning gaps that the missed sweep would immediately recycle.
+
+Windows come from your own configuration: `workday_start`/`workday_end` are wall-clock in
+your `timezone`, **pattern blocks** are direction-scoped availability windows
+(Home / Work / Community) selected by the day's **day type**, and a day type is resolved
+per-date first, then from the weekly map, then from a weekend heuristic. All day maths is
+DST-aware — day bounds are computed in your zone, never as `start + 24h`.
+
+### Reactive reflow, and why it doesn't thrash
+
+When the day shifts, `reflow()` re-places only the day's *movable* auto blocks — and it is
+**snapshot-based**: the set it clears is exactly the set it re-places, by construction. (That
+invariant is load-bearing. The bug it fixes was real: editing one placed task used to wipe
+every *other* auto-placed block, because the clear was broad and the re-place was narrow.)
+
+Anti-thrash rules, in priority order:
+
+1. An **in-progress** block is never moved.
+2. A **user-locked** block holds its slot *and* its task — never moved, never duplicated
+   beside the pin.
+3. A **recently-moved** block (within a 5-minute stability window) is held.
+4. Everything else is cleared and re-packed.
+
+Protected blocks are passed through **in memory**, so a reflow never writes `is_locked` to
+fence anything off — an interrupted reflow cannot leave a block stuck locked. A burst of
+triggers collapses into one trailing pass (1.5s debounce), a re-entrancy guard stops a
+reflow from re-triggering itself, and the whole path is skipped when
+`auto_defense_enabled` is off. `daily_plan` is an **ordering hint only** — it never gates
+membership, so a task staged after the day was authored still gets re-placed.
+
+**Escalation, not silent re-planning.** If a reflow leaves a **P1/P2** task dropped or
+unplaceable, that is a *big disruption*: the engine records **one** nudge per owner per day
+(`replan_suggestions`, so it survives a restart) and surfaces it over SSE and Web Push. The
+LLM re-authors only if you accept, via `POST /api/plan/reauthor`. A chronically-full day of
+low-priority backlog never nags.
+
+### Nightly review and backoff
+
+The `review_day` job (01:00) looks at planned task blocks whose end time passed
+un-started. Every priority now **auto-defers** on a **+1 / +3 / +7 day** backoff (by prior
+`defer_count`): `scheduled_for` moves out, the stale block is consumed so it stops
+lingering, and the task re-surfaces on its new day. The `daily_plan.outcome` stamp keeps
+the priority split (`missed` for P≤2, `deferred` for P≥3) so the aggregates can still tell
+an important miss from a routine slip. Hands-off owners get each deferred or revived task
+booked straight into its new day; Suggest-mode owners get it back as `open` with a date and
+nothing placed. The same engine backs the top-bar sweep button (`POST /api/review/sweep`).
+
+Separately, the `auto_schedule` job (03:00) sweeps auto blocks whose planned time passed
+without being started: it marks each one `skipped`, returns its task to the open backlog,
+re-stages it at the *end* of the flight plan, and requests a reflow so the work lands in
+whatever is left of the day.
+
+### Recurrence, bounded
+
+Recurring Tasks, Time Blocks, and Routines are **RRULE templates** that materialize lazily:
+a template is never rendered directly, and `generate_recurrences` (02:45) creates one
+instance per occurrence, idempotently. `recurrence_horizon_days` (Settings: 7 / 15 / 30 /
+60 / 90 / 180, default 7) bounds how far ahead that runs — lowering it prunes future
+auto-placed instances (snapshotted first, and reversible by raising it back) **without**
+touching the underlying rule.
+
+### Background jobs
+
+**20 cron rows across 21 executable kinds.** Owner-scoped kinds fan out once per owner
+(enumerated at run time, so a fresh account is picked up on the next tick); a kind still
+running is never started again by the next tick. Every run writes a `job_runs` row, and
+all of them are listed and manually runnable from the **Jobs** view.
+
+| Job | Cron | What it does |
+|---|---|---|
+| `fire_reminders` | `* * * * *` | Claim-by-UPDATE dispatcher — fires each due reminder **exactly once**, in-app via SSE and via Web Push |
+| `ingest_gmail` | `*/15 * * * *` | Mine email for action items into `possible_tasks`. Reads from the `(owner, google, account)` watermark — **unreleased:** floored at `now − email_lookback_days` so a first run, or the first run after an outage, can't replay months of mail |
+| `sync_calendar` | `*/15 * * * *` | Two-way calendar reconcile keyed on event identity + etag; requests a reflow when anything changed |
+| `ingest_gcal` | `*/30 * * * *` | Extract **tasks** from calendar text (meeting blocks are mirrored by `sync_calendar`, not here) |
+| `memory_suggest` | `0 */6 * * *` | Stage upcoming Companion Memory events as suggestions (needs `memory_pull_enabled`). Looks 48h ahead — **unreleased:** that becomes the configurable `memory_window_days`, which the daily brief reads too |
+| `tag_tasks` | `0 * * * *` | Tag untagged top-level open tasks |
+| `purge_objectives` | `0 * * * *` | Reap objectives whose 48-hour purge deadline has passed |
+| `reset_routines` | `0 0 * * *` | Midnight routine rollover |
+| `freeze_stars` | `20 0 * * *` | Freeze the closed day's five-star score — permanent, never recomputed |
+| `review_day` | `0 1 * * *` | The missed-task review + backoff above |
+| `calibrate_estimates` | `30 1 * * *` | Recompute the estimate-bias rollup and append an immutable row to `calibration_history` |
+| `nightly_grooming` | `0 2 * * *` | Embedding-based dedupe (two gated passes), overdue bump, straggler promotion |
+| `snapshot_db` | `0 2 * * *` | Point-in-time DB snapshot, keeping `SNAPSHOT_RETAIN` files |
+| `push_memory` | `0 2 * * *` | One-way mirror of completions/habits/reflections back to memory (needs `memory_sync_enabled`) |
+| `generate_recurrences` | `45 2 * * *` | Materialize RRULE instances up to the recurrence horizon |
+| `auto_schedule` | `0 3 * * *` | Propose flight-plan candidates + sweep missed blocks (it does **not** pack the backlog) |
+| `prune_sync_events` | `0 3 * * *` | Age out the SSE replay log |
+| `enrich_tasks` | `20 3 * * *` | Fill blank description / direction / categories from Companion Memory |
+| `calibrate_triality` | `50 3 * * 1` | Weekly re-tune of the per-slot Triality weights from the outcome log |
+| `advance_objectives` | `0 5 * * 1` | Stage the next action for each active objective into the flight plan |
+| `promote_possibles` | *(no cron row)* | Runnable on demand only — ingestion auto-promotes, and `nightly_grooming` sweeps stragglers |
+
+Set **`TZ`** to your IANA zone: cron fires on the container clock, and it decides what
+counts as "today" for every nightly job.
 
 ## Backup and restore
 
@@ -525,6 +1329,85 @@ them at different moments and can produce a corrupt or inconsistent database. Us
 `pnpm snapshot` or Litestream — both open a proper SQLite connection and export a
 consistent snapshot.
 
+## Unreleased on this branch
+
+Everything above describes the app **as it runs on `main`** (migration head `0146`). One
+change set is finished but **not yet merged** — migration `0147_ingest_windows`. It is
+marked **†** or *unreleased* wherever it appears above; this section is the single
+description of it.
+
+### Ingestion windows — two settings, pointing in opposite directions
+
+How much of each upstream source a pull actually reads becomes per-owner configuration on
+`scheduling_prefs`, surfaced in **Settings → Connections**:
+
+| Setting | Range | Default | Direction | What it bounds |
+|---|---|---|---|---|
+| `memory_window_days` | 1–30 | **2** | **Ahead** | How far forward the Companion Memory pull looks for upcoming events |
+| `email_lookback_days` | 1–90 | **7** | **Back** | How far back a Gmail ingest may reach |
+
+The asymmetry is deliberate, not an oversight: memory suggestions mirror **upcoming**
+events into tasks, so a backward memory window would stage work for things that already
+happened — while an inbox is only ever read backwards.
+
+- **The memory half is a no-op upgrade.** The default `2` is exactly the 48 hours that
+  `agents/memory-suggest.ts` and `agents/summarize.ts` each hardcoded separately;
+  `memoryWindowMs()` becomes the single authority both read, so one setting now moves the
+  suggestion agent and the daily brief together.
+- **The email half is not.** The Gmail `since` cursor previously had **no floor at all**,
+  so a first ingest — or the first run after a long outage — read as far back as the MCP
+  Gmail tool would return. `since` becomes `max(watermark, now − N days)`. On the healthy
+  15-minute cadence the watermark is always newer, so the steady state is unchanged.
+- **Range-checked once, in `services/prefs.ts`**, so REST and GraphQL cannot drift.
+  Out-of-range **rejects** (422 / `BAD_USER_INPUT`) rather than clamping — a silently
+  clamped value would leave the Settings input showing a number the server never stored.
+  An explicit `opts.since` (a manual replay) bypasses the floor: the caller named the window.
+- **Known trade-off, stated plainly:** the email floor applies always, not only on a first
+  run. Reconnecting after a long outage pulls the configured window and the watermark
+  jumps past the older backlog. That is what "look back N days" means, but it is a
+  deliberate skip in a pipeline otherwise built never to skip.
+
+### Tasks view — Scheduled now outranks New Today
+
+Section membership precedence changes from **Routine › New Today › Scheduled › Open** to
+**Routine › Scheduled › New Today › Open**. Scheduling a task the same day it was created
+moves its card to **Scheduled** immediately; previously it sat in New Today until local
+midnight, so placing it produced no visible movement and the section read as "created
+today" rather than "not yet dealt with".
+
+The **New Today → Open** rollover at local midnight is unchanged and still pure
+derivation — no column, no job. The header's **"N open"** number is unchanged by the swap:
+`headerOpenCount` loses its `isScheduled` parameter, which existed only to strip scheduled
+tasks back out of New Today under the old order, and the partition now drains them first.
+
+### Scheduling — a third fill order, "New Today"
+
+`fill_order` gains `new_today` alongside Priority and Due Date in the flight-plan toggle:
+today's arrivals take the earliest slots, and **each half stays deadline-first**, so it
+layers on top of `overdue` rather than replacing it. It is keyed on the owner's **real
+today**, not the date being placed — keying it to `date` would make the mode a silent
+no-op on every day but today, since nothing is ever created on a future date.
+
+It is wired into **both** ordering paths, which is necessary rather than thorough:
+`placeFlightPlan` skips its own `fill_order` branch whenever a `daily_plan` exists for the
+day, so a value only the placer understood would be inert on exactly the days the owner
+planned deliberately. `deterministicIndices` gains a matching band (after theme/memory,
+before deadline/priority) — the same parity the existing two values already have.
+
+### Bug fix — `CURRENT_TIMESTAMP` was being parsed as local time
+
+`tasks.created_at` is defaulted by SQLite's `CURRENT_TIMESTAMP`, which stores
+`'YYYY-MM-DD HH:MM:SS'` — a UTC instant with **no zone designator**, which `new Date()`
+parses as *local*. On a server behind UTC that shifted every timestamp by the offset, so a
+task created after roughly 17:00 local never appeared in **New Today** on the day it
+actually arrived; it turned up the next day. Every task row in a real database uses this
+spelling.
+
+Fixed at both ends with the identical rule, so the Tasks tab and the new fill order cannot
+disagree about the set: `sqliteUtcToISO()` folded into `localDateInTZ` server-side, and
+the same normalization in `isCreatedOnDay` client-side. A no-op for the proper ISO strings
+every other caller passes.
+
 ## Project status (v0.3, 2026-07)
 
 **Working today:**
@@ -556,11 +1439,13 @@ consistent snapshot.
 - Notifications: a `reminders` store + 1-minute `fire_reminders` dispatcher (exactly-once),
   delivered in-app via SSE and via Web Push (VAPID) to subscribed devices; reminders are
   auto-derived from per-pattern reminder offsets, with a Settings opt-in toggle and snooze
-- Croner jobs: 20 cron-scheduled rows out of 21 executable kinds — Gmail ingest,
-  Calendar ingest, nightly grooming/dedupe, auto-schedule, `enrich_tasks`,
-  the weekly `calibrate_triality` (Monday 03:50), fire_reminders, purge_objectives, and
-  the rest. `promote_possibles` is the kind with no cron row (runnable on demand only);
-  `place_patterns` was retired by 0026
+- Croner jobs: 20 cron-scheduled rows out of 21 executable kinds — Gmail ingest (every
+  15m since 0146), Calendar ingest, nightly grooming/dedupe, auto-schedule,
+  `enrich_tasks`, the weekly `calibrate_triality` (Monday 03:50), fire_reminders,
+  purge_objectives, and the rest. Owner-scoped kinds fan out once per owner; a kind still
+  running is never re-started by the next tick. Full table in
+  [Scheduling system → Background jobs](#background-jobs). `promote_possibles` is the kind
+  with no cron row (runnable on demand only); `place_patterns` was retired by 0026
 - Ollama-backed extraction/summarization with deterministic fallbacks
 - SSE events for real-time UI updates across open clients
 - Tag taxonomy: direction / intention hierarchy with many-to-many grouping
@@ -568,7 +1453,7 @@ consistent snapshot.
 - **Reflections / FOCUS card** — today focus + up to 3 weekly goals per ISO week, each optionally linked (`source_kind`/`source_ref`) to a Task or Objective, with category color stripes and done/undone toggling; a **Today's Brief** pop-up carries the AI/deterministic prose + capacity + top tasks that used to be the standalone Morning Briefing section
 - **Day note + five-star day** (Phase O) — one note per day (`reflections.kind='day_note'`, PK-enforced uniqueness); `computeStars()` derives 5 booleans (intention/habits/tasks/bonus/reflection) with zero manual toggles, cached in `daily_recap` and frozen permanently by the nightly `freeze_stars` job; `GET /api/stars` serves the frozen row over a live recompute
 - **Weekly Review** — scheduled/focus minutes, capacity bar, completion rate, and calibration bias insight
-- **Estimate calibration** — weekly `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review. The same run appends an immutable per-(scope, day) row to `calibration_history` (0138), so the regenerable rollup can keep being replaced without destroying the trend
+- **Estimate calibration** — the nightly (01:30) `calibrate_estimates` job computes personal bias ratio (p25/p50/p75) from actual vs estimated minutes; surfaced in the Weekly Review. The same run appends an immutable per-(scope, day) row to `calibration_history` (0138), so the regenerable rollup can keep being replaced without destroying the trend
 - **Close ritual + Balance Metrics** (0137/0138) — an optional post-completion sheet (mood face · note · real duration, stamped with its own `reaction_at`) feeding a measured **Metrics** tab on `/balance`: counts, timed minutes, mood mix, and estimate bias per direction and per category over 7/30/90 days, served by `GET /api/metrics/tasks` + `/api/metrics/calibration`
 - **Memory enrichment** (0136) — `POST /api/tasks/:id/enrich` (the task-card ✨ button) and the nightly `enrich_tasks` job fill blank description/direction/categories from Companion Memory; fill-blanks-only, and it reports an honest reason when it can't help
 - **Recurrence horizon + Clear Date Range** (Phase P) — `recurrence_horizon_days` bounds materialization in both recurrence engines (patterns + blocks); lowering it auto-prunes via a shared `clearPlannerRange` engine, which also backs `POST /api/planner/clear` (dry-run preview, DB snapshot on apply) and the original `clear-planner-from.ts` CLI script
@@ -939,7 +1824,7 @@ All from the repo root:
 | POST/DELETE | `/api/push/subscribe` | Register / remove a browser push subscription |
 | GET/POST/DELETE | `/api/reminders` · POST `/api/reminders/:id/snooze` | Reminders CRUD + snooze |
 | GET | `/api/jobs` · POST `/api/jobs/:id/run` | List / manually run background jobs. The Jobs view's **Run all** button is client-side sugar — it loops this same per-job endpoint over every listed job; no separate batch route |
-| GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count) |
+| GET/PATCH | `/api/prefs` | Scheduling preferences (incl. `recurrence_horizon_days`; a shorten auto-prunes and returns `pruned` count). **Unreleased:** also carries `memory_window_days` (1–30) and `email_lookback_days` (1–90); an out-of-range value is **rejected with a 422**, never clamped, so the Settings field can't show a number the server didn't store |
 | POST | `/api/planner/clear` | Preview (`dry_run`) or apply a Clear Date Range — bounded suppresses just that window, open-ended permanently caps the rule; snapshots + audits on apply (Phase P) |
 | GET/POST | `/api/memory` | Companion Memory sync state |
 | GET | `/api/llm/status` · `/api/integrations` | Ollama & integration health |
