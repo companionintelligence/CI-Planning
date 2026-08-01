@@ -29,6 +29,7 @@ import {
   scheduleTaskReminders,
   type ReminderTask,
 } from './lib/notifications.js';
+import { RecurringScopeDialog } from './components/RecurringScopeDialog.js';
 
 /**
  * T7 — wire browser reminders into the app root. Ask once for permission, then
@@ -202,6 +203,8 @@ function Shell(props: { children?: any }) {
       <Show when={closeRitualTask()}>{(t) => <CloseRitual task={t()} onClose={() => setCloseRitualTask(null)} />}</Show>
       <PlanWeekAssistant />
       <OnboardingWizard />
+      {/* Mounted once so any call site can await askRecurringScope() inline. */}
+      <RecurringScopeDialog />
 
       <BottomNav />
       <ToastContainer />
