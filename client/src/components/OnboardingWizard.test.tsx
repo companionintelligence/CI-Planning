@@ -77,7 +77,16 @@ const refetchTasksMock = vi.fn();
 const refetchBlocksMock = vi.fn();
 const refetchFlightPlanMock = vi.fn();
 
+// Planner night-collapse state: a real signal so step 2's wake/bed inputs hydrate from
+// it and the setter can be asserted, matching how prefs/onboardingStep are handled.
+const [plannerAxisValue, setPlannerAxisValue] = createSignal<{ topEndMin?: number; bottomStartMin?: number }>({});
+const setPlannerCollapseBoundsMock = vi.fn((topEndMin: number, bottomStartMin: number) =>
+  setPlannerAxisValue({ topEndMin, bottomStartMin }),
+);
+
 vi.mock('../stores/index.js', () => ({
+  plannerAxisState: () => plannerAxisValue(),
+  setPlannerCollapseBounds: (a: number, b: number) => setPlannerCollapseBoundsMock(a, b),
   prefs: () => prefsValue(),
   refetchPrefs: () => refetchPrefsMock(),
   showToast: (...a: unknown[]) => toastMock(...a),
@@ -138,6 +147,10 @@ async function advanceToRunSyncStep() {
 
 describe('OnboardingWizard', () => {
   beforeEach(() => {
+    // Module-level signal shared by every test in this file — reset it or a test that
+    // seeds saved collapse bounds leaks them into the next one's hydration assertions.
+    setPlannerAxisValue({});
+    setPlannerCollapseBoundsMock.mockClear();
     meMock.mockReset().mockResolvedValue({
       ownerId: 'o1', name: 'Ada', email: 'ada@x.io', username: null,
       backupEmail: null, role: 'operator', isOperator: true,
@@ -261,6 +274,68 @@ describe('OnboardingWizard', () => {
 
       await screen.findByText('Time and place');
       expect(updateProfileMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Wake / bed times are the planner's night-collapse bounds — the same setting as
+     * Settings → Planner display, stored as view_prefs.planner.topEndMin/bottomStartMin
+     * in minutes from midnight.
+     *
+     * The write is asserted on the awaited PATCH rather than on the store's own
+     * view_prefs effect: that effect is debounced 400ms and fire-and-forget, so a user
+     * who finishes onboarding quickly could navigate away before it flushes and silently
+     * lose the setting.
+     */
+    it('Step 2 persists wake/bed times as the planner collapse bounds', async () => {
+      setPrefs({ onboarded_at: null });
+      setOnboardingStepValue(2);
+      mount();
+      await screen.findByText('Time and place');
+
+      fireEvent.input(screen.getByLabelText(/Usually wake up/), { target: { value: '06:30' } });
+      fireEvent.input(screen.getByLabelText(/Usually go to bed/), { target: { value: '22:45' } });
+
+      fireEvent.click(screen.getByText('Next'));
+
+      await waitFor(() =>
+        expect(prefsUpdateMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            view_prefs: expect.objectContaining({
+              planner: expect.objectContaining({ topEndMin: 390, bottomStartMin: 1365 }),
+            }),
+          }),
+        ),
+      );
+      // Applied in-memory too, so the planner behind the wizard updates immediately.
+      expect(setPlannerCollapseBoundsMock).toHaveBeenCalledWith(390, 1365);
+    });
+
+    it('Step 2 clamps a wake/bed pair that would invert the planner axis', async () => {
+      // day-axis.ts clamps topEndMin to <=12:00 and bottomStartMin to >=12:00 on READ;
+      // writing an unclamped pair would persist a nonsense axis that only looks sane
+      // because the reader repairs it.
+      setPrefs({ onboarded_at: null });
+      setOnboardingStepValue(2);
+      mount();
+      await screen.findByText('Time and place');
+
+      fireEvent.input(screen.getByLabelText(/Usually wake up/), { target: { value: '23:00' } });
+      fireEvent.input(screen.getByLabelText(/Usually go to bed/), { target: { value: '01:00' } });
+
+      fireEvent.click(screen.getByText('Next'));
+
+      await waitFor(() => expect(setPlannerCollapseBoundsMock).toHaveBeenCalledWith(720, 720));
+    });
+
+    it('Step 2 hydrates wake/bed from the owner\'s saved collapse bounds', async () => {
+      setPlannerAxisValue({ topEndMin: 480, bottomStartMin: 1320 }); // 08:00 / 22:00
+      setPrefs({ onboarded_at: null });
+      setOnboardingStepValue(2);
+      mount();
+      await screen.findByText('Time and place');
+
+      expect((screen.getByLabelText(/Usually wake up/) as HTMLInputElement).value).toBe('08:00');
+      expect((screen.getByLabelText(/Usually go to bed/) as HTMLInputElement).value).toBe('22:00');
     });
 
     it('Step 2 Next calls prefs.update with timezone + workday_start + workday_end, then lands on Connect', async () => {
@@ -510,6 +585,10 @@ describe('OnboardingWizard', () => {
         expect.objectContaining({ workday_start: '07:30', workday_end: '16:00' }),
       ));
 
+      // Wait for the Connect step to actually render before clicking on: Next is
+      // disabled while the step-2 write is in flight, so clicking the moment the mock
+      // records the call can land on a disabled button and be swallowed.
+      await screen.findByText('Connect a source');
       fireEvent.click(screen.getByText('Next')); // Connect -> Trust
       await screen.findByText('Trust dial');
       fireEvent.click(screen.getByText('Next'));

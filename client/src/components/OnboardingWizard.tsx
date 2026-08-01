@@ -2,14 +2,34 @@ import { createSignal, createResource, createEffect, onMount, For, Show } from '
 import { api } from '../lib/api.js';
 import {
   prefs, refetchPrefs, showToast, onboardingStep, setOnboardingStep, onboardingForceOpen, setOnboardingForceOpen,
+  plannerAxisState, setPlannerCollapseBounds,
 } from '../stores/index.js';
 import { FTUE_RESUME_KEY } from '../lib/onboarding.js';
+import { topCollapseEnd, bottomCollapseStart } from '../lib/day-axis.js';
+import { buildPlannerViewPrefs } from '../lib/view-prefs.js';
 import { ConnectSourceStep } from './onboarding/ConnectSourceStep.js';
 import { RunFirstSyncStep } from './onboarding/RunFirstSyncStep.js';
 
 const BROWSER_TZ = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
 })();
+
+/** `540` → `"09:00"`. The collapse bounds are stored as minutes from midnight. */
+function minutesToHHMM(min: number): string {
+  const h = Math.floor(min / 60) % 24;
+  return `${String(h).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+/** `"09:00"` → `540`; falsy/malformed input falls back to `fallback`. */
+function hhmmToMinutes(hhmm: string, fallback = 0): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm ?? '');
+  if (!m) return fallback;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function clampMinutes(v: number, lo: number, hi: number): number {
+  return Math.min(Math.max(Math.round(v), lo), hi);
+}
 
 type TrustMode = 'cautious' | 'balanced' | 'hands_off';
 
@@ -81,6 +101,18 @@ export function OnboardingWizard() {
   // like the identity effect above, hydrate from `prefs()` whenever it resolves.
   const [workdayStart, setWorkdayStart] = createSignal('09:00');
   const [workdayEnd, setWorkdayEnd] = createSignal('18:00');
+
+  /**
+   * Wake / bed times drive the planner's night collapse — the hours the day grid folds
+   * away so the useful part of the day fills the screen. They are the SAME setting as
+   * Settings → Planner display ("Collapse night until" / "Collapse night from"), stored
+   * as view_prefs.planner.topEndMin / bottomStartMin in minutes from midnight.
+   *
+   * Hydrated from the live store so re-opening the wizard shows what is actually set,
+   * rather than resetting an owner's tuned values to the defaults.
+   */
+  const [wakeTime, setWakeTime] = createSignal(minutesToHHMM(topCollapseEnd(plannerAxisState())));
+  const [bedTime, setBedTime] = createSignal(minutesToHHMM(bottomCollapseStart(plannerAxisState())));
   createEffect(() => {
     const p = prefs();
     if (p) { setWorkdayStart(p.workday_start); setWorkdayEnd(p.workday_end); }
@@ -140,10 +172,29 @@ export function OnboardingWizard() {
   }
 
   function nextFromTimePlace() {
-    return advance(
-      () => api.prefs.update({ timezone: BROWSER_TZ, workday_start: workdayStart(), workday_end: workdayEnd() }),
-      3,
-    );
+    // The collapse bounds are clamped the same way day-axis.ts clamps them on read, so a
+    // hand-typed 23:00 wake time cannot produce an inverted axis.
+    const topEndMin = clampMinutes(hhmmToMinutes(wakeTime()), 0, 12 * 60);
+    const bottomStartMin = clampMinutes(hhmmToMinutes(bedTime()), 12 * 60, 24 * 60);
+
+    return advance(async () => {
+      // Apply in-memory first so the planner behind the wizard updates immediately.
+      setPlannerCollapseBounds(topEndMin, bottomStartMin);
+      // Then write BOTH prefs in one awaited PATCH.
+      //
+      // Deliberately not leaning on the store's view_prefs persist effect: that path is
+      // debounced 400ms and fire-and-forget (`.catch(() => {})`), so a user who clicks
+      // Next and finishes onboarding quickly could navigate away before it flushes and
+      // silently lose the setting — the same shape as the autofill bug this wizard just
+      // had. Merging over the existing blob keeps the sibling `calendar` section intact.
+      const existing = prefs()?.view_prefs ?? {};
+      await api.prefs.update({
+        timezone: BROWSER_TZ,
+        workday_start: workdayStart(),
+        workday_end: workdayEnd(),
+        view_prefs: { ...existing, planner: buildPlannerViewPrefs({ ...plannerAxisState(), topEndMin, bottomStartMin }) },
+      });
+    }, 3);
   }
 
   function nextFromTrust() {
@@ -221,8 +272,25 @@ export function OnboardingWizard() {
             <div class="flex flex-col gap-3">
               <div>
                 <h2 class="text-base font-semibold text-foreground">Time and place</h2>
-                <p class="text-xs text-muted-foreground mt-0.5">Detected timezone: <span class="text-foreground">{BROWSER_TZ}</span></p>
+                <p class="text-xs text-muted-foreground mt-0.5">
+                  Block your days and weeks intelligently. Detected timezone:{' '}
+                  <span class="text-foreground">{BROWSER_TZ}</span>
+                </p>
               </div>
+              <div class="flex gap-3">
+                <label class="flex flex-col gap-1 text-sm flex-1">
+                  <span class="text-xs text-muted-foreground">Usually wake up</span>
+                  <input class="input" type="time" value={wakeTime()} onInput={(e) => setWakeTime(e.currentTarget.value)} />
+                </label>
+                <label class="flex flex-col gap-1 text-sm flex-1">
+                  <span class="text-xs text-muted-foreground">Usually go to bed</span>
+                  <input class="input" type="time" value={bedTime()} onInput={(e) => setBedTime(e.currentTarget.value)} />
+                </label>
+              </div>
+              <p class="text-[11px] text-muted-foreground -mt-1">
+                The planner folds the hours outside this away, so your real day fills the screen.
+                Change it any time in Settings → Planner display.
+              </p>
               <div class="flex gap-3">
                 <label class="flex flex-col gap-1 text-sm flex-1">
                   <span class="text-xs text-muted-foreground">Workday start</span>
