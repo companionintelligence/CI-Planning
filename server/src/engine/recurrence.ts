@@ -181,7 +181,14 @@ export function parseRule(s: string): ParseResult {
 
   // Cap bounded spans. UNTIL beyond the ceiling, or a COUNT large enough to run
   // past it, is rejected rather than silently truncated.
-  const ceiling = Date.UTC(2000, 0, 1) + MAX_SPAN_DAYS * 86_400_000;
+  //
+  // Anchored at NOW, not at a fixed epoch. This previously read
+  // `Date.UTC(2000, 0, 1) + MAX_SPAN_DAYS`, which placed the ceiling at 2005-01-04 and
+  // therefore rejected EVERY real-world UNTIL. It went unnoticed because the only writer
+  // of UNTIL (the clear-range cap in routes/planner.ts) writes straight to the DB without
+  // validating — but it blocks any rule that legitimately ends on a date, which the
+  // "this and all following" split depends on.
+  const ceiling = Date.now() + MAX_SPAN_DAYS * 86_400_000;
   if (opts.until && opts.until.getTime() > ceiling) {
     return { ok: false, error: `UNTIL exceeds the ${MAX_SPAN_DAYS}-day horizon ceiling` };
   }
@@ -196,4 +203,47 @@ export function parseRule(s: string): ParseResult {
   // Re-emit the normalized RRULE line (drops the synthetic DTSTART).
   const normalized = rule.toString().replace(/^DTSTART:[^\n]*\n?/i, '').replace(/^RRULE:/i, '').trim();
   return { ok: true, rule: normalized };
+}
+
+/**
+ * Bound a rule so the series STOPS BEFORE `splitLocalDate` — the first half of a
+ * "this and all following" edit.
+ *
+ * "This and following" is a SPLIT, not a template edit: the original series keeps every
+ * occurrence up to the day before the split, and a new template carries the changed
+ * values from the split day onward. Editing the template in place would instead rewrite
+ * occurrences BEFORE the one the user clicked, which is the behaviour this replaces.
+ *
+ * COUNT is dropped: RFC 5545 allows at most one of COUNT/UNTIL, and a COUNT that
+ * survived alongside the new UNTIL would either be rejected or silently win.
+ *
+ * UNTIL is the last instant before local midnight of the split day, expressed in UTC —
+ * so the split day itself belongs to the NEW series in the owner's timezone, not the
+ * server's.
+ */
+export function boundRuleBefore(rule: string, splitLocalDate: string, tz: string): ParseResult {
+  // Shape-check first: zonedWallTimeToUTC is lenient, and a silently-unbounded rule
+  // here would turn "this and following" into "the whole series".
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(splitLocalDate)) return { ok: false, error: 'invalid split date' };
+  const midnightUtc = Date.parse(zonedWallTimeToUTC(splitLocalDate, '00:00', tz));
+  if (!Number.isFinite(midnightUtc)) return { ok: false, error: 'invalid split date' };
+  const until = new Date(midnightUtc - 1000); // 23:59:59 local, the day before
+  const stamp = until.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+
+  const withoutBounds = rule
+    .split(';')
+    .filter((p) => p && !/^(COUNT|UNTIL)=/i.test(p))
+    .join(';');
+
+  return parseRule(`${withoutBounds};UNTIL=${stamp}`);
+}
+
+/**
+ * True when a bounded rule yields NO occurrences at or after its own start — i.e. the
+ * split landed on the first occurrence, so the "before" half is empty and the original
+ * template should be removed outright rather than left as a series with nothing in it.
+ */
+export function ruleIsEmptyBefore(t: Template, splitLocalDate: string): boolean {
+  const first = occurrencesBetween(t, '1970-01-01', splitLocalDate);
+  return first.filter((d) => d < splitLocalDate).length === 0;
 }
