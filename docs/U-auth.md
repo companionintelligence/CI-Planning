@@ -231,22 +231,27 @@ All auth env vars (see [`server/.env.example`](../server/.env.example) for the a
 | `AUTH_AUTO_PROVISION` | — | `true` ⇒ an unknown CI-Portal `sub` provisions a new owner; else 403 |
 | `AUTH_DEFAULT_USERNAME` / `AUTH_DEFAULT_PASSWORD` | local, first boot | seed the first local owner (fails closed if no login path) |
 | `CIPORTAL_ISSUER` | — | discovery base; **default `https://hub.companionintelligence.com/api/auth`**. Endpoints + canonical `iss` come from `<issuer>/.well-known/openid-configuration` |
-| `CIPORTAL_CLIENT_ID` | prod `sso`+OIDC | our client registered at CI-Portal (public PKCE); no default |
+| `CIPORTAL_CLIENT_ID` | — | our client at CI-Portal (public PKCE). **Default `ci-planning`** — a fixed first-party registration, so a deployment no longer has to set it |
 | `CIPORTAL_CLIENT_SECRET` | confidential clients only | omit for public/PKCE-only |
 | `CIPORTAL_REDIRECT_URI` | — | default `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` — must match the URI registered at CI-Portal |
 | `CIPORTAL_AUTHORIZE_URI` / `CIPORTAL_TOKEN_URI` / `CIPORTAL_JWKS_URI` | — | **optional** overrides — set all three to bypass discovery (then `CIPORTAL_ISSUER` must equal the token's actual `iss`) |
 
 **Boot guards** (`config.ts`, fail-closed): `AUTH_MODE=test` forbidden in production;
 `AUTH_MODE=sso` requires `SESSION_SECRET`; production `sso`+OIDC requires `CIPORTAL_ISSUER` +
-`CIPORTAL_CLIENT_ID` (endpoints are discovered, so they're no longer required up front).
+`CIPORTAL_CLIENT_ID` (endpoints are discovered, so they're no longer required up front). Both now
+have real defaults, so that last guard is satisfied out of the box — it stays as a guard against a
+deployment that deliberately blanks either one.
 
 > **Confirmed against CI-Import-Tools** (the sibling consumer, `backend/src/auth/`): CI-Portal runs
 > **better-auth**; the discovery issuer is `https://hub.companionintelligence.com/api/auth` (now the
 > default); consumers are **public PKCE clients** (CI-Import-Tools registers `ci-import-tools`).
-> **The one thing still needed from the CI-Portal team**: register a client for this app (public PKCE)
-> and set `CIPORTAL_CLIENT_ID`. This is an EXTERNAL dependency — it cannot be resolved from this
-> repo, and until it lands production SSO is not live (there is no default client id, and the boot
-> guard fails closed on `sso` + OIDC without one). Use the fixture portal below in the meantime.
+> **Client registration: DONE.** CI-Portal registered this app as the first-party public (PKCE)
+> client `ci-planning` — CI-Portal PR #444, `PUBLIC_CLIENTS` in `apps/hono-app/.../createAuth.ts` —
+> so `CIPORTAL_CLIENT_ID` now defaults to it and production SSO no longer needs an operator to
+> discover a value. Both of this app's redirect paths are registered against the provisioned
+> `ci-planning` host: `/api/auth/ciportal/callback` (sign-in, #444) and
+> `/api/memory/ciportal/callback` (the AA0b memory connector, CI-Portal PR #447). Self-hosted
+> `*.ts.net` installs match on host alone and never needed either registration.
 > The older generic `AUTH_JWKS_URL`/`AUTH_ISSUER`/`AUTH_AUDIENCE`/`AUTH_CONTRACT_VERSION` vars have
 > been **retired** — they were parsed into config but read by no code path.
 

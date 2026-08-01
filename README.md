@@ -709,7 +709,7 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `AUTH_DEFAULT_PASSWORD` | (unset) | Password for that seeded owner. **Required** to seed it (`DISABLE_OIDC=true` + zero local owners) — fail-closed if unset. Never commit it. |
 | `AUTH_RESET_TOKEN_TTL_MS` | `3600000` | Password-reset link lifetime for local login (default 60 min, single-use). |
 | `CIPORTAL_ISSUER` | `https://hub.companionintelligence.com/api/auth` | CI-Portal SSO discovery base (OAuth 2.1 + PKCE). Endpoints and the token `iss` are read from `<issuer>/.well-known/openid-configuration`. Meaningful when `AUTH_MODE=sso` and `DISABLE_OIDC` is not `true`. |
-| `CIPORTAL_CLIENT_ID` | (unset) | Our client registered with CI-Portal (public PKCE). **Required** for prod `sso`+OIDC — fails closed without it. |
+| `CIPORTAL_CLIENT_ID` | `ci-planning` | Our client registered with CI-Portal as a first-party public (PKCE) client. A fixed first-party identity, so it defaults rather than needing to be looked up; override only for a fixture portal or a differently-registered fork. |
 | `CIPORTAL_CLIENT_SECRET` | (unset) | Only if registered as a confidential client; leave unset for public/PKCE. Never commit it. |
 | `CIPORTAL_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/auth/ciportal/callback` | Must match the URI registered with CI-Portal. |
 | `CIPORTAL_SCOPES` | `openid profile email` | Scopes requested at authorize. |
