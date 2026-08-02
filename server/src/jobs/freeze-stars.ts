@@ -55,7 +55,7 @@ export async function freezeStars(forDate?: string, nowISO?: string): Promise<Fr
     .get<{ total: number | null; frozen_at: string | null }>(owner, date);
   if (existing?.frozen_at != null) return { date, total: existing.total ?? 0, created: false };
 
-  const stars = computeStars(owner, date);
+  const stars = await computeStars(owner, date);
   const frozenAt = nowISO ?? new Date().toISOString();
 
   // Partial upsert of ONLY the star columns, guarded so it fills stars at most

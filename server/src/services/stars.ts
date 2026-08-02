@@ -67,10 +67,11 @@ export async function listDayStars(owner: string, from: string, to: string): Pro
     }>(owner, from, to);
   const frozen = new Map(frozenRows.map((r) => [r.date, r]));
 
-  return datesInRange(from, to).map((date) => {
+  const out: DayStarsRow[] = [];
+  for (const date of datesInRange(from, to)) {
     const f = frozen.get(date);
     if (f) {
-      return {
+      out.push({
         date,
         objective: !!f.star_objective,
         habits: !!f.star_habits,
@@ -79,11 +80,13 @@ export async function listDayStars(owner: string, from: string, to: string): Pro
         note: !!f.star_note,
         total: f.total,
         frozen: true,
-      };
+      });
+      continue;
     }
-    const s = computeStars(owner, date);
-    return { date, ...s, frozen: false };
-  });
+    const s = await computeStars(owner, date);
+    out.push({ date, ...s, frozen: false });
+  }
+  return out;
 }
 
 /**

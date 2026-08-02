@@ -72,210 +72,210 @@ beforeEach(() => { resetDb(); });
 
 // ── S1 objective ───────────────────────────────────────────────────────────────
 describe('computeStars — S1 objective', () => {
-  it('false when no today_goal', () => { expect(stars().objective).toBe(false); });
-  it('false when today_goal not done', () => { setToday('Ship it', false); expect(stars().objective).toBe(false); });
-  it('true when today_goal has done_at', () => { setToday('Ship it', true); expect(stars().objective).toBe(true); });
+  it('false when no today_goal', async () => { expect((await stars()).objective).toBe(false); });
+  it('false when today_goal not done', async () => { setToday('Ship it', false); expect((await stars()).objective).toBe(false); });
+  it('true when today_goal has done_at', async () => { setToday('Ship it', true); expect((await stars()).objective).toBe(true); });
 });
 
 // ── S2 habits (empty-set rule) ──────────────────────────────────────────────────
 describe('computeStars — S2 habits', () => {
-  it('false when no habit instance exists that day (empty-set rule)', () => {
-    expect(stars().habits).toBe(false);
+  it('false when no habit instance exists that day (empty-set rule)', async () => {
+    expect((await stars()).habits).toBe(false);
   });
-  it('false when a habit instance is not done', () => {
+  it('false when a habit instance is not done', async () => {
     makeTask({ title: 'Meditate', subtype: 'habit', occurrenceDate: DAY, status: 'open' });
-    expect(stars().habits).toBe(false);
+    expect((await stars()).habits).toBe(false);
   });
-  it('true when the single habit instance is done', () => {
+  it('true when the single habit instance is done', async () => {
     makeTask({ title: 'Meditate', subtype: 'habit', occurrenceDate: DAY, status: 'done' });
-    expect(stars().habits).toBe(true);
+    expect((await stars()).habits).toBe(true);
   });
-  it('false when one of two habit instances is undone', () => {
+  it('false when one of two habit instances is undone', async () => {
     makeTask({ title: 'A', subtype: 'habit', occurrenceDate: DAY, status: 'done' });
     makeTask({ title: 'B', subtype: 'habit', occurrenceDate: DAY, status: 'open' });
-    expect(stars().habits).toBe(false);
+    expect((await stars()).habits).toBe(false);
   });
-  it('ignores habit instances on another day', () => {
+  it('ignores habit instances on another day', async () => {
     makeTask({ title: 'Yesterday', subtype: 'habit', occurrenceDate: NEXT_DAY, status: 'open' });
-    expect(stars().habits).toBe(false);
+    expect((await stars()).habits).toBe(false);
   });
 });
 
 // ── S3 tasks (empty-set rule + habit/routine exclusion) ─────────────────────────
 describe('computeStars — S3 tasks', () => {
-  it('false when nothing is planned (empty-set rule)', () => {
-    expect(stars().tasks).toBe(false);
+  it('false when nothing is planned (empty-set rule)', async () => {
+    expect((await stars()).tasks).toBe(false);
   });
-  it('false when a planned task is still open', () => {
+  it('false when a planned task is still open', async () => {
     plan(makeTask({ title: 'A', status: 'open' }), 0);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('true when the single planned task is done', () => {
+  it('true when the single planned task is done', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('false when one of two planned tasks is open', () => {
+  it('false when one of two planned tasks is open', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'B', status: 'open' }), 1);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('a planned habit does NOT count toward the tasks star (empty-set holds)', () => {
+  it('a planned habit does NOT count toward the tasks star (empty-set holds)', async () => {
     plan(makeTask({ title: 'Habit', subtype: 'habit', status: 'done' }), 0);
-    expect(stars().tasks).toBe(false); // only a habit planned → no plannable task
+    expect((await stars()).tasks).toBe(false); // only a habit planned → no plannable task
   });
-  it('a planned routine member does NOT count toward the tasks star', () => {
+  it('a planned routine member does NOT count toward the tasks star', async () => {
     plan(makeRoutineMember('Routine'), 0);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('a planned open habit alongside a done plannable task still earns it', () => {
+  it('a planned open habit alongside a done plannable task still earns it', async () => {
     plan(makeTask({ title: 'Habit', subtype: 'habit', status: 'open' }), 0); // excluded
     plan(makeTask({ title: 'Real', status: 'done' }), 1);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
   // FIX 1 — cancelling a planned task (soft-delete leaves the daily_plan row)
   // must drop it from the "for the day" set so the star can still light.
-  it('cancelling a planned task removes it from the set (star still earns)', () => {
+  it('cancelling a planned task removes it from the set (star still earns)', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'B', status: 'cancelled' }), 1); // soft-deleted, plan row survives
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('a skipped planned recurring instance does not keep the star dark', () => {
+  it('a skipped planned recurring instance does not keep the star dark', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'Skipped', status: 'skipped' }), 1);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('a MISSED planned task is a genuine incompletion and keeps the star dark', () => {
+  it('a MISSED planned task is a genuine incompletion and keeps the star dark', async () => {
     plan(makeTask({ title: 'A', status: 'done' }), 0);
     plan(makeTask({ title: 'Missed', status: 'missed' }), 1);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('only a cancelled planned task means no plannable task remains (empty-set)', () => {
+  it('only a cancelled planned task means no plannable task remains (empty-set)', async () => {
     plan(makeTask({ title: 'B', status: 'cancelled' }), 0);
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
 
   // Path-independence: HOW a task was scheduled must not change its star. A
   // self-scheduled task (scheduled_for = date; quick-add / New Task / drag — no
   // daily_plan row, which only the AI authoring path writes) is planned work.
-  it('a self-scheduled (scheduled_for) done task earns S3 with no daily_plan row at all', () => {
+  it('a self-scheduled (scheduled_for) done task earns S3 with no daily_plan row at all', async () => {
     makeTask({ title: 'Self-placed', status: 'done', scheduledFor: DAY });
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
-  it('a self-scheduled task still open keeps S3 dark', () => {
+  it('a self-scheduled task still open keeps S3 dark', async () => {
     makeTask({ title: 'Self-placed', status: 'open', scheduledFor: DAY });
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('authored ∪ self-scheduled: ALL planned tasks must be done, whichever way they were planned', () => {
+  it('authored ∪ self-scheduled: ALL planned tasks must be done, whichever way they were planned', async () => {
     plan(makeTask({ title: 'Authored', status: 'done' }), 0);
     makeTask({ title: 'Self-placed', status: 'open', scheduledFor: DAY });
-    expect(stars().tasks).toBe(false);
+    expect((await stars()).tasks).toBe(false);
   });
-  it('a task scheduled for ANOTHER day is not part of this day\'s planned set', () => {
+  it('a task scheduled for ANOTHER day is not part of this day\'s planned set', async () => {
     makeTask({ title: 'Tomorrow', status: 'open', scheduledFor: NEXT_DAY });
-    expect(stars().tasks).toBe(false); // empty-set rule, not an incompletion
+    expect((await stars()).tasks).toBe(false); // empty-set rule, not an incompletion
   });
-  it('a task both authored AND self-scheduled counts once', () => {
+  it('a task both authored AND self-scheduled counts once', async () => {
     const t = makeTask({ title: 'Both', status: 'done', scheduledFor: DAY });
     plan(t, 0);
-    expect(stars().tasks).toBe(true);
+    expect((await stars()).tasks).toBe(true);
   });
 });
 
 // ── S4 bonus (unplanned completion) ─────────────────────────────────────────────
 describe('computeStars — S4 bonus', () => {
-  it('false with no completions', () => { expect(stars().bonus).toBe(false); });
-  it('completing a PLANNED task does NOT earn the bonus', () => {
+  it('false with no completions', async () => { expect((await stars()).bonus).toBe(false); });
+  it('completing a PLANNED task does NOT earn the bonus', async () => {
     const t = makeTask({ title: 'Planned', status: 'done', completedAt: at(DAY) });
     plan(t, 0);
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
-  it('completing an UNPLANNED task earns the bonus', () => {
+  it('completing an UNPLANNED task earns the bonus', async () => {
     makeTask({ title: 'Surprise win', status: 'done', completedAt: at(DAY) });
-    expect(stars().bonus).toBe(true);
+    expect((await stars()).bonus).toBe(true);
   });
-  it('an unplanned HABIT completion does NOT earn the bonus', () => {
+  it('an unplanned HABIT completion does NOT earn the bonus', async () => {
     makeTask({ title: 'Habit', subtype: 'habit', status: 'done', completedAt: at(DAY), occurrenceDate: DAY });
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
-  it('an unplanned ROUTINE completion does NOT earn the bonus', () => {
+  it('an unplanned ROUTINE completion does NOT earn the bonus', async () => {
     const t = makeRoutineMember('Routine');
     sqlite.prepare(`UPDATE tasks SET status='done', completed_at=? WHERE id=?`).run(at(DAY), t);
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
-  it('a completion on another day does not earn today\'s bonus', () => {
+  it('a completion on another day does not earn today\'s bonus', async () => {
     makeTask({ title: 'Yesterday', status: 'done', completedAt: at(NEXT_DAY) });
-    expect(stars().bonus).toBe(false);
+    expect((await stars()).bonus).toBe(false);
   });
 
   // The S4 exclusion mirrors S3's widened planned set: a self-scheduled completion
   // is planned work (S3), never double-counted as an unplanned win.
-  it('completing a SELF-SCHEDULED task does NOT earn the bonus (it earns S3 instead)', () => {
+  it('completing a SELF-SCHEDULED task does NOT earn the bonus (it earns S3 instead)', async () => {
     makeTask({ title: 'Self-placed', status: 'done', completedAt: at(DAY), scheduledFor: DAY });
-    const s = stars();
+    const s = await stars();
     expect(s.bonus).toBe(false);
     expect(s.tasks).toBe(true);
   });
-  it('a task scheduled for ANOTHER day but completed today still earns the bonus', () => {
+  it('a task scheduled for ANOTHER day but completed today still earns the bonus', async () => {
     makeTask({ title: 'Pulled forward', status: 'done', completedAt: at(DAY), scheduledFor: NEXT_DAY });
-    expect(stars().bonus).toBe(true);
+    expect((await stars()).bonus).toBe(true);
   });
 });
 
 // ── S5 reflection (done task + note) ────────────────────────────────────────────
 describe('computeStars — S5 reflection', () => {
-  it('false with a note but no completed task', () => {
+  it('false with a note but no completed task', async () => {
     setNote('Reflecting');
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
-  it('false with a completed task but no note', () => {
+  it('false with a completed task but no note', async () => {
     makeTask({ title: 'Done', status: 'done', completedAt: at(DAY) });
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
-  it('false when the note is only whitespace', () => {
+  it('false when the note is only whitespace', async () => {
     makeTask({ title: 'Done', status: 'done', completedAt: at(DAY) });
     setNote('   ');
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
-  it('true with both a completed task and a non-empty note', () => {
+  it('true with both a completed task and a non-empty note', async () => {
     makeTask({ title: 'Done', status: 'done', completedAt: at(DAY) });
     setNote('Great day');
-    expect(stars().note).toBe(true);
+    expect((await stars()).note).toBe(true);
   });
 
   // FIX 5 — pin S5's doneToday semantics: it counts ANY status='done' task with a
   // completed_at in the local-day window (no habit/routine exclusion, unlike S3/S4),
   // and requires a non-null completed_at (unlike S3's status-only rule).
-  it('a habit completion + a note earns S5 (no habit exclusion for the done-task predicate)', () => {
+  it('a habit completion + a note earns S5 (no habit exclusion for the done-task predicate)', async () => {
     makeTask({ title: 'Habit', subtype: 'habit', status: 'done', completedAt: at(DAY), occurrenceDate: DAY });
     setNote('Reflected');
-    expect(stars().note).toBe(true);
+    expect((await stars()).note).toBe(true);
   });
-  it('a routine-member completion + a note earns S5 (no routine exclusion either)', () => {
+  it('a routine-member completion + a note earns S5 (no routine exclusion either)', async () => {
     const t = makeRoutineMember('Routine');
     sqlite.prepare(`UPDATE tasks SET status='done', completed_at=? WHERE id=?`).run(at(DAY), t);
     setNote('Reflected');
-    expect(stars().note).toBe(true);
+    expect((await stars()).note).toBe(true);
   });
-  it('a done task with a NULL completed_at + a note does NOT earn S5', () => {
+  it('a done task with a NULL completed_at + a note does NOT earn S5', async () => {
     makeTask({ title: 'Done but untimed', status: 'done', completedAt: null });
     setNote('Reflected');
-    expect(stars().note).toBe(false);
+    expect((await stars()).note).toBe(false);
   });
 });
 
 // ── total ────────────────────────────────────────────────────────────────────
 describe('computeStars — total', () => {
-  it('total equals the count of true flags (a perfect 5-star day)', () => {
+  it('total equals the count of true flags (a perfect 5-star day)', async () => {
     setToday('The one thing', true);                                              // S1
     makeTask({ title: 'Habit', subtype: 'habit', occurrenceDate: DAY, status: 'done' }); // S2
     plan(makeTask({ title: 'Planned', status: 'done', completedAt: at(DAY) }), 0);  // S3
     makeTask({ title: 'Bonus', status: 'done', completedAt: at(DAY) });            // S4 (unplanned)
     setNote('Reflected');                                                          // S5 (done task exists)
-    const s = stars();
+    const s = await stars();
     expect(s).toMatchObject({ objective: true, habits: true, tasks: true, bonus: true, note: true, total: 5 });
   });
-  it('empty day scores zero', () => {
-    expect(stars().total).toBe(0);
+  it('empty day scores zero', async () => {
+    expect((await stars()).total).toBe(0);
   });
 });
 
@@ -329,7 +329,7 @@ describe('freezeStars — nightly snapshot', () => {
 
     // Later: complete an unplanned task on DAY (would be +1 live). Frozen row must not change.
     makeTask({ title: 'Late win', status: 'done', completedAt: at(DAY) });
-    expect(runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => computeStars(SYSTEM_OWNER, DAY)).total).toBe(2); // live sees it
+    expect((await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => computeStars(SYSTEM_OWNER, DAY))).total).toBe(2); // live sees it
     expect(frozenRow().total).toBe(1); // frozen unchanged (no re-freeze)
   });
 

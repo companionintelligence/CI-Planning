@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 
@@ -40,28 +40,28 @@ export interface DayStars {
   total: number;
 }
 
-export function computeStars(
+export async function computeStars(
   owner: string = currentOwnerId(),
   date: string = '',
   _opts: { now?: string } = {},
-): DayStars {
-  const tzRow = sqlite
+): Promise<DayStars> {
+  const tzRow = await store()
     .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   const tz = tzRow?.timezone || serverTimezone();
   const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
 
   // ── S1 — intention ──────────────────────────────────────────────────────────
-  const goal = sqlite
+  const goal = await store()
     .prepare(
       `SELECT done_at FROM reflections
         WHERE owner_id = ? AND kind = 'today_goal' AND period_key = ? AND position = 0`,
     )
-    .get(owner, date) as { done_at: string | null } | undefined;
+    .get<{ done_at: string | null }>(owner, date);
   const objective = !!goal?.done_at;
 
   // ── S2 — habits (>=1 habit instance today, all done) ─────────────────────────
-  const habitStats = sqlite
+  const habitStats = (await store()
     .prepare(
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done
@@ -70,7 +70,7 @@ export function computeStars(
           AND COALESCE(subtype, 'standard') = 'habit'
           AND occurrence_date = ?`,
     )
-    .get(owner, date) as { total: number; done: number | null };
+    .get<{ total: number; done: number | null }>(owner, date))!;
   const habits = habitStats.total > 0 && (habitStats.done ?? 0) === habitStats.total;
 
   // ── S3 — tasks (>=1 non-habit/non-routine planned task, all done) ────────────
@@ -85,7 +85,7 @@ export function computeStars(
   // "for the day" set entirely — so it can't pin total>done forever and lock the
   // star dark. A `missed`/still-open planned task is a genuine incompletion and
   // correctly keeps the star unlit.
-  const planStats = sqlite
+  const planStats = (await store()
     .prepare(
       `SELECT COUNT(*) AS total,
               SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done
@@ -98,13 +98,13 @@ export function computeStars(
           AND t.recurrence_parent_id IS NULL
           AND t.id NOT IN (SELECT task_id FROM pattern_tasks)`,
     )
-    .get(owner, date, owner, date) as { total: number; done: number | null };
+    .get<{ total: number; done: number | null }>(owner, date, owner, date))!;
   const tasks = planStats.total > 0 && (planStats.done ?? 0) === planStats.total;
 
   // ── S4 — bonus (an unplanned non-habit/non-routine completion today) ─────────
   // The exclusion mirrors S3's planned set exactly (daily_plan ∪ scheduled_for=date),
   // so one completion can never count as both planned work and an unplanned win.
-  const bonusRow = sqlite
+  const bonusRow = (await store()
     .prepare(
       `SELECT COUNT(*) AS n
          FROM tasks t
@@ -117,23 +117,23 @@ export function computeStars(
           AND (t.scheduled_for IS NULL OR t.scheduled_for <> ?)
           AND t.id NOT IN (SELECT task_id FROM daily_plan WHERE owner_id = ? AND date = ?)`,
     )
-    .get(owner, dayStart, dayEnd, date, owner, date) as { n: number };
+    .get<{ n: number }>(owner, dayStart, dayEnd, date, owner, date))!;
   const bonus = bonusRow.n > 0;
 
   // ── S5 — reflection (>=1 task done today AND a non-empty day note) ───────────
-  const doneToday = sqlite
+  const doneToday = (await store()
     .prepare(
       `SELECT COUNT(*) AS n FROM tasks
         WHERE owner_id = ? AND status = 'done'
           AND completed_at >= ? AND completed_at < ?`,
     )
-    .get(owner, dayStart, dayEnd) as { n: number };
-  const noteRow = sqlite
+    .get<{ n: number }>(owner, dayStart, dayEnd))!;
+  const noteRow = await store()
     .prepare(
       `SELECT body FROM reflections
         WHERE owner_id = ? AND kind = 'day_note' AND period_key = ? AND position = 0`,
     )
-    .get(owner, date) as { body: string } | undefined;
+    .get<{ body: string }>(owner, date);
   const note = doneToday.n > 0 && !!noteRow && noteRow.body.trim().length > 0;
 
   const total = [objective, habits, tasks, bonus, note].filter(Boolean).length;
