@@ -616,7 +616,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { mood?: unknown; note?: unknown; actual_minutes?: unknown };
-    const res = closeTask(owner, id, { mood: body.mood, note: body.note, actualMinutes: body.actual_minutes });
+    const res = await closeTask(owner, id, { mood: body.mood, note: body.note, actualMinutes: body.actual_minutes });
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));

@@ -35,7 +35,7 @@ describe('closeTask', () => {
 
   it('completes an open task and records the reflection', async () => {
     const id = insertTask('Write the memo');
-    const res = closeTask(OWNER, id, { mood: 'happy', note: 'went fine', actualMinutes: 45 });
+    const res = await closeTask(OWNER, id, { mood: 'happy', note: 'went fine', actualMinutes: 45 });
     expect(res.ok).toBe(true);
     const r = row(id);
     expect(r.status).toBe('done');
@@ -50,7 +50,7 @@ describe('closeTask', () => {
   it('stamps reaction_at WITHOUT touching an existing completed_at', async () => {
     const earlier = '2026-07-01T10:00:00.000Z';
     const id = insertTask('Finished last week', { status: 'done', completedAt: earlier });
-    closeTask(OWNER, id, { mood: 'frustrated' });
+    await closeTask(OWNER, id, { mood: 'frustrated' });
     const r = row(id);
     expect(r.completed_at).toBe(earlier);                       // task end unchanged
     expect(Date.parse(r.reaction_at as string)).toBeGreaterThan(Date.parse(earlier)); // reacted later
@@ -58,7 +58,7 @@ describe('closeTask', () => {
 
   it('does NOT stamp reaction_at for a duration-only correction', async () => {
     const id = insertTask('Timed wrong');
-    const res = closeTask(OWNER, id, { actualMinutes: 90 });
+    const res = await closeTask(OWNER, id, { actualMinutes: 90 });
     expect(res.ok && res.reactionAt).toBeNull();
     const r = row(id);
     expect(r.actual_minutes).toBe(90);
@@ -68,7 +68,7 @@ describe('closeTask', () => {
   it('never writes the reflection into `notes` (the description)', async () => {
     const id = insertTask('Has a description');
     sqlite.prepare(`UPDATE tasks SET notes = 'what this is about' WHERE id = ?`).run(id);
-    closeTask(OWNER, id, { note: 'how it went' });
+    await closeTask(OWNER, id, { note: 'how it went' });
     const r = row(id);
     expect(r.notes).toBe('what this is about');   // untouched
     expect(r.completion_note).toBe('how it went'); // its own column
@@ -76,23 +76,23 @@ describe('closeTask', () => {
 
   it('rejects an unknown mood rather than storing it', async () => {
     const id = insertTask('Bad mood value');
-    closeTask(OWNER, id, { mood: 'ecstatic' });
+    await closeTask(OWNER, id, { mood: 'ecstatic' });
     expect(row(id).completion_mood).toBeNull();
     expect(row(id).status).toBe('done'); // the completion still happened
   });
 
   it('drops absurd or negative durations instead of clamping them', async () => {
     const id = insertTask('Silly duration', { actual: 20 });
-    closeTask(OWNER, id, { actualMinutes: -5 });
+    await closeTask(OWNER, id, { actualMinutes: -5 });
     expect(row(id).actual_minutes).toBe(20);
-    closeTask(OWNER, id, { actualMinutes: 99_999 });
+    await closeTask(OWNER, id, { actualMinutes: 99_999 });
     expect(row(id).actual_minutes).toBe(20);
-    closeTask(OWNER, id, { actualMinutes: 0 }); // 0 is meaningful and must land
+    await closeTask(OWNER, id, { actualMinutes: 0 }); // 0 is meaningful and must land
     expect(row(id).actual_minutes).toBe(0);
   });
 
   it('404s a task belonging to nobody', async () => {
-    const res = closeTask(OWNER, 'nope', { mood: 'happy' });
+    const res = await closeTask(OWNER, 'nope', { mood: 'happy' });
     expect(res).toEqual({ ok: false, error: 'not_found' });
   });
 
@@ -129,7 +129,7 @@ describe('taskMetrics', () => {
     const work = seedTag('work', 'direction');
     const home = seedTag('home', 'direction');
     const a = insertTask('open work'); tagTask(a, work);
-    const b = insertTask('done work'); tagTask(b, work); closeTask(OWNER, b, { mood: 'happy', actualMinutes: 50 });
+    const b = insertTask('done work'); tagTask(b, work); await closeTask(OWNER, b, { mood: 'happy', actualMinutes: 50 });
     const c = insertTask('open home'); tagTask(c, home);
 
     const m = await taskMetrics(OWNER, 30);
@@ -157,13 +157,13 @@ describe('taskMetrics', () => {
     for (let i = 0; i < 2; i++) {
       const id = insertTask(`t${i}`, { estimated: 30 });
       tagTask(id, work);
-      closeTask(OWNER, id, { actualMinutes: 60 });
+      await closeTask(OWNER, id, { actualMinutes: 60 });
     }
     expect((await taskMetrics(OWNER, 30)).directions[0].estimateBias).toBeNull();
 
     const id = insertTask('t3', { estimated: 30 });
     tagTask(id, work);
-    closeTask(OWNER, id, { actualMinutes: 60 });
+    await closeTask(OWNER, id, { actualMinutes: 60 });
     expect((await taskMetrics(OWNER, 30)).directions[0].estimateBias).toBe(2); // 60/30 median
   });
 
