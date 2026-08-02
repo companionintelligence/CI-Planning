@@ -56,7 +56,7 @@ describe('Plans-first placement', () => {
     const errand = insertTask('Post office', 30, 'errands');
     stage(errand);
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placedInPlans).toBe(1);
     const blk = agentBlocks().find((b) => b.title === 'Post office')!;
     expect(blk.parent_block_id).toBe(plan.id);
@@ -72,7 +72,7 @@ describe('Plans-first placement', () => {
     [t1, t2, t3].forEach(stage);
 
     // Auto Schedule: tag-matched tasks land in their Plans; the untagged one goes to workday.
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placed).toBe(3);
     expect(r.placedInPlans).toBe(2);
     expect(r.placedInWorkday).toBe(1); // the untagged one fills workday
@@ -88,7 +88,7 @@ describe('Plans-first placement', () => {
     const high = insertTask('High', 60, 'work', 1);
     stage(low); stage(high);
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const blocks = agentBlocks();
     expect(blocks[0].title).toBe('High'); // earliest slot
     expect(blocks[1].title).toBe('Low');
@@ -96,24 +96,24 @@ describe('Plans-first placement', () => {
 });
 
 describe('no double-booking (shared obstacle set)', () => {
-  it('does not stack on a manually-placed task block; workday fallback flows around it', () => {
+  it('does not stack on a manually-placed task block; workday fallback flows around it', async () => {
     // a manual block 09:00–10:00 (source_kind manual, not agent → survives re-place)
     sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned', ?)`)
       .run(at('09:00'), at('10:00'), OWNER);
     const t = insertTask('Auto task', 60);
     stage(t);
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const auto = agentBlocks().find((b) => b.title === 'Auto task')!;
     expect(auto).toBeTruthy();
     expect(overlaps(auto, { start_at: at('09:00'), end_at: at('10:00') })).toBe(false); // around the manual block
   });
 
-  it('two workday tasks never overlap each other', () => {
+  it('two workday tasks never overlap each other', async () => {
     const a = insertTask('A', 90);
     const b = insertTask('B', 90);
     stage(a); stage(b);
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const blocks = agentBlocks();
     expect(blocks.length).toBe(2);
     expect(overlaps(blocks[0], blocks[1])).toBe(false);
@@ -123,7 +123,7 @@ describe('no double-booking (shared obstacle set)', () => {
     const plan = await makePlan(srv, 'errands', at('09:00'), at('17:00')); // a big plan covering most of the day
     const t = insertTask('Unrelated', 30); // not tagged errands
     stage(t);
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const blk = agentBlocks().find((b) => b.title === 'Unrelated');
     // 09:00–17:00 is reserved; the only free workday time is 17:00–18:00.
     expect(blk).toBeTruthy();
@@ -139,7 +139,7 @@ describe('workday fill (folded into Auto Schedule) + auto_fill_workday gate', ()
     const loose = insertTask('Loose', 30); // no plan tag
     stage(inPlan); stage(loose);
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placedInPlans).toBe(1);
     expect(r.placedInWorkday).toBe(1); // workday fill now runs inside placeFlightPlan
     expect(agentBlocks().some((b) => b.title === 'Loose')).toBe(true); // placed in workday
@@ -152,7 +152,7 @@ describe('workday fill (folded into Auto Schedule) + auto_fill_workday gate', ()
     const loose = insertTask('Loose', 30);
     stage(inPlan); stage(loose);
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placedInPlans).toBe(1); // tag-matched still runs
     expect(r.placedInWorkday).toBe(0); // gated off
     expect(agentBlocks().some((b) => b.title === 'Loose')).toBe(false);
@@ -164,7 +164,7 @@ describe('workday fill (folded into Auto Schedule) + auto_fill_workday gate', ()
     const hi = insertTask('High', 60, undefined, 1);
     stage(lo); stage(hi);
 
-    const r = placeFlightPlan(OWNER, { date: DAY }); // nothing tag-matched → both go to workday
+    const r = await placeFlightPlan(OWNER, { date: DAY }); // nothing tag-matched → both go to workday
     expect(r.placedInWorkday).toBe(2);
     const blocks = agentBlocks();
     expect(blocks[0].title).toBe('High'); // highest priority gets the earliest slot
@@ -181,11 +181,11 @@ describe('habit exclusion from flight-plan candidates', () => {
       .get(title, OWNER, subtype) as { id: string }).id;
   }
 
-  it("a habit task (subtype='habit') is not added as a candidate", () => {
+  it("a habit task (subtype='habit') is not added as a candidate", async () => {
     const standard = insertWithSubtype('Standard', 'standard');
     const habit = insertWithSubtype('Habit', 'habit');
 
-    const added = fillFlightPlanCandidates(OWNER);
+    const added = await fillFlightPlanCandidates(OWNER);
 
     expect(added).toBe(1);
     const staged = sqlite
@@ -195,11 +195,11 @@ describe('habit exclusion from flight-plan candidates', () => {
     expect(staged.some((r) => r.task_id === habit)).toBe(false);
   });
 
-  it('exclusion is driven by subtype alone (columns dropped in 0048)', () => {
+  it('exclusion is driven by subtype alone (columns dropped in 0048)', async () => {
     const habitTask = insertWithSubtype('Habit', 'habit');
     const standardTask = insertWithSubtype('Standard', 'standard');
 
-    const added = fillFlightPlanCandidates(OWNER);
+    const added = await fillFlightPlanCandidates(OWNER);
     expect(added).toBe(1);
 
     const staged = sqlite
@@ -227,7 +227,7 @@ describe('catch-all Plan (Community pattern type)', () => {
     const otherTag = insertTask('Errands task', 60, 'errands', 1);
     stage(tagged); stage(untagged); stage(otherTag);
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placedInPlans).toBeGreaterThanOrEqual(2); // at least some placed
     const titles = agentBlocks().map((b) => b.title);
     // All three should land — Community accepts any tag (or no tag).
@@ -236,13 +236,13 @@ describe('catch-all Plan (Community pattern type)', () => {
     expect(titles).toContain('Errands task');
   });
 
-  it('priority order: P1 gets the earliest slot inside a catch-all Plan', () => {
+  it('priority order: P1 gets the earliest slot inside a catch-all Plan', async () => {
     makeCommunityPlan(at('09:00'), at('12:00'));
     const lo = insertTask('Low', 60, undefined, 5);
     const hi = insertTask('High', 60, undefined, 1);
     stage(lo); stage(hi);
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const blocks = agentBlocks();
     expect(blocks[0].title).toBe('High');
     expect(blocks[1].title).toBe('Low');
@@ -255,7 +255,7 @@ describe('catch-all Plan (Community pattern type)', () => {
     const errand = insertTask('Errand task', 30, 'errands');
     stage(work); stage(errand);
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const comBlocks = agentBlocks().filter((b) => b.start_at >= at('10:00') && b.end_at <= at('12:00'));
     const errBlocks = agentBlocks().filter((b) => b.start_at >= at('14:00') && b.end_at <= at('16:00'));
     // Errands (non-catch-all) runs first, picks the errand-tagged task.
@@ -274,7 +274,7 @@ describe('DST-correct day slab (clearPriorAuto)', () => {
   // 2026-11-02T05:00:00Z, which covers it. See tz.utcDayBounds.
   const DST_DAY = '2026-11-01';
 
-  it("clears a re-placed task's prior block in the shifted last hour of a fall-back local day", () => {
+  it("clears a re-placed task's prior block in the shifted last hour of a fall-back local day", async () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/New_York' WHERE owner_id = ?`).run(OWNER);
     // The clear is scoped to the tasks a run re-places (AE reflow-correctness), so the
     // stale block belongs to a STAGED task — the DST assertion is unchanged: the
@@ -288,7 +288,7 @@ describe('DST-correct day slab (clearPriorAuto)', () => {
       .run(t, '2026-11-02T04:00:00.000Z', '2026-11-02T04:30:00.000Z', OWNER);
     stage(t);
 
-    placeFlightPlan(OWNER, { date: DST_DAY });
+    await placeFlightPlan(OWNER, { date: DST_DAY });
 
     const stale = sqlite
       .prepare(`SELECT 1 FROM time_blocks WHERE title = 'Stale auto' AND start_at = '2026-11-02T04:00:00.000Z'`)
@@ -308,8 +308,8 @@ describe('idempotent re-place', () => {
     sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned', ?)`)
       .run(at('16:00'), at('16:30'), OWNER);
 
-    placeFlightPlan(OWNER, { date: DAY }); // first run: places 'Coding', removes it from flight plan (item 5)
-    placeFlightPlan(OWNER, { date: DAY }); // second run: 'Coding' is de-staged → NOT in the clear scope → survives
+    await placeFlightPlan(OWNER, { date: DAY }); // first run: places 'Coding', removes it from flight plan (item 5)
+    await placeFlightPlan(OWNER, { date: DAY }); // second run: 'Coding' is de-staged → NOT in the clear scope → survives
     const titles = (sqlite.prepare(`SELECT title FROM time_blocks WHERE block_kind = 'task'`).all() as { title: string }[]).map((t) => t.title);
     expect(titles.filter((t) => t === 'Coding').length).toBe(1); // survives the re-run; never duplicated (AE)
     expect(titles).toContain('Routine task'); // pattern survived

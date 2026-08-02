@@ -63,8 +63,8 @@ export const possibleTaskResolvers = {
       // (REST parity): a START-anchored task is placed at its stated day/time in ANY
       // trust mode; a start-less one keeps the TM-5 trust-gated auto-block.
       try {
-        if (res.task.scheduledFor) placeStartAnchoredTask(owner, res.taskId);
-        else autoScheduleOnIngest(owner, { requireEstimate: true });
+        if (res.task.scheduledFor) await placeStartAnchoredTask(owner, res.taskId);
+        else await autoScheduleOnIngest(owner, { requireEstimate: true });
       } catch (err) {
         logger.warn('promotePossibleTask: post-promote placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
       }

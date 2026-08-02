@@ -141,7 +141,7 @@ export function tasksRouter() {
     let placement: StartAnchoredOutcome | undefined;
     if (body.auto_place === true && task.scheduledFor) {
       try {
-        placement = placeStartAnchoredTask(owner, task.id);
+        placement = await placeStartAnchoredTask(owner, task.id);
         if (placement.placed) [task] = await db.select().from(tasks).where(and(eq(tasks.id, task.id), eq(tasks.ownerId, owner)));
       } catch (err) {
         logger.warn('auto_place: start-anchored placement failed', { owner, taskId: task.id, err: (err as Error).message });
@@ -255,7 +255,7 @@ export function tasksRouter() {
     // the quick-add itself (the task is already created).
     if (task.scheduledFor) {
       try {
-        const placed = placeStartAnchoredTask(currentOwnerId(), task.id);
+        const placed = await placeStartAnchoredTask(currentOwnerId(), task.id);
         // Placement flips status open → scheduled (R2 parity) — re-read so the
         // response/broadcast carry the post-placement row. Owner-scoped (defense in
         // depth; matches the other owner-scoped reads in this router).

@@ -107,7 +107,7 @@ export const engineOpsResolvers = {
     // POST /api/auto/fill — propose candidates into staging. Never places.
     autoFill: async () => {
       const owner = currentOwnerId();
-      const added = fillFlightPlanCandidates(owner);
+      const added = await fillFlightPlanCandidates(owner);
       broadcast(owner, 'flight_plan:filled', { added });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'fill', entity: 'flight-plan:fill' });
       return { result: { step: 'fill', candidatesAdded: added }, flightPlan: await listFlightPlan(owner), success: true };
@@ -135,7 +135,7 @@ export const engineOpsResolvers = {
     // POST /api/auto/priority — explicit priority top-up. No SSE in the route.
     autoPriority: async (_p: unknown, args: { date?: string | null }) => {
       const owner = currentOwnerId();
-      const result = fillByPriority(owner, { date: args.date ?? undefined });
+      const result = await fillByPriority(owner, { date: args.date ?? undefined });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: 'flight-plan:priority' });
       return { result, flightPlan: await listFlightPlan(owner), success: true };
     },
@@ -144,7 +144,7 @@ export const engineOpsResolvers = {
     // internally, so (like the route) NO extra broadcast here.
     autoUndo: async () => {
       const owner = currentOwnerId();
-      const result = undoLastAuto(owner);
+      const result = await undoLastAuto(owner);
       writeAudit({ ownerId: owner, actor: 'owner', action: 'undo', entity: 'flight-plan:undo' });
       return { result, flightPlan: await listFlightPlan(owner), success: true };
     },

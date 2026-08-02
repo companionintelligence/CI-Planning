@@ -17,7 +17,7 @@
  * A single `blockId` still scopes placement to one Plan (the "Auto into this
  * Plan" affordance).
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { serverTimezone, zonedWallTimeToUTC, utcDayBounds, localDateInTZ, todayInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -102,8 +102,8 @@ function tagsOf(taskId: string): string[] {
  * after authoring) fall through to the original `fp.position` ordering so nothing
  * is ever silently dropped.
  */
-function selectedStaged(owner: string, date: string): StagedTask[] {
-  const rows = sqlite
+async function selectedStaged(owner: string, date: string): Promise<StagedTask[]> {
+  const rows = await store()
     .prepare(
       `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.scheduled_for, t.task_time, t.created_at
          FROM flight_plan fp
@@ -126,9 +126,9 @@ function selectedStaged(owner: string, date: string): StagedTask[] {
  * not write to — or read through — the user's staging area (the old restage inserted
  * rows there and leaked every re-place failure into the flight-plan UI).
  */
-function stagedFromTaskIds(owner: string, ids: readonly string[]): StagedTask[] {
+async function stagedFromTaskIds(owner: string, ids: readonly string[]): Promise<StagedTask[]> {
   if (ids.length === 0) return [];
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT id AS task_id, title, estimated_minutes, priority, due_at, scheduled_for, task_time, created_at
          FROM tasks WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
@@ -142,25 +142,25 @@ function stagedFromTaskIds(owner: string, ids: readonly string[]): StagedTask[] 
 }
 
 /** How many tasks are staged in the flight-plan (selected or not). */
-function flightPlanCount(owner: string): number {
-  return (sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(owner) as { n: number }).n;
+async function flightPlanCount(owner: string): Promise<number> {
+  return (await store().prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(owner) as { n: number }).n;
 }
 
 /** Record the most recent placement run for the owner, so Undo can target it (D2). */
-function recordRun(owner: string, runId: string, blocksCreated: number): void {
-  if (blocksCreated > 0) sqlite.prepare(`UPDATE owners SET last_auto_run_id = ? WHERE id = ?`).run(runId, owner);
+async function recordRun(owner: string, runId: string, blocksCreated: number): Promise<void> {
+  if (blocksCreated > 0) await store().prepare(`UPDATE owners SET last_auto_run_id = ? WHERE id = ?`).run(runId, owner);
 }
 
-function prefsOf(owner: string): PrefsRow | undefined {
-  return sqlite
+async function prefsOf(owner: string): Promise<PrefsRow | undefined> {
+  return await store()
     .prepare(`SELECT timezone, workday_start, workday_end, min_break_minutes, max_focus_block_minutes, auto_fill_workday, fill_order, default_time_block_minutes FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as PrefsRow | undefined;
 }
 
 /** Tagged, timed Plan containers on `date`, earliest first. */
-function dayPlans(owner: string, date: string, tz: string): PlanRow[] {
+async function dayPlans(owner: string, date: string, tz: string): Promise<PlanRow[]> {
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
-  return sqlite
+  return await store()
     .prepare(
       `SELECT tb.id, tb.start_at, tb.end_at, tb.tag,
               COALESCE((SELECT pt.catch_all FROM pattern_types pt
@@ -190,11 +190,11 @@ interface CategoryPlanRow { id: string; start_at: string; end_at: string; catego
  * Plan is filled by its POSITION-0 category — the fill axis is singular by design; the
  * stripes are a render concern.
  */
-function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlanRow[] {
+async function dayCategoryPlans(owner: string, date: string, tz: string): Promise<CategoryPlanRow[]> {
   // Same DST-aware day window as dayPlans directly above — a start+24h add drifts
   // an hour off local midnight on the two DST-transition days.
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
-  return sqlite
+  return await store()
     .prepare(
       `SELECT tb.id, tb.start_at, tb.end_at, ec.category_tag_id AS category_id
          FROM time_blocks tb
@@ -233,9 +233,9 @@ function dayCategoryPlans(owner: string, date: string, tz: string): CategoryPlan
  * the category match alone. Owner scoping comes from the `staged` intersection at the end
  * (both queries are keyed on a category id that is already owner-scoped).
  */
-function categoryCandidates(staged: StagedTask[], categoryId: string, owner: string): StagedTask[] {
+async function categoryCandidates(staged: StagedTask[], categoryId: string, owner: string): Promise<StagedTask[]> {
   const candIds = new Set(
-    (sqlite
+    (await store()
       .prepare(
         `SELECT DISTINCT entity_id FROM entity_tags
           WHERE entity_kind = 'task' AND level > 1
@@ -248,12 +248,12 @@ function categoryCandidates(staged: StagedTask[], categoryId: string, owner: str
   );
   if (candIds.size === 0) return [];
   const optOut = new Set(
-    (sqlite
+    (await store()
       .prepare(`SELECT direction_tag_id FROM category_direction_optouts WHERE category_tag_id = ?`)
       .all(categoryId) as { direction_tag_id: string }[]).map((r) => r.direction_tag_id),
   );
   const patNameToId = new Map<string, string>();
-  for (const pt of sqlite.prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND kind = 'direction'`).all(owner) as { id: string; name: string }[]) {
+  for (const pt of await store().prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND kind = 'direction'`).all(owner) as { id: string; name: string }[]) {
     patNameToId.set(pt.name, pt.id);
   }
   return staged.filter((t) => {
@@ -345,7 +345,7 @@ function orderByNewToday(cands: StagedTask[], todayISO: string, tz: string): Sta
 }
 
 const insBlock = () =>
-  sqlite.prepare(
+  store().prepare(
     `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status, parent_block_id, auto_run_id, tag)
      VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 1, 'agent', 'planned', ?, ?, ?)`
   );
@@ -366,17 +366,17 @@ const insBlock = () =>
  * in-progress / recently-moved / locked blocks here, in memory, so a reflow never has
  * to write is_locked to fence them off and can't leave a block stuck locked on a crash).
  */
-function clearPriorAuto(
+async function clearPriorAuto(
   owner: string,
   date: string,
   tz: string,
   opts: { taskIds: readonly string[]; protectIds?: Set<string> },
-): void {
+): Promise<void> {
   if (opts.taskIds.length === 0) return; // nothing to re-place → nothing to clear
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   const protect = opts.protectIds && opts.protectIds.size ? [...opts.protectIds] : [];
   const notIn = protect.length ? ` AND id NOT IN (${protect.map(() => '?').join(',')})` : '';
-  sqlite
+  await store()
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
@@ -392,14 +392,14 @@ function clearPriorAuto(
  * the live obstacle set. Returns the task ids that got at least one session.
  * Does not clear — the caller owns idempotent clearing for the whole run.
  */
-function placeIntoWindow(
+async function placeIntoWindow(
   owner: string,
   tasks: StagedTask[],
   windowStartMs: number,
   windowEndMs: number,
   prefs: PrefsRow | undefined,
   opts: { parentBlockId?: string | null; includePlans?: boolean; runId?: string | null; notBeforeMs?: number | null }
-): { blocksCreated: number; placedTaskIds: Set<string> } {
+): Promise<{ blocksCreated: number; placedTaskIds: Set<string> }> {
   const placedTaskIds = new Set<string>();
   // R3 clamp: an engine-chosen slot never starts before `now` (set by the caller only
   // when placing on the owner-local current day) — a late-day re-pack must fill the
@@ -424,7 +424,7 @@ function placeIntoWindow(
   // has tag NULL → inheritContainerDirection is a no-op; direction-window/workday fills
   // pass no parentBlockId, so their blocks keep tag NULL (unchanged).
   const containerTag = opts.parentBlockId
-    ? ((sqlite.prepare(`SELECT tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(opts.parentBlockId, owner) as { tag: string | null } | undefined)?.tag ?? null)
+    ? ((await store().prepare(`SELECT tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(opts.parentBlockId, owner) as { tag: string | null } | undefined)?.tag ?? null)
     : null;
 
   for (const t of tasks) {
@@ -436,7 +436,7 @@ function placeIntoWindow(
       if (!pick) break;
       const startMs = pick.gap.cursor;
       const endMs = startMs + pick.len;
-      ins.run(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null);
+      await ins.run(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), opts.parentBlockId ?? null, opts.runId ?? null, opts.parentBlockId ? containerTag : null);
       pick.gap.cursor = endMs + breakMs;
       blocksCreated++;
       placedAny = true;
@@ -465,8 +465,8 @@ interface PriorPlacement { id: string; start_at: string; end_at: string }
  * block on a different day silently suppressed the stated (scheduled_for, task_time) —
  * the task read as placed while its only block sat on the wrong (often past) day.
  */
-function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: string, dayEndISO: string): PriorPlacement | null {
-  const sameDay = sqlite
+async function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: string, dayEndISO: string): Promise<PriorPlacement | null> {
+  const sameDay = await store()
     .prepare(
       `SELECT id, start_at, end_at FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
@@ -477,7 +477,7 @@ function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: str
     .get(taskId, owner, dayEndISO, dayStartISO) as PriorPlacement | undefined;
   if (sameDay) return sameDay;
 
-  const lockedElsewhere = sqlite
+  const lockedElsewhere = await store()
     .prepare(
       `SELECT id, start_at, end_at FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 1
@@ -492,7 +492,7 @@ function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: str
   // CON-3 cascade: these are HARD-deleted, so clear their entity_tags rows too
   // (entity_tags.entity_id has no FK — an orphan would break tag-integrity), mirroring
   // review.ts's dropBlocks/rescheduleTask cleanup.
-  const stale = sqlite
+  const stale = await store()
     .prepare(
       `DELETE FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 0
@@ -514,31 +514,31 @@ function reconcilePriorPlacement(owner: string, taskId: string, dayStartISO: str
  * whether a block now exists for the task. Plan containers are NOT obstacles for the
  * exact hit — a stated time inside a Plan is normal grouping, not double-booking.
  */
-function pinTaskAt(
+async function pinTaskAt(
   owner: string,
   t: StagedTask,
   date: string,
   tz: string,
   prefs: PrefsRow | undefined,
   notBeforeMs?: number | null,
-): boolean {
+): Promise<boolean> {
   // H4: idempotent ONLY against a block already on the target day (or a locked pin
   // anywhere); a stale unlocked block on another day is cleared so the stated day wins.
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
-  const existing = reconcilePriorPlacement(owner, t.task_id, dayStartISO, dayEndISO);
+  const existing = await reconcilePriorPlacement(owner, t.task_id, dayStartISO, dayEndISO);
   if (existing) {
-    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
+    await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
     applyTaskPlacementStatus(t.task_id, owner); // R2 parity: the existing block IS the placement
     return true;
   }
 
   const durMs = Math.max((t.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
   const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
-  const create = (startMs: number): boolean => {
+  const create = async (startMs: number): Promise<boolean> => {
     const startAt = new Date(startMs).toISOString();
     const endAt = new Date(startMs + durMs).toISOString();
-    insAnchoredBlock().get(t.task_id, owner, t.title, startAt, endAt);
-    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
+    await insAnchoredBlock().get(t.task_id, owner, t.title, startAt, endAt);
+    await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
     mirrorEnginePlacement(t.task_id, owner); // R2 parity: scheduled_for = this day, open → scheduled
     return true;
   };
@@ -546,7 +546,7 @@ function pinTaskAt(
   // The stated (date, task_time) instant is honored EXACTLY even if it has already
   // passed (user intent, not an engine choice) — only the gap FALLBACK below clamps.
   const startMs = Date.parse(zonedWallTimeToUTC(date, t.task_time!, tz));
-  if (dayObstacles(owner, startMs, startMs + durMs).length === 0) return create(startMs);
+  if (dayObstacles(owner, startMs, startMs + durMs).length === 0) return await create(startMs);
 
   const bounds = utcDayBounds(date, tz);
   const dayStart = Math.max(Date.parse(bounds.start), notBeforeMs ?? Number.NEGATIVE_INFINITY);
@@ -559,7 +559,7 @@ function pinTaskAt(
     const dist = Math.abs(s - startMs);
     if (dist < bestDist) { bestStart = s; bestDist = dist; }
   }
-  return bestStart === null ? false : create(bestStart);
+  return bestStart === null ? false : await create(bestStart);
 }
 
 /**
@@ -575,7 +575,7 @@ function pinTaskAt(
  * the §A2 authored-order concern. `candidates` should already be in daily_plan order so
  * same-tag tasks pack contiguously. No-op (empty sets) when the day has no timed hints.
  */
-function placeHintWindows(
+async function placeHintWindows(
   owner: string,
   date: string,
   candidates: StagedTask[],
@@ -583,12 +583,12 @@ function placeHintWindows(
   tz: string,
   runId: string,
   notBeforeMs?: number | null,
-): { placedTaskIds: Set<string>; constrainedIds: Set<string>; blocksCreated: number } {
+): Promise<{ placedTaskIds: Set<string>; constrainedIds: Set<string>; blocksCreated: number }> {
   const placedTaskIds = new Set<string>();
   const constrainedIds = new Set<string>();
   let blocksCreated = 0;
 
-  const hintRows = sqlite
+  const hintRows = await store()
     .prepare(`SELECT kind, tag, time FROM plan_hints WHERE owner_id = ? AND date = ?`)
     .all(owner, date) as { kind: string; tag: string; time: string | null }[];
   const timed = hintRows.filter((h) => (h.kind === 'tag_before' || h.kind === 'tag_after') && h.time);
@@ -617,7 +617,7 @@ function placeHintWindows(
     if (!matched) continue;
     constrainedIds.add(t.task_id); // hard: caller excludes these from the unconstrained fill
     if (end <= start) continue;    // contradictory/empty window → leave unplaced today
-    const r = placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, [t], start, end, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
     r.placedTaskIds.forEach((id) => placedTaskIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -636,19 +636,19 @@ function placeHintWindows(
 /** Today in the OWNER's timezone (YYYY-MM-DD). `scheduled_for` is owner-local, so the
  *  fill/exclusion day must be too — comparing it to a server-tz `localISODate()` would
  *  mis-window scheduled tasks around midnight for owners in a different timezone. */
-function ownerToday(owner: string): string {
-  return todayInTZ(prefsOf(owner)?.timezone || serverTimezone());
+async function ownerToday(owner: string): Promise<string> {
+  return todayInTZ((await prefsOf(owner))?.timezone || serverTimezone());
 }
 
-export function fillFlightPlanCandidates(
+export async function fillFlightPlanCandidates(
   owner: string = currentOwnerId(),
   opts: { requireEstimate?: boolean; date?: string } = {},
-): number {
-  const fillDate = opts.date ?? ownerToday(owner);
+): Promise<number> {
+  const fillDate = opts.date ?? await ownerToday(owner);
   // TM-3: the auto-block path stages only estimate-bearing tasks (we won't fabricate a
   // block duration for a task the user never sized). Default false ⇒ unchanged staging.
   const estimateClause = opts.requireEstimate ? `AND estimated_minutes IS NOT NULL` : '';
-  const candidates = sqlite
+  const candidates = await store()
     .prepare(
       `SELECT id FROM tasks
         WHERE owner_id = ? AND status = 'open'
@@ -666,13 +666,13 @@ export function fillFlightPlanCandidates(
         LIMIT ?`
     )
     .all(owner, fillDate, owner, CANDIDATE_LIMIT) as { id: string }[];
-  const { m } = sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number };
+  const { m } = await store().prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number };
   // Filled candidates arrive SELECTED (deselect-to-exclude model, req 8): manual
   // staging already inserts selected = 1, so both paths now align.
-  const ins = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
+  const ins = store().prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
   let pos = m + 1;
   let added = 0;
-  for (const c of candidates) if (ins.run(owner, c.id, pos++).changes > 0) added++;
+  for (const c of candidates) if ((await ins.run(owner, c.id, pos++)).changes > 0) added++;
   return added;
 }
 
@@ -680,7 +680,7 @@ export function fillFlightPlanCandidates(
  * STEP 2: place SELECTED staged tasks. Plans first (tag-matched), then the
  * workday fallback if enabled. `blockId` scopes to a single Plan (legacy path).
  */
-export function placeFlightPlan(
+export async function placeFlightPlan(
   owner: string = currentOwnerId(),
   opts: {
     date?: string;
@@ -694,11 +694,11 @@ export function placeFlightPlan(
     /** Injectable clock for the R3 clamp (tests); defaults to Date.now(). */
     nowMs?: number;
   } = {},
-): AutoResult {
+): Promise<AutoResult> {
   const date = opts.date ?? localISODate();
-  const prefs = prefsOf(owner);
+  const prefs = await prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
-  const staged = opts.replaceTaskIds ? stagedFromTaskIds(owner, opts.replaceTaskIds) : selectedStaged(owner, date);
+  const staged = opts.replaceTaskIds ? await stagedFromTaskIds(owner, opts.replaceTaskIds) : await selectedStaged(owner, date);
   // R3: when placing on the owner-local CURRENT day, engine-chosen slots never start
   // before now — a re-pack fills the remaining day. Other days are untouched (a future
   // day has nothing to clamp; tests place on fixed past days deliberately).
@@ -708,7 +708,7 @@ export function placeFlightPlan(
 
   // ── Legacy single-Plan scope: place tag-matched staged tasks into one Plan ──
   if (opts.blockId != null) {
-    const block = sqlite.prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(opts.blockId, owner) as
+    const block = await store().prepare(`SELECT start_at, end_at, tag FROM time_blocks WHERE id = ? AND owner_id = ?`).get(opts.blockId, owner) as
       | { start_at: string; end_at: string; tag: string | null }
       | undefined;
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
@@ -720,10 +720,10 @@ export function placeFlightPlan(
     if (blockCategoryId) {
       // 0069 category Plan: fill ONLY its category candidates (NOT every staged task) —
       // the same secondary-tag + opt-out filter as the general Pass 1.5.
-      cands = categoryCandidates(staged, blockCategoryId, owner);
+      cands = await categoryCandidates(staged, blockCategoryId, owner);
       ordered = cands; // preserve staged order (deterministic)
     } else {
-      const catchAll = !!(sqlite
+      const catchAll = !!(await store()
         .prepare(`SELECT 1 FROM pattern_types WHERE name = ? AND catch_all = 1 LIMIT 1`)
         .get(block.tag) as {} | undefined);
       if (catchAll) {
@@ -741,15 +741,15 @@ export function placeFlightPlan(
     // Scoped clear (after cands are known): only the tasks this run will re-place into
     // the Plan lose their prior agent blocks — a staged task that doesn't match this
     // Plan keeps its existing placement.
-    clearPriorAutoInWindow(owner, Date.parse(block.start_at), Date.parse(block.end_at), cands.map((t) => t.task_id));
-    const r = placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs });
-    recordRun(owner, runId, r.blocksCreated);
+    await clearPriorAutoInWindow(owner, Date.parse(block.start_at), Date.parse(block.end_at), cands.map((t) => t.task_id));
+    const r = await placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs });
+    await recordRun(owner, runId, r.blocksCreated);
     // A candidate whose block was cleared but found no room is back off the board.
     for (const t of cands) if (!r.placedTaskIds.has(t.task_id)) revertTaskPlacementStatus(t.task_id, owner);
     if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     if (r.placedTaskIds.size > 0) {
-      const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
-      for (const id of r.placedTaskIds) del.run(owner, id);
+      const del = store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
+      for (const id of r.placedTaskIds) await del.run(owner, id);
       if (!opts.silent) broadcast(owner, 'flight_plan:updated', { removed: r.placedTaskIds.size });
     }
     return { step: 'place', blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size, placedInPlans: r.placedTaskIds.size, placedInWorkday: 0 };
@@ -759,7 +759,7 @@ export function placeFlightPlan(
   // Scoped to the tasks this run re-places (staged / replaceTaskIds): the clear set
   // and the re-place set are the same set by construction, so a run can never delete
   // a placement it isn't about to rebuild (the reflow-wipe bug, both paths).
-  clearPriorAuto(owner, date, tz, { taskIds: staged.map((t) => t.task_id), protectIds: opts.protectIds });
+  await clearPriorAuto(owner, date, tz, { taskIds: staged.map((t) => t.task_id), protectIds: opts.protectIds });
   const placedIds = new Set<string>();
   let blocksCreated = 0;
 
@@ -781,7 +781,7 @@ export function placeFlightPlan(
     // Count toward blocksCreated ONLY when a NEW block is made — both pin paths are
     // idempotent and return placed=true when reusing the task's existing active block,
     // which would otherwise inflate auto:placed.blocksCreated + recordRun bookkeeping.
-    const hadBlock = !!sqlite
+    const hadBlock = !!await store()
       .prepare(
         `SELECT 1 FROM time_blocks
           WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
@@ -790,15 +790,15 @@ export function placeFlightPlan(
       .get(t.task_id, owner);
     const pinned =
       t.scheduled_for === date
-        ? placeStartAnchoredTask(owner, t.task_id, { silent: true, nowMs }).placed
-        : pinTaskAt(owner, t, date, tz, prefs, notBeforeMs);
+        ? (await placeStartAnchoredTask(owner, t.task_id, { silent: true, nowMs })).placed
+        : await pinTaskAt(owner, t, date, tz, prefs, notBeforeMs);
     if (pinned) { placedIds.add(t.task_id); if (!hadBlock) blocksCreated++; }
   }
 
   // Pass 1 — fill each tagged Plan with its matching tasks. Tag-matched Plans run
   // first (so they get first pick of their candidates); catch-all Plans run last
   // and absorb whatever's left. Within each group, Plans run earliest-first.
-  const allPlans = dayPlans(owner, date, tz);
+  const allPlans = await dayPlans(owner, date, tz);
   const orderedPlans = [
     ...allPlans.filter((p) => !p.catch_all),
     ...allPlans.filter((p) => p.catch_all),
@@ -817,7 +817,7 @@ export function placeFlightPlan(
       ordered = orderForPlan(cands, weights);
     }
     if (cands.length === 0) continue;
-    const r = placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, ordered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -828,10 +828,10 @@ export function placeFlightPlan(
   // match + direction opt-out filter), preserving staged order. Runs immediately after
   // Pass 1 and before the direction-window pass, so category blocks supersede pattern
   // windows for their span (via dayObstacles includePlans) just like tag-Plans.
-  for (const plan of dayCategoryPlans(owner, date, tz)) {
-    const filtered = categoryCandidates(staged, plan.category_id, owner).filter((t) => !placedIds.has(t.task_id));
+  for (const plan of await dayCategoryPlans(owner, date, tz)) {
+    const filtered = (await categoryCandidates(staged, plan.category_id, owner)).filter((t) => !placedIds.has(t.task_id));
     if (filtered.length === 0) continue;
-    const r = placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
+    const r = await placeIntoWindow(owner, filtered, Date.parse(plan.start_at), Date.parse(plan.end_at), prefs, { parentBlockId: plan.id, runId, notBeforeMs });
     r.placedTaskIds.forEach((id) => placedIds.add(id));
     blocksCreated += r.blocksCreated;
   }
@@ -843,7 +843,7 @@ export function placeFlightPlan(
   // from the direction-window pass AND the workday fill below, so a hinted task never
   // lands outside its window (HARD: a full/empty window leaves it unplaced). Reflow honours
   // this automatically — it re-runs placeFlightPlan, which re-reads `plan_hints`.
-  const hintPass = placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId, notBeforeMs);
+  const hintPass = await placeHintWindows(owner, date, staged.filter((s) => !placedIds.has(s.task_id)), prefs, tz, runId, notBeforeMs);
   hintPass.placedTaskIds.forEach((id) => placedIds.add(id));
   blocksCreated += hintPass.blocksCreated;
   const hintConstrainedIds = hintPass.constrainedIds;
@@ -862,7 +862,7 @@ export function placeFlightPlan(
     const dprefs = getPatternPrefs(owner);
     const dirNameToId = new Map<string, string>(); // direction tag name → id
     const ids = Object.keys(patWindows);
-    const dirTags = sqlite
+    const dirTags = await store()
       .prepare(`SELECT id, name FROM tags WHERE owner_id = ? AND id IN (${ids.map(() => '?').join(',')}) AND kind = 'direction'`)
       .all(owner, ...ids) as { id: string; name: string }[];
     for (const dt of dirTags) dirNameToId.set(dt.name, dt.id);
@@ -881,7 +881,7 @@ export function placeFlightPlan(
         if (placedIds.has(t.task_id)) break;
         const winStart = Date.parse(zonedWallTimeToUTC(date, range.start_time, tz));
         const winEnd = Date.parse(zonedWallTimeToUTC(date, range.end_time, tz));
-        const r = placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+        const r = await placeIntoWindow(owner, [t], winStart, winEnd, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
         r.placedTaskIds.forEach((id) => placedIds.add(id));
         blocksCreated += r.blocksCreated;
       }
@@ -899,7 +899,7 @@ export function placeFlightPlan(
       // preferred sequence (LLM or deterministic) — preserve that order so placement
       // faithfully executes what authoring decided. Without a daily_plan, fall back
       // to the fill_order pref (pre-Phase-M backward-compatible behaviour).
-      const hasDailyPlan = !!(sqlite
+      const hasDailyPlan = !!(await store()
         .prepare(`SELECT 1 FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`)
         .get(owner, date));
       const fillOrder = prefs?.fill_order ?? 'priority';
@@ -908,18 +908,18 @@ export function placeFlightPlan(
         : fillOrder === 'overdue' ? orderByOverdue(remaining)
         // 'new_today': today's arrivals take the earliest slots (see orderByNewToday).
         // Keyed on the owner's real today, not `date`, so planning ahead still honors it.
-        : fillOrder === 'new_today' ? orderByNewToday(remaining, ownerToday(owner), tz)
+        : fillOrder === 'new_today' ? orderByNewToday(remaining, await ownerToday(owner), tz)
         : orderForPlan(remaining);
       const wsMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz));
       const weMs = Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz));
-      const r = placeIntoWindow(owner, ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+      const r = await placeIntoWindow(owner, ordered, wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
       r.placedTaskIds.forEach((id) => placedIds.add(id));
       blocksCreated += r.blocksCreated;
       placedInWorkday = r.placedTaskIds.size;
     }
   }
 
-  recordRun(owner, runId, blocksCreated);
+  await recordRun(owner, runId, blocksCreated);
 
   // R2: a staged task whose prior block was cleared but that found no room is off the
   // board again — return it to the open backlog (scheduled ⇒ open; no-op otherwise).
@@ -928,7 +928,7 @@ export function placeFlightPlan(
   // Link block_id in daily_plan for every placed task (Phase M §0 / A3: the block
   // detail view joins daily_plan on block_id to display the per-task rationale).
   if (placedIds.size > 0) {
-    const linkBlk = sqlite.prepare(
+    const linkBlk = store().prepare(
       `UPDATE daily_plan
           SET block_id = (
             SELECT id FROM time_blocks
@@ -937,15 +937,15 @@ export function placeFlightPlan(
           )
         WHERE owner_id = ? AND date = ? AND task_id = ?`
     );
-    for (const taskId of placedIds) linkBlk.run(taskId, owner, runId, owner, date, taskId);
+    for (const taskId of placedIds) await linkBlk.run(taskId, owner, runId, owner, date, taskId);
   }
 
   const placed = placedIds.size;
   const unplaced = staged.length - placed;
   if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced });
   if (placedIds.size > 0) {
-    const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
-    for (const id of placedIds) del.run(owner, id);
+    const del = store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
+    for (const id of placedIds) await del.run(owner, id);
     if (!opts.silent) broadcast(owner, 'flight_plan:updated', { removed: placedIds.size });
   }
   return { step: 'place', blocksCreated, placed, unplaced, placedInPlans, placedInWorkday };
@@ -958,9 +958,9 @@ export function placeFlightPlan(
  * placed (Plans, meetings, prior auto/manual blocks). Never auto-runs — it is always an
  * explicit tap, in both modes. Gated by the `auto_fill_workday` pref (off → no-op).
  */
-export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: string; nowMs?: number } = {}): AutoResult {
+export async function fillByPriority(owner: string = currentOwnerId(), opts: { date?: string; nowMs?: number } = {}): Promise<AutoResult> {
   const date = opts.date ?? localISODate();
-  const prefs = prefsOf(owner);
+  const prefs = await prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
   // R3 clamp (see placeFlightPlan): today's engine-chosen slots start no earlier than now.
   const nowMs = opts.nowMs ?? Date.now();
@@ -969,12 +969,12 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
     return { step: 'place', blocksCreated: 0, placed: 0, unplaced: 0, placedInPlans: 0, placedInWorkday: 0 };
   }
 
-  const staged = selectedStaged(owner, date);
+  const staged = await selectedStaged(owner, date);
   // Tasks already auto-placed today are not re-placed (this top-up runs AFTER tap 2,
   // and must not clear or duplicate those placements).
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
   const placedTaskIds = new Set(
-    (sqlite
+    (await store()
       .prepare(
         `SELECT DISTINCT task_id FROM time_blocks
           WHERE owner_id = ? AND is_auto = 1 AND source_kind = 'agent' AND block_kind = 'task' AND task_id IS NOT NULL
@@ -995,17 +995,17 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
   // A4: honour NL tag-window hints here too. A hint-constrained task is placed only within
   // its window (or left unplaced) and excluded from the unconstrained priority fill, so the
   // explicit top-up can't leak "no errands before noon" past its window.
-  const hintPass = placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs);
+  const hintPass = await placeHintWindows(owner, date, remaining, prefs, tz, runId, notBeforeMs);
   const unconstrained = remaining.filter((t) => !hintPass.constrainedIds.has(t.task_id));
-  const r = placeIntoWindow(owner, orderForPlan(unconstrained), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
+  const r = await placeIntoWindow(owner, orderForPlan(unconstrained), wsMs, weMs, prefs, { parentBlockId: null, includePlans: true, runId, notBeforeMs });
   const filled = new Set([...hintPass.placedTaskIds, ...r.placedTaskIds]);
   const blocksCreated = hintPass.blocksCreated + r.blocksCreated;
-  recordRun(owner, runId, blocksCreated);
+  await recordRun(owner, runId, blocksCreated);
   const placed = filled.size;
   broadcast(owner, 'auto:placed', { blocksCreated, placed, unplaced: remaining.length - placed });
   if (filled.size > 0) {
-    const del = sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
-    for (const id of filled) del.run(owner, id);
+    const del = await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
+    for (const id of filled) await del.run(owner, id);
     broadcast(owner, 'flight_plan:updated', { removed: filled.size });
   }
   return { step: 'place', blocksCreated, placed, unplaced: remaining.length - placed, placedInPlans: 0, placedInWorkday: placed };
@@ -1019,8 +1019,8 @@ export function fillByPriority(owner: string = currentOwnerId(), opts: { date?: 
  * manual block delete, a reflow), and a button offered on a dangling pointer would answer
  * "Nothing to undo" — an affordance that lies. Cheap enough to ride every flight-plan read.
  */
-export function canUndoLastAuto(owner: string = currentOwnerId()): boolean {
-  return !!sqlite
+export async function canUndoLastAuto(owner: string = currentOwnerId()): Promise<boolean> {
+  return !!await store()
     .prepare(
       `SELECT 1 FROM time_blocks b JOIN owners o ON o.id = b.owner_id
         WHERE b.owner_id = ? AND b.auto_run_id IS NOT NULL AND b.auto_run_id = o.last_auto_run_id
@@ -1035,26 +1035,26 @@ export function canUndoLastAuto(owner: string = currentOwnerId()): boolean {
  * carry no auto_run_id), re-stages those tasks onto the flight-plan (selected), and
  * clears the pointer so a second undo is a no-op. Returns the counts.
  */
-export function undoLastAuto(owner: string = currentOwnerId()): { removed: number; restaged: number } {
-  const runId = (sqlite.prepare(`SELECT last_auto_run_id FROM owners WHERE id = ?`).get(owner) as { last_auto_run_id: string | null } | undefined)?.last_auto_run_id;
+export async function undoLastAuto(owner: string = currentOwnerId()): Promise<{ removed: number; restaged: number }> {
+  const runId = (await store().prepare(`SELECT last_auto_run_id FROM owners WHERE id = ?`).get(owner) as { last_auto_run_id: string | null } | undefined)?.last_auto_run_id;
   if (!runId) return { removed: 0, restaged: 0 };
 
   // The tasks this run placed (re-stage them so the user can re-place/adjust).
-  const taskIds = (sqlite.prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE auto_run_id = ? AND owner_id = ? AND task_id IS NOT NULL`).all(runId, owner) as { task_id: string }[]).map((r) => r.task_id);
+  const taskIds = (await store().prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE auto_run_id = ? AND owner_id = ? AND task_id IS NOT NULL`).all(runId, owner) as { task_id: string }[]).map((r) => r.task_id);
 
-  const removed = sqlite.prepare(`DELETE FROM time_blocks WHERE auto_run_id = ? AND owner_id = ?`).run(runId, owner).changes;
+  const removed = (await store().prepare(`DELETE FROM time_blocks WHERE auto_run_id = ? AND owner_id = ?`).run(runId, owner)).changes;
 
-  let pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number }).m + 1;
-  const insFp = sqlite.prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
-  const selFp = sqlite.prepare(`UPDATE flight_plan SET selected = 1 WHERE owner_id = ? AND task_id = ?`);
+  let pos = (await store().prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number }).m + 1;
+  const insFp = store().prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`);
+  const selFp = store().prepare(`UPDATE flight_plan SET selected = 1 WHERE owner_id = ? AND task_id = ?`);
   let restaged = 0;
   for (const taskId of taskIds) {
-    if (insFp.run(owner, taskId, pos).changes > 0) pos++;
-    else selFp.run(owner, taskId); // already staged → just re-select it
+    if ((await insFp.run(owner, taskId, pos)).changes > 0) pos++;
+    else await selFp.run(owner, taskId); // already staged → just re-select it
     restaged++;
   }
 
-  sqlite.prepare(`UPDATE owners SET last_auto_run_id = NULL WHERE id = ?`).run(owner); // single-step undo
+  await store().prepare(`UPDATE owners SET last_auto_run_id = NULL WHERE id = ?`).run(owner); // single-step undo
   broadcast(owner, 'auto:undone', { removed, restaged });
   return { removed, restaged };
 }
@@ -1062,9 +1062,9 @@ export function undoLastAuto(owner: string = currentOwnerId()): { removed: numbe
 /** Clear prior agent placements overlapping a specific window (the single-Plan path).
  *  Scoped to `taskIds` — only the tasks this run re-places into the Plan (same
  *  clear-set == re-place-set rule as clearPriorAuto). */
-function clearPriorAutoInWindow(owner: string, windowStartMs: number, windowEndMs: number, taskIds: readonly string[]): void {
+async function clearPriorAutoInWindow(owner: string, windowStartMs: number, windowEndMs: number, taskIds: readonly string[]): Promise<void> {
   if (taskIds.length === 0) return;
-  sqlite
+  await store()
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ? AND is_auto = 1 AND is_locked = 0 AND block_kind = 'task' AND source_kind = 'agent'
@@ -1080,14 +1080,14 @@ function clearPriorAutoInWindow(owner: string, windowStartMs: number, windowEndM
  * to the explicit fill/place split. The UI now calls fillFlightPlanCandidates
  * and placeFlightPlan directly through separate endpoints.
  */
-export function runAuto(opts: { date?: string; blockId?: string } = {}): AutoResult {
+export async function runAuto(opts: { date?: string; blockId?: string } = {}): Promise<AutoResult> {
   const owner = currentOwnerId();
-  if (flightPlanCount(owner) === 0) {
-    const added = fillFlightPlanCandidates(owner);
+  if (await flightPlanCount(owner) === 0) {
+    const added = await fillFlightPlanCandidates(owner);
     broadcast(owner, 'flight_plan:filled', { added });
     return { step: 'fill', candidatesAdded: added };
   }
-  return placeFlightPlan(owner, opts);
+  return await placeFlightPlan(owner, opts);
 }
 
 export type TrustMode = 'cautious' | 'balanced' | 'hands_off';
@@ -1109,8 +1109,8 @@ export interface TrustPolicy {
  * trust_mode governs ONLY auto-blocking/planning — 'cautious'/'balanced' leave placement
  * to the user; 'hands_off' auto-blocks (and agents/plan.ts maps hands_off → smart).
  */
-export function resolveTrustPolicy(owner: string = currentOwnerId()): TrustPolicy {
-  const row = sqlite.prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
+export async function resolveTrustPolicy(owner: string = currentOwnerId()): Promise<TrustPolicy> {
+  const row = await store().prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
     | { trust_mode?: string }
     | undefined;
   const mode: TrustMode = row?.trust_mode === 'cautious' || row?.trust_mode === 'hands_off' ? row.trust_mode : 'balanced';
@@ -1127,17 +1127,17 @@ export function resolveTrustPolicy(owner: string = currentOwnerId()): TrustPolic
  * silent and is NOT run here. `requireEstimate` limits staging to estimate-bearing tasks (the
  * promotion-boundary policy, TM-5). Returns the place result, or null when off / nothing to do.
  */
-export function autoScheduleOnIngest(
+export async function autoScheduleOnIngest(
   owner: string = currentOwnerId(),
   opts: { date?: string; requireEstimate?: boolean } = {},
-): AutoResult | null {
-  if (!resolveTrustPolicy(owner).autoBlock) return null;
-  const date = opts.date ?? ownerToday(owner);
-  fillFlightPlanCandidates(owner, { requireEstimate: opts.requireEstimate, date }); // stage new open tasks, all selected
-  if (selectedStaged(owner, date).length === 0) return null;
+): Promise<AutoResult | null> {
+  if (!(await resolveTrustPolicy(owner)).autoBlock) return null;
+  const date = opts.date ?? await ownerToday(owner);
+  await fillFlightPlanCandidates(owner, { requireEstimate: opts.requireEstimate, date }); // stage new open tasks, all selected
+  if ((await selectedStaged(owner, date)).length === 0) return null;
   // Place the SAME day we filled — passing the resolved `date` (not raw opts.date) keeps
   // fill and placement on one owner-local day when the caller omitted a date.
-  return placeFlightPlan(owner, { date });
+  return await placeFlightPlan(owner, { date });
 }
 
 // ─── Phase AB · AB1 — start-anchored placement ─────────────────────────────────
@@ -1155,7 +1155,7 @@ export type StartAnchoredOutcome =
  * is not an undoable engine run).
  */
 const insAnchoredBlock = () =>
-  sqlite.prepare(
+  store().prepare(
     `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
      VALUES (uuid7(), ?, ?, ?, 'task', ?, ?, 0, 0, 'agent', 'planned') RETURNING id`,
   );
@@ -1178,12 +1178,12 @@ const insAnchoredBlock = () =>
  *
  * due_at plays no role here — it is a deadline, never a placement-day selector.
  */
-export function placeStartAnchoredTask(
+export async function placeStartAnchoredTask(
   owner: string,
   taskId: string,
   opts: { silent?: boolean; nowMs?: number } = {},
-): StartAnchoredOutcome {
-  const task = sqlite
+): Promise<StartAnchoredOutcome> {
+  const task = await store()
     .prepare(`SELECT id, title, scheduled_for, task_time, estimated_minutes FROM tasks WHERE id = ? AND owner_id = ?`)
     .get(taskId, owner) as
     | { id: string; title: string; scheduled_for: string | null; task_time: string | null; estimated_minutes: number | null }
@@ -1191,7 +1191,7 @@ export function placeStartAnchoredTask(
   if (!task) return { placed: false, reason: 'not_found' };
   if (!task.scheduled_for) return { placed: false, reason: 'no_start' };
 
-  const prefs = prefsOf(owner);
+  const prefs = await prefsOf(owner);
   const tz = prefs?.timezone || serverTimezone();
   const date = task.scheduled_for;
 
@@ -1201,9 +1201,9 @@ export function placeStartAnchoredTask(
   // wrong/past day meant the stated day was silently never honoured). These blocks are
   // is_auto=0, so clearPriorAuto never sweeps them — this is the sole dedup guard.
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
-  const existing = reconcilePriorPlacement(owner, taskId, dayStartISO, dayEndISO);
+  const existing = await reconcilePriorPlacement(owner, taskId, dayStartISO, dayEndISO);
   if (existing) {
-    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
+    await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
     applyTaskPlacementStatus(taskId, owner); // R2 parity: the existing block IS the placement
     return { placed: true, blockId: existing.id, startAt: existing.start_at, endAt: existing.end_at };
   }
@@ -1217,12 +1217,12 @@ export function placeStartAnchoredTask(
   const durMs = Math.max((task.estimated_minutes ?? prefs?.default_time_block_minutes ?? 60) * MS_PER_MIN, MIN_SESSION_MS);
   const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
 
-  const create = (startMs: number, endMs: number): StartAnchoredOutcome => {
+  const create = async (startMs: number, endMs: number): Promise<StartAnchoredOutcome> => {
     const startAt = new Date(startMs).toISOString();
     const endAt = new Date(endMs).toISOString();
-    const { id: blockId } = insAnchoredBlock().get(task.id, owner, task.title, startAt, endAt) as { id: string };
+    const { id: blockId } = await insAnchoredBlock().get(task.id, owner, task.title, startAt, endAt) as { id: string };
     // A staged copy of this task must not be auto-placed AGAIN by the next Auto run.
-    sqlite.prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, task.id);
+    await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, task.id);
     applyTaskPlacementStatus(task.id, owner); // R2 parity: placed = scheduled
     if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: 1, placed: 1, unplaced: 0 });
     return { placed: true, blockId, startAt, endAt };
@@ -1244,7 +1244,7 @@ export function placeStartAnchoredTask(
     // this time; a block inside a Plan's span is normal grouping, not double-booking.
     const startMs = Date.parse(zonedWallTimeToUTC(date, task.task_time, tz));
     const endMs = startMs + durMs;
-    if (dayObstacles(owner, startMs, endMs).length === 0) return create(startMs, endMs);
+    if (dayObstacles(owner, startMs, endMs).length === 0) return await create(startMs, endMs);
 
     // Occupied → the open gap NEAREST the requested time on the SAME local day
     // (engine-chosen, so the R3 clamp applies).
@@ -1261,7 +1261,7 @@ export function placeStartAnchoredTask(
       if (dist < bestDist) { bestStart = s; bestDist = dist; }
     }
     if (bestStart === null) return { placed: false, reason: 'day_full' };
-    return create(bestStart, bestStart + durMs);
+    return await create(bestStart, bestStart + durMs);
   }
 
   // No task_time → direction-window placement for THAT date (pass-2a semantics):
@@ -1272,7 +1272,7 @@ export function placeStartAnchoredTask(
   if (Object.keys(patWindows).length > 0) {
     const dprefs = getPatternPrefs(owner);
     const dirIds = (
-      sqlite
+      await store()
         .prepare(
           `SELECT DISTINCT tg.id FROM entity_tags et
              JOIN tags tg ON tg.id = et.tag_id

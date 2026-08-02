@@ -136,7 +136,7 @@ export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoR
     ? 1
     : horizonDays != null
       ? clampDays(horizonDays)
-      : (resolveTrustPolicy(owner).mode === 'hands_off' ? clampDays(sched?.planning_horizon_days ?? 7) : 1);
+      : ((await resolveTrustPolicy(owner)).mode === 'hands_off' ? clampDays(sched?.planning_horizon_days ?? 7) : 1);
 
   if (days > 1) {
     let blocksCreated = 0, placed = 0, unplaced = 0, llm = false;
@@ -146,7 +146,7 @@ export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoR
       // pre-T9 (day 0 authors normally, days 1..N forced deterministic).
       const source = await authorPlanOrder(owner, day, smart ? { force: true } : d === 0 ? {} : { deterministic: true });
       if (source === 'llm') llm = true;
-      const r = placeFlightPlan(owner, { date: day, silent: true });
+      const r = await placeFlightPlan(owner, { date: day, silent: true });
       blocksCreated += r.blocksCreated ?? 0;
       placed += r.placed ?? 0;
       unplaced = r.unplaced ?? 0; // tasks still staged after the final day
@@ -156,7 +156,7 @@ export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoR
   }
 
   const source = await authorPlanOrder(owner, date);
-  const result = placeFlightPlan(owner, { blockId, date });
+  const result = await placeFlightPlan(owner, { blockId, date });
   writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: 'flight-plan:run' });
   return { ...result, llm: source === 'llm' };
 }

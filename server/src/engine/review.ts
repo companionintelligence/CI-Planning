@@ -161,7 +161,7 @@ export async function reviewAndReschedule(opts: { owner?: string; nowISO?: strin
       }
       if (trust !== 'hands_off') continue;
       try {
-        const outcome: StartAnchoredOutcome = placeStartAnchoredTask(m.owner_id, m.task_id);
+        const outcome: StartAnchoredOutcome = await placeStartAnchoredTask(m.owner_id, m.task_id);
         if (outcome.placed) placed++;
       } catch (err) {
         logger.warn('review sweep: start-anchored placement failed', { owner: m.owner_id, taskId: m.task_id, err: (err as Error).message });
@@ -254,7 +254,7 @@ export async function rescheduleTask(taskId: string, days: number, owner: string
   const trust = (await store().prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get<{ trust_mode: string }>(owner))?.trust_mode;
   if (trust === 'hands_off') {
     try {
-      placement = placeStartAnchoredTask(owner, taskId);
+      placement = await placeStartAnchoredTask(owner, taskId);
     } catch (err) {
       logger.warn('rescheduleTask: start-anchored placement failed', { owner, taskId, err: (err as Error).message });
     }

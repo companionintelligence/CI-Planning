@@ -88,7 +88,7 @@ describe('Phase 5 — dilution in Auto placement', () => {
     const topTask = insertTask('Write code', 60, 'work');
     [secondaryTask, topTask].forEach(stage);
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placedInPlans).toBe(2); // both matched the Plan (top + secondary)
     const inPlan = agentBlocks().filter((b) => b.parent_block_id === plan.id);
     expect(inPlan.map((b) => b.title)).toEqual(['Write code', 'Triage inbox']); // top first
@@ -99,7 +99,7 @@ describe('Phase 5 — dilution in Auto placement', () => {
     const a = insertTask('Work thing', 60, 'work');
     const b = insertTask('Errand', 60, 'errands');
     [a, b].forEach(stage);
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.placedInPlans).toBe(1); // only the 'work' task matched (workday fallback off)
     expect(agentBlocks().filter((x) => x.parent_block_id === plan.id).map((x) => x.title)).toEqual(['Work thing']);
   });

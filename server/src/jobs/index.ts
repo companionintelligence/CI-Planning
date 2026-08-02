@@ -47,9 +47,9 @@ export interface JobRunResult extends JobOutcome {
  * Cautious/Balanced. Wrapped so a placement hiccup never turns a successful promotion into
  * a failed job — the tasks are already promoted; we just couldn't block them this pass.
  */
-function autoBlockAfterPromote(): number {
+async function autoBlockAfterPromote(): Promise<number> {
   try {
-    return autoScheduleOnIngest(currentOwnerId(), { requireEstimate: true })?.blocksCreated ?? 0;
+    return (await autoScheduleOnIngest(currentOwnerId(), { requireEstimate: true }))?.blocksCreated ?? 0;
   } catch (err) {
     logger.error('auto-block after promote failed', { err: (err as Error).message });
     return 0;
@@ -107,7 +107,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       } else {
         r = addIngestTotals(r, await ingestEmails());
       }
-      const placed = autoScheduleOnIngest(); // D1: schedule mode places tag-matched in the background; no-op in suggest
+      const placed = await autoScheduleOnIngest(); // D1: schedule mode places tag-matched in the background; no-op in suggest
       return {
         itemsCreated: r.possiblesCreated,
         itemsUpdated: r.possiblesUpdated,
@@ -198,7 +198,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // owner's run only (claimLegacy), never by whichever owner happens to run first.
       const owner = currentOwnerId();
       const r = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
-      const blocked = autoBlockAfterPromote();
+      const blocked = await autoBlockAfterPromote();
       return { itemsCreated: r.promoted, itemsUpdated: 0, log: `Promoted ${r.promoted}${r.failed ? `, ${r.failed} failed` : ''}${blocked ? `; auto-blocked ${blocked}` : ''}` };
     }
     case 'nightly_grooming': {
@@ -220,7 +220,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
       const overdue = await surfaceOverdue(owner);
       const promote = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
-      const blocked = autoBlockAfterPromote();
+      const blocked = await autoBlockAfterPromote();
       return {
         itemsCreated: promote.promoted,
         itemsUpdated: dedupe.duplicates + overdue,
@@ -231,7 +231,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // Retired (Phase G): Auto no longer packs the backlog into the day. Repurposed
       // to *propose* open-task candidates into the flight-plan; placement is
       // user-triggered via POST /api/auto/run. See engine/autoplan.ts.
-      const added = fillFlightPlanCandidates();
+      const added = await fillFlightPlanCandidates();
       // B2 safety net: sweep blocks whose planned time passed without being started,
       // mark them missed, re-stage the work, and request a reactive reflow (debounced,
       // toggle-gated) so the missed task gets re-placed into the remaining day.
@@ -313,7 +313,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       }
       // WP5: place AFTER inbound so the Auto engine packs around the freshly-synced meeting
       // obstacles (the locked inbound blocks applyInbound just created). D1: no-op in suggest.
-      const placed = autoScheduleOnIngest();
+      const placed = await autoScheduleOnIngest();
       // B2: a calendar change shifts the day's obstacles — request a reactive reflow so
       // existing task blocks re-pack around the new meetings (debounced, toggle-gated).
       if (totals.created + totals.updated + totals.deleted > 0) requestReplan('calendar');

@@ -206,7 +206,7 @@ describe('§A3 — per-task rationale', () => {
     const a = insertTask('A'); const b = insertTask('B'); const c = insertTask('C');
     stage(a, 0); stage(b, 1); stage(c, 2);
     await authorPlanOrder(OWNER, DATE); // C,A,B with rationales by position
-    placeFlightPlan(OWNER, { date: DATE }); // links daily_plan.block_id
+    await placeFlightPlan(OWNER, { date: DATE }); // links daily_plan.block_id
 
     const range = `from=${DATE}T00:00:00.000Z&to=${DATE}T23:59:59.999Z`;
     const res = await api(srv.url, `/api/blocks?${range}`);

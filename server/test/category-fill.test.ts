@@ -68,7 +68,7 @@ describe('category-Plan fill (0069)', () => {
     [match, nonMatch, unrelated].forEach(stage);
     const plan = await makeCategoryPlan(srv, family, at('14:00'), at('16:00'));
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     const kids = childOf(plan.id);
     expect(kids.map((c) => c.title)).toEqual(['Plan birthday']);
     expect(r.placedInPlans).toBe(1);
@@ -97,7 +97,7 @@ describe('category-Plan fill (0069)', () => {
     [match, unrelated].forEach(stage);
     const plan = await makeCategoryPlan(srv, relationships, at('14:00'), at('16:00'));
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(childOf(plan.id).map((c) => c.title)).toEqual(['Call Mum']);
     expect(r.placedInPlans).toBe(1);
   });
@@ -110,7 +110,7 @@ describe('category-Plan fill (0069)', () => {
     stage(match);
     const plan = await makeCategoryPlan(srv, relationships, at('14:00'), at('16:00'));
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(childOf(plan.id).map((c) => c.title)).toEqual(['Anniversary dinner']);
   });
 
@@ -125,7 +125,7 @@ describe('category-Plan fill (0069)', () => {
     [viaGrouping, viaCategory, both].forEach(stage);
     const plan = await makeCategoryPlan(srv, family, at('09:00'), at('17:00'));
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(childOf(plan.id).map((c) => c.title).sort()).toEqual(['Both routes', 'Direct match', 'Grouping match']);
   });
 
@@ -140,7 +140,7 @@ describe('category-Plan fill (0069)', () => {
     [workTask, homeTask].forEach(stage);
     const plan = await makeCategoryPlan(srv, family, at('09:00'), at('17:00'));
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(childOf(plan.id).map((c) => c.title)).toEqual(['Home thing']);
   });
 
@@ -152,7 +152,7 @@ describe('category-Plan fill (0069)', () => {
     stage(other);
     const plan = await makeCategoryPlan(srv, relationships, at('09:00'), at('17:00'));
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(childOf(plan.id)).toEqual([]);
   });
 
@@ -166,7 +166,7 @@ describe('category-Plan fill (0069)', () => {
     [workTask, homeTask, looseTask].forEach(stage);
     const plan = await makeCategoryPlan(srv, family, at('09:00'), at('17:00'));
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(childOf(plan.id).map((c) => c.title).sort()).toEqual(['Home kids thing', 'Loose kids thing']);
   });
 
@@ -177,10 +177,10 @@ describe('category-Plan fill (0069)', () => {
     ids.forEach(stage);
     const plan = await makeCategoryPlan(srv, family, at('09:00'), at('17:00'));
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const first = childOf(plan.id);
     ids.forEach(stage); // placed tasks were de-staged; re-stage to replay
-    placeFlightPlan(OWNER, { date: DAY }); // clearPriorAuto wipes the prior run, then re-places
+    await placeFlightPlan(OWNER, { date: DAY }); // clearPriorAuto wipes the prior run, then re-places
     expect(childOf(plan.id)).toEqual(first); // same titles, same start times
   });
 
@@ -193,7 +193,7 @@ describe('category-Plan fill (0069)', () => {
     const tagTask = insertTask('Code', { direction: 'work' }); // level-1 'work' tag matches the tag Plan
     [catTask, tagTask].forEach(stage);
 
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(childOf(catPlan.id).map((c) => c.title)).toEqual(['Kids']);
     // the category task must NOT also land in the tag Plan, and vice-versa
     expect(childOf(tagPlan.id).map((c) => c.title)).not.toContain('Kids');

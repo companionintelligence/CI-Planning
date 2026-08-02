@@ -79,7 +79,7 @@ function insertContainer(startISO: string, endISO: string, tag: string | null): 
 }
 
 describe('AD1 — flight-plan pins a task_time task while packing a time-less one', () => {
-  it('pins the timed task at its exact time; the time-less task packs elsewhere without overlap', () => {
+  it('pins the timed task at its exact time; the time-less task packs elsewhere without overlap', async () => {
 
       const day = new Date().toISOString().slice(0, 10); // UTC day — owner-tz=UTC baseline; avoids the near-midnight flake
       const timed = insertTask('Meet client', { est: 60, scheduledFor: day, taskTime: '14:00' });
@@ -87,7 +87,7 @@ describe('AD1 — flight-plan pins a task_time task while packing a time-less on
       stage(timed);
       stage(flexible);
 
-      placeFlightPlan(OWNER, { date: day, silent: true });
+      await placeFlightPlan(OWNER, { date: day, silent: true });
 
       const pinned = taskBlocks(timed);
       expect(pinned.length).toBe(1);
@@ -104,14 +104,14 @@ describe('AD1 — flight-plan pins a task_time task while packing a time-less on
 
   });
 
-  it('a timed task whose day ≠ placement date is NOT pinned on this day (packs normally, no pin block)', () => {
+  it('a timed task whose day ≠ placement date is NOT pinned on this day (packs normally, no pin block)', async () => {
 
       const day = new Date().toISOString().slice(0, 10); // UTC day — owner-tz=UTC baseline; avoids the near-midnight flake
       const other = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
       const timedOtherDay = insertTask('Future meeting', { est: 60, scheduledFor: other, taskTime: '14:00' });
       stage(timedOtherDay);
 
-      placeFlightPlan(OWNER, { date: day, silent: true });
+      await placeFlightPlan(OWNER, { date: day, silent: true });
 
       // No pin on `day` (its target day is `other`); nothing is placed at 14:00 today.
       const blocks = taskBlocks(timedOtherDay).filter((b) => b.start_at.startsWith(day));

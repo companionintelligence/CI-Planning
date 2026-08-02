@@ -2,7 +2,7 @@
 
 > ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–5 COMPLETE (wave 5 closed at 17 of 17). Suite verified after every one
+> **DONE — waves 0–5 COMPLETE; wave 7's `engine/autoplan.ts` taken EARLY to unblock wave 6. Suite verified after every one
 > of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
 > `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
 > test, which runs once per backend).**
@@ -23,8 +23,8 @@
 > which is the dominant formatting in this codebase. The figure at the time of that
 > correction was **261 statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
 > `db/store.ts`) and one is `agents/groom.ts`'s sqlite-vec residue (below), so
-> **23 real files remained**, not 15. (Now **14 real files / 194 statements** — wave
-> 5 is closed.)
+> **23 real files remained**, not 15. (Now **13 real files / 147 statements** — wave 5
+> closed, and autoplan landed out of order; see the deadlock note below.)
 >
 > **The corrected accounting is now CONFIRMED.** With wave 5 empty, the remaining
 > per-wave totals are 73 / 117 / 4 — matching the original wave table's numbers
@@ -68,9 +68,9 @@
 > |---|---|---|---|
 > | 5 | 0 | 0 | **CLOSED** |
 > | 6 | 7 | 73 | block-task-sync (21), day-types (17), reminders (14), sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4) |
-> | 7 | 6 | 117 | tags (60), autoplan (47), category-prefs (4), crypto/index (4), scheduler (1), models (1) |
+> | 7 | 5 | 70 | tags (60), category-prefs (4), crypto/index (4), scheduler (1), models (1) — ✓ autoplan done early |
 > | 8 | 1 | 4 | routes/sse |
-> | — | 14 | **194** | + 8 seam + 5 groom = 207 total |
+> | — | 13 | **147** | + 8 seam + 5 groom = 160 total |
 >
 > - **Wave 5 — CLOSED, 17 of 17.** ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
@@ -144,6 +144,28 @@
 >   - Both transactions carried over as `await store().transaction(async () => …)`
 >     — note the facade RUNS the callback, so the trailing `()` of
 >     `sqlite.transaction(fn)()` goes away.
+> ### Wave 6 could not START without a wave-7 file — read before sequencing
+>
+> Every one of wave 6's seven files reaches `engine/autoplan.ts`, which is wave 7:
+> day-types, pattern-blocks, pattern-prefs and block-task-sync are imported by it
+> DIRECTLY, and reminders, recurrence-generate and sync/apply reach it through
+> block-task-sync (whose ten exports were all synchronous). Autoplan's 29 internal
+> helpers were synchronous too, so porting ANY wave-6 file forced autoplan async and
+> dragged the other six in with it — a single ~120-statement commit. That is exactly
+> the §5.2 trap ("porting them pulled in engine/autoplan.ts … and was still growing
+> when I stopped"), and the wave boundary as drawn walks straight into it.
+>
+> **The seam is to port autoplan FIRST**, out of wave order. It is legal because the
+> cascade climbs to IMPORTERS, and all ten of autoplan's importers were already
+> ported — and because a still-synchronous callee is always safe to call from an
+> async function, so autoplan's calls into the unported wave-6 files needed no
+> change at all. Done as part 31. Each wave-6 file can now port on its own, with
+> autoplan simply gaining an `await` at those twelve call sites.
+>
+> **The general rule this exposes**: a wave is only independently portable if no
+> file OUTSIDE it imports one of its members while still being synchronous itself.
+> Check that before starting a wave, not after.
+>
 > - **Wave 6 (7 files, 73 stmts)** — pattern-prefs, pattern-blocks, day-types,
 >   block-task-sync, sync/apply, recurrence-generate, reminders.
 > - **Wave 7 (6 files, 117 stmts)** — autoplan, crypto/index, tags,

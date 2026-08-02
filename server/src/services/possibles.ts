@@ -219,7 +219,7 @@ export async function promoteAllPending(
     if (res.task.scheduledFor) {
       // AB1: a stated START is honored in ANY trust mode (user/suggestion intent).
       try {
-        placeStartAnchoredTask(owner, res.taskId);
+        await placeStartAnchoredTask(owner, res.taskId);
       } catch (err) {
         logger.warn('promoteAllPending: start-anchored placement failed', { owner, taskId: res.taskId, err: (err as Error).message });
       }
@@ -231,7 +231,7 @@ export async function promoteAllPending(
     // TM-5: one hands-off-only, estimate-bearing sweep for the whole batch (a no-op in
     // Cautious/Balanced) — after every possible:promoted broadcast above.
     try {
-      autoScheduleOnIngest(owner, { requireEstimate: true });
+      await autoScheduleOnIngest(owner, { requireEstimate: true });
     } catch (err) {
       logger.warn('promoteAllPending: post-promote auto-schedule failed', { owner, err: (err as Error).message });
     }

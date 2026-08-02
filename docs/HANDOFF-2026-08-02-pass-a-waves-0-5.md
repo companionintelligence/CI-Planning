@@ -8,7 +8,7 @@
 > - **Waves 0–5 are COMPLETE.** Wave 5 closed at 17 of 17 — not the 11 earlier
 >   revisions claimed; the wrongly-cleared files below were wave-5 work. The call-site migration went
 >   from ~355 to ~800 statements ported.
-> - **14 real files remain** — NOT the 15/16 earlier revisions of this box claimed.
+> - **13 real files remain** — NOT the 15/16 earlier revisions of this box claimed.
 >   That figure came from a single-line grep that cannot see `sqlite\n  .prepare(`,
 >   the dominant formatting here. Real total: **261 statements across 27 files**.
 >   §7 has the corrected breakdown and the count that is actually safe to run.
@@ -20,10 +20,14 @@
 > - **Parts 25–30 are DONE**: objectives, patterns-place, calibration, the memory
 >   pair, flags, and the four connector/copy files that closed wave 5. Do not redo
 >   them. §6 records what those ports decided.
->   **Start here: WAVE 6** — block-task-sync (21), day-types (17), reminders (14),
->   sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4).
->   Take `sync/apply.ts` deliberately: it retires the last raw-handle argument from
->   seven already-ported files in one go.
+>   **Wave 6 is now UNBLOCKED**: every one of its seven files reached
+>   `engine/autoplan.ts` (wave 7), which was still synchronous, so wave 6 could not
+>   be started incrementally at all. Autoplan was ported early as part 31 to break
+>   that — see the deadlock note in `passA-worklist.md`. **Start here: WAVE 6** —
+>   block-task-sync (21), day-types (17), reminders (14), sync/apply (7),
+>   pattern-blocks (5), recurrence-generate (5), pattern-prefs (4). Take
+>   `sync/apply.ts` deliberately: it retires the last raw-handle argument from seven
+>   already-ported files in one go.
 > - **The trap catalogue lives in `docs/passA-worklist.md`, not here.** Read it
 >   before your first edit. This document is the narrative; that one is the
 >   checklist you work from.

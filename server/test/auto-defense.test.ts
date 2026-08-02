@@ -104,7 +104,7 @@ describe('reflow', () => {
     insertDailyPlan(t2, 1);
     stage(t1, 0);
     stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const blocksBefore = autoBlocks();
     expect(blocksBefore).toHaveLength(2);
@@ -121,7 +121,7 @@ describe('reflow', () => {
     const t1 = insertTask('In-progress task');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const [block] = autoBlocks();
     expect(block).toBeTruthy();
@@ -151,7 +151,7 @@ describe('reflow', () => {
     insertDailyPlan(t2, 1);
     stage(t1, 0);
     stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     // Insert a meeting that forces T1 and T2 to move on the first reflow.
     insertMeeting(`${DATE}T09:00:00.000Z`, `${DATE}T10:00:00.000Z`);
@@ -175,7 +175,7 @@ describe('reflow', () => {
     const t1 = insertTask('Locked auto');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const [block] = autoBlocks();
     expect(block).toBeTruthy();
@@ -204,7 +204,7 @@ describe('reflow', () => {
     insertDailyPlan(backlog, 2);
     stage(t1, 0);
     stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const before = autoBlocks();
     expect(before).toHaveLength(2);
@@ -227,7 +227,7 @@ describe('reflow', () => {
     const t1 = insertTask('No room');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(autoBlocks()).toHaveLength(1);
 
     // A full-day meeting lands, leaving no room to re-place t1 on reflow.
@@ -242,7 +242,7 @@ describe('reflow', () => {
     const t1 = insertTask('Stuck');
     insertDailyPlan(t1, 0);
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     const [block] = autoBlocks();
     // Simulate residue from a reflow that died before unfreeze.
     sqlite.prepare(`UPDATE time_blocks SET is_locked = 1 WHERE id = ?`).run(block.id);

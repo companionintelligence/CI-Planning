@@ -256,7 +256,7 @@ export async function reflow(
   //    placeFlightPlan (never the user's flight_plan staging); `protectIds` keeps the
   //    protected blocks out of the DELETE (in memory — never written to is_locked),
   //    and dayObstacles already routes placement around them.
-  placeFlightPlan(owner, { date: d, replaceTaskIds, protectIds: protectedIds, nowMs });
+  await placeFlightPlan(owner, { date: d, replaceTaskIds, protectIds: protectedIds, nowMs });
 
   // 5. Snapshot after and compute the diff. A task whose block the pin pass converted
   //    to a stated-time is_auto=0 block leaves the agent snapshot but is still placed —
