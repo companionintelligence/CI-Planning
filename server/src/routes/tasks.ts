@@ -329,7 +329,7 @@ export function tasksRouter() {
     if (!owned) {
       ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return;
     }
-    const res = computeStreak(id);
+    const res = await computeStreak(id);
     if (!res) { ctx.status = 404; ctx.body = { error: 'not a recurring task' }; return; }
     ctx.body = res;
   });

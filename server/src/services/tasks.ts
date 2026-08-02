@@ -376,7 +376,7 @@ export async function updateTask(
   input: UpdateTaskInput,
   scope: UpdateTaskScope = 'instance',
 ): Promise<UpdateTaskResult> {
-  const targetId = scope === 'series' ? (resolveTemplateId(id) ?? id) : id;
+  const targetId = scope === 'series' ? ((await resolveTemplateId(id)) ?? id) : id;
 
   // Capture the pre-edit parent so a re-parent can GC the OLD parent's auto-objective
   // if this was its last subtask.
@@ -519,10 +519,10 @@ export async function updateTask(
   let generated: GenerateResult | undefined;
   if (
     scope === 'series' &&
-    resolveTemplateId(targetId) != null &&
+    (await resolveTemplateId(targetId)) != null &&
     (input.recurrence_rule !== undefined || input.recurrence_dtstart !== undefined || input.task_time !== undefined)
   ) {
-    deleteFutureOpenInstances(targetId);
+    await deleteFutureOpenInstances(targetId);
     generated = generateRecurrences();
   }
 
@@ -714,7 +714,7 @@ export async function skipRecurringInstance(ownerId: string, id: string): Promis
   if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId)) {
     return { ok: false, error: 'not_found' };
   }
-  const res = skipInstance(id);
+  const res = await skipInstance(id);
   if (!res.ok) return { ok: false, error: res.reason };
   // Phase L: `skipped` is mergeable and unpinned, so the stamp is what stops a queued op
   // from reviving this instance. It belongs here, not in the engine: skipInstance resolves
