@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { generate } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -239,10 +239,10 @@ function cleanLine(raw: string, multiline: boolean): string {
   return stripQuotes(first);
 }
 
-function readRecent(ownerId: string, surface: Surface, k: number): Signature[] {
-  const rows = sqlite
+async function readRecent(ownerId: string, surface: Surface, k: number): Promise<Signature[]> {
+  const rows = await store()
     .prepare(`SELECT signature FROM copy_history WHERE owner_id = ? AND surface = ? ORDER BY id DESC LIMIT ?`)
-    .all(ownerId, surface, k) as { signature: string }[];
+    .all<{ signature: string }>(ownerId, surface, k);
   const out: Signature[] = [];
   for (const r of rows) {
     try {
@@ -254,12 +254,12 @@ function readRecent(ownerId: string, surface: Surface, k: number): Signature[] {
   return out;
 }
 
-function record(ownerId: string, surface: Surface, sig: Signature, k: number): void {
-  sqlite
+async function record(ownerId: string, surface: Surface, sig: Signature, k: number): Promise<void> {
+  await store()
     .prepare(`INSERT INTO copy_history (id, owner_id, surface, signature) VALUES (uuid7(), ?, ?, ?)`)
     .run(ownerId, surface, JSON.stringify(sig));
   // Prune the window back to K (newest kept; id is uuid7 → time-ordered).
-  sqlite
+  await store()
     .prepare(
       `DELETE FROM copy_history
         WHERE owner_id = ? AND surface = ? AND id NOT IN (
@@ -296,7 +296,7 @@ export async function renderCopy(
   const cfg = SURFACES[surface];
   const ownerId = opts.ownerId ?? currentOwnerId();
   const required = cfg.required(payload);
-  const recent = readRecent(ownerId, surface, cfg.historyK);
+  const recent = await readRecent(ownerId, surface, cfg.historyK);
 
   let failure: string | undefined;
   for (let attempt = 0; attempt < MODEL_ATTEMPTS; attempt++) {
@@ -314,7 +314,7 @@ export async function renderCopy(
     const text = cleanLine(raw, cfg.tier === 'medium');
     const g = gateCopy(text, { required, recent, maxLen: cfg.maxLen });
     if (g.ok) {
-      record(ownerId, surface, g.signature, cfg.historyK);
+      await record(ownerId, surface, g.signature, cfg.historyK);
       return { text, source: 'model', surface };
     }
     failure = g.reason;
@@ -327,6 +327,6 @@ export async function renderCopy(
 
   // Escape hatch: deterministic rotation pool with datum-slotting.
   const fb = pickFallback(cfg, payload, recent);
-  record(ownerId, surface, fb.sig, cfg.historyK);
+  await record(ownerId, surface, fb.sig, cfg.historyK);
   return { text: fb.text, source: 'fallback', surface };
 }

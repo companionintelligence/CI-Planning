@@ -32,19 +32,19 @@ afterEach(() => {
 });
 
 describe('connectors mode gate', () => {
-  it('mode off → no connectors and no accounts, despite an active stored token', () => {
+  it('mode off → no connectors and no accounts, despite an active stored token', async () => {
     config.google.mode = 'off';
-    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => {
-      expect(getConnectors()).toEqual([]);
-      expect(googleAccounts()).toEqual([]);
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, async () => {
+      expect(await getConnectors()).toEqual([]);
+      expect(await googleAccounts()).toEqual([]);
     });
   });
 
-  it('any non-off mode surfaces the stored connection (fixture/live behave as before)', () => {
+  it('any non-off mode surfaces the stored connection (fixture/live behave as before)', async () => {
     config.google.mode = 'fixture';
-    runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => {
-      expect(getConnectors()).toHaveLength(1);
-      expect(googleAccounts()).toEqual(['gated@example.com']);
+    await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, async () => {
+      expect(await getConnectors()).toHaveLength(1);
+      expect(await googleAccounts()).toEqual(['gated@example.com']);
     });
   });
 });

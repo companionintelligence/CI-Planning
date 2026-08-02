@@ -89,7 +89,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // Fixture mode (explicit dev/demo opt-in) keeps the single canned client.
       let r = emptyIngestTotals();
       if (config.google.mode === 'live') {
-        const accounts = googleAccounts();
+        const accounts = await googleAccounts();
         if (accounts.length === 0) {
           return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
         }
@@ -125,7 +125,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       }
       let r = emptyIngestTotals();
       if (config.google.mode === 'live') {
-        const accounts = googleAccounts();
+        const accounts = await googleAccounts();
         if (accounts.length === 0) {
           return { itemsCreated: 0, itemsUpdated: 0, log: 'No Google account connected — skipped (connect one in Settings)' };
         }

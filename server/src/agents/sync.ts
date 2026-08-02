@@ -47,7 +47,7 @@ export async function enqueueOutbound(blockId: string): Promise<void> {
     .get(blockId);
   if (isInbound) return;
   const ownerId = currentOwnerId();
-  for (const c of getConnectors()) {
+  for (const c of await getConnectors()) {
     await store()
       .prepare(
         `INSERT INTO outbound_queue (id, owner_id, block_id, provider, account)
@@ -73,7 +73,7 @@ export async function pushOutboundDeletes(blockId: string): Promise<void> {
 
   if (outbound.length === 0) return;
 
-  const connectors = getConnectors();
+  const connectors = await getConnectors();
   for (const row of outbound) {
     const connector = connectors.find((c) => c.provider === row.provider && c.account === row.account);
     if (!connector) continue;
@@ -407,7 +407,7 @@ export async function syncAll(): Promise<SyncResult[]> {
     logger.debug('syncAll: sync disabled (CP_SYNC_DISABLED)');
     return [];
   }
-  const connectors = getConnectors();
+  const connectors = await getConnectors();
   if (connectors.length === 0) {
     logger.debug('syncAll: no connectors registered for this owner');
     return [];

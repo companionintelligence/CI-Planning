@@ -281,7 +281,11 @@ export function oauthRouter() {
     // Store under the state's owner (NOT the request's — the callback is credential-less).
     // A normal owner context (no admin) — this only writes the owner's own connector token.
     await runWithOwner(row.owner_id, [SCOPE_READ, SCOPE_WRITE], async () => {
-      BaseOAuth2Client.storeToken('google', email, {
+      // Awaited: the UPDATE below activates the very row this writes. Floated, the
+      // status flip would run first and match nothing, leaving the connection stored
+      // but never 'active' — and getConnectors()/googleAccounts() both filter on
+      // status='active', so the account would silently never sync.
+      await BaseOAuth2Client.storeToken('google', email, {
         accessToken: tok.access_token!,
         refreshToken,
         expiresAt,

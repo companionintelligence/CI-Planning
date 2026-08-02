@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { config } from '../lib/config.js';
 import { GoogleCalendarConnector } from './google.js';
@@ -21,30 +21,30 @@ export type { CalendarConnector, RemoteEvent, RemoteEventInput, ListEventsResult
  * status='active'). Empty when nothing is connected — ingest becomes a no-op, the
  * same posture getConnectors() gives sync.
  */
-export function googleAccounts(): string[] {
+export async function googleAccounts(): Promise<string[]> {
   // GOOGLE_MODE=off means OFF for stored connections too, not just new ones —
   // oauth /start gates connecting, this gates every already-connected account.
   if (config.google.mode === 'off') return [];
   const ownerId = currentOwnerId();
   try {
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         "SELECT account FROM connection_tokens WHERE owner_id = ? AND provider = 'google' AND status = 'active'",
       )
-      .all(ownerId) as { account: string }[];
+      .all<{ account: string }>(ownerId);
     return rows.map((r) => r.account);
   } catch {
     return [];
   }
 }
 
-export function getConnectors(): CalendarConnector[] {
+export async function getConnectors(): Promise<CalendarConnector[]> {
   const ownerId = currentOwnerId();
   let rows: { provider: string; account: string }[];
   try {
-    rows = sqlite
+    rows = await store()
       .prepare("SELECT provider, account FROM connection_tokens WHERE owner_id = ? AND status = 'active'")
-      .all(ownerId) as { provider: string; account: string }[];
+      .all<{ provider: string; account: string }>(ownerId);
   } catch {
     return [];
   }

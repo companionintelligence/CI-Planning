@@ -1,5 +1,5 @@
 import { seal, open, loadKek } from '../lib/crypto/index.js';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { currentOwnerId } from '../lib/context.js';
 import { logger } from '../lib/logger.js';
@@ -131,13 +131,11 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
   protected async getAccessToken(): Promise<string> {
     const ownerId = currentOwnerId();
     const kek = loadKek();
-    const row = sqlite
+    const row = await store()
       .prepare(
         'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
       )
-      .get(ownerId, this.provider, this.account) as
-      | { iv: string; auth_tag: string; ciphertext: string }
-      | undefined;
+      .get<{ iv: string; auth_tag: string; ciphertext: string }>(ownerId, this.provider, this.account);
     if (!row) throw new Error(`No connection token for ${this.provider}/${this.account}`);
     const tok = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, kek)) as {
       accessToken: string;
@@ -162,7 +160,7 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
     const { accessToken, expiresAt } = await this.refreshToken(rt);
     const kek = loadKek();
     const sealed = seal(JSON.stringify({ accessToken, refreshToken: rt, expiresAt }), kek);
-    sqlite
+    await store()
       .prepare(
         `UPDATE connection_tokens
          SET iv = ?, auth_tag = ?, ciphertext = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -174,15 +172,15 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
   }
 
   /** Upsert a fresh token set — call from the OAuth callback route. */
-  static storeToken(
+  static async storeToken(
     provider: string,
     account: string,
     tokens: { accessToken: string; refreshToken: string; expiresAt: string },
-  ): void {
+  ): Promise<void> {
     const kek = loadKek();
     const sealed = seal(JSON.stringify(tokens), kek);
     const ownerId = currentOwnerId();
-    sqlite
+    await store()
       .prepare(
         `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext)
          VALUES (?, ?, ?, ?, ?, ?, ?)

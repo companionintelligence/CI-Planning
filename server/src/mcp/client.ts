@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { seal, open, loadKek } from '../lib/crypto/index.js';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { logger } from '../lib/logger.js';
 import { config } from '../lib/config.js';
@@ -261,13 +261,11 @@ class TokenBearer extends BaseOAuth2Client {
   async forceRefresh(): Promise<string> {
     const ownerId = currentOwnerId();
     const kek = loadKek();
-    const row = sqlite
+    const row = await store()
       .prepare(
         'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
       )
-      .get(ownerId, this.provider, this.account) as
-      | { iv: string; auth_tag: string; ciphertext: string }
-      | undefined;
+      .get<{ iv: string; auth_tag: string; ciphertext: string }>(ownerId, this.provider, this.account);
     if (!row) throw new McpUnavailable(`No connection token for ${this.provider}/${this.account}`);
     const tok = JSON.parse(
       open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, kek),
@@ -280,7 +278,7 @@ class TokenBearer extends BaseOAuth2Client {
         JSON.stringify({ ...tok, expiresAt: '1970-01-01T00:00:00.000Z' }),
         kek,
       );
-      sqlite
+      await store()
         .prepare(
           `UPDATE connection_tokens SET iv = ?, auth_tag = ?, ciphertext = ?
            WHERE owner_id = ? AND provider = ? AND account = ?`,
