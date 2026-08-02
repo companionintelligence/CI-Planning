@@ -502,7 +502,7 @@ async function maybeSuggestReauthor(owner: string, date: string, diff: ReflowDif
 /** Best-effort Web Push for the nudge — mirrors reminders.deliver; never throws. */
 async function pushReplanNudge(owner: string, summary: string): Promise<void> {
   try {
-    for (const s of subsFor(owner)) {
+    for (const s of await subsFor(owner)) {
       const res = await sendPush(s.sub, { title: 'Re-plan your day?', body: summary, tag: 'replan:suggested', url: '/' });
       if (res === 'gone') await store().prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(s.id);
     }

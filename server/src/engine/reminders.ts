@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { sendPush, type PushSub } from '../lib/push.js';
 import { logger } from '../lib/logger.js';
@@ -10,8 +10,11 @@ import { instanceStartUTC } from './recurrence.js';
  * Reminder dispatch (Phase H). The 1-minute `fire_reminders` cron calls
  * `fireDueReminders()`. Exactly-once rides on an atomic claim: the `UPDATE … RETURNING`
  * flips only rows still `pending` with `fire_at <= now` to `fired`, so the next tick
- * re-selects nothing. better-sqlite3 is synchronous + single-writer, so no row is
- * claimed twice — never a double-fire.
+ * re-selects nothing. That property comes from the claim being ONE statement, not from
+ * the driver — an earlier version of this comment credited better-sqlite3 being
+ * synchronous and single-writer, which the store facade has since made untrue while the
+ * guarantee itself survives untouched: a single UPDATE … RETURNING is atomic on Postgres
+ * too, so no row is ever claimed twice and there is never a double-fire.
  *
  * Delivery emits the in-app SSE event FIRST, then attempts Web Push. Because SSE fires
  * unconditionally, push failure / push-denied / no-subscription all fall back to in-app
@@ -50,8 +53,8 @@ interface SubRow {
 
 /** An owner's push subscriptions, each shaped for `web-push`. Exported so other
  *  notifiers (B4 replan nudge) reuse the same query + shape. */
-export function subsFor(ownerId: string): { id: string; sub: PushSub }[] {
-  const rows = sqlite
+export async function subsFor(ownerId: string): Promise<{ id: string; sub: PushSub }[]> {
+  const rows = await store()
     .prepare(`SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE owner_id = ?`)
     .all(ownerId) as SubRow[];
   return rows.map((r) => ({ id: r.id, sub: { endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } } }));
@@ -70,9 +73,9 @@ const FOCUS_VIBRATE: Record<string, number[]> = {
  * `showNotification` honors it where the platform supports it — a degrade, never a
  * block, on iOS). Ordinary reminders carry no vibrate (unchanged behavior).
  */
-function contentFor(r: DueReminder): { title: string; body: string; url: string; vibrate?: number[] } {
+async function contentFor(r: DueReminder): Promise<{ title: string; body: string; url: string; vibrate?: number[] }> {
   if (FOCUS_SOURCES.includes(r.source as (typeof FOCUS_SOURCES)[number])) {
-    const b = sqlite.prepare(`SELECT title FROM time_blocks WHERE id = ? AND owner_id = ?`).get(r.block_id!, r.owner_id) as { title: string } | undefined;
+    const b = await store().prepare(`SELECT title FROM time_blocks WHERE id = ? AND owner_id = ?`).get(r.block_id!, r.owner_id) as { title: string } | undefined;
     const body = b?.title ?? 'Focus block';
     const vibrate = FOCUS_VIBRATE[r.source];
     if (r.source === 'focus_start') return { title: 'Focus started', body, url: '/', vibrate };
@@ -82,21 +85,21 @@ function contentFor(r: DueReminder): { title: string; body: string; url: string;
   if (r.task_id) {
     // Owner-scope the title lookup (the block branches already do): defense in depth so a
     // reminder pointing at another owner's task can never render their title here.
-    const t = sqlite.prepare(`SELECT title FROM tasks WHERE id = ? AND owner_id = ?`).get(r.task_id, r.owner_id) as { title: string } | undefined;
+    const t = await store().prepare(`SELECT title FROM tasks WHERE id = ? AND owner_id = ?`).get(r.task_id, r.owner_id) as { title: string } | undefined;
     return { title: 'Task reminder', body: t?.title ?? 'A task is due', url: '/' };
   }
-  const b = sqlite.prepare(`SELECT title FROM time_blocks WHERE id = ? AND owner_id = ?`).get(r.block_id!, r.owner_id) as { title: string } | undefined;
+  const b = await store().prepare(`SELECT title FROM time_blocks WHERE id = ? AND owner_id = ?`).get(r.block_id!, r.owner_id) as { title: string } | undefined;
   return { title: 'Upcoming block', body: b?.title ?? 'A block is starting', url: '/' };
 }
 
 async function deliver(r: DueReminder): Promise<void> {
   broadcast(r.owner_id, 'reminder:fire', { id: r.id, taskId: r.task_id, blockId: r.block_id, source: r.source });
-  const c = contentFor(r);
+  const c = await contentFor(r);
   const payload: Record<string, unknown> = { title: c.title, body: c.body, tag: `reminder:${r.id}`, url: c.url };
   if (c.vibrate) payload.vibrate = c.vibrate;
-  for (const s of subsFor(r.owner_id)) {
+  for (const s of await subsFor(r.owner_id)) {
     const res = await sendPush(s.sub, payload);
-    if (res === 'gone') sqlite.prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(s.id);
+    if (res === 'gone') await store().prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(s.id);
   }
 }
 
@@ -115,7 +118,7 @@ export async function fireDueReminders(nowISO: string = new Date().toISOString()
   // sets the task done without touching block status, and "Schedule again" skips the
   // block, so both must silence the block's remaining cues. Mirrors the task-status
   // chokepoint below; a deleted block's reminders are already gone via FK CASCADE.
-  const due = sqlite
+  const due = await store()
     .prepare(
       `UPDATE reminders SET status = 'fired', fired_at = ?
          WHERE status = 'pending' AND fire_at <= ?
@@ -150,10 +153,10 @@ export async function fireDueReminders(nowISO: string = new Date().toISOString()
  * rather than resolving the task's specific tags. Already-due fire times are skipped (no
  * backfill flood). Returns the number of reminders created.
  */
-export function syncTaskReminders(ownerId: string, taskId: string): number {
-  sqlite.prepare(`DELETE FROM reminders WHERE task_id = ? AND source = 'auto'`).run(taskId);
+export async function syncTaskReminders(ownerId: string, taskId: string): Promise<number> {
+  await store().prepare(`DELETE FROM reminders WHERE task_id = ? AND source = 'auto'`).run(taskId);
 
-  const task = sqlite
+  const task = await store()
     .prepare(`SELECT due_at, scheduled_for, occurrence_date, task_time, status FROM tasks WHERE id = ? AND owner_id = ?`)
     .get(taskId, ownerId) as
     | { due_at: string | null; scheduled_for: string | null; occurrence_date: string | null; task_time: string | null; status: string }
@@ -171,7 +174,7 @@ export function syncTaskReminders(ownerId: string, taskId: string): number {
   let anchorMs: number;
   if (day && task.task_time) {
     const tz =
-      (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(ownerId) as
+      (await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(ownerId) as
         | { timezone: string | null }
         | undefined)?.timezone || serverTimezone();
     anchorMs = Date.parse(instanceStartUTC(day, task.task_time, tz));
@@ -182,7 +185,7 @@ export function syncTaskReminders(ownerId: string, taskId: string): number {
   }
   if (!Number.isFinite(anchorMs)) return 0;
 
-  const rows = sqlite.prepare(`SELECT reminder_offsets FROM tag_prefs WHERE owner_id = ? AND kind = 'direction'`).all(ownerId) as
+  const rows = await store().prepare(`SELECT reminder_offsets FROM tag_prefs WHERE owner_id = ? AND kind = 'direction'`).all(ownerId) as
     { reminder_offsets: string }[];
   const offsets = new Set<number>();
   for (const r of rows) {
@@ -195,7 +198,7 @@ export function syncTaskReminders(ownerId: string, taskId: string): number {
   if (offsets.size === 0) return 0;
 
   const now = Date.now();
-  const ins = sqlite.prepare(
+  const ins = await store().prepare(
     `INSERT INTO reminders (id, owner_id, task_id, fire_at, source) VALUES (?, ?, ?, ?, 'auto')`,
   );
   let n = 0;
@@ -209,8 +212,8 @@ export function syncTaskReminders(ownerId: string, taskId: string): number {
 }
 
 /** Drop a block's Focus Ritual cue reminders (idempotent). */
-export function clearBlockFocusReminders(blockId: string): void {
-  sqlite
+export async function clearBlockFocusReminders(blockId: string): Promise<void> {
+  await store()
     .prepare(`DELETE FROM reminders WHERE block_id = ? AND source IN ('focus_start','focus_warn','focus_end')`)
     .run(blockId);
 }
@@ -227,9 +230,9 @@ export function clearBlockFocusReminders(blockId: string): void {
  * The MASTER flag gate lives at the caller (the arm route) — this engine also runs as
  * pure cleanup (arms 0) for an ineligible/non-planned block.
  */
-export function syncBlockFocusReminders(ownerId: string, blockId: string): number {
-  clearBlockFocusReminders(blockId);
-  const b = sqlite
+export async function syncBlockFocusReminders(ownerId: string, blockId: string): Promise<number> {
+  await clearBlockFocusReminders(blockId);
+  const b = await store()
     .prepare(`SELECT start_at, end_at, block_kind, status FROM time_blocks WHERE id = ? AND owner_id = ?`)
     .get(blockId, ownerId) as { start_at: string; end_at: string; block_kind: string; status: string } | undefined;
   if (!b || b.status !== 'planned' || !FOCUS_ELIGIBLE_KINDS.has(b.block_kind)) return 0;
@@ -244,7 +247,7 @@ export function syncBlockFocusReminders(ownerId: string, blockId: string): numbe
     { fireMs: endMs - WARN_LEAD_MIN * 60_000, source: 'focus_warn' },
     { fireMs: endMs, source: 'focus_end' },
   ];
-  const ins = sqlite.prepare(
+  const ins = await store().prepare(
     `INSERT INTO reminders (id, owner_id, block_id, fire_at, source) VALUES (?, ?, ?, ?, ?)`,
   );
   let n = 0;

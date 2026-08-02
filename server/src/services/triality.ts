@@ -323,7 +323,7 @@ async function collectCandidates(ownerId: string, now: Date): Promise<Candidate[
 // honestly drop anything; the C term goes neutral).
 
 export async function rawFreeGapMinutes(ownerId: string, now: Date): Promise<number | null> {
-  const tz = ownerTimezone(ownerId);
+  const tz = await ownerTimezone(ownerId);
   const today = localDateInTZ(now.toISOString(), tz);
   const rows = await store()
     .prepare(
@@ -646,7 +646,7 @@ export async function logShown(
    */
   confidenceJson: readonly (string | null)[],
 ): Promise<(string | null)[]> {
-  const tz = ownerTimezone(ownerId);
+  const tz = await ownerTimezone(ownerId);
   const localDate = localDateInTZ(now.toISOString(), tz);
   const insert = store().prepare(
     `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence)

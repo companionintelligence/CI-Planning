@@ -106,7 +106,7 @@ export function taskSecondaryTags(taskId: string): string[] {
  */
 export async function stampTaskCompletionReflection(ownerId: string, taskId: string, completedAt: string): Promise<void> {
   const now = new Date().toISOString();
-  const periodKey = localDateInTZ(completedAt, ownerTimezone(ownerId));
+  const periodKey = localDateInTZ(completedAt, await ownerTimezone(ownerId));
   await store()
     .prepare(
       `UPDATE reflections SET done_at = COALESCE(done_at, ?), updated_at = ?
@@ -225,7 +225,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
       throw err;
     }
   }
-  syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
+  await syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
   // §H: creating a subtask promotes its parent to an objective (task list star).
   if (parentId) await ensureTaskPromoted(parentId, ownerId);
 
@@ -252,7 +252,7 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
 
   const sw = subtypeWrite(input);
   const owner = ownerId; // W3.1b: always the authenticated caller — never a client body owner_id.
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   const [template] = await db
     .insert(tasks)
     .values({
@@ -277,7 +277,7 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
     setEntityCategories('task', template.id, categoryIdsForOwner(input.categories, ownerId));
   // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
   if (sw?.subtype === 'habit') await ensureHabitPattern(template.id, owner, template.title);
-  const generated = generateRecurrences();
+  const generated = await generateRecurrences();
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${template.id}` });
   return { ok: true, template, generated };
@@ -487,7 +487,7 @@ export async function updateTask(
       throw err;
     }
   }
-  syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
+  await syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
   // §H: re-parenting a task UNDER another promotes that parent to an objective; moving
   // it AWAY may leave the old parent empty → GC that parent's pristine auto-objective.
   if (newParentId) await ensureTaskPromoted(newParentId, ownerId);
@@ -525,7 +525,7 @@ export async function updateTask(
     (input.recurrence_rule !== undefined || input.recurrence_dtstart !== undefined || input.task_time !== undefined)
   ) {
     await deleteFutureOpenInstances(targetId);
-    generated = generateRecurrences();
+    generated = await generateRecurrences();
   }
 
   // Phase O · O0 — completing a task lights up the today-intention linked to it.
@@ -609,7 +609,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   // thing stopping a queued op with an older clientTs from setting status back to
   // 'open' and resurrecting this task — same guard the archive fields rely on.
   stampRow(sqlite, 'task', id, ['status']);
-  syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
+  await syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
   // A cancelled task's placements settle with it — a manual block is invisible to
   // reflow's agent-only GC and would otherwise stay on the board looking live.
   const cancelledBlockIds = await cancelBlocksForTask(id, ownerId);

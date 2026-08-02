@@ -245,14 +245,14 @@ export function blocksRouter() {
     if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const exists = await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
     if (!exists) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
-    const armed = syncBlockFocusReminders(owner, ctx.params.id);
+    const armed = await syncBlockFocusReminders(owner, ctx.params.id);
     ctx.body = { ok: true, armed };
   });
 
   router.delete('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
     if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
-    clearBlockFocusReminders(ctx.params.id);
+    await clearBlockFocusReminders(ctx.params.id);
     ctx.body = { ok: true };
   });
 
@@ -333,7 +333,7 @@ export function blocksRouter() {
         .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
         .run(owner, block.task_id, nextPos)).changes > 0;
       // Z4: a skipped attempt's focus cues must not fire for the abandoned block.
-      clearBlockFocusReminders(id);
+      await clearBlockFocusReminders(id);
     });
 
     // Flip the task back to open (it was 'scheduled' while it held the block) so Auto

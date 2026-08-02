@@ -77,7 +77,7 @@ export async function syncTaskFromBlock(blockId: string, ownerId: string): Promi
     .get(block.task_id, ownerId) as { s: string | null } | undefined;
   if (earliest?.s && block.start_at > earliest.s) return null;
 
-  const tz = ownerTimezone(ownerId);
+  const tz = await ownerTimezone(ownerId);
   const scheduledFor = localDateInTZ(block.start_at, tz);
   const taskTime = block.all_day ? null : utcToZonedWallTime(block.start_at, tz);
 
@@ -99,7 +99,7 @@ export async function syncTaskFromBlock(blockId: string, ownerId: string): Promi
   // (`occurrence_date` is outside the sync allowlist, so it needs no stamp.)
   if (info.changes > 0) stampRow(sqlite, 'task', block.task_id, ['scheduledFor', 'taskTime']);
 
-  syncTaskReminders(ownerId, block.task_id);
+  await syncTaskReminders(ownerId, block.task_id);
   return block.task_id;
 }
 
@@ -121,7 +121,7 @@ export async function mirrorBlockStatusToTask(blockId: string, ownerId: string):
     // Re-derive reminders AFTER the status flip so a same-PATCH time+complete change
     // doesn't leave auto-reminders firing for a now-done task (syncTaskReminders
     // clears them for a done task).
-    syncTaskReminders(ownerId, block.task_id);
+    await syncTaskReminders(ownerId, block.task_id);
     return block.task_id;
   }
   if (block.status === 'planned') {
@@ -131,7 +131,7 @@ export async function mirrorBlockStatusToTask(blockId: string, ownerId: string):
       .prepare(`UPDATE tasks SET status = 'scheduled', completed_at = NULL WHERE id = ? AND owner_id = ?`)
       .run(block.task_id, ownerId);
     stampRow(sqlite, 'task', block.task_id, ['status', 'completedAt']);
-    syncTaskReminders(ownerId, block.task_id);
+    await syncTaskReminders(ownerId, block.task_id);
     return block.task_id;
   }
   if (block.status === 'skipped') {
@@ -203,7 +203,7 @@ export async function mirrorEnginePlacement(taskId: string, ownerId: string): Pr
     )
     .get(taskId, ownerId) as { s: string | null } | undefined;
   if (!earliest?.s) return null;
-  const day = localDateInTZ(earliest.s, ownerTimezone(ownerId));
+  const day = localDateInTZ(earliest.s, await ownerTimezone(ownerId));
   // Keep occurrence_date aligned for a recurring instance, mirroring syncTaskFromBlock.
   await store()
     .prepare(
@@ -213,7 +213,7 @@ export async function mirrorEnginePlacement(taskId: string, ownerId: string): Pr
     )
     .run(day, day, taskId, ownerId, day);
   await applyTaskPlacementStatus(taskId, ownerId);
-  syncTaskReminders(ownerId, taskId);
+  await syncTaskReminders(ownerId, taskId);
   return taskId;
 }
 
@@ -263,7 +263,7 @@ export async function revertTaskPlacementStatus(taskId: string, ownerId: string)
     .run(taskId, ownerId, taskId, ownerId);
   if (info.changes === 0) return null;
   stampRow(sqlite, 'task', taskId, ['status']);
-  syncTaskReminders(ownerId, taskId);
+  await syncTaskReminders(ownerId, taskId);
   return taskId;
 }
 
@@ -294,7 +294,7 @@ export async function syncBlockFromTask(taskId: string, ownerId: string, opts: {
     .get(taskId, ownerId) as { id: string; start_at: string; end_at: string; all_day: number; is_locked: number } | undefined;
   if (!block || block.all_day || block.is_locked) return null;
 
-  const tz = ownerTimezone(ownerId);
+  const tz = await ownerTimezone(ownerId);
   // Day from the task's scheduled_for, else the block's current local day; time from
   // the task's task_time, else the block's current local time-of-day.
   const day = task.scheduled_for ?? localDateInTZ(block.start_at, tz);

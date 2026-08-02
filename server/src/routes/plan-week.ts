@@ -38,7 +38,7 @@ export function planWeekRouter() {
     if (raw !== undefined && !isValidISODate(raw)) {
       ctx.status = 422; ctx.body = { error: 'anchor must be YYYY-MM-DD' }; return;
     }
-    ctx.body = await planWeekReview((raw as string | undefined) ?? defaultAnchorForOwner());
+    ctx.body = await planWeekReview((raw as string | undefined) ?? (await defaultAnchorForOwner()));
   });
 
   /**

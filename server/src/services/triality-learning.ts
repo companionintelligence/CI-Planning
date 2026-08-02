@@ -305,7 +305,7 @@ export async function calibrateTriality(ownerId: string, now: Date): Promise<Tri
     writes.push({ slot, weights: applied.weights, sampleCount: decided.length });
   }
 
-  const computedDate = localDateInTZ(now.toISOString(), ownerTimezone(ownerId));
+  const computedDate = localDateInTZ(now.toISOString(), await ownerTimezone(ownerId));
   await store().transaction(async () => {
     await store().prepare(DELETE_WEIGHTS_SQL).run(ownerId);
     const insertWeights = store().prepare(INSERT_WEIGHTS_SQL);

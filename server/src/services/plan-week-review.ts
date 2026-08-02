@@ -62,8 +62,8 @@ export function priorWeekAnchor(today: string): string {
  * before last — or, mirrored, their in-progress week, which is exactly what anchoring on
  * a prior week exists to avoid.
  */
-export function defaultAnchorForOwner(owner: string = currentOwnerId()): string {
-  return priorWeekAnchor(localDateInTZ(new Date().toISOString(), ownerTimezone(owner)));
+export async function defaultAnchorForOwner(owner: string = currentOwnerId()): Promise<string> {
+  return priorWeekAnchor(localDateInTZ(new Date().toISOString(), await ownerTimezone(owner)));
 }
 
 /**
@@ -86,7 +86,7 @@ export async function planWeekReview(anchor: string): Promise<PlanWeekReview> {
   // 23:00 local on Sunday into the following week (or Monday 00:30 local into the
   // previous one) — and would disagree with the stars/note_dates in this very payload,
   // which are keyed by owner-local day.
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   const sessions = (await listSessions()).filter((s) => {
     const day = localDateInTZ(s.started_at, tz);
     return day >= from && day <= to;

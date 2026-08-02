@@ -244,7 +244,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       };
     }
     case 'generate_recurrences': {
-      const r = generateRecurrences();
+      const r = await generateRecurrences();
       return {
         itemsCreated: r.created,
         itemsUpdated: r.missed,

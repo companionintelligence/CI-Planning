@@ -108,34 +108,34 @@ const OWNER_ZONES = [
 
 describe('generateRecurrences — the missed sweep follows the OWNER clock', () => {
   for (const { tz, day } of OWNER_ZONES) {
-    it(`${tz}: leaves the owner's current day (${day}) open`, () => {
+    it(`${tz}: leaves the owner's current day (${day}) open`, async () => {
       setOwnerTz(tz);
       seedHabitOn(day);
 
-      runWithOwner(OWNER, ALL_SCOPES, () => generateRecurrences());
+      await runWithOwner(OWNER, ALL_SCOPES, async () => await generateRecurrences());
 
       // Anchoring on the server's date flips this to 'missed' before the owner's day ends.
       expect(statusOfInstanceOn(day)).toBe('open');
     });
 
-    it(`${tz}: still marks the owner's previous day missed`, () => {
+    it(`${tz}: still marks the owner's previous day missed`, async () => {
       setOwnerTz(tz);
       const yesterday = addDaysISO(day, -1);
       seedHabitOn(yesterday);
 
-      runWithOwner(OWNER, ALL_SCOPES, () => generateRecurrences());
+      await runWithOwner(OWNER, ALL_SCOPES, async () => await generateRecurrences());
 
       // The guard the fix must not break: genuinely past really is past.
       expect(statusOfInstanceOn(yesterday)).toBe('missed');
     });
   }
 
-  it('honours an explicit opts.today over the owner clock', () => {
+  it('honours an explicit opts.today over the owner clock', async () => {
     // The cron passes no date, but callers and tests do; that path stays authoritative.
     setOwnerTz('America/Los_Angeles');
     seedHabitOn('2026-03-10');
 
-    runWithOwner(OWNER, ALL_SCOPES, () => generateRecurrences({ today: '2026-03-20' }));
+    await runWithOwner(OWNER, ALL_SCOPES, async () => await generateRecurrences({ today: '2026-03-20' }));
 
     expect(statusOfInstanceOn('2026-03-10')).toBe('missed');
   });
