@@ -68,8 +68,10 @@
 >
 > - **Wave 5 (9 files left of 17)** — ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
->   commit as required), ✓ task-close, ✓ **objectives**. Remaining:
->   connectors/memory, services/memory, patterns-place.
+>   commit as required), ✓ task-close, ✓ **objectives**. Remaining: the nine in
+>   the table above — patterns-place, connectors/memory, services/memory, and the
+>   six the single-line grep wrongly cleared (calibration, render-copy,
+>   connectors/base, connectors/index, mcp/client, flags).
 >   `patterns-place.ensurePatternsForRange` is still called UNAWAITED from
 >   services/blocks.blockRowsForQuery — the one call site left deliberately sync
 >   in part 8. Add the await when it ports.
@@ -102,9 +104,13 @@
 >   - Both transactions carried over as `await store().transaction(async () => …)`
 >     — note the facade RUNS the callback, so the trailing `()` of
 >     `sqlite.transaction(fn)()` goes away.
-> - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
+> - **Wave 6 (7 files, 73 stmts)** — pattern-prefs, pattern-blocks, day-types,
 >   block-task-sync, sync/apply, recurrence-generate, reminders.
-> - **Wave 7 (4 files)** — autoplan, crypto/index, tags, category-prefs.
+> - **Wave 7 (6 files, 117 stmts)** — autoplan, crypto/index, tags,
+>   category-prefs, **scheduler** and **models** (the last two restored: they hold
+>   one multi-line statement each and had been wrongly cleared).
+>   `engine/scheduler.ts` is a hub despite its single statement — `dayObstacles`
+>   is called from autoplan, patterns-place and the flight plan.
 >   **`services/tags.ts` is the single heaviest file left on the module-level-prepare
 >   axis: 44 of them.** That is more than three times the whole of wave 5, and every
 >   one has to become a module-scope SQL string plus an in-function
