@@ -5,10 +5,13 @@
 > - **Branch `feat/postgres-cutover` is clean and green.** Nothing is half-done.
 >   Suite: **2634 passed / 21 skipped** (2667 with `PG_TEST_URL`), verified after
 >   every one of the 25 slices — never once red.
-> - **Waves 0–4 are COMPLETE. Wave 5 is at 8 of 11.** The call-site migration went
+> - **Waves 0–4 are COMPLETE. Wave 5 is at 8 of 17** (not 11 — the wrongly-cleared
+>   files below are wave-5 work). The call-site migration went
 >   from ~355 to ~800 statements ported.
-> - **15 real files remain**, not the 101 the original plan implied. Re-derive the
->   number from source (§7) rather than trusting any per-wave file list.
+> - **23 real files remain** — NOT the 15/16 earlier revisions of this box claimed.
+>   That figure came from a single-line grep that cannot see `sqlite\n  .prepare(`,
+>   the dominant formatting here. Real total: **261 statements across 27 files**.
+>   §7 has the corrected breakdown and the count that is actually safe to run.
 > - **Three real concurrency bugs were found and fixed** — two EXDATE lost updates
 >   and an inverted advance-after-commit invariant (§3). None were pre-existing;
 >   all three were defects the port itself would have introduced.
@@ -40,7 +43,8 @@ and `docs/passA-worklist.md` (the live tracker).
 
 ## 2. What shipped
 
-Wave 4 closed at 26 files. Wave 5 is 7 of 11.
+Wave 4 closed at 26 files. Wave 5 is 8 of 17 (see §7 — the "of 11" in earlier
+revisions dropped six wave-5 files the single-line grep could not see).
 
 | Part | Files | Note |
 |---|---|---|
@@ -221,19 +225,47 @@ Do not trust the per-wave file lists. Re-derive:
 grep -rn "sqlite\.\(prepare\|exec\|transaction\)" server/src --include=*.ts | wc -l
 ```
 
-At this commit: **136 references in 19 files**. Three are the seam itself
+**The bare grep above is NOT safe** — it is single-line only, and misses
+
+```ts
+const rows = sqlite
+  .prepare(`…`)
+```
+
+which is how most statements in this codebase are written. It under-reported by
+46%, and it under-reported in the direction that makes the work look finished.
+Use a multi-line-aware count:
+
+```
+python3 -c "
+import re,subprocess,pathlib
+fs=subprocess.run(['bash','-c','grep -rl sqlite --include=\"*.ts\" server/src --exclude-dir=migrations'],capture_output=True,text=True).stdout.split()
+print(sum(len(re.findall(r'sqlite\s*\.\s*(?:prepare|exec|transaction)', pathlib.Path(f).read_text())) for f in fs))"
+```
+
+At this commit: **261 statements across 27 files**. Three are the seam
 (`db/index.ts`, `db/pg.ts`, `db/store.ts`) and one is `groom.ts`'s deliberate
-sqlite-vec residue (§4) — so **15 real files remain**:
+sqlite-vec residue (§4) — so **23 real files remain**:
 
-- **Wave 5 (3)** — patterns-place, connectors/memory, services/memory
-- **Wave 6 (7)** — pattern-prefs, pattern-blocks, day-types, block-task-sync,
-  sync/apply, recurrence-generate, reminders
-- **Wave 7 (4)** — autoplan, crypto/index, tags, category-prefs
-- **Wave 8 (1)** — routes/sse
+- **Wave 5 (9, 54 stmts)** — patterns-place (13), connectors/memory (9),
+  services/memory (6), calibration (14), render-copy (3), connectors/base (3),
+  connectors/index (2), mcp/client (2), flags (2)
+- **Wave 6 (7, 73)** — block-task-sync (21), day-types (17), reminders (14),
+  sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4)
+- **Wave 7 (6, 117)** — tags (60), autoplan (47), category-prefs (4),
+  crypto/index (4), scheduler (1), models (1)
+- **Wave 8 (1, 4)** — routes/sse
 
-Several files the original plan named (render-copy, connectors/index, calibration,
-flags, mcp/client, connectors/base, scheduler, models) hold no raw statements and
-never needed porting.
+**Earlier revisions of this section cleared eight files** — render-copy,
+connectors/index, calibration, flags, mcp/client, connectors/base, scheduler,
+models — as holding no raw statements. **Every one of them does.** They were
+invisible only to the single-line grep. `engine/scheduler.ts` is the one to note:
+a single statement, but `dayObstacles` is called from autoplan, patterns-place and
+the flight plan, so it is a hub, not a leaf.
+
+The ORIGINAL wave table in `passA-worklist.md` was correct all along — its wave
+6/7/8 totals (73/117/4) match a proper count exactly, because it was built with a
+multi-line-aware script. Trust that table over any hand grep.
 
 ### Two files to plan around
 

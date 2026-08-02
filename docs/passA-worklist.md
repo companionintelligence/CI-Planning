@@ -2,23 +2,49 @@
 
 > ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–4 COMPLETE, wave 5 at 8 of 11. Suite verified after every one
+> **DONE — waves 0–4 COMPLETE, wave 5 at 8 of 17. Suite verified after every one
 > of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
 > `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
 > test, which runs once per backend).**
 >
-> **Remaining work is smaller than this document originally predicted.** A fresh
-> count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **136
-> references in 19 files**, three of which are the seam itself (`db/index.ts`,
-> `db/pg.ts`, `db/store.ts`) and one of which is `agents/groom.ts`'s deliberate
-> sqlite-vec residue (below) — so **15 real files remain**. Several files the
-> wave lists below name (render-copy, connectors/index, calibration, flags,
-> mcp/client, connectors/base, scheduler, models) hold NO raw statements and are
-> already done or never needed porting. Re-run the count rather than trusting the
-> per-wave file lists:
+> ### ⚠ The "remaining work is smaller" claim was WRONG — it under-counted by 46%
+>
+> Earlier revisions of this box said 151 (then 136) references in 20 (then 19)
+> files, and cleared eight files as "hold NO raw statements, never needed
+> porting". **All of that came from a single-line grep**, the exact mistake the
+> foundation handoff's §4.1 documented and told us not to repeat: `grep
+> 'sqlite\.prepare'` cannot see
+>
+> ```ts
+> const rows = sqlite
+>   .prepare(`…`)
+> ```
+>
+> which is the dominant formatting in this codebase. The real figure is **261
+> statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
+> `db/store.ts`) and one is `agents/groom.ts`'s sqlite-vec residue (below), so
+> **23 real files remain**, not 15.
+>
+> **The ORIGINAL wave table at the bottom of this document was right all along.**
+> Its wave 6 / 7 / 8 totals (73 / 117 / 4 statements) match a correct count
+> exactly, because it was built with a multi-line-aware script. The later "fresh
+> count" is what corrupted the picture — and it corrupted it in the direction that
+> makes the work look done. **Trust the wave table; distrust any hand grep.**
+>
+> Those eight wrongly-cleared files are all real work: **calibration (14),
+> connectors/base (3), render-copy (3), connectors/index (2), mcp/client (2),
+> flags (2)** — all wave 5 — plus **scheduler (1)** and **models (1)** in wave 7.
+> `engine/scheduler.ts` matters most of the eight despite its single statement:
+> `dayObstacles` is called by autoplan, patterns-place and the flight plan, so it
+> is a hub, and it was invisible because its one statement is multi-line.
+>
+> Re-derive with a multi-line-aware count. Never the bare grep:
 >
 > ```
-> grep -rn "sqlite\.\(prepare\|exec\|transaction\)" server/src --include=*.ts | wc -l
+> python3 -c "
+> import re,subprocess,pathlib
+> fs=subprocess.run(['bash','-c','grep -rl sqlite --include=\"*.ts\" server/src --exclude-dir=migrations'],capture_output=True,text=True).stdout.split()
+> print(sum(len(re.findall(r'sqlite\s*\.\s*(?:prepare|exec|transaction)', pathlib.Path(f).read_text())) for f in fs))"
 > ```
 >
 > **`agents/groom.ts`'s 5 remaining refs are NOT pass-A work** and will not fall to
@@ -30,8 +56,17 @@
 > stays on the raw handle"); it is repeated here because this is the file you
 > actually count from.
 >
-> Actual remaining, by wave:
-> - **Wave 5 (3 files left of 11)** — ✓ motivation, ✓ series-scope,
+> Actual remaining, by wave (multi-line-aware; statements in brackets):
+>
+> | Wave | Files left | Stmts | Which |
+> |---|---|---|---|
+> | 5 | 9 | 54 | patterns-place (13), connectors/memory (9), services/memory (6), calibration (14), render-copy (3), connectors/base (3), connectors/index (2), mcp/client (2), flags (2) |
+> | 6 | 7 | 73 | block-task-sync (21), day-types (17), reminders (14), sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4) |
+> | 7 | 6 | 117 | tags (60), autoplan (47), category-prefs (4), crypto/index (4), scheduler (1), models (1) |
+> | 8 | 1 | 4 | routes/sse |
+> | — | 23 | **248** | + 8 seam + 5 groom = 261 total |
+>
+> - **Wave 5 (9 files left of 17)** — ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
 >   commit as required), ✓ task-close, ✓ **objectives**. Remaining:
 >   connectors/memory, services/memory, patterns-place.
