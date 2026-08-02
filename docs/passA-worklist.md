@@ -1,26 +1,31 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 15 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 18 commits)
 >
-> **DONE — waves 0–3 complete, wave 4 in progress. ~355 of 906 portable
+> **DONE — waves 0–3 complete, wave 4 in progress. ~414 of 906 portable
 > statements ported. Suite verified at 2633 passed after every commit.**
 >
 > - Wave 0 ✓ (scripts; both verified end-to-end on a scratch DB)
 > - Wave 1 ✓ (all 16 routes; raw `sqlite` survives ONLY as the handle argument
 >   to `applyOp`/`stampRow` in routes/sync + routes/blocks + engine/extend-block
->   — dies when sync/apply.ts ports)
+>   + services/blocks + engine/review — dies when sync/apply.ts ports)
 > - Wave 2 ✓ (triality resolver)
 > - Wave 3 ✓ (all 22 near-leaf services + every cascade)
 > - Wave 4: DONE — password, resetToken, owners (the last-operator delete race
 >   is now CLOSED: a guarded owners-row DELETE inside deleteOwner's transaction
 >   throws typed `LastOperatorError`; the route pre-check is advisory),
 >   services/stars, auto-tag, engine-ops, memory-suggest, task-enrich,
->   calibrate-estimates, reflections, triality-learning, engine/stars.
->   REMAINING (14 files ~200 stmts): **next slice = blocks-place + blocks-recur
->   + services/blocks ported together** (blocks.ts calls both, plus wave-5's
->   ensurePatternsForRange/truncateSeriesFrom which stay sync until their turn);
->   then review, clear-range, agents/sync, plan, ingest, auto-defense,
->   services/tasks, recurrence-ops, deps, task-promotion, patterns.
+>   calibrate-estimates, reflections, triality-learning, engine/stars,
+>   **the fused blocks trio** (blocks-place + blocks-recur + services/blocks —
+>   blocks.ts calls both engines, so they had to land together; the EXDATE lost
+>   update is now CLOSED, see the trap below), **engine/review**,
+>   **engine/clear-range**.
+>   REMAINING (9 files, ~145 stmts): **next slice = engine/auto-defense** (11
+>   stmts, 7 importers), then the agents trio (sync, plan, ingest — expect one
+>   commit), services/tasks, recurrence-ops, deps, task-promotion, patterns.
+>   `recurrence-ops.skipInstance` carries the SAME EXDATE read-modify-write as
+>   blocks-recur — reuse the compare-and-swap below rather than porting it
+>   straight.
 > - Waves 5–8 untouched. Exporter (handoff §6.6) not started.
 >
 > **Method that survived contact** (per file): python exact-match replacement →
@@ -33,6 +38,13 @@
 > (need `await` on the wrapper AND `async` inside), Promises passed inline as
 > JSON-body/object arguments, and adjacent same-shaped lines (grep the symbol
 > again after editing — one of four `learnedF(…)` calls escaped a hand pass).
+>
+> **`tail` truncates tsc exactly like `head` does.** clear-range's first
+> typecheck run, piped through `tail -12`, showed only
+> `src/scripts/clear-planner-from.ts` — four resolver/route call sites were
+> above the window and looked like silent Promise-payload traps. The full run
+> had 15 errors across 5 files. Pipe tsc through `grep "error TS"`, never a
+> head/tail window.
 
 > Companion to `docs/HANDOFF-2026-08-02-oidc-and-postgres-port.md` §4–§5 and
 > `server/db/postgres/README.md`. This is the ordered plan for the remaining
@@ -118,6 +130,26 @@ of which 906 are portable work).
   loads before db/index installs the backend (§5.5's trap in a new form —
   `services/task-metrics.ts` had module-level prepares). Keep SQL strings at
   module level; call `store().prepare` inside functions.
+- **Read-modify-write on a JSON-array column is a lost update.** Distinct from
+  the check-then-write shape above: nothing is *checked*, so it reads as a plain
+  port. `blocks-recur.excludeBlockOccurrence` SELECTed the template's
+  `recurrence_exdates`, appended a day, and UPDATEd it back. With no await
+  between them that was safe for free; with one, deleting two occurrences of the
+  same template concurrently makes the second write drop the first's date and
+  the occurrence resurrects on the next read. Fixed with a compare-and-swap:
+  guard the UPDATE on the exact value read (`COALESCE(col,'') = ?` — portable,
+  unlike `IS`/`IS NOT DISTINCT FROM`), retry against the fresher list on
+  `changes === 0`, throw after 5 losses rather than silently skip the write.
+  A plain transaction does NOT fix this under Postgres READ COMMITTED. Grep a
+  file for `JSON.stringify` next to an UPDATE before porting it.
+
+## Known N+1s the port preserves (do not fix during pass A)
+
+`services/blocks.enrichApi` calls `rationaleOf` once per row — free on
+better-sqlite3, one round trip per block under Postgres (a week view is ~100).
+It was already per-row before the port; batching it is a behavior change, so it
+belongs after the cutover, alongside the batched `entityCategoryNamesByIds` /
+`externalSourceByBlockId` reads that already sit beside it.
 
 ## Per-file loop
 
