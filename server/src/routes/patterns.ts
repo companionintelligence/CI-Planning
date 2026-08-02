@@ -290,7 +290,7 @@ export function patternsRouter() {
     const pattern = await store().prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner);
     if (!pattern) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as { date?: string; block_id?: string | null };
-    const result = placePatternOnDay(owner, id, { date: body.date, blockId: body.block_id ?? null });
+    const result = await placePatternOnDay(owner, id, { date: body.date, blockId: body.block_id ?? null });
 
     // Return the freshly placed (or already-on-the-day pattern-marked) blocks
     // so the client can patch its block store without waiting on SSE.

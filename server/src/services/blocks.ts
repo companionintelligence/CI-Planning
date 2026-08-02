@@ -95,7 +95,12 @@ async function blockRowsForQuery(ownerId: string, query: ListBlocksQuery): Promi
   const { from, to, state } = query;
 
   if (from && to && !state) {
-    ensurePatternsForRange(ownerId, from, to);
+    // Awaited as of the patterns-place port — it was the one call site left deliberately
+    // sync back in part 8, when the engine was still synchronous. It MUST complete before
+    // the select below: it materializes the very rows that select is about to read, so a
+    // floated promise would let the day view return without the routines it just placed
+    // and only show them on a later refetch.
+    await ensurePatternsForRange(ownerId, from, to);
     await ensureRecurringBlocksForRange(ownerId, from, to);
     const fetched = await db.select().from(timeBlocks)
       .where(and(eq(timeBlocks.ownerId, ownerId), gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));

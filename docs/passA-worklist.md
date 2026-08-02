@@ -2,7 +2,7 @@
 
 > ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–4 COMPLETE, wave 5 at 8 of 17. Suite verified after every one
+> **DONE — waves 0–4 COMPLETE, wave 5 at 9 of 17. Suite verified after every one
 > of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
 > `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
 > test, which runs once per backend).**
@@ -20,10 +20,11 @@
 >   .prepare(`…`)
 > ```
 >
-> which is the dominant formatting in this codebase. The real figure is **261
-> statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
+> which is the dominant formatting in this codebase. The figure at the time of that
+> correction was **261 statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
 > `db/store.ts`) and one is `agents/groom.ts`'s sqlite-vec residue (below), so
-> **23 real files remain**, not 15.
+> **23 real files remained**, not 15. (Now 22 / 248 statements — patterns-place has
+> since landed.)
 >
 > **The ORIGINAL wave table at the bottom of this document was right all along.**
 > Its wave 6 / 7 / 8 totals (73 / 117 / 4 statements) match a correct count
@@ -60,21 +61,31 @@
 >
 > | Wave | Files left | Stmts | Which |
 > |---|---|---|---|
-> | 5 | 9 | 54 | patterns-place (13), connectors/memory (9), services/memory (6), calibration (14), render-copy (3), connectors/base (3), connectors/index (2), mcp/client (2), flags (2) |
+> | 5 | 8 | 41 | connectors/memory (9), services/memory (6), calibration (14), render-copy (3), connectors/base (3), connectors/index (2), mcp/client (2), flags (2) |
 > | 6 | 7 | 73 | block-task-sync (21), day-types (17), reminders (14), sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4) |
 > | 7 | 6 | 117 | tags (60), autoplan (47), category-prefs (4), crypto/index (4), scheduler (1), models (1) |
 > | 8 | 1 | 4 | routes/sse |
-> | — | 23 | **248** | + 8 seam + 5 groom = 261 total |
+> | — | 22 | **235** | + 8 seam + 5 groom = 248 total |
 >
-> - **Wave 5 (9 files left of 17)** — ✓ motivation, ✓ series-scope,
+> - **Wave 5 (8 files left of 17)** — ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
->   commit as required), ✓ task-close, ✓ **objectives**. Remaining: the nine in
->   the table above — patterns-place, connectors/memory, services/memory, and the
->   six the single-line grep wrongly cleared (calibration, render-copy,
+>   commit as required), ✓ task-close, ✓ **objectives**, ✓ **patterns-place**.
+>   Remaining: the eight in the table above — connectors/memory, services/memory,
+>   and the six the single-line grep wrongly cleared (calibration, render-copy,
 >   connectors/base, connectors/index, mcp/client, flags).
->   `patterns-place.ensurePatternsForRange` is still called UNAWAITED from
->   services/blocks.blockRowsForQuery — the one call site left deliberately sync
->   in part 8. Add the await when it ports.
+>
+>   **`engine/patterns-place.ts` is DONE** (part 26). 13 statements, not the 5 the
+>   single-line grep showed. The debt from part 8 is PAID: `ensurePatternsForRange`
+>   is now awaited in `services/blocks.blockRowsForQuery`, and the await had to go
+>   *before* the select on the next lines — that call materializes the very rows the
+>   select reads, so a floated promise would have returned the day view without the
+>   routines it had just placed, surfacing them only on a later refetch. tsc could
+>   not see it (void return). `placePatternOnDay`'s `sqlite.transaction(fn)()`
+>   became `await store().transaction(async () => …)`; its reused `ins` statement
+>   stays a plain `store().prepare` because `prepare` is synchronous on the facade.
+>   The container INSERT … RETURNING was the `await f(…).id` trap in the wild —
+>   parenthesised. `tagsOf`, `localDaysInRange` and `validatePatternRule` stayed
+>   sync (their callees are wave 6/7 files that have not ported yet).
 >
 >   **`services/objectives.ts` is DONE** (part 25). 905 lines, ~50 raw refs, 25
 >   exported functions; cascade was routes/objectives (12 sites),
