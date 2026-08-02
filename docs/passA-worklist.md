@@ -19,11 +19,15 @@
 > ```
 >
 > Actual remaining, by wave:
-> - **Wave 5 (7 files left of 11)** — ✓ motivation, ✓ series-scope,
->   ✓ triality-vector, ✓ triality. **Next = groom + possibles** (**a genuine
->   CIRCULAR import — groom imports promotePossible, possibles imports
->   dedupePossibles; they must land in ONE commit**). Then connectors/memory,
->   services/memory, objectives, task-close, patterns-place.
+> - **Wave 5 (4 files left of 11)** — ✓ motivation, ✓ series-scope,
+>   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
+>   commit as required), ✓ task-close. Remaining: **objectives** (15 stmts, 9
+>   importers — the big one; note task-promotion already calls its
+>   recomputeProgress/linkObjectiveTask synchronously, so that cascade lands
+>   here), connectors/memory, services/memory, patterns-place.
+>   `patterns-place.ensurePatternsForRange` is still called UNAWAITED from
+>   services/blocks.blockRowsForQuery — the one call site left deliberately sync
+>   in part 8. Add the await when it ports.
 >   `patterns-place.ensurePatternsForRange` is called unawaited from
 >   services/blocks.blockRowsForQuery — the one call site left deliberately sync
 >   in part 8. Add the await when it ports.
@@ -222,10 +226,9 @@ of which 906 are portable work).
   grep -rn "^const .*sqlite\.prepare" server/src --include=*.ts
   ```
 
-  **Repo-wide there are 47 left, and 44 of them are in `services/tags.ts`**
-  (wave 7) — the earlier "13" counted wave-5 files only. In wave 5 just 3 remain:
-  `possibles` has 2 (selectPossibleTags, insertTaskTag) and `task-close` has 1.
-  `motivation`'s, `triality`'s and all 9 of `triality-vector`'s are already fixed. Convert each to a module-level SQL string plus an in-function
+  **Wave 5 is now CLEAR of them; all 44 that remain are in `services/tags.ts`**
+  (wave 7) — the earlier "13" counted wave-5 files only, and the true repo-wide
+  figure was 47. Convert each to a module-level SQL string plus an in-function
   `store().prepare` — and note the suite will NOT catch a miss if the module
   happens to be imported after boot in test order, so fix them on sight rather
   than waiting for red.
