@@ -13,7 +13,10 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sqlite } from '../db/index.js';
+// Side-effect import: opening db/index.js runs migrations and installs the store
+// facade (setStore) — without it store() throws before the first statement.
+import '../db/index.js';
+import { store } from '../db/store.js';
 import { extractTasks, type ExtractedTask } from '../agents/extract.js';
 import { upsertPossible } from '../agents/ingest.js';
 import { promotePossibles } from '../agents/groom.js';
@@ -51,8 +54,8 @@ function parseArgs(argv: string[]): Args {
  * DESTRUCTIVE. Deletes every task, possible, block and tag in the database — for ALL
  * owners, not just the seed owner. Only ever reached via an explicit `--reset`.
  */
-function resetData() {
-  sqlite.exec(`
+async function resetData() {
+  await store().exec(`
     DELETE FROM possible_task_tags;
     DELETE FROM entity_tags;
     DELETE FROM time_blocks;
@@ -63,6 +66,10 @@ function resetData() {
   `);
   logger.info('seed: reset existing tasks/possibles/blocks/tags');
 }
+
+/** COUNT(*)-style scalar read; a SELECT COUNT always returns a row, `?? 0` is for the type. */
+const count = async (sql: string, ...params: unknown[]) =>
+  (await store().prepare(sql).get<{ n: number }>(...params))?.n ?? 0;
 
 /** Run async workers over items with a bounded concurrency pool. */
 async function pool<T>(items: T[], concurrency: number, worker: (item: T, i: number) => Promise<void>) {
@@ -101,7 +108,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   logger.info('seed: starting', args);
 
-  if (args.reset) resetData();
+  if (args.reset) await resetData();
 
   const google = createFixtureGoogleClient();
   const llmUp = args.useLlm && (await isAvailable());
@@ -142,9 +149,9 @@ async function main() {
   const events = await google.listEvents();
   await pool(events, 3, async (event: CalendarEvent) => {
     // Mirror the event as a read-only meeting block.
-    const exists = sqlite.prepare("SELECT id FROM time_blocks WHERE source_kind='gcal' AND source_ref=? AND owner_id=?").get(event.id, SYSTEM_OWNER);
+    const exists = await store().prepare("SELECT id FROM time_blocks WHERE source_kind='gcal' AND source_ref=? AND owner_id=?").get(event.id, SYSTEM_OWNER);
     if (!exists) {
-      sqlite
+      await store()
         .prepare(
           `INSERT INTO time_blocks (id, task_id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, source_ref, status)
            VALUES (uuid7(), NULL, ?, ?, 'meeting', ?, ?, 1, 0, 'gcal', ?, 'planned')`
@@ -172,31 +179,33 @@ async function main() {
   logger.info('seed: promoted', promoted);
 
   // 5) Top up to the target with deterministic filler so the deliverable is guaranteed.
-  let taskCount = (sqlite.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number }).n;
+  let taskCount = await count('SELECT COUNT(*) AS n FROM tasks');
   const fillerNeeded = Math.max(0, args.target - taskCount);
   if (fillerNeeded > 0) {
-    const fillerTagId = (sqlite.prepare("INSERT OR IGNORE INTO tags (id, owner_id, name) VALUES (uuid7(), ?, 'seed-filler')").run(SYSTEM_OWNER),
-      sqlite.prepare("SELECT id FROM tags WHERE owner_id = ? AND name='seed-filler'").get(SYSTEM_OWNER) as { id: string }).id;
+    await store().prepare("INSERT OR IGNORE INTO tags (id, owner_id, name) VALUES (uuid7(), ?, 'seed-filler')").run(SYSTEM_OWNER);
+    const fillerTag = await store().prepare("SELECT id FROM tags WHERE owner_id = ? AND name='seed-filler'").get<{ id: string }>(SYSTEM_OWNER);
+    if (!fillerTag) throw new Error('seed-filler tag missing right after INSERT OR IGNORE');
+    const fillerTagId = fillerTag.id;
     // owner_id was a hardcoded `1` from the pre-0030 integer-id era — no owner row
     // '1' exists post-uuidv7, so with foreign_keys=ON every filler insert would fail.
-    const insert = sqlite.prepare(
+    const insert = store().prepare(
       `INSERT INTO tasks (id, title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (uuid7(), ?, ?, ?, 'agent', 'open', ?) RETURNING id`
     );
-    const tx = sqlite.transaction((n: number) => {
-      for (let i = 1; i <= n; i++) {
-        const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), SYSTEM_OWNER, 15 + (i % 4) * 15) as { id: string };
+    await store().transaction(async () => {
+      for (let i = 1; i <= fillerNeeded; i++) {
+        const r = await insert.get<{ id: string }>(`Follow-up task ${i}`, 3 + (i % 3), SYSTEM_OWNER, 15 + (i % 4) * 15);
+        if (!r) throw new Error('filler task insert returned no row');
         // entity_tags is the sole task-tag store (CON-3 / migration 0041).
-        sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)").run(r.id, fillerTagId);
+        await store().prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)").run(r.id, fillerTagId);
       }
     });
-    tx(fillerNeeded);
     logger.warn(`seed: added ${fillerNeeded} deterministic filler tasks to reach target ${args.target}`);
   }
 
-  taskCount = (sqlite.prepare('SELECT COUNT(*) AS n FROM tasks').get() as { n: number }).n;
-  const possibleCount = (sqlite.prepare('SELECT COUNT(*) AS n FROM possible_tasks').get() as { n: number }).n;
-  const blockCount = (sqlite.prepare('SELECT COUNT(*) AS n FROM time_blocks').get() as { n: number }).n;
-  const pendingCount = (sqlite.prepare("SELECT COUNT(*) AS n FROM possible_tasks WHERE status='pending'").get() as { n: number }).n;
+  taskCount = await count('SELECT COUNT(*) AS n FROM tasks');
+  const possibleCount = await count('SELECT COUNT(*) AS n FROM possible_tasks');
+  const blockCount = await count('SELECT COUNT(*) AS n FROM time_blocks');
+  const pendingCount = await count("SELECT COUNT(*) AS n FROM possible_tasks WHERE status='pending'");
 
   console.log('\n=== Seed summary ===');
   console.log(`LLM extraction:     ${llmUp ? 'ON (' + args.tier + ')' : 'OFF (fallback)'}`);

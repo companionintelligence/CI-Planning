@@ -22,6 +22,32 @@ Two prior findings still bind:
 - **`tsc` does not see tests** (§5.4). The suite run is the signal for the
   test half of each cascade.
 
+## New hazard: implicit atomicity from synchronicity
+
+Not in the handoff. Several files document multi-statement safety as a
+*property of better-sqlite3 being synchronous* — no await between statements
+means no interleaving from concurrent requests:
+
+- `routes/accounts.ts` DELETE handler: "Check-then-delete is safe from
+  interleaving here: better-sqlite3 is synchronous and this handler has no
+  await between the count and the delete." Once `operatorCount()` /
+  `deleteOwner()` go async, two concurrent DELETEs can both pass the
+  last-operator check and leave zero operators.
+- `services/block-task-sync.ts`: "raw `sqlite` (synchronous) so a write can't
+  be interrupted mid-flight".
+- `services/{tasks,tags,objectives,patterns,block-templates,flight-plan,task-promotion}.ts`
+  all carry "better-sqlite3 is synchronous; these are plain sync functions"
+  headers.
+
+Every `await` is an interleaving point — even on the SQLite backend
+(concurrent handlers' microtask chains interleave). When porting each of these
+files: wrap formerly-contiguous multi-statement sequences in
+`store().transaction(…)`, and convert cross-request check-then-write guards to
+single guarded statements (the pattern `routes/accounts.ts` PATCH already
+uses for role demotion) — a plain transaction is NOT enough for those under
+Postgres READ COMMITTED. Grep the file for "synchronous", "no await", and
+"atomic" before starting it.
+
 ## Waves
 
 Statement counts are src-only (tests add ~1,678 more across 198 files).
