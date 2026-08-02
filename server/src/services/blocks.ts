@@ -1,5 +1,5 @@
 import { and, eq, gte, inArray, lte } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
 import { store } from '../db/store.js';
 import { timeBlocks } from '../db/schema.js';
 import { toApi, toApiList, toBlockApi } from '../lib/serialize.js';
@@ -576,7 +576,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // on the same path a REST PATCH does; skipping it would break multi-device sync).
   // Only the success path writes, so there is exactly one stamp site (updateTask's
   // error-path stamp has no analogue here — the guards above all return before any write).
-  if (updatedKeys.length > 0) stampRow(sqlite, 'block', id, updatedKeys);
+  if (updatedKeys.length > 0) await stampRow('block', id, updatedKeys);
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `block:${id}` });
   return { ok: true, block, api: out, updatedKeys, syncedTaskId };
@@ -616,7 +616,7 @@ export async function moveBlockGroup(ownerId: string, id: string, deltaMinutes: 
       // on the owner-scoped UPDATE landing (stampRow keys on id alone; see
       // cascadeArchiveToDescendants) even though `members` is already owner-scoped.
       const info = await upd.run(shift(m.start_at), shift(m.end_at), m.id, ownerId);
-      if (info.changes > 0) stampRow(sqlite, 'block', m.id, ['startAt', 'endAt']);
+      if (info.changes > 0) await stampRow('block', m.id, ['startAt', 'endAt']);
     }
   });
 
@@ -657,7 +657,7 @@ export async function promoteBlockToScheduled(ownerId: string, id: string, input
   // Phase L: every field written here is mergeable, so without the stamp a queued op
   // still holding block_type='concept' would win LWW and un-promote the Plan. The
   // owner-scoped `existing` guard above means this row is ours.
-  stampRow(sqlite, 'block', id, ['blockType', 'allDay', 'startAt', 'endAt', 'goalStartDate']);
+  await stampRow('block', id, ['blockType', 'allDay', 'startAt', 'endAt', 'goalStartDate']);
   const out = toApi(block);
   // REQ2: a promoted concept linked to a task gets concrete times — mirror them.
   const syncedTaskId = await syncTaskFromBlock(id, ownerId);

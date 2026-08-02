@@ -25,7 +25,6 @@
  * construction: outcome stamps are write-once, deferrals consume their stale
  * blocks, and the revive pass only sees rows still stuck in 'missed'.
  */
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { localISODate } from '../lib/dates.js';
@@ -239,7 +238,7 @@ export async function rescheduleTask(taskId: string, days: number, owner: string
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   await store().transaction(async () => {
     const info = await store().prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
-    if (info.changes > 0) stampRow(sqlite, 'task', taskId, ['scheduledFor', 'status']);
+    if (info.changes > 0) await stampRow('task', taskId, ['scheduledFor', 'status']);
     // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
     for (const b of await store().prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') AND is_locked = 0 RETURNING id`).all<{ id: string }>(taskId, owner)) {
       removeEntityTags('time_block', b.id);

@@ -1,7 +1,4 @@
 import Router from '@koa/router';
-// `sqlite` remains ONLY as stampRow's handle argument — it dies when sync/apply.ts
-// ports to the facade. The route's own statements go through store().
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -328,7 +325,7 @@ export function blocksRouter() {
       // still calling this block 'planned' would win LWW and resurrect the abandoned
       // attempt. (revertTaskPlacementStatus stamps the task side itself.)
       const info = await store().prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
-      if (info.changes > 0) stampRow(sqlite, 'block', id, ['status']);
+      if (info.changes > 0) await stampRow('block', id, ['status']);
       staged = (await store()
         .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
         .run(owner, block.task_id, nextPos)).changes > 0;

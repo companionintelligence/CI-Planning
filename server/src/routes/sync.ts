@@ -1,7 +1,4 @@
 import Router from '@koa/router';
-// `sqlite` remains ONLY as applyOp's handle argument — it dies when sync/apply.ts
-// ports to the facade. The route's own statements go through store().
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { applyOp, type Op, type ApplyResult } from '../sync/apply.js';
@@ -58,7 +55,7 @@ export function syncRouter() {
             op.entity === 'task' && op.fields && 'status' in op.fields
               ? (await store().prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get<{ status: string }>(op.entityId, ownerId))?.status
               : undefined;
-          const result = applyOp(sqlite, op, ownerId);
+          const result = await applyOp(op, ownerId);
           const statusAfter = result.applied['status'] as string | undefined;
           if (
             statusBefore !== undefined &&

@@ -2,7 +2,7 @@
 
 > ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–5 COMPLETE; wave 7's `engine/autoplan.ts` taken EARLY to unblock wave 6. Suite verified after every one
+> **DONE — waves 0–6 COMPLETE (autoplan taken early from wave 7 to unblock wave 6). Suite verified after every one
 > of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
 > `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
 > test, which runs once per backend).**
@@ -23,8 +23,8 @@
 > which is the dominant formatting in this codebase. The figure at the time of that
 > correction was **261 statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
 > `db/store.ts`) and one is `agents/groom.ts`'s sqlite-vec residue (below), so
-> **23 real files remained**, not 15. (Now **13 real files / 147 statements** — wave 5
-> closed, and autoplan landed out of order; see the deadlock note below.)
+> **23 real files remained**, not 15. (Now **6 real files / 74 statements** — waves 5
+> and 6 are both closed.)
 >
 > **The corrected accounting is now CONFIRMED.** With wave 5 empty, the remaining
 > per-wave totals are 73 / 117 / 4 — matching the original wave table's numbers
@@ -67,10 +67,10 @@
 > | Wave | Files left | Stmts | Which |
 > |---|---|---|---|
 > | 5 | 0 | 0 | **CLOSED** |
-> | 6 | 7 | 73 | block-task-sync (21), day-types (17), reminders (14), sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4) |
-> | 7 | 5 | 70 | tags (60), category-prefs (4), crypto/index (4), scheduler (1), models (1) — ✓ autoplan done early |
+> | 6 | 0 | 0 | **CLOSED** |
+> | 7 | 5 | 70 | **tags (60)**, category-prefs (4), crypto/index (4), scheduler (1), models (1) — ✓ autoplan done early |
 > | 8 | 1 | 4 | routes/sse |
-> | — | 13 | **147** | + 8 seam + 5 groom = 160 total |
+> | — | 6 | **74** | + 8 seam + 5 groom = 87 total |
 >
 > - **Wave 5 — CLOSED, 17 of 17.** ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
@@ -181,7 +181,16 @@
 >   another file.
 > - **Wave 8 (1 file)** — routes/sse (the event-bus design decision).
 >
-> **`sync/apply.ts` (wave 6) is the one that pays a debt**: every remaining raw
+> **`sync/apply.ts` PAID ITS DEBT (part 35).** `applyOp`, `stampRow` and
+`applyMonotonic` no longer take a raw `Database` handle — that parameter existed only
+so they could run inside a synchronous `sqlite.transaction()` callback, and
+`store().transaction()` takes an async one. 81 call sites lost the argument and the
+raw `sqlite` import is now gone from routes/sync, routes/blocks, engine/extend-block,
+engine/review, services/blocks, services/tasks, services/task-promotion,
+services/objectives and services/block-task-sync. Outside the seam and `boot.ts`, the
+only files still importing it are the ones genuinely left to port.
+
+**`sync/apply.ts` (wave 6) is the one that pays a debt**: every remaining raw
 > `sqlite` import in already-ported files exists ONLY to pass the handle to
 > `stampRow`/`applyOp`. Porting it removes the last raw-handle argument from
 > routes/sync, routes/blocks, engine/extend-block, engine/review, services/blocks,

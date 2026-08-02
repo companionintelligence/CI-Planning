@@ -12,13 +12,12 @@
  * near-midnight placement lands on the correct calendar day (DST included).
  *
  * These go through the store facade, so they are async. The old header claimed raw
- * `sqlite` being synchronous meant "a write can't be interrupted mid-flight"; that is
+ * better-sqlite3 being synchronous meant "a write can't be interrupted mid-flight"; that is
  * no longer true, so the two status guards whose check was separated from their write
  * by an await are now folded INTO the write —
  * [[applyTaskPlacementStatus]] and [[revertTaskPlacementStatus]]. See
  * docs/passA-worklist.md, "implicit atomicity".
  */
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { localDateInTZ, utcToZonedWallTime, zonedWallTimeToUTC } from '../lib/tz.js';
@@ -97,7 +96,7 @@ export async function syncTaskFromBlock(blockId: string, ownerId: string): Promi
   // whose BLOCK side this PR stamps — leaving the task side unstamped would let a stale
   // queued task op drag scheduled_for/task_time back out of lockstep with the block.
   // (`occurrence_date` is outside the sync allowlist, so it needs no stamp.)
-  if (info.changes > 0) stampRow(sqlite, 'task', block.task_id, ['scheduledFor', 'taskTime']);
+  if (info.changes > 0) await stampRow('task', block.task_id, ['scheduledFor', 'taskTime']);
 
   await syncTaskReminders(ownerId, block.task_id);
   return block.task_id;
@@ -117,7 +116,7 @@ export async function mirrorBlockStatusToTask(blockId: string, ownerId: string):
     await store()
       .prepare(`UPDATE tasks SET status = 'done', completed_at = ? WHERE id = ? AND owner_id = ?`)
       .run(new Date().toISOString(), block.task_id, ownerId);
-    stampRow(sqlite, 'task', block.task_id, ['status', 'completedAt']);
+    await stampRow('task', block.task_id, ['status', 'completedAt']);
     // Re-derive reminders AFTER the status flip so a same-PATCH time+complete change
     // doesn't leave auto-reminders firing for a now-done task (syncTaskReminders
     // clears them for a done task).
@@ -130,7 +129,7 @@ export async function mirrorBlockStatusToTask(blockId: string, ownerId: string):
     await store()
       .prepare(`UPDATE tasks SET status = 'scheduled', completed_at = NULL WHERE id = ? AND owner_id = ?`)
       .run(block.task_id, ownerId);
-    stampRow(sqlite, 'task', block.task_id, ['status', 'completedAt']);
+    await stampRow('task', block.task_id, ['status', 'completedAt']);
     await syncTaskReminders(ownerId, block.task_id);
     return block.task_id;
   }
@@ -178,7 +177,7 @@ export async function mirrorTaskStatusToBlocks(taskId: string, ownerId: string):
   const update = await store().prepare(`UPDATE time_blocks SET status = ? WHERE id = ? AND owner_id = ?`);
   for (const { id } of rows) {
     update.run(to, id, ownerId);
-    stampRow(sqlite, 'block', id, ['status']);
+    await stampRow('block', id, ['status']);
   }
   return rows.map((r) => r.id);
 }
@@ -235,7 +234,7 @@ export async function applyTaskPlacementStatus(taskId: string, ownerId: string):
     )
     .run(taskId, ownerId);
   if (info.changes === 0) return null;
-  stampRow(sqlite, 'task', taskId, ['status']);
+  await stampRow('task', taskId, ['status']);
   return taskId;
 }
 
@@ -262,7 +261,7 @@ export async function revertTaskPlacementStatus(taskId: string, ownerId: string)
     )
     .run(taskId, ownerId, taskId, ownerId);
   if (info.changes === 0) return null;
-  stampRow(sqlite, 'task', taskId, ['status']);
+  await stampRow('task', taskId, ['status']);
   await syncTaskReminders(ownerId, taskId);
   return taskId;
 }
@@ -317,7 +316,7 @@ export async function syncBlockFromTask(taskId: string, ownerId: string, opts: {
   // `clientTs >= ''`) and snaps the block back, leaving block and task desynced — the one
   // invariant this module exists to hold. Gated on the owner-scoped UPDATE landing, since
   // stampRow keys on id alone. (`is_auto` is outside the sync allowlist, so it needs none.)
-  if (info.changes > 0) stampRow(sqlite, 'block', block.id, ['startAt', 'endAt']);
+  if (info.changes > 0) await stampRow('block', block.id, ['startAt', 'endAt']);
   return block.id;
 }
 
@@ -345,7 +344,7 @@ export async function cancelBlocksForTask(taskId: string, ownerId: string): Prom
     // Owner action (delete/cancel came from the owner), so the block status write is
     // stamped like every other mirror in this module — an older queued block op must
     // not revive a cancelled placement through LWW.
-    stampRow(sqlite, 'block', id, ['status']);
+    await stampRow('block', id, ['status']);
   }
   return rows.map((r) => r.id);
 }

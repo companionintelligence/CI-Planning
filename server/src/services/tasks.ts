@@ -1,5 +1,5 @@
 import { and, eq, gt, asc } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
 import { store } from '../db/store.js';
 import { tasks, taskDependencies } from '../db/schema.js';
 import { setDependencies, DependencyCycleError } from '../engine/deps.js';
@@ -41,8 +41,8 @@ import { truncateSeriesFrom } from '../engine/series-scope.js';
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase
  * row shape for `taskToApi`), so the writers are async. Everything else goes through
- * the store facade; the raw `sqlite` handle survives only as `stampRow`'s argument
- * (dies when sync/apply.ts ports).
+ * the store facade. The raw `sqlite` handle that used to be threaded into `stampRow`
+ * is gone — sync/apply.ts ported.
  */
 
 /** A full drizzle `tasks` row (camelCase) — the shape `taskToApi` serializes. */
@@ -481,7 +481,7 @@ export async function updateTask(
         // rejected, so stamp version/field_ts here (moved in from routes/tasks.ts at
         // W3.3b) exactly as the route did on this 409 path — same target, same fields,
         // same guard — so REST stays byte-equivalent and a GraphQL update stamps too.
-        if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
+        if (updatedFields.length > 0) await stampRow('task', targetId, updatedFields);
         return { ok: false, error: 'dependency_cycle', detail: err.message, targetId, updatedFields };
       }
       throw err;
@@ -577,7 +577,7 @@ export async function updateTask(
   // updateTask mutation both version their column writes — same target, same fields,
   // same guard (`updatedFields.length > 0`) the route used, so REST stays byte-equivalent
   // (the route stamped after the service returned; audit already fired inside the service).
-  if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
+  if (updatedFields.length > 0) await stampRow('task', targetId, updatedFields);
 
   return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds, generated };
 }
@@ -608,7 +608,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   // would make cancelling irreversible through sync. So the server clock is the only
   // thing stopping a queued op with an older clientTs from setting status back to
   // 'open' and resurrecting this task — same guard the archive fields rely on.
-  stampRow(sqlite, 'task', id, ['status']);
+  await stampRow('task', id, ['status']);
   await syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
   // A cancelled task's placements settle with it — a manual block is invisible to
   // reflow's agent-only GC and would otherwise stay on the board looking live.
@@ -644,7 +644,7 @@ export async function promoteToHabit(ownerId: string, id: string): Promise<Promo
   // `subtype` is mergeable and unpinned, so without the server clock a queued op
   // carrying the old subtype would win LWW and silently demote the habit — same
   // hole as the soft-delete's status write above.
-  stampRow(sqlite, 'task', id, ['subtype']);
+  await stampRow('task', id, ['subtype']);
   await ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
   writeAudit({ ownerId, actor: 'owner', action: 'promote', entity: `task:${id}` });
   return { ok: true, task };
@@ -725,7 +725,7 @@ export async function skipRecurringInstance(ownerId: string, id: string): Promis
   // by id alone with no owner to gate on, while the check above has already proven the row
   // is ours. (The template's EXDATE write needs no stamp — recurrence_exdates isn't in the
   // sync allowlist, so no op can race it.)
-  stampRow(sqlite, 'task', id, ['status']);
+  await stampRow('task', id, ['status']);
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   writeAudit({ ownerId, actor: 'owner', action: 'skip', entity: `task:${id}` });
   return { ok: true, task, skipped: res.date };

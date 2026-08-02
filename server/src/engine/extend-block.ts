@@ -1,6 +1,3 @@
-// `sqlite` remains ONLY as stampRow's handle argument — it dies when sync/apply.ts
-// ports to the facade. The engine's own statements go through store().
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { stampRow } from '../sync/apply.js';
@@ -182,13 +179,13 @@ export async function extendBlock(
       const anchor = await store()
         .prepare(`UPDATE time_blocks SET end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`)
         .run(newEndAt, now, blockId, owner);
-      if (anchor.changes > 0) stampRow(sqlite, 'block', blockId, ['endAt']);
+      if (anchor.changes > 0) await stampRow('block', blockId, ['endAt']);
       const upd = store().prepare(
         `UPDATE time_blocks SET start_at = ?, end_at = ?, last_moved_at = ? WHERE id = ? AND owner_id = ?`,
       );
       for (const m of movedSet) {
         const info = await upd.run(m.after.start_at, m.after.end_at, now, m.block_id, owner);
-        if (info.changes > 0) stampRow(sqlite, 'block', m.block_id, ['startAt', 'endAt']);
+        if (info.changes > 0) await stampRow('block', m.block_id, ['startAt', 'endAt']);
       }
     });
     committed = true;

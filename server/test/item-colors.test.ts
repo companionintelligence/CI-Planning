@@ -51,13 +51,13 @@ describe('objectives.color_token', () => {
     expect(cleared.body.objective.color_token).toBeNull();
   });
 
-  it('syncs through applyOp (allowlisted) while derived fields still drop', () => {
+  it('syncs through applyOp (allowlisted) while derived fields still drop', async () => {
     sqlite.prepare(
       `INSERT INTO objectives (id, owner_id, title, level, created_at, updated_at)
        VALUES ('o-color', ?, 'Synced', 'objective', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')`,
     ).run(SYSTEM_OWNER);
 
-    const result = applyOp(sqlite, {
+    const result = await applyOp({
       opId: 'op-color-1', entity: 'objective', entityId: 'o-color',
       fields: { color_token: 'tag-7', level: 'goal' },
       baseVersion: 1, clientTs: '2026-07-02T10:00:00.000Z',

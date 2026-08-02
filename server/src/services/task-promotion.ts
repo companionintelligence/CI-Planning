@@ -16,10 +16,9 @@
  *     but only while it's still *pristine* (top-level, no sub-objectives) — once the
  *     user organizes it under a project/goal it becomes theirs and is left alone.
  *
- * Reads/writes go through the store facade; the raw `sqlite` handle survives only as
- * the argument to `stampRow` (dies when sync/apply.ts ports).
+ * Reads/writes go through the store facade. The raw `sqlite` handle this file used to
+ * thread into `stampRow` is gone — sync/apply.ts ported.
  */
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { broadcast } from '../routes/sse.js';
@@ -74,7 +73,7 @@ export async function ensureTaskPromoted(parentTaskId: string, ownerId: string):
       )
       .run(objId, ownerId, parent.title, now, now, parentTaskId);
     // Sync: stamp the created objective's fields so an older queued op can't clobber them.
-    stampRow(sqlite, 'objective', objId, ['title', 'status', 'horizon', 'cadence', 'priority']);
+    await stampRow('objective', objId, ['title', 'status', 'horizon', 'cadence', 'priority']);
     created = true;
   }
 

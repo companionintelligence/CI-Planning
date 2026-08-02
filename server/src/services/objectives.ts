@@ -1,4 +1,3 @@
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
@@ -110,7 +109,7 @@ export async function linkObjectiveTask(objectiveId: string, taskId: string): Pr
       .prepare(`INSERT INTO objective_tasks (objective_id, task_id, id, linked) VALUES (?, ?, ?, 1)`)
       .run(objectiveId, taskId, linkId);
   }
-  stampRow(sqlite, 'objective_task', linkId, ['linked']);
+  await stampRow('objective_task', linkId, ['linked']);
   return linkId;
 }
 
@@ -128,7 +127,7 @@ export async function unlinkObjectiveTask(objectiveId: string, taskId: string): 
   await store()
     .prepare(`UPDATE objective_tasks SET id = ?, linked = 0 WHERE objective_id = ? AND task_id = ?`)
     .run(linkId, objectiveId, taskId);
-  stampRow(sqlite, 'objective_task', linkId, ['linked']);
+  await stampRow('objective_task', linkId, ['linked']);
   return linkId;
 }
 
@@ -614,7 +613,7 @@ export async function createObjective(owner: string, body: CreateObjectiveInput)
   if (info.changes === 0) return { ok: false, error: 'parent_not_found' };
 
   await restampLevels(id);
-  stampRow(sqlite, 'objective', id, ['title', 'description', 'parentId', 'horizon', 'status', 'cadence', 'targetDate', 'categoryId', 'priority', 'colorToken']);
+  await stampRow('objective', id, ['title', 'description', 'parentId', 'horizon', 'status', 'cadence', 'targetDate', 'categoryId', 'priority', 'colorToken']);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `objective:${id}` });
   return { ok: true, row: (await store().prepare(`SELECT * FROM objectives WHERE id = ?`).get<ObjectiveRow>(id))! };
 }
@@ -692,7 +691,7 @@ export async function updateObjective(owner: string, id: string, body: UpdateObj
     color_token: 'colorToken',
   };
   const stamped = Object.keys(body).map((k) => patchToCamel[k]).filter(Boolean);
-  if (stamped.length > 0) stampRow(sqlite, 'objective', id, stamped);
+  if (stamped.length > 0) await stampRow('objective', id, stamped);
 
   writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `objective:${id}` });
   return { ok: true, row: (await store().prepare(`SELECT * FROM objectives WHERE id = ?`).get<ObjectiveRow>(id))! };
@@ -756,7 +755,7 @@ export async function cascadeArchiveToDescendants(owner: string, id: string, arc
       .prepare(`UPDATE objectives SET archived_at = ?, archive_root_id = ? WHERE id = ? AND owner_id = ?`)
       .run(archivedAt, id, child, owner);
     if (info.changes === 0) continue; // not ours after all — do not stamp it
-    stampRow(sqlite, 'objective', child, ['archivedAt', 'archiveRootId']);
+    await stampRow('objective', child, ['archivedAt', 'archiveRootId']);
     archived.push(child);
   }
   return archived;
@@ -828,7 +827,7 @@ export async function archiveObjective(owner: string, id: string): Promise<Delet
       .prepare(`UPDATE objectives SET archived_at = ? WHERE id = ? AND owner_id = ? AND archived_at IS NULL`)
       .run(now, id, owner);
     if (info.changes === 0) return false;
-    stampRow(sqlite, 'objective', id, ['archivedAt']);
+    await stampRow('objective', id, ['archivedAt']);
     await cascadeArchiveToDescendants(owner, id, now);
     // The parent just lost a live child: its height (and so its level) may drop, and its
     // rollup must stop counting the archived branch. recomputeProgress is new here — the
@@ -872,7 +871,7 @@ export async function restoreObjective(owner: string, id: string): Promise<Resto
       await store()
         .prepare(`UPDATE objectives SET archived_at = NULL, archive_root_id = NULL, purge_after = NULL WHERE id = ? AND owner_id = ?`)
         .run(rowId, owner);
-      stampRow(sqlite, 'objective', rowId, ['archivedAt', 'archiveRootId']);
+      await stampRow('objective', rowId, ['archivedAt', 'archiveRootId']);
     }
 
     await restampLevels(existing.parent_id);
