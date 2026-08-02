@@ -19,11 +19,13 @@
 > ```
 >
 > Actual remaining, by wave:
-> - **Wave 5 (9 files left of 11)** — ✓ motivation, ✓ series-scope. Remaining:
->   groom + possibles (**a genuine CIRCULAR import — groom imports promotePossible,
->   possibles imports dedupePossibles; they must land in ONE commit**),
->   connectors/memory, services/memory, objectives, task-close, triality-vector →
->   triality (that order: triality imports buildSituationVector), patterns-place.
+> - **Wave 5 (8 files left of 11)** — ✓ motivation, ✓ series-scope,
+>   ✓ triality-vector. **Next = services/triality** (13 raw statements + 1
+>   module-level prepare; it imports buildSituationVector, which is already async,
+>   so it must not be left long). Then: groom + possibles (**a genuine CIRCULAR
+>   import — groom imports promotePossible, possibles imports dedupePossibles;
+>   they must land in ONE commit**), connectors/memory, services/memory,
+>   objectives, task-close, patterns-place.
 >   `patterns-place.ensurePatternsForRange` is called unawaited from
 >   services/blocks.blockRowsForQuery — the one call site left deliberately sync
 >   in part 8. Add the await when it ports.
@@ -216,14 +218,17 @@ of which 906 are portable work).
   grep -rn "^const .*sqlite\.prepare" server/src --include=*.ts
   ```
 
-  `triality-vector` alone has 8 (selectPrefs, selectRecentMood,
-  selectNextFixedBlock, selectTimerRunning, selectLastCompletion,
-  selectLastActivity, selectPriorities, selectCategoryEntries); `possibles` has
-  2 (selectPossibleTags, insertTaskTag); `task-close` and `triality` have 1 each;
-  `motivation`'s is already fixed. Convert each to a module-level SQL string plus
-  an in-function `store().prepare` — and note the suite will NOT catch a miss if
-  the module happens to be imported after boot in test order, so fix them on
-  sight rather than waiting for red.
+  `possibles` has 2 (selectPossibleTags, insertTaskTag); `task-close` and
+  `triality` have 1 each. `motivation`'s and all 9 of `triality-vector`'s are
+  already fixed. Convert each to a module-level SQL string plus an in-function
+  `store().prepare` — and note the suite will NOT catch a miss if the module
+  happens to be imported after boot in test order, so fix them on sight rather
+  than waiting for red.
+
+  A bonus from doing this: `store().prepare` is ALREADY lazy, so any
+  "prepare this one lazily because the table/column may not exist yet" guard
+  written around better-sqlite3's eager prepare can be deleted outright.
+  `triality-vector`'s `selectMotivationEntries` was one.
 - **`Array.forEach` with an async callback drops the promise entirely.** Strictly
   worse than the `.filter`/`.every` case above: filter at least returns truthy
   promises, forEach discards them, so the body runs unordered and detached, any
