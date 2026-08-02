@@ -2,7 +2,13 @@ import { render } from 'solid-js/web';
 import { App } from './App.js';
 import { applyTheme, theme } from './lib/theme.js';
 import { registerSW } from './sw/register.js';
+import { initTelemetry } from './lib/telemetry.js';
 import './index.css';
+
+// Error reporting — opt-in and off by default: a no-op unless VITE_SENTRY_DSN was set
+// when this bundle was BUILT (see docs/operations/error-reporting.md). First, so a
+// throw during the initial mount below is still reported.
+initTelemetry();
 
 // Keep <html> in sync with the persisted theme. The inline script in index.html
 // sets the initial class pre-render (no flash); this reconciles the signal state.

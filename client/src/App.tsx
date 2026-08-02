@@ -13,6 +13,7 @@ import { ElementWizard } from './components/ElementWizard.js';
 import { PlanWeekAssistant } from './components/PlanWeekAssistant.js';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { ErrorBoundaryFallback } from './components/ErrorBoundaryFallback.js';
+import { captureException } from './lib/telemetry.js';
 import { Today }    from './views/Today.js';
 import { Focus }    from './views/Focus.js';
 import { Calendar } from './views/Calendar.js';
@@ -176,8 +177,17 @@ function Shell(props: { children?: any }) {
               fallback here instead of white-screening the whole SPA; the shell chrome
               stays mounted. Both routers (SessionGate + UngatedRouter) render through
               Shell, so this single boundary covers every route. Per-view resource.error
-              guards remain the first line of defense. */}
-          <ErrorBoundary fallback={(err, reset) => <ErrorBoundaryFallback error={err} onReset={reset} />}>
+              guards remain the first line of defense.
+
+              A caught error never reaches window.onerror, so report it here or Sentry
+              never sees the one class of failure that actually breaks a view for the
+              user. No-op unless a VITE_SENTRY_DSN was baked in at build time. */}
+          <ErrorBoundary
+            fallback={(err, reset) => {
+              captureException(err, { boundary: 'root', path: location.pathname });
+              return <ErrorBoundaryFallback error={err} onReset={reset} />;
+            }}
+          >
             {props.children}
           </ErrorBoundary>
         </div>
