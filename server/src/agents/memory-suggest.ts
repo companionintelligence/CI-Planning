@@ -348,7 +348,7 @@ export async function suggestFromMemory(
       continue;
     }
     const task = drafts.get(c.node.id) ?? templateTask(c, tz, fallbackMin);
-    const outcome = upsertPossible(task, MEMORY_SOURCE_KIND, ref, {
+    const outcome = await upsertPossible(task, MEMORY_SOURCE_KIND, ref, {
       node: c.node,
       participants: c.people,
       start: c.start,

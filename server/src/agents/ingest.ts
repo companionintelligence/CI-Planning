@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { extractTasks, type ExtractedTask, type ExtractSource } from './extract.js';
 import { createGoogleClient, type GoogleClient } from '../mcp/google.js';
 import { type ModelTier, OllamaUnavailable } from '../mcp/ollama.js';
@@ -50,24 +50,24 @@ function normTag(name: string): string {
   return name.toLowerCase().replace(/\s+/g, '-').slice(0, 32);
 }
 
-function tagId(name: string): string {
+async function tagId(name: string): Promise<string> {
   const owner = currentOwnerId();
-  const existing = sqlite.prepare('SELECT id FROM tags WHERE owner_id = ? AND name = ?').get(owner, name) as { id: string } | undefined;
+  const existing = await store().prepare('SELECT id FROM tags WHERE owner_id = ? AND name = ?').get<{ id: string }>(owner, name);
   if (existing) return existing.id;
-  return (sqlite.prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get(owner, name) as { id: string }).id;
+  return (await store().prepare('INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id').get<{ id: string }>(owner, name))!.id;
 }
 
 /** Resolve a direction tag id, ensuring it exists as a `direction` tag (the kind the
  *  Auto engine matches pattern-block windows against). Self-heals if a reset wiped the seed. */
-function directionTagId(name: string): string {
+async function directionTagId(name: string): Promise<string> {
   const owner = currentOwnerId();
-  const existing = sqlite
+  const existing = await store()
     .prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`)
-    .get(owner, name) as { id: string } | undefined;
+    .get<{ id: string }>(owner, name);
   if (existing) return existing.id;
   return (
-    sqlite.prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'direction') RETURNING id`).get(owner, name) as { id: string }
-  ).id;
+    await store().prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'direction') RETURNING id`).get<{ id: string }>(owner, name)
+  )!.id;
 }
 
 /**
@@ -86,22 +86,22 @@ function fallbackTask(source: ExtractSource): ExtractedTask {
  * the same source_refs, so an unscoped key let one owner's row absorb another's
  * content. Returns 'created' | 'updated'.
  */
-export function upsertPossible(
+export async function upsertPossible(
   task: ExtractedTask,
   sourceKind: string,
   sourceRef: string,
   payload: unknown
-): 'created' | 'updated' {
+): Promise<'created' | 'updated'> {
   const owner = currentOwnerId();
-  const existing = sqlite
+  const existing = await store()
     .prepare('SELECT id FROM possible_tasks WHERE proposed_owner_id = ? AND source_kind = ? AND source_ref = ?')
-    .get(owner, sourceKind, sourceRef) as { id: string } | undefined;
+    .get<{ id: string }>(owner, sourceKind, sourceRef);
 
   let possibleId: string;
   let outcome: 'created' | 'updated';
 
   if (existing) {
-    sqlite
+    await store()
       .prepare(
         `UPDATE possible_tasks SET raw_title = ?, raw_summary = ?, proposed_due_at = ?,
          proposed_scheduled_for = ?, proposed_task_time = ?,
@@ -122,7 +122,7 @@ export function upsertPossible(
     possibleId = existing.id;
     outcome = 'updated';
   } else {
-    const row = sqlite
+    const row = (await store()
       .prepare(
         `INSERT INTO possible_tasks
          (id, raw_title, raw_summary, proposed_due_at, proposed_scheduled_for, proposed_task_time,
@@ -130,7 +130,7 @@ export function upsertPossible(
           proposed_owner_id, source_kind, source_ref, source_payload, confidence, status)
          VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id`
       )
-      .get(
+      .get<{ id: string }>(
         task.title,
         task.summary ?? null,
         task.dueAt ?? null,
@@ -143,7 +143,7 @@ export function upsertPossible(
         sourceRef,
         JSON.stringify(payload),
         task.confidence
-      ) as { id: string };
+      ))!;
     possibleId = row.id;
     outcome = 'created';
   }
@@ -151,8 +151,8 @@ export function upsertPossible(
   // Attach the LLM's free-form content tags (idempotent) — kept as secondary
   // intention tags on promote.
   for (const raw of task.tags) {
-    const id = tagId(normTag(raw));
-    sqlite
+    const id = await tagId(normTag(raw));
+    await store()
       .prepare('INSERT OR IGNORE INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)')
       .run(possibleId, id);
   }
@@ -162,9 +162,9 @@ export function upsertPossible(
   // placement-relevant tag the Auto engine matches pattern windows against.
   const from = (payload as { from?: string } | null)?.from;
   const direction = inferDirection({ sourceKind, from, contentTags: task.tags });
-  sqlite
+  await store()
     .prepare('INSERT OR IGNORE INTO possible_task_tags (possible_task_id, tag_id) VALUES (?, ?)')
-    .run(possibleId, directionTagId(direction));
+    .run(possibleId, await directionTagId(direction));
 
   return outcome;
 }
@@ -194,23 +194,23 @@ const DEFAULT_EMAIL_LOOKBACK_DAYS = 7;
  * A non-positive stored value is treated as unset — a bad row must not collapse the
  * window to "now" and silently stop ingesting.
  */
-function gmailLookbackFloor(ownerId: string): string {
-  const row = sqlite
+async function gmailLookbackFloor(ownerId: string): Promise<string> {
+  const row = await store()
     .prepare(`SELECT email_lookback_days FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(ownerId) as { email_lookback_days?: number | null } | undefined;
+    .get<{ email_lookback_days?: number | null }>(ownerId);
   const days = Number(row?.email_lookback_days);
   const effective = Number.isFinite(days) && days > 0 ? days : DEFAULT_EMAIL_LOOKBACK_DAYS;
   return new Date(Date.now() - effective * 86_400_000).toISOString();
 }
 
 /** Read the persisted `since` watermark for (owner, google, account), or undefined. */
-function readGmailSince(ownerId: string, account: string): string | undefined {
-  const row = sqlite
+async function readGmailSince(ownerId: string, account: string): Promise<string | undefined> {
+  const row = await store()
     .prepare(
       `SELECT cursor FROM sync_state
        WHERE owner_id = ? AND provider = ? AND account = ? AND resource = ?`,
     )
-    .get(ownerId, GMAIL_PROVIDER, account, GMAIL_SINCE) as { cursor: string | null } | undefined;
+    .get<{ cursor: string | null }>(ownerId, GMAIL_PROVIDER, account, GMAIL_SINCE);
   return row?.cursor ?? undefined;
 }
 
@@ -219,11 +219,18 @@ function readGmailSince(ownerId: string, account: string): string | undefined {
  * called only once the batch's possibles are committed, so a crash mid-batch re-reads the
  * OLD watermark and reprocesses (idempotent on source_ref) rather than skipping items.
  * Only moves forward (never regresses to an older timestamp).
+ *
+ * The read and the write are no longer contiguous, so two overlapping ingests for one
+ * (owner, account) can both pass the forward check and the older watermark can win. Left
+ * as-is deliberately: the loser's effect is that the next run re-reads an older watermark
+ * and reprocesses, which is idempotent on source_ref — the documented crash behaviour
+ * already. Contrast blocks-recur's EXDATE, where losing the race resurrected deleted user
+ * data and had to be closed. Worth folding into the ON CONFLICT clause post-cutover.
  */
-function advanceGmailSince(ownerId: string, account: string, newest: string): void {
-  const prev = readGmailSince(ownerId, account);
+async function advanceGmailSince(ownerId: string, account: string, newest: string): Promise<void> {
+  const prev = await readGmailSince(ownerId, account);
   if (prev && newest <= prev) return;
-  sqlite
+  await store()
     .prepare(
       `INSERT INTO sync_state (id, owner_id, provider, account, resource, cursor)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -238,14 +245,19 @@ function advanceGmailSince(ownerId: string, account: string, newest: string): vo
  * Append a poison message id to the dead-letter list (sync_state, resource='gmail_deadletter',
  * cursor = JSON array — queryable). A poison message never wedges the pipeline and is not
  * silently lost: it's recorded here while the watermark still advances past it.
+ *
+ * Same read-modify-write-a-JSON-array shape as blocks-recur's EXDATE, and likewise no
+ * longer contiguous. Not guarded, for the same reason as advanceGmailSince: a lost race
+ * drops one poison message id from a diagnostic list, not user data. Post-cutover this
+ * wants the append pushed into the ON CONFLICT clause.
  */
-function deadLetterGmail(ownerId: string, account: string, messageId: string): void {
-  const row = sqlite
+async function deadLetterGmail(ownerId: string, account: string, messageId: string): Promise<void> {
+  const row = await store()
     .prepare(
       `SELECT cursor FROM sync_state
        WHERE owner_id = ? AND provider = ? AND account = ? AND resource = ?`,
     )
-    .get(ownerId, GMAIL_PROVIDER, account, GMAIL_DEADLETTER) as { cursor: string | null } | undefined;
+    .get<{ cursor: string | null }>(ownerId, GMAIL_PROVIDER, account, GMAIL_DEADLETTER);
   let ids: string[] = [];
   if (row?.cursor) {
     try {
@@ -256,7 +268,7 @@ function deadLetterGmail(ownerId: string, account: string, messageId: string): v
     }
   }
   if (!ids.includes(messageId)) ids.push(messageId);
-  sqlite
+  await store()
     .prepare(
       `INSERT INTO sync_state (id, owner_id, provider, account, resource, cursor)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -284,11 +296,13 @@ async function runExtraction(
     logger.warn('extract fallback (Ollama unavailable)', { kind: source.kind, ref: source.ref });
     tasks = [fallbackTask(source)];
   }
-  tasks.forEach((task, i) => {
-    const outcome = upsertPossible(task, source.kind, `${source.ref}#${i}`, payload);
+  // for-of, not forEach: forEach never awaits an async callback, so the counters below
+  // would not run and a failed upsert would become an unhandled rejection.
+  for (const [i, task] of tasks.entries()) {
+    const outcome = await upsertPossible(task, source.kind, `${source.ref}#${i}`, payload);
     if (outcome === 'created') result.possiblesCreated++;
     else result.possiblesUpdated++;
-  });
+  }
 }
 
 /**
@@ -317,8 +331,8 @@ export async function ingestEmails(
   // An explicit opts.since is a manual replay and bypasses the floor deliberately — the
   // caller has named the window. Otherwise take the LATER of the watermark and the
   // lookback floor, so a first run (no watermark at all) is bounded too.
-  const floor = gmailLookbackFloor(ownerId);
-  const watermark = readGmailSince(ownerId, account);
+  const floor = await gmailLookbackFloor(ownerId);
+  const watermark = await readGmailSince(ownerId, account);
   const since = opts.since ?? (watermark && watermark > floor ? watermark : floor);
 
   const emails = await client.listEmails({ since, limit: opts.limit });
@@ -335,7 +349,7 @@ export async function ingestEmails(
       // Non-transient failure on this message → dead-letter and keep going. Do NOT rethrow
       // (that would wedge the whole batch). OllamaUnavailable is handled inside runExtraction
       // as a fallback, so anything reaching here is a genuine poison message.
-      deadLetterGmail(ownerId, account, email.id);
+      await deadLetterGmail(ownerId, account, email.id);
       logger.error('gmail message dead-lettered', { id: email.id, err: (err as Error).message });
     }
     // Watermark advances past EVERY message we've moved past, dead-lettered included.
@@ -343,7 +357,7 @@ export async function ingestEmails(
   }
 
   // Advance-after-commit: only after the loop's possibles are committed.
-  if (newestProcessed) advanceGmailSince(ownerId, account, newestProcessed);
+  if (newestProcessed) await advanceGmailSince(ownerId, account, newestProcessed);
 
   // Email is REVIEW-GATED (services/review-gate.ts): unlike every other producer these
   // possibles are NOT promoted here — they stay `pending` for the owner to approve. An

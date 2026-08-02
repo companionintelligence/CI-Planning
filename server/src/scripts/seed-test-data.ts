@@ -119,12 +119,15 @@ async function main() {
   // 1) Notes bullets — explicit todos, parsed directly (no LLM needed).
   const notesPath = join(fixturesDir, 'tasks.md');
   const bullets = parseNotesBullets(readFileSync(notesPath, 'utf8'));
-  bullets.forEach((b, i) => {
+  // for-of, not forEach: an async callback handed to forEach is never awaited — the
+  // promise is dropped on the floor, so the counter below would never run and a failure
+  // would surface as an unhandled rejection instead of failing the seed.
+  for (const [i, b] of bullets.entries()) {
     const task: ExtractedTask = {
       title: b.title, priority: 3, dueAt: null, estimatedMinutes: 30, tags: [b.tag], confidence: 0.8,
     };
-    if (upsertPossible(task, 'text', `notes#${i}`, { source: 'tasks.md' }) === 'created') possiblesCreated++;
-  });
+    if ((await upsertPossible(task, 'text', `notes#${i}`, { source: 'tasks.md' })) === 'created') possiblesCreated++;
+  }
   logger.info(`seed: ${bullets.length} notes bullets ingested`);
 
   // 2) Emails — LLM extraction (fallback to subject-as-task).
@@ -139,9 +142,9 @@ async function main() {
       logger.warn('seed: email extraction failed, using fallback', { id: email.id, err: (err as Error).message });
       tasks = [fallbackTask(email.subject, email.body)];
     }
-    tasks.forEach((t, i) => {
-      if (upsertPossible(t, 'gmail', `${email.id}#${i}`, { from: email.from, subject: email.subject }) === 'created') possiblesCreated++;
-    });
+    for (const [i, t] of tasks.entries()) {
+      if ((await upsertPossible(t, 'gmail', `${email.id}#${i}`, { from: email.from, subject: email.subject })) === 'created') possiblesCreated++;
+    }
   });
   logger.info(`seed: emails processed (${emails.length})`);
 
@@ -168,9 +171,9 @@ async function main() {
       logger.warn('seed: event extraction failed, using fallback', { id: event.id, err: (err as Error).message });
       tasks = [fallbackTask(`Prep for ${event.title}`, event.description)];
     }
-    tasks.forEach((t, i) => {
-      if (upsertPossible(t, 'gcal', `${event.id}#${i}`, { title: event.title }) === 'created') possiblesCreated++;
-    });
+    for (const [i, t] of tasks.entries()) {
+      if ((await upsertPossible(t, 'gcal', `${event.id}#${i}`, { title: event.title })) === 'created') possiblesCreated++;
+    }
   });
   logger.info(`seed: calendar processed (${events.length})`);
 

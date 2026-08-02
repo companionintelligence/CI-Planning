@@ -45,20 +45,20 @@ describe('inferDirection — deterministic, source-first (D3/D4)', () => {
 describe('upsertPossible attaches exactly one direction (pattern) tag', () => {
   beforeEach(() => resetDb());
 
-  it('tags a work email WORK', () => {
-    expect(upsertPossible(mk({ title: 'Send report' }), 'gmail', 'm1', { from: 'boss@acme.co' })).toBe('created');
+  it('tags a work email WORK', async () => {
+    expect(await upsertPossible(mk({ title: 'Send report' }), 'gmail', 'm1', { from: 'boss@acme.co' })).toBe('created');
     const pid = (sqlite.prepare(`SELECT id FROM possible_tasks WHERE source_ref = 'm1'`).get() as { id: string }).id;
     expect(patternTagsFor(pid)).toEqual(['work']);
   });
 
-  it('still tags by source with no content tags (the Ollama-down shape)', () => {
-    upsertPossible(mk({ title: 'Note', tags: [] }), 'text', 't1', { ref: 't1' });
+  it('still tags by source with no content tags (the Ollama-down shape)', async () => {
+    await upsertPossible(mk({ title: 'Note', tags: [] }), 'text', 't1', { ref: 't1' });
     const pid = (sqlite.prepare(`SELECT id FROM possible_tasks WHERE source_ref = 't1'`).get() as { id: string }).id;
     expect(patternTagsFor(pid)).toEqual(['home']);
   });
 
-  it('exactly one direction tag even when content tags are present', () => {
-    upsertPossible(mk({ title: 'Invoice', tags: ['finance', 'urgent'] }), 'gmail', 'm2', { from: 'ar@vendor.io' });
+  it('exactly one direction tag even when content tags are present', async () => {
+    await upsertPossible(mk({ title: 'Invoice', tags: ['finance', 'urgent'] }), 'gmail', 'm2', { from: 'ar@vendor.io' });
     const pid = (sqlite.prepare(`SELECT id FROM possible_tasks WHERE source_ref = 'm2'`).get() as { id: string }).id;
     expect(patternTagsFor(pid)).toEqual(['work']); // exactly one pattern tag; content tags are intention-kind
   });
