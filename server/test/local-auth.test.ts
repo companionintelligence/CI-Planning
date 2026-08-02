@@ -150,12 +150,12 @@ describe('U2 — login / session / logout', () => {
 });
 
 describe('U2 — N-SENTINEL exclusion', () => {
-  it('findOwnerByUsername never returns the sentinel, even if it carries a username', () => {
+  it('findOwnerByUsername never returns the sentinel, even if it carries a username', async () => {
     // Defensive: the sentinel never has auth columns in prod. Force them, and confirm
     // the `id <> SYSTEM_OWNER_ID` guard still hides it (without the guard this returns the row).
     sqlite.prepare(`UPDATE owners SET username = 'root', password_hash = 'x' WHERE id = ?`).run(SYSTEM_OWNER_ID);
     try {
-      expect(findOwnerByUsername('root')).toBeUndefined();
+      expect(await findOwnerByUsername('root')).toBeUndefined();
     } finally {
       sqlite.prepare(`UPDATE owners SET username = NULL, password_hash = NULL WHERE id = ?`).run(SYSTEM_OWNER_ID);
     }
@@ -252,18 +252,18 @@ describe('G-BASETAG — provisionOwner seeds default availability windows', () =
 describe('U2 — boot bootstrap (ensureLocalAuthBootstrap)', () => {
   it('seeds the default owner when none exist and AUTH_DEFAULT_PASSWORD is set', async () => {
     resetDb();
-    expect(localOwnerCount()).toBe(0);
+    expect(await localOwnerCount()).toBe(0);
     const saved = { u: config.auth.defaultUsername, p: config.auth.defaultPassword };
     config.auth.defaultUsername = 'boot-admin';
     config.auth.defaultPassword = 'boot-pw-123';
     try {
       await ensureLocalAuthBootstrap();
-      expect(localOwnerCount()).toBe(1);
-      const owner = findOwnerByUsername('boot-admin');
+      expect(await localOwnerCount()).toBe(1);
+      const owner = await findOwnerByUsername('boot-admin');
       expect(owner?.password_hash).toBeTruthy();
       // Idempotent: a second run does not create a duplicate.
       await ensureLocalAuthBootstrap();
-      expect(localOwnerCount()).toBe(1);
+      expect(await localOwnerCount()).toBe(1);
     } finally {
       config.auth.defaultUsername = saved.u;
       config.auth.defaultPassword = saved.p;
@@ -289,7 +289,7 @@ describe('U2 — boot bootstrap (ensureLocalAuthBootstrap)', () => {
     sqlite
       .prepare(`INSERT INTO owners (id, name, username) VALUES ('00000000-0000-7000-8000-0000000000c3', 'stub', 'stub-user')`)
       .run();
-    expect(localOwnerCount()).toBe(0); // not counted — can't log in
+    expect(await localOwnerCount()).toBe(0); // not counted — can't log in
     const saved = config.auth.defaultPassword;
     config.auth.defaultPassword = undefined;
     try {

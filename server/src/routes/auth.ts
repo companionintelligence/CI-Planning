@@ -157,7 +157,7 @@ export function authRouter() {
       throw httpError(400, 'username and password are required');
     }
 
-    const owner = findOwnerByUsername(username);
+    const owner = await findOwnerByUsername(username);
     // Constant-work verify (one argon2id op regardless of whether the username exists
     // or is OIDC-only) → generic 401 that reveals nothing by status, body, OR timing.
     const ok = await verifyLoginPassword(owner?.password_hash ?? null, password);
@@ -245,7 +245,7 @@ export function authRouter() {
       if (!dest) {
         logger.warn('reset-request: account has no email or backup_email — cannot send', { owner: owner.id });
       } else {
-        const rawToken = issueResetToken(owner.id);
+        const rawToken = await issueResetToken(owner.id);
         const link = `${config.mail.appBaseUrl}/reset-password?token=${encodeURIComponent(rawToken)}`;
         const subject = 'Reset your Companion Planning password';
         const text =
@@ -286,7 +286,7 @@ export function authRouter() {
       throw httpError(400, `password must be at least ${MIN_PASSWORD_LENGTH} characters`);
     }
 
-    const ownerId = consumeResetToken(token);
+    const ownerId = await consumeResetToken(token);
     if (!ownerId) throw httpError(400, 'this reset link is invalid or has expired — request a new one');
 
     const passwordHash = await hashPassword(newPassword);

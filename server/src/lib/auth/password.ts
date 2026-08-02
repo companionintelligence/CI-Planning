@@ -1,5 +1,5 @@
 import { hash, hashSync, verify, Algorithm } from '@node-rs/argon2';
-import { sqlite } from '../../db/index.js';
+import { store } from '../../db/store.js';
 import { SYSTEM_OWNER_ID } from '../ids.js';
 
 /**
@@ -68,12 +68,12 @@ export interface LocalOwnerRow {
  * no future change (or a row hand-seeded with the sentinel id) can let an external
  * login take over the single-owner dev/test identity. Returns undefined if unknown.
  */
-export function findOwnerByUsername(username: string): LocalOwnerRow | undefined {
-  return sqlite
+export async function findOwnerByUsername(username: string): Promise<LocalOwnerRow | undefined> {
+  return store()
     .prepare(
       `SELECT id, password_hash FROM owners WHERE username = ? AND id <> ? LIMIT 1`,
     )
-    .get(username, SYSTEM_OWNER_ID) as LocalOwnerRow | undefined;
+    .get<LocalOwnerRow>(username, SYSTEM_OWNER_ID);
 }
 
 /**
@@ -84,13 +84,13 @@ export function findOwnerByUsername(username: string): LocalOwnerRow | undefined
  * counting it as a "local owner" would let the boot guard skip seeding AND skip failing
  * closed, leaving no usable login path. Count only genuinely-usable accounts.
  */
-export function localOwnerCount(): number {
+export async function localOwnerCount(): Promise<number> {
   return (
-    sqlite
+    (await store()
       .prepare(
         `SELECT COUNT(*) AS n FROM owners
            WHERE username IS NOT NULL AND password_hash IS NOT NULL AND id <> ?`,
       )
-      .get(SYSTEM_OWNER_ID) as { n: number }
+      .get<{ n: number }>(SYSTEM_OWNER_ID))!
   ).n;
 }

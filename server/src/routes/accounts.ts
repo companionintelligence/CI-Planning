@@ -55,7 +55,7 @@ export type InviteResult = { delivery: 'email'; to: string } | { delivery: 'link
  */
 async function sendInvite(target: OwnerAccount): Promise<InviteResult> {
   const fresh = !target.hasPassword; // first invite vs. reset of an active account
-  const raw = issueResetToken(target.id, fresh ? INVITE_TTL_MS : undefined);
+  const raw = await issueResetToken(target.id, fresh ? INVITE_TTL_MS : undefined);
   const link = `${config.mail.appBaseUrl}/reset-password?token=${encodeURIComponent(raw)}`;
   if (!config.mail.host) return { delivery: 'link', link };
 

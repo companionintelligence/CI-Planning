@@ -20,7 +20,7 @@ import { provisionOwner } from '../owners.js';
 export async function ensureLocalAuthBootstrap(): Promise<void> {
   if (!(config.auth.mode === 'sso' && config.auth.disableOidc)) return;
 
-  if (localOwnerCount() > 0) return;
+  if ((await localOwnerCount()) > 0) return;
 
   if (!config.auth.defaultPassword) {
     throw new Error(
