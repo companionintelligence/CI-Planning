@@ -16,9 +16,11 @@
  *     but only while it's still *pristine* (top-level, no sub-objectives) — once the
  *     user organizes it under a project/goal it becomes theirs and is left alone.
  *
- * Uses raw synchronous `sqlite` (mirrors routes/objectives.ts).
+ * Reads/writes go through the store facade; the raw `sqlite` handle survives only as
+ * the argument to `stampRow` (dies when sync/apply.ts ports).
  */
 import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { broadcast } from '../routes/sse.js';
 import { recomputeProgress, linkObjectiveTask } from './objectives.js';
@@ -28,14 +30,14 @@ import { stampRow } from '../sync/apply.js';
 /** Active (non-ephemeral, non-cancelled) subtasks of a parent — the objective's work.
  * Excludes `quick` ritual-local tasks and materialized recurrence instances, which
  * shouldn't pollute the strategic layer or its progress rollups. */
-function linkableSubtaskIds(parentTaskId: string, ownerId: string): string[] {
-  return (sqlite
+async function linkableSubtaskIds(parentTaskId: string, ownerId: string): Promise<string[]> {
+  return (await store()
     .prepare(
       `SELECT id FROM tasks
         WHERE parent_id = ? AND owner_id = ? AND status != 'cancelled'
           AND subtype != 'quick' AND recurrence_parent_id IS NULL`,
     )
-    .all(parentTaskId, ownerId) as { id: string }[]).map((r) => r.id);
+    .all<{ id: string }>(parentTaskId, ownerId)).map((r) => r.id);
 }
 
 /**
@@ -43,18 +45,18 @@ function linkableSubtaskIds(parentTaskId: string, ownerId: string): string[] {
  * objective, and that the parent + its current linkable subtasks are linked to it.
  * Returns the objective id, or null if the parent doesn't exist / isn't linkable.
  */
-export function ensureTaskPromoted(parentTaskId: string, ownerId: string): string | null {
-  const parent = sqlite
+export async function ensureTaskPromoted(parentTaskId: string, ownerId: string): Promise<string | null> {
+  const parent = await store()
     .prepare(`SELECT id, title, subtype, recurrence_parent_id FROM tasks WHERE id = ? AND owner_id = ?`)
-    .get(parentTaskId, ownerId) as { id: string; title: string; subtype: string | null; recurrence_parent_id: string | null } | undefined;
+    .get<{ id: string; title: string; subtype: string | null; recurrence_parent_id: string | null }>(parentTaskId, ownerId);
   // Don't promote ephemeral parents (a quick task or a recurrence instance shouldn't
   // spawn a strategic objective).
   if (!parent || parent.subtype === 'quick' || parent.recurrence_parent_id) return null;
 
   // Find-or-create THIS task's objective (keyed on source_task_id, not "any link").
-  const existing = sqlite
+  const existing = await store()
     .prepare(`SELECT id FROM objectives WHERE source_task_id = ? AND owner_id = ?`)
-    .get(parentTaskId, ownerId) as { id: string } | undefined;
+    .get<{ id: string }>(parentTaskId, ownerId);
 
   let objId: string;
   let created = false;
@@ -63,7 +65,7 @@ export function ensureTaskPromoted(parentTaskId: string, ownerId: string): strin
   } else {
     objId = newId();
     const now = new Date().toISOString();
-    sqlite
+    await store()
       .prepare(
         `INSERT INTO objectives
            (id, owner_id, parent_id, title, description, horizon, status, cadence,
@@ -79,7 +81,7 @@ export function ensureTaskPromoted(parentTaskId: string, ownerId: string): strin
   // Link the parent + its linkable subtasks (idempotent). Each link is a
   // sync-versioned join row (0087). The objective stays a leaf, so this never
   // violates the "tasks only on leaves" containment rule.
-  const linkedTaskIds = [parentTaskId, ...linkableSubtaskIds(parentTaskId, ownerId)];
+  const linkedTaskIds = [parentTaskId, ...(await linkableSubtaskIds(parentTaskId, ownerId))];
   const linkIds = linkedTaskIds.map((tid) => linkObjectiveTask(objId, tid));
 
   recomputeProgress(objId);
@@ -92,10 +94,10 @@ export function ensureTaskPromoted(parentTaskId: string, ownerId: string): strin
 
 /** A promoted objective is "pristine" (safe to auto-GC) only while it's still a
  * top-level leaf the user hasn't organized into their hierarchy. */
-function isPristine(objId: string): boolean {
-  const row = sqlite.prepare(`SELECT parent_id FROM objectives WHERE id = ?`).get(objId) as { parent_id: string | null } | undefined;
+async function isPristine(objId: string): Promise<boolean> {
+  const row = await store().prepare(`SELECT parent_id FROM objectives WHERE id = ?`).get<{ parent_id: string | null }>(objId);
   if (!row || row.parent_id != null) return false;
-  const child = sqlite.prepare(`SELECT 1 FROM objectives WHERE parent_id = ? LIMIT 1`).get(objId);
+  const child = await store().prepare(`SELECT 1 FROM objectives WHERE parent_id = ? LIMIT 1`).get(objId);
   return !child;
 }
 
@@ -104,34 +106,34 @@ function isPristine(objId: string): boolean {
  * auto-created objective so childless single-task objectives don't accumulate. No-op
  * if the objective was organized under a project/goal (then it's the user's to keep).
  */
-export function unpromoteIfEmpty(parentTaskId: string, ownerId: string): void {
-  const obj = sqlite
+export async function unpromoteIfEmpty(parentTaskId: string, ownerId: string): Promise<void> {
+  const obj = await store()
     .prepare(`SELECT id FROM objectives WHERE source_task_id = ? AND owner_id = ?`)
-    .get(parentTaskId, ownerId) as { id: string } | undefined;
+    .get<{ id: string }>(parentTaskId, ownerId);
   if (!obj) return;
-  const activeSubs = (sqlite
+  const activeSubs = (await store()
     .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ? AND owner_id = ? AND status != 'cancelled' AND subtype != 'quick' AND recurrence_parent_id IS NULL`)
-    .get(parentTaskId, ownerId) as { n: number }).n;
-  if (activeSubs > 0 || !isPristine(obj.id)) return;
+    .get<{ n: number }>(parentTaskId, ownerId))!.n;
+  if (activeSubs > 0 || !(await isPristine(obj.id))) return;
   // Deliberately a HARD delete, not the archive (0129): isPristine guarantees this is
   // auto-generated scaffolding the user never organized, so archiving it would fill
   // their archive with rows they never chose to delete. This is only safe WHILE
   // isPristine holds — relaxing it breaks owner-scoping (no owner_id below), leveling
   // (no restampLevels) and rollups (no recomputeProgress) all at once.
-  sqlite.prepare(`DELETE FROM objectives WHERE id = ?`).run(obj.id); // cascades objective_tasks
+  await store().prepare(`DELETE FROM objectives WHERE id = ?`).run(obj.id); // cascades objective_tasks
   broadcast(ownerId, 'objective:deleted', { id: obj.id });
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `objective:${obj.id}` });
 }
 
 /** When a task is itself cancelled, drop the pristine objective it spawned (its work is
  * abandoned). Left alone if the user organized it into their hierarchy. */
-export function dropSourceObjective(taskId: string, ownerId: string): void {
-  const obj = sqlite
+export async function dropSourceObjective(taskId: string, ownerId: string): Promise<void> {
+  const obj = await store()
     .prepare(`SELECT id FROM objectives WHERE source_task_id = ? AND owner_id = ?`)
-    .get(taskId, ownerId) as { id: string } | undefined;
-  if (!obj || !isPristine(obj.id)) return;
+    .get<{ id: string }>(taskId, ownerId);
+  if (!obj || !(await isPristine(obj.id))) return;
   // Hard delete, not the archive (0129) — same isPristine rationale as unpromoteIfEmpty.
-  sqlite.prepare(`DELETE FROM objectives WHERE id = ?`).run(obj.id);
+  await store().prepare(`DELETE FROM objectives WHERE id = ?`).run(obj.id);
   broadcast(ownerId, 'objective:deleted', { id: obj.id });
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `objective:${obj.id}` });
 }
@@ -147,8 +149,8 @@ export function dropSourceObjective(taskId: string, ownerId: string): void {
  * recomputeProgress's child rollup already excludes archived children, so a live ancestor
  * never counts this branch. Cost is a rollup nobody is currently looking at; the archive
  * list does render progress_cache, so it isn't even wasted. */
-export function recomputeObjectivesForTask(taskId: string): void {
-  const objs = sqlite.prepare(`SELECT objective_id FROM objective_tasks WHERE task_id = ? AND linked = 1`).all(taskId) as { objective_id: string }[];
+export async function recomputeObjectivesForTask(taskId: string): Promise<void> {
+  const objs = await store().prepare(`SELECT objective_id FROM objective_tasks WHERE task_id = ? AND linked = 1`).all<{ objective_id: string }>(taskId);
   for (const o of objs) recomputeProgress(o.objective_id);
 }
 
@@ -173,10 +175,10 @@ export function recomputeObjectivesForTask(taskId: string): void {
  * keeps REST's objective_id and GraphQL's objective agreeing on the same first
  * objective. Change one, change the other.
  */
-export function objectiveIdsByTaskIds(ownerId: string, taskIds: string[]): Map<string, string[]> {
+export async function objectiveIdsByTaskIds(ownerId: string, taskIds: string[]): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>();
   if (taskIds.length === 0) return map;
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT ot.task_id, ot.objective_id FROM objective_tasks ot
          JOIN objectives o ON o.id = ot.objective_id
@@ -186,7 +188,7 @@ export function objectiveIdsByTaskIds(ownerId: string, taskIds: string[]): Map<s
           AND ot.task_id IN (${taskIds.map(() => '?').join(',')})
         ORDER BY o.created_at, o.id`,
     )
-    .all(ownerId, ownerId, ...taskIds) as { task_id: string; objective_id: string }[];
+    .all<{ task_id: string; objective_id: string }>(ownerId, ownerId, ...taskIds);
   for (const r of rows) {
     const list = map.get(r.task_id);
     if (list) list.push(r.objective_id);

@@ -68,7 +68,7 @@ export function tasksRouter() {
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
     const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
-    const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
+    const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
     // Resolved up front so the map below can stay synchronous — an async .map callback
     // would put a Promise in every depends_on field, and ctx.body would serialize `{}`.
     const dependsById = new Map<string, string[]>();
@@ -287,7 +287,7 @@ export function tasksRouter() {
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
-    const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
+    const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
     const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B
     const withTags = result.map((t) => ({
       ...taskToApi(t),
@@ -365,7 +365,7 @@ export function tasksRouter() {
     }
     // The task exists but is ephemeral — a quick task or a materialized recurrence
     // instance. Those must not spawn a strategic objective (services/task-promotion.ts).
-    const objectiveId = ensureTaskPromoted(id, owner);
+    const objectiveId = await ensureTaskPromoted(id, owner);
     if (!objectiveId) { ctx.status = 422; ctx.body = { error: 'not_promotable' }; return; }
     // Owner-scoped read even though ensureTaskPromoted only ever returns THIS owner's
     // objective: the route shouldn't depend on the service's internal scoping for its

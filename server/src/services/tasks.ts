@@ -225,7 +225,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
   }
   syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
   // §H: creating a subtask promotes its parent to an objective (task list star).
-  if (parentId) ensureTaskPromoted(parentId, ownerId);
+  if (parentId) await ensureTaskPromoted(parentId, ownerId);
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${task.id}` });
   return { ok: true, task };
@@ -488,9 +488,9 @@ export async function updateTask(
   syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
   // §H: re-parenting a task UNDER another promotes that parent to an objective; moving
   // it AWAY may leave the old parent empty → GC that parent's pristine auto-objective.
-  if (newParentId) ensureTaskPromoted(newParentId, ownerId);
+  if (newParentId) await ensureTaskPromoted(newParentId, ownerId);
   if (parentIdSet && prevParentId && prevParentId !== newParentId) {
-    unpromoteIfEmpty(prevParentId, ownerId);
+    await unpromoteIfEmpty(prevParentId, ownerId);
   }
 
   // REQ2 (reverse sync): editing a task's time/day/estimate moves its placed block in
@@ -544,7 +544,7 @@ export async function updateTask(
   // had when the task was thrown away. (Its mirror image — open→cancelled via PATCH
   // rather than deleteTask — was skipped for the same reason.)
   if (priorStatus !== undefined && rollupStatusFacet(priorStatus) !== rollupStatusFacet(task.status)) {
-    recomputeObjectivesForTask(targetId);
+    await recomputeObjectivesForTask(targetId);
   }
 
   // Task→block done-state mirror (the inverse of mirrorBlockStatusToTask): checking
@@ -611,9 +611,9 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   // A cancelled task's placements settle with it — a manual block is invisible to
   // reflow's agent-only GC and would otherwise stay on the board looking live.
   const cancelledBlockIds = cancelBlocksForTask(id, ownerId);
-  dropSourceObjective(id, ownerId);
-  if (task.parentId) unpromoteIfEmpty(task.parentId, ownerId);
-  recomputeObjectivesForTask(id);
+  await dropSourceObjective(id, ownerId);
+  if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
+  await recomputeObjectivesForTask(id);
   // 'following': truncate the series at this occurrence so it stops recurring from here.
   // Done AFTER the row is cancelled so the clicked occurrence settles the same way it
   // would under 'instance' — the truncation only governs what comes after it.
