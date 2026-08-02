@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import { randomBytes } from 'node:crypto';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { newId } from '../lib/ids.js';
@@ -94,7 +94,7 @@ export function oauthRouter() {
   // ── GET /api/oauth/google/start ───────────────────────────────────────────
   // Begin the Authorization Code + PKCE flow. Refused in test mode (no real owner
   // identity to bind the connection to — I2).
-  router.get('/start', (ctx) => {
+  router.get('/start', async (ctx) => {
     if (config.auth.mode === 'test') {
       ctx.status = 409;
       ctx.body = { error: 'oauth_disabled_in_test_mode' };
@@ -118,7 +118,7 @@ export function oauthRouter() {
     const scopes = buildGoogleScopes({ gmail: true });
 
     const now = Date.now();
-    sqlite
+    await store()
       .prepare(
         `INSERT INTO oauth_states (id, owner_id, provider, state, code_verifier, nonce, redirect_uri, created_at, expires_at)
          VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?)`,
@@ -181,12 +181,12 @@ export function oauthRouter() {
 
     // Atomically consume the state row (single-use): DELETE ... RETURNING means a
     // replayed callback finds nothing. Reject unknown / already-consumed states.
-    const row = sqlite
+    const row = await store()
       .prepare(
         `DELETE FROM oauth_states WHERE state = ? AND provider = 'google'
          RETURNING id, owner_id, code_verifier, nonce, redirect_uri, expires_at`,
       )
-      .get(state) as (OAuthStateRow & { expires_at: string | null }) | undefined;
+      .get<OAuthStateRow & { expires_at: string | null }>(state);
 
     if (!row) {
       ctx.status = 400;
@@ -248,11 +248,11 @@ export function oauthRouter() {
     // exists, so reuse the stored value rather than persisting an empty one (I4).
     let existingRefresh: string | null = null;
     try {
-      const existing = sqlite
+      const existing = await store()
         .prepare(
           'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
         )
-        .get(row.owner_id, 'google', email) as { iv: string; auth_tag: string; ciphertext: string } | undefined;
+        .get<{ iv: string; auth_tag: string; ciphertext: string }>(row.owner_id, 'google', email);
       if (existing) {
         const decoded = JSON.parse(
           open({ iv: existing.iv, authTag: existing.auth_tag, ciphertext: existing.ciphertext }, loadKek()),
@@ -280,13 +280,13 @@ export function oauthRouter() {
 
     // Store under the state's owner (NOT the request's — the callback is credential-less).
     // A normal owner context (no admin) — this only writes the owner's own connector token.
-    runWithOwner(row.owner_id, [SCOPE_READ, SCOPE_WRITE], () => {
+    await runWithOwner(row.owner_id, [SCOPE_READ, SCOPE_WRITE], async () => {
       BaseOAuth2Client.storeToken('google', email, {
         accessToken: tok.access_token!,
         refreshToken,
         expiresAt,
       });
-      sqlite
+      await store()
         .prepare(
           `UPDATE connection_tokens SET status = 'active'
            WHERE owner_id = ? AND provider = 'google' AND account = ?`,

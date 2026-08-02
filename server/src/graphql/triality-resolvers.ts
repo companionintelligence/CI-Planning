@@ -1,5 +1,5 @@
 import { GraphQLError } from 'graphql';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
@@ -89,7 +89,7 @@ export const trialityResolvers = {
     },
   },
   Mutation: {
-    trialityFeedback: (_: unknown, args: { logId: string; outcome: string }) => {
+    trialityFeedback: async (_: unknown, args: { logId: string; outcome: string }) => {
       const owner = gate();
       const outcome = String(args.outcome).toLowerCase();
       if (!isOutcome(outcome)) {
@@ -97,7 +97,7 @@ export const trialityResolvers = {
           extensions: { code: 'BAD_USER_INPUT' },
         });
       }
-      const mine = sqlite
+      const mine = await store()
         .prepare(`SELECT 1 FROM triality_log WHERE id = ? AND owner_id = ?`)
         .get(args.logId, owner);
       if (!mine) throw new GraphQLError('Not found', { extensions: { code: 'NOT_FOUND' } });

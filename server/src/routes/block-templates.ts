@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { writeAudit } from '../lib/audit.js';
@@ -98,12 +98,13 @@ export function blockTemplatesRouter() {
     const base = Date.parse(body.start_at);
     const endAt = body.end_at ?? new Date(base + (t.default_minutes ?? 60) * 60_000).toISOString();
 
-    const block = sqlite
+    const block = await store()
       .prepare(
         `INSERT INTO time_blocks (id, owner_id, title, block_kind, block_type, tag, start_at, end_at, is_locked, is_auto, source_kind, status)
          VALUES (uuid7(), ?, ?, 'timeblock', 'scheduled', ?, ?, ?, 0, 0, 'manual', 'planned') RETURNING *`
       )
-      .get(owner, t.name, t.tag, body.start_at, endAt) as Record<string, unknown>;
+      .get<Record<string, unknown>>(owner, t.name, t.tag, body.start_at, endAt);
+    if (!block) { ctx.status = 500; ctx.body = { error: 'insert returned no row' }; return; }
 
     // Recreate the saved tasks (real task + its scheduled block at the saved offset).
     // Loose (no parent) — matches the historical instantiate behavior.
@@ -125,28 +126,28 @@ export function blockTemplatesRouter() {
     if (!t) { ctx.status = 404; ctx.body = { error: 'template not found' }; return; }
     const body = (ctx.request.body ?? {}) as { block_id?: string };
     if (!body.block_id) { ctx.status = 422; ctx.body = { error: 'block_id is required' }; return; }
-    const block = sqlite
+    const block = await store()
       .prepare(`SELECT id, start_at FROM time_blocks WHERE id = ? AND owner_id = ? AND block_kind = 'timeblock'`)
-      .get(body.block_id, owner) as { id: string; start_at: string } | undefined;
+      .get<{ id: string; start_at: string }>(body.block_id, owner);
     if (!block) { ctx.status = 404; ctx.body = { error: 'block not found (must be a Plan container)' }; return; }
 
     const touched = new Set<string>();
-    sqlite.transaction(() => {
+    await store().transaction(async () => {
       // 1. Clear current child task-blocks; their tasks revert to unscheduled.
-      const children = sqlite
+      const children = await store()
         .prepare(`SELECT id, task_id, block_kind FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`)
-        .all(block.id, owner) as { id: string; task_id: string | null; block_kind: string }[];
+        .all<{ id: string; task_id: string | null; block_kind: string }>(block.id, owner);
       for (const c of children) {
         if (c.task_id && c.block_kind === 'task') touched.add(c.task_id);
         removeEntityTags('time_block', c.id);
       }
-      sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(block.id, owner);
+      await store().prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(block.id, owner);
       for (const taskId of touched) revertTaskPlacementStatus(taskId, owner);
 
       // 2. Repopulate from the template, parented to the block + flipped to scheduled.
       const created = materializeTemplateTasks(owner, Date.parse(block.start_at), parseTasks(t.tasks), block.id);
       for (const id of created) { applyTaskPlacementStatus(id, owner); touched.add(id); }
-    })();
+    });
 
     broadcast(owner, 'block:updated', { id: block.id });
     for (const taskId of touched) broadcast(owner, 'task:updated', { id: taskId });

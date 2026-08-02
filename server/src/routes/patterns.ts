@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { placePatternOnDay } from '../engine/patterns-place.js';
@@ -150,24 +150,23 @@ export function patternsRouter() {
   router.post('/api/patterns/:id/fast-tasks', async (ctx) => {
     const patternId = ctx.params.id;
     const owner = currentOwnerId();
-    const pattern = sqlite.prepare(`SELECT id, type_id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, owner) as
-      | { id: string; type_id: string | null }
-      | undefined;
+    const pattern = await store().prepare(`SELECT id, type_id FROM patterns WHERE id = ? AND owner_id = ?`)
+      .get<{ id: string; type_id: string | null }>(patternId, owner);
     if (!pattern) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as { title?: string; estimated_minutes?: number };
     if (!body.title?.trim()) { ctx.status = 422; ctx.body = { error: 'title is required' }; return; }
     const typeDefault = pattern.type_id != null
-      ? (sqlite.prepare(`SELECT default_est_minutes AS m FROM pattern_types WHERE id = ?`).get(pattern.type_id) as { m: number | null } | undefined)?.m ?? null
+      ? (await store().prepare(`SELECT default_est_minutes AS m FROM pattern_types WHERE id = ?`).get<{ m: number | null }>(pattern.type_id))?.m ?? null
       : null;
     const est = body.estimated_minutes ?? typeDefault ?? 15;
-    const task = sqlite
+    const task = (await store()
       .prepare(
         `INSERT INTO tasks (id, title, estimated_minutes, subtype, owner_id, status, priority, source_kind)
          VALUES (uuid7(), ?, ?, 'quick', ?, 'open', 3, 'manual') RETURNING id, title, estimated_minutes`
       )
-      .get(body.title.trim(), est, owner) as { id: string; title: string; estimated_minutes: number };
-    const pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM pattern_tasks WHERE pattern_id = ?`).get(patternId) as { m: number }).m + 1;
-    sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(patternId, task.id, pos);
+      .get<{ id: string; title: string; estimated_minutes: number }>(body.title.trim(), est, owner))!;
+    const pos = (await store().prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM pattern_tasks WHERE pattern_id = ?`).get<{ m: number }>(patternId))!.m + 1;
+    await store().prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`).run(patternId, task.id, pos);
     broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `task:${task.id}` });
     ctx.status = 201;
@@ -178,18 +177,18 @@ export function patternsRouter() {
     const patternId = ctx.params.id;
     const taskId = ctx.params.taskId;
     const owner = currentOwnerId();
-    if (!sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, owner)) {
+    if (!(await store().prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(patternId, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
     // Delete the underlying task only when it's genuinely a fast task (membership
     // cascades). A shared real task just loses its membership.
-    const isFast = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ? AND subtype = 'quick'`).get(taskId, owner);
+    const isFast = await store().prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ? AND subtype = 'quick'`).get(taskId, owner);
     if (isFast) {
       // CON-3 cascade: the fast task is HARD-deleted — drop its tag rows.
       removeEntityTags('task', taskId);
-      sqlite.prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId);
+      await store().prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId);
     }
-    else sqlite.prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, taskId);
+    else await store().prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, taskId);
     broadcast(owner, 'pattern:updated', { id: patternId, task_ids: taskIdsOf(patternId) });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `task:${taskId}` });
     ctx.body = { ok: true };
@@ -200,13 +199,13 @@ export function patternsRouter() {
   // created (owner-scoped), then `task_ids` are added in order. Source-specific
   // logic — extracting tasks from a Plan, a Plan template, or a selection —
   // happens above the helper.
-  function createRoutineWithTasks(name: string, taskIds: string[]): PatternRow {
+  async function createRoutineWithTasks(name: string, taskIds: string[]): Promise<PatternRow> {
     const owner = currentOwnerId();
-    const routineType = sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Routine' AND owner_id = ?`).get(owner) as { id: string } | undefined;
+    const routineType = await store().prepare(`SELECT id FROM pattern_types WHERE name = 'Routine' AND owner_id = ?`).get<{ id: string }>(owner);
     if (!routineType) throw new Error('no Routine pattern type for owner');
-    const p = sqlite
+    const p = (await store()
       .prepare(`INSERT INTO patterns (id, owner_id, type_id, name) VALUES (uuid7(), ?, ?, ?) RETURNING *`)
-      .get(owner, routineType.id, name) as PatternRow;
+      .get<PatternRow>(owner, routineType.id, name))!;
     if (taskIds.length) setMembers(owner, p.id, taskIds);
     return p;
   }
@@ -217,13 +216,13 @@ export function patternsRouter() {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { plan_block_id?: number; name?: string };
     if (body.plan_block_id == null) { ctx.status = 422; ctx.body = { error: 'plan_block_id is required' }; return; }
-    const plan = sqlite.prepare(`SELECT id, title, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`).get(body.plan_block_id, owner) as
-      | { id: string; title: string; block_kind: string } | undefined;
+    const plan = await store().prepare(`SELECT id, title, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get<{ id: string; title: string; block_kind: string }>(body.plan_block_id, owner);
     if (!plan || plan.block_kind !== 'timeblock') { ctx.status = 404; ctx.body = { error: 'plan not found' }; return; }
-    const taskIds = (sqlite
+    const taskIds = (await store()
       .prepare(`SELECT DISTINCT task_id FROM time_blocks WHERE parent_block_id = ? AND owner_id = ? AND task_id IS NOT NULL`)
-      .all(plan.id, owner) as { task_id: string }[]).map((r) => r.task_id);
-    const p = createRoutineWithTasks(body.name?.trim() || plan.title, taskIds);
+      .all<{ task_id: string }>(plan.id, owner)).map((r) => r.task_id);
+    const p = await createRoutineWithTasks(body.name?.trim() || plan.title, taskIds);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
@@ -239,20 +238,20 @@ export function patternsRouter() {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { template_id?: number; name?: string };
     if (body.template_id == null) { ctx.status = 422; ctx.body = { error: 'template_id is required' }; return; }
-    const tpl = sqlite.prepare(`SELECT id, name, tasks FROM block_templates WHERE id = ? AND owner_id = ?`).get(body.template_id, owner) as
-      | { id: string; name: string; tasks: string | null } | undefined;
+    const tpl = await store().prepare(`SELECT id, name, tasks FROM block_templates WHERE id = ? AND owner_id = ?`)
+      .get<{ id: string; name: string; tasks: string | null }>(body.template_id, owner);
     if (!tpl) { ctx.status = 404; ctx.body = { error: 'template not found' }; return; }
     interface TemplateTask { title: string; estimated_minutes?: number | null }
     let savedTasks: TemplateTask[] = [];
     try { savedTasks = JSON.parse(tpl.tasks ?? '[]'); if (!Array.isArray(savedTasks)) savedTasks = []; } catch { savedTasks = []; }
 
-    const insTask = sqlite.prepare(`INSERT INTO tasks (id, title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (uuid7(), ?, ?, ?, 'open', 3, 'manual') RETURNING id`);
+    const insTask = store().prepare(`INSERT INTO tasks (id, title, estimated_minutes, owner_id, status, priority, source_kind) VALUES (uuid7(), ?, ?, ?, 'open', 3, 'manual') RETURNING id`);
     const taskIds: string[] = [];
     for (const t of savedTasks) {
-      const id = (insTask.get(t.title, t.estimated_minutes ?? null, owner) as { id: string }).id;
+      const id = (await insTask.get<{ id: string }>(t.title, t.estimated_minutes ?? null, owner))!.id;
       taskIds.push(id);
     }
-    const p = createRoutineWithTasks(body.name?.trim() || tpl.name, taskIds);
+    const p = await createRoutineWithTasks(body.name?.trim() || tpl.name, taskIds);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
@@ -269,9 +268,9 @@ export function patternsRouter() {
     if (ids.length === 0) { ctx.status = 422; ctx.body = { error: 'task_ids is required' }; return; }
     // Verify all tasks belong to this owner (defensive).
     const placeholders = ids.map(() => '?').join(',');
-    const owned = sqlite.prepare(`SELECT id FROM tasks WHERE id IN (${placeholders}) AND owner_id = ?`).all(...ids, owner) as { id: string }[];
+    const owned = await store().prepare(`SELECT id FROM tasks WHERE id IN (${placeholders}) AND owner_id = ?`).all<{ id: string }>(...ids, owner);
     if (owned.length !== ids.length) { ctx.status = 422; ctx.body = { error: 'task ids must belong to the current owner' }; return; }
-    const p = createRoutineWithTasks(body.name?.trim() || 'New routine', ids);
+    const p = await createRoutineWithTasks(body.name?.trim() || 'New routine', ids);
     const out = serializePattern(p);
     broadcast(owner, 'pattern:created', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `routine:${p.id}` });
@@ -286,21 +285,21 @@ export function patternsRouter() {
   router.post('/api/patterns/:id/place-today', async (ctx) => {
     const owner = currentOwnerId();
     const id = ctx.params.id;
-    const pattern = sqlite.prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner);
+    const pattern = await store().prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner);
     if (!pattern) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as { date?: string; block_id?: string | null };
     const result = placePatternOnDay(owner, id, { date: body.date, blockId: body.block_id ?? null });
 
     // Return the freshly placed (or already-on-the-day pattern-marked) blocks
     // so the client can patch its block store without waiting on SSE.
-    const blocks = sqlite
+    const blocks = await store()
       .prepare(
         `SELECT * FROM time_blocks
           WHERE owner_id = ? AND source_kind = 'pattern' AND source_ref = ?
             AND date(start_at) = date(?)
           ORDER BY start_at`
       )
-      .all(owner, String(id), `${result.date}T00:00:00`) as Record<string, unknown>[];
+      .all<Record<string, unknown>>(owner, String(id), `${result.date}T00:00:00`);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'place', entity: `routine:${id}` });
     ctx.body = {
       result,

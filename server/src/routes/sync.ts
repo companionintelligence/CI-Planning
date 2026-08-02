@@ -1,5 +1,8 @@
 import Router from '@koa/router';
+// `sqlite` remains ONLY as applyOp's handle argument — it dies when sync/apply.ts
+// ports to the facade. The route's own statements go through store().
 import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { applyOp, type Op, type ApplyResult } from '../sync/apply.js';
 import { mirrorTaskStatusToBlocks } from '../services/block-task-sync.js';
@@ -44,7 +47,7 @@ export function syncRouter() {
     const toEmit: { seq: number; event: string; payload: unknown }[] = [];
     const results: (ApplyResult | { opId: string; error: string })[] = [];
 
-    sqlite.transaction(() => {
+    await store().transaction(async () => {
       for (const op of ops) {
         try {
           // Capture the pre-merge status so a merged completion (or reopen) can run the
@@ -53,7 +56,7 @@ export function syncRouter() {
           // from another device would leave its Planner block sitting at 'planned'.
           const statusBefore =
             op.entity === 'task' && op.fields && 'status' in op.fields
-              ? (sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(op.entityId, ownerId) as { status: string } | undefined)?.status
+              ? (await store().prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get<{ status: string }>(op.entityId, ownerId))?.status
               : undefined;
           const result = applyOp(sqlite, op, ownerId);
           const statusAfter = result.applied['status'] as string | undefined;
@@ -92,7 +95,7 @@ export function syncRouter() {
           results.push({ opId: op.opId, error: msg });
         }
       }
-    })();
+    });
 
     // Broadcast after the transaction commits so events are never for rolled-back data.
     for (const { seq, event, payload } of toEmit) {

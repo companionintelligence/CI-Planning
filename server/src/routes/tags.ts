@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import {
   directionsOf, categoriesOf, directionOptoutsOf,
   createTag, updateTag, deleteTag,
@@ -13,7 +13,7 @@ export function tagsRouter() {
   // canonical entity_tags store (covers tasks · time blocks · routines). The client
   // groups directions / intentions / Unsorted from this one list.
   router.get('/api/tags', async (ctx) => {
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT t.id, t.name, t.kind, t.is_base AS isBase, t.muted,
                 COUNT(et.tag_id) AS count
@@ -23,7 +23,7 @@ export function tagsRouter() {
           GROUP BY t.id
           ORDER BY t.kind DESC, count DESC, t.name`,
       )
-      .all(currentOwnerId()) as { id: string; name: string; kind: string; isBase: number; muted: number; count: number }[];
+      .all<{ id: string; name: string; kind: string; isBase: number; muted: number; count: number }>(currentOwnerId());
     const tags = rows.map((r) => ({
       id: r.id,
       name: r.name,

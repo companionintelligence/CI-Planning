@@ -1,7 +1,7 @@
 import Router from '@koa/router';
 import { summarizeDay, morningCarryover } from '../agents/summarize.js';
 import { localISODate, isValidISODate } from '../lib/dates.js';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { serverTimezone, utcDayBounds } from '../lib/tz.js';
 import { timeSenseEnabled } from '../lib/flags.js';
@@ -24,15 +24,15 @@ export interface TopTask {
  * S3/S4 star rule). A task counts as "for the day" when it is in the day's
  * daily_plan OR has a time-block placed within the local day.
  */
-export function topTasksForDay(date: string): TopTask[] {
+export async function topTasksForDay(date: string): Promise<TopTask[]> {
   const owner = currentOwnerId();
-  const tzRow = sqlite
+  const tzRow = await store()
     .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   const tz = tzRow?.timezone || serverTimezone();
   const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
 
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT t.id, t.title, t.status, t.priority,
               (dp.task_id IS NOT NULL) AS planned,
@@ -56,9 +56,9 @@ export function topTasksForDay(date: string): TopTask[] {
           )
         ORDER BY (dp.position IS NULL), dp.position ASC, t.priority ASC, t.id ASC`,
     )
-    .all(owner, date, owner, dayStart, dayEnd) as {
+    .all<{
       id: string; title: string; status: string; priority: number; planned: number; plan_pos: number | null;
-    }[];
+    }>(owner, date, owner, dayStart, dayEnd);
 
   return rows.map((r) => ({
     id: r.id,
@@ -95,7 +95,7 @@ export function summaryRouter() {
     }
 
     const day = typeof raw === 'string' ? raw : localISODate();
-    ctx.body = { tasks: topTasksForDay(day) };
+    ctx.body = { tasks: await topTasksForDay(day) };
   });
 
   return router;

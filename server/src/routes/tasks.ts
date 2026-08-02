@@ -1,7 +1,8 @@
 import Router from '@koa/router';
 import { eq, and, like, asc, lte, ne } from 'drizzle-orm';
 import { logger } from '../lib/logger.js';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
+import { store } from '../db/store.js';
 import { tasks } from '../db/schema.js';
 import { broadcast } from './sse.js';
 import { taskToApi } from '../lib/serialize.js';
@@ -355,7 +356,7 @@ export function tasksRouter() {
   router.post('/api/tasks/:id/promote-objective', async (ctx) => {
     const id = ctx.params.id;
     const owner = currentOwnerId();
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+    if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
     // The task exists but is ephemeral — a quick task or a materialized recurrence
@@ -366,7 +367,7 @@ export function tasksRouter() {
     // objective: the route shouldn't depend on the service's internal scoping for its
     // own safety (matches every other raw read here), and an unscoped read would answer
     // 200 with a silent `{}` if the row were unreadable. Unreachable today — by design.
-    const objective = sqlite.prepare('SELECT * FROM objectives WHERE id = ? AND owner_id = ?').get(objectiveId, owner);
+    const objective = await store().prepare('SELECT * FROM objectives WHERE id = ? AND owner_id = ?').get(objectiveId, owner);
     if (!objective) { ctx.status = 500; ctx.body = { error: 'objective missing' }; return; }
     ctx.body = { objective };
   });
@@ -398,7 +399,7 @@ export function tasksRouter() {
   router.post('/api/tasks/:id/enrich', async (ctx) => {
     const owner = currentOwnerId();
     const id = ctx.params.id;
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+    if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
     const res = await enrichTaskFromMemory(owner, id);
@@ -499,7 +500,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { days?: number };
     if (typeof body.days !== 'number') { ctx.status = 422; ctx.body = { error: 'days is required' }; return; }
-    if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner)) {
+    if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
     const { scheduled_for, placement } = rescheduleTask(id, body.days, owner);

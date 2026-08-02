@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import type Koa from 'koa';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { trialityEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
@@ -104,7 +104,7 @@ export function trialityRouter() {
   // on a shown row, at most once (append-only discipline; the engine's guarded
   // UPDATE). A foreign/unknown log_id is a 404 — multi-tenant convention: never
   // confirm another owner's row exists.
-  router.post('/feedback', (ctx) => {
+  router.post('/feedback', async (ctx) => {
     if (!gate(ctx)) return;
     const body = (ctx.request.body ?? {}) as { log_id?: unknown; outcome?: unknown };
     if (typeof body.log_id !== 'string' || !body.log_id || !isOutcome(body.outcome)) {
@@ -113,7 +113,7 @@ export function trialityRouter() {
       return;
     }
     const owner = currentOwnerId();
-    const mine = sqlite
+    const mine = await store()
       .prepare(`SELECT 1 FROM triality_log WHERE id = ? AND owner_id = ?`)
       .get(body.log_id, owner);
     if (!mine) {
@@ -133,10 +133,10 @@ export function trialityRouter() {
   // learned rows only; the triality_log evidence survives untouched, so the
   // adaptation can be re-earned on the next weekly pass rather than being lost.
   // Owner-initiated write ⇒ audited (WHO rule), unlike the job that writes them.
-  router.delete('/weights', (ctx) => {
+  router.delete('/weights', async (ctx) => {
     if (!gate(ctx)) return;
     const owner = currentOwnerId();
-    const res = sqlite.prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(owner);
+    const res = await store().prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(owner);
     // Audit only a real reset — a no-op delete is not a mutation worth a row
     // (the same posture as the feedback stamp above).
     if (res.changes > 0) {

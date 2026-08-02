@@ -1,5 +1,5 @@
 import Router from '@koa/router';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { broadcast } from './sse.js';
 import { writeAudit } from '../lib/audit.js';
@@ -119,14 +119,14 @@ const OWNER_TABLES = [
  * partition. (A legitimate export is owner-scoped, so its rows always carry the caller's
  * own owner_id; this is a no-op for them.)
  */
-function insertRows(table: string, rows: Record<string, unknown>[], ownerId: string): number {
+async function insertRows(table: string, rows: Record<string, unknown>[], ownerId: string): Promise<number> {
   if (!rows.length) return 0;
   // Intersect the backup's keys with the LIVE table shape: an export taken before a
   // column was dropped (0048 is_habit, 0061, 0081, 0123 auto_mode, …) must still
   // import — retired keys are ignored, and keys absent from the backup take the
   // column default.
   const live = new Set(
-    (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name),
+    (await store().prepare(`PRAGMA table_info(${table})`).all<{ name: string }>()).map((c) => c.name),
   );
   const ownerCol = live.has('owner_id') ? 'owner_id' : live.has('proposed_owner_id') ? 'proposed_owner_id' : null;
   if (ownerCol) {
@@ -139,12 +139,12 @@ function insertRows(table: string, rows: Record<string, unknown>[], ownerId: str
   }
   const cols = Object.keys(rows[0]).filter((c) => live.has(c));
   if (!cols.length) return 0;
-  const stmt = sqlite.prepare(
+  const stmt = store().prepare(
     `INSERT OR REPLACE INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
   );
   for (const row of rows) {
     // Force the owner column to the caller — belt-and-suspenders behind the reject above.
-    stmt.run(cols.map((c) => (c === ownerCol ? ownerId : row[c])));
+    await stmt.run(...cols.map((c) => (c === ownerCol ? ownerId : row[c])));
   }
   return rows.length;
 }
@@ -153,10 +153,10 @@ function insertRows(table: string, rows: Record<string, unknown>[], ownerId: str
 const PARENT_OWNER_COL: Record<string, string> = { possible_tasks: 'proposed_owner_id' };
 
 /** Is `id` a row in `parent` owned by `ownerId`? A null FK is nothing to check (true). */
-function ownsParent(parent: string, id: unknown, ownerId: string): boolean {
+async function ownsParent(parent: string, id: unknown, ownerId: string): Promise<boolean> {
   if (id == null) return true;
   const col = PARENT_OWNER_COL[parent] ?? 'owner_id';
-  return !!sqlite.prepare(`SELECT 1 FROM ${parent} WHERE id = ? AND ${col} = ?`).get(id, ownerId);
+  return !!(await store().prepare(`SELECT 1 FROM ${parent} WHERE id = ? AND ${col} = ?`).get(id, ownerId));
 }
 
 // FK columns → owner-scoped parent table, for the owner-LESS junction tables. entity_tags
@@ -179,18 +179,29 @@ const ENTITY_KIND_PARENT: Record<string, string> = { task: 'tasks', routine: 'pa
  * against the victim. Parents are inserted (owner-forced) earlier in the same transaction,
  * so this check sees exactly the caller's set.
  */
-function insertJunctionRows(table: string, rows: Record<string, unknown>[], ownerId: string): number {
-  const owned = rows.filter((row) => {
+async function insertJunctionRows(table: string, rows: Record<string, unknown>[], ownerId: string): Promise<number> {
+  // Explicit loop, NOT Array.filter: an async predicate under .filter() returns a
+  // Promise, which is always truthy — every row (including another owner's) would
+  // pass, silently breaking the tenant-isolation drop this function exists for.
+  const owned: Record<string, unknown>[] = [];
+  for (const row of rows) {
     // The two polymorphic junctions resolve their parent table through entity_kind, so
     // they cannot be expressed in JUNCTION_FKS. They differ only in the tag column.
     if (table === 'entity_tags' || table === 'entity_categories') {
       const parent = ENTITY_KIND_PARENT[String(row['entity_kind'])];
-      if (!parent) return false;
+      if (!parent) continue;
       const tagCol = table === 'entity_tags' ? 'tag_id' : 'category_tag_id';
-      return ownsParent(parent, row['entity_id'], ownerId) && ownsParent('tags', row[tagCol], ownerId);
+      if ((await ownsParent(parent, row['entity_id'], ownerId)) && (await ownsParent('tags', row[tagCol], ownerId))) {
+        owned.push(row);
+      }
+      continue;
     }
-    return (JUNCTION_FKS[table] ?? []).every(([col, parent]) => ownsParent(parent, row[col], ownerId));
-  });
+    let ok = true;
+    for (const [col, parent] of JUNCTION_FKS[table] ?? []) {
+      if (!(await ownsParent(parent, row[col], ownerId))) { ok = false; break; }
+    }
+    if (ok) owned.push(row);
+  }
   return insertRows(table, owned, ownerId);
 }
 
@@ -198,22 +209,22 @@ export function backupRouter() {
   const router = new Router({ prefix: '/api' });
 
   // GET /api/export — dump all owner data as a downloadable JSON file.
-  router.get('/export', (ctx) => {
+  router.get('/export', async (ctx) => {
     const ownerId = currentOwnerId();
 
     // Collect owner-scoped table rows.
     const ownerData: Record<string, unknown[]> = {};
     for (const t of OWNER_TABLES) {
-      ownerData[t] = sqlite.prepare(`SELECT * FROM ${t} WHERE owner_id = ?`).all(ownerId) as unknown[];
+      ownerData[t] = await store().prepare(`SELECT * FROM ${t} WHERE owner_id = ?`).all(ownerId);
     }
 
     // Tables with no direct owner_id — scope via owner's task/pattern ids.
-    const taskIdsRaw = sqlite
+    const taskIdsRaw = await store()
       .prepare('SELECT id FROM tasks WHERE owner_id = ?')
-      .all(ownerId) as { id: string }[];
-    const patternIdsRaw = sqlite
+      .all<{ id: string }>(ownerId);
+    const patternIdsRaw = await store()
       .prepare('SELECT id FROM patterns WHERE owner_id = ?')
-      .all(ownerId) as { id: string }[];
+      .all<{ id: string }>(ownerId);
 
     const taskIds = taskIdsRaw.map((r) => r.id);
     const patternIds = patternIdsRaw.map((r) => r.id);
@@ -226,22 +237,22 @@ export function backupRouter() {
     const blockIds = (timeBlocks as { id: string }[]).map((b) => b.id);
 
     const patternTasks = patternIds.length
-      ? sqlite
+      ? await store()
           .prepare(`SELECT * FROM pattern_tasks WHERE pattern_id IN (${patternIds.map(() => '?').join(',')})`)
-          .all(patternIds)
+          .all(...patternIds)
       : [];
 
     const taskDeps = taskIds.length
-      ? sqlite
+      ? await store()
           .prepare(`SELECT * FROM task_dependencies WHERE task_id IN (${taskIds.map(() => '?').join(',')})`)
-          .all(taskIds)
+          .all(...taskIds)
       : [];
 
     const entityTagIds = [...taskIds, ...patternIds, ...blockIds];
     const entityTags = entityTagIds.length
-      ? sqlite
+      ? await store()
           .prepare(`SELECT * FROM entity_tags WHERE entity_id IN (${entityTagIds.map(() => '?').join(',')})`)
-          .all(entityTagIds)
+          .all(...entityTagIds)
       : [];
 
     // entity_categories (migration 0134) is entity_tags' twin — polymorphic, owner-less,
@@ -250,30 +261,30 @@ export function backupRouter() {
     // 'time_block' are valid entity_kinds for it, so patternIds are deliberately absent.
     const entityCategoryIds = [...taskIds, ...blockIds];
     const entityCategories = entityCategoryIds.length
-      ? sqlite
+      ? await store()
           .prepare(
             `SELECT * FROM entity_categories WHERE entity_id IN (${entityCategoryIds.map(() => '?').join(',')})`,
           )
-          .all(entityCategoryIds)
+          .all(...entityCategoryIds)
       : [];
 
-    const possibleTasks = sqlite
+    const possibleTasks = await store()
       .prepare('SELECT * FROM possible_tasks WHERE proposed_owner_id = ?')
-      .all(ownerId) as { id: string }[];
+      .all<{ id: string }>(ownerId);
     const ptIds = possibleTasks.map((p) => p.id);
     const possibleTaskTags = ptIds.length
-      ? sqlite
+      ? await store()
           .prepare(`SELECT * FROM possible_task_tags WHERE possible_task_id IN (${ptIds.map(() => '?').join(',')})`)
-          .all(ptIds)
+          .all(...ptIds)
       : [];
 
     // objective_tasks has no owner_id — scope via the owner's objectives (both ends of a
     // link belong to the same owner). Carries tombstones (linked=0) too, via SELECT *.
     const objectiveIds = (ownerData['objectives'] as { id: string }[]).map((o) => o.id);
     const objectiveTasks = objectiveIds.length
-      ? sqlite
+      ? await store()
           .prepare(`SELECT * FROM objective_tasks WHERE objective_id IN (${objectiveIds.map(() => '?').join(',')})`)
-          .all(objectiveIds)
+          .all(...objectiveIds)
       : [];
 
     const payload = {
@@ -284,9 +295,9 @@ export function backupRouter() {
       // T2: tags are owner-scoped (an OWNER_TABLES entry); the 3 junctions carry no owner_id,
       // so they scope through their parent tags (tag_id IN this owner's tags).
       tags: ownerData['tags'],
-      tag_directions: sqlite.prepare(`SELECT * FROM tag_directions WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
-      tag_categories: sqlite.prepare(`SELECT * FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
-      category_direction_optouts: sqlite.prepare(`SELECT * FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
+      tag_directions: await store().prepare(`SELECT * FROM tag_directions WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
+      tag_categories: await store().prepare(`SELECT * FROM tag_categories WHERE intention_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
+      category_direction_optouts: await store().prepare(`SELECT * FROM category_direction_optouts WHERE category_tag_id IN (SELECT id FROM tags WHERE owner_id = ?)`).all(ownerId),
       pattern_types: ownerData['pattern_types'],
       patterns: ownerData['patterns'],
       tasks: ownerData['tasks'],
@@ -335,7 +346,7 @@ export function backupRouter() {
   });
 
   // POST /api/import — replace owner partition from a JSON export.
-  router.post('/import', (ctx) => {
+  router.post('/import', async (ctx) => {
     const ownerId = currentOwnerId();
     const body = ctx.request.body as Record<string, unknown>;
 
@@ -400,11 +411,11 @@ export function backupRouter() {
 
     const counts: Record<string, number> = {};
 
-    sqlite.transaction(() => {
+    await store().transaction(async () => {
       // Defer FK checks to COMMIT so a full-table restore is order-independent — e.g.
       // time_blocks containers + their child task-blocks (parent_block_id), and the new
       // category_id refs. The complete dataset is consistent at commit. Auto-resets at tx end.
-      sqlite.exec('PRAGMA defer_foreign_keys=ON');
+      await store().exec('PRAGMA defer_foreign_keys=ON');
       // ── Delete the owner's existing portable data in reverse FK order ──────
       // Shared with deleteOwner() so the FK-safe ordering has one source of truth.
       purgeOwnerData(ownerId);
@@ -413,53 +424,53 @@ export function backupRouter() {
       const g = (key: string) => (Array.isArray(body[key]) ? (body[key] as Record<string, unknown>[]) : []);
       // Owner-bearing tables: owner_id force+reject inside insertRows.
       // Owner-LESS junctions (via insertJunctionRows): FK-parent ownership drop.
-      counts['scheduling_prefs'] = insertRows('scheduling_prefs', g('scheduling_prefs'), ownerId);
-      counts['daily_recap']      = insertRows('daily_recap', g('daily_recap'), ownerId);
-      counts['tags']             = insertRows('tags', g('tags'), ownerId);
-      counts['tag_directions']   = insertJunctionRows('tag_directions', g('tag_directions'), ownerId);
-      counts['tag_categories']   = insertJunctionRows('tag_categories', g('tag_categories'), ownerId);
-      counts['category_direction_optouts'] = insertJunctionRows('category_direction_optouts', g('category_direction_optouts'), ownerId);
-      counts['pattern_types']    = insertRows('pattern_types', g('pattern_types'), ownerId);
-      counts['patterns']         = insertRows('patterns', g('patterns'), ownerId);
-      counts['tasks']            = insertRows('tasks', g('tasks'), ownerId);
-      counts['pattern_tasks']    = insertJunctionRows('pattern_tasks', g('pattern_tasks'), ownerId);
-      counts['time_blocks']      = insertRows('time_blocks', g('time_blocks'), ownerId);
-      counts['task_dependencies']= insertJunctionRows('task_dependencies', g('task_dependencies'), ownerId);
-      counts['block_templates']  = insertRows('block_templates', g('block_templates'), ownerId);
-      counts['pattern_blocks']   = insertRows('pattern_blocks', g('pattern_blocks'), ownerId);
-      counts['tag_prefs']        = insertRows('tag_prefs', g('tag_prefs'), ownerId);
-      counts['flight_plan']      = insertRows('flight_plan', g('flight_plan'), ownerId);
-      counts['time_entries']     = insertRows('time_entries', g('time_entries'), ownerId);
-      counts['entity_tags']      = insertJunctionRows('entity_tags', g('entity_tags'), ownerId);
-      counts['entity_categories'] = insertJunctionRows('entity_categories', g('entity_categories'), ownerId);
-      counts['possible_tasks']   = insertRows('possible_tasks', g('possible_tasks'), ownerId);
-      counts['possible_task_tags'] = insertJunctionRows('possible_task_tags', g('possible_task_tags'), ownerId);
-      counts['reminders']        = insertRows('reminders', g('reminders'), ownerId);
-      counts['push_subscriptions'] = insertRows('push_subscriptions', g('push_subscriptions'), ownerId);
+      counts['scheduling_prefs'] = await insertRows('scheduling_prefs', g('scheduling_prefs'), ownerId);
+      counts['daily_recap']      = await insertRows('daily_recap', g('daily_recap'), ownerId);
+      counts['tags']             = await insertRows('tags', g('tags'), ownerId);
+      counts['tag_directions']   = await insertJunctionRows('tag_directions', g('tag_directions'), ownerId);
+      counts['tag_categories']   = await insertJunctionRows('tag_categories', g('tag_categories'), ownerId);
+      counts['category_direction_optouts'] = await insertJunctionRows('category_direction_optouts', g('category_direction_optouts'), ownerId);
+      counts['pattern_types']    = await insertRows('pattern_types', g('pattern_types'), ownerId);
+      counts['patterns']         = await insertRows('patterns', g('patterns'), ownerId);
+      counts['tasks']            = await insertRows('tasks', g('tasks'), ownerId);
+      counts['pattern_tasks']    = await insertJunctionRows('pattern_tasks', g('pattern_tasks'), ownerId);
+      counts['time_blocks']      = await insertRows('time_blocks', g('time_blocks'), ownerId);
+      counts['task_dependencies']= await insertJunctionRows('task_dependencies', g('task_dependencies'), ownerId);
+      counts['block_templates']  = await insertRows('block_templates', g('block_templates'), ownerId);
+      counts['pattern_blocks']   = await insertRows('pattern_blocks', g('pattern_blocks'), ownerId);
+      counts['tag_prefs']        = await insertRows('tag_prefs', g('tag_prefs'), ownerId);
+      counts['flight_plan']      = await insertRows('flight_plan', g('flight_plan'), ownerId);
+      counts['time_entries']     = await insertRows('time_entries', g('time_entries'), ownerId);
+      counts['entity_tags']      = await insertJunctionRows('entity_tags', g('entity_tags'), ownerId);
+      counts['entity_categories'] = await insertJunctionRows('entity_categories', g('entity_categories'), ownerId);
+      counts['possible_tasks']   = await insertRows('possible_tasks', g('possible_tasks'), ownerId);
+      counts['possible_task_tags'] = await insertJunctionRows('possible_task_tags', g('possible_task_tags'), ownerId);
+      counts['reminders']        = await insertRows('reminders', g('reminders'), ownerId);
+      counts['push_subscriptions'] = await insertRows('push_subscriptions', g('push_subscriptions'), ownerId);
       // v4 owner-scoped tables (G-EXPORT-MISSING). defer_foreign_keys=ON (above) makes the
       // intra-transaction insert order FK-safe; listed parents-before-children for clarity.
-      counts['objectives']          = insertRows('objectives', g('objectives'), ownerId);
-      counts['objective_tasks']     = insertJunctionRows('objective_tasks', g('objective_tasks'), ownerId);
-      counts['reflections']         = insertRows('reflections', g('reflections'), ownerId);
-      counts['daily_plan']          = insertRows('daily_plan', g('daily_plan'), ownerId);
-      counts['day_types']           = insertRows('day_types', g('day_types'), ownerId);
-      counts['day_of_week_map']     = insertRows('day_of_week_map', g('day_of_week_map'), ownerId);
-      counts['day_assignments']     = insertRows('day_assignments', g('day_assignments'), ownerId);
-      counts['pattern_day_optouts'] = insertRows('pattern_day_optouts', g('pattern_day_optouts'), ownerId);
-      counts['plan_hints']          = insertRows('plan_hints', g('plan_hints'), ownerId);
-      counts['replan_suggestions']  = insertRows('replan_suggestions', g('replan_suggestions'), ownerId);
-      counts['estimate_calibration']= insertRows('estimate_calibration', g('estimate_calibration'), ownerId);
-      counts['calibration_combo_pins'] = insertRows('calibration_combo_pins', g('calibration_combo_pins'), ownerId);
-      counts['calibration_history'] = insertRows('calibration_history', g('calibration_history'), ownerId);
+      counts['objectives']          = await insertRows('objectives', g('objectives'), ownerId);
+      counts['objective_tasks']     = await insertJunctionRows('objective_tasks', g('objective_tasks'), ownerId);
+      counts['reflections']         = await insertRows('reflections', g('reflections'), ownerId);
+      counts['daily_plan']          = await insertRows('daily_plan', g('daily_plan'), ownerId);
+      counts['day_types']           = await insertRows('day_types', g('day_types'), ownerId);
+      counts['day_of_week_map']     = await insertRows('day_of_week_map', g('day_of_week_map'), ownerId);
+      counts['day_assignments']     = await insertRows('day_assignments', g('day_assignments'), ownerId);
+      counts['pattern_day_optouts'] = await insertRows('pattern_day_optouts', g('pattern_day_optouts'), ownerId);
+      counts['plan_hints']          = await insertRows('plan_hints', g('plan_hints'), ownerId);
+      counts['replan_suggestions']  = await insertRows('replan_suggestions', g('replan_suggestions'), ownerId);
+      counts['estimate_calibration']= await insertRows('estimate_calibration', g('estimate_calibration'), ownerId);
+      counts['calibration_combo_pins'] = await insertRows('calibration_combo_pins', g('calibration_combo_pins'), ownerId);
+      counts['calibration_history'] = await insertRows('calibration_history', g('calibration_history'), ownerId);
       // v8 (G-CASCADEXPORT). external_events/outbound_queue FK time_blocks(id); the blocks
       // above are re-inserted with original ids, and defer_foreign_keys=ON makes order moot.
-      counts['copy_history']     = insertRows('copy_history', g('copy_history'), ownerId);
-      counts['external_events']  = insertRows('external_events', g('external_events'), ownerId);
-      counts['outbound_queue']   = insertRows('outbound_queue', g('outbound_queue'), ownerId);
+      counts['copy_history']     = await insertRows('copy_history', g('copy_history'), ownerId);
+      counts['external_events']  = await insertRows('external_events', g('external_events'), ownerId);
+      counts['outbound_queue']   = await insertRows('outbound_queue', g('outbound_queue'), ownerId);
       // v9: standalone owner tables (no children, no junctions).
-      counts['life_priorities']  = insertRows('life_priorities', g('life_priorities'), ownerId);
-      counts['planning_sessions'] = insertRows('planning_sessions', g('planning_sessions'), ownerId);
-    })();
+      counts['life_priorities']  = await insertRows('life_priorities', g('life_priorities'), ownerId);
+      counts['planning_sessions'] = await insertRows('planning_sessions', g('planning_sessions'), ownerId);
+    });
 
     writeAudit({ ownerId, actor: 'owner', action: 'import', entity: 'import' });
     broadcast(ownerId, 'data:imported', { counts });

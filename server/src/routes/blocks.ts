@@ -1,5 +1,8 @@
 import Router from '@koa/router';
+// `sqlite` remains ONLY as stampRow's handle argument — it dies when sync/apply.ts
+// ports to the facade. The route's own statements go through store().
 import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
 import { localISODate } from '../lib/dates.js';
@@ -131,9 +134,9 @@ export function blocksRouter() {
     // instead would rewrite earlier occurrences too.
     let targetId = id;
     if ((ctx.query.scope as string) === 'following') {
-      const inst = sqlite
+      const inst = await store()
         .prepare(`SELECT recurrence_parent_id, occurrence_date FROM time_blocks WHERE id = ? AND owner_id = ?`)
-        .get(id, owner) as { recurrence_parent_id: string | null; occurrence_date: string | null } | undefined;
+        .get<{ recurrence_parent_id: string | null; occurrence_date: string | null }>(id, owner);
       if (inst?.recurrence_parent_id && inst.occurrence_date) {
         const fork = forkSeriesAt(owner, 'time_blocks', inst.recurrence_parent_id, inst.occurrence_date, newId());
         if (!fork.ok) {
@@ -240,7 +243,7 @@ export function blocksRouter() {
   router.post('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
     if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
-    const exists = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
+    const exists = await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
     if (!exists) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
     const armed = syncBlockFocusReminders(owner, ctx.params.id);
     ctx.body = { ok: true, armed };
@@ -261,24 +264,23 @@ export function blocksRouter() {
   router.get('/api/blocks/:id/whats-next', async (ctx) => {
     const owner = currentOwnerId();
     if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
-    const block = sqlite
+    const block = await store()
       .prepare(`SELECT id, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`)
-      .get(ctx.params.id, owner) as { id: string; end_at: string } | undefined;
+      .get<{ id: string; end_at: string }>(ctx.params.id, owner);
     if (!block) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
-    const next = sqlite
+    const next = await store()
       .prepare(
         `SELECT title, start_at FROM time_blocks
           WHERE owner_id = ? AND id != ? AND block_kind != 'timeblock' AND start_at >= ?
           ORDER BY start_at LIMIT 1`,
       )
-      .get(owner, block.id, block.end_at) as { title: string; start_at: string } | undefined;
+      .get<{ title: string; start_at: string }>(owner, block.id, block.end_at);
     // Blocks are stored as UTC instants; render the wall-clock in the owner's zone.
     // NEVER slice the ISO string for HH:MM (grid.ts invariant) — that leaks UTC to a
     // non-UTC user, mismatching the calendar's local display.
     const tz =
-      (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
-        | { timezone: string | null }
-        | undefined)?.timezone || serverTimezone();
+      (await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get<{ timezone: string | null }>(owner))
+        ?.timezone || serverTimezone();
     const copy = await renderCopy(
       't4_whats_next',
       next ? { next: next.title, next_time: utcToZonedWallTime(next.start_at, tz) } : {},
@@ -295,15 +297,15 @@ export function blocksRouter() {
     if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const id = ctx.params.id;
 
-    const block = sqlite
+    const block = await store()
       .prepare(`SELECT id, task_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-      .get(id, owner) as { id: string; task_id: string | null } | undefined;
+      .get<{ id: string; task_id: string | null }>(id, owner);
     if (!block) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
     if (!block.task_id) { ctx.status = 422; ctx.body = { error: 'block has no task to reschedule' }; return; }
 
-    const t = sqlite
+    const t = await store()
       .prepare(`SELECT recurrence_parent_id, status FROM tasks WHERE id = ? AND owner_id = ?`)
-      .get(block.task_id, owner) as { recurrence_parent_id: string | null; status: string } | undefined;
+      .get<{ recurrence_parent_id: string | null; status: string }>(block.task_id, owner);
     if (!t) { ctx.status = 404; ctx.body = { error: 'task not found' }; return; }
     // "Schedule again" is for unfinished work only — a done/cancelled task must not
     // be re-staged (Auto would place a fresh block for already-closed work).
@@ -313,26 +315,26 @@ export function blocksRouter() {
     // Same guard as the stage endpoint: series instances re-land via their RRULE.
     if (t.recurrence_parent_id) { ctx.status = 422; ctx.body = { error: 'series instances re-land via their rule, not reschedule' }; return; }
 
-    const nextPos = (sqlite
+    const nextPos = ((await store()
       .prepare(`SELECT COALESCE(MAX(position), 0) + 1 AS n FROM flight_plan WHERE owner_id = ?`)
-      .get(owner) as { n: number }).n;
+      .get<{ n: number }>(owner)))!.n;
 
     let staged = false;
-    sqlite.transaction(() => {
+    await store().transaction(async () => {
       // Attempt 1 becomes history — skipped, not deleted. The partial time_entry is
       // left as-is: the task stays open, and calibration only reads DONE tasks, so
       // the partial never enters estimate_calibration (§1.1b / N L169) — no flag needed.
       // Phase L: `skipped` is mergeable and unpinned, so without the stamp a queued op
       // still calling this block 'planned' would win LWW and resurrect the abandoned
       // attempt. (revertTaskPlacementStatus stamps the task side itself.)
-      const info = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
+      const info = await store().prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
       if (info.changes > 0) stampRow(sqlite, 'block', id, ['status']);
-      staged = sqlite
+      staged = (await store()
         .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
-        .run(owner, block.task_id, nextPos).changes > 0;
+        .run(owner, block.task_id, nextPos)).changes > 0;
       // Z4: a skipped attempt's focus cues must not fire for the abandoned block.
       clearBlockFocusReminders(id);
-    })();
+    });
 
     // Flip the task back to open (it was 'scheduled' while it held the block) so Auto
     // re-places it; broadcast so the board drops the skipped block and shows the stage.
@@ -371,7 +373,7 @@ export function blocksRouter() {
     const owner = currentOwnerId();
 
     // Verify ownership before any side effects (e.g. remote deletes).
-    if (!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, owner)) {
+    if (!(await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
 

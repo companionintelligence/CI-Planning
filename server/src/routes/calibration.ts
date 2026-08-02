@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import type Koa from 'koa';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { timeSenseEnabled } from '../lib/flags.js';
 import { writeAudit } from '../lib/audit.js';
@@ -34,17 +34,17 @@ export function calibrationRouter() {
   // GET /api/calibration/scopes — all scoped rows + current (unpinned) combo
   // suggestions. (Bare GET /api/calibration is Phase N's legacy global-row
   // readout in routes/review.ts — ungated, unchanged.)
-  router.get('/scopes', (ctx) => {
+  router.get('/scopes', async (ctx) => {
     if (!gate(ctx)) return;
     const owner = currentOwnerId();
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT scope_kind, scope_ref, computed_at, sample_count, bias_ratio, p25, p50, p75
            FROM estimate_calibration WHERE owner_id = ?
           ORDER BY scope_kind, scope_ref`,
       )
       .all(owner);
-    const pins = sqlite
+    const pins = await store()
       .prepare(`SELECT scope_ref, created_at FROM calibration_combo_pins WHERE owner_id = ? ORDER BY scope_ref`)
       .all(owner);
     ctx.body = { rows, pins, suggestions: detectComboSuggestions(owner) };
@@ -70,7 +70,7 @@ export function calibrationRouter() {
   });
 
   // POST /api/calibration/pins { tag_ids: string[] } — confirm a combo suggestion.
-  router.post('/pins', (ctx) => {
+  router.post('/pins', async (ctx) => {
     if (!gate(ctx)) return;
     const owner = currentOwnerId();
     const { tag_ids } = (ctx.request.body ?? {}) as { tag_ids?: unknown };
@@ -79,17 +79,17 @@ export function calibrationRouter() {
       ctx.body = { error: 'tag_ids must be 2+ tag ids' };
       return;
     }
-    const owned = sqlite
+    const owned = await store()
       .prepare(`SELECT COUNT(*) AS n FROM tags WHERE owner_id = ? AND id IN (${tag_ids.map(() => '?').join(',')})`)
-      .get(owner, ...tag_ids) as { n: number };
-    if (owned.n !== new Set(tag_ids).size) {
+      .get<{ n: number }>(owner, ...tag_ids);
+    if (owned?.n !== new Set(tag_ids).size) {
       ctx.status = 422;
       ctx.body = { error: 'unknown tag id' };
       return;
     }
 
     const scope_ref = comboRef(tag_ids as string[]);
-    sqlite
+    await store()
       .prepare(`INSERT OR IGNORE INTO calibration_combo_pins (owner_id, scope_ref) VALUES (?, ?)`)
       .run(owner, scope_ref);
     // Recompute immediately so the pinned combo's row exists now, not tonight.
@@ -100,14 +100,14 @@ export function calibrationRouter() {
 
   // DELETE /api/calibration/pins/:scopeRef — unpin; the combo's row goes with it
   // (an unpinned combo must stop biasing immediately, not at the next nightly).
-  router.delete('/pins/:scopeRef', (ctx) => {
+  router.delete('/pins/:scopeRef', async (ctx) => {
     if (!gate(ctx)) return;
     const owner = currentOwnerId();
     const scopeRef = ctx.params.scopeRef;
-    const res = sqlite
+    const res = await store()
       .prepare(`DELETE FROM calibration_combo_pins WHERE owner_id = ? AND scope_ref = ?`)
       .run(owner, scopeRef);
-    sqlite
+    await store()
       .prepare(`DELETE FROM estimate_calibration WHERE owner_id = ? AND scope_kind = 'tag_combo' AND scope_ref = ?`)
       .run(owner, scopeRef);
     if (res.changes === 0) {

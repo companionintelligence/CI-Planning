@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import type Koa from 'koa';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { currentScopes, currentOwnerId } from '../lib/context.js';
@@ -82,16 +82,15 @@ async function sendInvite(target: OwnerAccount): Promise<InviteResult> {
 }
 
 /** One real (non-sentinel) account row, or undefined. */
-function getAccount(id: string): OwnerAccount | undefined {
+async function getAccount(id: string): Promise<OwnerAccount | undefined> {
   if (id === SYSTEM_OWNER_ID) return undefined;
-  const r = sqlite
+  const r = await store()
     .prepare(
       `SELECT id, name, username, email, role, password_hash IS NOT NULL AS has_password
          FROM owners WHERE id = ? AND id <> ?`,
     )
-    .get(id, SYSTEM_OWNER_ID) as
-    | { id: string; name: string; username: string | null; email: string | null; role: string; has_password: number }
-    | undefined;
+    .get<{ id: string; name: string; username: string | null; email: string | null; role: string; has_password: number }>(
+      id, SYSTEM_OWNER_ID);
   if (!r) return undefined;
   // normalizeRole: a hand-edited role string leaves the union the client types
   // expect — read it as 'viewer', the role whose scopes it effectively grants.
@@ -143,7 +142,7 @@ export function accountsRouter() {
       }
       throw err;
     }
-    const account = getAccount(id)!;
+    const account = (await getAccount(id))!;
     const invite = await sendInvite(account);
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'create', entity: `account:${id}` });
     ctx.status = 201;
@@ -155,7 +154,7 @@ export function accountsRouter() {
   // newest link supersedes any outstanding one (issueResetToken drops siblings).
   router.post('/api/accounts/:id/invite', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const target = getAccount(ctx.params.id);
+    const target = await getAccount(ctx.params.id);
     if (!target) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     if (!target.username) {
       // An OIDC-only account has no local login — a password would be inert; they
@@ -188,7 +187,7 @@ export function accountsRouter() {
       ctx.status = 400; ctx.body = { error: 'email must be an email address or null' }; return;
     }
 
-    const target = getAccount(ctx.params.id);
+    const target = await getAccount(ctx.params.id);
     if (!target) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
 
     const roleChanged = body.role !== undefined && body.role !== target.role;
@@ -197,7 +196,7 @@ export function accountsRouter() {
       // under concurrent PATCHes (a check-then-write pair could let two demotions
       // both pass the count and leave zero operators). The UPDATE refuses to fire
       // when the target is the final operator and the new role isn't operator.
-      const res = sqlite
+      const res = await store()
         .prepare(
           `UPDATE owners SET role = @role
              WHERE id = @id AND NOT (
@@ -214,20 +213,20 @@ export function accountsRouter() {
       await bumpSessionEpoch(target.id);
     }
     if (typeof body.name === 'string') {
-      sqlite.prepare(`UPDATE owners SET name = ? WHERE id = ?`).run(body.name.trim(), target.id);
+      await store().prepare(`UPDATE owners SET name = ? WHERE id = ?`).run(body.name.trim(), target.id);
     }
     if (body.email !== undefined) {
-      sqlite.prepare(`UPDATE owners SET email = ? WHERE id = ?`).run(body.email === null ? null : (body.email as string).trim(), target.id);
+      await store().prepare(`UPDATE owners SET email = ? WHERE id = ?`).run(body.email === null ? null : (body.email as string).trim(), target.id);
     }
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'update', entity: `account:${target.id}` });
-    ctx.body = { account: getAccount(target.id) };
+    ctx.body = { account: await getAccount(target.id) };
   });
 
   // DELETE /api/accounts/:id — permanently delete an account and ALL its data.
   // Refuses yourself (use another operator) and the last operator (lockout).
-  router.delete('/api/accounts/:id', (ctx) => {
+  router.delete('/api/accounts/:id', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const target = getAccount(ctx.params.id);
+    const target = await getAccount(ctx.params.id);
     if (!target) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     if (target.id === currentOwnerId()) {
       ctx.status = 409; ctx.body = { error: 'cannot delete your own account' }; return;

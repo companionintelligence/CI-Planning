@@ -70,6 +70,21 @@ async change when this file ports.
 **Total: 914 src statements / 101 files** (23+98+1+145+292+153+73+117+4+8 = 914,
 of which 906 are portable work).
 
+## Two more silent-break shapes (found in wave 1–3, both typecheck clean)
+
+- **`Array.filter`/`.every` with an async predicate** returns promises — always
+  truthy, so every element passes. `routes/backup.ts` insertJunctionRows would
+  have silently stopped dropping other owners' junction rows on import.
+  Rewrite as explicit loops.
+- **Koa does not await `ctx.body`** — `ctx.body = nowAsyncService(…)` assigns
+  a Promise and serializes `{}`. `ctx.body` is `any`, so tsc says nothing;
+  only the suite catches it. When a service ports, sweep its route call
+  expressions for missing `await`.
+- **Module-level `store().prepare(…)` throws at import time** when the module
+  loads before db/index installs the backend (§5.5's trap in a new form —
+  `services/task-metrics.ts` had module-level prepares). Keep SQL strings at
+  module level; call `store().prepare` inside functions.
+
 ## Per-file loop
 
 1. Read the file's *direct importers* (`grep -rn "from.*<name>" server/src`) —

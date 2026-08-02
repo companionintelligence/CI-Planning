@@ -1,6 +1,6 @@
 import Router from '@koa/router';
 import { randomBytes } from 'node:crypto';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { newId, SYSTEM_OWNER_ID } from '../lib/ids.js';
@@ -124,13 +124,12 @@ export function authRouter() {
 
   // Gated: identity of the current session/credential — the client shell's session
   // probe (U3). 401s via requireAuth when there is no valid credential.
-  router.get('/api/auth/me', (ctx) => {
+  router.get('/api/auth/me', async (ctx) => {
     const ownerId = currentOwnerId();
-    const row = sqlite
+    const row = await store()
       .prepare(`SELECT id, name, email, username, backup_email, role FROM owners WHERE id = ?`)
-      .get(ownerId) as
-      | { id: string; name: string; email: string | null; username: string | null; backup_email: string | null; role: string }
-      | undefined;
+      .get<{ id: string; name: string; email: string | null; username: string | null; backup_email: string | null; role: string }>(
+        ownerId);
     if (!row) throw httpError(401, 'unknown owner');
     // Phase AG: `role` + derived `isOperator` let the client show/hide the operator
     // surfaces (Settings → Accounts, the Jobs nav entry) without probing an admin GET.
@@ -208,13 +207,13 @@ export function authRouter() {
     // Resolve by username OR email, excluding the sentinel (N-SENTINEL). Prefer an email match
     // when the identifier looks like an email to avoid ambiguity with email-shaped usernames.
     const looksLikeEmail = id.includes('@');
-    const owner = (looksLikeEmail
-      ? sqlite
+    const owner = await (looksLikeEmail
+      ? store()
           .prepare(`SELECT id, email, backup_email FROM owners WHERE email = ? AND id <> ? LIMIT 1`)
-          .get(id, SYSTEM_OWNER_ID)
-      : sqlite
+          .get<{ id: string; email: string | null; backup_email: string | null }>(id, SYSTEM_OWNER_ID)
+      : store()
           .prepare(`SELECT id, email, backup_email FROM owners WHERE username = ? AND id <> ? LIMIT 1`)
-          .get(id, SYSTEM_OWNER_ID)) as { id: string; email: string | null; backup_email: string | null } | undefined;
+          .get<{ id: string; email: string | null; backup_email: string | null }>(id, SYSTEM_OWNER_ID));
 
     // The response is returned in every branch below and depends ONLY on server config,
     // never on whether the identifier matched — the anti-enumeration invariant. With no
@@ -292,7 +291,7 @@ export function authRouter() {
 
     const passwordHash = await hashPassword(newPassword);
     // Belt-and-suspenders sentinel guard (tokens are only ever issued for real owners).
-    sqlite
+    await store()
       .prepare(`UPDATE owners SET password_hash = ? WHERE id = ? AND id <> ?`)
       .run(passwordHash, ownerId, SYSTEM_OWNER_ID);
     // Invalidate all existing sessions for this owner (every device is signed out).
@@ -326,14 +325,14 @@ export function authRouter() {
 
     // Opportunistic hygiene: expired rows are minted unauthenticated and abandoned
     // logins never consume theirs, so prune on every start.
-    sqlite.prepare(`DELETE FROM auth_states WHERE expires_at <= ?`).run(new Date().toISOString());
+    await store().prepare(`DELETE FROM auth_states WHERE expires_at <= ?`).run(new Date().toISOString());
 
     const codeVerifier = base64url(randomBytes(64)); // ~86 chars (within 43–128)
     const state = base64url(randomBytes(32));
     const nonce = base64url(randomBytes(32));
 
     const now = Date.now();
-    sqlite
+    await store()
       .prepare(
         `INSERT INTO auth_states (id, state, code_verifier, nonce, redirect_uri, created_at, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -408,12 +407,12 @@ export function authRouter() {
 
     // Atomically consume the state row (single-use): DELETE ... RETURNING means a
     // replayed callback finds nothing. Reject unknown / already-consumed states.
-    const row = sqlite
+    const row = await store()
       .prepare(
         `DELETE FROM auth_states WHERE state = ?
          RETURNING id, code_verifier, nonce, redirect_uri, expires_at`,
       )
-      .get(state) as AuthStateRow | undefined;
+      .get<AuthStateRow>(state);
 
     if (!row) {
       ctx.status = 400;
@@ -494,8 +493,8 @@ export function authRouter() {
 
     // sub → owner. EXCLUDES the sentinel owner (N-SENTINEL, U0): an external
     // login must never take over the single-owner dev/test identity.
-    const findBySub = sqlite.prepare(`SELECT id FROM owners WHERE external_subject = ? AND id <> ?`);
-    let owner = findBySub.get(claims.sub, SYSTEM_OWNER_ID) as { id: string } | undefined;
+    const findBySub = store().prepare(`SELECT id FROM owners WHERE external_subject = ? AND id <> ?`);
+    let owner = await findBySub.get<{ id: string }>(claims.sub, SYSTEM_OWNER_ID);
 
     if (!owner) {
       if (!config.auth.autoProvision) {
@@ -518,16 +517,16 @@ export function authRouter() {
       } catch (err) {
         // Two concurrent first-logins for the same sub: the UNIQUE(external_subject)
         // index makes the loser's insert throw — re-read and use the winner's row.
-        owner = findBySub.get(claims.sub, SYSTEM_OWNER_ID) as { id: string } | undefined;
+        owner = await findBySub.get<{ id: string }>(claims.sub, SYSTEM_OWNER_ID);
         if (!owner) {
           // Re-read still empty. Distinguish the one benign case — the sub is held by
           // the sentinel, which the owner lookup EXCLUDES (N-SENTINEL) — from a real
           // provisioning failure (a constraint deeper in provisionOwner's ~15 inserts).
           // Query INCLUDING the sentinel: only if IT holds the sub do we fail closed
           // with 403; anything else is a genuine internal fault that must surface (500).
-          const held = sqlite
+          const held = await store()
             .prepare(`SELECT id FROM owners WHERE external_subject = ?`)
-            .get(claims.sub) as { id: string } | undefined;
+            .get<{ id: string }>(claims.sub);
           if (held?.id === SYSTEM_OWNER_ID) {
             logger.warn('CI-Portal login rejected: subject is reserved (N-SENTINEL)');
             ctx.status = 403;
