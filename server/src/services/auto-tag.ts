@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { suggestTags } from '../agents/tags.js';
 import { resolveTagId, suggestibleVocabulary } from './tags.js';
 import { logger } from '../lib/logger.js';
@@ -52,7 +52,9 @@ export function mergeTags(llm: string[], heuristic: string[], vocabulary: string
 // never touched, so re-running never overwrites existing user-applied tags. It spans ALL
 // levels on purpose — a task carrying only level-2 intentions still counts as tagged, so
 // the sweep can't quietly re-level a set the user chose by hand.
-const selectUntagged = sqlite.prepare(`
+// SQL at module level, prepared inside the function — a module-level store() call
+// would throw when this module loads before db/index installs the backend (§5.5).
+const SELECT_UNTAGGED = `
   SELECT t.id, t.title FROM tasks t
   WHERE t.owner_id = ?
     AND t.status NOT IN ('cancelled', 'done')
@@ -62,11 +64,10 @@ const selectUntagged = sqlite.prepare(`
       SELECT 1 FROM entity_tags e
       WHERE e.entity_kind = 'task' AND e.entity_id = t.id
     )
-`);
+`;
 
-const insertEntityTag = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`,
-);
+const INSERT_ENTITY_TAG =
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, ?)`;
 
 /**
  * AF-11 task tag model — level the merged names BY KIND. The first direction becomes the
@@ -128,7 +129,7 @@ export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Pro
   // The scope filter runs in JS rather than as an IN-list: the id set comes from a client
   // view of unbounded size, and binding it would blow SQLite's bound-parameter cap.
   const scope = taskIds ? new Set(taskIds) : null;
-  const candidates = (selectUntagged.all(ownerId) as { id: string; title: string }[])
+  const candidates = (await store().prepare(SELECT_UNTAGGED).all<{ id: string; title: string }>(ownerId))
     .filter((t) => !scope || scope.has(t.id));
   if (candidates.length === 0) {
     return { tagged: 0, total: 0, taggedIds: [], log: 'No untagged tasks to process' };
@@ -145,8 +146,8 @@ export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Pro
       kindOf,
     );
     if (!primary && intentions.length === 0) continue;
-    if (primary) insertEntityTag.run(task.id, resolveTagId(primary, ownerId), 1);
-    for (const name of intentions) insertEntityTag.run(task.id, resolveTagId(name, ownerId), 2);
+    if (primary) await store().prepare(INSERT_ENTITY_TAG).run(task.id, resolveTagId(primary, ownerId), 1);
+    for (const name of intentions) await store().prepare(INSERT_ENTITY_TAG).run(task.id, resolveTagId(name, ownerId), 2);
     taggedIds.push(task.id);
   }
 

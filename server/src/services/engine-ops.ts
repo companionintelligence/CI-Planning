@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 import { isValidISODate } from '../lib/dates.js';
@@ -31,20 +31,20 @@ import {
  * clearPlanner stay TRANSPORT-side (the route AND the resolver each fire them), since this
  * service is transport-agnostic and returns enough for both to reproduce the side effects.
  *
- * better-sqlite3 is synchronous; the async functions here are async only because they
+ * Async via the store facade (pass A); the async functions here also await because they
  * await the engine (parseInstruction / authorPlanOrder).
  */
 
 // ─── 1. instruct (POST /api/plan/instruct) ─────────────────────────────────────
 
 /** Apply parsed time pins as locked, non-auto obstacle blocks the placer routes around. */
-function applyPins(owner: string, pins: PlanPin[]): number {
+async function applyPins(owner: string, pins: PlanPin[]): Promise<number> {
   if (pins.length === 0) return 0;
-  const ins = sqlite.prepare(
+  const ins = store().prepare(
     `INSERT INTO time_blocks (id, owner_id, title, block_kind, start_at, end_at, is_locked, is_auto, source_kind, status)
      VALUES (?, ?, ?, 'meeting', ?, ?, 1, 0, 'instruct', 'planned')`,
   );
-  sqlite.transaction(() => { for (const p of pins) ins.run(newId(), owner, p.title, p.start_at, p.end_at); })();
+  await store().transaction(async () => { for (const p of pins) await ins.run(newId(), owner, p.title, p.start_at, p.end_at); });
   return pins.length;
 }
 
@@ -54,12 +54,12 @@ function applyPins(owner: string, pins: PlanPin[]): number {
  * `authorPlanOrder` folds them into the ordering prompt. Idempotent (INSERT OR IGNORE
  * against the dedupe index), so a repeated instruct doesn't pile up duplicates.
  */
-function applyHints(owner: string, date: string, hints: PlanHint[]): number {
+async function applyHints(owner: string, date: string, hints: PlanHint[]): Promise<number> {
   if (hints.length === 0) return 0;
-  const ins = sqlite.prepare(
+  const ins = store().prepare(
     `INSERT OR IGNORE INTO plan_hints (id, owner_id, date, kind, tag, time) VALUES (?, ?, ?, ?, ?, ?)`,
   );
-  sqlite.transaction(() => { for (const h of hints) ins.run(newId(), owner, date, h.kind, h.tag, h.time ?? null); })();
+  await store().transaction(async () => { for (const h of hints) await ins.run(newId(), owner, date, h.kind, h.tag, h.time ?? null); });
   return hints.length;
 }
 
@@ -81,8 +81,8 @@ export interface InstructOutcome {
  */
 export async function instructPlan(owner: string, date: string, text: string): Promise<InstructOutcome> {
   const result = await parseInstruction(owner, date, text); // validates fully BEFORE any write; throws InstructError
-  const created = applyPins(owner, result.pins);
-  applyHints(owner, date, result.hints);
+  const created = await applyPins(owner, result.pins);
+  await applyHints(owner, date, result.hints);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'instruct', entity: `plan:${date}` });
   return { pins: result.pins, hints: result.hints, created };
 }
@@ -129,9 +129,9 @@ export interface AutoRunInput {
 export async function autoRun(owner: string, input: AutoRunInput): Promise<AutoResult> {
   const { date, blockId, horizonDays, smart } = input;
 
-  const sched = sqlite
+  const sched = await store()
     .prepare(`SELECT planning_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { planning_horizon_days?: number } | undefined;
+    .get<{ planning_horizon_days?: number }>(owner);
   const days = blockId != null
     ? 1
     : horizonDays != null

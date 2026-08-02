@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { serverTimezone, localDateInTZ, utcToZonedWallTime } from '../lib/tz.js';
 import { logger } from '../lib/logger.js';
@@ -82,10 +82,10 @@ function skipped(status: 'flag_off' | 'unavailable'): MemorySuggestResult {
   return { status, pulled: 0, created: 0, updated: 0, skippedDismissed: 0, skippedCap: 0, promoted: 0, duplicates: 0, failed: 0 };
 }
 
-function pullEnabled(owner: string): boolean {
-  const row = sqlite
+async function pullEnabled(owner: string): Promise<boolean> {
+  const row = await store()
     .prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { memory_pull_enabled?: number } | undefined;
+    .get<{ memory_pull_enabled?: number }>(owner);
   return !!row?.memory_pull_enabled;
 }
 
@@ -154,19 +154,19 @@ function median(nums: number[]): number {
  * Reads actual_minutes (timer truth) only; suggest-only — this seeds a possible's
  * proposed estimate the user still reviews, exactly as the flat default did.
  */
-export function memoryFallbackEstimate(owner: string): number {
-  const actuals = (memoryOnly: boolean): number[] =>
-    (sqlite
+export async function memoryFallbackEstimate(owner: string): Promise<number> {
+  const actuals = async (memoryOnly: boolean): Promise<number[]> =>
+    (await store()
       .prepare(
         `SELECT actual_minutes AS m FROM tasks
           WHERE owner_id = ? AND status = 'done' AND actual_minutes > 0`
           + (memoryOnly ? ` AND source_kind = ?` : ``),
       )
-      .all(...(memoryOnly ? [owner, MEMORY_SOURCE_KIND] : [owner])) as { m: number }[]).map((r) => r.m);
+      .all<{ m: number }>(...(memoryOnly ? [owner, MEMORY_SOURCE_KIND] : [owner]))).map((r) => r.m);
 
-  const mem = actuals(true);
+  const mem = await actuals(true);
   if (mem.length >= CONFIDENCE_FLOOR) return Math.round(median(mem));
-  const glob = actuals(false);
+  const glob = await actuals(false);
   if (glob.length >= CONFIDENCE_FLOOR) return Math.round(median(glob));
   return DEFAULT_ESTIMATE_MIN;
 }
@@ -264,7 +264,7 @@ export async function suggestFromMemory(
   opts: { polish?: PolishFn | false; embedFn?: (text: string) => Promise<number[]> } = {},
 ): Promise<MemorySuggestResult> {
   const owner = currentOwnerId();
-  if (!pullEnabled(owner)) return skipped('flag_off');
+  if (!(await pullEnabled(owner))) return skipped('flag_off');
   if (!memoryConnectorAvailable(owner)) return skipped('unavailable');
 
   const from = new Date().toISOString();
@@ -297,12 +297,12 @@ export async function suggestFromMemory(
   // Owner timezone: the mirrored scheduled_for/task_time are the event start's
   // wall-clock in the OWNER's zone (blocks store UTC; intent columns store local).
   const tz =
-    (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined)
+    (await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get<{ timezone: string | null }>(owner))
       ?.timezone || serverTimezone();
 
   // AA3b: the owner's typical actual duration — computed ONCE per run (owner-scoped, same
   // for every candidate), used only for events that carry no scheduled duration.
-  const fallbackMin = memoryFallbackEstimate(owner);
+  const fallbackMin = await memoryFallbackEstimate(owner);
   const drafts = new Map(candidates.map((c) => [c.node.id, templateTask(c, tz, fallbackMin)]));
 
   // Optional polish — best-effort by contract. OllamaUnavailable is the expected
@@ -322,21 +322,21 @@ export async function suggestFromMemory(
   }
 
   let pending = (
-    sqlite
+    (await store()
       .prepare(
         `SELECT COUNT(*) AS n FROM possible_tasks
           WHERE proposed_owner_id = ? AND source_kind = ? AND status = 'pending'`,
       )
-      .get(owner, MEMORY_SOURCE_KIND) as { n: number }
+      .get<{ n: number }>(owner, MEMORY_SOURCE_KIND))!
   ).n;
 
   for (const c of candidates) {
     const ref = `ci:${c.node.id}`;
     // Owner-scoped (0114): another owner's dismissed/pending row on the same fixture
     // ref must neither suppress this owner's suggestion nor be overwritten by it.
-    const existing = sqlite
+    const existing = await store()
       .prepare(`SELECT status FROM possible_tasks WHERE proposed_owner_id = ? AND source_kind = ? AND source_ref = ?`)
-      .get(owner, MEMORY_SOURCE_KIND, ref) as { status: string } | undefined;
+      .get<{ status: string }>(owner, MEMORY_SOURCE_KIND, ref);
     if (existing && existing.status !== 'pending') {
       // dismissed is TERMINAL for a source_ref; promoted/other settled possibles are
       // never rewritten either — the suggestion already ran its course.
