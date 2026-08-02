@@ -11,9 +11,27 @@ import { status as ollamaStatus } from './mcp/ollama.js';
 
 // DB is initialised on import (runs setup + seed).
 import { sqlite } from './db/index.js';
+import { initPg, closePg } from './db/pg.js';
+import { runPgMigrations } from './db/migrate-pg.js';
 import { recoverStaleFreezeLocks } from './engine/auto-defense.js';
 import { ensureLocalAuthBootstrap } from './lib/auth/localBootstrap.js';
 import { writePidFile, removePidFile } from './lib/pidfile.js';
+
+// Postgres (schema port). Opt-in via DATABASE_URL while the 386 SQLite call sites move
+// file by file — with it unset this is inert and the SQLite path above is unchanged.
+//
+// Migrating at boot mirrors what the SQLite build did (db/index.ts runs its migrations
+// on import), so a container still comes up migrated with no separate deploy step. The
+// runner is dbmate-wire-compatible, so an operator who prefers to migrate ahead of the
+// deploy can run `dbmate up` and this will simply find nothing pending.
+//
+// Awaited BEFORE the server listens: a half-migrated schema must never serve traffic.
+// A failure here throws, which index.ts turns into one clean `FATAL:` line.
+if (config.databaseUrl) {
+  const pool = initPg({ connectionString: config.databaseUrl, schema: 'planning' });
+  const { applied } = await runPgMigrations(pool, { schema: 'planning' });
+  logger.info('Postgres schema ready', { migrationsApplied: applied.length });
+}
 
 // Local-auth mode (AUTH_MODE=sso + DISABLE_OIDC): seed the default owner or fail
 // closed if there's no way to log in. No-op in every other mode. Awaited before we
@@ -86,6 +104,10 @@ function closeDb(): void {
   } catch (err) {
     logger.warn(`shutdown: closing the database failed — a -wal file may remain: ${(err as Error).message}`);
   }
+  // Drain the Postgres pool too. Not load-bearing the way the SQLite checkpoint is —
+  // Postgres recovers from a dropped connection on its own — so it is fire-and-forget:
+  // waiting on it would delay the exit the signal handler is racing a timeout to reach.
+  void closePg().catch((err) => logger.warn(`shutdown: closing the pg pool failed: ${(err as Error).message}`));
   removePidFile(config.dbPath);
 }
 
