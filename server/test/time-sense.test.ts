@@ -137,12 +137,12 @@ describe('flag off (default)', () => {
     expect((await api(srv.url, '/api/reflections/evening', { method: 'PUT', json: { period_key: DAY, body: 'x' } })).status).toBe(404);
   });
 
-  it('calibrateEstimates keeps the Phase-N single-global-row behavior', () => {
+  it('calibrateEstimates keeps the Phase-N single-global-row behavior', async () => {
     // Percentile math incl. outliers, no caps — 5 ratios 0.5/1/1.5/2/50.
     for (const [est, act] of [[20, 10], [30, 30], [40, 60], [20, 40], [1, 50]]) {
       makeDoneTask({ est, act });
     }
-    const r = calibrateEstimates();
+    const r = await calibrateEstimates();
     expect(r.sample_count).toBe(5);
     expect(r.bias_ratio).toBeCloseTo(1.5, 4); // median, uncapped 50 included in the set
     expect(r.scopes).toBeUndefined();
@@ -158,10 +158,10 @@ describe('flag off (default)', () => {
 describe('scoped calibration (flag on)', () => {
   beforeEach(() => setFlag(true));
 
-  it('writes global + subtype + tag scopes with robust stats', () => {
+  it('writes global + subtype + tag scopes with robust stats', async () => {
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] }); // ratio 1.5
-    const r = calibrateEstimates();
+    const r = await calibrateEstimates();
     expect(r.scopes).toBeGreaterThanOrEqual(3);
     expect(calRow('global', '')?.sample_count).toBe(6);
     expect(calRow('subtype', 'standard')?.sample_count).toBe(6);
@@ -173,7 +173,7 @@ describe('scoped calibration (flag on)', () => {
   it('legacy GET /api/calibration still reads the GLOBAL row once scopes exist', async () => {
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
-    calibrateEstimates(); // writes global + subtype + tag rows
+    await calibrateEstimates(); // writes global + subtype + tag rows
     const legacy = await api(srv.url, '/api/calibration');
     expect(legacy.status).toBe(200);
     expect(legacy.body.calibrated).toBe(true);
@@ -184,14 +184,14 @@ describe('scoped calibration (flag on)', () => {
     expect(scopes.body.rows.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('turning the flag OFF and recomputing purges stale scoped rows (back to one global row)', () => {
+  it('turning the flag OFF and recomputing purges stale scoped rows (back to one global row)', async () => {
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
-    calibrateEstimates(); // flag ON → scoped rows written
+    await calibrateEstimates(); // flag ON → scoped rows written
     expect(calRow('tag', taxes)).toBeDefined();
 
     setFlag(false);
-    calibrateEstimates(); // flag OFF → must leave ONLY the global row
+    await calibrateEstimates(); // flag OFF → must leave ONLY the global row
     expect(calRow('tag', taxes)).toBeUndefined();
     expect(calRow('subtype', 'standard')).toBeUndefined();
     expect(calRow('global', '')?.sample_count).toBe(6);
@@ -199,12 +199,12 @@ describe('scoped calibration (flag on)', () => {
     expect(total).toBe(1);
   });
 
-  it('drops MAD outliers and caps extreme ratios', () => {
+  it('drops MAD outliers and caps extreme ratios', async () => {
     // ratios 0.9/1.0/1.0/1.1/5.0 → median 1.0, MAD 0.1 → the 5.0 is dropped.
     for (const [est, act] of [[10, 9], [10, 10], [10, 10], [10, 11], [10, 50]]) {
       makeDoneTask({ est, act });
     }
-    calibrateEstimates();
+    await calibrateEstimates();
     const g = calRow('global', '');
     expect(g?.sample_count).toBe(4);
     expect(g?.bias_ratio).toBeCloseTo(1.0, 4);
@@ -213,7 +213,7 @@ describe('scoped calibration (flag on)', () => {
     resetDb();
     setFlag(true);
     makeDoneTask({ est: 1, act: 50 });
-    calibrateEstimates();
+    await calibrateEstimates();
     expect(calRow('global', '')?.bias_ratio).toBeCloseTo(10, 4);
   });
 
@@ -221,7 +221,7 @@ describe('scoped calibration (flag on)', () => {
     const a = makeTag('a');
     const b = makeTag('b');
     for (let i = 0; i < 5; i++) makeDoneTask({ est: 30, act: 60, tags: [a, b] });
-    calibrateEstimates();
+    await calibrateEstimates();
     const ref = comboRef([a, b]);
     expect(calRow('tag_combo', ref)).toBeUndefined();
 
@@ -241,30 +241,30 @@ describe('scoped calibration (flag on)', () => {
     expect((await api(srv.url, '/api/calibration/pins', { method: 'POST', json: { tag_ids: [a, 'nope'] } })).status).toBe(422);
   });
 
-  it('replaces the owner scope set wholesale — vanished scopes disappear', () => {
+  it('replaces the owner scope set wholesale — vanished scopes disappear', async () => {
     const a = makeTag('a');
     for (let i = 0; i < 5; i++) makeDoneTask({ est: 30, act: 45, tags: [a] });
-    calibrateEstimates();
+    await calibrateEstimates();
     expect(calRow('tag', a)).toBeDefined();
     sqlite.prepare(`DELETE FROM entity_tags WHERE tag_id = ?`).run(a);
-    calibrateEstimates();
+    await calibrateEstimates();
     expect(calRow('tag', a)).toBeUndefined();
   });
 
-  it('never writes estimates — suggest-only invariant', () => {
+  it('never writes estimates — suggest-only invariant', async () => {
     const ids = [makeDoneTask({ est: 30, act: 90 }), makeDoneTask({ est: 20, act: 60 })];
     for (let i = 0; i < 4; i++) ids.push(makeDoneTask({ est: 30, act: 90 }));
     const before = ids.map((id) => sqlite.prepare(`SELECT estimated_minutes FROM tasks WHERE id = ?`).get(id));
-    calibrateEstimates();
+    await calibrateEstimates();
     const after = ids.map((id) => sqlite.prepare(`SELECT estimated_minutes FROM tasks WHERE id = ?`).get(id));
     expect(after).toEqual(before);
   });
 
-  it('resolveCalibration walks the ladder and reports confidence tiers', () => {
+  it('resolveCalibration walks the ladder and reports confidence tiers', async () => {
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
     for (let i = 0; i < 8; i++) makeDoneTask({ est: 30, act: 30 }); // untagged noise → global/subtype
-    calibrateEstimates();
+    await calibrateEstimates();
 
     const tagged = makeDoneTask({ est: 30, act: 45, tags: [taxes] });
     const viaTag = resolveCalibration(SYSTEM_OWNER, tagged);
@@ -279,7 +279,7 @@ describe('scoped calibration (flag on)', () => {
 
     // ≥12 retained samples → confident.
     for (let i = 0; i < 8; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
-    calibrateEstimates();
+    await calibrateEstimates();
     expect(resolveCalibration(SYSTEM_OWNER, tagged)?.confidence).toBe('confident');
   });
 
@@ -398,7 +398,7 @@ describe('suggestEstimate (Z6, flag on)', () => {
   it('proposes a bumped estimate from the resolved scope bias, snapped to 5m', async () => {
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] }); // ratio 1.5
-    calibrateEstimates();
+    await calibrateEstimates();
 
     const live = makeOpenTask(60, [taxes]);
     const s = suggestEstimate(SYSTEM_OWNER, live);
@@ -414,27 +414,27 @@ describe('suggestEstimate (Z6, flag on)', () => {
     expect(viaApi.body.suggestion.suggested_minutes).toBe(90);
   });
 
-  it('suggests at exactly the 15% boundary (float-safe: bias 1.15 is not swallowed)', () => {
+  it('suggests at exactly the 15% boundary (float-safe: bias 1.15 is not swallowed)', async () => {
     const errand = makeTag('errand');
     // ratio 23/20 = exactly the IEEE-754 float 1.15 → median bias 1.15.
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 20, act: 23, tags: [errand] });
-    calibrateEstimates();
+    await calibrateEstimates();
     const s = suggestEstimate(SYSTEM_OWNER, makeOpenTask(100, [errand]));
     expect(s).not.toBeNull();          // 0.14999… < 0.15 must NOT suppress a true 15% bias
     expect(s!.suggested_minutes).toBe(115); // round(100 * 1.15 / 5) * 5
   });
 
-  it('returns null when there is nothing worth saying', () => {
+  it('returns null when there is nothing worth saying', async () => {
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
-    calibrateEstimates();
+    await calibrateEstimates();
 
     expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(null, [taxes]))).toBeNull(); // no current estimate
 
     // near-1.0 bias: a scope whose actuals ≈ estimates.
     const steady = makeTag('steady');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 30, tags: [steady] });
-    calibrateEstimates();
+    await calibrateEstimates();
     expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [steady]))).toBeNull();
 
     // below the confidence floor everywhere (fresh owner, only 2 samples): no scope resolves.
@@ -442,14 +442,14 @@ describe('suggestEstimate (Z6, flag on)', () => {
     setFlag(true);
     const t2 = makeTag('sparse');
     for (let i = 0; i < 2; i++) makeDoneTask({ est: 30, act: 60, tags: [t2] });
-    calibrateEstimates();
+    await calibrateEstimates();
     expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [t2]))).toBeNull();
   });
 
-  it('never writes — suggest-only', () => {
+  it('never writes — suggest-only', async () => {
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
-    calibrateEstimates();
+    await calibrateEstimates();
     const live = makeOpenTask(60, [taxes]);
     suggestEstimate(SYSTEM_OWNER, live);
     const after = sqlite.prepare(`SELECT estimated_minutes FROM tasks WHERE id = ?`).get(live) as { estimated_minutes: number };
@@ -646,7 +646,7 @@ describe('Z7 Voice loop retrofit (flag-gated)', () => {
     setFlag(true);
     const taxes = makeTag('taxes');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] }); // ratio 1.5
-    calibrateEstimates();
+    await calibrateEstimates();
     const live = (sqlite
       .prepare(`INSERT INTO tasks (id, title, owner_id, status, estimated_minutes) VALUES (uuid7(), 'Live', ?, 'open', 60) RETURNING id`)
       .get(SYSTEM_OWNER) as { id: string }).id;

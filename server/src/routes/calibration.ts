@@ -93,7 +93,7 @@ export function calibrationRouter() {
       .prepare(`INSERT OR IGNORE INTO calibration_combo_pins (owner_id, scope_ref) VALUES (?, ?)`)
       .run(owner, scope_ref);
     // Recompute immediately so the pinned combo's row exists now, not tonight.
-    calibrateEstimates();
+    await calibrateEstimates();
     writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `calibration_pin:${scope_ref}` });
     ctx.body = { ok: true, scope_ref };
   });

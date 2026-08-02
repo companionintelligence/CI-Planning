@@ -37,27 +37,27 @@ describe('calibration history (0138)', () => {
   const globalRows = () => history().filter((r) => r.scope_kind === 'global');
 
   it('records a reading even with no samples — a trend starts where the data does', async () => {
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
     expect(globalRows()).toHaveLength(1);
     expect(globalRows()[0]).toMatchObject({ scope_kind: 'global', sample_count: 0, bias_ratio: null });
   });
 
   it('writes the bias for the day', async () => {
     doneTask(30, 60); doneTask(30, 60); doneTask(30, 60);
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
     expect(globalRows()[0]).toMatchObject({ sample_count: 3, bias_ratio: 2 });
   });
 
   it('SURVIVES a recompute that wipes the rollup', async () => {
     doneTask(30, 60); doneTask(30, 60); doneTask(30, 60);
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
     // Backdate the reading so the next run lands on a different day.
     sqlite.prepare(`UPDATE calibration_history SET computed_date = '2026-01-01' WHERE owner_id = ?`).run(OWNER);
 
     // Second run, different data — the rollup is replaced wholesale…
     sqlite.prepare(`DELETE FROM tasks WHERE owner_id = ?`).run(OWNER);
     doneTask(60, 60); doneTask(60, 60); doneTask(60, 60);
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
 
     const g = globalRows();
     expect(g).toHaveLength(2);                    // …but BOTH readings remain
@@ -70,19 +70,19 @@ describe('calibration history (0138)', () => {
 
   it('is idempotent within a day — a re-run overwrites, never duplicates', async () => {
     doneTask(30, 60); doneTask(30, 60); doneTask(30, 60);
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
     const afterFirst = history().length;
-    asOwner(() => calibrateEstimates());
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
     expect(history()).toHaveLength(afterFirst); // count must not GROW on same-day re-runs
     expect(globalRows()).toHaveLength(1);
   });
 
   it('GET /api/metrics/calibration returns readings oldest→newest', async () => {
     doneTask(30, 60); doneTask(30, 60); doneTask(30, 60);
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
     sqlite.prepare(`UPDATE calibration_history SET computed_date = '2026-01-01' WHERE owner_id = ?`).run(OWNER);
-    asOwner(() => calibrateEstimates());
+    await asOwner(() => calibrateEstimates());
 
     const { status, body } = await api(srv.url, '/api/metrics/calibration?limit=90');
     expect(status).toBe(200);

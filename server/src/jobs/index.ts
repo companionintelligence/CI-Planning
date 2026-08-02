@@ -380,7 +380,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       return { itemsCreated: 0, itemsUpdated: r.slotsWritten, log: `Triality calibration: ${label}` };
     }
     case 'calibrate_estimates': {
-      const r = calibrateEstimates();
+      const r = await calibrateEstimates();
       const label = r.bias_ratio != null
         ? `bias_ratio=${r.bias_ratio.toFixed(2)} (n=${r.sample_count})`
         : 'no timed tasks yet';
