@@ -1,5 +1,39 @@
 # Pass A work list — sequenced by transitive importers
 
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 15 commits)
+>
+> **DONE — waves 0–3 complete, wave 4 in progress. ~355 of 906 portable
+> statements ported. Suite verified at 2633 passed after every commit.**
+>
+> - Wave 0 ✓ (scripts; both verified end-to-end on a scratch DB)
+> - Wave 1 ✓ (all 16 routes; raw `sqlite` survives ONLY as the handle argument
+>   to `applyOp`/`stampRow` in routes/sync + routes/blocks + engine/extend-block
+>   — dies when sync/apply.ts ports)
+> - Wave 2 ✓ (triality resolver)
+> - Wave 3 ✓ (all 22 near-leaf services + every cascade)
+> - Wave 4: DONE — password, resetToken, owners (the last-operator delete race
+>   is now CLOSED: a guarded owners-row DELETE inside deleteOwner's transaction
+>   throws typed `LastOperatorError`; the route pre-check is advisory),
+>   services/stars, auto-tag, engine-ops, memory-suggest, task-enrich,
+>   calibrate-estimates, reflections, triality-learning, engine/stars.
+>   REMAINING (14 files ~200 stmts): **next slice = blocks-place + blocks-recur
+>   + services/blocks ported together** (blocks.ts calls both, plus wave-5's
+>   ensurePatternsForRange/truncateSeriesFrom which stay sync until their turn);
+>   then review, clear-range, agents/sync, plan, ingest, auto-defense,
+>   services/tasks, recurrence-ops, deps, task-promotion, patterns.
+> - Waves 5–8 untouched. Exporter (handoff §6.6) not started.
+>
+> **Method that survived contact** (per file): python exact-match replacement →
+> `tsc` enumerates the src cascade → UNTRUNCATED full-symbol grep over src+test
+> (never pipe through `head` — it hid real call sites twice) → awaits + an
+> asyncify pass over enclosing `it()` callbacks → focused tests → serialized
+> full-suite gate per slice (no edits while a suite runs) → commit.
+> Test-cascade shapes the asyncify regex misses: single-line
+> `it('…', () => { … });` forms, `runWithOwner`/`asOwner` wrapper callbacks
+> (need `await` on the wrapper AND `async` inside), Promises passed inline as
+> JSON-body/object arguments, and adjacent same-shaped lines (grep the symbol
+> again after editing — one of four `learnedF(…)` calls escaped a hand pass).
+
 > Companion to `docs/HANDOFF-2026-08-02-oidc-and-postgres-port.md` §4–§5 and
 > `server/db/postgres/README.md`. This is the ordered plan for the remaining
 > call-site migration, built from an import-graph analysis of `server/src`
