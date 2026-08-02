@@ -24,8 +24,11 @@ export function trialityRouter() {
 
   // Per-route gate (NOT router.use — the @koa/router prefix-path caveat, see
   // routes/calibration.ts).
-  const gate = (ctx: Koa.Context): boolean => {
-    if (trialityEnabled(currentOwnerId())) return true;
+  // Async because the flag read goes through the store facade. Every caller must
+  // `await` it: `if (!gate(ctx))` on a promise is ALWAYS false, which would turn
+  // the 404-when-disabled posture into "the feature is always on".
+  const gate = async (ctx: Koa.Context): Promise<boolean> => {
+    if (await trialityEnabled(currentOwnerId())) return true;
     ctx.status = 404;
     ctx.body = { error: 'Not found' };
     return false;
@@ -78,7 +81,7 @@ export function trialityRouter() {
   // explanation, §8). Refusal is a typed 200, not an error: "not enough history"
   // is an honest answer, not a failure.
   router.get('/next', async (ctx) => {
-    if (!gate(ctx)) return;
+    if (!(await gate(ctx))) return;
     const owner = currentOwnerId();
     const now = new Date();
     const res = await trialityNext(owner, now);
@@ -105,7 +108,7 @@ export function trialityRouter() {
   // UPDATE). A foreign/unknown log_id is a 404 — multi-tenant convention: never
   // confirm another owner's row exists.
   router.post('/feedback', async (ctx) => {
-    if (!gate(ctx)) return;
+    if (!(await gate(ctx))) return;
     const body = (ctx.request.body ?? {}) as { log_id?: unknown; outcome?: unknown };
     if (typeof body.log_id !== 'string' || !body.log_id || !isOutcome(body.outcome)) {
       ctx.status = 422;
@@ -134,7 +137,7 @@ export function trialityRouter() {
   // adaptation can be re-earned on the next weekly pass rather than being lost.
   // Owner-initiated write ⇒ audited (WHO rule), unlike the job that writes them.
   router.delete('/weights', async (ctx) => {
-    if (!gate(ctx)) return;
+    if (!(await gate(ctx))) return;
     const owner = currentOwnerId();
     const res = await store().prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(owner);
     // Audit only a real reset — a no-op delete is not a mutation worth a row

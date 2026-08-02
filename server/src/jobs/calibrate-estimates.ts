@@ -76,7 +76,7 @@ export interface CalibrationResult {
 export async function calibrateEstimates(): Promise<CalibrationResult> {
   const owner = currentOwnerId();
 
-  if (timeSenseEnabled(owner)) {
+  if (await timeSenseEnabled(owner)) {
     const rows = await computeScopedCalibration(owner);
     const now = new Date().toISOString();
     const insert = store().prepare(

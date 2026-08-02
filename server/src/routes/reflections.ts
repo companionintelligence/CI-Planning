@@ -119,8 +119,11 @@ export function reflectionsRouter() {
   // ── Phase Z · Z1 (Time-Sense) — EOD Alignment (kind='evening') ──────────────
   // All three routes 404 while the owner's time_sense_enabled flag is off: the feature
   // ships dark, and a disabled feature's endpoints should look absent.
-  const timeSenseGate = (ctx: Koa.Context): boolean => {
-    if (timeSenseEnabled(currentOwnerId())) return true;
+  // Async because the flag read goes through the store facade. Every caller must
+  // `await` it: `if (!timeSenseGate(ctx))` on a promise is ALWAYS false, which would turn
+  // the 404-when-disabled posture into "the feature is always on".
+  const timeSenseGate = async (ctx: Koa.Context): Promise<boolean> => {
+    if (await timeSenseEnabled(currentOwnerId())) return true;
     ctx.status = 404;
     ctx.body = { error: 'Not found' };
     return false;
@@ -128,7 +131,7 @@ export function reflectionsRouter() {
 
   // GET /api/reflections/evening?period=YYYY-MM-DD — pure read: live payload + authored row.
   router.get('/api/reflections/evening', async (ctx) => {
-    if (!timeSenseGate(ctx)) return;
+    if (!(await timeSenseGate(ctx))) return;
     const owner = currentOwnerId();
     const period = (ctx.query.period as string | undefined) ?? localISODate();
     if (!isValidISODate(period)) {
@@ -147,7 +150,7 @@ export function reflectionsRouter() {
   // POST /api/reflections/evening/open { period_key, refresh? } — opening the modal IS the
   // authorship act: generate the narrative + persist. Idempotent unless refresh:true.
   router.post('/api/reflections/evening/open', async (ctx) => {
-    if (!timeSenseGate(ctx)) return;
+    if (!(await timeSenseGate(ctx))) return;
     const owner = currentOwnerId();
     const { period_key, refresh } = (ctx.request.body ?? {}) as { period_key?: string; refresh?: boolean };
     const period = period_key ?? localISODate();
@@ -172,7 +175,7 @@ export function reflectionsRouter() {
   // PUT /api/reflections/evening { period_key, body } — the user's own edits over the
   // narrative. Empty body = delete.
   router.put('/api/reflections/evening', async (ctx) => {
-    if (!timeSenseGate(ctx)) return;
+    if (!(await timeSenseGate(ctx))) return;
     const owner = currentOwnerId();
     const { period_key, body } = (ctx.request.body ?? {}) as { period_key?: string; body?: string };
     const res = await upsertEvening(owner, { period_key, body });

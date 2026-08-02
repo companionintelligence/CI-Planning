@@ -201,7 +201,7 @@ export function blocksRouter() {
   // never writes.
   router.post('/api/blocks/:id/extend', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const body = (ctx.request.body ?? {}) as { minutes?: number; confirm?: boolean };
     const minutes = Math.round(Number(body.minutes ?? 10));
     if (!Number.isFinite(minutes) || minutes <= 0) {
@@ -242,7 +242,7 @@ export function blocksRouter() {
   // DELETE clears them (ritual dismissed / block finished in-tab).
   router.post('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const exists = await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
     if (!exists) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
     const armed = syncBlockFocusReminders(owner, ctx.params.id);
@@ -251,7 +251,7 @@ export function blocksRouter() {
 
   router.delete('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     clearBlockFocusReminders(ctx.params.id);
     ctx.body = { ok: true };
   });
@@ -263,7 +263,7 @@ export function blocksRouter() {
   // non-repeating line per block-end. Flag-gated (404 off).
   router.get('/api/blocks/:id/whats-next', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const block = await store()
       .prepare(`SELECT id, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`)
       .get<{ id: string; end_at: string }>(ctx.params.id, owner);
@@ -294,7 +294,7 @@ export function blocksRouter() {
   // — Auto lands it later, inheriting the task's own defaults (no clone). Flag-gated.
   router.post('/api/blocks/:id/reschedule', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const id = ctx.params.id;
 
     const block = await store()

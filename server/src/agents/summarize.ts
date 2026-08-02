@@ -377,7 +377,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
 
   let prose: string;
   let llm: boolean;
-  if (timeSenseEnabled(currentOwnerId())) {
+  if (await timeSenseEnabled(currentOwnerId())) {
     // Phase Z · Z7 — route the brief through the Voice loop so it's voice-gated and
     // never repeats a recent day's phrasing. Only on a cache MISS (here): a cache hit
     // returns the stored prose above without re-rendering, so copy_history records

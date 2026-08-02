@@ -57,7 +57,7 @@ export function metricsRouter() {
   // off — same posture as every other Triality surface.
   router.get('/api/metrics/triality', async (ctx) => {
     const owner = currentOwnerId();
-    if (!trialityEnabled(owner)) {
+    if (!(await trialityEnabled(owner))) {
       ctx.status = 404;
       ctx.body = { error: 'Not found' };
       return;
