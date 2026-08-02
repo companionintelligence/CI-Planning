@@ -173,7 +173,7 @@ export const engineOpsResolvers = {
         backup = filename;
       }
 
-      const result = clearPlannerRange({ owner, start, end, suppress: 'auto', autoOnly: false, dryRun });
+      const result = await clearPlannerRange({ owner, start, end, suppress: 'auto', autoOnly: false, dryRun });
 
       if (!dryRun) {
         writeAudit({ ownerId: owner, actor: 'owner', action: 'clear-range', entity: `planner:${start}..${end ?? ''}` });

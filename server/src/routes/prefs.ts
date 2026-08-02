@@ -80,7 +80,7 @@ export function prefsRouter() {
       // Prune only engine-generated instances beyond the new window. clearDailyPlan:false
       // — the recurrence ceiling must NOT discard authored Phase-M day plans (rationales/
       // outcomes), which raising the horizon could not restore.
-      const r = clearPlannerRange({
+      const r = await clearPlannerRange({
         owner,
         start: addDays(today, res.newHorizon),
         suppress: 'none',

@@ -215,7 +215,7 @@ export const prefsResolvers = {
         const today = localDateInTZ(new Date().toISOString(), tz);
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         await snapshot(join(backupDir, `companion-prehorizon-${ts}.db`));
-        const r = clearPlannerRange({
+        const r = await clearPlannerRange({
           owner,
           start: addDays(today, res.newHorizon),
           suppress: 'none',
