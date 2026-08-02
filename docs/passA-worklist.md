@@ -1,8 +1,8 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 18 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 20 commits)
 >
-> **DONE — waves 0–3 complete, wave 4 in progress. ~414 of 906 portable
+> **DONE — waves 0–3 complete, wave 4 in progress. ~425 of 906 portable
 > statements ported. Suite verified at 2633 passed after every commit.**
 >
 > - Wave 0 ✓ (scripts; both verified end-to-end on a scratch DB)
@@ -19,10 +19,11 @@
 >   **the fused blocks trio** (blocks-place + blocks-recur + services/blocks —
 >   blocks.ts calls both engines, so they had to land together; the EXDATE lost
 >   update is now CLOSED, see the trap below), **engine/review**,
->   **engine/clear-range**.
->   REMAINING (9 files, ~145 stmts): **next slice = engine/auto-defense** (11
->   stmts, 7 importers), then the agents trio (sync, plan, ingest — expect one
->   commit), services/tasks, recurrence-ops, deps, task-promotion, patterns.
+>   **engine/clear-range**, **engine/auto-defense** (`requestReplan` kept its
+>   synchronous fire-and-forget signature — see the rule below).
+>   REMAINING (8 files, ~134 stmts): **next slice = the agents trio (sync, plan,
+>   ingest)** — expect one commit; then services/tasks, recurrence-ops, deps,
+>   task-promotion, patterns.
 >   `recurrence-ops.skipInstance` carries the SAME EXDATE read-modify-write as
 >   blocks-recur — reuse the compare-and-swap below rather than porting it
 >   straight.
@@ -38,6 +39,21 @@
 > (need `await` on the wrapper AND `async` inside), Promises passed inline as
 > JSON-body/object arguments, and adjacent same-shaped lines (grep the symbol
 > again after editing — one of four `learnedF(…)` calls escaped a hand pass).
+> Also: **`vi.advanceTimersByTime` stops working the moment the timer's callback
+> becomes async** — it fires the callback but returns before any await settles,
+> so assertions right after it see the pre-reflow world. Use
+> `await vi.advanceTimersByTimeAsync(…)`. If you asyncify `it(` callbacks with a
+> regex, exclude the ones already marked async or you get `async async () => {`
+> (21 of them, in one pass).
+>
+> **Fire-and-forget signatures are worth preserving.** Before async-ifying an
+> exported function, count its callers and ask what they do with the result.
+> `writeAudit` (125 sites) and `requestReplan` (21) are both floated by every
+> caller, so making them async buys nothing and costs a caller-layer cascade. If
+> the only reason a function must go async is ONE gate/lookup, push that read
+> down into the async work the function already schedules — `requestReplan`'s
+> `auto_defense_enabled` check moved into the debounced `fireReplan`. Applies to
+> anything triggered from a timer, a handler tail, or a job tick.
 >
 > **`tail` truncates tsc exactly like `head` does.** clear-range's first
 > typecheck run, piped through `tail -12`, showed only
