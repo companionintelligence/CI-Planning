@@ -172,7 +172,7 @@ export function accountsRouter() {
 
   // PATCH /api/accounts/:id — set role, name, and/or email. Refuses to demote the
   // last operator; a role change invalidates the target's live sessions (epoch bump).
-  router.patch('/api/accounts/:id', (ctx) => {
+  router.patch('/api/accounts/:id', async (ctx) => {
     if (!requireAdmin(ctx)) return;
     const body = (ctx.request.body ?? {}) as { role?: unknown; name?: unknown; email?: unknown };
     if (body.role === undefined && body.name === undefined && body.email === undefined) {
@@ -211,7 +211,7 @@ export function accountsRouter() {
       }
       // Live sessions carry scopes derived at verify time from the OLD role; the
       // epoch bump forces every outstanding cookie to re-login → new scopes.
-      bumpSessionEpoch(target.id);
+      await bumpSessionEpoch(target.id);
     }
     if (typeof body.name === 'string') {
       sqlite.prepare(`UPDATE owners SET name = ? WHERE id = ?`).run(body.name.trim(), target.id);

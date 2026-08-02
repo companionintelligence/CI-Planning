@@ -29,8 +29,8 @@ const realFetch = globalThis.fetch.bind(globalThis);
 
 let srv: TestServer;
 
-function authHeaders(): { headers: Record<string, string> } {
-  const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ, SCOPE_WRITE]);
+async function authHeaders(): Promise<{ headers: Record<string, string> }> {
+  const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ, SCOPE_WRITE]);
   return { headers: { 'x-api-key': key } };
 }
 
@@ -137,7 +137,7 @@ describe('listConnections() — leak-safe list', () => {
 describe('GET /api/connections', () => {
   it('returns 200 { connections: [...] } for the seeded owner, leak-free', async () => {
     seedToken({ provider: 'google', account: 'get@x.io' });
-    const { status, body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', authHeaders());
+    const { status, body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
     expect(status).toBe(200);
     expect(body.connections).toHaveLength(1);
     expect(body.connections[0]).toEqual({
@@ -155,7 +155,7 @@ describe('GET /api/connections', () => {
   });
 
   it('returns { connections: [] } for an owner with none', async () => {
-    const { status, body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', authHeaders());
+    const { status, body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
     expect(status).toBe(200);
     expect(body.connections).toEqual([]);
   });
@@ -163,7 +163,7 @@ describe('GET /api/connections', () => {
   it('never shows another owner\'s connections', async () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-b', 'B')`).run();
     seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
-    const { body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', authHeaders());
+    const { body } = await realApi<{ connections: ConnectionSummary[] }>('/api/connections', await authHeaders());
     expect(body.connections).toEqual([]); // the api key is SYSTEM_OWNER's
   });
 });
@@ -190,7 +190,7 @@ describe('DELETE /api/connections/:provider/:account', () => {
 
     const { status, body } = await realApi(`/api/connections/google/${encodeURIComponent(account)}`, {
       method: 'DELETE',
-      ...authHeaders(),
+      ...await authHeaders(),
     });
     expect(status).toBe(200);
     expect(body).toEqual({ disconnected: { provider: 'google', account } });
@@ -205,7 +205,7 @@ describe('DELETE /api/connections/:provider/:account', () => {
   it('404s { error: connection_not_found } when the owner holds no such connection', async () => {
     const { status, body } = await realApi(`/api/connections/google/${encodeURIComponent('nobody@x.io')}`, {
       method: 'DELETE',
-      ...authHeaders(),
+      ...await authHeaders(),
     });
     expect(status).toBe(404);
     expect(body).toEqual({ error: 'connection_not_found' });
@@ -223,7 +223,7 @@ describe('DELETE /api/connections/:provider/:account', () => {
 
     const { status, body } = await realApi(`/api/connections/ci_memory/${encodeURIComponent(account)}`, {
       method: 'DELETE',
-      ...authHeaders(),
+      ...await authHeaders(),
     });
     expect(status).toBe(200);
     expect(body).toEqual({ disconnected: { provider: 'ci_memory', account } });
@@ -240,7 +240,7 @@ describe('DELETE /api/connections/:provider/:account', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
     const { status } = await realApi(`/api/connections/google/${encodeURIComponent('theirs@x.io')}`, {
       method: 'DELETE',
-      ...authHeaders(),
+      ...await authHeaders(),
     });
     expect(status).toBe(404); // not this owner's row → not found, not deleted
     const n = sqlite.prepare("SELECT COUNT(*) AS n FROM connection_tokens WHERE account = 'theirs@x.io'").get() as { n: number };

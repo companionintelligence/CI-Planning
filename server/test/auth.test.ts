@@ -87,21 +87,21 @@ describe('requireAuth — standalone mode, no credential', () => {
 describe('requireAuth — standalone mode, api key', () => {
   it('accepts a valid read+write key', async () => {
     config.auth.mode = 'standalone';
-    const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ, SCOPE_WRITE]);
+    const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ, SCOPE_WRITE]);
     const { status } = await api(srv.url, '/api/tasks', withKey(key));
     expect(status).toBe(200);
   });
 
   it('accepts the key as an ?api_key= query param (for EventSource)', async () => {
     config.auth.mode = 'standalone';
-    const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
+    const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
     const { status } = await api(srv.url, `/api/tasks?api_key=${key}`);
     expect(status).toBe(200);
   });
 
   it('403s a read-only key on a mutation, 200 on a read', async () => {
     config.auth.mode = 'standalone';
-    const ro = issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
+    const ro = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
     const read = await api(srv.url, '/api/tasks', withKey(ro));
     expect(read.status).toBe(200);
     const write = await api(srv.url, '/api/tasks', { method: 'POST', json: { title: 'x' }, ...withKey(ro) });
@@ -111,7 +111,7 @@ describe('requireAuth — standalone mode, api key', () => {
 
   it('401s an expired key', async () => {
     config.auth.mode = 'standalone';
-    const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
+    const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
     sqlite.prepare(`UPDATE api_keys SET expires_at = ? WHERE prefix = ?`).run('2000-01-01T00:00:00.000Z', key.slice(0, 5));
     const { status } = await api(srv.url, '/api/tasks', withKey(key));
     expect(status).toBe(401);
@@ -119,7 +119,7 @@ describe('requireAuth — standalone mode, api key', () => {
 
   it('401s a revoked key', async () => {
     config.auth.mode = 'standalone';
-    const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
+    const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
     sqlite.prepare(`UPDATE api_keys SET revoked_at = ? WHERE prefix = ?`).run(new Date().toISOString(), key.slice(0, 5));
     const { status } = await api(srv.url, '/api/tasks', withKey(key));
     expect(status).toBe(401);
@@ -127,7 +127,7 @@ describe('requireAuth — standalone mode, api key', () => {
 
   it('advances last_used_at after an accepted call', async () => {
     config.auth.mode = 'standalone';
-    const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
+    const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
     const before = sqlite.prepare(`SELECT last_used_at FROM api_keys WHERE prefix = ?`).get(key.slice(0, 5)) as { last_used_at: string | null };
     expect(before.last_used_at).toBeNull();
     await api(srv.url, '/api/tasks', withKey(key));
@@ -137,8 +137,8 @@ describe('requireAuth — standalone mode, api key', () => {
 });
 
 describe('api key storage — secrets never plaintext', () => {
-  it('stores only the SHA-256 hash, never the raw key', () => {
-    const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
+  it('stores only the SHA-256 hash, never the raw key', async () => {
+    const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
     const row = sqlite.prepare(`SELECT * FROM api_keys WHERE prefix = ?`).get(key.slice(0, 5)) as Record<string, unknown>;
     // key_hash is the 64-char SHA-256 hex, not the 68-char raw key.
     expect(row.key_hash).toHaveLength(64);

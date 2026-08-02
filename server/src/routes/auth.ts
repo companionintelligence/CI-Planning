@@ -166,7 +166,7 @@ export function authRouter() {
       throw httpError(401, 'invalid credentials');
     }
 
-    setSession(ctx, owner.id);
+    await setSession(ctx, owner.id);
     ctx.body = { ok: true };
   });
 
@@ -296,7 +296,7 @@ export function authRouter() {
       .prepare(`UPDATE owners SET password_hash = ? WHERE id = ? AND id <> ?`)
       .run(passwordHash, ownerId, SYSTEM_OWNER_ID);
     // Invalidate all existing sessions for this owner (every device is signed out).
-    bumpSessionEpoch(ownerId);
+    await bumpSessionEpoch(ownerId);
 
     logger.info('password reset completed', { owner: ownerId });
     ctx.body = { ok: true };
@@ -539,7 +539,7 @@ export function authRouter() {
       }
     }
 
-    setSession(ctx, owner.id);
+    await setSession(ctx, owner.id);
     logger.info('CI-Portal login established', { owner: owner.id });
     ctx.redirect('/');
   });
