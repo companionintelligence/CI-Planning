@@ -19,9 +19,14 @@
 > ```
 >
 > Actual remaining, by wave:
-> - **Wave 5 (11 files)** — groom, connectors/memory, services/memory, motivation,
->   objectives, possibles, series-scope, task-close, triality, triality-vector,
->   patterns-place.
+> - **Wave 5 (9 files left of 11)** — ✓ motivation, ✓ series-scope. Remaining:
+>   groom + possibles (**a genuine CIRCULAR import — groom imports promotePossible,
+>   possibles imports dedupePossibles; they must land in ONE commit**),
+>   connectors/memory, services/memory, objectives, task-close, triality-vector →
+>   triality (that order: triality imports buildSituationVector), patterns-place.
+>   `patterns-place.ensurePatternsForRange` is called unawaited from
+>   services/blocks.blockRowsForQuery — the one call site left deliberately sync
+>   in part 8. Add the await when it ports.
 > - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
 >   block-task-sync, sync/apply, recurrence-generate, reminders.
 > - **Wave 7 (4 files)** — autoplan, crypto/index, tags, category-prefs.
@@ -86,6 +91,11 @@
 > returns a rejected promise instead of throwing, `toThrow` sees no throw, and the
 > assertion passes while testing nothing. The deps slice had two guarding the
 > cycle detector. Rewrite as `await expect(f()).rejects.toThrow(…)`, and
+> **`await f(...).prop` parses as `await (f(...).prop)`** — property access binds
+> tighter than await, so it reads the property off the PENDING promise, gets
+> `undefined`, and awaits that. Silent. Any assertion of the form
+> `expect(f(...).reason)` needs `expect((await f(...)).reason)`, not
+> `expect(await f(...).reason)`. Bit series-scope.test.ts once.
 > `.not.toThrow()` as `await expect(f()).resolves…`. Grep each ported file's
 > symbols for `toThrow` before trusting a green suite. Swept the suite for others:
 > every remaining sync `toThrow` targets a still-sync callee (migrations, raw
@@ -200,6 +210,20 @@ of which 906 are portable work).
   loads before db/index installs the backend (§5.5's trap in a new form —
   `services/task-metrics.ts` had module-level prepares). Keep SQL strings at
   module level; call `store().prepare` inside functions.
+  **Wave 5 is dense with these — 13 across 5 files**, found by:
+
+  ```
+  grep -rn "^const .*sqlite\.prepare" server/src --include=*.ts
+  ```
+
+  `triality-vector` alone has 8 (selectPrefs, selectRecentMood,
+  selectNextFixedBlock, selectTimerRunning, selectLastCompletion,
+  selectLastActivity, selectPriorities, selectCategoryEntries); `possibles` has
+  2 (selectPossibleTags, insertTaskTag); `task-close` and `triality` have 1 each;
+  `motivation`'s is already fixed. Convert each to a module-level SQL string plus
+  an in-function `store().prepare` — and note the suite will NOT catch a miss if
+  the module happens to be imported after boot in test order, so fix them on
+  sight rather than waiting for red.
 - **`Array.forEach` with an async callback drops the promise entirely.** Strictly
   worse than the `.filter`/`.every` case above: filter at least returns truthy
   promises, forEach discards them, so the body runs unordered and detached, any
@@ -247,6 +271,9 @@ belongs after the cutover, alongside the batched `entityCategoryNamesByIds` /
 
 Follow handoff §6 items 4–7: flip `test/helpers.ts` `resetDb`, then
 `STORE_BACKEND=postgres`, fix dialect deltas (43 `INSERT OR IGNORE`,
-3 `INSERT OR REPLACE`, 20 `strftime`, 3 `julianday`, 2 `lastInsertRowid`),
+3 `INSERT OR REPLACE`, 20 `strftime`, 3 `julianday`, 2 `lastInsertRowid`,
+and `PRAGMA table_info` in `engine/series-scope.ts` forkSeriesAt — Postgres
+needs `information_schema.columns`; it is there deliberately, so the column
+copy can't silently stop copying columns added later),
 delete better-sqlite3/sqlite-vec/Drizzle + 147 SQLite migrations, and write
 the one-shot data exporter before any deployed install can cut over.
