@@ -1,8 +1,8 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 20 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 22 commits)
 >
-> **DONE — waves 0–3 complete, wave 4 in progress. ~425 of 906 portable
+> **DONE — waves 0–3 complete, wave 4 in progress. ~459 of 906 portable
 > statements ported. Suite verified at 2633 passed after every commit.**
 >
 > - Wave 0 ✓ (scripts; both verified end-to-end on a scratch DB)
@@ -20,10 +20,14 @@
 >   blocks.ts calls both engines, so they had to land together; the EXDATE lost
 >   update is now CLOSED, see the trap below), **engine/review**,
 >   **engine/clear-range**, **engine/auto-defense** (`requestReplan` kept its
->   synchronous fire-and-forget signature — see the rule below).
->   REMAINING (8 files, ~134 stmts): **next slice = the agents trio (sync, plan,
->   ingest)** — expect one commit; then services/tasks, recurrence-ops, deps,
->   task-promotion, patterns.
+>   synchronous fire-and-forget signature — see the rule below),
+>   **agents/ingest**, **agents/sync**. The agents files turned out NOT to be
+>   interdependent — they went in as separate commits, not the single one this
+>   list predicted.
+>   REMAINING (6 files, ~100 stmts): **next slice = agents/plan** (11 stmts;
+>   `loadPlanHints` is the only currently-sync export, and `authorPlanOrder` /
+>   `parseInstruction` are already async, so the cascade should be small); then
+>   services/tasks, recurrence-ops, deps, task-promotion, patterns.
 >   `recurrence-ops.skipInstance` carries the SAME EXDATE read-modify-write as
 >   blocks-recur — reuse the compare-and-swap below rather than porting it
 >   straight.
@@ -146,6 +150,19 @@ of which 906 are portable work).
   loads before db/index installs the backend (§5.5's trap in a new form —
   `services/task-metrics.ts` had module-level prepares). Keep SQL strings at
   module level; call `store().prepare` inside functions.
+- **`Array.forEach` with an async callback drops the promise entirely.** Strictly
+  worse than the `.filter`/`.every` case above: filter at least returns truthy
+  promises, forEach discards them, so the body runs unordered and detached, any
+  counter or accumulator after the await never runs, and a rejection surfaces as
+  an unhandled rejection rather than failing the caller. Four sites in the ingest
+  slice (`runExtraction`'s upsert loop, three in seed-test-data). Rewrite as
+  `for (const [i, x] of xs.entries())`.
+- **An unawaited void-returning call is invisible to tsc AND to the return-type
+  check.** In `syncConnector`, `applyInbound` going async left the whole inbound
+  reconcile detached, and the cursor write that must follow it ran first —
+  silently inverting the advance-after-commit invariant. tsc flagged only the
+  sibling line whose value was actually consumed. After porting a file, grep
+  EVERY symbol it exports or calls internally, not just the ones tsc named.
 - **Read-modify-write on a JSON-array column is a lost update.** Distinct from
   the check-then-write shape above: nothing is *checked*, so it reads as a plain
   port. `blocks-recur.excludeBlockOccurrence` SELECTed the template's
