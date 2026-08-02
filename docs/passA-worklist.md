@@ -19,19 +19,23 @@
 > ```
 >
 > Actual remaining, by wave:
-> - **Wave 5 (8 files left of 11)** — ✓ motivation, ✓ series-scope,
->   ✓ triality-vector. **Next = services/triality** (13 raw statements + 1
->   module-level prepare; it imports buildSituationVector, which is already async,
->   so it must not be left long). Then: groom + possibles (**a genuine CIRCULAR
->   import — groom imports promotePossible, possibles imports dedupePossibles;
->   they must land in ONE commit**), connectors/memory, services/memory,
->   objectives, task-close, patterns-place.
+> - **Wave 5 (7 files left of 11)** — ✓ motivation, ✓ series-scope,
+>   ✓ triality-vector, ✓ triality. **Next = groom + possibles** (**a genuine
+>   CIRCULAR import — groom imports promotePossible, possibles imports
+>   dedupePossibles; they must land in ONE commit**). Then connectors/memory,
+>   services/memory, objectives, task-close, patterns-place.
 >   `patterns-place.ensurePatternsForRange` is called unawaited from
 >   services/blocks.blockRowsForQuery — the one call site left deliberately sync
 >   in part 8. Add the await when it ports.
 > - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
 >   block-task-sync, sync/apply, recurrence-generate, reminders.
 > - **Wave 7 (4 files)** — autoplan, crypto/index, tags, category-prefs.
+>   **`services/tags.ts` is the single heaviest file left on the module-level-prepare
+>   axis: 44 of them.** That is more than three times the whole of wave 5, and every
+>   one has to become a module-scope SQL string plus an in-function
+>   `store().prepare`. Budget the slice accordingly — it is mechanical but long, and
+>   tags.ts has 9+ importers, so its cascade is wide too. Do NOT bundle it with
+>   another file.
 > - **Wave 8 (1 file)** — routes/sse (the event-bus design decision).
 >
 > **`sync/apply.ts` (wave 6) is the one that pays a debt**: every remaining raw
@@ -218,9 +222,10 @@ of which 906 are portable work).
   grep -rn "^const .*sqlite\.prepare" server/src --include=*.ts
   ```
 
-  `possibles` has 2 (selectPossibleTags, insertTaskTag); `task-close` and
-  `triality` have 1 each. `motivation`'s and all 9 of `triality-vector`'s are
-  already fixed. Convert each to a module-level SQL string plus an in-function
+  **Repo-wide there are 47 left, and 44 of them are in `services/tags.ts`**
+  (wave 7) — the earlier "13" counted wave-5 files only. In wave 5 just 3 remain:
+  `possibles` has 2 (selectPossibleTags, insertTaskTag) and `task-close` has 1.
+  `motivation`'s, `triality`'s and all 9 of `triality-vector`'s are already fixed. Convert each to a module-level SQL string plus an in-function
   `store().prepare` — and note the suite will NOT catch a miss if the module
   happens to be imported after boot in test order, so fix them on sight rather
   than waiting for red.
