@@ -235,7 +235,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // B2 safety net: sweep blocks whose planned time passed without being started,
       // mark them missed, re-stage the work, and request a reactive reflow (debounced,
       // toggle-gated) so the missed task gets re-placed into the remaining day.
-      const swept = sweepMissedBlocks();
+      const swept = await sweepMissedBlocks();
       if (swept.skipped > 0) requestReplan('missed');
       return {
         itemsCreated: added,

@@ -250,11 +250,11 @@ describe('time_blocks HTTP owner-isolation', () => {
 describe('time_blocks cross-owner non-interference', () => {
   beforeEach(() => { resetDb(); createOwner(); });
 
-  it('reflow(B) never deletes or moves owner A auto blocks (F-REFLOW)', () => {
+  it('reflow(B) never deletes or moves owner A auto blocks (F-REFLOW)', async () => {
     // Owner A (SYSTEM) has an auto task-block; a bare reflow for owner B must not
     // clear or move it (clearPriorAuto + snapshotAutoBlocks are owner-scoped now).
     insertBlock('a-auto', SYSTEM_OWNER, { start_at: at('10:00'), end_at: at('11:00') });
-    reflow(SECOND_OWNER_ID, DAY);
+    await reflow(SECOND_OWNER_ID, DAY);
     const row = sqlite.prepare(`SELECT start_at, end_at, status FROM time_blocks WHERE id = 'a-auto'`).get() as
       | { start_at: string; end_at: string; status: string }
       | undefined;

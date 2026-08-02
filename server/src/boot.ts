@@ -54,7 +54,7 @@ await ensureLocalAuthBootstrap();
 
 // Heal any auto blocks left `is_locked` by a reflow that was interrupted before its
 // unfreeze could run (pre-fix databases). No-op once clean; reflow no longer freezes.
-const recovered = recoverStaleFreezeLocks();
+const recovered = await recoverStaleFreezeLocks();
 if (recovered > 0) logger.info(`Recovered ${recovered} stale auto-block lock(s) from an interrupted reflow`);
 
 const app = await buildApp();

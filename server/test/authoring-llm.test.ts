@@ -217,7 +217,7 @@ describe('§A3 — per-task rationale', () => {
     // The rationale survives a reflow: block ids churn (reflow clears + re-places from
     // daily_plan), and daily_plan.block_id re-links to the fresh block.
     const beforeId = cBlock!.id;
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
     const res2 = await api(srv.url, `/api/blocks?${range}`);
     const cBlock2 = res2.body.blocks.find((bl: { task_id?: string }) => bl.task_id === c);
     expect(cBlock2?.rationale).toBe('Reason zero');

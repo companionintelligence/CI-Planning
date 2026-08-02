@@ -96,7 +96,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     // block via syncBlockFromTask, marking it is_auto=0) → route fires requestReplan.
     const res = await updateTask(OWNER, t1, { scheduled_for: DATE, task_time: '14:00' });
     expect(res.ok).toBe(true);
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     expect(taskBlocks(t1), 'edited task keeps its (now manual) block').toHaveLength(1);
     expect(taskBlocks(t1)[0].is_auto).toBe(0);
@@ -114,7 +114,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     expect(taskBlocks(t3)).toHaveLength(1);
 
     await updateTask(OWNER, t1, { scheduled_for: DATE, task_time: '14:00' });
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     expect(taskBlocks(t2)).toHaveLength(1);
     expect(taskBlocks(t3), 'unauthored task must NOT be wiped').toHaveLength(1);
@@ -131,7 +131,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ?`).run(t2);
 
     await updateTask(OWNER, t1, { scheduled_for: DATE, task_time: '14:00' });
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     expect(taskBlocks(t2), "'scheduled' task must NOT be wiped").toHaveLength(1);
   });
@@ -144,14 +144,14 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     placeFlightPlan(OWNER, { date: DATE });
 
     await updateTask(OWNER, t1, { scheduled_for: DATE, task_time: '14:00' });
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     expect(taskBlocks(t1)).toHaveLength(1);
     expect(taskBlocks(t2), 'must NOT be wiped').toHaveLength(1);
     expect(taskBlocks(t3), 'must NOT be wiped').toHaveLength(1);
   });
 
-  it('cron self-wipe: an immediate reflow after an unauthored placement keeps the fresh blocks', () => {
+  it('cron self-wipe: an immediate reflow after an unauthored placement keeps the fresh blocks', async () => {
     // sync_calendar: autoScheduleOnIngest places (never authors daily_plan), then the
     // same tick fires requestReplan('calendar') — the reflow must not eat what the
     // cron just placed.
@@ -161,7 +161,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     placeFlightPlan(OWNER, { date: DATE });
     expect(taskBlocks(t1)).toHaveLength(1);
 
-    const diff = reflow(OWNER, DATE, 'calendar');
+    const diff = await reflow(OWNER, DATE, 'calendar');
 
     expect(taskBlocks(t1)).toHaveLength(1);
     expect(taskBlocks(t2)).toHaveLength(1);
@@ -203,13 +203,13 @@ describe('explicit Auto runs', () => {
 // ─── Reflow hygiene: staging purity, GC, missed evidence ────────────────────────
 
 describe('reflow hygiene', () => {
-  it('never writes to the user’s flight_plan staging area', () => {
+  it('never writes to the user’s flight_plan staging area', async () => {
     const t1 = insertTask('Placed');
     stage(t1, 0);
     placeFlightPlan(OWNER, { date: DATE });
     expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(OWNER)).toEqual({ n: 0 });
 
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     expect(
       sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(OWNER),
@@ -217,20 +217,20 @@ describe('reflow hygiene', () => {
     ).toEqual({ n: 0 });
   });
 
-  it('garbage-collects the stale planned block of a task completed via task PATCH', () => {
+  it('garbage-collects the stale planned block of a task completed via task PATCH', async () => {
     const t1 = insertTask('Done under its block');
     const t2 = insertTask('Still live');
     stage(t1, 0); stage(t2, 1);
     placeFlightPlan(OWNER, { date: DATE });
     sqlite.prepare(`UPDATE tasks SET status = 'done' WHERE id = ?`).run(t1);
 
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     expect(taskBlocks(t1), 'terminal task’s stale block is cleared, not re-placed').toHaveLength(0);
     expect(taskBlocks(t2)).toHaveLength(1);
   });
 
-  it("preserves 'missed' evidence blocks (status-vocabulary alignment)", () => {
+  it("preserves 'missed' evidence blocks (status-vocabulary alignment)", async () => {
     const t1 = insertTask('Missed earlier', 30, 'missed');
     sqlite
       .prepare(
@@ -242,7 +242,7 @@ describe('reflow hygiene', () => {
     stage(t2, 0);
     placeFlightPlan(OWNER, { date: DATE });
 
-    reflow(OWNER, DATE);
+    await reflow(OWNER, DATE);
 
     expect(taskBlocks(t1), "the review surface's missed evidence must survive a reflow").toHaveLength(1);
     expect(taskBlocks(t1)[0].status).toBe('missed');
@@ -286,7 +286,7 @@ describe('placement status parity', () => {
     expect(row.task_time).toBeNull();
   });
 
-  it('a reflow that cannot re-place a task reverts it to the open backlog', () => {
+  it('a reflow that cannot re-place a task reverts it to the open backlog', async () => {
     const t1 = insertTask('Squeezed out');
     stage(t1, 0);
     placeFlightPlan(OWNER, { date: DATE });
@@ -299,14 +299,14 @@ describe('placement status parity', () => {
          VALUES (uuid7(), 'All-day', 'meeting', ?, ?, 1, 0, 'manual', ?)`,
       )
       .run(`${DATE}T00:00:00.000Z`, `${DATE}T23:59:00.000Z`, OWNER);
-    const diff = reflow(OWNER, DATE);
+    const diff = await reflow(OWNER, DATE);
 
     expect(diff.unplaced).toContain(t1);
     expect(taskBlocks(t1)).toHaveLength(0);
     expect(taskRow(t1).status, 'no placement left ⇒ back to open').toBe('open');
   });
 
-  it('sweepMissedBlocks reverts a placement-scheduled task so it re-queues', () => {
+  it('sweepMissedBlocks reverts a placement-scheduled task so it re-queues', async () => {
     const t1 = insertTask('Missed placement');
     stage(t1, 0);
     placeFlightPlan(OWNER, { date: DATE });
@@ -314,7 +314,7 @@ describe('placement status parity', () => {
 
     // Sweep "now" = end of that day: the block's end is in the past.
     const now = Date.parse(`${DATE}T23:00:00.000Z`);
-    const res = sweepMissedBlocks(OWNER, DATE, now);
+    const res = await sweepMissedBlocks(OWNER, DATE, now);
 
     expect(res.skipped).toBe(1);
     expect(res.requeued, 'the scheduled→open revert must precede the open-check').toBe(1);
@@ -326,7 +326,7 @@ describe('placement status parity', () => {
 // ─── Owner-tz reactive date + R3 clamp ─────────────────────────────────────────
 
 describe('owner-timezone dates and the not-before-now clamp', () => {
-  it('a date-less reflow targets the OWNER’s current day, not the server’s', () => {
+  it('a date-less reflow targets the OWNER’s current day, not the server’s', async () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'America/Los_Angeles' WHERE owner_id = ?`).run(OWNER);
     // Fixed instant: 2026-06-24 20:00Z = 13:00 in LA (server-UTC date and LA date agree
     // here; the assertion below pins the LA day resolution + survival, deterministic).
@@ -338,7 +338,7 @@ describe('owner-timezone dates and the not-before-now clamp', () => {
     placeFlightPlan(OWNER, { date: laDay, nowMs });
     expect(taskBlocks(t1)).toHaveLength(1);
 
-    const diff = reflow(OWNER, undefined, 'task:updated', { nowMs });
+    const diff = await reflow(OWNER, undefined, 'task:updated', { nowMs });
 
     expect(taskBlocks(t1), 'reflow found (and kept) the owner-day blocks').toHaveLength(1);
     expect(taskBlocks(t2)).toHaveLength(1);
@@ -359,7 +359,7 @@ describe('owner-timezone dates and the not-before-now clamp', () => {
     }
   });
 
-  it('a reflow late in the day re-packs into the REMAINING day, never into past gaps', () => {
+  it('a reflow late in the day re-packs into the REMAINING day, never into past gaps', async () => {
     const t1 = insertTask('Morning-placed');
     stage(t1, 0);
     // Placed in the morning (now = 08:00 → block lands at workday start 09:00).
@@ -368,7 +368,7 @@ describe('owner-timezone dates and the not-before-now clamp', () => {
 
     // 15:00: a disruption triggers a reflow. The 09:00 slot is in the past now.
     const nowMs = Date.parse(`${DATE}T15:00:00.000Z`);
-    reflow(OWNER, DATE, 'overrun', { nowMs });
+    await reflow(OWNER, DATE, 'overrun', { nowMs });
 
     const [b] = taskBlocks(t1);
     expect(b).toBeTruthy();

@@ -40,15 +40,15 @@ function toPlanHints(hints: PlanHint[]) {
 export const engineOpsResolvers = {
   Query: {
     // GET /api/plan/suggestion — nullable outstanding nudge.
-    planSuggestion: () => outstandingSuggestion(currentOwnerId()) ?? null,
+    planSuggestion: async () => (await outstandingSuggestion(currentOwnerId())) ?? null,
   },
 
   Mutation: {
     // POST /api/schedule/run — deterministic reflow; no SSE in the route; audit stays here.
-    runSchedule: (_p: unknown, args: { date?: string | null }) => {
+    runSchedule: async (_p: unknown, args: { date?: string | null }) => {
       const owner = currentOwnerId();
       const date = args.date ?? localISODate();
-      const diff = reflow(owner, date, 'manual');
+      const diff = await reflow(owner, date, 'manual');
       writeAudit({ ownerId: owner, actor: 'owner', action: 'run', entity: `schedule:${date}` });
       return { diff, success: true };
     },
@@ -88,17 +88,17 @@ export const engineOpsResolvers = {
       const owner = currentOwnerId();
       const date = args.date ?? localISODate();
       await authorPlanOrder(owner, date, { force: true });
-      clearSuggestion(owner);
-      const diff = reflow(owner, date, 'reauthor');
+      await clearSuggestion(owner);
+      const diff = await reflow(owner, date, 'reauthor');
       broadcast(owner, 'schedule:done', { reason: 'reauthor', ...diff });
       writeAudit({ ownerId: owner, actor: 'owner', action: 'reauthor', entity: `plan:${date}` });
       return { diff, success: true };
     },
 
     // POST /api/plan/reauthor/dismiss — drop the outstanding suggestion.
-    dismissReauthor: () => {
+    dismissReauthor: async () => {
       const owner = currentOwnerId();
-      clearSuggestion(owner);
+      await clearSuggestion(owner);
       broadcast(owner, 'replan:dismissed', {});
       writeAudit({ ownerId: owner, actor: 'owner', action: 'dismiss', entity: 'plan:reauthor' });
       return { success: true };

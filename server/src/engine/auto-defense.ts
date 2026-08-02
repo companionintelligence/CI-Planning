@@ -32,7 +32,7 @@
  * re-placement goes through placeFlightPlan's `replaceTaskIds`, so a re-place failure
  * can't leak rows into the user's staging area.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { placeFlightPlan } from './autoplan.js';
 import { serverTimezone, utcDayBounds, localDateInTZ } from '../lib/tz.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -77,10 +77,10 @@ type TaskTimeMap = Map<string, { block_id: string; start_at: string; end_at: str
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function snapshotAutoBlocks(owner: string, dayStartISO: string, dayEndISO: string): BlockSnapshot[] {
+function snapshotAutoBlocks(owner: string, dayStartISO: string, dayEndISO: string): Promise<BlockSnapshot[]> {
   // Owner-scoped (F-REFLOW): without `owner_id = ?` a reflow would snapshot — then
   // re-place/stamp — another owner's overlapping blocks. Silent cross-tenant corruption.
-  return sqlite
+  return store()
     .prepare(
       `SELECT id, task_id, start_at, end_at, is_locked, status, last_moved_at
          FROM time_blocks
@@ -89,7 +89,7 @@ function snapshotAutoBlocks(owner: string, dayStartISO: string, dayEndISO: strin
           AND start_at < ? AND end_at > ?
           AND status NOT IN ('completed', 'skipped', 'cancelled', 'missed')`
     )
-    .all(owner, dayEndISO, dayStartISO) as BlockSnapshot[];
+    .all<BlockSnapshot>(owner, dayEndISO, dayStartISO);
 }
 
 /** Build a task_id-keyed map from a snapshot, keeping the earliest block per task. */
@@ -134,25 +134,25 @@ const REPLACEABLE_TASK_STATUSES = new Set(['open', 'scheduled', 'in_progress']);
  * coverage goes stale the moment a task is staged after the day's first Auto run) and
  * never from a status filter narrower than "live work".
  */
-function partitionReplaceSet(
+async function partitionReplaceSet(
   owner: string,
   date: string,
   snapshot: BlockSnapshot[],
   protectedTaskIds: Set<string>,
-): { replaceTaskIds: string[]; gcBlockIds: string[] } {
+): Promise<{ replaceTaskIds: string[]; gcBlockIds: string[] }> {
   const movable = snapshot.filter((b) => !protectedTaskIds.has(b.task_id));
   if (movable.length === 0) return { replaceTaskIds: [], gcBlockIds: [] };
 
   const taskIds = [...new Set(movable.map((b) => b.task_id))];
   const statusById = new Map(
-    (sqlite
+    (await store()
       .prepare(`SELECT id, status FROM tasks WHERE owner_id = ? AND id IN (${taskIds.map(() => '?').join(',')})`)
-      .all(owner, ...taskIds) as { id: string; status: string }[]).map((r) => [r.id, r.status]),
+      .all<{ id: string; status: string }>(owner, ...taskIds)).map((r) => [r.id, r.status]),
   );
   const dpPos = new Map(
-    (sqlite
+    (await store()
       .prepare(`SELECT task_id, position FROM daily_plan WHERE owner_id = ? AND date = ? AND task_id IN (${taskIds.map(() => '?').join(',')})`)
-      .all(owner, date, ...taskIds) as { task_id: string; position: number }[]).map((r) => [r.task_id, r.position]),
+      .all<{ task_id: string; position: number }>(owner, date, ...taskIds)).map((r) => [r.task_id, r.position]),
   );
   const earliestStart = new Map<string, string>();
   for (const b of movable) {
@@ -211,15 +211,15 @@ function diffBlocks(before: TaskTimeMap, after: TaskTimeMap): Omit<ReflowDiff, '
  *
  * Never calls the LLM. Returns a diff of what moved, was removed, or was added.
  */
-export function reflow(
+export async function reflow(
   owner: string = currentOwnerId(),
   date?: string,
   _reason?: string,
   opts: { nowMs?: number } = {},
-): ReflowDiff {
-  const prefs = sqlite
+): Promise<ReflowDiff> {
+  const prefs = await store()
     .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   const tz = prefs?.timezone || serverTimezone();
   const nowMs = opts.nowMs ?? Date.now(); // injectable clock (tests): default-date, stability window, R3 clamp
   // OWNER-local today, not the server's: an owner west of the server editing in the
@@ -232,7 +232,7 @@ export function reflow(
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(d, tz);
 
   // 1. Snapshot auto blocks before any changes.
-  const snapshot = snapshotAutoBlocks(owner, dayStartISO, dayEndISO);
+  const snapshot = await snapshotAutoBlocks(owner, dayStartISO, dayEndISO);
   const beforeMap = toTaskMap(snapshot);
 
   // 2. Which blocks are protected (in-progress, locked, or recently moved)?
@@ -245,9 +245,9 @@ export function reflow(
 
   // 3. Partition the movable snapshot: live tasks get re-placed (authored order first,
   //    block order for the unauthored tail); terminal tasks' stale blocks get GC'd.
-  const { replaceTaskIds, gcBlockIds } = partitionReplaceSet(owner, d, snapshot, protectedTaskIds);
+  const { replaceTaskIds, gcBlockIds } = await partitionReplaceSet(owner, d, snapshot, protectedTaskIds);
   if (gcBlockIds.length > 0) {
-    sqlite
+    await store()
       .prepare(`DELETE FROM time_blocks WHERE owner_id = ? AND id IN (${gcBlockIds.map(() => '?').join(',')})`)
       .run(owner, ...gcBlockIds);
   }
@@ -263,26 +263,30 @@ export function reflow(
   //    it must not be reported `removed` (B4 would nag about a task that's fine).
   //    Scoped to THIS day's window (same bounds as the snapshots): an active block on a
   //    DIFFERENT day must not mask a genuine same-day removal/unplaced.
-  const hasActiveBlockToday = sqlite.prepare(
+  const hasActiveBlockToday = store().prepare(
     `SELECT 1 FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
       AND status NOT IN (${TERMINAL_BLOCK_STATUS_SQL})
       AND start_at < ? AND end_at > ? LIMIT 1`,
   );
-  const activeToday = (taskId: string) => !!hasActiveBlockToday.get(taskId, owner, dayEndISO, dayStartISO);
-  const afterSnapshot = snapshotAutoBlocks(owner, dayStartISO, dayEndISO);
+  const activeToday = async (taskId: string) => !!(await hasActiveBlockToday.get(taskId, owner, dayEndISO, dayStartISO));
+  const afterSnapshot = await snapshotAutoBlocks(owner, dayStartISO, dayEndISO);
   const afterMap = toTaskMap(afterSnapshot);
   const { moved, removed: removedRaw, added } = diffBlocks(beforeMap, afterMap);
-  const removed = removedRaw.filter((r) => !activeToday(r.task_id));
+  // Explicit loops, not `.filter(activeToday)`: an async predicate returns a Promise,
+  // which is always truthy, so every candidate would survive the filter.
+  const removed: typeof removedRaw = [];
+  for (const r of removedRaw) if (!(await activeToday(r.task_id))) removed.push(r);
 
   // 6. Stamp last_moved_at on blocks that actually changed time.
   const nowISO = new Date(nowMs).toISOString();
-  const stamp = sqlite.prepare(`UPDATE time_blocks SET last_moved_at = ? WHERE id = ? AND owner_id = ?`);
-  for (const m of moved) stamp.run(nowISO, m.block_id, owner);
+  const stamp = store().prepare(`UPDATE time_blocks SET last_moved_at = ? WHERE id = ? AND owner_id = ?`);
+  for (const m of moved) await stamp.run(nowISO, m.block_id, owner);
 
   // 7. Unplaced = tasks we tried to re-place that no longer hold an active block ON
   //    THIS DAY (same pin-conversion caveat as `removed` above; day-scoped so a block
   //    on another day doesn't hide a genuine same-day failure to place).
-  const unplaced = replaceTaskIds.filter((id) => !afterMap.has(id) && !activeToday(id));
+  const unplaced: string[] = [];
+  for (const id of replaceTaskIds) if (!afterMap.has(id) && !(await activeToday(id))) unplaced.push(id);
 
   return { moved, removed, added, unplaced };
 }
@@ -294,14 +298,15 @@ export function reflow(
  * a no-op once clean. (Post-fix, reflow no longer writes is_locked at all, so no new
  * residue is ever produced; this only heals databases written by the old code.)
  */
-export function recoverStaleFreezeLocks(): number {
-  return sqlite
+export async function recoverStaleFreezeLocks(): Promise<number> {
+  const res = await store()
     .prepare(
       `UPDATE time_blocks SET is_locked = 0
         WHERE is_locked = 1 AND is_auto = 1 AND source_kind = 'agent' AND block_kind = 'task'
           AND status = 'planned'`
     )
-    .run().changes;
+    .run();
+  return res.changes;
 }
 
 // ─── B2: triggers + debounce ───────────────────────────────────────────────────
@@ -310,36 +315,47 @@ const pendingReplans = new Map<string, ReturnType<typeof setTimeout>>(); // owne
 const reflowing = new Set<string>(); // owner currently inside a reflow (re-entrancy guard)
 
 /** Reflow is gated per owner by scheduling_prefs.auto_defense_enabled (default on). */
-function autoDefenseEnabled(owner: string): boolean {
-  const row = sqlite
+async function autoDefenseEnabled(owner: string): Promise<boolean> {
+  const row = await store()
     .prepare(`SELECT auto_defense_enabled FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { auto_defense_enabled: number } | undefined;
+    .get<{ auto_defense_enabled: number }>(owner);
   return (row?.auto_defense_enabled ?? 1) === 1;
 }
 
 /** The owner-local current date (scheduling_prefs.timezone, falling back to the server
  *  zone) — the reactive path must target the day the OWNER is living in, not the
  *  server's calendar day. */
-function ownerLocalDate(owner: string): string {
-  const prefs = sqlite
+async function ownerLocalDate(owner: string): Promise<string> {
+  const prefs = await store()
     .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   return localDateInTZ(new Date().toISOString(), prefs?.timezone || serverTimezone());
 }
 
-/** Run one reflow now and broadcast the diff. Swallows errors — never throws to a timer. */
-function fireReplan(owner: string, date: string | undefined, reason: string): void {
+/**
+ * Run one reflow now and broadcast the diff. Swallows errors — never throws to a timer.
+ *
+ * Also owns the `auto_defense_enabled` gate, which used to sit in `requestReplan`. It
+ * moved here so `requestReplan` could stay SYNCHRONOUS: the gate is the only DB read on
+ * that path, and making it async would have turned 21 fire-and-forget trigger sites
+ * (request + sync handlers) into awaits for no benefit — the same reasoning that keeps
+ * `writeAudit` floating. Evaluating the gate at fire time rather than trigger time is
+ * also strictly more correct: a trigger raised just before the owner disables
+ * auto-defense no longer reflows 1.5s later.
+ */
+async function fireReplan(owner: string, date: string | undefined, reason: string): Promise<void> {
   if (reflowing.has(owner)) return; // re-entrancy: a reflow's own writes must not re-trigger
   reflowing.add(owner);
-  const d = date ?? ownerLocalDate(owner);
   try {
-    const diff = reflow(owner, d, reason);
+    if (!(await autoDefenseEnabled(owner))) return;
+    const d = date ?? (await ownerLocalDate(owner));
+    const diff = await reflow(owner, d, reason);
     broadcast(owner, 'schedule:done', { reason, ...diff });
     // B4: on a BIG disruption (a high-priority task can't fit), escalate by surfacing
     // ONE actionable nudge — never re-author here. The LLM only runs on explicit accept
     // (POST /api/plan/reauthor). This is the reactive path; the accept route calls
     // reflow() directly, so an accepted re-author can never re-trigger a suggestion.
-    const sug = maybeSuggestReauthor(owner, d, diff, reason);
+    const sug = await maybeSuggestReauthor(owner, d, diff, reason);
     if (sug) {
       broadcast(owner, 'replan:suggested', { date: sug.date, reason: sug.reason, summary: sug.summary });
       void pushReplanNudge(owner, sug.summary);
@@ -358,13 +374,14 @@ function fireReplan(owner: string, date: string | undefined, reason: string): vo
  */
 export function requestReplan(reason: string, owner: string = currentOwnerId(), date?: string): void {
   try {
-    if (!autoDefenseEnabled(owner)) return;
     if (reflowing.has(owner)) return; // ignore triggers raised during an in-flight reflow
     const existing = pendingReplans.get(owner);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       pendingReplans.delete(owner);
-      fireReplan(owner, date, reason);
+      // Floated deliberately: fireReplan owns the auto_defense_enabled gate and swallows
+      // its own errors, so there is nothing here to await or catch.
+      void fireReplan(owner, date, reason);
     }, DEBOUNCE_MS);
     // A pending debounce must never keep the process (or a test runner) alive.
     if (typeof timer.unref === 'function') timer.unref();
@@ -380,21 +397,21 @@ export function requestReplan(reason: string, owner: string = currentOwnerId(), 
  * flight_plan, so the next reflow re-places the work into the remaining day. Returns
  * counts; does not itself reflow (the caller decides — the cron pairs it with requestReplan).
  */
-export function sweepMissedBlocks(
+export async function sweepMissedBlocks(
   owner: string = currentOwnerId(),
   date?: string,
   now: number = Date.now(),
-): { skipped: number; requeued: number } {
-  const prefs = sqlite
+): Promise<{ skipped: number; requeued: number }> {
+  const prefs = await store()
     .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   const tz = prefs?.timezone || serverTimezone();
   const d = date ?? localDateInTZ(new Date(now).toISOString(), tz);
   // Same DST-aware day window as reflow/clearPriorAuto (utcDayBounds), not start+24h.
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(d, tz);
   const nowISO = new Date(now).toISOString();
 
-  const missed = sqlite
+  const missed = await store()
     .prepare(
       `SELECT id, task_id FROM time_blocks
         WHERE owner_id = ? AND task_id IS NOT NULL
@@ -403,31 +420,31 @@ export function sweepMissedBlocks(
           AND end_at <= ?
           AND start_at < ? AND end_at > ?`
     )
-    .all(owner, nowISO, dayEndISO, dayStartISO) as { id: string; task_id: string }[];
+    .all<{ id: string; task_id: string }>(owner, nowISO, dayEndISO, dayStartISO);
 
   if (missed.length === 0) return { skipped: 0, requeued: 0 };
 
-  const markSkipped = sqlite.prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`);
-  const restage = sqlite.prepare(
+  const markSkipped = store().prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`);
+  const restage = store().prepare(
     `INSERT OR IGNORE INTO flight_plan (owner_id, task_id, selected, position) VALUES (?, ?, 1, ?)`
   );
   // Append re-queued tasks at the END of the flight-plan (nextPos), not position 0 — a
   // hard-coded 0 collided every requeued task onto the same slot, so the (position,
   // task_id) order was arbitrary and unstable across sweeps.
-  let pos = (sqlite.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get(owner) as { m: number }).m + 1;
+  let pos = (await store().prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM flight_plan WHERE owner_id = ?`).get<{ m: number }>(owner))!.m + 1;
   let requeued = 0;
-  sqlite.transaction(() => {
+  await store().transaction(async () => {
     for (const blk of missed) {
-      markSkipped.run(blk.id, owner);
+      await markSkipped.run(blk.id, owner);
       // R2 parity: skipping a task's only active placement returns it to the open
       // backlog (scheduled ⇒ open) — MUST run before the open-check below, or a
       // placement-scheduled task would never re-queue.
       revertTaskPlacementStatus(blk.task_id, owner);
       // Only re-queue tasks that are still open (a completed task's stale block isn't work).
-      const open = sqlite.prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'open'`).get(blk.task_id);
-      if (open && restage.run(owner, blk.task_id, pos).changes > 0) { pos++; requeued++; }
+      const open = await store().prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'open'`).get(blk.task_id);
+      if (open && (await restage.run(owner, blk.task_id, pos)).changes > 0) { pos++; requeued++; }
     }
-  })();
+  });
 
   broadcast(owner, 'blocks:missed', { count: missed.length });
   return { skipped: missed.length, requeued };
@@ -450,18 +467,18 @@ interface Suggestion { date: string; reason: string; summary: string; atRisk: nu
  * or unplaceable (`unplaced`). This is the disruption signal: a chronically-full day
  * of low-priority backlog does NOT nag; only an important task losing its slot does.
  */
-function highPriorityAtRisk(diff: ReflowDiff): string[] {
+async function highPriorityAtRisk(diff: ReflowDiff): Promise<string[]> {
   const ids = [...new Set<string>([...diff.removed.map((r) => r.task_id), ...diff.unplaced])];
   if (ids.length === 0) return [];
-  const rows = sqlite
+  const rows = await store()
     .prepare(`SELECT id, priority FROM tasks WHERE id IN (${ids.map(() => '?').join(',')})`)
-    .all(...ids) as { id: string; priority: number | null }[];
+    .all<{ id: string; priority: number | null }>(...ids);
   return rows.filter((r) => (r.priority ?? 3) <= 2).map((r) => r.id);
 }
 
 /** B4 disruption predicate: a high-priority task is at risk after the deterministic reflow. */
-export function isBigDisruption(diff: ReflowDiff): boolean {
-  return highPriorityAtRisk(diff).length > 0;
+export async function isBigDisruption(diff: ReflowDiff): Promise<boolean> {
+  return (await highPriorityAtRisk(diff)).length > 0;
 }
 
 /**
@@ -469,14 +486,14 @@ export function isBigDisruption(diff: ReflowDiff): boolean {
  * already outstanding for this (owner, date). Returns null otherwise (no disruption,
  * or de-duped). Pure bookkeeping — the caller broadcasts/pushes.
  */
-function maybeSuggestReauthor(owner: string, date: string, diff: ReflowDiff, reason: string): Suggestion | null {
-  const atRisk = highPriorityAtRisk(diff);
+async function maybeSuggestReauthor(owner: string, date: string, diff: ReflowDiff, reason: string): Promise<Suggestion | null> {
+  const atRisk = await highPriorityAtRisk(diff);
   if (atRisk.length === 0) return null;
-  const existing = sqlite.prepare(`SELECT date FROM replan_suggestions WHERE owner_id = ?`).get(owner) as { date: string } | undefined;
+  const existing = await store().prepare(`SELECT date FROM replan_suggestions WHERE owner_id = ?`).get<{ date: string }>(owner);
   if (existing && existing.date === date) return null; // anti-spam: one per (owner, day)
   const k = atRisk.length;
   const sug: Suggestion = { date, reason, summary: `${k} priority task${k === 1 ? '' : 's'} at risk`, atRisk: k };
-  sqlite
+  await store()
     .prepare(`INSERT OR REPLACE INTO replan_suggestions (owner_id, date, reason, summary, at_risk) VALUES (?, ?, ?, ?, ?)`)
     .run(owner, date, reason, sug.summary, k);
   return sug;
@@ -487,7 +504,7 @@ async function pushReplanNudge(owner: string, summary: string): Promise<void> {
   try {
     for (const s of subsFor(owner)) {
       const res = await sendPush(s.sub, { title: 'Re-plan your day?', body: summary, tag: 'replan:suggested', url: '/' });
-      if (res === 'gone') sqlite.prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(s.id);
+      if (res === 'gone') await store().prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(s.id);
     }
   } catch {
     // SSE already delivered the nudge in-app; push is a bonus.
@@ -495,22 +512,22 @@ async function pushReplanNudge(owner: string, summary: string): Promise<void> {
 }
 
 /** The outstanding suggestion for an owner (B4 — read by routes/tests). */
-export function outstandingSuggestion(owner: string): Suggestion | undefined {
-  const row = sqlite
+export async function outstandingSuggestion(owner: string): Promise<Suggestion | undefined> {
+  const row = await store()
     .prepare(`SELECT date, reason, summary, at_risk FROM replan_suggestions WHERE owner_id = ?`)
-    .get(owner) as { date: string; reason: string; summary: string; at_risk: number } | undefined;
+    .get<{ date: string; reason: string; summary: string; at_risk: number }>(owner);
   return row ? { date: row.date, reason: row.reason, summary: row.summary, atRisk: row.at_risk } : undefined;
 }
 
 /** Clear the outstanding suggestion (on accept/dismiss). */
-export function clearSuggestion(owner: string): void {
-  sqlite.prepare(`DELETE FROM replan_suggestions WHERE owner_id = ?`).run(owner);
+export async function clearSuggestion(owner: string): Promise<void> {
+  await store().prepare(`DELETE FROM replan_suggestions WHERE owner_id = ?`).run(owner);
 }
 
 /** Test-only: clear pending debounce timers, the re-entrancy guard, and suggestions. */
-export function _resetReplanState(): void {
+export async function _resetReplanState(): Promise<void> {
   for (const t of pendingReplans.values()) clearTimeout(t);
   pendingReplans.clear();
   reflowing.clear();
-  sqlite.exec(`DELETE FROM replan_suggestions`);
+  await store().exec(`DELETE FROM replan_suggestions`);
 }

@@ -168,14 +168,14 @@ describe('H4 placeStartAnchoredTask idempotency is day-scoped', () => {
 // ─── H5 — sweep requeue positions + multi-session characterization ──────────────
 
 describe('H5 sweep requeue + multi-session', () => {
-  it('re-queues each missed task at a distinct flight-plan position (not all 0)', () => {
+  it('re-queues each missed task at a distinct flight-plan position (not all 0)', async () => {
     const t1 = insertTask('Missed A');
     const t2 = insertTask('Missed B');
     // Two agent auto blocks whose planned end is in the past.
     insertBlock(t1, '2026-06-24T09:00:00.000Z', '2026-06-24T09:30:00.000Z', { isAuto: 1 });
     insertBlock(t2, '2026-06-24T10:00:00.000Z', '2026-06-24T10:30:00.000Z', { isAuto: 1 });
 
-    const res = sweepMissedBlocks(OWNER, '2026-06-24', Date.parse('2026-06-24T23:00:00.000Z'));
+    const res = await sweepMissedBlocks(OWNER, '2026-06-24', Date.parse('2026-06-24T23:00:00.000Z'));
 
     expect(res.skipped).toBe(2);
     expect(res.requeued).toBe(2);
@@ -197,7 +197,7 @@ describe('H5 sweep requeue + multi-session', () => {
     // double-placed (an is_auto=0 survivor beside freshly-created is_auto=1 sessions).
     await updateTask(OWNER, t, { scheduled_for: '2026-06-24', task_time: '14:00' });
     const { reflow } = await import('../src/engine/auto-defense.js');
-    reflow(OWNER, '2026-06-24', 'task:updated', { nowMs: Date.parse('2026-06-24T08:05:00.000Z') });
+    await reflow(OWNER, '2026-06-24', 'task:updated', { nowMs: Date.parse('2026-06-24T08:05:00.000Z') });
 
     const blocks = taskBlocks(t);
     const starts = blocks.map((b) => b.start_at);
