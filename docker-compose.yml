@@ -33,10 +33,43 @@ services:
       AUTH_DEFAULT_PASSWORD: ${AUTH_DEFAULT_PASSWORD:?set AUTH_DEFAULT_PASSWORD in .env}
       # In-network service name — the app reaches the ollama service over the compose network.
       OLLAMA_URL: http://ollama:11434
+      # Postgres (schema port). Unset ⇒ the app still uses the SQLite store at /data —
+      # the two backends coexist while the 386 call sites are migrated file by file.
+      DATABASE_URL: postgres://${POSTGRES_USER:-planning}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-planning}
     depends_on:
       ollama:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     # Liveness comes from the Dockerfile HEALTHCHECK (hits /api/health).
+
+  # Postgres for the schema port (db/postgres/migrations). pgvector is the sqlite-vec
+  # replacement — possible-task dedupe builds a transient KNN index and needs the
+  # extension present even though no column stores a vector.
+  #
+  # Pinned to the same major CI-Server runs so a later "one instance, two schemas"
+  # deployment is a connection-string change rather than an upgrade. When pointing this
+  # app at a SHARED instance, drop this service and set DATABASE_URL to that host —
+  # `planning` is a schema, so it coexists with CI-Server's `ci` in one database.
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-planning}
+      POSTGRES_USER: ${POSTGRES_USER:-planning}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ci-planning-pg:/var/lib/postgresql/data
+    # No host port by default — the app reaches it in-network. Uncomment to inspect with
+    # psql from the host:
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-planning} -d ${POSTGRES_DB:-planning}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   ollama:
     image: ollama/ollama:latest
@@ -85,4 +118,5 @@ services:
 
 volumes:
   ci-planning-data:
+  ci-planning-pg:
   ollama-data:
