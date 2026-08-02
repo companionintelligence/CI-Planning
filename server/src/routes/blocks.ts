@@ -138,7 +138,7 @@ export function blocksRouter() {
         .prepare(`SELECT recurrence_parent_id, occurrence_date FROM time_blocks WHERE id = ? AND owner_id = ?`)
         .get<{ recurrence_parent_id: string | null; occurrence_date: string | null }>(id, owner);
       if (inst?.recurrence_parent_id && inst.occurrence_date) {
-        const fork = forkSeriesAt(owner, 'time_blocks', inst.recurrence_parent_id, inst.occurrence_date, newId());
+        const fork = await forkSeriesAt(owner, 'time_blocks', inst.recurrence_parent_id, inst.occurrence_date, newId());
         if (!fork.ok) {
           ctx.status = 422;
           ctx.body = { error: 'Could not split this series — its repeat rule could not be bounded' };

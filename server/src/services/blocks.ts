@@ -749,7 +749,7 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
       // Truncate the series here. The EXDATE below is still written for THIS day: the
       // bounded rule already excludes it, but the exdate keeps the intent explicit and
       // makes the operation idempotent if the rule is later widened by hand.
-      truncateSeriesFrom(ownerId, 'time_blocks', block.recurrenceParentId, block.occurrenceDate);
+      await truncateSeriesFrom(ownerId, 'time_blocks', block.recurrenceParentId, block.occurrenceDate);
     }
     await excludeBlockOccurrence(ownerId, block.recurrenceParentId, block.occurrenceDate);
   }

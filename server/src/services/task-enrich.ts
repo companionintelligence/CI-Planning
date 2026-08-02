@@ -243,7 +243,7 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   // Motivation (0141): the SQL guard in applyMachineMotivation IS the concurrency
   // re-check — a user label written since the read above wins and changes = 0.
   if (needsMotivation && isMotivation(out.motivation)) {
-    if (applyMachineMotivation(owner, taskId, out.motivation)) {
+    if (await applyMachineMotivation(owner, taskId, out.motivation)) {
       result.motivation = out.motivation;
       result.enriched = true;
     }

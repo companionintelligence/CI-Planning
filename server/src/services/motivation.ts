@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { generateJson } from '../mcp/ollama.js';
 import { MOTIVATION_RUBRIC, isMotivation, type Motivation } from '../agents/rubric.js';
 
@@ -68,10 +68,11 @@ export async function classifyMotivationLLM(
 }
 
 // ── Machine-apply (fill-blanks-only, enforced in SQL) ─────────────────────────
-const applyStmt = sqlite.prepare(
-  `UPDATE tasks SET motivation = ?, motivation_source = 'llm'
-    WHERE id = ? AND owner_id = ? AND motivation IS NULL`,
-);
+// SQL at module level, `prepare` INSIDE the function (§5.5): a module-level
+// store().prepare runs at import time, which for any module imported before boot
+// installs the backend throws "store not initialised".
+const APPLY_SQL = `UPDATE tasks SET motivation = ?, motivation_source = 'llm'
+    WHERE id = ? AND owner_id = ? AND motivation IS NULL`;
 
 /**
  * Write a machine-attributed label ('llm' covers the model AND the keyword
@@ -79,6 +80,7 @@ const applyStmt = sqlite.prepare(
  * The `motivation IS NULL` guard is the never-re-tag contract: a user label, or
  * an earlier machine label, always stands. Returns whether a row was written.
  */
-export function applyMachineMotivation(ownerId: string, taskId: string, value: Motivation): boolean {
-  return applyStmt.run(value, taskId, ownerId).changes > 0;
+export async function applyMachineMotivation(ownerId: string, taskId: string, value: Motivation): Promise<boolean> {
+  const res = await store().prepare(APPLY_SQL).run(value, taskId, ownerId);
+  return res.changes > 0;
 }

@@ -621,7 +621,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   // would under 'instance' — the truncation only governs what comes after it.
   let seriesTruncated = false;
   if (scope === 'following' && task.recurrenceParentId && task.occurrenceDate) {
-    const r = truncateSeriesFrom(ownerId, 'tasks', task.recurrenceParentId, task.occurrenceDate);
+    const r = await truncateSeriesFrom(ownerId, 'tasks', task.recurrenceParentId, task.occurrenceDate);
     seriesTruncated = r.ok;
   }
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `task:${id}` });
