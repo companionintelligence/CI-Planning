@@ -258,7 +258,7 @@ export async function trialityMetrics(ownerId: string, now: Date, days = 30): Pr
   // count of taken Contextual/Novel picks whose action carries the category, and
   // the timed-minutes share this window vs the prior one. Correlation surfaced
   // honestly: the tiles say "moved with", never "because".
-  const vector = buildSituationVector(ownerId, now);
+  const vector = await buildSituationVector(ownerId, now);
   const underServed = Object.entries(vector.dims)
     .filter(([k, v]) => k.startsWith('cat_deficit_') && v === 1)
     .map(([k]) => k.slice('cat_deficit_'.length));

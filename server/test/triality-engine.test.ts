@@ -570,7 +570,7 @@ const onlyN: SlotWeights = { F: 0, H: 0, Q: 0, N: 1, C: 0 };
 const onlyH: SlotWeights = { F: 0, H: 1, Q: 0, N: 0, C: 0 };
 
 describe('E1–E3 — confidence can never reach ranking', () => {
-  it('E1 — the engine never names the confidence module in code (import graph)', () => {
+  it('E1 — the engine never names the confidence module in code (import graph)', async () => {
     // WHAT THIS PROVES: the very first line of a change that wires confidence back into
     // scoring — a runtime import, a type-only import, a re-export, a dynamic import with
     // a literal specifier — turns this red, before any number moves. Cheap and early.
@@ -912,24 +912,24 @@ describe('E9–E11 — the honest-zero branches and the dims that are actually r
 });
 
 describe('E12–E16 — the situation, the isolation, and what gets written', () => {
-  it('E12 — meta.active is 12 with work hours, 11 without, and never 13', () => {
+  it('E12 — meta.active is 12 with work hours, 11 without, and never 13', async () => {
     // The coverage denominator. `memory_context` encodes a constant and therefore
     // reports inactive in BOTH flag states (the v2.1 truthfulness fix): an inert dim
     // counted as active would understate coverage permanently and invisibly, because
     // it always reads 0.
     expect(DIM_REGISTRY.length).toBe(13);
 
-    const withHours = buildSituationVector(OWNER, NOW);
+    const withHours = await buildSituationVector(OWNER, NOW);
     expect(withHours.meta.active).not.toContain('memory_context');
     expect(withHours.meta.active.length).toBe(12);
 
     sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1 WHERE owner_id = ?`).run(OWNER);
-    expect(buildSituationVector(OWNER, NOW).meta.active).not.toContain('memory_context');
+    expect((await buildSituationVector(OWNER, NOW)).meta.active).not.toContain('memory_context');
 
     // FIRM_AT/TENTATIVE_AT are chosen so the bands mean the same DIM COUNT at both
     // denominators — which is only worth anything if 11 is genuinely reachable.
     sqlite.prepare(`UPDATE scheduling_prefs SET workday_start = NULL, workday_end = NULL WHERE owner_id = ?`).run(OWNER);
-    const noHours = buildSituationVector(OWNER, NOW);
+    const noHours = await buildSituationVector(OWNER, NOW);
     expect(noHours.meta.active).not.toContain('in_work_hours');
     expect(noHours.meta.active.length).toBe(11);
   });

@@ -687,7 +687,7 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
   const have = confirmedCompletionCount(ownerId, now);
   if (have < REFUSAL_FLOOR) return { refused: 'sparse_history', have, need: REFUSAL_FLOOR };
 
-  const vector = buildSituationVector(ownerId, now);
+  const vector = await buildSituationVector(ownerId, now);
   const gapMin = rawFreeGapMinutes(ownerId, now);
 
   // Stage 1 — hard capacity filter (§1: pipeline order is normative). Only a

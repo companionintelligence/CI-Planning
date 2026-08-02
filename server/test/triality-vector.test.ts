@@ -128,11 +128,11 @@ beforeEach(() => resetDb());
 // the temporary DROP below legal SQLite.)
 
 describe('motivation_balance — tasks.motivation column guard', () => {
-  it('column absent → 0, not active, and buildSituationVector does not throw', () => {
+  it('column absent → 0, not active, and buildSituationVector does not throw', async () => {
     const hadColumn = hasMotivationColumn();
     if (hadColumn) sqlite.exec(`ALTER TABLE tasks DROP COLUMN motivation`);
     try {
-      const v = buildSituationVector(OWNER, NOW);
+      const v = await buildSituationVector(OWNER, NOW);
       expect(v.dims.motivation_balance).toBe(0);
       expect(v.meta.active).not.toContain('motivation_balance');
     } finally {
@@ -160,21 +160,21 @@ describe('motivation_balance — tasks.motivation column guard', () => {
 // ── §3 row 1: in_work_hours ────────────────────────────────────────────────────────
 
 describe('in_work_hours (§3: inside → +1 · outside → −1 · hours unknown → 0)', () => {
-  it('+1 inside the prefs work hours', () => {
-    expect(buildSituationVector(OWNER, NOW).dims.in_work_hours).toBe(1);
+  it('+1 inside the prefs work hours', async () => {
+    expect((await buildSituationVector(OWNER, NOW)).dims.in_work_hours).toBe(1);
   });
 
-  it('−1 outside the prefs work hours', () => {
-    expect(buildSituationVector(OWNER, EVENING).dims.in_work_hours).toBe(-1);
+  it('−1 outside the prefs work hours', async () => {
+    expect((await buildSituationVector(OWNER, EVENING)).dims.in_work_hours).toBe(-1);
   });
 
-  it('0 and inactive when the owner has no scheduling_prefs row (no data)', () => {
+  it('0 and inactive when the owner has no scheduling_prefs row (no data)', async () => {
     const bare = (
       sqlite
         .prepare(`INSERT INTO owners (id, name, email) VALUES (uuid7(), 'Bare', 'bare-owner@test.local') RETURNING id`)
         .get() as { id: string }
     ).id;
-    const v = buildSituationVector(bare, NOW);
+    const v = await buildSituationVector(bare, NOW);
     expect(v.dims.in_work_hours).toBe(0);
     expect(v.meta.active).not.toContain('in_work_hours');
     // No prefs row also means the memory pull flag cannot be on.
@@ -185,126 +185,126 @@ describe('in_work_hours (§3: inside → +1 · outside → −1 · hours unknown
 // ── §3 row 2: day_energy ───────────────────────────────────────────────────────────
 
 describe('day_energy (§3: happy → +1 · flat/no recent reading → 0 · frustrated/stressed → −1)', () => {
-  it('+1 for a happy reflection within 3h', () => {
+  it('+1 for a happy reflection within 3h', async () => {
     insertTask({ status: 'done', completedAt: iso(-60), mood: 'happy', reactionAt: iso(-60) });
-    expect(buildSituationVector(OWNER, NOW).dims.day_energy).toBe(1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(1);
   });
 
-  it('0 for a flat reflection within 3h — and the dim stays active (honest zero ≠ unsensed)', () => {
+  it('0 for a flat reflection within 3h — and the dim stays active (honest zero ≠ unsensed)', async () => {
     insertTask({ status: 'done', completedAt: iso(-60), mood: 'flat', reactionAt: iso(-60) });
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.day_energy).toBe(0);
     expect(v.meta.active).toContain('day_energy');
   });
 
-  it('−1 for a frustrated reflection within 3h', () => {
+  it('−1 for a frustrated reflection within 3h', async () => {
     insertTask({ status: 'done', completedAt: iso(-45), mood: 'frustrated', reactionAt: iso(-45) });
-    expect(buildSituationVector(OWNER, NOW).dims.day_energy).toBe(-1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(-1);
   });
 
-  it('the LATEST reading wins: stressed after happy → −1', () => {
+  it('the LATEST reading wins: stressed after happy → −1', async () => {
     insertTask({ status: 'done', completedAt: iso(-120), mood: 'happy', reactionAt: iso(-120) });
     insertTask({ status: 'done', completedAt: iso(-20), mood: 'stressed', reactionAt: iso(-20) });
-    expect(buildSituationVector(OWNER, NOW).dims.day_energy).toBe(-1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(-1);
   });
 
-  it('0 with no reflection at all (no data)', () => {
-    expect(buildSituationVector(OWNER, NOW).dims.day_energy).toBe(0);
+  it('0 with no reflection at all (no data)', async () => {
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(0);
   });
 
-  it('0 when the only reading is 4h old (outside the 3h recency window)', () => {
+  it('0 when the only reading is 4h old (outside the 3h recency window)', async () => {
     insertTask({ status: 'done', completedAt: iso(-240), mood: 'happy', reactionAt: iso(-240) });
-    expect(buildSituationVector(OWNER, NOW).dims.day_energy).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(0);
   });
 
-  it('windows on reaction_at, not completed_at: an old completion reflected on 1h ago counts', () => {
+  it('windows on reaction_at, not completed_at: an old completion reflected on 1h ago counts', async () => {
     insertTask({ status: 'done', completedAt: iso(-10 * DAY_MIN), mood: 'happy', reactionAt: iso(-60) });
-    expect(buildSituationVector(OWNER, NOW).dims.day_energy).toBe(1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(1);
   });
 
-  it('windows on reaction_at, not completed_at: a fresh completion with a 4h-old reaction is stale', () => {
+  it('windows on reaction_at, not completed_at: a fresh completion with a 4h-old reaction is stale', async () => {
     // If the encoder windowed on completed_at (−10m) this would read +1.
     insertTask({ status: 'done', completedAt: iso(-10), mood: 'happy', reactionAt: iso(-240) });
-    expect(buildSituationVector(OWNER, NOW).dims.day_energy).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_energy).toBe(0);
   });
 });
 
 // ── §3 row 3: free_gap ─────────────────────────────────────────────────────────────
 
 describe('free_gap (§3: ≥45m → +1 · 15–45m → 0 · <15m → −1 · no calendar data → 0)', () => {
-  it('+1 when the next locked block is 60m away', () => {
+  it('+1 when the next locked block is 60m away', async () => {
     insertBlock(iso(60), iso(120), { locked: true });
-    expect(buildSituationVector(OWNER, NOW).dims.free_gap).toBe(1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.free_gap).toBe(1);
   });
 
-  it('0 when the next fixed block is a meeting 30m away (15–45m band; kind counts, not just locks)', () => {
+  it('0 when the next fixed block is a meeting 30m away (15–45m band; kind counts, not just locks)', async () => {
     insertBlock(iso(30), iso(90), { kind: 'meeting' });
-    expect(buildSituationVector(OWNER, NOW).dims.free_gap).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.free_gap).toBe(0);
   });
 
-  it('−1 when the NEAREST locked block is 10m away (a later one does not widen the gap)', () => {
+  it('−1 when the NEAREST locked block is 10m away (a later one does not widen the gap)', async () => {
     insertBlock(iso(10), iso(40), { locked: true });
     insertBlock(iso(90), iso(150), { locked: true });
-    expect(buildSituationVector(OWNER, NOW).dims.free_gap).toBe(-1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.free_gap).toBe(-1);
   });
 
-  it('0 with no fixed block today — soft blocks and tomorrow’s meetings are not calendar data for today', () => {
-    expect(buildSituationVector(OWNER, NOW).dims.free_gap).toBe(0); // nothing at all
+  it('0 with no fixed block today — soft blocks and tomorrow’s meetings are not calendar data for today', async () => {
+    expect((await buildSituationVector(OWNER, NOW)).dims.free_gap).toBe(0); // nothing at all
     insertBlock(iso(10), iso(40), { kind: 'task', locked: false }); // soft/auto block: reflows, doesn't bound
     insertBlock(iso(21 * 60), iso(22 * 60), { locked: true });      // tomorrow 09:00Z: outside today
-    expect(buildSituationVector(OWNER, NOW).dims.free_gap).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.free_gap).toBe(0);
   });
 });
 
 // ── §3 row 4: day_type ─────────────────────────────────────────────────────────────
 
 describe('day_type (§3: work-typed → +1 · unset/unknown → 0 · rest-typed → −1)', () => {
-  it('+1 on a heuristic workday (Wednesday, no assignment rows)', () => {
-    expect(buildSituationVector(OWNER, NOW).dims.day_type).toBe(1);
+  it('+1 on a heuristic workday (Wednesday, no assignment rows)', async () => {
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_type).toBe(1);
   });
 
-  it('−1 on a heuristic weekend, and for a clearly-rest custom key', () => {
-    expect(buildSituationVector(OWNER, SATURDAY).dims.day_type).toBe(-1);
+  it('−1 on a heuristic weekend, and for a clearly-rest custom key', async () => {
+    expect((await buildSituationVector(OWNER, SATURDAY)).dims.day_type).toBe(-1);
     assignDay(NOW_DATE, 'vacation');
-    expect(buildSituationVector(OWNER, NOW).dims.day_type).toBe(-1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_type).toBe(-1);
   });
 
-  it('0 for a custom key that is neither clearly work nor rest (unknown, not guessed)', () => {
+  it('0 for a custom key that is neither clearly work nor rest (unknown, not guessed)', async () => {
     assignDay(NOW_DATE, 'conference');
-    expect(buildSituationVector(OWNER, NOW).dims.day_type).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.day_type).toBe(0);
   });
 });
 
 // ── §3 row 5: momentum ─────────────────────────────────────────────────────────────
 
 describe('momentum (§3: running timer / ≤30m completion → +1 · no signal → 0 · idle >3h in work hours → −1)', () => {
-  it('+1 with a running timer (ended_at IS NULL)', () => {
+  it('+1 with a running timer (ended_at IS NULL)', async () => {
     insertEntry(insertTask(), iso(-50), null);
-    expect(buildSituationVector(OWNER, NOW).dims.momentum).toBe(1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.momentum).toBe(1);
   });
 
-  it('+1 with a completion 10m ago', () => {
+  it('+1 with a completion 10m ago', async () => {
     insertTask({ status: 'done', completedAt: iso(-10) });
-    expect(buildSituationVector(OWNER, NOW).dims.momentum).toBe(1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.momentum).toBe(1);
   });
 
-  it('−1 when the last tracked signal is 5h old during work hours', () => {
+  it('−1 when the last tracked signal is 5h old during work hours', async () => {
     insertTask({ status: 'done', completedAt: iso(-300) });
-    expect(buildSituationVector(OWNER, NOW).dims.momentum).toBe(-1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.momentum).toBe(-1);
   });
 
-  it('0 with no tracked history at all — an unsensed owner is not "idle" (no data)', () => {
-    expect(buildSituationVector(OWNER, NOW).dims.momentum).toBe(0);
+  it('0 with no tracked history at all — an unsensed owner is not "idle" (no data)', async () => {
+    expect((await buildSituationVector(OWNER, NOW)).dims.momentum).toBe(0);
   });
 
-  it('0 with a 5h-old signal OUTSIDE work hours (idleness only reads during the workday)', () => {
+  it('0 with a 5h-old signal OUTSIDE work hours (idleness only reads during the workday)', async () => {
     insertTask({ status: 'done', completedAt: iso(-300, EVENING) });
-    expect(buildSituationVector(OWNER, EVENING).dims.momentum).toBe(0);
+    expect((await buildSituationVector(OWNER, EVENING)).dims.momentum).toBe(0);
   });
 
-  it('0 for a completion between the 30m momentum window and the 3h idle horizon', () => {
+  it('0 for a completion between the 30m momentum window and the 3h idle horizon', async () => {
     insertTask({ status: 'done', completedAt: iso(-60) });
-    expect(buildSituationVector(OWNER, NOW).dims.momentum).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.momentum).toBe(0);
   });
 });
 
@@ -313,13 +313,13 @@ describe('momentum (§3: running timer / ≤30m completion → +1 · no signal �
 describe('memory_context (§3: only when memory_pull_enabled; off/nothing related → 0)', () => {
   // The service module has no import of connectors/memory.ts, so with the flag off the
   // connector is statically unreachable — no mock needed for "must not be hit".
-  it('flag off (the resetDb default) → 0 and inactive, without touching the connector', () => {
-    const v = buildSituationVector(OWNER, NOW);
+  it('flag off (the resetDb default) → 0 and inactive, without touching the connector', async () => {
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.memory_context).toBe(0);
     expect(v.meta.active).not.toContain('memory_context');
   });
 
-  it('flag ON → still 0, and STILL INACTIVE: an unsensed dim never claims to be sensed', () => {
+  it('flag ON → still 0, and STILL INACTIVE: an unsensed dim never claims to be sensed', async () => {
     // This assertion was inverted until v2.1. `active` means "computable in
     // principle this call", and the encoder consults no source in either flag
     // state — so reporting active-when-enabled made this the one dim where
@@ -329,16 +329,16 @@ describe('memory_context (§3: only when memory_pull_enabled; off/nothing relate
     // When the v2.4 connector probe lands, `active` and `encode` must regain
     // their memory_pull_enabled behavior in the SAME commit.
     sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1 WHERE owner_id = ?`).run(OWNER);
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.memory_context).toBe(0);
     expect(v.meta.active).not.toContain('memory_context');
   });
 
-  it('no dim reports active while encoding a constant — meta.active is literally true', () => {
+  it('no dim reports active while encoding a constant — meta.active is literally true', async () => {
     // A guard against the general shape of the bug, not just this instance: every
     // dim the vector calls active must have a source it actually reads.
     sqlite.prepare(`UPDATE scheduling_prefs SET memory_pull_enabled = 1 WHERE owner_id = ?`).run(OWNER);
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     for (const name of v.meta.active) {
       const entry = DIM_REGISTRY.find((d) => d.name === name)!;
       expect(entry.encode.length, `${name} is active but its encoder ignores its context`).toBeGreaterThan(0);
@@ -351,35 +351,35 @@ describe('memory_context (§3: only when memory_pull_enabled; off/nothing relate
 describe('motivation_balance (§3b: them-drift → +1 · in-band/floor → 0 · me-drift → −1)', () => {
   beforeAll(() => ensureMotivationColumn());
 
-  it('+1 when the 30d window is far more them-directed than the 90d baseline', () => {
+  it('+1 when the 30d window is far more them-directed than the 90d baseline', async () => {
     timedTask('them', -10 * DAY_MIN, 120); // recent share 0
     timedTask('me', -60 * DAY_MIN, 300);   // baseline share 300/420 ≈ 0.71
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.motivation_balance).toBe(1);
     expect(v.meta.active).toContain('motivation_balance');
   });
 
-  it('−1 when the 30d window is far more me-directed than the 90d baseline', () => {
+  it('−1 when the 30d window is far more me-directed than the 90d baseline', async () => {
     timedTask('me', -10 * DAY_MIN, 120);    // recent share 1
     timedTask('them', -60 * DAY_MIN, 300);  // baseline share 120/420 ≈ 0.29
-    expect(buildSituationVector(OWNER, NOW).dims.motivation_balance).toBe(-1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.motivation_balance).toBe(-1);
   });
 
-  it('0 when the recent share sits within ±0.15 of the baseline', () => {
+  it('0 when the recent share sits within ±0.15 of the baseline', async () => {
     timedTask('me', -10 * DAY_MIN, 60);
     timedTask('them', -10 * DAY_MIN, 60);   // recent share 0.5
     timedTask('me', -60 * DAY_MIN, 150);
     timedTask('them', -60 * DAY_MIN, 150);  // baseline share 0.5
-    expect(buildSituationVector(OWNER, NOW).dims.motivation_balance).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.motivation_balance).toBe(0);
   });
 
-  it('0 below the 60-labeled-minute floor, however extreme the drift (no data)', () => {
+  it('0 below the 60-labeled-minute floor, however extreme the drift (no data)', async () => {
     timedTask('them', -10 * DAY_MIN, 30);  // only 30 labeled recent minutes
     timedTask('me', -60 * DAY_MIN, 300);
-    expect(buildSituationVector(OWNER, NOW).dims.motivation_balance).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.motivation_balance).toBe(0);
   });
 
-  it('excludes NULL-motivation minutes from numerator AND denominator', () => {
+  it('excludes NULL-motivation minutes from numerator AND denominator', async () => {
     // Recent labeled: me 90 / them 30 → share 0.75; baseline (350+90)/(400+120) ≈ 0.85 → in band → 0.
     // If the 500 unlabeled minutes entered the recent denominator the share would crash
     // to ≈0.15 and this would read +1.
@@ -388,51 +388,51 @@ describe('motivation_balance (§3b: them-drift → +1 · in-band/floor → 0 · 
     timedTask(null, -8 * DAY_MIN, 500);
     timedTask('me', -60 * DAY_MIN, 350);
     timedTask('them', -59 * DAY_MIN, 50);
-    expect(buildSituationVector(OWNER, NOW).dims.motivation_balance).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.motivation_balance).toBe(0);
   });
 
-  it("counts 'us' minutes in the denominator (labeled, neutral — unlike NULL)", () => {
+  it("counts 'us' minutes in the denominator (labeled, neutral — unlike NULL)", async () => {
     // Recent me 30 / us 90 → share 0.25; baseline 240/420 ≈ 0.57 → drifted them-ward → +1.
     // If 'us' were excluded like NULL the recent share would be 1.0 and this would read −1.
     timedTask('me', -10 * DAY_MIN, 30);
     timedTask('us', -9 * DAY_MIN, 90);
     timedTask('me', -60 * DAY_MIN, 210);
     timedTask('us', -59 * DAY_MIN, 90);
-    expect(buildSituationVector(OWNER, NOW).dims.motivation_balance).toBe(1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.motivation_balance).toBe(1);
   });
 });
 
 // ── §3 row 7 / §6: cat_deficit[c] ──────────────────────────────────────────────────
 
 describe('cat_deficit (§6: under-served → +1 · on-target/no self-audit → 0 · over-served → −1)', () => {
-  it('+1 from the stated half alone (importance ≫ satisfaction), other categories honest 0', () => {
+  it('+1 from the stated half alone (importance ≫ satisfaction), other categories honest 0', async () => {
     setPriority('health', 10, 1, 0); // stated 1 → blend 0.5
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.cat_deficit_health).toBe(1);
     expect(v.dims.cat_deficit_career).toBe(0); // no self-audit row → no pull
     expect(v.dims.cat_deficit_leisure).toBe(0);
   });
 
-  it('−1 from the stated half alone (satisfaction ≫ importance)', () => {
+  it('−1 from the stated half alone (satisfaction ≫ importance)', async () => {
     setPriority('health', 1, 10, 0);
-    expect(buildSituationVector(OWNER, NOW).dims.cat_deficit_health).toBe(-1);
+    expect((await buildSituationVector(OWNER, NOW)).dims.cat_deficit_health).toBe(-1);
   });
 
-  it('0 when stated is on-target and the timed window is empty (targets alone exert no measured pull)', () => {
+  it('0 when stated is on-target and the timed window is empty (targets alone exert no measured pull)', async () => {
     setPriority('health', 5, 5, 10);
-    expect(buildSituationVector(OWNER, NOW).dims.cat_deficit_health).toBe(0);
+    expect((await buildSituationVector(OWNER, NOW)).dims.cat_deficit_health).toBe(0);
   });
 
-  it('no self-audit at all → all six 0, even with timed minutes on record', () => {
+  it('no self-audit at all → all six 0, even with timed minutes on record', async () => {
     const health = seedCategory('health');
     const t = insertTask();
     categorize(t, health);
     insertEntry(t, iso(-DAY_MIN), iso(-DAY_MIN + 120)); // 120 timed minutes, no targets to compare against
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     for (const cat of CAT_KEYS) expect(v.dims[`cat_deficit_${cat}`]).toBe(0);
   });
 
-  it('measured half: equal targets, minutes all on career → health under-served, career over-served', () => {
+  it('measured half: equal targets, minutes all on career → health under-served, career over-served', async () => {
     setPriority('health', 5, 5, 10); // stated 0
     setPriority('career', 5, 5, 10); // stated 0; target shares 0.5 / 0.5
     seedCategory('health');
@@ -440,25 +440,25 @@ describe('cat_deficit (§6: under-served → +1 · on-target/no self-audit → 0
     const t = insertTask();
     categorize(t, career);
     insertEntry(t, iso(-DAY_MIN), iso(-DAY_MIN + 120)); // timed shares: health 0, career 1
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.cat_deficit_health).toBe(1);  // 0.5·(0.5 − 0) = +0.25
     expect(v.dims.cat_deficit_career).toBe(-1); // 0.5·(0.5 − 1) = −0.25
     expect(v.dims.cat_deficit_growth).toBe(0);  // no row, no minutes
   });
 
-  it('clamps stated to ±9 before normalizing (defensive against out-of-range raw rows)', () => {
+  it('clamps stated to ±9 before normalizing (defensive against out-of-range raw rows)', async () => {
     // The service layer clamps 1–10, but a raw row must not blow past ±1 stated.
     setPriority('health', 25, 1, 0);  // diff 24 → clamp 9 → stated 1 → +1
     setPriority('finance', 1, 25, 0); // diff −24 → clamp −9 → stated −1 → −1
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.cat_deficit_health).toBe(1);
     expect(v.dims.cat_deficit_finance).toBe(-1);
   });
 
-  it('ternarizes at ±0.15: an importance−satisfaction gap of 2 stays 0, a gap of 3 fires', () => {
+  it('ternarizes at ±0.15: an importance−satisfaction gap of 2 stays 0, a gap of 3 fires', async () => {
     setPriority('health', 7, 5, 0); // blend 0.5·(2/9) ≈ 0.11 → inside the band
     setPriority('career', 8, 5, 0); // blend 0.5·(3/9) ≈ 0.17 → beyond the band
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(v.dims.cat_deficit_health).toBe(0);
     expect(v.dims.cat_deficit_career).toBe(1);
   });
@@ -475,15 +475,15 @@ describe('vector shape and determinism', () => {
     ...CAT_KEYS.map((c) => `cat_deficit_${c}` as DimName),
   ];
 
-  it('always returns every registry dim with a balanced-ternary value; active ⊆ dims', () => {
+  it('always returns every registry dim with a balanced-ternary value; active ⊆ dims', async () => {
     expect(DIM_REGISTRY.map((d) => d.name).sort()).toEqual([...EXPECTED].sort());
-    const v = buildSituationVector(OWNER, NOW);
+    const v = await buildSituationVector(OWNER, NOW);
     expect(Object.keys(v.dims).sort()).toEqual([...EXPECTED].sort());
     for (const value of Object.values(v.dims)) expect([-1, 0, 1]).toContain(value);
     for (const name of v.meta.active) expect(EXPECTED).toContain(name);
   });
 
-  it('same DB + same now → deep-equal vectors (no wall clock, no randomness)', () => {
+  it('same DB + same now → deep-equal vectors (no wall clock, no randomness)', async () => {
     // A busy fixture touching every source.
     insertTask({ status: 'done', completedAt: iso(-60), mood: 'happy', reactionAt: iso(-55) });
     insertBlock(iso(20), iso(80), { locked: true });
@@ -497,8 +497,8 @@ describe('vector shape and determinism', () => {
     timedTask('me', -10 * DAY_MIN, 120);
     timedTask('them', -60 * DAY_MIN, 300);
 
-    const first = buildSituationVector(OWNER, NOW);
-    const second = buildSituationVector(OWNER, NOW);
+    const first = await buildSituationVector(OWNER, NOW);
+    const second = await buildSituationVector(OWNER, NOW);
     expect(second).toEqual(first);
     // Spot-check the fixture actually energized the vector (guards against a
     // trivially-all-zero determinism pass).
