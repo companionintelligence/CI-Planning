@@ -20,7 +20,8 @@ import { promotePossibles } from '../agents/groom.js';
 import { createFixtureGoogleClient, type EmailMessage, type CalendarEvent } from '../mcp/google.js';
 import { isAvailable, type ModelTier } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
-import { SYSTEM_OWNER } from '../lib/context.js';
+import { runWithOwner, SYSTEM_OWNER } from '../lib/context.js';
+import { SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN } from '../lib/auth/types.js';
 
 const _dir = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(_dir, '..', '..', 'test', 'fixtures');
@@ -168,12 +169,18 @@ async function main() {
   if (fillerNeeded > 0) {
     const fillerTagId = (sqlite.prepare("INSERT OR IGNORE INTO tags (id, owner_id, name) VALUES (uuid7(), ?, 'seed-filler')").run(SYSTEM_OWNER),
       sqlite.prepare("SELECT id FROM tags WHERE owner_id = ? AND name='seed-filler'").get(SYSTEM_OWNER) as { id: string }).id;
+    // owner_id is BOUND, not literal. It used to read `1` — a pre-multi-tenant
+    // integer owner id left behind by Phase T. `owners.id` is a TEXT UUIDv7 and
+    // FK enforcement is on for every connection (Phase Q), so every filler task
+    // either violated that FK or landed on an owner that does not exist and was
+    // invisible in the app. It only ever fired when the run came up short of
+    // --target, which is why it outlived the migration that made it wrong.
     const insert = sqlite.prepare(
-      `INSERT INTO tasks (id, title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (uuid7(), ?, ?, 1, 'agent', 'open', ?) RETURNING id`
+      `INSERT INTO tasks (id, title, priority, owner_id, source_kind, status, estimated_minutes) VALUES (uuid7(), ?, ?, ?, 'agent', 'open', ?) RETURNING id`
     );
     const tx = sqlite.transaction((n: number) => {
       for (let i = 1; i <= n; i++) {
-        const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), 15 + (i % 4) * 15) as { id: string };
+        const r = insert.get(`Follow-up task ${i}`, 3 + (i % 3), SYSTEM_OWNER, 15 + (i % 4) * 15) as { id: string };
         // entity_tags is the sole task-tag store (CON-3 / migration 0041).
         sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)").run(r.id, fillerTagId);
       }
@@ -202,7 +209,22 @@ async function main() {
   }
 }
 
-main()
+/**
+ * Bind the owner context before anything runs. The seed calls owner-scoped
+ * services (`upsertPossible`, `promotePossibles`), and since Phase T those read
+ * `currentOwnerId()`, which THROWS outside a `runWithOwner` scope rather than
+ * silently defaulting to owner #1 — deliberately, because that silent default
+ * was a cross-tenant leak waiting to happen. A CLI script is neither a request
+ * nor a cron, so it has to establish the scope itself; without this the seed
+ * died on its first ingest and `pnpm seed` (documented in the README) was
+ * unusable.
+ *
+ * Scopes mirror the job dispatcher's: a seed is trusted local maintenance, so it
+ * carries the full set rather than a request's verified subset.
+ */
+const SEED_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
+
+runWithOwner(SYSTEM_OWNER, SEED_SCOPES, () => main())
   .then(() => process.exit(0))
   .catch((err) => {
     logger.error('seed failed', { err: (err as Error).message, stack: (err as Error).stack });
