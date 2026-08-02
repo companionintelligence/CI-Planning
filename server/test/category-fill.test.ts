@@ -215,7 +215,7 @@ describe('category-Plan fill (0069)', () => {
         start_at: `${future}T18:00:00.000Z`, end_at: `${future}T19:00:00.000Z`, recurrence_rule: 'FREQ=DAILY',
       },
     });
-    ensureRecurringBlocksForRange(OWNER, `${future}T00:00:00.000Z`, `${future}T23:59:59.999Z`);
+    await ensureRecurringBlocksForRange(OWNER, `${future}T00:00:00.000Z`, `${future}T23:59:59.999Z`);
     // Phase B (0135): the category axis rides entity_categories (copied template →
     // instance, position preserved); color_token is still the frozen column stamp.
     const inst = sqlite

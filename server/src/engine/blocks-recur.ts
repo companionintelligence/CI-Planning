@@ -13,7 +13,7 @@
  * No backfill: only today-or-future local days are materialized (a template the user
  * creates appears the moment its day is next read, like recurring Routines).
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { serverTimezone, zonedWallTimeToUTC, utcToZonedWallTime, localDateInTZ } from '../lib/tz.js';
 import { addDays } from '../lib/dates.js';
 import { occurrencesBetween } from './recurrence.js';
@@ -55,26 +55,44 @@ function parseExdates(raw: string | null): string[] {
  * the task `skipInstance` EXDATE behavior. Idempotent. The DELETE route calls
  * this when removing a materialized instance, so deleting an occurrence sticks.
  */
-export function excludeBlockOccurrence(owner: string, templateId: string, date: string): void {
-  const tpl = sqlite
-    .prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ? AND owner_id = ?`)
-    .get(templateId, owner) as { recurrence_exdates: string | null } | undefined;
-  if (!tpl) return;
-  const ex = parseExdates(tpl.recurrence_exdates);
-  if (ex.includes(date)) return;
-  ex.push(date);
-  ex.sort();
-  sqlite.prepare(`UPDATE time_blocks SET recurrence_exdates = ? WHERE id = ? AND owner_id = ?`).run(JSON.stringify(ex), templateId, owner);
+export async function excludeBlockOccurrence(owner: string, templateId: string, date: string): Promise<void> {
+  // Read-modify-write on a JSON array. Deleting two occurrences of the SAME template
+  // concurrently used to be safe for free — better-sqlite3 put no await between the
+  // SELECT and the UPDATE. It now does, and a blind UPDATE would let the second writer
+  // overwrite the first one's date, resurrecting that occurrence on the next read. So
+  // the UPDATE is guarded on the exact value we read (compare-and-swap) and retried
+  // against the fresher list when it loses.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const tpl = await store()
+      .prepare(`SELECT recurrence_exdates FROM time_blocks WHERE id = ? AND owner_id = ?`)
+      .get<{ recurrence_exdates: string | null }>(templateId, owner);
+    if (!tpl) return;
+    const ex = parseExdates(tpl.recurrence_exdates);
+    if (ex.includes(date)) return; // already excluded (possibly by the writer that beat us)
+    ex.push(date);
+    ex.sort();
+    const res = await store()
+      .prepare(
+        `UPDATE time_blocks SET recurrence_exdates = ?
+          WHERE id = ? AND owner_id = ? AND COALESCE(recurrence_exdates, '') = ?`,
+      )
+      .run(JSON.stringify(ex), templateId, owner, tpl.recurrence_exdates ?? '');
+    if (res.changes > 0) return;
+  }
+  // Five straight losses means sustained contention on one template, not a transient
+  // interleave. Failing loudly beats silently dropping the exclusion — that would
+  // resurrect the occurrence the caller just deleted.
+  throw new Error(`excludeBlockOccurrence: EXDATE write lost 5 races on template ${templateId}`);
 }
 
 /**
  * Materialize every recurring Time-Block template's instances over the local days
  * intersecting [fromUtcISO, toUtcISO]. Returns how many instance rows were created.
  */
-export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string, toUtcISO: string): { blocksCreated: number } {
-  const prefsRow = sqlite
+export async function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string, toUtcISO: string): Promise<{ blocksCreated: number }> {
+  const prefsRow = await store()
     .prepare(`SELECT timezone, recurrence_horizon_days FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { timezone: string | null; recurrence_horizon_days: number | null } | undefined;
+    .get<{ timezone: string | null; recurrence_horizon_days: number | null }>(owner);
   const tz = prefsRow?.timezone || serverTimezone();
   // "Today" in the OWNER's timezone (matches the prefs-tz day set from
   // localDaysInRange); server-local would misplace the boundary when TZ differs.
@@ -89,17 +107,17 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
   const fromDay = days[0];
   const toDay = days[days.length - 1];
 
-  const templates = sqlite
+  const templates = await store()
     .prepare(
       `SELECT id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, source_kind,
               recurrence_rule, recurrence_dtstart, recurrence_exdates, category_id, color_token
          FROM time_blocks
         WHERE owner_id = ? AND recurrence_rule IS NOT NULL AND recurrence_parent_id IS NULL`,
     )
-    .all(owner) as BlockTemplate[];
+    .all<BlockTemplate>(owner);
   if (templates.length === 0) return { blocksCreated: 0 };
 
-  const ins = sqlite.prepare(
+  const ins = store().prepare(
     `INSERT OR IGNORE INTO time_blocks
        (id, owner_id, title, block_kind, tag, block_type, note, start_at, end_at, is_locked, is_auto,
         source_kind, status, recurrence_parent_id, occurrence_date, category_id, color_token)
@@ -108,21 +126,21 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
   );
   // Carry the template's normalized tags (with levels) onto the instance so Phase 5
   // dilution / search see the recurring block's tags too.
-  const copyTags = sqlite.prepare(
+  const copyTags = store().prepare(
     `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level)
        SELECT 'time_block', ?, tag_id, level FROM entity_tags
         WHERE entity_kind = 'time_block' AND entity_id = ?`,
   );
   // Phase B (0135): carry the category axis too (position preserved — stripe order),
   // so a recurring category Plan's instances keep filling by category.
-  const copyCats = sqlite.prepare(
+  const copyCats = store().prepare(
     `INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position)
        SELECT 'time_block', ?, category_tag_id, position FROM entity_categories
         WHERE entity_kind = 'time_block' AND entity_id = ?`,
   );
 
   let blocksCreated = 0;
-  const run = sqlite.transaction(() => {
+  await store().transaction(async () => {
     for (const t of templates) {
       const wall = utcToZonedWallTime(t.start_at, tz); // HH:MM in tz
       const durationMs = Math.max(Date.parse(t.end_at) - Date.parse(t.start_at), 0);
@@ -141,19 +159,18 @@ export function ensureRecurringBlocksForRange(owner: string, fromUtcISO: string,
         if (!wanted.has(day)) continue;
         const startISO = zonedWallTimeToUTC(day, wall, tz);
         const endISO = new Date(Date.parse(startISO) + durationMs).toISOString();
-        const row = ins.get(
+        const row = await ins.get<{ id: string }>(
           owner, t.title, t.block_kind ?? 'timeblock', t.tag, t.block_type, t.note,
           startISO, endISO, t.is_locked ?? 0, t.source_kind ?? 'manual', t.id, day,
           t.category_id, t.color_token, // 0069: frozen stamp copied verbatim (not re-derived)
-        ) as { id: string } | undefined;
+        );
         if (row) {
           blocksCreated++;
-          copyTags.run(row.id, t.id);
-          copyCats.run(row.id, t.id);
+          await copyTags.run(row.id, t.id);
+          await copyCats.run(row.id, t.id);
         }
       }
     }
   });
-  run();
   return { blocksCreated };
 }

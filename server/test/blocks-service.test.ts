@@ -250,7 +250,7 @@ describe('owner-scoping (W3.2) — a cross-owner id is rejected with no mutation
     createOwner();
     const foreignContainer = insertBlock(SECOND_OWNER_ID, { title: 'Foreign container', block_kind: 'timeblock', start_at: at('09:00'), end_at: at('12:00') });
     const foreignTask = insertTask(SECOND_OWNER_ID, 'Foreign task', { estimated_minutes: 30 });
-    const result = addTasksToBlock(OWNER, foreignContainer, [foreignTask]);
+    const result = await addTasksToBlock(OWNER, foreignContainer, [foreignTask]);
     expect(result).toEqual({ blockId: foreignContainer, blocksCreated: 0, placed: 0, unplaced: 0, skipped: 0 });
     const children = sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE parent_block_id = ?`).get(foreignContainer) as { n: number };
     expect(children.n).toBe(0);
@@ -271,7 +271,7 @@ describe('owner-scoping (W3.2) — a cross-owner id is rejected with no mutation
       start_at: at('11:00'), end_at: at('12:00'),
     });
 
-    const result = clearDayAutoBlocks(OWNER, DAY);
+    const result = await clearDayAutoBlocks(OWNER, DAY);
     expect(result.removedCount).toBe(1); // only the caller's own block
 
     expect(sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ?`).get(foreignAuto)).toBeTruthy(); // untouched

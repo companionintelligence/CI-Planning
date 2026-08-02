@@ -124,13 +124,13 @@ describe('AD2 — container → task direction inheritance (placeTasksInBlock)',
   const DAY = '2026-06-22';
   const at = (hhmm: string) => `${DAY}T${hhmm}:00.000Z`;
 
-  it('a task added to a direction-tagged container inherits that direction (level 1) + block tag mirrors it', () => {
+  it('a task added to a direction-tagged container inherits that direction (level 1) + block tag mirrors it', async () => {
     directionTag('work');
     const c = insertContainer(at('09:00'), at('12:00'), 'work');
     const t = insertTask('Untagged task', { est: 30 });
     expect(taskLevel1Directions(t)).toEqual([]); // starts with no direction
 
-    const r = placeTasksInBlock(OWNER, c, [t]);
+    const r = await placeTasksInBlock(OWNER, c, [t]);
     expect(r.placed).toBe(1);
 
     expect(taskLevel1Directions(t)).toEqual(['work']); // inherited
@@ -139,23 +139,23 @@ describe('AD2 — container → task direction inheritance (placeTasksInBlock)',
     expect(kids[0].tag).toBe('work'); // block tag mirrors the container direction
   });
 
-  it("never overrides a task's existing level-1 direction", () => {
+  it("never overrides a task's existing level-1 direction", async () => {
     directionTag('work');
     const home = directionTag('home');
     const c = insertContainer(at('09:00'), at('12:00'), 'work');
     const t = insertTask('Already home', { est: 30 });
     sqlite.prepare(`INSERT INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`).run(t, home);
 
-    placeTasksInBlock(OWNER, c, [t]);
+    await placeTasksInBlock(OWNER, c, [t]);
 
     // Its own 'home' direction survives — the container's 'work' does NOT get added.
     expect(taskLevel1Directions(t)).toEqual(['home']);
   });
 
-  it('a container with no direction tag leaves the task untouched (block tag stays null)', () => {
+  it('a container with no direction tag leaves the task untouched (block tag stays null)', async () => {
     const c = insertContainer(at('09:00'), at('12:00'), null);
     const t = insertTask('No inherit', { est: 30 });
-    placeTasksInBlock(OWNER, c, [t]);
+    await placeTasksInBlock(OWNER, c, [t]);
     expect(taskLevel1Directions(t)).toEqual([]);
     expect(taskBlocks(t)[0].tag).toBeNull();
   });

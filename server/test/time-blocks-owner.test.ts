@@ -261,7 +261,7 @@ describe('time_blocks cross-owner non-interference', () => {
     expect(row).toMatchObject({ start_at: at('10:00'), end_at: at('11:00'), status: 'planned' });
   });
 
-  it('a GET-driven recurrence materialization for B never expands owner A templates (G-RECUR)', () => {
+  it('a GET-driven recurrence materialization for B never expands owner A templates (G-RECUR)', async () => {
     const today = new Date().toISOString().slice(0, 10);
     // Owner A owns a DAILY recurring container template (rule set, no parent).
     insertBlock('a-tmpl', SYSTEM_OWNER, {
@@ -272,8 +272,8 @@ describe('time_blocks cross-owner non-interference', () => {
     const from = `${today}T00:00:00.000Z`;
     const to = new Date(Date.parse(from) + 2 * 86_400_000).toISOString();
 
-    ensureRecurringBlocksForRange(SECOND_OWNER_ID, from, to); // B: sees no template → materializes nothing
-    ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);     // A: its own template DOES fire (sanity)
+    await ensureRecurringBlocksForRange(SECOND_OWNER_ID, from, to); // B: sees no template → materializes nothing
+    await ensureRecurringBlocksForRange(SYSTEM_OWNER, from, to);     // A: its own template DOES fire (sanity)
 
     const bInstances = sqlite
       .prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE owner_id = ? AND recurrence_parent_id IS NOT NULL`)

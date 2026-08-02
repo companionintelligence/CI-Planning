@@ -409,7 +409,7 @@ export function blocksRouter() {
     const owner = currentOwnerId();
     const date = ctx.params.date;
 
-    const result = clearDayAutoBlocks(owner, date);
+    const result = await clearDayAutoBlocks(owner, date);
 
     for (const taskId of result.revertedTaskIds) broadcast(owner, 'task:updated', { id: taskId });
     if (result.removedCount) broadcast(owner, 'block:deleted', { cleared: result.removedCount, date });
@@ -424,7 +424,7 @@ export function blocksRouter() {
     const id = ctx.params.id;
     const body = (ctx.request.body ?? {}) as { task_ids?: unknown };
     const taskIds = Array.isArray(body.task_ids) ? body.task_ids.filter((x): x is string => typeof x === 'string') : [];
-    const result = addTasksToBlock(currentOwnerId(), id, taskIds);
+    const result = await addTasksToBlock(currentOwnerId(), id, taskIds);
     ctx.body = { ok: true, ...result };
   });
 

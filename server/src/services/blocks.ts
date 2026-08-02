@@ -1,5 +1,6 @@
 import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { timeBlocks } from '../db/schema.js';
 import { toApi, toApiList, toBlockApi } from '../lib/serialize.js';
 import { localISODate } from '../lib/dates.js';
@@ -65,10 +66,10 @@ export function secondaryTagsOf(blockId: string): string[] {
 }
 
 /** §A3: the "why now" rationale for a placed block, joined from daily_plan via block_id (null when none). */
-export function rationaleOf(blockId: string): string | null {
-  const row = sqlite.prepare(`SELECT rationale FROM daily_plan WHERE block_id = ? LIMIT 1`).get(blockId) as
-    | { rationale: string | null }
-    | undefined;
+export async function rationaleOf(blockId: string): Promise<string | null> {
+  const row = await store()
+    .prepare(`SELECT rationale FROM daily_plan WHERE block_id = ? LIMIT 1`)
+    .get<{ rationale: string | null }>(blockId);
   return row?.rationale ?? null;
 }
 
@@ -95,7 +96,7 @@ async function blockRowsForQuery(ownerId: string, query: ListBlocksQuery): Promi
 
   if (from && to && !state) {
     ensurePatternsForRange(ownerId, from, to);
-    ensureRecurringBlocksForRange(ownerId, from, to);
+    await ensureRecurringBlocksForRange(ownerId, from, to);
     const fetched = await db.select().from(timeBlocks)
       .where(and(eq(timeBlocks.ownerId, ownerId), gte(timeBlocks.startAt, from), lte(timeBlocks.endAt, to)));
     return fetched.filter((b) => !(b.recurrenceRule && !b.recurrenceParentId));
@@ -123,21 +124,24 @@ export function blockCategoryNames(blockId: string, taskId: string | null): stri
 
 /** Serialize + enrich raw block rows into the snake_case API dicts (secondary tags +
  *  the "why now" rationale + categories). The shared tail of listBlocks/fetchBlocksForRange. */
-function enrichApi(rows: BlockRow[]): Record<string, unknown>[] {
+async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
   // Phase B: batched category attach (no N+1), with the derive rule: a block's OWN
   // entity_categories rows win; a task-backed block with none inherits its task's LIVE
   // categories. Auto-placed blocks therefore never copy category rows — they derive,
   // so re-categorizing a task re-stripes its blocks with zero engine writes.
   const ownCats = entityCategoryNamesByIds('time_block', rows.map((r) => r.id));
   const taskCats = entityCategoryNamesByIds('task', [...new Set(rows.map((r) => r.taskId).filter((t): t is string => t != null))]);
-  const source = externalSourceByBlockId(rows.map((r) => r.id));
-  return toApiList(rows).map((b) => {
+  const source = await externalSourceByBlockId(rows.map((r) => r.id));
+  // `rationale` is still a per-row read, so the body has to await. An async `.map`
+  // callback would assign a Promise to every field and serialize `{}` — explicit loop.
+  const out: Record<string, unknown>[] = [];
+  for (const b of toApiList(rows)) {
     const own = ownCats.get(b.id as string);
     const src = source.get(b.id as string);
-    return {
+    out.push({
       ...b,
       secondary_tags: secondaryTagsOf(b.id as string),
-      rationale: rationaleOf(b.id as string),
+      rationale: await rationaleOf(b.id as string),
       categories: (own?.length ? own : taskCats.get(b.task_id as string)) ?? [],
       // Which connection mirrored this block in, so the client can colour/texture it
       // per source and tell a synced event apart from a local one. null for anything
@@ -145,8 +149,9 @@ function enrichApi(rows: BlockRow[]): Record<string, unknown>[] {
       // account — and per-connection styling is meaningless without the account.
       source_provider: src?.provider ?? null,
       source_account: src?.account ?? null,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /**
@@ -154,19 +159,19 @@ function enrichApi(rows: BlockRow[]): Record<string, unknown>[] {
  * whole page rather than a per-row join, matching how categories are attached above.
  * Blocks with no external row simply don't appear in the map.
  */
-function externalSourceByBlockId(blockIds: string[]): Map<string, { provider: string; account: string }> {
+async function externalSourceByBlockId(blockIds: string[]): Promise<Map<string, { provider: string; account: string }>> {
   const out = new Map<string, { provider: string; account: string }>();
   if (!blockIds.length) return out;
   // Chunked to stay clear of SQLite's variable limit on very wide ranges.
   const CHUNK = 500;
   for (let i = 0; i < blockIds.length; i += CHUNK) {
     const slice = blockIds.slice(i, i + CHUNK);
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT block_id, provider, account FROM external_events
           WHERE block_id IN (${slice.map(() => '?').join(',')})`,
       )
-      .all(...slice) as { block_id: string; provider: string; account: string }[];
+      .all<{ block_id: string; provider: string; account: string }>(...slice);
     for (const r of rows) out.set(r.block_id, { provider: r.provider, account: r.account });
   }
   return out;
@@ -248,11 +253,11 @@ export async function listBlockPage(
  * id does not exist yet). Shared by createBlock + updateBlock so create and attach, REST
  * and GraphQL, all answer identically — the create path used to answer nothing at all.
  */
-function isValidParent(ownerId: string, parentId: string, self?: string): boolean {
+async function isValidParent(ownerId: string, parentId: string, self?: string): Promise<boolean> {
   if (!parentId || parentId === self) return false;
-  return !!sqlite
+  return !!(await store()
     .prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ? AND block_kind = 'timeblock' LIMIT 1`)
-    .get(parentId, ownerId);
+    .get(parentId, ownerId));
 }
 
 /** The POST /api/blocks body shape (snake_case API convention). */
@@ -312,7 +317,7 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
   // a one-element set with its original validation (invalid_category) intact.
   const hasCat = input.category_id != null && input.category_id !== '';
   if (hasCat) {
-    const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
+    const ok = await store().prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
     if (!ok) return { ok: false, error: 'invalid_category' };
   }
   const categoryIds = input.categories !== undefined
@@ -325,7 +330,7 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
   // Attach-at-create (PR-C): validated BEFORE the insert, so a bad parent yields a clean
   // `invalid_parent` and no row — rather than the FK throwing mid-insert (a 500), or, as
   // before, the field being silently dropped and the caller told 201 with a null parent.
-  if (input.parent_block_id != null && !isValidParent(ownerId, input.parent_block_id)) {
+  if (input.parent_block_id != null && !(await isValidParent(ownerId, input.parent_block_id))) {
     return { ok: false, error: 'invalid_parent' };
   }
 
@@ -445,7 +450,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // guard below can run — otherwise the I10 guard leaks a foreign block's existence/state
   // (a title/time edit on someone else's inbound-mirrored block would 422 `inbound_readonly`
   // instead of 404, an existence oracle across owners).
-  if (!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, ownerId)) {
+  if (!(await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, ownerId))) {
     return { ok: false, error: 'not_found' };
   }
 
@@ -454,7 +459,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // anyway; rejecting here prevents silent drift and a confusing UX. Scoped by
   // owner_id too (defense-in-depth; the ownership check above already gates this).
   if (input.title !== undefined || input.start_at !== undefined || input.end_at !== undefined) {
-    const isInboundBlock = sqlite
+    const isInboundBlock = await store()
       .prepare(`SELECT 1 FROM external_events WHERE block_id = ? AND owner_id = ? AND direction = 'inbound'`)
       .get(id, ownerId);
     if (isInboundBlock) return { ok: false, error: 'inbound_readonly' };
@@ -464,7 +469,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // a block may carry a direction tag AND a category). Only the category kind is
   // validated here. (color re-stamp is handled below, only when category_id changes.)
   if (input.category_id != null && input.category_id !== '') {
-    const ok = sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
+    const ok = await store().prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ? AND kind = 'category' LIMIT 1`).get(input.category_id, ownerId);
     if (!ok) return { ok: false, error: 'invalid_category' };
   }
 
@@ -472,7 +477,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // the FK alone let a PATCH point one of your blocks at ANOTHER owner's block (the row
   // exists, so the constraint passed), grafting your tree onto theirs. `null` still
   // detaches, so the Alt-drag pull-out is untouched.
-  if (input.parent_block_id != null && !isValidParent(ownerId, input.parent_block_id, id)) {
+  if (input.parent_block_id != null && !(await isValidParent(ownerId, input.parent_block_id, id))) {
     return { ok: false, error: 'invalid_parent' };
   }
 
@@ -543,9 +548,10 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // of this template + their tag rows; GET re-materializes under the new rule.
   if (input.recurrence_rule !== undefined || input.recurrence_dtstart !== undefined) {
     const today = localISODate();
-    for (const inst of sqlite
+    const dropped = await store()
       .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND occurrence_date >= ? AND owner_id = ? RETURNING id`)
-      .all(id, today, ownerId) as { id: string }[]) {
+      .all<{ id: string }>(id, today, ownerId);
+    for (const inst of dropped) {
       removeEntityTags('time_block', inst.id); // also purges entity_categories (Phase B)
     }
   }
@@ -583,31 +589,31 @@ export type MoveBlockGroupResult =
 export async function moveBlockGroup(ownerId: string, id: string, deltaMinutes: number): Promise<MoveBlockGroupResult> {
   const delta = Math.round(Number(deltaMinutes || 0));
 
-  const anchor = sqlite
+  const anchor = await store()
     .prepare(`SELECT id, block_kind, parent_block_id FROM time_blocks WHERE id = ? AND owner_id = ?`)
-    .get(id, ownerId) as { id: string; block_kind: string; parent_block_id: string | null } | undefined;
+    .get<{ id: string; block_kind: string; parent_block_id: string | null }>(id, ownerId);
   if (!anchor) return { ok: false, error: 'not_found' };
 
   // The group's parent: the container itself, the member's parent, or (a loose
   // block) itself alone.
   const parentId = anchor.block_kind === 'timeblock' ? anchor.id : anchor.parent_block_id ?? anchor.id;
-  const members = sqlite
+  const members = await store()
     .prepare(`SELECT id, start_at, end_at FROM time_blocks WHERE (id = ? OR parent_block_id = ?) AND owner_id = ?`)
-    .all(parentId, parentId, ownerId) as { id: string; start_at: string; end_at: string }[];
+    .all<{ id: string; start_at: string; end_at: string }>(parentId, parentId, ownerId);
 
   const deltaMs = delta * 60_000;
   const shift = (iso: string) => new Date(Date.parse(iso) + deltaMs).toISOString();
-  const upd = sqlite.prepare(`UPDATE time_blocks SET start_at = ?, end_at = ? WHERE id = ? AND owner_id = ?`);
-  sqlite.transaction(() => {
+  const upd = store().prepare(`UPDATE time_blocks SET start_at = ?, end_at = ? WHERE id = ? AND owner_id = ?`);
+  await store().transaction(async () => {
     for (const m of members) {
       // Phase L: same stamp updateBlock does — a group drag is an owner edit, so a queued
       // op holding the pre-drag times must lose LWW rather than snap the group back. Gated
       // on the owner-scoped UPDATE landing (stampRow keys on id alone; see
       // cascadeArchiveToDescendants) even though `members` is already owner-scoped.
-      const info = upd.run(shift(m.start_at), shift(m.end_at), m.id, ownerId);
+      const info = await upd.run(shift(m.start_at), shift(m.end_at), m.id, ownerId);
       if (info.changes > 0) stampRow(sqlite, 'block', m.id, ['startAt', 'endAt']);
     }
-  })();
+  });
 
   const ids = members.map((m) => m.id);
   const rows = ids.length ? await db.select().from(timeBlocks).where(and(inArray(timeBlocks.id, ids), eq(timeBlocks.ownerId, ownerId))) : [];
@@ -683,7 +689,7 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
   // Verify ownership before any side effects (e.g. remote deletes) — the route
   // checks this first via the same query before calling pushOutboundDeletes; this
   // internal existence check ensures the function itself is safe called standalone.
-  if (!sqlite.prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, ownerId)) {
+  if (!(await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(id, ownerId))) {
     return { ok: false, error: 'not_found' };
   }
 
@@ -692,26 +698,27 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
   // can return their tasks to the open backlog afterward. This handler isn't
   // transactional, so gather up front.
   const affectedTaskIds = new Set<string>();
-  const collectTaskId = (blockId: string) => {
-    const row = sqlite
+  const collectTaskId = async (blockId: string) => {
+    const row = await store()
       .prepare(`SELECT task_id, block_kind FROM time_blocks WHERE id = ? AND owner_id = ?`)
-      .get(blockId, ownerId) as { task_id: string | null; block_kind: string } | undefined;
+      .get<{ task_id: string | null; block_kind: string }>(blockId, ownerId);
     if (row?.task_id && row.block_kind === 'task') affectedTaskIds.add(row.task_id);
   };
-  collectTaskId(id);
+  await collectTaskId(id);
   if (opts.deleteChildren) {
     // CON-3 cascade: members are HARD-deleted here — drop their tag rows first.
-    const members = sqlite
+    const members = await store()
       .prepare(`SELECT id FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`)
-      .all(id, ownerId) as { id: string }[];
-    for (const m of members) { collectTaskId(m.id); removeEntityTags('time_block', m.id); }
-    sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(id, ownerId);
+      .all<{ id: string }>(id, ownerId);
+    for (const m of members) { await collectTaskId(m.id); removeEntityTags('time_block', m.id); }
+    await store().prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(id, ownerId);
   }
   // CON-4: deleting a recurring template also removes its materialized instances
   // (+ their tag rows) — otherwise orphan instances would linger with a dead parent.
-  for (const inst of sqlite
+  const droppedInstances = await store()
     .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND owner_id = ? RETURNING id, task_id, block_kind`)
-    .all(id, ownerId) as { id: string; task_id: string | null; block_kind: string }[]) {
+    .all<{ id: string; task_id: string | null; block_kind: string }>(id, ownerId);
+  for (const inst of droppedInstances) {
     if (inst.task_id && inst.block_kind === 'task') affectedTaskIds.add(inst.task_id);
     removeEntityTags('time_block', inst.id);
   }
@@ -725,8 +732,11 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
   // the block can never be removed. Scoped to containers (block_kind='timeblock')
   // — a single child task block deletion is a partial edit, not a day opt-out.
   if (block.sourceKind === 'pattern' && block.blockKind === 'timeblock' && block.sourceRef && block.startAt) {
-    const tz = (sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(ownerId) as { timezone: string | null } | undefined)?.timezone || serverTimezone();
-    sqlite
+    const tzRow = await store()
+      .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
+      .get<{ timezone: string | null }>(ownerId);
+    const tz = tzRow?.timezone || serverTimezone();
+    await store()
       .prepare(`INSERT OR IGNORE INTO pattern_day_optouts (owner_id, pattern_id, date) VALUES (?, ?, ?)`)
       .run(ownerId, String(block.sourceRef), localDateInTZ(block.startAt, tz));
   }
@@ -741,7 +751,7 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
       // makes the operation idempotent if the rule is later widened by hand.
       truncateSeriesFrom(ownerId, 'time_blocks', block.recurrenceParentId, block.occurrenceDate);
     }
-    excludeBlockOccurrence(ownerId, block.recurrenceParentId, block.occurrenceDate);
+    await excludeBlockOccurrence(ownerId, block.recurrenceParentId, block.occurrenceDate);
   }
   // REQ2: a task with no remaining active placement returns to the open backlog.
   const revertedTaskIds: string[] = [];
@@ -766,16 +776,16 @@ export type ClearDayAutoBlocksResult = { removedCount: number; revertedTaskIds: 
  * cancelled/missed evidence the review surface reads (Phase AE status-vocabulary
  * alignment, docs/AE-reflow-correctness.md).
  */
-export function clearDayAutoBlocks(ownerId: string, date: string): ClearDayAutoBlocksResult {
-  const tzRow = sqlite
+export async function clearDayAutoBlocks(ownerId: string, date: string): Promise<ClearDayAutoBlocksResult> {
+  const tzRow = await store()
     .prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(ownerId) as { timezone?: string } | undefined;
+    .get<{ timezone?: string }>(ownerId);
   const tz = tzRow?.timezone || serverTimezone();
   // Same day window as clearPriorAuto/dayPlans (utcDayBounds — DST-aware, end is
   // next-day midnight, not start+24h): on a DST-transition day a start+24h window
   // is off by an hour, sweeping the next day's first block or missing the last one.
   const { start: dayStartISO, end: dayEndISO } = utcDayBounds(date, tz);
-  const removed = sqlite
+  const removed = await store()
     .prepare(
       `DELETE FROM time_blocks
         WHERE owner_id = ?
@@ -784,7 +794,7 @@ export function clearDayAutoBlocks(ownerId: string, date: string): ClearDayAutoB
           AND start_at < ? AND end_at > ?
         RETURNING id, task_id`,
     )
-    .all(ownerId, dayEndISO, dayStartISO) as { id: string; task_id: string | null }[];
+    .all<{ id: string; task_id: string | null }>(ownerId, dayEndISO, dayStartISO);
   for (const r of removed) removeEntityTags('time_block', r.id);
   // REQ2: a task whose last active placement was just cleared returns to the open
   // backlog — otherwise it's stranded at status='scheduled' with no block.
@@ -803,8 +813,8 @@ export function clearDayAutoBlocks(ownerId: string, date: string): ClearDayAutoB
  * file) that adds the audit entry, gated on at least one block actually created,
  * exactly as the route did.
  */
-export function addTasksToBlock(ownerId: string, id: string, taskIds: string[]): PlaceTasksResult {
-  const result = placeTasksInBlock(ownerId, id, taskIds);
+export async function addTasksToBlock(ownerId: string, id: string, taskIds: string[]): Promise<PlaceTasksResult> {
+  const result = await placeTasksInBlock(ownerId, id, taskIds);
   if (result.blocksCreated > 0) {
     writeAudit({ ownerId, actor: 'owner', action: 'add-tasks', entity: `block:${id}` });
   }
