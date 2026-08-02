@@ -97,7 +97,7 @@ export async function planWeekReview(anchor: string): Promise<PlanWeekReview> {
     week,
     calibration: await globalCalibrationReadout(owner),
     stars: await listDayStars(owner, from, to),
-    note_dates: noteDates(owner, from, to),
+    note_dates: await noteDates(owner, from, to),
     sessions,
   };
 }

@@ -29,31 +29,35 @@ export function reflectionsRouter() {
   const router = new Router();
 
   // GET /api/reflections?period=YYYY-MM-DD
-  router.get('/api/reflections', (ctx) => {
+  router.get('/api/reflections', async (ctx) => {
     const owner = currentOwnerId();
     const period = (ctx.query.period as string | undefined) ?? localISODate();
 
-    const todayRow = getTodayGoal(owner, period);
-    const weeklyRows = getWeeklyGoals(owner, period);
-    const noteRow = getDayNote(owner, period);
+    const todayRow = await getTodayGoal(owner, period);
+    const weeklyRows = await getWeeklyGoals(owner, period);
+    const noteRow = await getDayNote(owner, period);
 
-    ctx.body = {
-      today: todayRow ? toTodayDto(todayRow, categoryColorToken(owner, todayRow.category_id)) : null,
-      weekly: weeklyRows.map((r) => ({
+    const weekly = [];
+    for (const r of weeklyRows) {
+      weekly.push({
         position: r.position,
         body: r.body,
         category_id: r.category_id,
         done_at: r.done_at,
         source_kind: r.source_kind,
         source_ref: r.source_ref,
-        color_token: categoryColorToken(owner, r.category_id),
-      })),
+        color_token: await categoryColorToken(owner, r.category_id),
+      });
+    }
+    ctx.body = {
+      today: todayRow ? toTodayDto(todayRow, await categoryColorToken(owner, todayRow.category_id)) : null,
+      weekly,
       note: noteRow ? { body: noteRow.body, updated_at: noteRow.updated_at } : null,
     };
   });
 
   // GET /api/reflections/notes?from=YYYY-MM-DD&to=YYYY-MM-DD
-  router.get('/api/reflections/notes', (ctx) => {
+  router.get('/api/reflections/notes', async (ctx) => {
     const owner = currentOwnerId();
     const from = ctx.query.from as string | undefined;
     const to = ctx.query.to as string | undefined;
@@ -62,14 +66,14 @@ export function reflectionsRouter() {
       ctx.body = { error: 'from and to are required (YYYY-MM-DD)' };
       return;
     }
-    ctx.body = { dates: noteDates(owner, from!, to!) };
+    ctx.body = { dates: await noteDates(owner, from!, to!) };
   });
 
   // PUT /api/reflections/note { period_key, body }
-  router.put('/api/reflections/note', (ctx) => {
+  router.put('/api/reflections/note', async (ctx) => {
     const owner = currentOwnerId();
     const { period_key, body } = (ctx.request.body ?? {}) as { period_key?: string; body?: string };
-    const res = upsertDayNote(owner, { period_key, body });
+    const res = await upsertDayNote(owner, { period_key, body });
     if (!res.ok) {
       ctx.status = 422;
       ctx.body = { error: 'period_key is required (YYYY-MM-DD)' };
@@ -80,12 +84,12 @@ export function reflectionsRouter() {
   });
 
   // PUT /api/reflections/today { period_key, body, category_id? }
-  router.put('/api/reflections/today', (ctx) => {
+  router.put('/api/reflections/today', async (ctx) => {
     const owner = currentOwnerId();
     const { period_key, body, category_id, source_kind, source_ref } = (ctx.request.body ?? {}) as {
       period_key?: string; body?: string; category_id?: string | null; source_kind?: string; source_ref?: string | null;
     };
-    const res = upsertTodayGoal(owner, { period_key, body, category_id, source_kind, source_ref });
+    const res = await upsertTodayGoal(owner, { period_key, body, category_id, source_kind, source_ref });
     if (!res.ok) {
       ctx.status = 422;
       ctx.body = { error: 'period_key is required' };
@@ -96,13 +100,13 @@ export function reflectionsRouter() {
   });
 
   // PUT /api/reflections/weekly/:position { period_key, body, category_id? }
-  router.put('/api/reflections/weekly/:position', (ctx) => {
+  router.put('/api/reflections/weekly/:position', async (ctx) => {
     const owner = currentOwnerId();
     const position = Number(ctx.params.position);
     const { period_key, body, category_id, source_kind, source_ref } = (ctx.request.body ?? {}) as {
       period_key?: string; body?: string; category_id?: string | null; source_kind?: string; source_ref?: string | null;
     };
-    const res = upsertWeeklyGoal(owner, position, { period_key, body, category_id, source_kind, source_ref });
+    const res = await upsertWeeklyGoal(owner, position, { period_key, body, category_id, source_kind, source_ref });
     if (!res.ok) {
       ctx.status = 422;
       ctx.body = { error: res.error === 'bad_position' ? 'position must be 0, 1, or 2' : 'period_key is required' };
@@ -132,7 +136,7 @@ export function reflectionsRouter() {
       ctx.body = { error: 'period must be YYYY-MM-DD' };
       return;
     }
-    const row = getEvening(owner, period);
+    const row = await getEvening(owner, period);
     ctx.body = {
       period_key: period,
       row: row ? { body: row.body, created_at: row.created_at, updated_at: row.updated_at } : null,
@@ -153,25 +157,25 @@ export function reflectionsRouter() {
       return;
     }
 
-    const existing = getEvening(owner, period);
+    const existing = await getEvening(owner, period);
     if (existing && !refresh) {
       ctx.body = { period_key: period, body: existing.body, llm: null, created: false, payload: await gatherEvening(period) };
       return;
     }
 
     const summary = await summarizeEvening(period);
-    saveEveningNarrative(owner, period, summary.prose);
+    await saveEveningNarrative(owner, period, summary.prose);
     broadcast(owner, 'reflection:updated', { kind: 'evening', period_key: period, position: 0 });
     ctx.body = { period_key: period, body: summary.prose, llm: summary.llm, created: !existing, payload: summary.payload };
   });
 
   // PUT /api/reflections/evening { period_key, body } — the user's own edits over the
   // narrative. Empty body = delete.
-  router.put('/api/reflections/evening', (ctx) => {
+  router.put('/api/reflections/evening', async (ctx) => {
     if (!timeSenseGate(ctx)) return;
     const owner = currentOwnerId();
     const { period_key, body } = (ctx.request.body ?? {}) as { period_key?: string; body?: string };
-    const res = upsertEvening(owner, { period_key, body });
+    const res = await upsertEvening(owner, { period_key, body });
     if (!res.ok) {
       ctx.status = 422;
       ctx.body = { error: 'period_key is required (YYYY-MM-DD)' };
@@ -182,13 +186,13 @@ export function reflectionsRouter() {
   });
 
   // POST /api/reflections/:kind/:position/done { period_key, done }
-  router.post('/api/reflections/:kind/:position/done', (ctx) => {
+  router.post('/api/reflections/:kind/:position/done', async (ctx) => {
     const owner = currentOwnerId();
     const kind = ctx.params.kind;
     const position = Number(ctx.params.position);
     const { period_key, done } = (ctx.request.body ?? {}) as { period_key?: string; done?: boolean };
 
-    const res = toggleDone(owner, kind, position, { period_key, done });
+    const res = await toggleDone(owner, kind, position, { period_key, done });
     if (!res.ok) {
       if (res.error === 'not_found') {
         ctx.status = 404;
@@ -208,13 +212,13 @@ export function reflectionsRouter() {
   });
 
   // DELETE /api/reflections/:kind/:position?period_key=…
-  router.delete('/api/reflections/:kind/:position', (ctx) => {
+  router.delete('/api/reflections/:kind/:position', async (ctx) => {
     const owner = currentOwnerId();
     const kind = ctx.params.kind;
     const period_key = ctx.query.period_key as string | undefined;
     const position = Number(ctx.params.position);
 
-    const res = deleteGoal(owner, kind, position, period_key);
+    const res = await deleteGoal(owner, kind, position, period_key);
     if (!res.ok) {
       ctx.status = 422;
       ctx.body = { error: res.error === 'bad_kind' ? 'invalid kind' : 'period_key query param is required' };

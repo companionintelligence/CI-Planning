@@ -29,16 +29,16 @@ function reflectionId(r: ReflectionRow): string {
 
 export const reflectionResolvers = {
   Query: {
-    reflections: (_p: unknown, args: { period: string }) => {
+    reflections: async (_p: unknown, args: { period: string }) => {
       const owner = currentOwnerId();
       // `getWeeklyGoals` derives the ISO week via isoWeekKey(period), which throws on a
       // non-date — guard here so a bad input is a clean BAD_USER_INPUT, not a 500.
       if (!isValidISODate(args.period)) throw new GraphQLError('period must be YYYY-MM-DD', { extensions: { code: 'BAD_USER_INPUT' } });
       return {
         period: args.period,
-        today: getTodayGoal(owner, args.period) ?? null,
-        weekly: getWeeklyGoals(owner, args.period),
-        note: getDayNote(owner, args.period) ?? null,
+        today: (await getTodayGoal(owner, args.period)) ?? null,
+        weekly: await getWeeklyGoals(owner, args.period),
+        note: (await getDayNote(owner, args.period)) ?? null,
       };
     },
     reflectionNoteDates: (_p: unknown, args: { from: string; to: string }) =>
@@ -46,10 +46,10 @@ export const reflectionResolvers = {
   },
 
   Mutation: {
-    setTodayGoal: (_p: unknown, args: { input: { periodKey: string; body: string; categoryId?: string | null; sourceKind?: string | null; sourceRef?: string | null } }) => {
+    setTodayGoal: async (_p: unknown, args: { input: { periodKey: string; body: string; categoryId?: string | null; sourceKind?: string | null; sourceRef?: string | null } }) => {
       const owner = currentOwnerId();
       const i = args.input;
-      const res = upsertTodayGoal(owner, {
+      const res = await upsertTodayGoal(owner, {
         period_key: i.periodKey, body: i.body, category_id: i.categoryId ?? null,
         source_kind: i.sourceKind ?? undefined, source_ref: i.sourceRef ?? undefined,
       });
@@ -58,10 +58,10 @@ export const reflectionResolvers = {
       return { reflection: res.row, deleted: res.action === 'delete', success: true };
     },
 
-    setWeeklyGoal: (_p: unknown, args: { input: { periodKey: string; position: number; body: string; categoryId?: string | null; sourceKind?: string | null; sourceRef?: string | null } }) => {
+    setWeeklyGoal: async (_p: unknown, args: { input: { periodKey: string; position: number; body: string; categoryId?: string | null; sourceKind?: string | null; sourceRef?: string | null } }) => {
       const owner = currentOwnerId();
       const i = args.input;
-      const res = upsertWeeklyGoal(owner, i.position, {
+      const res = await upsertWeeklyGoal(owner, i.position, {
         period_key: i.periodKey, body: i.body, category_id: i.categoryId ?? null,
         source_kind: i.sourceKind ?? undefined, source_ref: i.sourceRef ?? undefined,
       });
@@ -72,19 +72,19 @@ export const reflectionResolvers = {
       return { reflection: res.row, deleted: res.action === 'delete', success: true };
     },
 
-    setDayNote: (_p: unknown, args: { input: { periodKey: string; body: string } }) => {
+    setDayNote: async (_p: unknown, args: { input: { periodKey: string; body: string } }) => {
       const owner = currentOwnerId();
       const i = args.input;
-      const res = upsertDayNote(owner, { period_key: i.periodKey, body: i.body });
+      const res = await upsertDayNote(owner, { period_key: i.periodKey, body: i.body });
       if (!res.ok) throw new GraphQLError('periodKey must be YYYY-MM-DD', { extensions: { code: 'BAD_USER_INPUT' } });
       broadcast(owner, res.action === 'delete' ? 'reflection:deleted' : 'reflection:updated', { kind: 'day_note', period_key: i.periodKey, position: 0 });
       return { reflection: res.row, deleted: res.action === 'delete', success: true };
     },
 
-    toggleReflectionDone: (_p: unknown, args: { input: { kind: string; periodKey: string; position: number; done: boolean } }) => {
+    toggleReflectionDone: async (_p: unknown, args: { input: { kind: string; periodKey: string; position: number; done: boolean } }) => {
       const owner = currentOwnerId();
       const i = args.input;
-      const res = toggleDone(owner, i.kind, i.position, { period_key: i.periodKey, done: i.done });
+      const res = await toggleDone(owner, i.kind, i.position, { period_key: i.periodKey, done: i.done });
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('reflection not found', { extensions: { code: 'NOT_FOUND' } });
         const msg =
@@ -98,15 +98,15 @@ export const reflectionResolvers = {
       // A weekly goal's periodKey is already the ISO-week key, so read it by exact key
       // (getWeeklyGoals would re-run isoWeekKey and throw on the week-key input).
       const row = i.kind === 'today_goal'
-        ? getTodayGoal(owner, i.periodKey)
-        : getWeeklyGoalSlot(owner, i.periodKey, i.position);
+        ? await getTodayGoal(owner, i.periodKey)
+        : await getWeeklyGoalSlot(owner, i.periodKey, i.position);
       return { reflection: row ?? null, deleted: false, success: true };
     },
 
-    deleteReflection: (_p: unknown, args: { input: { kind: string; periodKey: string; position: number } }) => {
+    deleteReflection: async (_p: unknown, args: { input: { kind: string; periodKey: string; position: number } }) => {
       const owner = currentOwnerId();
       const i = args.input;
-      const res = deleteGoal(owner, i.kind, i.position, i.periodKey);
+      const res = await deleteGoal(owner, i.kind, i.position, i.periodKey);
       if (!res.ok) {
         throw new GraphQLError(res.error === 'bad_kind' ? 'invalid kind' : 'periodKey is required', { extensions: { code: 'BAD_USER_INPUT' } });
       }
