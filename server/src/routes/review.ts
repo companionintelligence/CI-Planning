@@ -12,8 +12,8 @@ export function reviewRouter() {
   // Past-due planned tasks auto-defer with backoff, stuck 'missed' one-offs revive
   // to open, and hands_off owners get everything reopened placed into its new day.
   // Idempotent — a second click with nothing stale is a no-op returning zeros.
-  router.post('/api/review/sweep', (ctx) => {
-    ctx.body = { result: reviewAndReschedule({ owner: currentOwnerId() }) };
+  router.post('/api/review/sweep', async (ctx) => {
+    ctx.body = { result: await reviewAndReschedule({ owner: currentOwnerId() }) };
   });
 
   // GET /api/review/week?anchor=YYYY-MM-DD

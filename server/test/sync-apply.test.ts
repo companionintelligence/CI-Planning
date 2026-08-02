@@ -398,7 +398,7 @@ describe('rescheduleTask — stamping', () => {
 
   it('does NOT let a stale queued op drag scheduled_for back', async () => {
     insertTask('t-resc-1');
-    rescheduleTask('t-resc-1', 3, SYSTEM_OWNER);
+    await rescheduleTask('t-resc-1', 3, SYSTEM_OWNER);
     const newDay = getTask('t-resc-1')['scheduled_for'] as string;
 
     // The op a client queued while offline, before the reschedule reached the server.
@@ -412,14 +412,14 @@ describe('rescheduleTask — stamping', () => {
     expect(getTask('t-resc-1')['scheduled_for']).toBe(newDay);
   });
 
-  it('never stamps a foreign owner\'s row when the scoped UPDATE misses', () => {
+  it('never stamps a foreign owner\'s row when the scoped UPDATE misses', async () => {
     createOwner(SECOND_OWNER_ID);
     insertTask('t-resc-2'); // belongs to SYSTEM_OWNER
     const before = getTask('t-resc-2');
 
     // A caller that skipped the route's ownership pre-check: the UPDATE must miss, and
     // the stamp must not fire — stamping here would corrupt SYSTEM_OWNER's merge state.
-    rescheduleTask('t-resc-2', 3, SECOND_OWNER_ID);
+    await rescheduleTask('t-resc-2', 3, SECOND_OWNER_ID);
 
     const after = getTask('t-resc-2');
     expect(after['scheduled_for']).toBe(before['scheduled_for']);

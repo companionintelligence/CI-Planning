@@ -503,7 +503,7 @@ export function tasksRouter() {
     if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, owner))) {
       ctx.status = 404; ctx.body = { error: 'not found' }; return;
     }
-    const { scheduled_for, placement } = rescheduleTask(id, body.days, owner);
+    const { scheduled_for, placement } = await rescheduleTask(id, body.days, owner);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
     const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
     broadcast(owner, 'task:updated', out);

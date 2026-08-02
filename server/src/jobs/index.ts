@@ -256,7 +256,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // (+1/3/7 backoff, unified 2026-07-20); stuck 'missed' one-offs are revived;
       // hands_off owners get reopened tasks placed into their new day right away.
       // Open tasks with no future blocks are re-staged into the flight plan.
-      const r = reviewAndReschedule();
+      const r = await reviewAndReschedule();
       return {
         itemsCreated: r.restaged,
         itemsUpdated: r.deferred + r.revived,
