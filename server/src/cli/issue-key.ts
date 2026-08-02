@@ -25,7 +25,7 @@ const scopes = scopeArg
   ? scopeArg.split(',').map((s) => (s.trim() === 'write' ? SCOPE_WRITE : s.trim() === 'read' ? SCOPE_READ : s.trim()))
   : [SCOPE_READ, SCOPE_WRITE];
 
-const key = issueApiKey(owner, scopes, ttlDays);
+const key = await issueApiKey(owner, scopes, ttlDays);
 
 console.log('\nAPI key issued (shown once — copy it now):\n');
 console.log(`  ${key}\n`);

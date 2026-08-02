@@ -1,5 +1,5 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
-import { sqlite } from '../../db/index.js';
+import { store } from '../../db/store.js';
 import { newId } from '../ids.js';
 import { httpError } from '../http-error.js';
 import type { VerifiedClaims } from './types.js';
@@ -14,12 +14,12 @@ import type { VerifiedClaims } from './types.js';
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 /** Issue a new key and persist its hash. Returns the raw key — surfaced ONCE, never re-derivable. */
-export function issueApiKey(ownerId: string, scopes: string[], ttlDays?: number): string {
+export async function issueApiKey(ownerId: string, scopes: string[], ttlDays?: number): Promise<string> {
   const raw = randomBytes(32).toString('hex'); // 64 hex chars of entropy
   const key = `cpk_${raw}`;
   const prefix = key.slice(0, 5); // 'cpk_' + 1 char → 5-char indexed lookup
   const expiresAt = ttlDays ? new Date(Date.now() + ttlDays * 864e5).toISOString() : null;
-  sqlite
+  await store()
     .prepare(
       `INSERT INTO api_keys (id, owner_id, prefix, key_hash, scopes, expires_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -37,14 +37,14 @@ interface ApiKeyRow {
 }
 
 /** Resolve a presented key to its owner + scopes, or throw 401. Constant-time hash compare. */
-export function verifyApiKey(presented: string): VerifiedClaims {
+export async function verifyApiKey(presented: string): Promise<VerifiedClaims> {
   const prefix = presented.slice(0, 5);
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT id, owner_id, key_hash, scopes, expires_at
          FROM api_keys WHERE prefix = ? AND revoked_at IS NULL`,
     )
-    .all(prefix) as ApiKeyRow[];
+    .all<ApiKeyRow>(prefix);
 
   // SHA-256 hex is fixed-length, so timingSafeEqual is safe; iterate all candidates
   // (no early return on the first mismatch) to keep the compare data-independent.
@@ -58,7 +58,7 @@ export function verifyApiKey(presented: string): VerifiedClaims {
 
   // Best-effort touch — a failed bookkeeping write must never block an accepted request.
   try {
-    sqlite.prepare(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`).run(new Date().toISOString(), row.id);
+    await store().prepare(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`).run(new Date().toISOString(), row.id);
   } catch {
     /* ignore */
   }

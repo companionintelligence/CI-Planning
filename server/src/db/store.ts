@@ -1,4 +1,4 @@
-import type { Database } from 'better-sqlite3';
+import type { Database, Statement } from 'better-sqlite3';
 import { prepare as pgPrepare, transaction as pgTransaction, execRaw as pgExec } from './pg.js';
 
 /**
@@ -62,17 +62,20 @@ export function createSqliteStore(db: Database): Store {
       // Prepared lazily: better-sqlite3 throws on a statement whose table does not
       // exist yet, and module-level `prepare` calls run before migrations in some
       // import orders. Postgres has the same property, so this keeps them alike.
-      let stmt: ReturnType<Database['prepare']> | undefined;
-      const get_ = () => (stmt ??= db.prepare(sql));
+      // Explicit `unknown[]` binding generic: better-sqlite3's default overload infers a
+      // fixed-arity tuple, which then rejects the variadic spread below (and, worse,
+      // rejects the zero-parameter case that plenty of statements use).
+      let stmt: Statement<unknown[], unknown> | undefined;
+      const get_ = () => (stmt ??= db.prepare<unknown[], unknown>(sql));
       return {
         async get<T>(...params: unknown[]) {
-          return get_().get(...(params as [])) as T | undefined;
+          return get_().get(...params) as T | undefined;
         },
         async all<T>(...params: unknown[]) {
-          return get_().all(...(params as [])) as T[];
+          return get_().all(...params) as T[];
         },
         async run(...params: unknown[]) {
-          const r = get_().run(...(params as []));
+          const r = get_().run(...params);
           return { changes: r.changes };
         },
       };
