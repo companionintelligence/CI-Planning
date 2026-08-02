@@ -1,14 +1,14 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 29 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 37 commits)
 >
-> **DONE — waves 0–4 COMPLETE. Suite verified at 2633 passed after every one of
-> the 19 slices.**
+> **DONE — waves 0–4 COMPLETE, wave 5 at 7 of 11. Suite verified at 2633 passed
+> after every one of the 24 slices.**
 >
 > **Remaining work is smaller than this document originally predicted.** A fresh
-> count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **175
-> references in 26 files**, three of which are the seam itself (`db/index.ts`,
-> `db/pg.ts`, `db/store.ts`) — so **23 files actually remain**. Several files the
+> count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **151
+> references in 20 files**, three of which are the seam itself (`db/index.ts`,
+> `db/pg.ts`, `db/store.ts`) — so **17 files actually remain**. Several files the
 > wave lists below name (render-copy, connectors/index, calibration, flags,
 > mcp/client, connectors/base, scheduler, models) hold NO raw statements and are
 > already done or never needed porting. Re-run the count rather than trusting the
@@ -26,9 +26,6 @@
 >   recomputeProgress/linkObjectiveTask synchronously, so that cascade lands
 >   here), connectors/memory, services/memory, patterns-place.
 >   `patterns-place.ensurePatternsForRange` is still called UNAWAITED from
->   services/blocks.blockRowsForQuery — the one call site left deliberately sync
->   in part 8. Add the await when it ports.
->   `patterns-place.ensurePatternsForRange` is called unawaited from
 >   services/blocks.blockRowsForQuery — the one call site left deliberately sync
 >   in part 8. Add the await when it ports.
 > - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
@@ -82,10 +79,8 @@
 > (task_id, habit-type) pair, i.e. a schema change, which a pure refactor pass
 > should not smuggle in. Consequence is a duplicate habit pattern under a
 > double-submit, not data loss. Fix alongside the other post-cutover items.
->   `recurrence-ops.skipInstance` carries the SAME EXDATE read-modify-write as
->   blocks-recur — reuse the compare-and-swap below rather than porting it
->   straight.
-> - Waves 5–8 untouched. Exporter (handoff §6.6) not started.
+>
+> Exporter (handoff §6.6) not started.
 >
 > **Method that survived contact** (per file): python exact-match replacement →
 > `tsc` enumerates the src cascade → UNTRUNCATED full-symbol grep over src+test
@@ -101,11 +96,6 @@
 > returns a rejected promise instead of throwing, `toThrow` sees no throw, and the
 > assertion passes while testing nothing. The deps slice had two guarding the
 > cycle detector. Rewrite as `await expect(f()).rejects.toThrow(…)`, and
-> **`await f(...).prop` parses as `await (f(...).prop)`** — property access binds
-> tighter than await, so it reads the property off the PENDING promise, gets
-> `undefined`, and awaits that. Silent. Any assertion of the form
-> `expect(f(...).reason)` needs `expect((await f(...)).reason)`, not
-> `expect(await f(...).reason)`. Bit series-scope.test.ts once.
 > `.not.toThrow()` as `await expect(f()).resolves…`. Grep each ported file's
 > symbols for `toThrow` before trusting a green suite. Swept the suite for others:
 > every remaining sync `toThrow` targets a still-sync callee (migrations, raw
@@ -113,6 +103,16 @@
 > `mergeRefreshToken`). The ones that WILL need this treatment are
 > `crypto.test.ts`'s `loadKek()` / `rotateKek()` / `open()` — `crypto/index` is
 > wave 7 — so fix them in that slice, not before.
+>
+> **`await f(...).prop` parses as `await (f(...).prop)`** — property access binds
+> tighter than `await`, so it reads the property off the PENDING promise, gets
+> `undefined`, and awaits that. Silent. Any assertion of the form
+> `expect(f(...).reason)` needs `expect((await f(...)).reason)`, never
+> `expect(await f(...).reason)`. This is the trap that most needs a paren-aware
+> inserter rather than a regex: the triality tests mixed `expect(f(...))`,
+> `expect(f(...).changed)` and `return f(...).F` on adjacent lines, and only the
+> last two need the parens. Match the call's closing paren, then branch on whether
+> a `.` follows.
 > Also: **`vi.advanceTimersByTime` stops working the moment the timer's callback
 > becomes async** — it fires the callback but returns before any await settles,
 > so assertions right after it see the pre-reflow world. Use
