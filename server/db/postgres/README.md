@@ -156,12 +156,44 @@ So the shape is: **port file-by-file in ONE branch, cut over in ONE release.**
 
 1. ~~Boot + migrations~~ — done: the app runs dbmate-compatible migrations at startup
    when `DATABASE_URL` is set, and is inert without it.
-2. Flip the TEST HARNESS to Postgres (`test/helpers.ts` `resetDb`, the per-pid database).
-   This is the real gate — 2600+ tests are the thing that proves the port, and they
-   cannot prove it while they run against SQLite.
-3. Port call sites file-by-file, commit-by-commit, with the suite going green
-   incrementally. Leaf-first still helps for review size; it just is not shippable
-   separately.
+2. ~~Flip the test harness to Postgres~~ — **superseded**. The harness is not the only
+   coupling: the tests themselves hold **1,150 raw `sqlite.*` uses across 183 of 224
+   files**, for setup and assertions. Flipping `helpers.ts` alone would leave those
+   files reading a database the app no longer writes.
+
+   Instead `src/db/store.ts` splits the work in two, so neither half is done blind:
+
+   **Pass A — async migration, SQLite underneath.** Move all ~1,536 call sites (386 in
+   src, 1,150 in tests) to `await store.prepare(…)`. The store has not changed, so the
+   suite stays GREEN at every commit and each file is independently reviewable.
+
+   **Pass B — the cutover.** Set `STORE_BACKEND=postgres`. One change, and 2,600 tests
+   immediately report every dialect difference (`INSERT OR IGNORE`, `strftime`, …).
+
+   `test/store-conformance.test.ts` runs ONE suite against BOTH backends, pinning the
+   semantics call sites actually depend on — `.get()` → `undefined` (not `null`) on a
+   miss, `{ changes }` on a write, rollback discarding work, a nested failure not
+   poisoning the outer transaction. Those are the ways the two could silently disagree
+   and turn a green pass A into a broken pass B. (Verified it bites: injecting a
+   `null`-on-miss divergence into the SQLite backend fails the suite.)
+3. Port call sites file-by-file, commit-by-commit, per pass A above. Leaf-first still
+   helps for review size; it just is not shippable separately.
+
+   **Pass A findings so far** (each one is a decision the mechanical edit would have
+   got wrong):
+
+   - `writeAudit` is documented fire-and-forget and called **125 times**. It cannot stay
+     fire-and-forget: **29 assertions read `audit_log` immediately after the mutation that
+     writes it**, and under Postgres that is a real round trip, so an unawaited write is a
+     race. It must be awaited at all 125 sites — the single largest cascade in the port,
+     worth doing as its own commit.
+   - `better-sqlite3`'s `.get()`/`.all()`/`.run()` need an explicit `unknown[]` binding
+     generic to accept a variadic spread; the default overload infers a fixed-arity tuple
+     and rejects the zero-parameter case.
+   - `tsc` covers `src` only (`tsconfig.json` includes `src/**/*`), so test call sites are
+     NOT typechecked. Vitest's oxc transform does reject `await` in a non-async function,
+     which makes running the suite — not typechecking — the reliable signal for the test
+     half of the cascade.
 4. The dialect rewrites above, mechanically.
 5. Delete `better-sqlite3`, `sqlite-vec`, Drizzle and the 147 SQLite migrations in the
    same release as the cutover.
