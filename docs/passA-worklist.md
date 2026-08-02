@@ -10,7 +10,8 @@
 > **Remaining work is smaller than this document originally predicted.** A fresh
 > count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **136
 > references in 19 files**, three of which are the seam itself (`db/index.ts`,
-> `db/pg.ts`, `db/store.ts`) — so **16 files actually remain**. Several files the
+> `db/pg.ts`, `db/store.ts`) and one of which is `agents/groom.ts`'s deliberate
+> sqlite-vec residue (below) — so **15 real files remain**. Several files the
 > wave lists below name (render-copy, connectors/index, calibration, flags,
 > mcp/client, connectors/base, scheduler, models) hold NO raw statements and are
 > already done or never needed porting. Re-run the count rather than trusting the
@@ -24,7 +25,10 @@
 > the facade. They are sqlite-vec virtual-table calls (`vec0`, `MATCH`, the
 > `vec_dedupe_tmp` scratch table) — a SQLite-extension code path that pgvector
 > replaces at cutover, not a statement to route through `store()`. Groom is done;
-> the grep just cannot tell. Subtract it before sizing what is left.
+> the grep just cannot tell. Subtract it before sizing what is left. The reasoning
+> is `HANDOFF-2026-08-02-pass-a-waves-0-5.md` §4 ("groom's sqlite-vec KNN path
+> stays on the raw handle"); it is repeated here because this is the file you
+> actually count from.
 >
 > Actual remaining, by wave:
 > - **Wave 5 (3 files left of 11)** — ✓ motivation, ✓ series-scope,

@@ -3,19 +3,21 @@
 > ## Read this box first
 >
 > - **Branch `feat/postgres-cutover` is clean and green.** Nothing is half-done.
->   Suite: **2633 passed / 21 skipped**, verified after every one of the 24 slices —
->   never once red.
-> - **Waves 0–4 are COMPLETE. Wave 5 is at 7 of 11.** The call-site migration went
->   from ~355 to ~750 statements ported in this session.
-> - **16 real files remain**, not the 101 the original plan implied. Re-derive the
+>   Suite: **2634 passed / 21 skipped** (2667 with `PG_TEST_URL`), verified after
+>   every one of the 25 slices — never once red.
+> - **Waves 0–4 are COMPLETE. Wave 5 is at 8 of 11.** The call-site migration went
+>   from ~355 to ~800 statements ported.
+> - **15 real files remain**, not the 101 the original plan implied. Re-derive the
 >   number from source (§7) rather than trusting any per-wave file list.
 > - **Three real concurrency bugs were found and fixed** — two EXDATE lost updates
 >   and an inverted advance-after-commit invariant (§3). None were pre-existing;
 >   all three were defects the port itself would have introduced.
 > - **The app still runs on SQLite.** Nothing about the running system changed.
 >   `STORE_BACKEND` is still opt-in and inert.
-> - **Start here: `services/objectives.ts`** — surveyed, not started. §6 has the
->   survey so you don't repeat it.
+> - **`services/objectives.ts` is DONE** (part 25) — this box previously said
+>   "start here"; it is finished, do not redo it. §6 records what the port
+>   decided. **Start here: `engine/patterns-place.ts`**, then the
+>   `connectors/memory` + `services/memory` pair, which close wave 5.
 > - **The trap catalogue lives in `docs/passA-worklist.md`, not here.** Read it
 >   before your first edit. This document is the narrative; that one is the
 >   checklist you work from.
@@ -158,34 +160,56 @@ shapes (`.filter`/`.every` with async predicates, `.map` returning promises,
 
 ---
 
-## 6. Start here — `services/objectives.ts`
+## 6. `services/objectives.ts` — DONE (part 25)
 
-Surveyed, **not started**. The largest single slice left in wave 5; give it its own
-commit.
+The survey that used to live here has been spent. 905 lines, ~50 raw references, 25
+exported functions. Cascade: routes/objectives (12 sites),
+graphql/objective-resolvers (11), services/task-promotion (3),
+graphql/task-resolvers (1), routes/sync (1), and 7 sites in sync-apply.test.ts.
 
-- **~50 raw `sqlite` references across 905 lines**, 25+ exported functions, 9
-  importers. The work list's older "15 stmts" counted single-line matches only.
-- **Recursive / looping helpers that go async and are called from inside loops**:
-  `heightBelow` (a `WITH RECURSIVE` query), `restampLevels` (walks up the parent
-  chain calling `heightBelow` per node), `wouldCycle`, `liveDescendantIds`, and
-  `recomputeProgress` (rolls up through children). Await inside those loops — do
-  not reach for `.map`.
-- **Two existing transactions** to carry over: `archiveObjective` and
-  `restoreObjective` (its subtree walk). The comment near line 748 — cascade as a
-  unit "has to be atomic" — is the justification; keep it true.
-- **`stampRow(sqlite, …)` appears ~8 times** and keeps the raw handle, as
-  everywhere else, until `sync/apply.ts` ports in wave 6.
-- Header line 17 still claims "better-sqlite3 is synchronous; these are plain sync
-  functions" — correct it the way `patterns.ts`'s was.
-- No module-level prepares in this file.
+**Two check-then-write guards were re-asserted as part of the write**, since an
+await now separates each from what it protects and a transaction does not close
+that under Postgres READ COMMITTED. `createObjective`'s live-parent check became an
+`INSERT … SELECT … WHERE EXISTS`; the unguarded `VALUES` form is kept for the
+parentless case, because `id = NULL` matches nothing and an EXISTS guard there
+would refuse every root objective. `archiveObjective`'s root UPDATE is guarded on
+`archived_at IS NULL`, with the audit gated on `changes > 0` to match the
+idempotent early return that also writes none.
 
-**`services/task-promotion` already calls `recomputeProgress` / `linkObjectiveTask`
-synchronously**, so that cascade lands with this slice.
+**Two races were deliberately left open**, documented at their sites, on the same
+reasoning as `ensureHabitPattern` in §4 — both need a schema change, not a
+refactor:
 
-Then `connectors/memory`, `services/memory`, `patterns-place` close wave 5. Note
-`patterns-place.ensurePatternsForRange` is still called **unawaited** from
-`services/blocks.blockRowsForQuery` — the one call site left deliberately sync back
-in part 8. Add the await when it ports.
+- `linkObjectiveTask` can insert a duplicate join row under a double-submit.
+  `objective_tasks` has no unique index on (objective_id, task_id), only on the
+  surrogate `id`, and the predicate concerns a row the call has not written yet —
+  so `WHERE NOT EXISTS` races exactly as the SELECT does.
+- `updateObjective`'s three re-parent guards can each pass concurrently. The
+  `cycle` one is the one that matters: A→B and B→A both commit, and the resulting
+  parent loop does not terminate the `UNION ALL` recursive CTEs in
+  `heightBelow`/`wouldCycle`. That needs the writers serialized, not a better
+  WHERE clause.
+
+**Three breaks tsc could not see**, all found by the symbol grep §5 insists on:
+`task-promotion` built its link ids with `.map` over a now-async call (would have
+broadcast `[object Promise]` as the link id — the payload is `unknown`, so it
+typechecks); `routes/objectives` assigned two unawaited promises straight to
+`ctx.body`, which Koa serializes as `{}`; `routes/sync` floated
+`applySyncedObjectiveUpkeep`, detaching the archive cascade from the transaction
+that must contain it. One test failed OPEN — `expect(() =>
+applySyncedObjectiveUpkeep(…)).not.toThrow()` — rewritten as `await
+expect(f()).resolves.toBeUndefined()`.
+
+**A new dialect-portability case**: the guarded INSERT is new SQL, so it is pinned
+in `test/store-conformance.test.ts` and asserted on BOTH backends rather than left
+to surface at the flip. Verified against a real Postgres 17 + pgvector. Add a
+conformance case whenever a slice introduces a SQL shape the existing statements do
+not cover.
+
+**Next: `engine/patterns-place.ts`, then `connectors/memory` + `services/memory`,
+which close wave 5.** Note `patterns-place.ensurePatternsForRange` is still called
+**unawaited** from `services/blocks.blockRowsForQuery` — the one call site left
+deliberately sync back in part 8. Add the await when it ports.
 
 ---
 
@@ -197,11 +221,11 @@ Do not trust the per-wave file lists. Re-derive:
 grep -rn "sqlite\.\(prepare\|exec\|transaction\)" server/src --include=*.ts | wc -l
 ```
 
-At this commit: **151 references in 20 files**. Three are the seam itself
+At this commit: **136 references in 19 files**. Three are the seam itself
 (`db/index.ts`, `db/pg.ts`, `db/store.ts`) and one is `groom.ts`'s deliberate
-sqlite-vec residue (§4) — so **16 real files remain**:
+sqlite-vec residue (§4) — so **15 real files remain**:
 
-- **Wave 5 (4)** — objectives, connectors/memory, services/memory, patterns-place
+- **Wave 5 (3)** — patterns-place, connectors/memory, services/memory
 - **Wave 6 (7)** — pattern-prefs, pattern-blocks, day-types, block-task-sync,
   sync/apply, recurrence-generate, reminders
 - **Wave 7 (4)** — autoplan, crypto/index, tags, category-prefs
