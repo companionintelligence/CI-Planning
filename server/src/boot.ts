@@ -13,6 +13,7 @@ import { status as ollamaStatus } from './mcp/ollama.js';
 import { sqlite } from './db/index.js';
 import { initPg, closePg } from './db/pg.js';
 import { runPgMigrations } from './db/migrate-pg.js';
+import { setStore, store, createSqliteStore, createPostgresStore } from './db/store.js';
 import { recoverStaleFreezeLocks } from './engine/auto-defense.js';
 import { ensureLocalAuthBootstrap } from './lib/auth/localBootstrap.js';
 import { writePidFile, removePidFile } from './lib/pidfile.js';
@@ -32,6 +33,19 @@ if (config.databaseUrl) {
   const { applied } = await runPgMigrations(pool, { schema: 'planning' });
   logger.info('Postgres schema ready', { migrationsApplied: applied.length });
 }
+
+// Install the data-facade backend (db/store.ts). Call sites migrate to `store()` in a
+// pass of their own, with SQLite underneath so the suite stays green; STORE_BACKEND is
+// what flips them onto Postgres once that pass is done. Default is sqlite, so this is
+// inert until deliberately switched — and it refuses to select postgres without a
+// DATABASE_URL rather than silently falling back to a store the data is not in.
+if (config.storeBackend === 'postgres') {
+  if (!config.databaseUrl) throw new Error('STORE_BACKEND=postgres requires DATABASE_URL');
+  setStore(createPostgresStore());
+} else {
+  setStore(createSqliteStore(sqlite));
+}
+logger.info('Data store backend', { backend: store().backend });
 
 // Local-auth mode (AUTH_MODE=sso + DISABLE_OIDC): seed the default owner or fail
 // closed if there's no way to log in. No-op in every other mode. Awaited before we
