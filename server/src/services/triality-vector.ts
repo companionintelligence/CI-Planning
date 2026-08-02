@@ -341,7 +341,7 @@ async function buildDimContext(ownerId: string, now: Date): Promise<DimContext> 
     workHours,
     recentMood,
     freeGapMinutes,
-    dayTypeKey: resolveDayType(ownerId, localDate),
+    dayTypeKey: await resolveDayType(ownerId, localDate),
     timerRunning,
     lastCompletionMs: lastCompletion ? Date.parse(lastCompletion) : null,
     lastActivityMs: lastActivity ? Date.parse(lastActivity) : null,

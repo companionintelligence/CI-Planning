@@ -854,12 +854,12 @@ export async function placeFlightPlan(
   // flowing around the Plans. Per-direction auto_fill (pattern_prefs) is still honored.
   // Leftover capacity is left OPEN here — the workday/priority fill is the separate,
   // explicit fillByPriority() step (tap 3, D5).
-  const dayType = resolveDayType(owner, date);
-  const patWindows = getPatternBlocks(owner, dayType);
+  const dayType = await resolveDayType(owner, date);
+  const patWindows = await getPatternBlocks(owner, dayType);
   // Track tasks gated off by per-direction auto_fill=false so Pass 2b skips them too.
   const directionGatedOffIds = new Set<string>();
   if (Object.keys(patWindows).length > 0) {
-    const dprefs = getPatternPrefs(owner);
+    const dprefs = await getPatternPrefs(owner);
     const dirNameToId = new Map<string, string>(); // direction tag name → id
     const ids = Object.keys(patWindows);
     const dirTags = await store()
@@ -1267,10 +1267,10 @@ export async function placeStartAnchoredTask(
   // No task_time → direction-window placement for THAT date (pass-2a semantics):
   // the task's level-1 direction tags, minus those gated off by auto_fill=false,
   // union of their windows for the date's day-type, earliest-first.
-  const dayType = resolveDayType(owner, date);
-  const patWindows = getPatternBlocks(owner, dayType);
+  const dayType = await resolveDayType(owner, date);
+  const patWindows = await getPatternBlocks(owner, dayType);
   if (Object.keys(patWindows).length > 0) {
-    const dprefs = getPatternPrefs(owner);
+    const dprefs = await getPatternPrefs(owner);
     const dirIds = (
       await store()
         .prepare(

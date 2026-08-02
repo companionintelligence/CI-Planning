@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
@@ -23,22 +23,22 @@ function utcDow(dateStr: string): number {
  * map rows (a new owner, or a reset test DB) it returns exactly what `isWeekendDate()`
  * did. The seeded builtins + map make the default visible & editable, nothing more.
  */
-export function resolveDayType(ownerId: string, date: string): string {
-  return resolveDayTypeWithSource(ownerId, date).key;
+export async function resolveDayType(ownerId: string, date: string): Promise<string> {
+  return (await resolveDayTypeWithSource(ownerId, date)).key;
 }
 
 export type DayTypeSource = 'assignment' | 'map' | 'default';
 
 /** Like resolveDayType but also reports WHERE the key came from — so the UI can show
  *  whether a date carries an explicit per-date override (and offer "reset to default"). */
-export function resolveDayTypeWithSource(ownerId: string, date: string): { key: string; source: DayTypeSource } {
-  const a = sqlite
+export async function resolveDayTypeWithSource(ownerId: string, date: string): Promise<{ key: string; source: DayTypeSource }> {
+  const a = await store()
     .prepare(`SELECT day_type_key FROM day_assignments WHERE owner_id = ? AND date = ?`)
     .get(ownerId, date) as { day_type_key: string } | undefined;
   if (a) return { key: a.day_type_key, source: 'assignment' };
 
   const dow = utcDow(date);
-  const m = sqlite
+  const m = await store()
     .prepare(`SELECT day_type_key FROM day_of_week_map WHERE owner_id = ? AND dow = ?`)
     .get(ownerId, dow) as { day_type_key: string } | undefined;
   if (m) return { key: m.day_type_key, source: 'map' };
@@ -47,46 +47,46 @@ export function resolveDayTypeWithSource(ownerId: string, date: string): { key: 
 }
 
 // ── Catalog CRUD (consumed by routes/day-types.ts) ────────────────────────────
-export function listDayTypes(ownerId: string): DayType[] {
+export async function listDayTypes(ownerId: string): Promise<DayType[]> {
   return (
-    sqlite
+    await store()
       .prepare(`SELECT id, key, name, is_builtin FROM day_types WHERE owner_id = ? ORDER BY is_builtin DESC, name`)
       .all(ownerId) as { id: string; key: string; name: string; is_builtin: number }[]
   ).map((r) => ({ id: r.id, key: r.key, name: r.name, is_builtin: !!r.is_builtin }));
 }
 
-export function getDayType(ownerId: string, id: string): DayType | undefined {
-  const r = sqlite
+export async function getDayType(ownerId: string, id: string): Promise<DayType | undefined> {
+  const r = await store()
     .prepare(`SELECT id, key, name, is_builtin FROM day_types WHERE owner_id = ? AND id = ?`)
     .get(ownerId, id) as { id: string; key: string; name: string; is_builtin: number } | undefined;
   return r ? { id: r.id, key: r.key, name: r.name, is_builtin: !!r.is_builtin } : undefined;
 }
 
 /** Create a custom (non-builtin) day type. Throws on a duplicate key (UNIQUE). */
-export function createDayType(ownerId: string, key: string, name: string): DayType {
+export async function createDayType(ownerId: string, key: string, name: string): Promise<DayType> {
   const id = newId();
-  sqlite
+  await store()
     .prepare(`INSERT INTO day_types (id, owner_id, key, name, is_builtin) VALUES (?, ?, ?, ?, 0)`)
     .run(id, ownerId, key, name);
   return { id, key, name, is_builtin: false };
 }
 
-export function renameDayType(ownerId: string, id: string, name: string): void {
-  sqlite.prepare(`UPDATE day_types SET name = ? WHERE owner_id = ? AND id = ?`).run(name, ownerId, id);
+export async function renameDayType(ownerId: string, id: string, name: string): Promise<void> {
+  await store().prepare(`UPDATE day_types SET name = ? WHERE owner_id = ? AND id = ?`).run(name, ownerId, id);
 }
 
 /** Delete a custom day type and clean up any map/assignment rows that referenced it. */
-export function deleteDayType(ownerId: string, dt: DayType): void {
-  sqlite.transaction(() => {
-    sqlite.prepare(`DELETE FROM day_types WHERE owner_id = ? AND id = ?`).run(ownerId, dt.id);
-    sqlite.prepare(`DELETE FROM day_of_week_map WHERE owner_id = ? AND day_type_key = ?`).run(ownerId, dt.key);
-    sqlite.prepare(`DELETE FROM day_assignments WHERE owner_id = ? AND day_type_key = ?`).run(ownerId, dt.key);
-  })();
+export async function deleteDayType(ownerId: string, dt: DayType): Promise<void> {
+  await store().transaction(async () => {
+    await store().prepare(`DELETE FROM day_types WHERE owner_id = ? AND id = ?`).run(ownerId, dt.id);
+    await store().prepare(`DELETE FROM day_of_week_map WHERE owner_id = ? AND day_type_key = ?`).run(ownerId, dt.key);
+    await store().prepare(`DELETE FROM day_assignments WHERE owner_id = ? AND day_type_key = ?`).run(ownerId, dt.key);
+  });
 }
 
 /** The weekly default map as a complete dow→key record, heuristic-filled for any gap. */
-export function getWeekMap(ownerId: string): Record<number, string> {
-  const rows = sqlite
+export async function getWeekMap(ownerId: string): Promise<Record<number, string>> {
+  const rows = await store()
     .prepare(`SELECT dow, day_type_key FROM day_of_week_map WHERE owner_id = ?`)
     .all(ownerId) as { dow: number; day_type_key: string }[];
   const byDow = new Map(rows.map((r) => [r.dow, r.day_type_key]));
@@ -98,25 +98,25 @@ export function getWeekMap(ownerId: string): Record<number, string> {
 }
 
 /** Replace the weekly map atomically with the given dow→key entries. */
-export function setWeekMap(ownerId: string, map: Record<number, string>): void {
-  sqlite.transaction(() => {
-    const ins = sqlite.prepare(
+export async function setWeekMap(ownerId: string, map: Record<number, string>): Promise<void> {
+  await store().transaction(async () => {
+    const ins = await store().prepare(
       `INSERT INTO day_of_week_map (owner_id, dow, day_type_key) VALUES (?, ?, ?)
        ON CONFLICT(owner_id, dow) DO UPDATE SET day_type_key = excluded.day_type_key`,
     );
     for (const [dow, key] of Object.entries(map)) ins.run(ownerId, Number(dow), key);
-  })();
+  });
 }
 
-export function listAssignments(ownerId: string): Record<string, string> {
-  const rows = sqlite
+export async function listAssignments(ownerId: string): Promise<Record<string, string>> {
+  const rows = await store()
     .prepare(`SELECT date, day_type_key FROM day_assignments WHERE owner_id = ? ORDER BY date`)
     .all(ownerId) as { date: string; day_type_key: string }[];
   return Object.fromEntries(rows.map((r) => [r.date, r.day_type_key]));
 }
 
-export function assignDate(ownerId: string, date: string, key: string): void {
-  sqlite
+export async function assignDate(ownerId: string, date: string, key: string): Promise<void> {
+  await store()
     .prepare(
       `INSERT INTO day_assignments (owner_id, date, day_type_key) VALUES (?, ?, ?)
        ON CONFLICT(owner_id, date) DO UPDATE SET day_type_key = excluded.day_type_key`,
@@ -124,13 +124,13 @@ export function assignDate(ownerId: string, date: string, key: string): void {
     .run(ownerId, date, key);
 }
 
-export function clearAssignment(ownerId: string, date: string): void {
-  sqlite.prepare(`DELETE FROM day_assignments WHERE owner_id = ? AND date = ?`).run(ownerId, date);
+export async function clearAssignment(ownerId: string, date: string): Promise<void> {
+  await store().prepare(`DELETE FROM day_assignments WHERE owner_id = ? AND date = ?`).run(ownerId, date);
 }
 
 /** True when `key` names a day type the owner has defined (used to validate writes). */
-export function dayTypeKeyExists(ownerId: string, key: string): boolean {
-  return !!sqlite
+export async function dayTypeKeyExists(ownerId: string, key: string): Promise<boolean> {
+  return !!await store()
     .prepare(`SELECT 1 FROM day_types WHERE owner_id = ? AND key = ? LIMIT 1`)
     .get(ownerId, key);
 }
@@ -141,36 +141,36 @@ export function dayTypeKeyExists(ownerId: string, key: string): boolean {
 
 export type CreateDayTypeResult = { ok: true; dayType: DayType } | { ok: false; error: 'bad_key' | 'name_required' | 'duplicate' };
 
-export function createDayTypeChecked(ownerId: string, rawKey: unknown, rawName: unknown): CreateDayTypeResult {
+export async function createDayTypeChecked(ownerId: string, rawKey: unknown, rawName: unknown): Promise<CreateDayTypeResult> {
   const key = String(rawKey ?? '').trim().toLowerCase();
   const name = String(rawName ?? '').trim();
   if (!KEY_RE.test(key)) return { ok: false, error: 'bad_key' };
   if (!name) return { ok: false, error: 'name_required' };
-  if (dayTypeKeyExists(ownerId, key)) return { ok: false, error: 'duplicate' };
-  const dayType = createDayType(ownerId, key, name);
+  if (await dayTypeKeyExists(ownerId, key)) return { ok: false, error: 'duplicate' };
+  const dayType = await createDayType(ownerId, key, name);
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `day-type:${key}` });
   return { ok: true, dayType };
 }
 
 export type RenameDayTypeResult = { ok: true; dayType: DayType } | { ok: false; error: 'not_found' | 'name_required' };
 
-export function renameDayTypeChecked(ownerId: string, id: string, rawName: unknown): RenameDayTypeResult {
-  const dt = getDayType(ownerId, id);
+export async function renameDayTypeChecked(ownerId: string, id: string, rawName: unknown): Promise<RenameDayTypeResult> {
+  const dt = await getDayType(ownerId, id);
   if (!dt) return { ok: false, error: 'not_found' };
   const name = String(rawName ?? '').trim();
   if (!name) return { ok: false, error: 'name_required' };
-  renameDayType(ownerId, dt.id, name);
+  await renameDayType(ownerId, dt.id, name);
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `day-type:${dt.key}` });
   return { ok: true, dayType: { ...dt, name } };
 }
 
 export type DeleteDayTypeResult = { ok: true; dayType: DayType } | { ok: false; error: 'not_found' | 'builtin' };
 
-export function deleteDayTypeChecked(ownerId: string, id: string): DeleteDayTypeResult {
-  const dt = getDayType(ownerId, id);
+export async function deleteDayTypeChecked(ownerId: string, id: string): Promise<DeleteDayTypeResult> {
+  const dt = await getDayType(ownerId, id);
   if (!dt) return { ok: false, error: 'not_found' };
   if (dt.is_builtin) return { ok: false, error: 'builtin' };
-  deleteDayType(ownerId, dt);
+  await deleteDayType(ownerId, dt);
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `day-type:${dt.key}` });
   return { ok: true, dayType: dt };
 }

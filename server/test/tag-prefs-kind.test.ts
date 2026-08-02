@@ -42,14 +42,14 @@ describe('tag_prefs kind normalization on upsert', () => {
     expect(getCategoryPrefs(SYSTEM_OWNER)[tag]).toEqual({ color_token: 'chart-1', default_minutes: 90 });
   });
 
-  it('setPatternPref normalizes kind to direction on conflict', () => {
+  it('setPatternPref normalizes kind to direction on conflict', async () => {
     const tag = newTag('direction');
     sqlite.prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
        VALUES (uuid7(), ?, ?, 'category', 'chart-3', 60)`,
     ).run(SYSTEM_OWNER, tag);
 
-    setPatternPref(SYSTEM_OWNER, tag, { auto_fill: false });
+    await setPatternPref(SYSTEM_OWNER, tag, { auto_fill: false });
 
     const r = row(tag);
     expect(r.kind).toBe('direction');

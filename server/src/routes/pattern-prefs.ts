@@ -6,17 +6,17 @@ export function patternPrefsRouter() {
   const router = new Router();
 
   // GET /api/pattern-prefs → { prefs: Record<string, { auto_fill: boolean, reminder_offsets: number[] }> }
-  router.get('/api/pattern-prefs', (ctx) => {
+  router.get('/api/pattern-prefs', async (ctx) => {
     const owner = currentOwnerId();
-    ctx.body = { prefs: getPatternPrefs(owner) };
+    ctx.body = { prefs: await getPatternPrefs(owner) };
   });
 
   // PUT /api/pattern-prefs/:patternTagId  body: { auto_fill?, reminder_offsets?, icon_shape?, color_token?, default_minutes? }
   // Validation + upsert live in services/pattern-prefs.ts (shared with GraphQL); this maps
   // the discriminated result back to the original REST status codes + messages.
-  router.put('/api/pattern-prefs/:patternTagId', (ctx) => {
+  router.put('/api/pattern-prefs/:patternTagId', async (ctx) => {
     const owner = currentOwnerId();
-    const res = setPatternPrefChecked(owner, ctx.params.patternTagId, (ctx.request.body ?? {}) as Record<string, unknown>);
+    const res = await setPatternPrefChecked(owner, ctx.params.patternTagId, (ctx.request.body ?? {}) as Record<string, unknown>);
     if (!res.ok) {
       switch (res.error) {
         case 'tag_not_found': ctx.status = 404; ctx.body = { error: 'Tag not found' }; return;

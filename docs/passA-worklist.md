@@ -442,6 +442,21 @@ print([str(p) for p in pathlib.Path('server').rglob('*.ts') if b'\x00' in p.read
 At this commit that list is empty. Prefer a python `rglob` walk over `grep -rl`
 for file selection generally — it has no binary heuristic to be wrong about.
 
+**Spreading a promise yields `{}`** — silently, with no error anywhere. `{ date,
+...resolveDayTypeWithSource(owner, date) }` drops every field the spread was meant to
+contribute the moment that call goes async: a pending promise has no own enumerable
+properties. Two sites (the REST resolve route and its GraphQL twin). Neither tsc nor a
+paren-aware await inserter catches it — the call is preceded by `...` and followed by
+`)`, so it looks like a bare statement — and the REST one would have shipped a 200 with
+`{ date }` and nothing else. Grep `\.\.\.\s*fn(` for every symbol a slice makes async.
+
+**Do not let an await inserter touch GraphQL document strings.** Test files embed
+`gql('mutation { setPatternBlockRanges(input: …) }')`, and a symbol-name inserter happily
+rewrote the FIELD NAME inside the document to `await setPatternBlockRanges`, producing
+`Cannot query field "await" on type "Mutation"`. It fails loudly, but across ten tests at
+once and a long way from the cause. Exclude anything inside a `gql(` template — including
+the shorthand `gql('{ field(…) }')` form with no `query` keyword.
+
 **New dialect-portability coverage.** The guarded `INSERT … SELECT … WHERE EXISTS`
 that `createObjective` now uses is pinned in `test/store-conformance.test.ts`, so it
 is asserted on BOTH backends rather than only the one pass A runs on. It verifies

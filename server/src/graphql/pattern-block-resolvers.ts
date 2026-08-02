@@ -22,8 +22,8 @@ type PrefNode = PatternPref & { tag_id: string };
 
 export const patternBlockResolvers = {
   Query: {
-    patternBlocks: (_p: unknown, args: { dayType: string }): BlockRow[] => {
-      const windows = getPatternBlocks(currentOwnerId(), args.dayType);
+    patternBlocks: async (_p: unknown, args: { dayType: string }): Promise<BlockRow[]> => {
+      const windows = await getPatternBlocks(currentOwnerId(), args.dayType);
       const rows = Object.entries(windows).flatMap(([dirId, ranges]) =>
         ranges.map((r) => ({ id: r.id, direction_tag_id: dirId, day_type: args.dayType, start_time: r.start_time, end_time: r.end_time })),
       );
@@ -31,18 +31,18 @@ export const patternBlockResolvers = {
       // per-direction SQL row order, not a stable cross-direction sort, so sort explicitly.
       return rows.sort((a, b) => a.direction_tag_id.localeCompare(b.direction_tag_id) || a.start_time.localeCompare(b.start_time));
     },
-    patternPrefs: (): PrefNode[] =>
-      Object.entries(getPatternPrefs(currentOwnerId())).map(([tagId, pref]) => ({ ...pref, tag_id: tagId })),
+    patternPrefs: async (): Promise<PrefNode[]> =>
+      Object.entries(await getPatternPrefs(currentOwnerId())).map(([tagId, pref]) => ({ ...pref, tag_id: tagId })),
   },
 
   Mutation: {
-    setPatternBlockRanges: (
+    setPatternBlockRanges: async (
       _p: unknown,
       args: { input: { directionTagId: string; dayType: string; ranges: { startTime: string; endTime: string }[] } },
     ) => {
       const owner = currentOwnerId();
       const ranges = args.input.ranges.map((r) => ({ start_time: r.startTime, end_time: r.endTime }));
-      const res = replacePatternBlockRanges(owner, args.input.directionTagId, args.input.dayType, ranges);
+      const res = await replacePatternBlockRanges(owner, args.input.directionTagId, args.input.dayType, ranges);
       if (!res.ok) {
         if (res.error === 'tag_not_found') throw new GraphQLError('Tag not found', { extensions: { code: 'NOT_FOUND' } });
         const msg =
@@ -57,7 +57,7 @@ export const patternBlockResolvers = {
       return { patternBlocks: blocks, success: true };
     },
 
-    setPatternPref: (
+    setPatternPref: async (
       _p: unknown,
       args: { input: { directionTagId: string; autoFill?: boolean | null; reminderOffsets?: number[] | null; iconShape?: string | null; colorToken?: string | null; defaultMinutes?: number | null } },
     ) => {
@@ -70,7 +70,7 @@ export const patternBlockResolvers = {
       if (i.iconShape != null) patch.icon_shape = i.iconShape;
       if (i.colorToken != null) patch.color_token = i.colorToken;
       if (i.defaultMinutes != null) patch.default_minutes = i.defaultMinutes;
-      const res = setPatternPrefChecked(owner, i.directionTagId, patch);
+      const res = await setPatternPrefChecked(owner, i.directionTagId, patch);
       if (!res.ok) {
         if (res.error === 'tag_not_found') throw new GraphQLError('Tag not found', { extensions: { code: 'NOT_FOUND' } });
         const msg =
