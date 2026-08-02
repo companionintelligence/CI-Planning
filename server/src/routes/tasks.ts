@@ -63,18 +63,22 @@ export function tasksRouter() {
       .orderBy(asc(tasks.priority), asc(tasks.dueAt));
 
     // Attach tags + dependency info, serialize to snake_case
-    const blocked = blockedTaskIds();
+    const blocked = await blockedTaskIds();
     const ids = result.map((t) => t.id);
     const tagsById = taskTagNamesByIds(ids);
     const secondaryById = taskSecondaryTagNamesByIds(ids);
     const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
     const objectivesById = objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
+    // Resolved up front so the map below can stay synchronous — an async .map callback
+    // would put a Promise in every depends_on field, and ctx.body would serialize `{}`.
+    const dependsById = new Map<string, string[]>();
+    for (const id of ids) dependsById.set(id, await getDependencies(id));
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
       secondary_tags: secondaryById.get(t.id) ?? [],
       categories: categoriesById.get(t.id) ?? [],
-      depends_on: getDependencies(t.id),
+      depends_on: dependsById.get(t.id) ?? [],
       blocked: blocked.has(t.id),
       // §I star + AF-10 card picker. objective_id = objective_ids[0] ?? null (back compat).
       objective_ids: objectivesById.get(t.id) ?? [],
@@ -149,8 +153,8 @@ export function tasksRouter() {
       tags: body.tags ?? [],
       secondary_tags: taskSecondaryTags(task.id),
       categories: entityCategoryNames('task', task.id),
-      depends_on: getDependencies(task.id),
-      blocked: blockedTaskIds().has(task.id),
+      depends_on: await getDependencies(task.id),
+      blocked: (await blockedTaskIds()).has(task.id),
     };
     broadcast(owner, 'task:created', out);
     requestReplan('task:created'); // B2: a new task can shift today's plan (debounced + toggle-gated)
@@ -341,7 +345,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const res = await promoteToHabit(owner, id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const out = { ...taskToApi(res.task), tags: taskTagNames(id), depends_on: getDependencies(id) };
+    const out = { ...taskToApi(res.task), tags: taskTagNames(id), depends_on: await getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
@@ -411,8 +415,8 @@ export function tasksRouter() {
           tags: taskTagNames(id),
           secondary_tags: taskSecondaryTags(id),
           categories: entityCategoryNames('task', id),
-          depends_on: getDependencies(id),
-          blocked: blockedTaskIds().has(id),
+          depends_on: await getDependencies(id),
+          blocked: (await blockedTaskIds()).has(id),
         });
       }
       writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `task:${id}` });
@@ -449,7 +453,7 @@ export function tasksRouter() {
 
     // The service writes entity_tags directly (no updateTask call), so nothing else
     // broadcasts these — fan them out here or other open clients keep the stale tags.
-    const blocked = blockedTaskIds(); // hoisted: one dependency scan, not one per task
+    const blocked = await blockedTaskIds(); // hoisted: one dependency scan, not one per task
     for (const id of res.taggedIds) {
       const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
       if (!task) continue;
@@ -458,7 +462,7 @@ export function tasksRouter() {
         tags: taskTagNames(id),
         secondary_tags: taskSecondaryTags(id),
         categories: entityCategoryNames('task', id),
-        depends_on: getDependencies(id),
+        depends_on: await getDependencies(id),
         blocked: blocked.has(id),
       });
       // One row per task, matching what the old PATCH-per-task path recorded — a bulk
@@ -505,7 +509,7 @@ export function tasksRouter() {
     }
     const { scheduled_for, placement } = await rescheduleTask(id, body.days, owner);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-    const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: getDependencies(id) };
+    const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: await getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `task:${id}` });
     broadcast(owner, 'block:updated', { rescheduled: id });
@@ -559,8 +563,8 @@ export function tasksRouter() {
       tags: taskTagNames(res.targetId),
       secondary_tags: taskSecondaryTags(res.targetId),
       categories: entityCategoryNames('task', res.targetId),
-      depends_on: getDependencies(res.targetId),
-      blocked: blockedTaskIds().has(res.targetId),
+      depends_on: await getDependencies(res.targetId),
+      blocked: (await blockedTaskIds()).has(res.targetId),
     };
     broadcast(owner, 'task:updated', out);
     if (res.generated) broadcast(owner, 'recurrence:generated', res.generated);
@@ -621,8 +625,8 @@ export function tasksRouter() {
       tags: taskTagNames(id),
       secondary_tags: taskSecondaryTags(id),
       categories: entityCategoryNames('task', id),
-      depends_on: getDependencies(id),
-      blocked: blockedTaskIds().has(id),
+      depends_on: await getDependencies(id),
+      blocked: (await blockedTaskIds()).has(id),
     };
     broadcast(owner, 'task:updated', out);
     ctx.body = { task: out, closed: { completed_at: res.completedAt, reaction_at: res.reactionAt, mood: res.mood, actual_minutes: res.actualMinutes } };

@@ -217,7 +217,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
-      setDependencies(task.id, input.depends_on, ownerId);
+      await setDependencies(task.id, input.depends_on, ownerId);
     } catch (err) {
       if (err instanceof DependencyCycleError) return { ok: false, error: 'dependency_cycle', detail: err.message };
       throw err;
@@ -472,7 +472,7 @@ export async function updateTask(
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
-      setDependencies(targetId, input.depends_on, ownerId);
+      await setDependencies(targetId, input.depends_on, ownerId);
     } catch (err) {
       if (err instanceof DependencyCycleError) {
         // Phase L: the column UPDATE already applied before the dependency change was
