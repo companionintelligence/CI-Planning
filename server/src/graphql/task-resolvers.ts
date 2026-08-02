@@ -113,7 +113,7 @@ export const taskResolvers = {
     task: async (_p: unknown, args: { id: string }) => {
       return (await getTask(currentOwnerId(), args.id)) ?? null;
     },
-    tasks: (_p: unknown, args: ConnArgs & { status?: string | null }) => {
+    tasks: async (_p: unknown, args: ConnArgs & { status?: string | null }) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const after = decodeIdCursor(args.after);
@@ -121,7 +121,7 @@ export const taskResolvers = {
       return taskConnection(
         listTasks(owner, { status, after: after || undefined, limit: limit + 1 }),
         limit,
-        countTasks(owner, status),
+        await countTasks(owner, status),
       );
     },
   },
@@ -181,14 +181,14 @@ export const taskResolvers = {
     motivation: (t: TaskRow) => (t.motivation ? t.motivation.toUpperCase() : null),
     motivationSource: (t: TaskRow) => (t.motivationSource ? t.motivationSource.toUpperCase() : null),
     parent: async (t: TaskRow) => (t.parentId ? (await getTask(currentOwnerId(), t.parentId)) ?? null : null),
-    subtasks: (t: TaskRow, args: ConnArgs) => {
+    subtasks: async (t: TaskRow, args: ConnArgs) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const after = decodeIdCursor(args.after);
       return taskConnection(
         listSubtasks(owner, t.id, { after: after || undefined, limit: limit + 1 }),
         limit,
-        countSubtasks(owner, t.id),
+        await countSubtasks(owner, t.id),
       );
     },
     dependsOn: (t: TaskRow) => dependsOnService(currentOwnerId(), t.id),

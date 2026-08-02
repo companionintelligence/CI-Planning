@@ -1,5 +1,6 @@
 import { and, eq, gt, asc } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { tasks, taskDependencies } from '../db/schema.js';
 import { setDependencies, DependencyCycleError } from '../engine/deps.js';
 import { parseRule } from '../engine/recurrence.js';
@@ -39,8 +40,9 @@ import { truncateSeriesFrom } from '../engine/series-scope.js';
  * engine-side.
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase
- * row shape for `taskToApi`), so the writers are async; better-sqlite3 executes
- * them synchronously underneath.
+ * row shape for `taskToApi`), so the writers are async. Everything else goes through
+ * the store facade; the raw `sqlite` handle survives only as `stampRow`'s argument
+ * (dies when sync/apply.ts ports).
  */
 
 /** A full drizzle `tasks` row (camelCase) — the shape `taskToApi` serializes. */
@@ -52,9 +54,9 @@ export type TaskRow = typeof tasks.$inferSelect;
  * id is dropped to `null` (no dangling cross-tenant parent ref, no existence leak).
  * `undefined`/`null` in → `null` out (top-level task).
  */
-function ownedTaskId(ownerId: string, id: string | null | undefined): string | null {
+async function ownedTaskId(ownerId: string, id: string | null | undefined): Promise<string | null> {
   if (!id) return null;
-  const row = sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId);
+  const row = await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId);
   return row ? id : null;
 }
 
@@ -102,10 +104,10 @@ export function taskSecondaryTags(taskId: string): string[] {
  * — derived in the OWNER'S timezone to match how period_key is written (local
  * YYYY-MM-DD), not a UTC slice. COALESCE preserves an already-set done_at.
  */
-export function stampTaskCompletionReflection(ownerId: string, taskId: string, completedAt: string): void {
+export async function stampTaskCompletionReflection(ownerId: string, taskId: string, completedAt: string): Promise<void> {
   const now = new Date().toISOString();
   const periodKey = localDateInTZ(completedAt, ownerTimezone(ownerId));
-  sqlite
+  await store()
     .prepare(
       `UPDATE reflections SET done_at = COALESCE(done_at, ?), updated_at = ?
          WHERE owner_id = ? AND kind = 'today_goal' AND period_key = ? AND position = 0
@@ -174,7 +176,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
 
   // W3.1b: a parent_id must be one of the caller's own tasks — a foreign parent_id
   // is dropped (would otherwise be a dangling cross-tenant ref). null = top-level.
-  const parentId = ownedTaskId(ownerId, input.parent_id);
+  const parentId = await ownedTaskId(ownerId, input.parent_id);
 
   // Motivation (0141, §3b) — LLM-first at the surfaces that can afford the model
   // (quick-add's overlay passes it in); here only the CHEAP deterministic keyword
@@ -381,7 +383,7 @@ export async function updateTask(
   // Capture the pre-edit parent so a re-parent can GC the OLD parent's auto-objective
   // if this was its last subtask.
   const prevParentId = input.parent_id !== undefined
-    ? (sqlite.prepare(`SELECT parent_id FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { parent_id: string | null } | undefined)?.parent_id ?? null
+    ? (await store().prepare(`SELECT parent_id FROM tasks WHERE id = ? AND owner_id = ?`).get<{ parent_id: string | null }>(targetId, ownerId))?.parent_id ?? null
     : null;
 
   const update: Partial<typeof tasks.$inferInsert> = {};
@@ -409,7 +411,7 @@ export async function updateTask(
   // dropped to null (an explicit null un-parents). `parentIdSet` remembers a
   // parent_id was in the PATCH; `newParentId` is the validated value written.
   const parentIdSet = input.parent_id !== undefined;
-  const newParentId = parentIdSet ? ownedTaskId(ownerId, input.parent_id) : null;
+  const newParentId = parentIdSet ? await ownedTaskId(ownerId, input.parent_id) : null;
   if (parentIdSet)                           update.parentId = newParentId;
   const sw = subtypeWrite(input);
   if (sw) update.subtype = sw.subtype;
@@ -435,7 +437,7 @@ export async function updateTask(
   // `undefined` means "not queried — no status change, so no transition to react to",
   // while `null` means "queried, no such row" (the UPDATE then 404s before we use it).
   const priorStatus: string | null | undefined = update.status !== undefined
-    ? ((sqlite.prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get(targetId, ownerId) as { status: string } | undefined)?.status ?? null)
+    ? ((await store().prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get<{ status: string }>(targetId, ownerId))?.status ?? null)
     : undefined;
   const wasDone = priorStatus !== undefined ? priorStatus === 'done' : undefined;
 
@@ -529,7 +531,7 @@ export async function updateTask(
   // Phase O · O0 — completing a task lights up the today-intention linked to it.
   if (task.status === 'done') {
     const completedAt = typeof input.completed_at === 'string' && input.completed_at ? input.completed_at : new Date().toISOString();
-    stampTaskCompletionReflection(ownerId, targetId, completedAt);
+    await stampTaskCompletionReflection(ownerId, targetId, completedAt);
   }
 
   // AF-5: a status change that alters how a linked objective's rollup sees this task
@@ -657,42 +659,44 @@ export type RecallTaskResult = { ok: true; task: TaskRow } | { ok: false; error:
  * no recurrence or history. cockpit-v2 Phase 6.
  */
 export async function recallTask(ownerId: string, taskId: string): Promise<RecallTaskResult> {
-  if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(taskId, ownerId)) {
+  if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(taskId, ownerId))) {
     return { ok: false, error: 'not_found' };
   }
-  const keepPattern = !!(sqlite.prepare('SELECT recall_keeps_pattern AS v FROM scheduling_prefs WHERE owner_id = ?').get(ownerId) as { v: number } | undefined)?.v;
+  const keepPattern = !!(await store().prepare('SELECT recall_keeps_pattern AS v FROM scheduling_prefs WHERE owner_id = ?').get<{ v: number }>(ownerId))?.v;
 
-  // Recursively clone a task + its subtree (better-sqlite3 is synchronous). The top
-  // clone is a fresh independent task (parent_id null); uuid7() mints each new id.
-  const cloneTree = (srcId: string, parentId: string | null): string => {
-    const s = sqlite.prepare(
+  // Recursively clone a task + its subtree. The top clone is a fresh independent task
+  // (parent_id null); uuid7() mints each new id. Depth-first and sequential — the
+  // recursion awaits each child before the next, so the whole subtree lands inside the
+  // single transaction below.
+  const cloneTree = async (srcId: string, parentId: string | null): Promise<string> => {
+    const s = (await store().prepare(
       'SELECT title, description, notes, estimated_minutes, priority, task_time, subtype, source_kind, texture_enabled, texture_color_token FROM tasks WHERE id = ?'
-    ).get(srcId) as {
+    ).get<{
       title: string; description: string | null; notes: string | null;
       estimated_minutes: number | null; priority: number | null; task_time: string | null;
       subtype: string | null; source_kind: string | null;
       texture_enabled: number; texture_color_token: string | null;
-    };
+    }>(srcId))!;
     const st = s.subtype ?? 'standard';
-    const newId = (sqlite.prepare(
+    const newId = (await store().prepare(
       `INSERT INTO tasks (id, title, description, notes, estimated_minutes, priority, task_time, subtype, parent_id, owner_id, status, source_kind, texture_enabled, texture_color_token)
        VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?) RETURNING id`
-    ).get(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, parentId, ownerId, s.source_kind ?? 'manual', s.texture_enabled, s.texture_color_token) as { id: string }).id;
+    ).get<{ id: string }>(s.title, s.description, s.notes, s.estimated_minutes, s.priority ?? 3, s.task_time, st, parentId, ownerId, s.source_kind ?? 'manual', s.texture_enabled, s.texture_color_token))!.id;
     // Carry tags (entity_tags, all levels); Routine membership only when the pref is on.
-    sqlite.prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
+    await store().prepare("INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) SELECT 'task', ?, tag_id, level FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
     // Phase B: carry the category axis too (position preserved — the stripe order).
-    sqlite.prepare("INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) SELECT 'task', ?, category_tag_id, position FROM entity_categories WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
+    await store().prepare("INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) SELECT 'task', ?, category_tag_id, position FROM entity_categories WHERE entity_kind = 'task' AND entity_id = ?").run(newId, srcId);
     if (keepPattern) {
-      sqlite.prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
+      await store().prepare('INSERT OR IGNORE INTO pattern_tasks (pattern_id, task_id, position) SELECT pattern_id, ?, position FROM pattern_tasks WHERE task_id = ?').run(newId, srcId);
     }
-    for (const k of sqlite.prepare('SELECT id FROM tasks WHERE parent_id = ?').all(srcId) as { id: string }[]) {
-      cloneTree(k.id, newId);
+    for (const k of await store().prepare('SELECT id FROM tasks WHERE parent_id = ?').all<{ id: string }>(srcId)) {
+      await cloneTree(k.id, newId);
     }
     return newId;
   };
 
   // Atomic: a partway failure must not leave a half-built clone subtree.
-  const newId = sqlite.transaction(() => cloneTree(taskId, null))();
+  const newId = await store().transaction(() => cloneTree(taskId, null));
   const [task] = await db.select().from(tasks).where(eq(tasks.id, newId));
   writeAudit({ ownerId, actor: 'owner', action: 'recall', entity: `task:${newId}` });
   return { ok: true, task };
@@ -711,7 +715,7 @@ export async function skipRecurringInstance(ownerId: string, id: string): Promis
   // ownership here (mirrors recallTask) before it can mark another owner's instance
   // skipped / write an EXDATE onto their template. A cross-owner id → not_found (404),
   // exactly what a non-existent id already returned — the legit-owner path is unchanged.
-  if (!sqlite.prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId)) {
+  if (!(await store().prepare('SELECT 1 FROM tasks WHERE id = ? AND owner_id = ?').get(id, ownerId))) {
     return { ok: false, error: 'not_found' };
   }
   const res = await skipInstance(id);
@@ -760,11 +764,11 @@ export async function listTasks(
 }
 
 /** Total count for the `tasks` connection (same owner/status filter, no keyset). */
-export function countTasks(ownerId: string, status?: string): number {
+export async function countTasks(ownerId: string, status?: string): Promise<number> {
   const row = status
-    ? sqlite.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND status = ?').get(ownerId, status)
-    : sqlite.prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ?').get(ownerId);
-  return (row as { n: number }).n;
+    ? await store().prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ? AND status = ?').get<{ n: number }>(ownerId, status)
+    : await store().prepare('SELECT COUNT(*) AS n FROM tasks WHERE owner_id = ?').get<{ n: number }>(ownerId);
+  return row!.n;
 }
 
 /** One keyset page of a task's subtasks (owner-scoped: subtasks share the parent's
@@ -781,11 +785,11 @@ export async function listSubtasks(
 }
 
 /** Subtask count for the `subtasks` connection totalCount. */
-export function countSubtasks(ownerId: string, parentId: string): number {
-  const row = sqlite
+export async function countSubtasks(ownerId: string, parentId: string): Promise<number> {
+  const row = await store()
     .prepare('SELECT COUNT(*) AS n FROM tasks WHERE parent_id = ? AND owner_id = ?')
-    .get(parentId, ownerId);
-  return (row as { n: number }).n;
+    .get<{ n: number }>(parentId, ownerId);
+  return row!.n;
 }
 
 /** A task's blocker rows (task_dependencies.depends_on_id → task), owner-scoped: the
