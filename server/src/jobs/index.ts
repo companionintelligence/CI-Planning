@@ -373,7 +373,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // cron fans this out per owner, and each pass reads only that owner's log.
       // A cron/agent write, so it deliberately does NOT stamp owner attribution
       // (WHO rule, owner ruling 2026-07-16).
-      const r = calibrateTriality(currentOwnerId(), new Date());
+      const r = await calibrateTriality(currentOwnerId(), new Date());
       const label = r.slotsWritten > 0
         ? `${r.slotsWritten} slot(s) tuned from ${r.outcomeRows} outcome(s)`
         : `no slot cleared the ${r.floor}-outcome floor (${r.outcomeRows} outcome(s)) — defaults stand`;

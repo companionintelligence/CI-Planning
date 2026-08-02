@@ -467,7 +467,7 @@ describe('weights', () => {
       logLearnable({ outcome: 'staged', scores: { F: 1, H: 0, Q: 0.5 }, ageDays: 3 + i });
       logLearnable({ outcome: 'dismissed', scores: { F: 0, H: 1, Q: 0.5 }, ageDays: 3 + i });
     }
-    expect(calibrateTriality(OWNER, NOW).slotsWritten).toBe(1);
+    expect((await calibrateTriality(OWNER, NOW)).slotsWritten).toBe(1);
 
     const m = await trialityMetrics(OWNER, NOW, 30);
     expect(m.weights).toHaveLength(1);
@@ -491,7 +491,7 @@ describe('weights', () => {
     for (let i = 0; i < 19; i++) {
       logLearnable({ outcome: i % 2 ? 'staged' : 'dismissed', scores: { F: i % 2, H: 0.5, Q: 0.5 }, ageDays: 4 + i });
     }
-    calibrateTriality(OWNER, NOW);
+    await calibrateTriality(OWNER, NOW);
     expect((await trialityMetrics(OWNER, NOW, 30)).weights).not.toBeNull();
     sqlite.prepare(`DELETE FROM triality_weights WHERE owner_id = ?`).run(OWNER);
     expect((await trialityMetrics(OWNER, NOW, 30)).weights).toBeNull();
