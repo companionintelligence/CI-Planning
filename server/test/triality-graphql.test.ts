@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { parseConfidence } from '../src/services/triality-confidence.js';
@@ -214,6 +215,7 @@ describe('trialityFeedback parity', () => {
     expect(foreign.body.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
 
     // A landing stamp audits exactly once — REST/GraphQL identical (WHO rule).
+    await flushAudits();
     const audits = (
       sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log WHERE entity = ?`).get(`triality:${logId}`) as { c: number }
     ).c;

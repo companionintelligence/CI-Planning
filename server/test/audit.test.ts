@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { newId } from '../src/lib/ids.js';
@@ -14,7 +15,8 @@ import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
 
 const OWNER = SYSTEM_OWNER;
 
-function auditCount(action: string, entityLike: string): number {
+async function auditCount(action: string, entityLike: string): Promise<number> {
+  await flushAudits();
   return (
     sqlite
       .prepare(`SELECT COUNT(*) AS c FROM audit_log WHERE action = ? AND entity LIKE ?`)
@@ -22,7 +24,9 @@ function auditCount(action: string, entityLike: string): number {
   ).c;
 }
 
-function lastAudit(entityLike: string): { actor: string; action: string; entity: string } | undefined {
+async function lastAudit(entityLike: string): Promise<{ actor: string; action: string; entity: string } | undefined> {
+  await flushAudits();
+  await flushAudits();
   return sqlite
     .prepare(`SELECT actor, action, entity FROM audit_log WHERE entity LIKE ? ORDER BY at DESC LIMIT 1`)
     .get(entityLike) as { actor: string; action: string; entity: string } | undefined;
@@ -73,34 +77,34 @@ beforeEach(() => {
 
 describe('tasks route', () => {
   it('writes audit row on POST /api/tasks (create)', async () => {
-    const before = auditCount('create', 'task:%');
+    const before = await auditCount('create', 'task:%');
     const { status } = await api(srv.url, '/api/tasks', {
       method: 'POST',
       json: { title: 'Audit test task' },
     });
     expect(status).toBe(201);
-    expect(auditCount('create', 'task:%')).toBe(before + 1);
-    const row = lastAudit('task:%');
+    expect(await auditCount('create', 'task:%')).toBe(before + 1);
+    const row = await lastAudit('task:%');
     expect(row?.actor).toBe('owner');
     expect(row?.action).toBe('create');
   });
 
   it('writes audit row on PATCH /api/tasks/:id (update)', async () => {
     const id = insertTask('Updatable');
-    const before = auditCount('update', `task:${id}`);
+    const before = await auditCount('update', `task:${id}`);
     const { status } = await api(srv.url, `/api/tasks/${id}`, {
       method: 'PATCH',
       json: { title: 'Updated' },
     });
     expect(status).toBe(200);
-    expect(auditCount('update', `task:${id}`)).toBe(before + 1);
+    expect(await auditCount('update', `task:${id}`)).toBe(before + 1);
   });
 
   it('writes audit row on DELETE /api/tasks/:id (soft-delete)', async () => {
     const id = insertTask('To delete');
     await api(srv.url, `/api/tasks/${id}`, { method: 'DELETE' });
-    expect(auditCount('delete', `task:${id}`)).toBeGreaterThanOrEqual(1);
-    const row = lastAudit(`task:${id}`);
+    expect(await auditCount('delete', `task:${id}`)).toBeGreaterThanOrEqual(1);
+    const row = await lastAudit(`task:${id}`);
     expect(row?.action).toBe('delete');
   });
 });
@@ -109,13 +113,13 @@ describe('tasks route', () => {
 
 describe('blocks route', () => {
   it('writes audit row on POST /api/blocks (create)', async () => {
-    const before = auditCount('create', 'block:%');
+    const before = await auditCount('create', 'block:%');
     const { status } = await api(srv.url, '/api/blocks', {
       method: 'POST',
       json: { title: 'Test block', start_at: '2026-06-22T09:00:00Z', end_at: '2026-06-22T10:00:00Z' },
     });
     expect(status).toBe(201);
-    expect(auditCount('create', 'block:%')).toBe(before + 1);
+    expect(await auditCount('create', 'block:%')).toBe(before + 1);
   });
 
   it('writes audit row on PATCH /api/blocks/:id (update)', async () => {
@@ -125,12 +129,12 @@ describe('blocks route', () => {
       json: { title: 'Block to patch', start_at: '2026-06-22T09:00:00Z', end_at: '2026-06-22T10:00:00Z' },
     });
     const blockId = created.block.id;
-    const before = auditCount('update', `block:${blockId}`);
+    const before = await auditCount('update', `block:${blockId}`);
     await api(srv.url, `/api/blocks/${blockId}`, {
       method: 'PATCH',
       json: { title: 'Patched block' },
     });
-    expect(auditCount('update', `block:${blockId}`)).toBe(before + 1);
+    expect(await auditCount('update', `block:${blockId}`)).toBe(before + 1);
   });
 
   it('writes audit row on DELETE /api/blocks/:id', async () => {
@@ -140,7 +144,7 @@ describe('blocks route', () => {
     });
     const blockId = created.block.id;
     await api(srv.url, `/api/blocks/${blockId}`, { method: 'DELETE' });
-    expect(auditCount('delete', `block:${blockId}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('delete', `block:${blockId}`)).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -164,13 +168,13 @@ describe('possibles route', () => {
       json: {},
     });
     expect(status).toBe(201);
-    expect(auditCount('promote', `possible:${id}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('promote', `possible:${id}`)).toBeGreaterThanOrEqual(1);
   });
 
   it('writes audit row on POST /api/possible-tasks/:id/dismiss', async () => {
     const id = insertPossible();
     await api(srv.url, `/api/possible-tasks/${id}/dismiss`, { method: 'POST', json: {} });
-    expect(auditCount('dismiss', `possible:${id}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('dismiss', `possible:${id}`)).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -178,16 +182,16 @@ describe('possibles route', () => {
 
 describe('tags route', () => {
   it('writes audit row on POST /api/tags (create)', async () => {
-    const before = auditCount('create', 'tag:%');
+    const before = await auditCount('create', 'tag:%');
     await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'audit-tag' } });
-    expect(auditCount('create', 'tag:%')).toBe(before + 1);
+    expect(await auditCount('create', 'tag:%')).toBe(before + 1);
   });
 
   it('writes audit row on PATCH /api/tags/:id (update)', async () => {
     const { body } = await api(srv.url, '/api/tags', { method: 'POST', json: { name: 'mutable-tag' } });
     const id = body.tag.id;
     await api(srv.url, `/api/tags/${id}`, { method: 'PATCH', json: { muted: true } });
-    expect(auditCount('update', `tag:${id}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('update', `tag:${id}`)).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -195,10 +199,10 @@ describe('tags route', () => {
 
 describe('prefs route', () => {
   it('writes audit row on PATCH /api/prefs (update)', async () => {
-    const before = auditCount('update', 'prefs:owner');
+    const before = await auditCount('update', 'prefs:owner');
     await api(srv.url, '/api/prefs', { method: 'PATCH', json: { workday_start: '08:00' } });
-    expect(auditCount('update', 'prefs:owner')).toBe(before + 1);
-    const row = lastAudit('prefs:owner');
+    expect(await auditCount('update', 'prefs:owner')).toBe(before + 1);
+    const row = await lastAudit('prefs:owner');
     expect(row?.actor).toBe('owner');
     expect(row?.action).toBe('update');
     expect(row?.entity).toBe('prefs:owner');
@@ -209,10 +213,10 @@ describe('prefs route', () => {
 
 describe('schedule route', () => {
   it('writes audit row on POST /api/schedule/run', async () => {
-    const before = auditCount('run', 'schedule:%');
+    const before = await auditCount('run', 'schedule:%');
     await api(srv.url, '/api/schedule/run', { method: 'POST', json: { date: '2026-06-22' } });
-    expect(auditCount('run', 'schedule:%')).toBe(before + 1);
-    const row = lastAudit('schedule:%');
+    expect(await auditCount('run', 'schedule:%')).toBe(before + 1);
+    const row = await lastAudit('schedule:%');
     expect(row?.entity).toBe('schedule:2026-06-22');
   });
 });
@@ -222,13 +226,13 @@ describe('schedule route', () => {
 describe('notifications route', () => {
   it('writes audit row on POST /api/reminders (create)', async () => {
     const taskId = insertTask('Reminder task');
-    const before = auditCount('create', 'reminder:%');
+    const before = await auditCount('create', 'reminder:%');
     await api(srv.url, '/api/reminders', {
       method: 'POST',
       json: { taskId, fireAt: '2999-01-01T10:00:00.000Z' },
     });
-    expect(auditCount('create', 'reminder:%')).toBe(before + 1);
-    const row = lastAudit('reminder:%');
+    expect(await auditCount('create', 'reminder:%')).toBe(before + 1);
+    const row = await lastAudit('reminder:%');
     expect(row?.actor).toBe('owner');
     expect(row?.action).toBe('create');
   });
@@ -241,7 +245,7 @@ describe('notifications route', () => {
     });
     const reminderId = created.reminder.id;
     await api(srv.url, `/api/reminders/${reminderId}/snooze`, { method: 'POST', json: { minutes: 10 } });
-    expect(auditCount('snooze', `reminder:${reminderId}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('snooze', `reminder:${reminderId}`)).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -255,12 +259,12 @@ describe('pattern-prefs route', () => {
         .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), 'test-routine', 'direction', 0, ?) RETURNING id`)
         .get(OWNER) as { id: string }
     ).id;
-    const before = auditCount('update', `pattern-prefs:${tagId}`);
+    const before = await auditCount('update', `pattern-prefs:${tagId}`);
     await api(srv.url, `/api/pattern-prefs/${tagId}`, {
       method: 'PUT',
       json: { auto_fill: true },
     });
-    expect(auditCount('update', `pattern-prefs:${tagId}`)).toBe(before + 1);
+    expect(await auditCount('update', `pattern-prefs:${tagId}`)).toBe(before + 1);
   });
 });
 
@@ -273,12 +277,12 @@ describe('pattern-blocks route', () => {
         .prepare(`INSERT INTO tags (id, name, kind, is_base, owner_id) VALUES (uuid7(), 'test-pattern-block', 'direction', 0, ?) RETURNING id`)
         .get(OWNER) as { id: string }
     ).id;
-    const before = auditCount('update', `pattern-block:${tagId}:workday`);
+    const before = await auditCount('update', `pattern-block:${tagId}:workday`);
     await api(srv.url, `/api/pattern-blocks/${tagId}/workday`, {
       method: 'PUT',
       json: { ranges: [{ start_time: '09:00', end_time: '17:00' }] },
     });
-    expect(auditCount('update', `pattern-block:${tagId}:workday`)).toBe(before + 1);
+    expect(await auditCount('update', `pattern-block:${tagId}:workday`)).toBe(before + 1);
   });
 });
 
@@ -295,14 +299,14 @@ describe('patterns route', () => {
 
   it('writes audit row on POST /api/patterns (create)', async () => {
     const typeId = routineTypeId();
-    const before = auditCount('create', 'routine:%');
+    const before = await auditCount('create', 'routine:%');
     const { status } = await api(srv.url, '/api/patterns', {
       method: 'POST',
       json: { name: 'My Routine', type_id: typeId },
     });
     expect(status).toBe(201);
-    expect(auditCount('create', 'routine:%')).toBe(before + 1);
-    const row = lastAudit('routine:%');
+    expect(await auditCount('create', 'routine:%')).toBe(before + 1);
+    const row = await lastAudit('routine:%');
     expect(row?.actor).toBe('owner');
     expect(row?.action).toBe('create');
   });
@@ -318,7 +322,7 @@ describe('patterns route', () => {
       method: 'PATCH',
       json: { name: 'Updated Routine' },
     });
-    expect(auditCount('update', `routine:${patternId}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('update', `routine:${patternId}`)).toBeGreaterThanOrEqual(1);
   });
 
   it('writes audit row on DELETE /api/patterns/:id', async () => {
@@ -329,7 +333,7 @@ describe('patterns route', () => {
     });
     const patternId = created.pattern.id;
     await api(srv.url, `/api/patterns/${patternId}`, { method: 'DELETE' });
-    expect(auditCount('delete', `routine:${patternId}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('delete', `routine:${patternId}`)).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -338,19 +342,19 @@ describe('patterns route', () => {
 describe('flight-plan route', () => {
   it('writes audit row on POST /api/flight-plan (stage)', async () => {
     const taskId = insertTask('Flight plan task');
-    const before = auditCount('stage', 'flight-plan:%');
+    const before = await auditCount('stage', 'flight-plan:%');
     const { status } = await api(srv.url, '/api/flight-plan', {
       method: 'POST',
       json: { task_id: taskId },
     });
     expect(status).toBe(201);
-    expect(auditCount('stage', 'flight-plan:%')).toBe(before + 1);
+    expect(await auditCount('stage', 'flight-plan:%')).toBe(before + 1);
   });
 
   it('writes audit row on POST /api/flight-plan/reset', async () => {
-    const before = auditCount('reset', 'flight-plan:reset');
+    const before = await auditCount('reset', 'flight-plan:reset');
     await api(srv.url, '/api/flight-plan/reset', { method: 'POST', json: {} });
-    expect(auditCount('reset', 'flight-plan:reset')).toBe(before + 1);
+    expect(await auditCount('reset', 'flight-plan:reset')).toBe(before + 1);
   });
 });
 
@@ -358,14 +362,14 @@ describe('flight-plan route', () => {
 
 describe('block-templates route', () => {
   it('writes audit row on POST /api/block-templates (create)', async () => {
-    const before = auditCount('create', 'block-template:%');
+    const before = await auditCount('create', 'block-template:%');
     const { status } = await api(srv.url, '/api/block-templates', {
       method: 'POST',
       json: { name: 'Morning Plan', default_minutes: 90 },
     });
     expect(status).toBe(201);
-    expect(auditCount('create', 'block-template:%')).toBe(before + 1);
-    const row = lastAudit('block-template:%');
+    expect(await auditCount('create', 'block-template:%')).toBe(before + 1);
+    const row = await lastAudit('block-template:%');
     expect(row?.actor).toBe('owner');
     expect(row?.action).toBe('create');
   });
@@ -377,7 +381,7 @@ describe('block-templates route', () => {
     });
     const templateId = created.block_template.id;
     await api(srv.url, `/api/block-templates/${templateId}`, { method: 'DELETE' });
-    expect(auditCount('delete', `block-template:${templateId}`)).toBeGreaterThanOrEqual(1);
+    expect(await auditCount('delete', `block-template:${templateId}`)).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -389,6 +393,7 @@ describe('audit actor', () => {
       method: 'POST',
       json: { title: 'Actor check task' },
     });
+    await flushAudits();
     const rows = sqlite
       .prepare(`SELECT DISTINCT actor FROM audit_log`)
       .all() as { actor: string }[];

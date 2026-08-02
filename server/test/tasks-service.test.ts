@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import {
@@ -72,6 +73,7 @@ describe('createTask', () => {
       .all(res.task.id) as { name: string }[]).map((r) => r.name);
     expect(tagNames).toEqual(['svc-tag']);
 
+    await flushAudits();
     const audit = sqlite
       .prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE action = 'create' AND entity = ?`)
       .get(`task:${res.task.id}`) as { n: number };

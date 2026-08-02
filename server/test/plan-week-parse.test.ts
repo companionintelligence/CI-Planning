@@ -8,6 +8,7 @@
  * /api/plan/instruct.
  */
 import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 
 let ollamaUp = true;
 const parseResp = vi.fn<() => unknown>(() => ({ pins: [], hints: [] }));
@@ -38,7 +39,8 @@ function instructBlocks(): unknown[] {
 function planHints(): unknown[] {
   return sqlite.prepare(`SELECT id FROM plan_hints WHERE date = ?`).all(DATE);
 }
-function auditRows(): unknown[] {
+async function auditRows(): Promise<unknown[]> {
+  await flushAudits();
   return sqlite.prepare(`SELECT id FROM audit_log WHERE entity LIKE 'plan:%'`).all();
 }
 
@@ -75,7 +77,7 @@ describe('POST /api/plan-week/parse (T8 — parse-only)', () => {
 
     expect(instructBlocks()).toHaveLength(0);
     expect(planHints()).toHaveLength(0);
-    expect(auditRows()).toHaveLength(0);
+    expect(await auditRows()).toHaveLength(0);
   });
 
   it('defaults date to today when omitted', async () => {
