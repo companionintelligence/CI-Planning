@@ -149,6 +149,11 @@ export interface Config {
   /** Postgres connection string (schema port). Absent ⇒ the SQLite store is used —
    *  both backends coexist while the 386 raw-SQL call sites migrate file by file. */
   databaseUrl?: string;
+  /** Which backend db/store.ts serves. Default 'sqlite'. Flipping this to 'postgres'
+   *  IS the cutover — it is only correct once every call site uses the facade, so it
+   *  stays opt-in. Requires databaseUrl; boot fails closed otherwise rather than
+   *  silently serving a store the data is not in. */
+  storeBackend: 'sqlite' | 'postgres';
   ollamaUrl: string;
   ollamaSmallModel: string;
   ollamaMediumModel: string;
@@ -182,6 +187,7 @@ const packageRoot = join(_dir, '..', '..'); // server/src/lib → server/src →
 
 const dbPath = process.env.DB_PATH ?? join(defaultDataDir, 'companion.db');
 const databaseUrl = process.env.DATABASE_URL;
+const storeBackend = process.env.STORE_BACKEND === 'postgres' ? 'postgres' as const : 'sqlite' as const;
 // Ensure the directory containing the DB exists (better-sqlite3 won't create it).
 mkdirSync(dirname(dbPath), { recursive: true });
 
@@ -253,6 +259,7 @@ export const config: Config = {
   trustProxy: process.env.TRUST_PROXY === 'true',
   dbPath,
   databaseUrl,
+  storeBackend,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
   // Last-resort names only. These tags are NOT installed on most machines, so when a
   // tier is unpinned lib/models.ts auto-selects from what the device actually has and
