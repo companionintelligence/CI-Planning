@@ -274,7 +274,7 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
   if (input.categories !== undefined)
     setEntityCategories('task', template.id, categoryIdsForOwner(input.categories, ownerId));
   // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
-  if (sw?.subtype === 'habit') ensureHabitPattern(template.id, owner, template.title);
+  if (sw?.subtype === 'habit') await ensureHabitPattern(template.id, owner, template.title);
   const generated = generateRecurrences();
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${template.id}` });
@@ -643,7 +643,7 @@ export async function promoteToHabit(ownerId: string, id: string): Promise<Promo
   // carrying the old subtype would win LWW and silently demote the habit — same
   // hole as the soft-delete's status write above.
   stampRow(sqlite, 'task', id, ['subtype']);
-  ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
+  await ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
   writeAudit({ ownerId, actor: 'owner', action: 'promote', entity: `task:${id}` });
   return { ok: true, task };
 }
