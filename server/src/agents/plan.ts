@@ -201,7 +201,7 @@ export async function loadMemoryRelated(
   tasks: PlanTask[],
   deps: { graphData: typeof graphData } = { graphData },
 ): Promise<Set<string>> {
-  if (!(await memoryPullEnabled(owner)) || !memoryConnectorAvailable(owner)) return new Set();
+  if (!(await memoryPullEnabled(owner)) || !(await memoryConnectorAvailable(owner))) return new Set();
   const { start, end } = utcDayBounds(date, await ownerTimezone(owner));
   try {
     const graph = await deps.graphData(owner, { from: start, to: end });

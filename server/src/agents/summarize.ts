@@ -225,7 +225,7 @@ function eventLine(node: MemoryNode, startISO: string, people: string[], tz: str
  * back to a trimmed graphContext when there are no dated nodes. Never throws.
  */
 export async function memoryBriefExcerpt(owner: string, date: string): Promise<string> {
-  if (!(await pullEnabled(owner)) || !memoryConnectorAvailable(owner)) return '';
+  if (!(await pullEnabled(owner)) || !(await memoryConnectorAvailable(owner))) return '';
   try {
     const tzRow = await store()
       .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
@@ -239,7 +239,7 @@ export async function memoryBriefExcerpt(owner: string, date: string): Promise<s
     // this used to hardcode), so a late-evening event that rolls just over the local-
     // midnight boundary is still caught for the day's brief. Shares the setting with the
     // suggest agent — one knob moves every memory pull surface together.
-    const to = new Date(Date.parse(start) + memoryWindowMs(owner)).toISOString();
+    const to = new Date(Date.parse(start) + (await memoryWindowMs(owner))).toISOString();
     const graph = await graphData(owner, { from: start, to });
 
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));

@@ -2,7 +2,7 @@
 
 > ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–4 COMPLETE, wave 5 at 10 of 17. Suite verified after every one
+> **DONE — waves 0–4 COMPLETE, wave 5 at 12 of 17. Suite verified after every one
 > of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
 > `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
 > test, which runs once per backend).**
@@ -23,8 +23,8 @@
 > which is the dominant formatting in this codebase. The figure at the time of that
 > correction was **261 statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
 > `db/store.ts`) and one is `agents/groom.ts`'s sqlite-vec residue (below), so
-> **23 real files remained**, not 15. (Now **21 real files / 221 statements** —
-> patterns-place and calibration have since landed.)
+> **23 real files remained**, not 15. (Now **19 real files / 206 statements** —
+> patterns-place, calibration and the memory pair have since landed.)
 >
 > **The ORIGINAL wave table at the bottom of this document was right all along.**
 > Its wave 6 / 7 / 8 totals (73 / 117 / 4 statements) match a correct count
@@ -61,18 +61,30 @@
 >
 > | Wave | Files left | Stmts | Which |
 > |---|---|---|---|
-> | 5 | 7 | 27 | connectors/memory (9), services/memory (6), render-copy (3), connectors/base (3), connectors/index (2), mcp/client (2), flags (2) |
+> | 5 | 5 | 12 | render-copy (3), connectors/base (3), connectors/index (2), mcp/client (2), flags (2) |
 > | 6 | 7 | 73 | block-task-sync (21), day-types (17), reminders (14), sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4) |
 > | 7 | 6 | 117 | tags (60), autoplan (47), category-prefs (4), crypto/index (4), scheduler (1), models (1) |
 > | 8 | 1 | 4 | routes/sse |
-> | — | 21 | **221** | + 8 seam + 5 groom = 234 total |
+> | — | 19 | **206** | + 8 seam + 5 groom = 219 total |
 >
-> - **Wave 5 (7 files left of 17)** — ✓ motivation, ✓ series-scope,
+> - **Wave 5 (5 files left of 17)** — ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
 >   commit as required), ✓ task-close, ✓ **objectives**, ✓ **patterns-place**,
->   ✓ **calibration**. Remaining: the seven in the table above —
->   connectors/memory, services/memory, and the five the single-line grep wrongly
->   cleared (render-copy, connectors/base, connectors/index, mcp/client, flags).
+>   ✓ **calibration**, ✓ **the memory pair** (connectors/memory + services/memory,
+>   one commit — services/memory is the only importer of the connector's DB-backed
+>   exports, so splitting them would have left an intermediate broken state).
+>   Remaining: the five the single-line grep wrongly cleared — render-copy,
+>   connectors/base, connectors/index, mcp/client, flags. All small (2–3 statements
+>   each); the wave closes with them.
+>
+>   **The memory pair's hazard was boolean gates.** `memoryConnectorAvailable`,
+>   `pushConnectorAvailable` and the `memoryCreds`-derived probes are all consumed as
+>   `if (!f(owner)) return <degraded>`. `!somePromise` is ALWAYS false, so every one
+>   of those guards silently STOPS FIRING — the suggest agent, the brief and the push
+>   job would each run on against creds that do not resolve, and tsc says nothing
+>   because `!x` is legal for any `x`. Four sites (memory-suggest, plan, summarize,
+>   syncToMemory). Grep for `if (!` against a ported file's exports before trusting
+>   a green suite.
 >
 >   **`engine/patterns-place.ts` is DONE** (part 26). 13 statements, not the 5 the
 >   single-line grep showed. The debt from part 8 is PAID: `ensurePatternsForRange`

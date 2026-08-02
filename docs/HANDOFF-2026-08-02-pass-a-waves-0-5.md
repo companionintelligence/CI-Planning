@@ -5,10 +5,10 @@
 > - **Branch `feat/postgres-cutover` is clean and green.** Nothing is half-done.
 >   Suite: **2634 passed / 21 skipped** (2667 with `PG_TEST_URL`), verified after
 >   every one of the 25 slices — never once red.
-> - **Waves 0–4 are COMPLETE. Wave 5 is at 8 of 17** (not 11 — the wrongly-cleared
+> - **Waves 0–4 are COMPLETE. Wave 5 is at 12 of 17** (not 11 — the wrongly-cleared
 >   files below are wave-5 work). The call-site migration went
 >   from ~355 to ~800 statements ported.
-> - **23 real files remain** — NOT the 15/16 earlier revisions of this box claimed.
+> - **19 real files remain** — NOT the 15/16 earlier revisions of this box claimed.
 >   That figure came from a single-line grep that cannot see `sqlite\n  .prepare(`,
 >   the dominant formatting here. Real total: **261 statements across 27 files**.
 >   §7 has the corrected breakdown and the count that is actually safe to run.
@@ -17,10 +17,11 @@
 >   all three were defects the port itself would have introduced.
 > - **The app still runs on SQLite.** Nothing about the running system changed.
 >   `STORE_BACKEND` is still opt-in and inert.
-> - **`services/objectives.ts` is DONE** (part 25) — this box previously said
->   "start here"; it is finished, do not redo it. §6 records what the port
->   decided. **Start here: `engine/patterns-place.ts`**, then the
->   `connectors/memory` + `services/memory` pair, which close wave 5.
+> - **Parts 25–28 are DONE**: objectives, patterns-place, calibration, and the
+>   memory pair. Do not redo them. §6 records what those ports decided.
+>   **Start here: the five small files that close wave 5** — render-copy (3),
+>   connectors/base (3), connectors/index (2), mcp/client (2), flags (2). All were
+>   wrongly cleared by the single-line grep; none exceeds three statements.
 > - **The trap catalogue lives in `docs/passA-worklist.md`, not here.** Read it
 >   before your first edit. This document is the narrative; that one is the
 >   checklist you work from.

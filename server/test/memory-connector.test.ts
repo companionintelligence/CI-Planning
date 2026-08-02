@@ -77,54 +77,54 @@ beforeEach(() => {
 });
 
 describe('creds resolution chain', () => {
-  it('resolves to null when neither a settings row nor env is present', () => {
-    expect(memoryCreds(OWNER)).toBeNull();
-    expect(memoryConnectorAvailable(OWNER)).toBe(false);
+  it('resolves to null when neither a settings row nor env is present', async () => {
+    expect(await memoryCreds(OWNER)).toBeNull();
+    expect(await memoryConnectorAvailable(OWNER)).toBe(false);
   });
 
-  it('falls back to env (CI_SERVER_URL / CI_SERVER_API_KEY)', () => {
+  it('falls back to env (CI_SERVER_URL / CI_SERVER_API_KEY)', async () => {
     process.env.CI_SERVER_URL = 'http://ci.local:3000';
     process.env.CI_SERVER_API_KEY = 'env-key';
-    expect(memoryCreds(OWNER)).toEqual({ url: 'http://ci.local:3000', apiKey: 'env-key', source: 'env', authKind: null });
-    expect(memoryConnectorAvailable(OWNER)).toBe(true);
+    expect(await memoryCreds(OWNER)).toEqual({ url: 'http://ci.local:3000', apiKey: 'env-key', source: 'env', authKind: null });
+    expect(await memoryConnectorAvailable(OWNER)).toBe(true);
   });
 
-  it('honors the env fallback in single-tenant modes but IGNORES it under multi-tenant SSO', () => {
+  it('honors the env fallback in single-tenant modes but IGNORES it under multi-tenant SSO', async () => {
     process.env.CI_SERVER_URL = 'http://ci.local:3000';
     process.env.CI_SERVER_API_KEY = 'env-key';
     const saved = { mode: config.auth.mode, disableOidc: config.auth.disableOidc };
     try {
       // Single-tenant modes: standalone and sso+DISABLE_OIDC (local login) keep the fallback.
       config.auth.mode = 'standalone';
-      expect(memoryCreds(OWNER)?.source).toBe('env');
+      expect((await memoryCreds(OWNER))?.source).toBe('env');
       config.auth.mode = 'sso';
       config.auth.disableOidc = true;
-      expect(memoryCreds(OWNER)?.source).toBe('env');
+      expect((await memoryCreds(OWNER))?.source).toBe('env');
 
       // Multi-tenant SSO: one shared env key would map every owner onto ONE
       // CI-Server user (ApiKeyStrategy derives userId from the key) — fallback off.
       config.auth.disableOidc = false;
-      expect(memoryCreds(OWNER)).toBeNull();
-      expect(memoryConnectorAvailable(OWNER)).toBe(false);
+      expect(await memoryCreds(OWNER)).toBeNull();
+      expect(await memoryConnectorAvailable(OWNER)).toBe(false);
 
       // Per-owner settings rows are unaffected by the gate.
-      storeMemoryConnection(OWNER, { url: 'https://settings.local:8443', apiKey: 'k' });
-      expect(memoryCreds(OWNER)).toMatchObject({ url: 'https://settings.local:8443', source: 'settings' });
+      await storeMemoryConnection(OWNER, { url: 'https://settings.local:8443', apiKey: 'k' });
+      expect(await memoryCreds(OWNER)).toMatchObject({ url: 'https://settings.local:8443', source: 'settings' });
     } finally {
       config.auth.mode = saved.mode;
       config.auth.disableOidc = saved.disableOidc;
     }
   });
 
-  it('a stored settings connection wins over env', () => {
+  it('a stored settings connection wins over env', async () => {
     process.env.CI_SERVER_URL = 'http://env.local:3000';
-    storeMemoryConnection(OWNER, { url: 'https://settings.local:8443', apiKey: 'settings-key' });
-    const creds = memoryCreds(OWNER);
+    await storeMemoryConnection(OWNER, { url: 'https://settings.local:8443', apiKey: 'settings-key' });
+    const creds = await memoryCreds(OWNER);
     expect(creds).toMatchObject({ url: 'https://settings.local:8443', apiKey: 'settings-key', source: 'settings' });
   });
 
-  it('stores the creds sealed — plaintext never appears in the row', () => {
-    storeMemoryConnection(OWNER, { url: 'https://settings.local:8443', apiKey: 'super-secret-key' });
+  it('stores the creds sealed — plaintext never appears in the row', async () => {
+    await storeMemoryConnection(OWNER, { url: 'https://settings.local:8443', apiKey: 'super-secret-key' });
     const row = sqlite
       .prepare(`SELECT account, iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ?`)
       .get(OWNER, MEMORY_PROVIDER) as { account: string; iv: string; auth_tag: string; ciphertext: string };
@@ -133,16 +133,16 @@ describe('creds resolution chain', () => {
     expect(row.ciphertext).not.toContain('settings.local');
   });
 
-  it('reconnecting replaces the previous row (one logical connection per owner)', () => {
-    storeMemoryConnection(OWNER, { url: 'http://a.local:3000', apiKey: 'k1' });
-    storeMemoryConnection(OWNER, { url: 'http://b.local:3000', apiKey: 'k2' });
+  it('reconnecting replaces the previous row (one logical connection per owner)', async () => {
+    await storeMemoryConnection(OWNER, { url: 'http://a.local:3000', apiKey: 'k1' });
+    await storeMemoryConnection(OWNER, { url: 'http://b.local:3000', apiKey: 'k2' });
     const rows = sqlite
       .prepare(`SELECT account FROM connection_tokens WHERE owner_id = ? AND provider = ?`)
       .all(OWNER, MEMORY_PROVIDER) as { account: string }[];
     expect(rows).toEqual([{ account: 'b.local:3000' }]);
-    expect(memoryCreds(OWNER)?.url).toBe('http://b.local:3000');
-    expect(deleteMemoryConnection(OWNER)).toBe(1);
-    expect(memoryCreds(OWNER)).toBeNull();
+    expect((await memoryCreds(OWNER))?.url).toBe('http://b.local:3000');
+    expect(await deleteMemoryConnection(OWNER)).toBe(1);
+    expect(await memoryCreds(OWNER)).toBeNull();
   });
 });
 
@@ -289,7 +289,7 @@ describe('routes', () => {
       const r = await api(srv.url, '/api/memory/connect', { method: 'POST', json: { url, api_key: 'k' } });
       expect(r.status).toBe(422);
     }
-    expect(memoryCreds(OWNER)).toBeNull();
+    expect(await memoryCreds(OWNER)).toBeNull();
   });
 
   it('POST /api/memory/connect stores the connection and stamps memory_account; disconnect clears both', async () => {
@@ -308,7 +308,7 @@ describe('routes', () => {
     expect(disc.status).toBe(200);
     expect(disc.body.pull).toMatchObject({ available: false, source: null });
     expect(disc.body.connected).toBe(false);
-    expect(memoryCreds(OWNER)).toBeNull();
+    expect(await memoryCreds(OWNER)).toBeNull();
   });
 
   it('memory_pull_enabled round-trips through PATCH /api/prefs (never raw SQL)', async () => {
@@ -326,8 +326,8 @@ describe('routes', () => {
     expect(off.body.prefs.memory_pull_enabled).toBe(false);
   });
 
-  it('memoryStatus keeps the legacy push fields byte-compatible when off', () => {
-    const s = memoryStatus(OWNER);
+  it('memoryStatus keeps the legacy push fields byte-compatible when off', async () => {
+    const s = await memoryStatus(OWNER);
     expect(s).toMatchObject({ enabled: false, connected: false, account: null, lastSyncedAt: null });
     expect(s.scopes).toEqual({ completed: true, habits: true, reflections: true });
   });

@@ -64,15 +64,15 @@ describe('model resolution', () => {
 });
 
 describe('memory service', () => {
-  it('defaults: off, not connected, connector unavailable, scopes on', () => {
-    const s = memoryStatus(OWNER);
+  it('defaults: off, not connected, connector unavailable, scopes on', async () => {
+    const s = await memoryStatus(OWNER);
     expect(s).toMatchObject({ enabled: false, connected: false, available: false });
     expect(s.scopes).toEqual({ completed: true, habits: true, reflections: true });
   });
 
-  it('reflects enabled + account + a narrowed scope', () => {
+  it('reflects enabled + account + a narrowed scope', async () => {
     setPrefs({ memory_sync_enabled: 1, memory_account: 'liam@x.io', memory_sync_reflections: 0 });
-    const s = memoryStatus(OWNER);
+    const s = await memoryStatus(OWNER);
     expect(s).toMatchObject({ enabled: true, connected: true, account: 'liam@x.io' });
     expect(s.scopes.reflections).toBe(false);
   });
