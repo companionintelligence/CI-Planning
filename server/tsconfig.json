@@ -3,7 +3,16 @@
   "compilerOptions": {
     "noEmit": true,
     "types": ["node"],
-    "lib": ["ES2023", "DOM"]
+    "lib": ["ES2023", "DOM"],
+    // TypeORM's decorators are the LEGACY (pre-stage-3) kind, which TS only accepts
+    // under this flag; without it every @Entity/@Column fails to typecheck. Scoped to
+    // the server package, and safe because the codebase used no decorators of its own
+    // before the generated entities — so nothing existing changes semantics.
+    "experimentalDecorators": true,
+    // TypeORM reads `design:type` at runtime to infer a column's type when the
+    // decorator does not state one. The generated entities always state `type`
+    // explicitly, so this is belt-and-braces for hand-written entities added later.
+    "emitDecoratorMetadata": true
   },
   "include": ["src/**/*"]
 }

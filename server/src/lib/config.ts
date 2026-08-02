@@ -146,6 +146,9 @@ export interface Config {
   // Default false — safe when the app is directly reachable (don't trust spoofable XFF).
   trustProxy: boolean;
   dbPath: string;
+  /** Postgres connection string (schema port). Absent ⇒ the SQLite store is used —
+   *  both backends coexist while the 386 raw-SQL call sites migrate file by file. */
+  databaseUrl?: string;
   ollamaUrl: string;
   ollamaSmallModel: string;
   ollamaMediumModel: string;
@@ -178,6 +181,7 @@ const _dir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(_dir, '..', '..'); // server/src/lib → server/src → server
 
 const dbPath = process.env.DB_PATH ?? join(defaultDataDir, 'companion.db');
+const databaseUrl = process.env.DATABASE_URL;
 // Ensure the directory containing the DB exists (better-sqlite3 won't create it).
 mkdirSync(dirname(dbPath), { recursive: true });
 
@@ -248,6 +252,7 @@ export const config: Config = {
   port: Number(process.env.PORT ?? 3848),
   trustProxy: process.env.TRUST_PROXY === 'true',
   dbPath,
+  databaseUrl,
   ollamaUrl: process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434',
   // Last-resort names only. These tags are NOT installed on most machines, so when a
   // tier is unpinned lib/models.ts auto-selects from what the device actually has and
