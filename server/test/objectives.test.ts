@@ -621,7 +621,7 @@ describe('subtree walks stay inside the owner (corrupt cross-owner parent_id)', 
     const theirs = corruptChildOf(mine);
     linkTask(theirs, insertOtherOwnerTask('Owner B private task'));
 
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
 
     expect(fpRows()).toHaveLength(0);
   });
@@ -858,7 +858,7 @@ describe('advance_objectives', () => {
     const tId = insertTask('Write first draft');
     linkTask(oId, tId);
 
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
 
     const rows = fpRows();
     expect(rows).toHaveLength(1);
@@ -877,11 +877,11 @@ describe('advance_objectives', () => {
     linkTask(oId, tId);
 
     await api(srv.url, `/api/objectives/${oId}`, { method: 'DELETE' }); // archives
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
     expect(fpRows()).toHaveLength(0);
 
     await api(srv.url, `/api/objectives/${oId}/restore`, { method: 'POST' });
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
     expect(fpRows().map((r) => r.task_id)).toEqual([tId]); // the cadence survived the archive
   });
 
@@ -894,7 +894,7 @@ describe('advance_objectives', () => {
     linkTask(proj, tId);
 
     await api(srv.url, `/api/objectives/${proj}`, { method: 'DELETE' });
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
 
     expect(fpRows()).toHaveLength(0);
   });
@@ -910,7 +910,7 @@ describe('advance_objectives', () => {
        VALUES (?, ?, 'pattern', 'some-pattern-id', 1, 0, ?)`
     ).run(SYSTEM_OWNER, tId, NOW);
 
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
 
     const rows = fpRows();
     // Still exactly 1 row — the UPSERT repointed, not duplicated.
@@ -926,7 +926,7 @@ describe('advance_objectives', () => {
     const tId = insertTask('Do work');
     linkTask(oId, tId);
 
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
 
     expect(fpRows()).toHaveLength(0); // skipped due to anti-thrash gate
   });
@@ -935,7 +935,7 @@ describe('advance_objectives', () => {
     const oId = insertObjective({ title: 'Paused', cadence: 'weekly', status: 'paused', last_advanced_at: LONG_AGO });
     const tId = insertTask('Paused task');
     linkTask(oId, tId);
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
     expect(fpRows()).toHaveLength(0);
   });
 
@@ -943,7 +943,7 @@ describe('advance_objectives', () => {
     const oId = insertObjective({ title: 'Done', cadence: 'weekly', status: 'done', last_advanced_at: LONG_AGO });
     const tId = insertTask('Done task');
     linkTask(oId, tId);
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
     expect(fpRows()).toHaveLength(0);
   });
 
@@ -951,7 +951,7 @@ describe('advance_objectives', () => {
     const oId = insertObjective({ title: 'No cadence', cadence: 'none', last_advanced_at: LONG_AGO });
     const tId = insertTask('Task');
     linkTask(oId, tId);
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
     expect(fpRows()).toHaveLength(0);
   });
 
@@ -960,7 +960,7 @@ describe('advance_objectives', () => {
     const oId = insertObjective({ title: 'All done', cadence: 'weekly', last_advanced_at: LONG_AGO });
     const tId = insertTask('Completed task', undefined, 'done');
     linkTask(oId, tId);
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
     expect(fpRows()).toHaveLength(0);
   });
 
@@ -976,7 +976,7 @@ describe('advance_objectives', () => {
     ).run(SYSTEM_OWNER, tId, NOW);
     sqlite.prepare(`UPDATE tasks SET status = 'in_progress' WHERE id = ?`).run(tId);
 
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
 
     // Row count unchanged — the task was already staged AND in_progress: no new nomination.
     expect(fpRows()).toHaveLength(1);
@@ -988,7 +988,7 @@ describe('advance_objectives', () => {
     const tId = insertTask('Next action');
     linkTask(oId, tId);
 
-    advanceObjectives(SYSTEM_OWNER, { now: NOW });
+    await advanceObjectives(SYSTEM_OWNER, { now: NOW });
 
     const row = sqlite.prepare(`SELECT last_advanced_at FROM objectives WHERE id = ?`).get(oId) as { last_advanced_at: string };
     expect(row.last_advanced_at).not.toBe(LONG_AGO);

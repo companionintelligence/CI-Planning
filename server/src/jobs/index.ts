@@ -1,5 +1,5 @@
 import { Cron } from 'croner';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { generateRecurrences } from '../engine/recurrence-generate.js';
 import { fillFlightPlanCandidates, autoScheduleOnIngest } from '../engine/autoplan.js';
 import { sweepMissedBlocks, requestReplan } from '../engine/auto-defense.js';
@@ -337,7 +337,7 @@ async function execute(kind: string): Promise<JobOutcome> {
       // owners in one pass (T3: this kind runs once globally, not per owner — the
       // old owner-scoped predicate would have left every non-first owner's rows to
       // grow unbounded under multi-tenant).
-      const { changes } = sqlite
+      const { changes } = await store()
         .prepare(`DELETE FROM sync_events WHERE at < datetime('now', '-30 days')`)
         .run();
       return { itemsCreated: 0, itemsUpdated: changes, log: `Pruned ${changes} sync_event row(s) older than 30 days` };
@@ -355,13 +355,13 @@ async function execute(kind: string): Promise<JobOutcome> {
       //
       // Zero rows is the normal case and must NOT throw — runJob would mark the run
       // red. Deletions are reported in itemsUpdated (prune_sync_events precedent).
-      const { changes } = sqlite
+      const { changes } = await store()
         .prepare(`DELETE FROM objectives WHERE purge_after IS NOT NULL AND purge_after < ?`)
         .run(new Date().toISOString());
       return { itemsCreated: 0, itemsUpdated: changes, log: `Purged ${changes} objective(s) past the reversal window` };
     }
     case 'advance_objectives': {
-      const r = advanceObjectives();
+      const r = await advanceObjectives();
       return {
         itemsCreated: r.nominated,
         itemsUpdated: r.skipped,
@@ -390,7 +390,7 @@ async function execute(kind: string): Promise<JobOutcome> {
     case 'freeze_stars': {
       // Freezing is an INSERT (first-freeze-wins): a create, or a no-op if the
       // day was already frozen — never an update. Report counters accordingly.
-      const r = freezeStars();
+      const r = await freezeStars();
       return {
         itemsCreated: r.created ? 1 : 0,
         itemsUpdated: 0,
@@ -402,7 +402,7 @@ async function execute(kind: string): Promise<JobOutcome> {
     case 'reset_routines': {
       // Midnight: Routine tasks are a repeatable checklist — never archived. Flip any
       // completed routine member back to open so the routine is fresh for the new day.
-      const r = resetRoutineTasks();
+      const r = await resetRoutineTasks();
       return { itemsCreated: 0, itemsUpdated: r.reset, log: `Reset ${r.reset} completed routine task(s) to open` };
     }
     default:
@@ -413,12 +413,12 @@ async function execute(kind: string): Promise<JobOutcome> {
 /** Run a job by kind, recording a job_runs row and broadcasting start/finish over SSE. */
 export async function runJob(kind: string): Promise<JobRunResult> {
   const startedAt = new Date().toISOString();
-  const run = sqlite
+  const run = await store()
     .prepare(
       `INSERT INTO job_runs (id, job_id, started_at, status)
        SELECT uuid7(), id, ?, 'running' FROM scheduled_jobs WHERE kind = ? RETURNING id`
     )
-    .get(startedAt, kind) as { id: string } | undefined;
+    .get<{ id: string }>(startedAt, kind);
 
   broadcast(currentOwnerId(), 'job:started', { kind, startedAt });
 
@@ -438,13 +438,13 @@ export async function runJob(kind: string): Promise<JobRunResult> {
 
   const finishedAt = new Date().toISOString();
   if (run) {
-    sqlite
+    await store()
       .prepare(
         `UPDATE job_runs SET finished_at = ?, status = ?, items_created = ?, items_updated = ?, log = ? WHERE id = ?`
       )
       .run(finishedAt, status, outcome.itemsCreated, outcome.itemsUpdated, outcome.log, run.id);
   }
-  sqlite.prepare('UPDATE scheduled_jobs SET last_run_at = ? WHERE kind = ?').run(finishedAt, kind);
+  await store().prepare('UPDATE scheduled_jobs SET last_run_at = ? WHERE kind = ?').run(finishedAt, kind);
 
   broadcast(currentOwnerId(), 'job:run', { kind, status, ...outcome, finishedAt });
   logger.info(`Job ${kind} ${status}`, { ...outcome });
@@ -483,8 +483,8 @@ const OWNER_SCOPED_KINDS = new Set([
   'reset_routines',
 ]);
 
-function allOwnerIds(): string[] {
-  return (sqlite.prepare('SELECT id FROM owners').all() as { id: string }[]).map((o) => o.id);
+async function allOwnerIds(): Promise<string[]> {
+  return (await store().prepare('SELECT id FROM owners').all<{ id: string }>()).map((o) => o.id);
 }
 
 /**
@@ -521,8 +521,8 @@ const inFlight = new Set<string>();
  * startup belongs to a process that is gone. Left alone they accumulate forever and make
  * the Jobs view claim work is in progress that nothing is doing. Called once at boot.
  */
-export function failInterruptedJobRuns(): number {
-  const { changes } = sqlite
+export async function failInterruptedJobRuns(): Promise<number> {
+  const { changes } = await store()
     .prepare(
       `UPDATE job_runs SET status = 'error', finished_at = ?, log = 'interrupted — server restarted'
         WHERE status = 'running'`,
@@ -549,7 +549,7 @@ export async function runScheduledJob(kind: string): Promise<void> {
 
 async function runScheduledJobInner(kind: string): Promise<void> {
   if (OWNER_SCOPED_KINDS.has(kind)) {
-    for (const ownerId of allOwnerIds()) {
+    for (const ownerId of await allOwnerIds()) {
       try {
         await runWithOwner(ownerId, JOB_SCOPES, () => runJob(kind));
       } catch (err) {
@@ -596,10 +596,10 @@ export async function runIngestNow(): Promise<JobRunResult[]> {
   return results;
 }
 
-export function startCronJobs() {
-  const jobs = sqlite
+export async function startCronJobs() {
+  const jobs = await store()
     .prepare('SELECT id, kind, cron FROM scheduled_jobs WHERE enabled = 1')
-    .all() as { id: string; kind: string; cron: string }[];
+    .all<{ id: string; kind: string; cron: string }>();
 
   for (const job of jobs) {
     new Cron(job.cron, () => runScheduledJob(job.kind));

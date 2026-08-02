@@ -19,8 +19,8 @@ export function connectionsRouter(): Router {
 
   // ── GET /api/connections ────────────────────────────────────────────────────
   // Every connection the current owner holds, across providers. Never any secrets.
-  router.get('/', (ctx) => {
-    ctx.body = { connections: listConnections(currentOwnerId()) };
+  router.get('/', async (ctx) => {
+    ctx.body = { connections: await listConnections(currentOwnerId()) };
   });
 
   // ── DELETE /api/connections/:provider/:account ──────────────────────────────

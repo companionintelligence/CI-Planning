@@ -68,7 +68,7 @@ describe('W8c — DayStarsType (dayStars range query)', () => {
   it('prefers the FROZEN snapshot over a live recompute', async () => {
     // Freeze DAY at total 1, then change the live world so a recompute would give 2.
     setDoneGoal(DAY);
-    runWithOwner(OWNER, ALL_SCOPES, () => freezeStars(DAY, FREEZE_NOW));
+    await runWithOwner(OWNER, ALL_SCOPES, () => freezeStars(DAY, FREEZE_NOW));
     sqlite.prepare(
       `INSERT INTO tasks (id, title, status, completed_at, owner_id)
        VALUES (uuid7(), 'Late win', 'done', ?, ?)`,
@@ -115,7 +115,7 @@ describe('W8c — DailyRecapType (dailyRecap single-row read)', () => {
 
   it('reads the frozen star group (frozenAt set) after the freeze job runs', async () => {
     setDoneGoal(DAY);
-    runWithOwner(OWNER, ALL_SCOPES, () => freezeStars(DAY, FREEZE_NOW));
+    await runWithOwner(OWNER, ALL_SCOPES, () => freezeStars(DAY, FREEZE_NOW));
 
     const r = await gql(`{ dailyRecap(date: "${DAY}") { objective habits tasks bonus note total frozenAt } }`);
     const recap = r.body.data.dailyRecap;

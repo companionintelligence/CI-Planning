@@ -87,8 +87,8 @@ void ollamaStatus().then((s) => {
 // Any job_run still marked `running` belongs to a process that no longer exists —
 // settle those before the scheduler starts so the Jobs view isn't claiming work is
 // in flight that nothing is doing.
-failInterruptedJobRuns();
-startCronJobs();
+await failInterruptedJobRuns();
+await startCronJobs();
 
 // Phase H: VAPID keys are now auto-provisioned at boot (services/vapid-config.ts), so push
 // is normally live out of the box. It only stays dormant in two deliberate cases: a

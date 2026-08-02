@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { serverTimezone, localDateInTZ } from '../lib/tz.js';
 import { computeStars } from '../engine/stars.js';
@@ -30,12 +30,12 @@ export interface FreezeResult {
  *
  * `forDate`/`nowISO` are injectable for deterministic tests (no Date.now bomb).
  */
-export function freezeStars(forDate?: string, nowISO?: string): FreezeResult {
+export async function freezeStars(forDate?: string, nowISO?: string): Promise<FreezeResult> {
   const owner = currentOwnerId();
 
-  const tzRow = sqlite
+  const tzRow = await store()
     .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   const tz = tzRow?.timezone || serverTimezone();
 
   // The owner-tz "today" of the given instant, then yesterday from it.
@@ -50,9 +50,9 @@ export function freezeStars(forDate?: string, nowISO?: string): FreezeResult {
   // First-freeze-wins: never overwrite an already-FROZEN day. Keyed on
   // frozen_at (not row existence) — a summarizeDay upsert may already have
   // created this (owner, date) row with frozen_at NULL.
-  const existing = sqlite
+  const existing = await store()
     .prepare('SELECT total, frozen_at FROM daily_recap WHERE owner_id = ? AND date = ?')
-    .get(owner, date) as { total: number | null; frozen_at: string | null } | undefined;
+    .get<{ total: number | null; frozen_at: string | null }>(owner, date);
   if (existing?.frozen_at != null) return { date, total: existing.total ?? 0, created: false };
 
   const stars = computeStars(owner, date);
@@ -60,7 +60,7 @@ export function freezeStars(forDate?: string, nowISO?: string): FreezeResult {
 
   // Partial upsert of ONLY the star columns, guarded so it fills stars at most
   // once — preserving immutability and never touching the summary group.
-  sqlite
+  await store()
     .prepare(
       `INSERT INTO daily_recap
          (owner_id, date, star_objective, star_habits, star_tasks, star_bonus, star_note, total, frozen_at)

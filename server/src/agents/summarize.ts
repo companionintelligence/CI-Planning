@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { generate } from '../mcp/ollama.js';
 import { renderCopy } from './render-copy.js';
 import { timeSenseEnabled } from '../lib/flags.js';
@@ -60,52 +60,52 @@ export interface DaySummary {
   cached?: boolean;
 }
 
-function gather(date: string) {
+async function gather(date: string) {
   // "Today" is the user's local calendar day, not the UTC day — so overdue/
   // due-today/blocks line up with what the scheduler placed.
   // Owner-scoped throughout (multi-tenant): the day summary must reflect only the
   // caller's own tasks + blocks, never every tenant's.
   const owner = currentOwnerId();
-  const tzRow = sqlite
+  const tzRow = await store()
     .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   const tz = tzRow?.timezone || serverTimezone();
   const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
 
-  const overdue = sqlite
+  const overdue = await store()
     .prepare(
       `SELECT id, title, priority, due_at, status, estimated_minutes FROM tasks
        WHERE owner_id = ? AND status IN ('open','scheduled') AND due_at IS NOT NULL AND due_at < ?
        ORDER BY due_at ASC LIMIT 25`
     )
-    .all(owner, dayStart) as TaskRow[];
+    .all<TaskRow>(owner, dayStart);
 
-  const dueToday = sqlite
+  const dueToday = await store()
     .prepare(
       `SELECT id, title, priority, due_at, status, estimated_minutes FROM tasks
        WHERE owner_id = ? AND status IN ('open','scheduled') AND due_at >= ? AND due_at < ?
        ORDER BY priority ASC LIMIT 25`
     )
-    .all(owner, dayStart, dayEnd) as TaskRow[];
+    .all<TaskRow>(owner, dayStart, dayEnd);
 
-  const open = sqlite
+  const open = await store()
     .prepare(
       `SELECT id, title, priority, due_at, status, estimated_minutes FROM tasks
        WHERE owner_id = ? AND status = 'open' ORDER BY priority ASC, created_at ASC LIMIT 25`
     )
-    .all(owner) as TaskRow[];
+    .all<TaskRow>(owner);
 
-  const blocks = sqlite
+  const blocks = await store()
     .prepare(
       `SELECT title, block_kind, start_at, end_at, status FROM time_blocks
        WHERE owner_id = ? AND start_at >= ? AND start_at < ? ORDER BY start_at ASC`
     )
-    .all(owner, dayStart, dayEnd) as BlockRow[];
+    .all<BlockRow>(owner, dayStart, dayEnd);
 
   return { overdue, dueToday, open, blocks };
 }
 
-function fallbackProse(date: string, g: ReturnType<typeof gather>, memoryExcerpt = ''): string {
+function fallbackProse(date: string, g: Awaited<ReturnType<typeof gather>>, memoryExcerpt = ''): string {
   const lines: string[] = [];
   lines.push(`Plan for ${date}:`);
   if (g.overdue.length) lines.push(`• ${g.overdue.length} overdue item(s) — top: "${g.overdue[0].title}".`);
@@ -119,7 +119,7 @@ function fallbackProse(date: string, g: ReturnType<typeof gather>, memoryExcerpt
   return lines.join('\n');
 }
 
-function buildPrompt(date: string, g: ReturnType<typeof gather>, memoryExcerpt = ''): string {
+function buildPrompt(date: string, g: Awaited<ReturnType<typeof gather>>, memoryExcerpt = ''): string {
   const fmt = (rows: TaskRow[]) =>
     rows.map((r) => `- [P${r.priority}] ${r.title}${r.due_at ? ` (due ${r.due_at.slice(0, 10)})` : ''}`).join('\n') || '(none)';
   const fmtBlocks = (rows: BlockRow[]) =>
@@ -162,10 +162,10 @@ const MEMORY_EXCERPT_MAX = 200;
 /** How many dated event lines to surface at most. */
 const MEMORY_EXCERPT_LINES = 3;
 
-function pullEnabled(owner: string): boolean {
-  const row = sqlite
+async function pullEnabled(owner: string): Promise<boolean> {
+  const row = await store()
     .prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as { memory_pull_enabled?: number } | undefined;
+    .get<{ memory_pull_enabled?: number }>(owner);
   return !!row?.memory_pull_enabled;
 }
 
@@ -225,11 +225,11 @@ function eventLine(node: MemoryNode, startISO: string, people: string[], tz: str
  * back to a trimmed graphContext when there are no dated nodes. Never throws.
  */
 export async function memoryBriefExcerpt(owner: string, date: string): Promise<string> {
-  if (!pullEnabled(owner) || !memoryConnectorAvailable(owner)) return '';
+  if (!(await pullEnabled(owner)) || !memoryConnectorAvailable(owner)) return '';
   try {
-    const tzRow = sqlite
+    const tzRow = await store()
       .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-      .get(owner) as { timezone: string | null } | undefined;
+      .get<{ timezone: string | null }>(owner);
     const tz = tzRow?.timezone || serverTimezone();
     // Prefix is relative to the ACTUAL current day (owner tz), not the brief's `date`:
     // the EOD path passes tomorrow, so its events must read "Tomorrow:", not "Today:".
@@ -283,7 +283,7 @@ export async function memoryBriefExcerpt(owner: string, date: string): Promise<s
 }
 
 /** Up to three concrete things to act on, most urgent first (deterministic). */
-function buildFocus(g: ReturnType<typeof gather>): FocusItem[] {
+function buildFocus(g: Awaited<ReturnType<typeof gather>>): FocusItem[] {
   const out: FocusItem[] = [];
   const seen = new Set<string>();
   const add = (t: TaskRow, reason: string) => {
@@ -297,7 +297,7 @@ function buildFocus(g: ReturnType<typeof gather>): FocusItem[] {
   return out;
 }
 
-function buildCapacity(g: ReturnType<typeof gather>, focus: FocusItem[]): Capacity {
+async function buildCapacity(g: Awaited<ReturnType<typeof gather>>, focus: FocusItem[]): Promise<Capacity> {
   const scheduled_minutes = g.blocks.reduce((sum, b) => {
     const ms = new Date(b.end_at).getTime() - new Date(b.start_at).getTime();
     return sum + Math.max(0, Math.round(ms / 60_000));
@@ -315,9 +315,9 @@ function buildCapacity(g: ReturnType<typeof gather>, focus: FocusItem[]): Capaci
     }
   }
 
-  const prefRow = sqlite
+  const prefRow = await store()
     .prepare(`SELECT workday_start, workday_end FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(currentOwnerId()) as { workday_start: string | null; workday_end: string | null } | undefined;
+    .get<{ workday_start: string | null; workday_end: string | null }>(currentOwnerId());
 
   const [sh, sm] = (prefRow?.workday_start ?? '09:00').split(':').map(Number);
   const [eh, em] = (prefRow?.workday_end ?? '18:00').split(':').map(Number);
@@ -327,7 +327,7 @@ function buildCapacity(g: ReturnType<typeof gather>, focus: FocusItem[]): Capaci
 }
 
 /** Fingerprint of the inputs that feed a briefing; changes invalidate the cache. */
-function inputsHash(date: string, g: ReturnType<typeof gather>, memoryExcerpt = ''): string {
+function inputsHash(date: string, g: Awaited<ReturnType<typeof gather>>, memoryExcerpt = ''): string {
   // AA2 — fold the memory excerpt into the fingerprint ONLY when non-empty, so a
   // flag-off / connector-down brief hashes byte-identically to pre-AA2 (no cache churn),
   // while a changing excerpt (or toggling memory on) correctly invalidates a cached recap.
@@ -344,7 +344,7 @@ function inputsHash(date: string, g: ReturnType<typeof gather>, memoryExcerpt = 
  * and self-invalidates when the day's tasks/blocks change.
  */
 export async function summarizeDay(date: string, opts: { refresh?: boolean } = {}): Promise<DaySummary> {
-  const g = gather(date);
+  const g = await gather(date);
   const stats = {
     overdue: g.overdue.length,
     dueToday: g.dueToday.length,
@@ -352,18 +352,16 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     blocks: g.blocks.length,
   };
   const focus = buildFocus(g);
-  const capacity = buildCapacity(g, focus);
+  const capacity = await buildCapacity(g, focus);
   // AA2 — computed once and threaded into the hash + both generation paths. '' when the
   // flag is off / connector is down, keeping the hash + prose byte-identical to pre-AA2.
   const memoryExcerpt = await memoryBriefExcerpt(currentOwnerId(), date);
   const hash = inputsHash(date, g, memoryExcerpt);
 
   if (!opts.refresh) {
-    const row = sqlite
+    const row = await store()
       .prepare('SELECT prose, stats, focus, llm, inputs_hash FROM daily_recap WHERE owner_id = ? AND date = ?')
-      .get(currentOwnerId(), date) as
-      | { prose: string; stats: string; focus: string; llm: number; inputs_hash: string }
-      | undefined;
+      .get<{ prose: string; stats: string; focus: string; llm: number; inputs_hash: string }>(currentOwnerId(), date);
     if (row && row.inputs_hash === hash) {
       return {
         date,
@@ -405,7 +403,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
     }
   }
 
-  sqlite
+  await store()
     .prepare(
       // Partial upsert of ONLY the summary columns — never touches the star
       // group, so refreshing a briefing can't disturb a frozen day_recap row.
@@ -453,23 +451,23 @@ export interface EveningPayload {
   combo_suggestions: ComboSuggestion[];
 }
 
-export function gatherEvening(date: string): EveningPayload {
+export async function gatherEvening(date: string): Promise<EveningPayload> {
   const owner = currentOwnerId();
-  const tzRow = sqlite
+  const tzRow = await store()
     .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
-    .get(owner) as { timezone: string | null } | undefined;
+    .get<{ timezone: string | null }>(owner);
   const tz = tzRow?.timezone || serverTimezone();
   const { start: dayStart, end: dayEnd } = utcDayBounds(date, tz);
 
-  const planned = (sqlite
+  const planned = ((await store()
     .prepare(
       `SELECT COUNT(*) AS n FROM time_blocks b
         WHERE b.owner_id = ? AND b.task_id IS NOT NULL AND b.block_kind != 'meeting'
           AND b.start_at >= ? AND b.start_at < ?`,
     )
-    .get(owner, dayStart, dayEnd) as { n: number }).n;
+    .get<{ n: number }>(owner, dayStart, dayEnd)))!.n;
 
-  const completed = (sqlite
+  const completed = ((await store()
     .prepare(
       `SELECT COUNT(DISTINCT b.task_id) AS n FROM time_blocks b
          JOIN tasks t ON t.id = b.task_id
@@ -477,21 +475,21 @@ export function gatherEvening(date: string): EveningPayload {
           AND b.start_at >= ? AND b.start_at < ?
           AND t.status = 'done' AND t.completed_at >= ? AND t.completed_at < ?`,
     )
-    .get(owner, dayStart, dayEnd, dayStart, dayEnd) as { n: number }).n;
+    .get<{ n: number }>(owner, dayStart, dayEnd, dayStart, dayEnd)))!.n;
 
-  const outcomeRows = sqlite
+  const outcomeRows = await store()
     .prepare(
       `SELECT outcome, COUNT(*) AS n FROM daily_plan
         WHERE owner_id = ? AND date = ? AND outcome IS NOT NULL GROUP BY outcome`,
     )
-    .all(owner, date) as { outcome: string; n: number }[];
+    .all<{ outcome: string; n: number }>(owner, date);
   const outcomes = { deferred: 0, missed: 0 };
   for (const r of outcomeRows) {
     if (r.outcome === 'deferred') outcomes.deferred = r.n;
     else if (r.outcome === 'missed') outcomes.missed = r.n;
   }
 
-  const estimate_deltas = (sqlite
+  const estimate_deltas = (await store()
     .prepare(
       `SELECT id AS task_id, title, estimated_minutes, actual_minutes,
               (actual_minutes - estimated_minutes) AS delta_minutes
@@ -501,9 +499,9 @@ export function gatherEvening(date: string): EveningPayload {
           AND estimated_minutes > 0 AND actual_minutes > 0
         ORDER BY ABS(actual_minutes - estimated_minutes) DESC LIMIT 10`,
     )
-    .all(owner, dayStart, dayEnd)) as EstimateDelta[];
+    .all<EstimateDelta>(owner, dayStart, dayEnd));
 
-  const carry_forward = sqlite
+  const carry_forward = await store()
     .prepare(
       `SELECT DISTINCT t.id AS task_id, t.title, t.status FROM time_blocks b
          JOIN tasks t ON t.id = b.task_id
@@ -512,16 +510,16 @@ export function gatherEvening(date: string): EveningPayload {
           AND t.status IN ('open', 'scheduled', 'in_progress')
         ORDER BY t.title LIMIT 10`,
     )
-    .all(owner, dayStart, dayEnd) as { task_id: string; title: string; status: string }[];
+    .all<{ task_id: string; title: string; status: string }>(owner, dayStart, dayEnd);
 
   // Label the scope refs so the modal never shows raw ids (shared with the Z6 chip).
-  const calibration = (sqlite
+  const calibration = (await store()
     .prepare(
       `SELECT scope_kind, scope_ref, bias_ratio, sample_count FROM estimate_calibration
         WHERE owner_id = ? AND sample_count >= ?
         ORDER BY sample_count DESC, scope_kind, scope_ref LIMIT 5`,
     )
-    .all(owner, CONFIDENCE_FLOOR) as { scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }[])
+    .all<{ scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }>(owner, CONFIDENCE_FLOOR))
     .map((r) => ({ ...r, label: scopeLabel(owner, r.scope_kind as ScopeKind, r.scope_ref) }));
 
   return {
@@ -609,17 +607,17 @@ export interface MorningCarryover {
  * deterministic carry_forward still surfaces (§2.6/§2.7 — the Brief never blocks
  * on an Alignment having been written).
  */
-export function morningCarryover(date: string): MorningCarryover {
+export async function morningCarryover(date: string): Promise<MorningCarryover> {
   const yesterday = addDays(date, -1);
-  const row = sqlite
+  const row = await store()
     .prepare(
       `SELECT body FROM reflections WHERE owner_id = ? AND kind = 'evening' AND period_key = ? AND position = 0`,
     )
-    .get(currentOwnerId(), yesterday) as { body: string } | undefined;
+    .get<{ body: string }>(currentOwnerId(), yesterday);
   return {
     date: yesterday,
     prose: row?.body ?? null,
-    carry_forward: gatherEvening(yesterday).carry_forward,
+    carry_forward: (await gatherEvening(yesterday)).carry_forward,
   };
 }
 
@@ -630,7 +628,7 @@ export function morningCarryover(date: string): MorningCarryover {
  * modal open) — this function is pure compute.
  */
 export async function summarizeEvening(date: string): Promise<EveningSummary> {
-  const payload = gatherEvening(date);
+  const payload = await gatherEvening(date);
   // AA2 — the EOD reflection ends on "what carries into tomorrow", so the useful memory
   // context is TOMORROW's events. '' when the flag is off / connector is down, keeping
   // the evening facts + fallback byte-identical to pre-AA2.

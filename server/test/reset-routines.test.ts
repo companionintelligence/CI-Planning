@@ -43,40 +43,40 @@ const taskRow = (id: string) =>
 beforeEach(() => resetDb());
 
 describe('resetRoutineTasks', () => {
-  it('flips a completed Routine member back to open and clears completed_at', () => {
+  it('flips a completed Routine member back to open and clears completed_at', async () => {
     const p = pattern(patternType('Routine'), 'Morning');
     const task = doneTask('Make the bed');
     addMember(p, task);
 
-    const r = run(() => resetRoutineTasks());
+    const r = await run(() => resetRoutineTasks());
     expect(r.reset).toBe(1);
     expect(taskRow(task)).toEqual({ status: 'open', completed_at: null });
   });
 
-  it('leaves a completed NON-routine task untouched (it archives normally)', () => {
+  it('leaves a completed NON-routine task untouched (it archives normally)', async () => {
     const loose = doneTask('One-off done task'); // no pattern membership
-    run(() => resetRoutineTasks());
+    await run(() => resetRoutineTasks());
     expect(taskRow(loose).status).toBe('done');
   });
 
-  it('does not reset members of a non-Routine pattern (Habit/Ritual keep their lifecycle)', () => {
+  it('does not reset members of a non-Routine pattern (Habit/Ritual keep their lifecycle)', async () => {
     const p = pattern(patternType('Habit'), 'Meditate');
     const task = doneTask('Meditate 10m');
     addMember(p, task);
 
-    const r = run(() => resetRoutineTasks());
+    const r = await run(() => resetRoutineTasks());
     expect(r.reset).toBe(0);
     expect(taskRow(task).status).toBe('done');
   });
 
-  it('is owner-scoped — another owner’s completed routine task is not reset', () => {
+  it('is owner-scoped — another owner’s completed routine task is not reset', async () => {
     const other = 'owner-other-reset';
     sqlite.prepare(`INSERT OR IGNORE INTO owners (id, name) VALUES (?, 'Other')`).run(other);
     const p = pattern(patternType('Routine', other), 'Their routine', other);
     const task = doneTask('Their task', other);
     addMember(p, task);
 
-    run(() => resetRoutineTasks()); // runs as OWNER
+    await run(() => resetRoutineTasks()); // runs as OWNER
     expect(taskRow(task).status).toBe('done'); // untouched — different owner
   });
 });

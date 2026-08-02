@@ -84,13 +84,13 @@ afterEach(() => {
 });
 
 describe('listConnections() — leak-safe list', () => {
-  it('returns { provider, account, status, createdAt } ordered by provider, account', () => {
+  it('returns { provider, account, status, createdAt } ordered by provider, account', async () => {
     // Insert out of order to prove the ORDER BY, across providers.
     seedToken({ provider: 'google', account: 'b@x.io', status: 'active' });
     seedToken({ provider: 'ci_memory', account: 'mem@x.io', status: 'error' });
     seedToken({ provider: 'google', account: 'a@x.io', status: 'revoked' });
 
-    const list = listConnections(SYSTEM_OWNER);
+    const list = await listConnections(SYSTEM_OWNER);
     expect(list.map((c) => `${c.provider}/${c.account}`)).toEqual([
       'ci_memory/mem@x.io',
       'google/a@x.io',
@@ -104,13 +104,13 @@ describe('listConnections() — leak-safe list', () => {
     expect(list.find((c) => c.account === 'a@x.io')!.status).toBe('revoked');
   });
 
-  it('returns [] (not null) for an owner with no connections', () => {
-    expect(listConnections(SYSTEM_OWNER)).toEqual([]);
+  it('returns [] (not null) for an owner with no connections', async () => {
+    expect(await listConnections(SYSTEM_OWNER)).toEqual([]);
   });
 
-  it('never leaks token material (no ciphertext/iv/key_version/token values)', () => {
+  it('never leaks token material (no ciphertext/iv/key_version/token values)', async () => {
     seedToken({ provider: 'google', account: 'leak-check@x.io' });
-    const json = JSON.stringify(listConnections(SYSTEM_OWNER));
+    const json = JSON.stringify(await listConnections(SYSTEM_OWNER));
     for (const key of ['ciphertext', 'authTag', 'auth_tag', 'key_version', 'accessToken', 'refreshToken']) {
       expect(json).not.toContain(`"${key}"`);
     }
@@ -123,14 +123,14 @@ describe('listConnections() — leak-safe list', () => {
     expect(json).not.toContain(ivHex);
   });
 
-  it('is owner-scoped — never returns another owner\'s rows', () => {
+  it('is owner-scoped — never returns another owner\'s rows', async () => {
     sqlite.prepare(`INSERT INTO owners (id, name) VALUES ('owner-b', 'B')`).run();
     seedToken({ provider: 'google', account: 'mine@x.io', owner: SYSTEM_OWNER });
     seedToken({ provider: 'google', account: 'theirs@x.io', owner: 'owner-b' });
 
-    const mine = listConnections(SYSTEM_OWNER);
+    const mine = await listConnections(SYSTEM_OWNER);
     expect(mine.map((c) => c.account)).toEqual(['mine@x.io']);
-    expect(listConnections('owner-b').map((c) => c.account)).toEqual(['theirs@x.io']);
+    expect((await listConnections('owner-b')).map((c) => c.account)).toEqual(['theirs@x.io']);
   });
 });
 

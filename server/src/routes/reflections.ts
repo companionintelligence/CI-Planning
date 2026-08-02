@@ -123,7 +123,7 @@ export function reflectionsRouter() {
   };
 
   // GET /api/reflections/evening?period=YYYY-MM-DD — pure read: live payload + authored row.
-  router.get('/api/reflections/evening', (ctx) => {
+  router.get('/api/reflections/evening', async (ctx) => {
     if (!timeSenseGate(ctx)) return;
     const owner = currentOwnerId();
     const period = (ctx.query.period as string | undefined) ?? localISODate();
@@ -136,7 +136,7 @@ export function reflectionsRouter() {
     ctx.body = {
       period_key: period,
       row: row ? { body: row.body, created_at: row.created_at, updated_at: row.updated_at } : null,
-      payload: gatherEvening(period),
+      payload: await gatherEvening(period),
     };
   });
 
@@ -155,7 +155,7 @@ export function reflectionsRouter() {
 
     const existing = getEvening(owner, period);
     if (existing && !refresh) {
-      ctx.body = { period_key: period, body: existing.body, llm: null, created: false, payload: gatherEvening(period) };
+      ctx.body = { period_key: period, body: existing.body, llm: null, created: false, payload: await gatherEvening(period) };
       return;
     }
 
