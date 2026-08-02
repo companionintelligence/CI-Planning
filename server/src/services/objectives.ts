@@ -1,4 +1,5 @@
 import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 import { stampRow } from '../sync/apply.js';
@@ -14,7 +15,14 @@ import { stampRow } from '../sync/apply.js';
  * byte-equivalence lock. `writeAudit` + `stampRow` (Phase-L sync versioning) fire INSIDE
  * these functions; SSE `broadcast` stays transport-side (route + resolver each fire it).
  *
- * better-sqlite3 is synchronous; these are plain sync functions.
+ * Reads/writes go through the store facade, so these are async. The two multi-statement
+ * cascades that were atomic only BECAUSE better-sqlite3 was synchronous are explicit
+ * transactions (archiveObjective, restoreObjective), and the two check-then-write guards
+ * whose window a single `await` opens are re-asserted as part of the write itself
+ * (createObjective's live parent, archiveObjective's not-already-archived) — see
+ * docs/passA-worklist.md, "implicit atomicity". Two races remain open because closing them
+ * needs a schema change rather than a refactor; both are documented at their site
+ * ([[linkObjectiveTask]], [[updateObjective]]).
  */
 
 export interface ObjectiveRow {
@@ -47,8 +55,8 @@ export interface ObjectiveRow {
 }
 
 // ── Hierarchy leveling (height-from-bottom) ───────────────────────────────────
-function heightBelow(id: string): number {
-  const row = sqlite
+async function heightBelow(id: string): Promise<number> {
+  const row = (await store()
     .prepare(
       // Level is a function of the LIVE tree, so archived descendants stop propping
       // their ancestors up. Consequence: archiving the last child of a project
@@ -61,7 +69,7 @@ function heightBelow(id: string): number {
        )
        SELECT MAX(depth) AS d FROM down`,
     )
-    .get(id) as { d: number };
+    .get<{ d: number }>(id))!;
   return row.d;
 }
 
@@ -73,21 +81,32 @@ function levelFromHeight(h: number): 'goal' | 'project' | 'objective' {
  * Link a task to an objective as an addressable, sync-versioned join row (migration
  * 0087). Idempotent: re-linking an existing (possibly tombstoned) row flips it back to
  * `linked = 1` and keeps its surrogate id. Stamps `field_ts`. Returns the link id.
+ *
+ * KNOWN RACE, deliberately left open. The "does a row already exist?" probe is separated
+ * from the INSERT by an await, and `objective_tasks` has no unique index on
+ * (objective_id, task_id) — only on the surrogate `id`. So two concurrent links of the
+ * same pair can both miss and both insert, leaving a duplicate join row (the task then
+ * appears twice in objectiveTaskIds/buildTree). No single guarded statement fixes it: the
+ * predicate is about a row this call has not written yet, so `WHERE NOT EXISTS` races
+ * exactly as the SELECT does under READ COMMITTED. The real fix is a unique index on the
+ * pair, i.e. a migration — which a pure refactor pass should not smuggle in. Same shape
+ * and same disposition as patterns.ensureHabitPattern's residual race; consequence is a
+ * duplicate row under a double-submit, not data loss. Fix alongside the post-cutover items.
  */
-export function linkObjectiveTask(objectiveId: string, taskId: string): string {
-  const existing = sqlite
+export async function linkObjectiveTask(objectiveId: string, taskId: string): Promise<string> {
+  const existing = await store()
     .prepare(`SELECT id FROM objective_tasks WHERE objective_id = ? AND task_id = ?`)
-    .get(objectiveId, taskId) as { id: string | null } | undefined;
+    .get<{ id: string | null }>(objectiveId, taskId);
 
   let linkId: string;
   if (existing) {
     linkId = existing.id ?? newId();
-    sqlite
+    await store()
       .prepare(`UPDATE objective_tasks SET id = ?, linked = 1 WHERE objective_id = ? AND task_id = ?`)
       .run(linkId, objectiveId, taskId);
   } else {
     linkId = newId();
-    sqlite
+    await store()
       .prepare(`INSERT INTO objective_tasks (objective_id, task_id, id, linked) VALUES (?, ?, ?, 1)`)
       .run(objectiveId, taskId, linkId);
   }
@@ -100,13 +119,13 @@ export function linkObjectiveTask(objectiveId: string, taskId: string): string {
  * deleting it, so the unlink round-trips through field-LWW. Stamps `field_ts`. Returns
  * the link id, or null if none existed.
  */
-export function unlinkObjectiveTask(objectiveId: string, taskId: string): string | null {
-  const existing = sqlite
+export async function unlinkObjectiveTask(objectiveId: string, taskId: string): Promise<string | null> {
+  const existing = await store()
     .prepare(`SELECT id FROM objective_tasks WHERE objective_id = ? AND task_id = ?`)
-    .get(objectiveId, taskId) as { id: string | null } | undefined;
+    .get<{ id: string | null }>(objectiveId, taskId);
   if (!existing) return null;
   const linkId = existing.id ?? newId();
-  sqlite
+  await store()
     .prepare(`UPDATE objective_tasks SET id = ?, linked = 0 WHERE objective_id = ? AND task_id = ?`)
     .run(linkId, objectiveId, taskId);
   stampRow(sqlite, 'objective_task', linkId, ['linked']);
@@ -118,25 +137,28 @@ export function unlinkObjectiveTask(objectiveId: string, taskId: string): string
  * re-parent / delete of a descendant) can change a parent's height and therefore its
  * level. Walks UP the parent chain, guarding against cycles.
  */
-export function restampLevels(startId: string | null | undefined): void {
+export async function restampLevels(startId: string | null | undefined): Promise<void> {
   let cur = startId ?? null;
   const seen = new Set<string>();
   while (cur && !seen.has(cur)) {
     seen.add(cur);
-    const row = sqlite.prepare(`SELECT parent_id FROM objectives WHERE id = ?`).get(cur) as
-      | { parent_id: string | null }
-      | undefined;
+    const row = await store()
+      .prepare(`SELECT parent_id FROM objectives WHERE id = ?`)
+      .get<{ parent_id: string | null }>(cur);
     if (!row) break;
-    sqlite.prepare(`UPDATE objectives SET level = ? WHERE id = ?`).run(levelFromHeight(heightBelow(cur)), cur);
+    // Sequential by necessity: each iteration re-reads a height that the previous
+    // iteration's UPDATE can change. Do NOT batch this walk with Promise.all/.map.
+    const height = await heightBelow(cur);
+    await store().prepare(`UPDATE objectives SET level = ? WHERE id = ?`).run(levelFromHeight(height), cur);
     cur = row.parent_id;
   }
 }
 
 // Would setting obj.parent_id = proposedParent create a cycle? True if proposedParent is a
 // descendant of objId (which would cycle back).
-function wouldCycle(objId: string, proposedParent: string): boolean {
+async function wouldCycle(objId: string, proposedParent: string): Promise<boolean> {
   if (objId === proposedParent) return true;
-  const row = sqlite
+  const row = await store()
     .prepare(
       `WITH RECURSIVE sub(id) AS (
          SELECT ? AS id
@@ -145,7 +167,7 @@ function wouldCycle(objId: string, proposedParent: string): boolean {
        )
        SELECT 1 FROM sub WHERE id = ? LIMIT 1`,
     )
-    .get(objId, proposedParent) as { 1: number } | undefined;
+    .get<{ 1: number }>(objId, proposedParent);
   return row !== undefined;
 }
 
@@ -173,12 +195,12 @@ export interface ObjectiveTaskSummary {
  * batched query for the whole forest, ordered priority ASC → due_at ASC (NULLs last) → id.
  * next_action / has_tasks are unchanged (the client depends on them until Wave 2).
  */
-export function buildTree(owner: string) {
+export async function buildTree(owner: string) {
   const now = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-  const objs = sqlite
+  const objs = await store()
     .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND archived_at IS NULL ORDER BY created_at`)
-    .all(owner) as ObjectiveRow[];
+    .all<ObjectiveRow>(owner);
 
   if (objs.length === 0) return [];
 
@@ -202,7 +224,7 @@ export function buildTree(owner: string) {
   // stray/dangling objective_tasks row can't leak another owner's task. Active links only
   // (linked=1 — tombstones excluded), cancelled tasks excluded.
   const isParent = new Set(objs.map((o) => o.parent_id).filter((p): p is string => p != null));
-  const linkedTasks = sqlite
+  const linkedTasks = await store()
     .prepare(
       `SELECT ot.objective_id AS objective_id,
               t.id, t.title, t.status, t.priority, t.due_at, t.scheduled_for, t.parent_id, t.completed_at
@@ -212,7 +234,7 @@ export function buildTree(owner: string) {
         WHERE o.owner_id = ? AND t.owner_id = ? AND ot.linked = 1 AND t.status != 'cancelled'
         ORDER BY t.priority ASC, (t.due_at IS NULL) ASC, t.due_at ASC, t.id ASC`,
     )
-    .all(owner, owner) as (ObjectiveTaskSummary & { objective_id: string })[];
+    .all<ObjectiveTaskSummary & { objective_id: string }>(owner, owner);
   for (const { objective_id, ...task } of linkedTasks) {
     const node = byId.get(objective_id);
     if (!node || isParent.has(objective_id)) continue; // leaf-only (write-enforced; belt-and-braces)
@@ -223,7 +245,9 @@ export function buildTree(owner: string) {
   // filter linked=1) — so a tombstoned link doesn't keep a node marked task-bearing, which
   // would wrongly block it as a parent. Consistent with the containment guard in updateObjective.
   const withTasks = new Set(
-    (sqlite.prepare(`SELECT DISTINCT objective_id FROM objective_tasks WHERE linked = 1`).all() as { objective_id: string }[]).map((r) => r.objective_id),
+    (await store()
+      .prepare(`SELECT DISTINCT objective_id FROM objective_tasks WHERE linked = 1`)
+      .all<{ objective_id: string }>()).map((r) => r.objective_id),
   );
 
   for (const id of objIds) {
@@ -242,7 +266,7 @@ export function buildTree(owner: string) {
     //    unconstrained descent would walk straight into another owner's branch. Scoped in
     //    the recursive step AND on `t.owner_id`, so it is self-sufficiently owner-safe
     //    whichever half is corrupt (a bad parent_id or a bad objective_tasks row).
-    const nextAction = sqlite
+    const nextAction = await store()
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
@@ -259,7 +283,7 @@ export function buildTree(owner: string) {
           ORDER BY t.priority ASC, t.id ASC
           LIMIT 1`,
       )
-      .get(id, owner, owner) as { id: string; title: string; status: string; scheduled_date: string | null } | undefined;
+      .get<{ id: string; title: string; status: string; scheduled_date: string | null }>(id, owner, owner);
 
     decorated.next_action = nextAction ?? null;
     decorated.has_tasks = withTasks.has(id);
@@ -268,7 +292,7 @@ export function buildTree(owner: string) {
     // branch's target_date must not keep setting its live ancestor's effective target, and
     // a cross-owner branch must not set it at all (MAX() would happily take a stranger's
     // date). Scoped in the recursive step and again in the final select.
-    const effectiveTarget = sqlite
+    const effectiveTarget = (await store()
       .prepare(
         `WITH RECURSIVE sub(id) AS (
            SELECT ? AS id
@@ -281,7 +305,7 @@ export function buildTree(owner: string) {
            JOIN sub ON objectives.id = sub.id
           WHERE target_date IS NOT NULL AND objectives.owner_id = ?`,
       )
-      .get(id, owner, owner) as { et: string | null };
+      .get<{ et: string | null }>(id, owner, owner))!;
 
     decorated.effective_target = effectiveTarget.et ?? null;
 
@@ -340,6 +364,8 @@ export type RollupStatusFacet = 'done' | 'counted' | 'excluded' | 'absent';
  * facet changed. Derived from the constants above rather than a second hardcoded list, so
  * a new excluded status can't leave a mutator behind (which is exactly how the
  * cancelled→open restore path came to be missed).
+ *
+ * Pure — no store access, so it stays synchronous and callers need no await.
  */
 export function rollupStatusFacet(status: string | null | undefined): RollupStatusFacet {
   if (status == null) return 'absent';
@@ -351,29 +377,34 @@ export function rollupStatusFacet(status: string | null | undefined): RollupStat
  * Recompute progress_cache for an objective and all its ancestors (bounded upward walk).
  * Called after task links change or explicitly via recompute.
  */
-export function recomputeProgress(objectiveId: string): void {
+export async function recomputeProgress(objectiveId: string): Promise<void> {
   const now = new Date().toISOString();
 
   let currentId: string | null = objectiveId;
   while (currentId) {
-    const obj = sqlite
+    // Sequential by necessity: a parent's rollup reads the progress_cache this
+    // iteration just wrote for its child. Do NOT batch this walk.
+    // `obj` is annotated rather than inferred: it is assigned INTO `currentId` below, and
+    // inferring it from a call that takes `currentId` makes the two definitions circular
+    // (TS7022). The old `as ... | undefined` assertion broke that cycle implicitly.
+    const obj: { id: string; parent_id: string | null } | undefined = await store()
       .prepare(`SELECT id, parent_id FROM objectives WHERE id = ?`)
-      .get(currentId) as { id: string; parent_id: string | null } | undefined;
+      .get<{ id: string; parent_id: string | null }>(currentId);
     if (!obj) break;
 
-    const tasks = sqlite
+    const tasks = await store()
       .prepare(
         `SELECT t.estimated_minutes, t.status
            FROM objective_tasks ot JOIN tasks t ON t.id = ot.task_id
           WHERE ot.objective_id = ? AND ot.linked = 1
             AND t.status NOT IN (${ROLLUP_EXCLUDED_TASK_STATUS_SQL})`,
       )
-      .all(obj.id) as { estimated_minutes: number | null; status: string }[];
+      .all<{ estimated_minutes: number | null; status: string }>(obj.id);
 
     // An archived child must not keep dragging its parent's completion.
-    const children = sqlite
+    const children = await store()
       .prepare(`SELECT progress_cache FROM objectives WHERE parent_id = ? AND archived_at IS NULL`)
-      .all(obj.id) as { progress_cache: number | null }[];
+      .all<{ progress_cache: number | null }>(obj.id);
 
     const allNull = tasks.length === 0 && children.every((c) => c.progress_cache === null);
 
@@ -403,7 +434,7 @@ export function recomputeProgress(objectiveId: string): void {
       }
     }
 
-    sqlite.prepare(`UPDATE objectives SET progress_cache = ?, updated_at = ? WHERE id = ?`).run(progress ?? null, now, obj.id);
+    await store().prepare(`UPDATE objectives SET progress_cache = ?, updated_at = ? WHERE id = ?`).run(progress ?? null, now, obj.id);
     currentId = obj.parent_id;
   }
 }
@@ -424,16 +455,16 @@ export interface CreateObjectiveInput {
 }
 
 /** One of the owner's objectives (raw row), or undefined (not found / not this owner's). */
-export function getObjectiveRow(owner: string, id: string): ObjectiveRow | undefined {
-  return sqlite.prepare(`SELECT * FROM objectives WHERE id = ? AND owner_id = ?`).get(id, owner) as ObjectiveRow | undefined;
+export async function getObjectiveRow(owner: string, id: string): Promise<ObjectiveRow | undefined> {
+  return await store().prepare(`SELECT * FROM objectives WHERE id = ? AND owner_id = ?`).get<ObjectiveRow>(id, owner);
 }
 
 /** All of the owner's objectives (flat, created_at order) — GraphQL navigates the tree
  *  via the parent/children field resolvers. */
-export function listObjectiveRows(owner: string): ObjectiveRow[] {
-  return sqlite
+export async function listObjectiveRows(owner: string): Promise<ObjectiveRow[]> {
+  return await store()
     .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND archived_at IS NULL ORDER BY created_at, id`)
-    .all(owner) as ObjectiveRow[];
+    .all<ObjectiveRow>(owner);
 }
 
 /**
@@ -446,10 +477,10 @@ export function listObjectiveRows(owner: string): ObjectiveRow[] {
  * which query produced the row. The values are genuinely empty rather than computed:
  * next_action/progress are about live work, and an archived node has none.
  */
-export function listArchivedObjectiveRows(owner: string): ObjectiveRow[] {
-  const rows = sqlite
+export async function listArchivedObjectiveRows(owner: string): Promise<ObjectiveRow[]> {
+  const rows = await store()
     .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC, id`)
-    .all(owner) as ObjectiveRow[];
+    .all<ObjectiveRow>(owner);
   return rows.map((o) => ({
     ...o,
     next_action: null,
@@ -462,10 +493,10 @@ export function listArchivedObjectiveRows(owner: string): ObjectiveRow[] {
 }
 
 /** The owner's objectives whose parent is `parentId` (children of a node). */
-export function objectiveChildrenRows(owner: string, parentId: string): ObjectiveRow[] {
-  return sqlite
+export async function objectiveChildrenRows(owner: string, parentId: string): Promise<ObjectiveRow[]> {
+  return await store()
     .prepare(`SELECT * FROM objectives WHERE owner_id = ? AND parent_id = ? AND archived_at IS NULL ORDER BY created_at, id`)
-    .all(owner, parentId) as ObjectiveRow[];
+    .all<ObjectiveRow>(owner, parentId);
 }
 
 /**
@@ -481,8 +512,8 @@ export function objectiveChildrenRows(owner: string, parentId: string): Objectiv
  * Mirrors task-promotion.ts objectiveIdsByTaskIds (REST `objective_ids`) exactly — same
  * filter, same order. Change one, change the other.
  */
-export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | undefined {
-  return sqlite
+export async function objectiveForTask(owner: string, taskId: string): Promise<ObjectiveRow | undefined> {
+  return await store()
     .prepare(
       // Scope BOTH sides by owner (objective + task): the join to `tasks` makes this
       // self-sufficiently owner-safe — a stray/dangling objective_tasks row (sync/import)
@@ -494,18 +525,18 @@ export function objectiveForTask(owner: string, taskId: string): ObjectiveRow | 
           AND o.archived_at IS NULL
         ORDER BY o.created_at, o.id LIMIT 1`,
     )
-    .get(taskId, owner, owner) as ObjectiveRow | undefined;
+    .get<ObjectiveRow>(taskId, owner, owner);
 }
 
 /** The task ids currently linked (linked=1) to an objective, priority-then-id ordered. */
-export function objectiveTaskIds(objectiveId: string): string[] {
+export async function objectiveTaskIds(objectiveId: string): Promise<string[]> {
   return (
-    sqlite
+    await store()
       .prepare(
         `SELECT t.id AS id FROM objective_tasks ot JOIN tasks t ON t.id = ot.task_id
           WHERE ot.objective_id = ? AND ot.linked = 1 ORDER BY t.priority ASC, t.id ASC`,
       )
-      .all(objectiveId) as { id: string }[]
+      .all<{ id: string }>(objectiveId)
   ).map((r) => r.id);
 }
 
@@ -525,14 +556,23 @@ export type CreateObjectiveResult = { ok: true; row: ObjectiveRow } | { ok: fals
  *
  * Shared by create + update so the two can't drift — they were byte-identical, and both
  * missed `archived_at` when 0129 landed.
+ *
+ * ADVISORY ONLY once an await separates it from the write it guards. It produces the right
+ * ERROR for the ordinary case; the write itself has to re-assert liveness to stay correct
+ * against a concurrent archive — see the guarded INSERT in [[createObjective]].
  */
-function liveParentExists(owner: string, parentId: string): boolean {
-  return sqlite
+async function liveParentExists(owner: string, parentId: string): Promise<boolean> {
+  const row = await store()
     .prepare(`SELECT 1 FROM objectives WHERE id = ? AND owner_id = ? AND archived_at IS NULL LIMIT 1`)
-    .get(parentId, owner) !== undefined;
+    .get(parentId, owner);
+  return row !== undefined;
 }
 
-export function createObjective(owner: string, body: CreateObjectiveInput): CreateObjectiveResult {
+/** Column list shared by both INSERT forms below, so they cannot drift apart. */
+const INSERT_OBJECTIVE_COLUMNS = `INSERT INTO objectives
+     (id, owner_id, parent_id, title, description, horizon, status, cadence, target_date, category_id, priority, color_token, created_at, updated_at, level)`;
+
+export async function createObjective(owner: string, body: CreateObjectiveInput): Promise<CreateObjectiveResult> {
   if (!body.title?.trim()) return { ok: false, error: 'title_required' };
   // `!= null`, not truthiness: '' is a PROVIDED parent that no objective can satisfy, so it
   // must be refused like any other unknown id. Under a truthy check it skipped validation
@@ -541,27 +581,42 @@ export function createObjective(owner: string, body: CreateObjectiveInput): Crea
   // the FK is what caught it, so this was a wrong-answer bug, not silent corruption.)
   // updateObjective already guards with `!= null`; this makes the two agree.
   if (body.parent_id != null) {
-    if (!liveParentExists(owner, body.parent_id)) return { ok: false, error: 'parent_not_found' };
+    if (!(await liveParentExists(owner, body.parent_id))) return { ok: false, error: 'parent_not_found' };
   }
   const id = newId();
   const now = new Date().toISOString();
-  sqlite
-    .prepare(
-      `INSERT INTO objectives
-         (id, owner_id, parent_id, title, description, horizon, status, cadence, target_date, category_id, priority, color_token, created_at, updated_at, level)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      id, owner, body.parent_id ?? null, body.title.trim(), body.description ?? null,
-      body.horizon ?? 'none', body.status ?? 'active', body.cadence ?? 'none',
-      body.target_date ?? null, body.category_id ?? null, body.priority ?? 3,
-      body.color_token ?? null, now, now,
-      'objective', // placeholder — re-stamped from height below
-    );
-  restampLevels(id);
+  const values = [
+    id, owner, body.parent_id ?? null, body.title.trim(), body.description ?? null,
+    body.horizon ?? 'none', body.status ?? 'active', body.cadence ?? 'none',
+    body.target_date ?? null, body.category_id ?? null, body.priority ?? 3,
+    body.color_token ?? null, now, now,
+    'objective', // placeholder — re-stamped from height below
+  ];
+
+  // The parent-liveness check above is now separated from this write by an await, so a
+  // concurrent archive can land in between — and an archived parent is exactly the case
+  // liveParentExists exists to refuse (a live child under an archived parent silently
+  // resurfaces as a top-level goal). Re-assert it AS PART OF the INSERT so the check and
+  // the write cannot be interleaved; a plain transaction would not help under Postgres
+  // READ COMMITTED. The unguarded form is kept for the parentless case: `id = NULL` matches
+  // nothing, so an EXISTS guard there would refuse every root objective.
+  const info = body.parent_id == null
+    ? await store().prepare(`${INSERT_OBJECTIVE_COLUMNS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(...values)
+    : await store()
+        .prepare(
+          `${INSERT_OBJECTIVE_COLUMNS}
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM objectives WHERE id = ? AND owner_id = ? AND archived_at IS NULL)`,
+        )
+        .run(...values, body.parent_id, owner);
+  // Lost the race: the parent was archived between the check and the insert. Same answer
+  // the pre-check would have given a moment later, and no row was written.
+  if (info.changes === 0) return { ok: false, error: 'parent_not_found' };
+
+  await restampLevels(id);
   stampRow(sqlite, 'objective', id, ['title', 'description', 'parentId', 'horizon', 'status', 'cadence', 'targetDate', 'categoryId', 'priority', 'colorToken']);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `objective:${id}` });
-  return { ok: true, row: sqlite.prepare(`SELECT * FROM objectives WHERE id = ?`).get(id) as ObjectiveRow };
+  return { ok: true, row: (await store().prepare(`SELECT * FROM objectives WHERE id = ?`).get<ObjectiveRow>(id))! };
 }
 
 export interface UpdateObjectiveInput extends CreateObjectiveInput {
@@ -571,17 +626,31 @@ export type UpdateObjectiveResult =
   | { ok: true; row: ObjectiveRow }
   | { ok: false; error: 'not_found' | 'parent_not_found' | 'cycle' | 'parent_has_tasks' };
 
-export function updateObjective(owner: string, id: string, body: UpdateObjectiveInput): UpdateObjectiveResult {
-  const existing = getObjectiveRow(owner, id);
+/**
+ * KNOWN RACE, deliberately left open. The three re-parent guards below (live parent, no
+ * cycle, parent bears no tasks) are each separated from the UPDATE by an await, so two
+ * concurrent re-parents can each pass and then write. The serious one is `cycle`: A→B and
+ * B→A both see an acyclic tree, both commit, and the result is a parent loop that
+ * `heightBelow`/`wouldCycle`'s `UNION ALL` recursive CTEs do not terminate on. Unlike
+ * createObjective's parent check this cannot be folded into the write — the predicate is
+ * "no cycle in the graph this statement is about to create", which needs the two writers
+ * serialized (SERIALIZABLE, or a lock on the owner's tree), not a better WHERE clause.
+ * Out of scope for a refactor pass; deferred to the post-cutover items with the other two
+ * residual races.
+ */
+export async function updateObjective(owner: string, id: string, body: UpdateObjectiveInput): Promise<UpdateObjectiveResult> {
+  const existing = await getObjectiveRow(owner, id);
   if (!existing) return { ok: false, error: 'not_found' };
 
   if ('parent_id' in body && body.parent_id != null) {
-    if (!liveParentExists(owner, body.parent_id)) return { ok: false, error: 'parent_not_found' };
-    if (wouldCycle(id, body.parent_id)) return { ok: false, error: 'cycle' };
+    if (!(await liveParentExists(owner, body.parent_id))) return { ok: false, error: 'parent_not_found' };
+    if (await wouldCycle(id, body.parent_id)) return { ok: false, error: 'cycle' };
     // Containment: a node may not nest under a task-bearing objective. No archived_at
     // check needed here — liveParentExists above has already refused an archived parent,
     // so by this line the parent is live and this asks only about its tasks.
-    const parentHasTasks = sqlite.prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? AND linked = 1 LIMIT 1`).get(body.parent_id);
+    const parentHasTasks = await store()
+      .prepare(`SELECT 1 FROM objective_tasks WHERE objective_id = ? AND linked = 1 LIMIT 1`)
+      .get(body.parent_id);
     if (parentHasTasks) return { ok: false, error: 'parent_has_tasks' };
   }
 
@@ -601,7 +670,7 @@ export function updateObjective(owner: string, id: string, body: UpdateObjective
     color_token: 'color_token' in body ? body.color_token ?? null : existing.color_token,
   };
 
-  sqlite
+  await store()
     .prepare(
       `UPDATE objectives SET
          title = ?, description = ?, horizon = ?, status = ?, cadence = ?,
@@ -613,8 +682,8 @@ export function updateObjective(owner: string, id: string, body: UpdateObjective
       patch.target_date, patch.category_id, patch.priority, patch.parent_id, patch.completed_at, patch.color_token, now, id, owner,
     );
 
-  restampLevels(id);
-  if (oldParentId && oldParentId !== patch.parent_id) restampLevels(oldParentId);
+  await restampLevels(id);
+  if (oldParentId && oldParentId !== patch.parent_id) await restampLevels(oldParentId);
 
   const patchToCamel: Record<string, string> = {
     title: 'title', description: 'description', horizon: 'horizon', status: 'status',
@@ -626,7 +695,7 @@ export function updateObjective(owner: string, id: string, body: UpdateObjective
   if (stamped.length > 0) stampRow(sqlite, 'objective', id, stamped);
 
   writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `objective:${id}` });
-  return { ok: true, row: sqlite.prepare(`SELECT * FROM objectives WHERE id = ?`).get(id) as ObjectiveRow };
+  return { ok: true, row: (await store().prepare(`SELECT * FROM objectives WHERE id = ?`).get<ObjectiveRow>(id))! };
 }
 
 export type DeleteObjectiveResult = { ok: true; parentId: string | null } | { ok: false; error: 'not_found' };
@@ -644,8 +713,8 @@ export const PURGE_WINDOW_HOURS = 48;
  *  directly, so an unscoped descent can wander into ANOTHER owner's branch. Their row must
  *  not even be considered here — see [[cascadeArchiveToDescendants]] for what stamping one
  *  would cost. This is the walk #369 missed. */
-function liveDescendantIds(owner: string, id: string): string[] {
-  return (sqlite
+async function liveDescendantIds(owner: string, id: string): Promise<string[]> {
+  return (await store()
     .prepare(
       `WITH RECURSIVE down(id) AS (
          SELECT id FROM objectives WHERE id = ?
@@ -655,7 +724,7 @@ function liveDescendantIds(owner: string, id: string): string[] {
        )
        SELECT id FROM down WHERE id != ?`,
     )
-    .all(id, owner, id) as { id: string }[]).map((r) => r.id);
+    .all<{ id: string }>(id, owner, id)).map((r) => r.id);
 }
 
 /**
@@ -679,10 +748,11 @@ function liveDescendantIds(owner: string, id: string): string[] {
  * stranger is ever a candidate) AND the stamp is gated on the owner-scoped UPDATE actually
  * landing, which keeps this correct even if a future caller hands it a foreign id.
  */
-export function cascadeArchiveToDescendants(owner: string, id: string, archivedAt: string): string[] {
+export async function cascadeArchiveToDescendants(owner: string, id: string, archivedAt: string): Promise<string[]> {
   const archived: string[] = [];
-  for (const child of liveDescendantIds(owner, id)) {
-    const info = sqlite
+  // Sequential: the stamp for each child must follow that child's own UPDATE landing.
+  for (const child of await liveDescendantIds(owner, id)) {
+    const info = await store()
       .prepare(`UPDATE objectives SET archived_at = ?, archive_root_id = ? WHERE id = ? AND owner_id = ?`)
       .run(archivedAt, id, child, owner);
     if (info.changes === 0) continue; // not ours after all — do not stamp it
@@ -708,21 +778,21 @@ export function cascadeArchiveToDescendants(owner: string, id: string, archivedA
  * Idempotent and safe to call for any applied field set; a no-op unless one of those two
  * fields actually landed.
  */
-export function applySyncedObjectiveUpkeep(owner: string, id: string, applied: Record<string, unknown>): void {
+export async function applySyncedObjectiveUpkeep(owner: string, id: string, applied: Record<string, unknown>): Promise<void> {
   const touchedParent = 'parent_id' in applied;
   const touchedArchive = 'archived_at' in applied;
   if (!touchedParent && !touchedArchive) return;
 
-  const row = getObjectiveRow(owner, id);
+  const row = await getObjectiveRow(owner, id);
   if (!row) return;
 
   if (touchedArchive && applied['archived_at'] != null) {
-    cascadeArchiveToDescendants(owner, id, String(applied['archived_at']));
+    await cascadeArchiveToDescendants(owner, id, String(applied['archived_at']));
   }
   // Height-from-bottom: a re-parent or an archive can change levels above the node (it
   // gained/lost a descendant) and at the node itself.
-  restampLevels(row.parent_id);
-  restampLevels(id);
+  await restampLevels(row.parent_id);
+  await restampLevels(id);
 }
 
 /**
@@ -733,10 +803,10 @@ export function applySyncedObjectiveUpkeep(owner: string, id: string, applied: R
  * subtree restores as a unit; without the cascade, `parent_id`'s ON DELETE SET NULL
  * would silently re-root the children at purge time.
  */
-export function archiveObjective(owner: string, id: string): DeleteObjectiveResult {
-  const existing = sqlite
+export async function archiveObjective(owner: string, id: string): Promise<DeleteObjectiveResult> {
+  const existing = await store()
     .prepare(`SELECT id, parent_id, archived_at FROM objectives WHERE id = ? AND owner_id = ?`)
-    .get(id, owner) as { id: string; parent_id: string | null; archived_at: string | null } | undefined;
+    .get<{ id: string; parent_id: string | null; archived_at: string | null }>(id, owner);
   if (!existing) return { ok: false, error: 'not_found' };
   if (existing.archived_at) return { ok: true, parentId: existing.parent_id }; // idempotent
 
@@ -747,17 +817,29 @@ export function archiveObjective(owner: string, id: string): DeleteObjectiveResu
   // buildTree (:280-284) roots any node whose parent is filtered out, so that child
   // would silently resurface as a top-level goal. "Cascade as a unit" has to be atomic
   // to be true.
-  sqlite.transaction(() => {
-    sqlite.prepare(`UPDATE objectives SET archived_at = ? WHERE id = ? AND owner_id = ?`).run(now, id, owner);
+  const didArchive = await store().transaction(async () => {
+    // Guarded on `archived_at IS NULL` rather than trusting the read above: that read is
+    // now an await away, so a concurrent archive can have landed in between. Without the
+    // guard both callers would re-stamp and re-cascade, and the second would overwrite the
+    // first's archived_at — moving the subtree's archive_root_id timestamps under a
+    // restore that is already in flight. changes === 0 means the other caller won, which
+    // is exactly the idempotent case the early return above handles.
+    const info = await store()
+      .prepare(`UPDATE objectives SET archived_at = ? WHERE id = ? AND owner_id = ? AND archived_at IS NULL`)
+      .run(now, id, owner);
+    if (info.changes === 0) return false;
     stampRow(sqlite, 'objective', id, ['archivedAt']);
-    cascadeArchiveToDescendants(owner, id, now);
+    await cascadeArchiveToDescendants(owner, id, now);
     // The parent just lost a live child: its height (and so its level) may drop, and its
     // rollup must stop counting the archived branch. recomputeProgress is new here — the
     // old deleteObjective omitted it, leaving a stale progress_cache behind.
-    restampLevels(existing.parent_id);
-    if (existing.parent_id) recomputeProgress(existing.parent_id);
-  })();
-  writeAudit({ ownerId: owner, actor: 'owner', action: 'archive', entity: `objective:${id}` });
+    await restampLevels(existing.parent_id);
+    if (existing.parent_id) await recomputeProgress(existing.parent_id);
+    return true;
+  });
+  // No audit when a concurrent archive won — matching the idempotent early return above,
+  // which does not write one either.
+  if (didArchive) writeAudit({ ownerId: owner, actor: 'owner', action: 'archive', entity: `objective:${id}` });
   return { ok: true, parentId: existing.parent_id };
 }
 
@@ -766,12 +848,10 @@ export function archiveObjective(owner: string, id: string): DeleteObjectiveResu
  * pending purge. THIS is the reversal: the row never left the table, so it is one
  * UPDATE — no id is re-minted and no FK or link tombstone was ever destroyed.
  */
-export function restoreObjective(owner: string, id: string): RestoreResult {
-  const existing = sqlite
+export async function restoreObjective(owner: string, id: string): Promise<RestoreResult> {
+  const existing = await store()
     .prepare(`SELECT id, parent_id, archived_at, archive_root_id FROM objectives WHERE id = ? AND owner_id = ?`)
-    .get(id, owner) as
-    | { id: string; parent_id: string | null; archived_at: string | null; archive_root_id: string | null }
-    | undefined;
+    .get<{ id: string; parent_id: string | null; archived_at: string | null; archive_root_id: string | null }>(id, owner);
   if (!existing) return { ok: false, error: 'not_found' };
 
   // A cascaded member must be restored from its root. Restoring it alone would clear
@@ -782,22 +862,23 @@ export function restoreObjective(owner: string, id: string): RestoreResult {
     return { ok: false, error: 'subtree_member', archiveRootId: existing.archive_root_id };
   }
 
-  sqlite.transaction(() => {
-    const subtree = (sqlite
+  await store().transaction(async () => {
+    const subtree = (await store()
       .prepare(`SELECT id FROM objectives WHERE owner_id = ? AND archive_root_id = ?`)
-      .all(owner, id) as { id: string }[]).map((r) => r.id);
+      .all<{ id: string }>(owner, id)).map((r) => r.id);
 
+    // Sequential: each stamp must follow its own row's UPDATE, as in the archive cascade.
     for (const rowId of [id, ...subtree]) {
-      sqlite
+      await store()
         .prepare(`UPDATE objectives SET archived_at = NULL, archive_root_id = NULL, purge_after = NULL WHERE id = ? AND owner_id = ?`)
         .run(rowId, owner);
       stampRow(sqlite, 'objective', rowId, ['archivedAt', 'archiveRootId']);
     }
 
-    restampLevels(existing.parent_id);
-    restampLevels(id);
-    if (existing.parent_id) recomputeProgress(existing.parent_id);
-  })();
+    await restampLevels(existing.parent_id);
+    await restampLevels(id);
+    if (existing.parent_id) await recomputeProgress(existing.parent_id);
+  });
   writeAudit({ ownerId: owner, actor: 'owner', action: 'restore', entity: `objective:${id}` });
   return { ok: true, parentId: existing.parent_id };
 }
@@ -822,10 +903,10 @@ export type PurgeResult =
  * `purge_after` is intentionally NOT stamped for sync — it is a server-owned deadline
  * (like level/progress_cache), so a client cannot author it.
  */
-export function requestPurge(owner: string, id: string): PurgeResult {
-  const row = sqlite
+export async function requestPurge(owner: string, id: string): Promise<PurgeResult> {
+  const row = await store()
     .prepare(`SELECT id, archived_at, archive_root_id FROM objectives WHERE id = ? AND owner_id = ?`)
-    .get(id, owner) as { id: string; archived_at: string | null; archive_root_id: string | null } | undefined;
+    .get<{ id: string; archived_at: string | null; archive_root_id: string | null }>(id, owner);
   if (!row) return { ok: false, error: 'not_found' };
   if (!row.archived_at) return { ok: false, error: 'not_archived' };
   // Purge the subtree from its root, or the member would go while the root stayed —
@@ -833,13 +914,13 @@ export function requestPurge(owner: string, id: string): PurgeResult {
   if (row.archive_root_id) return { ok: false, error: 'subtree_member', archiveRootId: row.archive_root_id };
   // A live child would be silently re-rooted by ON DELETE SET NULL when the job fires.
   // The cascade means this should be unreachable; it is a guard, not a workflow.
-  const live = sqlite
+  const live = await store()
     .prepare(`SELECT 1 FROM objectives WHERE parent_id = ? AND archived_at IS NULL LIMIT 1`)
     .get(id);
   if (live) return { ok: false, error: 'live_children' };
 
   const deadline = new Date(Date.now() + PURGE_WINDOW_HOURS * 3600_000).toISOString();
-  sqlite
+  await store()
     .prepare(`UPDATE objectives SET purge_after = ? WHERE owner_id = ? AND (id = ? OR archive_root_id = ?)`)
     .run(deadline, owner, id, id);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'purge:request', entity: `objective:${id}` });
@@ -847,15 +928,15 @@ export function requestPurge(owner: string, id: string): PurgeResult {
 }
 
 /** Cancel a pending permanent deletion — the reversal itself. */
-export function cancelPurge(owner: string, id: string): PurgeResult {
-  const row = sqlite
+export async function cancelPurge(owner: string, id: string): Promise<PurgeResult> {
+  const row = await store()
     .prepare(`SELECT id, archive_root_id FROM objectives WHERE id = ? AND owner_id = ?`)
-    .get(id, owner) as { id: string; archive_root_id: string | null } | undefined;
+    .get<{ id: string; archive_root_id: string | null }>(id, owner);
   if (!row) return { ok: false, error: 'not_found' };
   // Symmetric with requestPurge: the deadline was stamped across the subtree, so the
   // undo belongs at the root. Cancelling from a member would spare only that member.
   if (row.archive_root_id) return { ok: false, error: 'subtree_member', archiveRootId: row.archive_root_id };
-  sqlite
+  await store()
     .prepare(`UPDATE objectives SET purge_after = NULL WHERE owner_id = ? AND (id = ? OR archive_root_id = ?)`)
     .run(owner, id, id);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'purge:cancel', entity: `objective:${id}` });
@@ -867,16 +948,16 @@ export type LinkTaskResult =
   | { ok: false; error: 'objective_not_found' | 'task_id_required' | 'non_leaf' | 'task_not_found' };
 
 /** Link a task to a (leaf) objective. Preserves the route's validation order + messages. */
-export function linkTaskToObjective(owner: string, objId: string, taskId: string | undefined): LinkTaskResult {
-  const obj = sqlite.prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(objId, owner);
+export async function linkTaskToObjective(owner: string, objId: string, taskId: string | undefined): Promise<LinkTaskResult> {
+  const obj = await store().prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(objId, owner);
   if (!obj) return { ok: false, error: 'objective_not_found' };
   if (!taskId) return { ok: false, error: 'task_id_required' };
   // Containment: tasks live only at the leaf (objective) level.
-  if (heightBelow(objId) > 0) return { ok: false, error: 'non_leaf' };
-  const task = sqlite.prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, owner);
+  if ((await heightBelow(objId)) > 0) return { ok: false, error: 'non_leaf' };
+  const task = await store().prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ?`).get(taskId, owner);
   if (!task) return { ok: false, error: 'task_not_found' };
-  const linkId = linkObjectiveTask(objId, taskId);
-  recomputeProgress(objId);
+  const linkId = await linkObjectiveTask(objId, taskId);
+  await recomputeProgress(objId);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'link', entity: `objective:${objId}:task:${taskId}` });
   return { ok: true, linkId };
 }
@@ -886,20 +967,20 @@ export function linkTaskToObjective(owner: string, objId: string, taskId: string
  * cross-owner tombstone; this hardens it without changing same-owner behavior): a foreign
  * objId is a no-op returning null. Idempotent otherwise.
  */
-export function unlinkTaskFromObjective(owner: string, objId: string, taskId: string): { linkId: string | null } {
-  const obj = sqlite.prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(objId, owner);
+export async function unlinkTaskFromObjective(owner: string, objId: string, taskId: string): Promise<{ linkId: string | null }> {
+  const obj = await store().prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(objId, owner);
   if (!obj) return { linkId: null };
-  const linkId = unlinkObjectiveTask(objId, taskId);
-  recomputeProgress(objId);
+  const linkId = await unlinkObjectiveTask(objId, taskId);
+  await recomputeProgress(objId);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'unlink', entity: `objective:${objId}:task:${taskId}` });
   return { linkId };
 }
 
 export type RecomputeResult = { ok: true } | { ok: false; error: 'not_found' };
 
-export function recomputeObjective(owner: string, id: string): RecomputeResult {
-  const obj = sqlite.prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(id, owner);
+export async function recomputeObjective(owner: string, id: string): Promise<RecomputeResult> {
+  const obj = await store().prepare(`SELECT id FROM objectives WHERE id = ? AND owner_id = ?`).get(id, owner);
   if (!obj) return { ok: false, error: 'not_found' };
-  recomputeProgress(id);
+  await recomputeProgress(id);
   return { ok: true };
 }

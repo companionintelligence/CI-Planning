@@ -202,6 +202,6 @@ export const taskResolvers = {
     textureEnabled: (t: TaskRow) => t.textureEnabled ?? true,
     // W8a follow-up: the first objective this task is linked to (owner-scoped in the
     // service). The returned raw ObjectiveRow is shaped by ObjectiveType's field resolvers.
-    objective: (t: TaskRow) => objectiveForTask(currentOwnerId(), t.id) ?? null,
+    objective: async (t: TaskRow) => (await objectiveForTask(currentOwnerId(), t.id)) ?? null,
   },
 };

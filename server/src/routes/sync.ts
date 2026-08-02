@@ -78,7 +78,11 @@ export function syncRouter() {
           // the live subtree the way archiveObjective does, or archiving offline silently
           // orphans every child (buildTree then re-roots them to top level).
           if (op.entity === 'objective') {
-            applySyncedObjectiveUpkeep(ownerId, op.entityId, result.applied);
+            // Awaited, not floated: the upkeep must land INSIDE this transaction, and
+            // before the sync event below announces the op as applied. Detached, the
+            // archive cascade would race the commit and the client could observe an
+            // archived root whose subtree is still live.
+            await applySyncedObjectiveUpkeep(ownerId, op.entityId, result.applied);
           }
           // An objective_task link change surfaces as an objective update (the
           // client re-derives the tree from the objective's links).

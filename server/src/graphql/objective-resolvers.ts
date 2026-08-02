@@ -59,16 +59,16 @@ export const objectiveResolvers = {
     // `objectives` (which filters) and what deleteObjective reports. The archive is
     // reachable via REST GET /api/objectives?archived=1; a GraphQL archive surface is
     // deliberately out of scope for 0129.
-    objective: (_p: unknown, args: { id: string }) => {
-      const row = getObjectiveRow(currentOwnerId(), args.id);
+    objective: async (_p: unknown, args: { id: string }) => {
+      const row = await getObjectiveRow(currentOwnerId(), args.id);
       return row && !row.archived_at ? row : null;
     },
   },
 
   Mutation: {
-    createObjective: (_p: unknown, args: { input: Record<string, unknown> }) => {
+    createObjective: async (_p: unknown, args: { input: Record<string, unknown> }) => {
       const owner = currentOwnerId();
-      const res = createObjective(owner, toCreate(args.input));
+      const res = await createObjective(owner, toCreate(args.input));
       if (!res.ok) {
         throw new GraphQLError(res.error === 'title_required' ? 'title is required' : 'parent_id not found', { extensions: { code: 'BAD_USER_INPUT' } });
       }
@@ -76,9 +76,9 @@ export const objectiveResolvers = {
       return { objective: res.row, success: true };
     },
 
-    updateObjective: (_p: unknown, args: { input: Record<string, unknown> & { id: string } }) => {
+    updateObjective: async (_p: unknown, args: { input: Record<string, unknown> & { id: string } }) => {
       const owner = currentOwnerId();
-      const res = updateObjective(owner, args.input.id, toUpdate(args.input));
+      const res = await updateObjective(owner, args.input.id, toUpdate(args.input));
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('objective not found', { extensions: { code: 'NOT_FOUND' } });
         const msg =
@@ -93,17 +93,17 @@ export const objectiveResolvers = {
 
     // Archives rather than destroys, matching DELETE /api/objectives/:id — the two
     // surfaces share the service, so they must not disagree about what "delete" means.
-    deleteObjective: (_p: unknown, args: { input: { id: string } }) => {
+    deleteObjective: async (_p: unknown, args: { input: { id: string } }) => {
       const owner = currentOwnerId();
-      const res = archiveObjective(owner, args.input.id);
+      const res = await archiveObjective(owner, args.input.id);
       if (!res.ok) throw new GraphQLError('objective not found', { extensions: { code: 'NOT_FOUND' } });
       broadcast(owner, 'objective:deleted', { id: args.input.id });
       return { deletedId: args.input.id, success: true };
     },
 
-    linkObjectiveTask: (_p: unknown, args: { input: { objectiveId: string; taskId: string } }) => {
+    linkObjectiveTask: async (_p: unknown, args: { input: { objectiveId: string; taskId: string } }) => {
       const owner = currentOwnerId();
-      const res = linkTaskToObjective(owner, args.input.objectiveId, args.input.taskId);
+      const res = await linkTaskToObjective(owner, args.input.objectiveId, args.input.taskId);
       if (!res.ok) {
         if (res.error === 'non_leaf') throw new GraphQLError('tasks can only be linked to a leaf objective, not a project or goal', { extensions: { code: 'BAD_USER_INPUT' } });
         // objective_not_found / task_not_found (task_id_required can't occur — taskId is ID!).
@@ -111,15 +111,15 @@ export const objectiveResolvers = {
       }
       broadcast(owner, 'objective:updated', { id: args.input.objectiveId });
       broadcast(owner, 'objective_task:updated', { id: res.linkId });
-      return { objective: getObjectiveRow(owner, args.input.objectiveId) ?? null, success: true };
+      return { objective: (await getObjectiveRow(owner, args.input.objectiveId)) ?? null, success: true };
     },
 
-    unlinkObjectiveTask: (_p: unknown, args: { input: { objectiveId: string; taskId: string } }) => {
+    unlinkObjectiveTask: async (_p: unknown, args: { input: { objectiveId: string; taskId: string } }) => {
       const owner = currentOwnerId();
-      const { linkId } = unlinkTaskFromObjective(owner, args.input.objectiveId, args.input.taskId);
+      const { linkId } = await unlinkTaskFromObjective(owner, args.input.objectiveId, args.input.taskId);
       broadcast(owner, 'objective:updated', { id: args.input.objectiveId });
       if (linkId) broadcast(owner, 'objective_task:updated', { id: linkId });
-      return { objective: getObjectiveRow(owner, args.input.objectiveId) ?? null, success: true };
+      return { objective: (await getObjectiveRow(owner, args.input.objectiveId)) ?? null, success: true };
     },
   },
 
@@ -129,13 +129,13 @@ export const objectiveResolvers = {
     createdAt: (o: ObjectiveRow) => o.created_at,
     updatedAt: (o: ObjectiveRow) => o.updated_at,
     completedAt: (o: ObjectiveRow) => o.completed_at,
-    parent: (o: ObjectiveRow) => (o.parent_id ? getObjectiveRow(currentOwnerId(), o.parent_id) ?? null : null),
+    parent: async (o: ObjectiveRow) => (o.parent_id ? (await getObjectiveRow(currentOwnerId(), o.parent_id)) ?? null : null),
     children: (o: ObjectiveRow) => objectiveChildrenRows(currentOwnerId(), o.id),
     // Linked tasks, re-fetched owner-scoped (a shared task that vanished is skipped, keeping
     // the non-null [TaskType!]! honest). Bounded per objective → N+1 acceptable.
     tasks: async (o: ObjectiveRow) => {
       const owner = currentOwnerId();
-      const rows = await Promise.all(objectiveTaskIds(o.id).map((id) => getTask(owner, id)));
+      const rows = await Promise.all((await objectiveTaskIds(o.id)).map((id) => getTask(owner, id)));
       return rows.filter((t): t is NonNullable<typeof t> => !!t);
     },
     category: (o: ObjectiveRow) => {

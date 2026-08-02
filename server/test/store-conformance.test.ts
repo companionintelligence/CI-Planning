@@ -121,6 +121,27 @@ describe.each(backends.map((b) => [b.name, b] as const))('store conformance: %s'
     expect(none.changes).toBe(0);
   });
 
+  it('INSERT … SELECT … WHERE EXISTS writes conditionally and reports `changes`', async () => {
+    // The shape services/objectives.createObjective uses to re-assert that the parent is
+    // still live AS PART OF the insert — a plain check-then-write stopped being safe once
+    // an await separated the two halves, and a transaction does not close it under
+    // Postgres READ COMMITTED. Two properties have to hold identically on both backends:
+    // a full parameter list binds in the SELECT list (Postgres infers those types from the
+    // INSERT's target columns), and a failed guard reports changes = 0 rather than raising.
+    await store.prepare(`INSERT INTO conf (id, n) VALUES (?, ?)`).run('parent', 1);
+
+    const guarded = `INSERT INTO conf (id, n, label)
+       SELECT ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM conf WHERE id = ? AND n = ?)`;
+
+    const hit = await store.prepare(guarded).run('child', 2, 'kept', 'parent', 1);
+    expect(hit.changes).toBe(1);
+
+    const miss = await store.prepare(guarded).run('orphan', 3, 'dropped', 'parent', 99);
+    expect(miss.changes).toBe(0);
+    expect(await store.prepare(`SELECT * FROM conf WHERE id = ?`).get('orphan')).toBeUndefined();
+  });
+
   it('a statement is reusable across calls', async () => {
     const ins = store.prepare(`INSERT INTO conf (id, n) VALUES (?, ?)`);
     await ins.run('a', 1);

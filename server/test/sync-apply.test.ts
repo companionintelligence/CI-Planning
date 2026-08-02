@@ -800,11 +800,11 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
   });
 
   // ── (b) the incoming archived_at ──
-  it('cascades a synced archive over the live subtree, exactly as archiveObjective does', () => {
+  it('cascades a synced archive over the live subtree, exactly as archiveObjective does', async () => {
     mkObj('b-goal'); mkObj('b-proj', 'b-goal'); mkObj('b-leaf', 'b-proj'); // 2 levels deep
 
     applyOp(sqlite, op('b-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
 
     expect(liveChildrenOfArchivedParents()).toEqual([]);
     for (const id of ['b-proj', 'b-leaf']) {
@@ -814,13 +814,16 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
     }
   });
 
-  it('a synced UN-archive does not cascade — restore stays root-only (0129 subtree rule)', () => {
+  it('a synced UN-archive does not cascade — restore stays root-only (0129 subtree rule)', async () => {
     mkObj('b2-goal'); mkObj('b2-kid', 'b2-goal');
     applyOp(sqlite, op('b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: '2026-06-02T10:00:00.000Z' });
     // Clearing archived_at must not fan out — restoreObjective owns that path.
     applyOp(sqlite, op('b2-goal', { archived_at: null }, '2026-06-03T10:00:00.000Z'), SYSTEM_OWNER);
-    expect(() => applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: null })).not.toThrow();
+    // `expect(() => f()).not.toThrow()` fails OPEN once f is async — the call returns a
+    // rejected promise instead of throwing, so the matcher sees no throw and passes while
+    // testing nothing. Assert on the settled promise instead.
+    await expect(applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'b2-goal', { archived_at: null })).resolves.toBeUndefined();
     expect(getObjective('b2-goal').archived_at).toBeNull();
   });
 
@@ -840,14 +843,14 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
    * Same class as the recursive-walk scoping in #369 — liveDescendantIds is the walk that
    * pass missed.
    */
-  it('never touches another owner\'s objective — not archived, not even stamped', () => {
+  it('never touches another owner\'s objective — not archived, not even stamped', async () => {
     createOwner();
     mkObj('x-mine');
     mkObj('x-theirs', 'x-mine', SECOND_OWNER_ID); // corrupt cross-owner edge (pre-existing data)
     const before = getObjective('x-theirs');
 
     applyOp(sqlite, op('x-mine', { archived_at: '2026-06-02T10:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'x-mine', { archived_at: '2026-06-02T10:00:00.000Z' });
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'x-mine', { archived_at: '2026-06-02T10:00:00.000Z' });
 
     const after = getObjective('x-theirs');
     expect(after.archived_at).toBeNull();        // owner-scoped UPDATE already got this right
@@ -858,19 +861,19 @@ describe('sync cannot leave a live objective under an archived parent (0129)', (
   });
 
   // ── order independence: LWW guarantees no arrival order ──
-  it('holds whichever order the two ops arrive in', () => {
+  it('holds whichever order the two ops arrive in', async () => {
     // Order 1: re-parent first, THEN archive the parent → the cascade must catch the child.
     mkObj('o1-p'); mkObj('o1-c');
     applyOp(sqlite, op('o1-c', { parent_id: 'o1-p' }), SYSTEM_OWNER);
     applyOp(sqlite, op('o1-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o1-p', { archived_at: '2026-06-02T11:00:00.000Z' });
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o1-p', { archived_at: '2026-06-02T11:00:00.000Z' });
     expect(liveChildrenOfArchivedParents()).toEqual([]);
     expect(getObjective('o1-c').archived_at).toBeTruthy(); // archived WITH its parent
 
     // Order 2: archive first, THEN the re-parent op arrives → the clamp must catch it.
     mkObj('o2-p'); mkObj('o2-c');
     applyOp(sqlite, op('o2-p', { archived_at: '2026-06-02T11:00:00.000Z' }), SYSTEM_OWNER);
-    applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o2-p', { archived_at: '2026-06-02T11:00:00.000Z' });
+    await applySyncedObjectiveUpkeep(SYSTEM_OWNER, 'o2-p', { archived_at: '2026-06-02T11:00:00.000Z' });
     applyOp(sqlite, op('o2-c', { parent_id: 'o2-p' }), SYSTEM_OWNER);
     expect(liveChildrenOfArchivedParents()).toEqual([]);
     expect(getObjective('o2-c').parent_id).toBeNull();     // re-rooted, explicitly

@@ -1,14 +1,16 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 37 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–4 COMPLETE, wave 5 at 7 of 11. Suite verified at 2633 passed
-> after every one of the 24 slices.**
+> **DONE — waves 0–4 COMPLETE, wave 5 at 8 of 11. Suite verified after every one
+> of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
+> `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
+> test, which runs once per backend).**
 >
 > **Remaining work is smaller than this document originally predicted.** A fresh
-> count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **151
-> references in 20 files**, three of which are the seam itself (`db/index.ts`,
-> `db/pg.ts`, `db/store.ts`) — so **17 files actually remain**. Several files the
+> count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **136
+> references in 19 files**, three of which are the seam itself (`db/index.ts`,
+> `db/pg.ts`, `db/store.ts`) — so **16 files actually remain**. Several files the
 > wave lists below name (render-copy, connectors/index, calibration, flags,
 > mcp/client, connectors/base, scheduler, models) hold NO raw statements and are
 > already done or never needed porting. Re-run the count rather than trusting the
@@ -18,35 +20,49 @@
 > grep -rn "sqlite\.\(prepare\|exec\|transaction\)" server/src --include=*.ts | wc -l
 > ```
 >
+> **`agents/groom.ts`'s 5 remaining refs are NOT pass-A work** and will not fall to
+> the facade. They are sqlite-vec virtual-table calls (`vec0`, `MATCH`, the
+> `vec_dedupe_tmp` scratch table) — a SQLite-extension code path that pgvector
+> replaces at cutover, not a statement to route through `store()`. Groom is done;
+> the grep just cannot tell. Subtract it before sizing what is left.
+>
 > Actual remaining, by wave:
-> - **Wave 5 (4 files left of 11)** — ✓ motivation, ✓ series-scope,
+> - **Wave 5 (3 files left of 11)** — ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
->   commit as required), ✓ task-close. Remaining: **objectives** (15 stmts, 9
->   importers — the big one; note task-promotion already calls its
->   recomputeProgress/linkObjectiveTask synchronously, so that cascade lands
->   here), connectors/memory, services/memory, patterns-place.
+>   commit as required), ✓ task-close, ✓ **objectives**. Remaining:
+>   connectors/memory, services/memory, patterns-place.
 >   `patterns-place.ensurePatternsForRange` is still called UNAWAITED from
 >   services/blocks.blockRowsForQuery — the one call site left deliberately sync
 >   in part 8. Add the await when it ports.
 >
->   **START HERE — `services/objectives.ts`, surveyed but NOT started.** 905 lines,
->   ~50 raw `sqlite` references (the "15" above counted single-line matches only —
->   trust the grep, not that number), 25+ exported functions, 9 importers. Largest
->   single slice left in wave 5; give it its own commit. What the survey found, so
->   it need not be redone:
->   - **Recursive / looping helpers that all go async and are called from inside
->     loops**: `heightBelow` (a `WITH RECURSIVE` query), `restampLevels` (walks UP
->     the parent chain calling `heightBelow` per node), `wouldCycle`,
->     `liveDescendantIds`, and `recomputeProgress` (rolls up through children).
->     Await inside those loops — do NOT reach for `.map`.
->   - **Two existing transactions** to carry over: `archiveObjective` and
->     `restoreObjective` (its subtree walk). The comment near line 748 — cascade as
->     a unit "has to be atomic" — is the reason; keep it true.
->   - **`stampRow(sqlite, …)` appears ~8 times** and keeps the raw handle, as
->     everywhere else, until sync/apply.ts ports in wave 6.
->   - Header line 17 still claims "better-sqlite3 is synchronous; these are plain
->     sync functions" — correct it the way patterns.ts's was.
->   - No module-level prepares in this file.
+>   **`services/objectives.ts` is DONE** (part 25). 905 lines, ~50 raw refs, 25
+>   exported functions; cascade was routes/objectives (12 sites),
+>   graphql/objective-resolvers (11), services/task-promotion (3),
+>   graphql/task-resolvers (1), routes/sync (1), and 7 sites in
+>   sync-apply.test.ts. What the port had to decide, so it is not re-litigated:
+>   - **Two check-then-write guards were re-asserted as part of the write**, per
+>     the "implicit atomicity" rule below. `createObjective`'s live-parent check
+>     became an `INSERT … SELECT … WHERE EXISTS (…)` (the unguarded `VALUES` form
+>     is kept for the parentless case — `id = NULL` matches nothing, so an EXISTS
+>     guard there would refuse every root objective), and `archiveObjective`'s
+>     root UPDATE is now guarded on `archived_at IS NULL` with the audit gated on
+>     `changes > 0`, matching the idempotent early return.
+>   - **Two races were deliberately LEFT OPEN and documented at their site**,
+>     because closing them needs a schema change rather than a refactor:
+>     `linkObjectiveTask` can insert a duplicate join row under a double-submit
+>     (`objective_tasks` has no unique index on (objective_id, task_id) — only on
+>     the surrogate `id`; same shape and same disposition as
+>     patterns.ensureHabitPattern), and `updateObjective`'s re-parent guards can
+>     both pass under concurrency, of which the `cycle` one matters: A→B and B→A
+>     both commit and the resulting parent loop does not terminate the `UNION ALL`
+>     recursive CTEs in `heightBelow`/`wouldCycle`. That one cannot be folded into
+>     a WHERE clause — it needs the two writers serialized. Fix both with the
+>     other post-cutover items.
+>   - `stampRow(sqlite, …)` still keeps the raw handle at 8 sites; the `sqlite`
+>     import survives for that alone and dies when sync/apply.ts ports in wave 6.
+>   - Both transactions carried over as `await store().transaction(async () => …)`
+>     — note the facade RUNS the callback, so the trailing `()` of
+>     `sqlite.transaction(fn)()` goes away.
 > - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
 >   block-task-sync, sync/apply, recurrence-generate, reminders.
 > - **Wave 7 (4 files)** — autoplan, crypto/index, tags, category-prefs.
@@ -281,6 +297,31 @@ of which 906 are portable work).
   `changes === 0`, throw after 5 losses rather than silently skip the write.
   A plain transaction does NOT fix this under Postgres READ COMMITTED. Grep a
   file for `JSON.stringify` next to an UPDATE before porting it.
+- **Dropping an `as T` cast for `.get<T>()` can make an inference cycle (TS7022).**
+  Not a silent break — it fails the typecheck — but the error names the variable,
+  not the cause, so it reads as a mystery. A type ASSERTION fixes an expression's
+  type regardless of its arguments; the generic does not, so a loop of the shape
+  `let cur: string | null = …; while (cur) { const row = await …get<T>(cur); cur =
+  row.parent_id }` becomes circular: narrowing `cur` needs every assignment to it,
+  which needs `row`, which needs the narrowed `cur`. `recomputeProgress` hit this.
+  Annotate the local (`const row: T | undefined = await …`) rather than reaching
+  back for a cast.
+- **`x ?? null` on a now-async call is a no-op that happens to survive GraphQL.**
+  `??` sees a pending promise, which is never nullish, so it returns the promise
+  and the `?? null` does nothing; graphql-js then awaits it and gets `undefined`,
+  which it coerces to null for a nullable field. So it works — by luck, through two
+  layers — and reads as correct. Four sites in the objectives resolvers. Await
+  inside the parens (`(await f(…)) ?? null`) so the intent survives a future
+  refactor that consumes the value somewhere less forgiving than a field resolver.
+
+**New dialect-portability coverage.** The guarded `INSERT … SELECT … WHERE EXISTS`
+that `createObjective` now uses is pinned in `test/store-conformance.test.ts`, so it
+is asserted on BOTH backends rather than only the one pass A runs on. It verifies
+that a full parameter list binds in the SELECT list (Postgres infers those types
+from the INSERT's target columns) and that a failed guard reports `changes = 0`
+rather than raising. Add a conformance case whenever a slice introduces a SQL shape
+the existing statements do not already cover — that is cheaper than discovering it
+at the `STORE_BACKEND=postgres` flip.
 
 ## Known N+1s the port preserves (do not fix during pass A)
 
