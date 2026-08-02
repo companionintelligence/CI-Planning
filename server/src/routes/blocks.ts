@@ -98,7 +98,7 @@ export function blocksRouter() {
     broadcast(currentOwnerId(), 'block:created', result.api);
     if (result.syncedTaskId) broadcast(currentOwnerId(), 'task:updated', { id: result.syncedTaskId });
 
-    enqueueOutbound(result.block.id);
+    await enqueueOutbound(result.block.id);
     ctx.status = 201;
     ctx.body = { block: result.api };
   });
@@ -168,7 +168,7 @@ export function blocksRouter() {
     broadcast(owner, 'block:updated', result.api);
     if (result.syncedTaskId) broadcast(owner, 'task:updated', { id: result.syncedTaskId });
 
-    enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
+    await enqueueOutbound(id); // I9 + writeback gate handled inside enqueueOutbound
     ctx.body = { block: result.api };
   });
 

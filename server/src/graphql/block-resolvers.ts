@@ -150,7 +150,7 @@ export const blockResolvers = {
       }
       broadcast(owner, 'block:created', res.api);
       if (res.syncedTaskId) broadcast(owner, 'task:updated', { id: res.syncedTaskId });
-      enqueueOutbound(res.block.id);
+      await enqueueOutbound(res.block.id);
       return { timeBlock: res.block, success: true };
     },
 
@@ -166,7 +166,7 @@ export const blockResolvers = {
       // stampRow already fired inside updateBlock (W3.3c commit 1).
       broadcast(owner, 'block:updated', res.api);
       if (res.syncedTaskId) broadcast(owner, 'task:updated', { id: res.syncedTaskId });
-      enqueueOutbound(args.input.id);
+      await enqueueOutbound(args.input.id);
       return { timeBlock: res.block, success: true };
     },
 
