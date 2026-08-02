@@ -418,7 +418,7 @@ export function backupRouter() {
       await store().exec('PRAGMA defer_foreign_keys=ON');
       // ── Delete the owner's existing portable data in reverse FK order ──────
       // Shared with deleteOwner() so the FK-safe ordering has one source of truth.
-      purgeOwnerData(ownerId);
+      await purgeOwnerData(ownerId);
 
       // ── Insert in FK-safe forward order ────────────────────────────────────
       const g = (key: string) => (Array.isArray(body[key]) ? (body[key] as Record<string, unknown>[]) : []);

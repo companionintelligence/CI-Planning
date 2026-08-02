@@ -512,7 +512,7 @@ export function authRouter() {
         // Phase AG: an auto-provisioned portal user is a 'member', never an operator —
         // this is what closes the "every SSO tenant is an admin" hole. An operator
         // promotes them via /api/accounts if they should run the instance.
-        owner = { id: provisionOwner({ name, email, externalSubject: claims.sub, role: 'member' }) };
+        owner = { id: await provisionOwner({ name, email, externalSubject: claims.sub, role: 'member' }) };
         logger.info('CI-Portal auto-provisioned a new owner', { owner: owner.id });
       } catch (err) {
         // Two concurrent first-logins for the same sub: the UNIQUE(external_subject)

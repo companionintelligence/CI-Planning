@@ -241,7 +241,7 @@ describe('AA0b routes', () => {
   });
 
   it('the public callback stores an oidc connection + stamps memory_account, then redirects connected', async () => {
-    const owner = provisionOwner({ name: 'Mem User', email: 'mem@ci.test', externalSubject: 'mem-sub-1' });
+    const owner = await provisionOwner({ name: 'Mem User', email: 'mem@ci.test', externalSubject: 'mem-sub-1' });
     const nonce = 'nonce-happy';
     const state = seedState(owner, nonce);
     const { idToken, jwks } = makeIdToken({ sub: 'mem-sub-1', nonce });
@@ -260,7 +260,7 @@ describe('AA0b routes', () => {
   });
 
   it('refuses a grant with no refresh token (offline_access is required to self-refresh)', async () => {
-    const owner = provisionOwner({ name: 'No RT', externalSubject: 'mem-sub-2' });
+    const owner = await provisionOwner({ name: 'No RT', externalSubject: 'mem-sub-2' });
     const nonce = 'nonce-nort';
     const state = seedState(owner, nonce);
     const { idToken, jwks } = makeIdToken({ sub: 'mem-sub-2', nonce });
@@ -273,7 +273,7 @@ describe('AA0b routes', () => {
   });
 
   it('rejects an id_token whose subject is not the connecting owner (subject binding)', async () => {
-    const owner = provisionOwner({ name: 'Bound', externalSubject: 'the-owner-sub' });
+    const owner = await provisionOwner({ name: 'Bound', externalSubject: 'the-owner-sub' });
     const nonce = 'nonce-bind';
     const state = seedState(owner, nonce);
     const { idToken, jwks } = makeIdToken({ sub: 'someone-else', nonce }); // mismatched subject
@@ -305,21 +305,21 @@ describe('AA0b routes', () => {
   }
 
   it('a local-login owner (no external_subject) CAN connect any portal account first time', async () => {
-    const owner = provisionOwner({ name: 'Local only' }); // externalSubject deliberately unset
+    const owner = await provisionOwner({ name: 'Local only' }); // externalSubject deliberately unset
     const res = await connectAs(owner, 'whichever-portal-account');
     expect(res.location).toBe('/settings?memory=connected');
     expect(memoryOidcSubject(owner)).toBe('whichever-portal-account'); // now pinned
   });
 
   it('reconnecting the SAME subject still works (refresh / re-consent)', async () => {
-    const owner = provisionOwner({ name: 'Local only' });
+    const owner = await provisionOwner({ name: 'Local only' });
     expect((await connectAs(owner, 'sub-a')).location).toBe('/settings?memory=connected');
     expect((await connectAs(owner, 'sub-a')).location).toBe('/settings?memory=connected');
     expect(memoryOidcSubject(owner)).toBe('sub-a');
   });
 
   it('refuses a SILENT re-bind to a different portal identity once connected', async () => {
-    const owner = provisionOwner({ name: 'Local only' });
+    const owner = await provisionOwner({ name: 'Local only' });
     await connectAs(owner, 'sub-a');
     const before = memoryCreds(owner);
 
@@ -331,7 +331,7 @@ describe('AA0b routes', () => {
   });
 
   it('disconnecting releases the binding so a different account can be connected', async () => {
-    const owner = provisionOwner({ name: 'Local only' });
+    const owner = await provisionOwner({ name: 'Local only' });
     await connectAs(owner, 'sub-a');
     deleteMemoryConnection(owner);
     expect(memoryOidcSubject(owner)).toBeNull();

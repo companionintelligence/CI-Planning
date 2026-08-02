@@ -221,8 +221,8 @@ describe('U2 — logout is inert outside local mode (no unauthenticated 500)', (
 });
 
 describe('G-BASETAG — provisionOwner seeds default availability windows', () => {
-  it('gives a new owner the same pattern_blocks owner #1 got from 0037', () => {
-    const ownerId = provisionOwner({ name: 'Windowed', username: 'windowed', passwordHash: 'x' });
+  it('gives a new owner the same pattern_blocks owner #1 got from 0037', async () => {
+    const ownerId = await provisionOwner({ name: 'Windowed', username: 'windowed', passwordHash: 'x' });
 
     // 5 workday + 3 weekend = 8 rows (home wk 2 + work 1 + community 2; home we 1 + work 1 + community 1).
     const byDayType = sqlite

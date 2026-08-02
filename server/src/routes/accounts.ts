@@ -7,7 +7,7 @@ import { currentScopes, currentOwnerId } from '../lib/context.js';
 import { hasAdminScope, normalizeRole, OWNER_ROLES, type OwnerRole } from '../lib/auth/scopes.js';
 import { issueResetToken } from '../lib/auth/resetToken.js';
 import { bumpSessionEpoch } from '../lib/auth/session.js';
-import { provisionOwner, deleteOwner, listOwners, operatorCount, type OwnerAccount } from '../lib/owners.js';
+import { provisionOwner, deleteOwner, listOwners, operatorCount, LastOperatorError, type OwnerAccount } from '../lib/owners.js';
 import { SYSTEM_OWNER_ID } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 import { sendMail } from '../lib/mail/index.js';
@@ -101,9 +101,9 @@ export function accountsRouter() {
   const router = new Router();
 
   // GET /api/accounts — every real owner (sentinel excluded), creation order.
-  router.get('/api/accounts', (ctx) => {
+  router.get('/api/accounts', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    ctx.body = { accounts: listOwners() };
+    ctx.body = { accounts: await listOwners() };
   });
 
   // POST /api/accounts — create a local account and send its invite. Body:
@@ -129,7 +129,7 @@ export function accountsRouter() {
 
     let id: string;
     try {
-      id = provisionOwner({
+      id = await provisionOwner({
         name: (typeof body.name === 'string' && body.name.trim()) || username,
         username,
         email,
@@ -231,14 +231,22 @@ export function accountsRouter() {
     if (target.id === currentOwnerId()) {
       ctx.status = 409; ctx.body = { error: 'cannot delete your own account' }; return;
     }
-    // Check-then-delete is safe from interleaving here: better-sqlite3 is
-    // synchronous and this handler has no await between the count and the delete,
-    // so no other request can run in between. (deleteOwner opens its own
-    // transaction, so the pair can't be wrapped in an outer one — no nesting.)
-    if (target.role === 'operator' && operatorCount() <= 1) {
+    // Fast-path refusal for the common case. This pre-check is ADVISORY under the
+    // async facade (an await now sits between count and delete, so two concurrent
+    // DELETEs could both pass it) — the atomic enforcement is the guarded
+    // owners-row DELETE inside deleteOwner's transaction, surfaced as
+    // LastOperatorError and mapped to the same 409 below.
+    if (target.role === 'operator' && (await operatorCount()) <= 1) {
       ctx.status = 409; ctx.body = { error: 'cannot delete the last operator' }; return;
     }
-    deleteOwner(target.id); // refuses the sentinel internally as well
+    try {
+      await deleteOwner(target.id); // refuses the sentinel internally as well
+    } catch (err) {
+      if (err instanceof LastOperatorError) {
+        ctx.status = 409; ctx.body = { error: 'cannot delete the last operator' }; return;
+      }
+      throw err;
+    }
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'delete', entity: `account:${target.id}` });
     ctx.body = { ok: true };
   });

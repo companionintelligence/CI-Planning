@@ -141,8 +141,8 @@ describe('AG — session scopes derive from owners.role (the choke point)', () =
 
 describe('AG — provisioning defaults', () => {
   it('provisionOwner defaults to member; an explicit role sticks', async () => {
-    const m = provisionOwner({ name: 'plain' });
-    const o = provisionOwner({ name: 'boss', role: 'operator' });
+    const m = await provisionOwner({ name: 'plain' });
+    const o = await provisionOwner({ name: 'boss', role: 'operator' });
     const roleOf = (id: string) =>
       (sqlite.prepare(`SELECT role FROM owners WHERE id = ?`).get(id) as { role: string }).role;
     expect(roleOf(m)).toBe('member');
@@ -151,15 +151,15 @@ describe('AG — provisioning defaults', () => {
 
   it('listOwners excludes the sentinel and reports hasPassword; operatorCount ignores the sentinel', async () => {
     await seedUser('op', 'operator');
-    provisionOwner({ name: 'oidc-user', externalSubject: 'sub-x' }); // no password
-    const accounts = listOwners();
+    await provisionOwner({ name: 'oidc-user', externalSubject: 'sub-x' }); // no password
+    const accounts = await listOwners();
     expect(accounts.some((a) => a.id === SYSTEM_OWNER_ID)).toBe(false);
     expect(accounts.find((a) => a.username === 'op')!.hasPassword).toBe(true);
     expect(accounts.find((a) => a.name === 'oidc-user')!.hasPassword).toBe(false);
     // Force an operator role onto the sentinel: it still must not count (auth-inert).
     sqlite.prepare(`UPDATE owners SET role = 'operator' WHERE id = ?`).run(SYSTEM_OWNER_ID);
     try {
-      expect(operatorCount()).toBe(1);
+      expect(await operatorCount()).toBe(1);
     } finally {
       sqlite.prepare(`UPDATE owners SET role = 'member' WHERE id = ?`).run(SYSTEM_OWNER_ID);
     }
@@ -168,7 +168,7 @@ describe('AG — provisioning defaults', () => {
   it('a hand-edited (unrecognized) role reads back as viewer everywhere, matching its granted scopes', async () => {
     const id = await seedUser('weird', 'member');
     sqlite.prepare(`UPDATE owners SET role = 'admin' WHERE id = ?`).run(id);
-    expect(listOwners().find((a) => a.id === id)!.role).toBe('viewer');
+    expect((await listOwners()).find((a) => a.id === id)!.role).toBe('viewer');
     // The session for that owner is read-only (roleToScopes fail-closed)…
     const cookie = await login('weird');
     expect((await req('/api/tasks', cookie)).status).toBe(200);
@@ -244,9 +244,9 @@ describe('AG — /api/accounts CRUD (operator-gated)', () => {
     expect((await req('/api/auth/reset', '', { method: 'POST', json: { token: firstToken, newPassword: 'long-enough-pw' } })).status).toBe(400);
     expect((await req('/api/auth/reset', '', { method: 'POST', json: { token: secondToken, newPassword: 'long-enough-pw' } })).status).toBe(200);
 
-    const oidcId = provisionOwner({ name: 'portal', externalSubject: 'sub-inv' });
+    const oidcId = await provisionOwner({ name: 'portal', externalSubject: 'sub-inv' });
     expect((await req(`/api/accounts/${oidcId}/invite`, opCookie, { method: 'POST' })).status).toBe(409);
-    const noMailId = provisionOwner({ name: 'nomail', username: 'nomail' });
+    const noMailId = await provisionOwner({ name: 'nomail', username: 'nomail' });
     expect((await req(`/api/accounts/${noMailId}/invite`, opCookie, { method: 'POST' })).status).toBe(409);
     expect((await req(`/api/accounts/00000000-0000-7000-8000-00000000dead/invite`, opCookie, { method: 'POST' })).status).toBe(404);
   });
@@ -271,7 +271,7 @@ describe('AG — /api/accounts CRUD (operator-gated)', () => {
     expect((await demote()).status).toBe(409);
 
     const secondId = await seedUser('op2', 'operator');
-    expect(operatorCount()).toBe(2);
+    expect(await operatorCount()).toBe(2);
     expect((await demote()).status).toBe(200);
     // …and now op2 is the last one.
     const op2Cookie = await login('op2');
@@ -286,7 +286,7 @@ describe('AG — /api/accounts CRUD (operator-gated)', () => {
 
   it('an operator-sent reset link lets an active user replace a lost password and signs them out everywhere', async () => {
     // seedUser sets no email — give mem one so the link has a destination.
-    const memId = provisionOwner({ name: 'mem', username: 'mem', email: 'mem@test.local', passwordHash: await hashPassword(PW), role: 'member' });
+    const memId = await provisionOwner({ name: 'mem', username: 'mem', email: 'mem@test.local', passwordHash: await hashPassword(PW), role: 'member' });
     const oldCookie = await login('mem');
 
     const r = await req(`/api/accounts/${memId}/invite`, opCookie, { method: 'POST' });
