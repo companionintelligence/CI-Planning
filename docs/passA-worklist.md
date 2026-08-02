@@ -28,6 +28,25 @@
 >   `patterns-place.ensurePatternsForRange` is still called UNAWAITED from
 >   services/blocks.blockRowsForQuery — the one call site left deliberately sync
 >   in part 8. Add the await when it ports.
+>
+>   **START HERE — `services/objectives.ts`, surveyed but NOT started.** 905 lines,
+>   ~50 raw `sqlite` references (the "15" above counted single-line matches only —
+>   trust the grep, not that number), 25+ exported functions, 9 importers. Largest
+>   single slice left in wave 5; give it its own commit. What the survey found, so
+>   it need not be redone:
+>   - **Recursive / looping helpers that all go async and are called from inside
+>     loops**: `heightBelow` (a `WITH RECURSIVE` query), `restampLevels` (walks UP
+>     the parent chain calling `heightBelow` per node), `wouldCycle`,
+>     `liveDescendantIds`, and `recomputeProgress` (rolls up through children).
+>     Await inside those loops — do NOT reach for `.map`.
+>   - **Two existing transactions** to carry over: `archiveObjective` and
+>     `restoreObjective` (its subtree walk). The comment near line 748 — cascade as
+>     a unit "has to be atomic" — is the reason; keep it true.
+>   - **`stampRow(sqlite, …)` appears ~8 times** and keeps the raw handle, as
+>     everywhere else, until sync/apply.ts ports in wave 6.
+>   - Header line 17 still claims "better-sqlite3 is synchronous; these are plain
+>     sync functions" — correct it the way patterns.ts's was.
+>   - No module-level prepares in this file.
 > - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
 >   block-task-sync, sync/apply, recurrence-generate, reminders.
 > - **Wave 7 (4 files)** — autoplan, crypto/index, tags, category-prefs.
