@@ -136,14 +136,37 @@ const row = sqlite.prepare(`SELECT … WHERE owner_id = ?`).get(owner);
 const row = await pg.prepare(`SELECT … WHERE owner_id = ?`).get(owner);
 ```
 
-Suggested order, each independently shippable and testable:
+### Sequencing: the code ports file-by-file, the RUNTIME cutover cannot
 
-1. Boot + migrations (`src/db/index.ts`, `boot.ts`) — run dbmate at startup, expose `pg`.
-2. Leaf services with the fewest callers (`app_config`, `audit_log`, `job_runs`).
-3. The dialect rewrites above, mechanically, with tests per file.
-4. Tenant-scoped services (`tasks`, `time_blocks`, `patterns`) — the bulk.
-5. The agents and engine, which are already async and so absorb the cascade cheaply.
-6. Delete `better-sqlite3`, `sqlite-vec`, Drizzle and the 147 SQLite migrations.
-7. **Then** consider the type-tightening pass (`timestamptz`, `jsonb`, `boolean`).
+An earlier draft of this file suggested shipping the port service by service. That is
+wrong, and the schema says so: **42 of 56 tables carry a foreign key to `owners`**, and
+only two (`app_config`, `auth_states`) have no foreign key in either direction. A row
+written to Postgres cannot reference an owner that still lives in SQLite, so the data
+cannot straddle both stores — which means there is no useful intermediate release where
+some services read Postgres and the rest read SQLite.
+
+```sql
+-- 42 of 56
+SELECT count(DISTINCT tc.table_name) FROM information_schema.table_constraints tc
+JOIN information_schema.constraint_column_usage ccu USING (constraint_name)
+WHERE tc.table_schema='planning' AND tc.constraint_type='FOREIGN KEY' AND ccu.table_name='owners';
+```
+
+So the shape is: **port file-by-file in ONE branch, cut over in ONE release.**
+
+1. ~~Boot + migrations~~ — done: the app runs dbmate-compatible migrations at startup
+   when `DATABASE_URL` is set, and is inert without it.
+2. Flip the TEST HARNESS to Postgres (`test/helpers.ts` `resetDb`, the per-pid database).
+   This is the real gate — 2600+ tests are the thing that proves the port, and they
+   cannot prove it while they run against SQLite.
+3. Port call sites file-by-file, commit-by-commit, with the suite going green
+   incrementally. Leaf-first still helps for review size; it just is not shippable
+   separately.
+4. The dialect rewrites above, mechanically.
+5. Delete `better-sqlite3`, `sqlite-vec`, Drizzle and the 147 SQLite migrations in the
+   same release as the cutover.
+6. A one-shot data exporter for existing installs (SQLite → Postgres), which is what
+   makes the single cutover safe for deployed users.
+7. **Then** the type-tightening pass (`timestamptz`, `jsonb`, `boolean`), separately.
 
 Data migration for existing installs is a separate task and is not covered here.
