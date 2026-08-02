@@ -178,6 +178,22 @@ So the shape is: **port file-by-file in ONE branch, cut over in ONE release.**
    `null`-on-miss divergence into the SQLite backend fails the suite.)
 3. Port call sites file-by-file, commit-by-commit, per pass A above. Leaf-first still
    helps for review size; it just is not shippable separately.
+
+   **Pass A findings so far** (each one is a decision the mechanical edit would have
+   got wrong):
+
+   - `writeAudit` is documented fire-and-forget and called **125 times**. It cannot stay
+     fire-and-forget: **29 assertions read `audit_log` immediately after the mutation that
+     writes it**, and under Postgres that is a real round trip, so an unawaited write is a
+     race. It must be awaited at all 125 sites — the single largest cascade in the port,
+     worth doing as its own commit.
+   - `better-sqlite3`'s `.get()`/`.all()`/`.run()` need an explicit `unknown[]` binding
+     generic to accept a variadic spread; the default overload infers a fixed-arity tuple
+     and rejects the zero-parameter case.
+   - `tsc` covers `src` only (`tsconfig.json` includes `src/**/*`), so test call sites are
+     NOT typechecked. Vitest's oxc transform does reject `await` in a non-async function,
+     which makes running the suite — not typechecking — the reliable signal for the test
+     half of the cascade.
 4. The dialect rewrites above, mechanically.
 5. Delete `better-sqlite3`, `sqlite-vec`, Drizzle and the 147 SQLite migrations in the
    same release as the cutover.
