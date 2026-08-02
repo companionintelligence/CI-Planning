@@ -32,8 +32,8 @@ const realFetch = globalThis.fetch.bind(globalThis);
 let srv: TestServer;
 
 /** A standalone-mode read+write api key (the /start + gated routes need it). */
-function authHeaders(): { headers: Record<string, string> } {
-  const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ, SCOPE_WRITE]);
+async function authHeaders(): Promise<{ headers: Record<string, string> }> {
+  const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ, SCOPE_WRITE]);
   return { headers: { 'x-api-key': key } };
 }
 
@@ -90,7 +90,7 @@ afterEach(() => {
 describe('GET /api/oauth/google/start', () => {
   it('returns { url } to Google with S256 + offline + consent and a verbatim redirect_uri', async () => {
     config.auth.mode = 'standalone';
-    const { status, body } = await realApi<{ url: string }>('/api/oauth/google/start', authHeaders());
+    const { status, body } = await realApi<{ url: string }>('/api/oauth/google/start', await authHeaders());
     expect(status).toBe(200);
     expect(body.url).toBeTruthy();
     const url = new URL(body.url);
@@ -121,9 +121,9 @@ describe('GET /api/oauth/google/start', () => {
   it('refuses with 409 when the connector is not live (off/fixture)', async () => {
     config.auth.mode = 'standalone';
     config.google.mode = 'off';
-    expect((await realApi('/api/oauth/google/start', authHeaders())).status).toBe(409);
+    expect((await realApi('/api/oauth/google/start', await authHeaders())).status).toBe(409);
     config.google.mode = 'fixture';
-    expect((await realApi('/api/oauth/google/start', authHeaders())).status).toBe(409);
+    expect((await realApi('/api/oauth/google/start', await authHeaders())).status).toBe(409);
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM oauth_states').get()).toEqual({ n: 0 });
   });
 
@@ -459,7 +459,7 @@ describe('accounts listing + disconnect', () => {
 
     const { status, body } = await realApi(
       `/api/oauth/google/accounts/${encodeURIComponent(account)}`,
-      { method: 'DELETE', ...authHeaders() },
+      { method: 'DELETE', ...await authHeaders() },
     );
     expect(status).toBe(200);
     expect(body).toEqual({ disconnected: account });

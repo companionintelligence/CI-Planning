@@ -69,7 +69,7 @@ describe('POST /api/jobs/run-now', () => {
 
   it('403s a read-only credential (ordinary write gate) — not the admin gate', async () => {
     config.auth.mode = 'standalone';
-    const key = issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
+    const key = await issueApiKey(SYSTEM_OWNER, [SCOPE_READ]);
     const res = await post({ 'x-api-key': key });
     expect(res.status).toBe(403);
     expect(res.body as unknown).toEqual({ error: 'forbidden' });
