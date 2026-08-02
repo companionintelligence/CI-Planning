@@ -47,18 +47,18 @@ export function calibrationRouter() {
     const pins = await store()
       .prepare(`SELECT scope_ref, created_at FROM calibration_combo_pins WHERE owner_id = ? ORDER BY scope_ref`)
       .all(owner);
-    ctx.body = { rows, pins, suggestions: detectComboSuggestions(owner) };
+    ctx.body = { rows, pins, suggestions: await detectComboSuggestions(owner) };
   });
 
   // GET /api/calibration/suggest/:taskId — Z6 suggest-only estimate nudge for one
   // task, or { suggestion: null } when there's nothing worth surfacing. The numbers
-  // come from the pure suggestEstimate(); Z7 renders the chip's LINE through the Voice
-  // loop here (at the async boundary — suggestEstimate stays a pure, sync read), so the
-  // nudge shares the one voice and its phrasing doesn't repeat.
+  // come from suggestEstimate(), which is still a PURE READ — it goes through the store
+  // facade now, so it is async, but it writes nothing. Z7 renders the chip's LINE through
+  // the Voice loop here, so the nudge shares the one voice and its phrasing doesn't repeat.
   router.get('/suggest/:taskId', async (ctx) => {
     if (!gate(ctx)) return;
     const owner = currentOwnerId();
-    const suggestion = suggestEstimate(owner, ctx.params.taskId);
+    const suggestion = await suggestEstimate(owner, ctx.params.taskId);
     if (!suggestion) { ctx.body = { suggestion: null }; return; }
     const copy = await renderCopy('calibration_chip', {
       suggested: suggestion.suggested_minutes,

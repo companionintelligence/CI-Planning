@@ -2,7 +2,7 @@
 
 > ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–4 COMPLETE, wave 5 at 9 of 17. Suite verified after every one
+> **DONE — waves 0–4 COMPLETE, wave 5 at 10 of 17. Suite verified after every one
 > of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
 > `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
 > test, which runs once per backend).**
@@ -23,8 +23,8 @@
 > which is the dominant formatting in this codebase. The figure at the time of that
 > correction was **261 statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
 > `db/store.ts`) and one is `agents/groom.ts`'s sqlite-vec residue (below), so
-> **23 real files remained**, not 15. (Now 22 / 248 statements — patterns-place has
-> since landed.)
+> **23 real files remained**, not 15. (Now **21 real files / 221 statements** —
+> patterns-place and calibration have since landed.)
 >
 > **The ORIGINAL wave table at the bottom of this document was right all along.**
 > Its wave 6 / 7 / 8 totals (73 / 117 / 4 statements) match a correct count
@@ -61,18 +61,18 @@
 >
 > | Wave | Files left | Stmts | Which |
 > |---|---|---|---|
-> | 5 | 8 | 41 | connectors/memory (9), services/memory (6), calibration (14), render-copy (3), connectors/base (3), connectors/index (2), mcp/client (2), flags (2) |
+> | 5 | 7 | 27 | connectors/memory (9), services/memory (6), render-copy (3), connectors/base (3), connectors/index (2), mcp/client (2), flags (2) |
 > | 6 | 7 | 73 | block-task-sync (21), day-types (17), reminders (14), sync/apply (7), pattern-blocks (5), recurrence-generate (5), pattern-prefs (4) |
 > | 7 | 6 | 117 | tags (60), autoplan (47), category-prefs (4), crypto/index (4), scheduler (1), models (1) |
 > | 8 | 1 | 4 | routes/sse |
-> | — | 22 | **235** | + 8 seam + 5 groom = 248 total |
+> | — | 21 | **221** | + 8 seam + 5 groom = 234 total |
 >
-> - **Wave 5 (8 files left of 17)** — ✓ motivation, ✓ series-scope,
+> - **Wave 5 (7 files left of 17)** — ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
->   commit as required), ✓ task-close, ✓ **objectives**, ✓ **patterns-place**.
->   Remaining: the eight in the table above — connectors/memory, services/memory,
->   and the six the single-line grep wrongly cleared (calibration, render-copy,
->   connectors/base, connectors/index, mcp/client, flags).
+>   commit as required), ✓ task-close, ✓ **objectives**, ✓ **patterns-place**,
+>   ✓ **calibration**. Remaining: the seven in the table above —
+>   connectors/memory, services/memory, and the five the single-line grep wrongly
+>   cleared (render-copy, connectors/base, connectors/index, mcp/client, flags).
 >
 >   **`engine/patterns-place.ts` is DONE** (part 26). 13 statements, not the 5 the
 >   single-line grep showed. The debt from part 8 is PAID: `ensurePatternsForRange`
@@ -369,6 +369,27 @@ of which 906 are portable work).
   layers — and reads as correct. Four sites in the objectives resolvers. Await
   inside the parens (`(await f(…)) ?? null`) so the intent survives a future
   refactor that consumes the value somewhere less forgiving than a field resolver.
+
+**A raw NUL byte in a source file hides it from EVERY grep.**
+`services/calibration.ts` built a composite Map key by joining two fields with a
+literal U+0000, which made `file` report it as `data` rather than text. The two
+greps in this environment then disagreed, both unhelpfully: GNU grep (what
+`bash -c` scripts get) suppresses LINE output for binary files, so the prescribed
+`grep -rn` returned nothing for it while `-l`/`-c` still named it; ugrep (what the
+interactive shell's `grep` function resolves to) dropped the file entirely, even
+for `-l`. That is how a 14-statement file — the second largest left in wave 5 —
+came to be catalogued as holding none. It has been converted to the escape form,
+which is the same string at runtime. **Before trusting any grep-derived
+inventory, check for others:**
+
+```
+python3 -c "
+import pathlib
+print([str(p) for p in pathlib.Path('server').rglob('*.ts') if b'\x00' in p.read_bytes()])"
+```
+
+At this commit that list is empty. Prefer a python `rglob` walk over `grep -rl`
+for file selection generally — it has no binary heuristic to be wrong about.
 
 **New dialect-portability coverage.** The guarded `INSERT … SELECT … WHERE EXISTS`
 that `createObjective` now uses is pinned in `test/store-conformance.test.ts`, so it

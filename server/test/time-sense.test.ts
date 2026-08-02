@@ -267,23 +267,23 @@ describe('scoped calibration (flag on)', () => {
     await calibrateEstimates();
 
     const tagged = makeDoneTask({ est: 30, act: 45, tags: [taxes] });
-    const viaTag = resolveCalibration(SYSTEM_OWNER, tagged);
+    const viaTag = await resolveCalibration(SYSTEM_OWNER, tagged);
     expect(viaTag?.scope_kind).toBe('tag');
     expect(viaTag?.scope_ref).toBe(taxes);
     expect(viaTag?.confidence).toBe('tentative'); // 5 ≤ n < 12
 
     const untagged = makeDoneTask({ est: 30, act: 30 });
-    const viaSubtype = resolveCalibration(SYSTEM_OWNER, untagged);
+    const viaSubtype = await resolveCalibration(SYSTEM_OWNER, untagged);
     expect(['subtype', 'global']).toContain(viaSubtype?.scope_kind); // both ≥ floor; subtype rung comes first
     expect(viaSubtype?.scope_kind).toBe('subtype');
 
     // ≥12 retained samples → confident.
     for (let i = 0; i < 8; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
     await calibrateEstimates();
-    expect(resolveCalibration(SYSTEM_OWNER, tagged)?.confidence).toBe('confident');
+    expect((await resolveCalibration(SYSTEM_OWNER, tagged))?.confidence).toBe('confident');
   });
 
-  it('suggests divergent unpinned combos; pinned ones drop out', () => {
+  it('suggests divergent unpinned combos; pinned ones drop out', async () => {
     const dinner = makeTag('dinner');
     const reservation = makeTag('reservation');
     for (let i = 0; i < 10; i++) makeDoneTask({ est: 30, act: 30, tags: [dinner] });      // 1.0
@@ -291,13 +291,13 @@ describe('scoped calibration (flag on)', () => {
     for (let i = 0; i < 5; i++) makeDoneTask({ est: 30, act: 60, tags: [dinner, reservation] }); // 2.0
 
     const ref = comboRef([dinner, reservation]);
-    const suggestions = detectComboSuggestions(SYSTEM_OWNER);
+    const suggestions = await detectComboSuggestions(SYSTEM_OWNER);
     expect(suggestions.map((s) => s.scope_ref)).toContain(ref);
     const s = suggestions.find((x) => x.scope_ref === ref)!;
     expect(s.combo_bias).toBeCloseTo(2.0, 4);
 
     sqlite.prepare(`INSERT INTO calibration_combo_pins (owner_id, scope_ref) VALUES (?, ?)`).run(SYSTEM_OWNER, ref);
-    expect(detectComboSuggestions(SYSTEM_OWNER).map((x) => x.scope_ref)).not.toContain(ref);
+    expect((await detectComboSuggestions(SYSTEM_OWNER)).map((x) => x.scope_ref)).not.toContain(ref);
   });
 });
 
@@ -401,7 +401,7 @@ describe('suggestEstimate (Z6, flag on)', () => {
     await calibrateEstimates();
 
     const live = makeOpenTask(60, [taxes]);
-    const s = suggestEstimate(SYSTEM_OWNER, live);
+    const s = await suggestEstimate(SYSTEM_OWNER, live);
     expect(s).not.toBeNull();
     expect(s!.suggested_minutes).toBe(90); // 60 * 1.5
     expect(s!.delta_minutes).toBe(30);
@@ -419,7 +419,7 @@ describe('suggestEstimate (Z6, flag on)', () => {
     // ratio 23/20 = exactly the IEEE-754 float 1.15 → median bias 1.15.
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 20, act: 23, tags: [errand] });
     await calibrateEstimates();
-    const s = suggestEstimate(SYSTEM_OWNER, makeOpenTask(100, [errand]));
+    const s = await suggestEstimate(SYSTEM_OWNER, makeOpenTask(100, [errand]));
     expect(s).not.toBeNull();          // 0.14999… < 0.15 must NOT suppress a true 15% bias
     expect(s!.suggested_minutes).toBe(115); // round(100 * 1.15 / 5) * 5
   });
@@ -429,13 +429,13 @@ describe('suggestEstimate (Z6, flag on)', () => {
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
     await calibrateEstimates();
 
-    expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(null, [taxes]))).toBeNull(); // no current estimate
+    expect(await suggestEstimate(SYSTEM_OWNER, makeOpenTask(null, [taxes]))).toBeNull(); // no current estimate
 
     // near-1.0 bias: a scope whose actuals ≈ estimates.
     const steady = makeTag('steady');
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 30, tags: [steady] });
     await calibrateEstimates();
-    expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [steady]))).toBeNull();
+    expect(await suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [steady]))).toBeNull();
 
     // below the confidence floor everywhere (fresh owner, only 2 samples): no scope resolves.
     resetDb();
@@ -443,7 +443,7 @@ describe('suggestEstimate (Z6, flag on)', () => {
     const t2 = makeTag('sparse');
     for (let i = 0; i < 2; i++) makeDoneTask({ est: 30, act: 60, tags: [t2] });
     await calibrateEstimates();
-    expect(suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [t2]))).toBeNull();
+    expect(await suggestEstimate(SYSTEM_OWNER, makeOpenTask(60, [t2]))).toBeNull();
   });
 
   it('never writes — suggest-only', async () => {
@@ -451,7 +451,7 @@ describe('suggestEstimate (Z6, flag on)', () => {
     for (let i = 0; i < 6; i++) makeDoneTask({ est: 30, act: 45, tags: [taxes] });
     await calibrateEstimates();
     const live = makeOpenTask(60, [taxes]);
-    suggestEstimate(SYSTEM_OWNER, live);
+    await suggestEstimate(SYSTEM_OWNER, live);
     const after = sqlite.prepare(`SELECT estimated_minutes FROM tasks WHERE id = ?`).get(live) as { estimated_minutes: number };
     expect(after.estimated_minutes).toBe(60);
   });

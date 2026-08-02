@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 
 /**
  * Phase Z · Z0 (Time-Sense) — scoped estimate calibration.
@@ -81,8 +81,8 @@ interface TaskSample {
  * timer-less completions stay at 0 and are excluded here (N L169: imputed
  * values never enter calibration).
  */
-function gatherSamples(ownerId: string): TaskSample[] {
-  const tasks = sqlite
+async function gatherSamples(ownerId: string): Promise<TaskSample[]> {
+  const tasks = await store()
     .prepare(
       `SELECT id, COALESCE(subtype, 'standard') AS subtype,
               CAST(actual_minutes AS REAL) / estimated_minutes AS ratio
@@ -90,13 +90,13 @@ function gatherSamples(ownerId: string): TaskSample[] {
         WHERE owner_id = ? AND status = 'done'
           AND estimated_minutes > 0 AND actual_minutes > 0`,
     )
-    .all(ownerId) as { id: string; subtype: string; ratio: number }[];
+    .all<{ id: string; subtype: string; ratio: number }>(ownerId);
   if (tasks.length === 0) return [];
 
   const byTask = new Map<string, TaskSample>();
   for (const t of tasks) byTask.set(t.id, { ...t, tagIds: [], categoryIds: [], objectiveIds: [] });
 
-  const tagRows = sqlite
+  const tagRows = await store()
     .prepare(
       `SELECT et.entity_id AS task_id, et.tag_id
          FROM entity_tags et
@@ -104,10 +104,10 @@ function gatherSamples(ownerId: string): TaskSample[] {
         WHERE t.owner_id = ? AND et.entity_kind = 'task' AND et.level = 1
           AND t.status = 'done' AND t.estimated_minutes > 0 AND t.actual_minutes > 0`,
     )
-    .all(ownerId) as { task_id: string; tag_id: string }[];
+    .all<{ task_id: string; tag_id: string }>(ownerId);
   for (const r of tagRows) byTask.get(r.task_id)?.tagIds.push(r.tag_id);
 
-  const catRows = sqlite
+  const catRows = await store()
     .prepare(
       `SELECT DISTINCT et.entity_id AS task_id, tc.category_tag_id
          FROM entity_tags et
@@ -116,17 +116,17 @@ function gatherSamples(ownerId: string): TaskSample[] {
         WHERE t.owner_id = ? AND et.entity_kind = 'task' AND et.level = 1
           AND t.status = 'done' AND t.estimated_minutes > 0 AND t.actual_minutes > 0`,
     )
-    .all(ownerId) as { task_id: string; category_tag_id: string }[];
+    .all<{ task_id: string; category_tag_id: string }>(ownerId);
   for (const r of catRows) byTask.get(r.task_id)?.categoryIds.push(r.category_tag_id);
 
-  const objRows = sqlite
+  const objRows = await store()
     .prepare(
       `SELECT ot.task_id, ot.objective_id
          FROM objective_tasks ot
          JOIN tasks t ON t.id = ot.task_id
         WHERE t.owner_id = ? AND t.status = 'done' AND t.estimated_minutes > 0 AND t.actual_minutes > 0`,
     )
-    .all(ownerId) as { task_id: string; objective_id: string }[];
+    .all<{ task_id: string; objective_id: string }>(ownerId);
   for (const r of objRows) byTask.get(r.task_id)?.objectiveIds.push(r.objective_id);
 
   return [...byTask.values()];
@@ -138,12 +138,12 @@ function gatherSamples(ownerId: string): TaskSample[] {
  * membership; tag_combo ONLY for user-pinned refs (calibration_combo_pins) —
  * and returns robust stats per scope. The caller persists.
  */
-export function computeScopedCalibration(ownerId: string): ScopeStats[] {
-  const samples = gatherSamples(ownerId);
+export async function computeScopedCalibration(ownerId: string): Promise<ScopeStats[]> {
+  const samples = await gatherSamples(ownerId);
   const pinned = new Set(
-    (sqlite.prepare(`SELECT scope_ref FROM calibration_combo_pins WHERE owner_id = ?`).all(ownerId) as {
-      scope_ref: string;
-    }[]).map((r) => r.scope_ref),
+    (await store()
+      .prepare(`SELECT scope_ref FROM calibration_combo_pins WHERE owner_id = ?`)
+      .all<{ scope_ref: string }>(ownerId)).map((r) => r.scope_ref),
   );
 
   const groups = new Map<string, { scope_kind: ScopeKind; scope_ref: string; ratios: number[] }>();
@@ -187,15 +187,25 @@ export function computeScopedCalibration(ownerId: string): ScopeStats[] {
  * 'overall'. Unknown ids (deleted tags) fall back to the ref. Shared by the EOD
  * Alignment and the estimate chip so both speak the same way.
  */
-export function scopeLabel(ownerId: string, kind: ScopeKind, ref: string): string {
-  const tagName = (id: string) =>
-    (sqlite.prepare(`SELECT name FROM tags WHERE id = ? AND owner_id = ?`).get(id, ownerId) as { name: string } | undefined)?.name ?? id;
+export async function scopeLabel(ownerId: string, kind: ScopeKind, ref: string): Promise<string> {
+  const tagName = async (id: string) =>
+    (await store().prepare(`SELECT name FROM tags WHERE id = ? AND owner_id = ?`).get<{ name: string }>(id, ownerId))?.name ?? id;
   if (kind === 'global') return 'overall';
   if (kind === 'subtype') return ref;
-  if (kind === 'tag' || kind === 'category') return tagName(ref);
-  if (kind === 'tag_combo') return ref.split('+').map(tagName).join(' + ');
+  if (kind === 'tag' || kind === 'category') return await tagName(ref);
+  if (kind === 'tag_combo') {
+    // An explicit loop, NOT `.map(tagName).join(' + ')`. With tagName async that join
+    // stringifies PROMISES, so the combo label becomes
+    // "[object Promise] + [object Promise]" — straight into the estimate chip and the
+    // EOD Alignment copy. String coercion never throws, tsc infers `string` from the
+    // template context, and no test asserts the exact combo label, so nothing would
+    // have caught it.
+    const names: string[] = [];
+    for (const id of ref.split('+')) names.push(await tagName(id));
+    return names.join(' + ');
+  }
   if (kind === 'objective') {
-    return (sqlite.prepare(`SELECT title FROM objectives WHERE id = ? AND owner_id = ?`).get(ref, ownerId) as { title: string } | undefined)?.title ?? ref;
+    return (await store().prepare(`SELECT title FROM objectives WHERE id = ? AND owner_id = ?`).get<{ title: string }>(ref, ownerId))?.title ?? ref;
   }
   return ref;
 }
@@ -211,25 +221,25 @@ export interface ResolvedCalibration extends ScopeStats {
  * pick is deterministic). Null when even global is below floor — the caller
  * shows nothing (silence beats noise).
  */
-export function resolveCalibration(ownerId: string, taskId: string): ResolvedCalibration | null {
-  const task = sqlite
+export async function resolveCalibration(ownerId: string, taskId: string): Promise<ResolvedCalibration | null> {
+  const task = await store()
     .prepare(`SELECT COALESCE(subtype,'standard') AS subtype FROM tasks WHERE id = ? AND owner_id = ?`)
-    .get(taskId, ownerId) as { subtype: string } | undefined;
+    .get<{ subtype: string }>(taskId, ownerId);
   if (!task) return null;
 
-  const tagIds = (sqlite
+  const tagIds = (await store()
     .prepare(`SELECT tag_id FROM entity_tags WHERE entity_kind = 'task' AND entity_id = ? AND level = 1`)
-    .all(taskId) as { tag_id: string }[]).map((r) => r.tag_id);
-  const categoryIds = (sqlite
+    .all<{ tag_id: string }>(taskId)).map((r) => r.tag_id);
+  const categoryIds = (await store()
     .prepare(
       `SELECT DISTINCT tc.category_tag_id FROM entity_tags et
          JOIN tag_categories tc ON tc.intention_tag_id = et.tag_id
         WHERE et.entity_kind = 'task' AND et.entity_id = ? AND et.level = 1`,
     )
-    .all(taskId) as { category_tag_id: string }[]).map((r) => r.category_tag_id);
-  const objectiveIds = (sqlite
+    .all<{ category_tag_id: string }>(taskId)).map((r) => r.category_tag_id);
+  const objectiveIds = (await store()
     .prepare(`SELECT objective_id FROM objective_tasks WHERE task_id = ?`)
-    .all(taskId) as { objective_id: string }[]).map((r) => r.objective_id);
+    .all<{ objective_id: string }>(taskId)).map((r) => r.objective_id);
 
   const ladder: { scope_kind: ScopeKind; refs: string[] }[] = [
     { scope_kind: 'tag_combo', refs: tagIds.length >= 2 ? [comboRef(tagIds)] : [] },
@@ -240,15 +250,23 @@ export function resolveCalibration(ownerId: string, taskId: string): ResolvedCal
     { scope_kind: 'global', refs: [''] },
   ];
 
-  const read = sqlite.prepare(
+  const read = store().prepare(
     `SELECT scope_kind, scope_ref, sample_count, bias_ratio, p25, p50, p75
        FROM estimate_calibration WHERE owner_id = ? AND scope_kind = ? AND scope_ref = ?`,
   );
   for (const rung of ladder) {
-    const candidates = rung.refs
-      .map((ref) => read.get(ownerId, rung.scope_kind, ref) as ScopeStats | undefined)
-      .filter((r): r is ScopeStats => !!r && r.sample_count >= CONFIDENCE_FLOOR)
-      .sort((a, b) => b.sample_count - a.sample_count || a.scope_ref.localeCompare(b.scope_ref));
+    // An explicit loop, NOT `.map(read.get).filter(…)`. With an async `read.get` the
+    // map yields promises; each is truthy so `!!r` passes, but `r.sample_count` is
+    // undefined and `undefined >= CONFIDENCE_FLOOR` is false — so the filter would
+    // drop EVERY candidate on every rung and resolveCalibration would return null for
+    // every task, silently turning the whole feature off. The `r is ScopeStats`
+    // predicate would have asserted the lie right past the type checker.
+    const candidates: ScopeStats[] = [];
+    for (const ref of rung.refs) {
+      const row = await read.get<ScopeStats>(ownerId, rung.scope_kind, ref);
+      if (row && row.sample_count >= CONFIDENCE_FLOOR) candidates.push(row);
+    }
+    candidates.sort((a, b) => b.sample_count - a.sample_count || a.scope_ref.localeCompare(b.scope_ref));
     if (candidates.length) {
       const best = candidates[0];
       return { ...best, confidence: best.sample_count >= CONFIDENCE_STRONG ? 'confident' : 'tentative' };
@@ -285,13 +303,13 @@ const SUGGEST_MIN_DIVERGENCE = 0.15;
  * and the user saving (an explicit human write via PATCH /api/tasks), per the
  * design's suggest-only constraint.
  */
-export function suggestEstimate(ownerId: string, taskId: string): EstimateSuggestion | null {
-  const task = sqlite
+export async function suggestEstimate(ownerId: string, taskId: string): Promise<EstimateSuggestion | null> {
+  const task = await store()
     .prepare(`SELECT estimated_minutes FROM tasks WHERE id = ? AND owner_id = ?`)
-    .get(taskId, ownerId) as { estimated_minutes: number | null } | undefined;
+    .get<{ estimated_minutes: number | null }>(taskId, ownerId);
   if (!task || !task.estimated_minutes || task.estimated_minutes <= 0) return null;
 
-  const cal = resolveCalibration(ownerId, taskId);
+  const cal = await resolveCalibration(ownerId, taskId);
   if (!cal || cal.bias_ratio == null) return null;
   // The 15% cutoff is inclusive: a true 15% bias (e.g. ratio exactly 1.15, which
   // in IEEE-754 is 0.14999…) should still suggest, so subtract a tiny epsilon.
@@ -309,7 +327,9 @@ export function suggestEstimate(ownerId: string, taskId: string): EstimateSugges
     bias_ratio: cal.bias_ratio,
     scope_kind: cal.scope_kind,
     scope_ref: cal.scope_ref,
-    scope_label: scopeLabel(ownerId, cal.scope_kind, cal.scope_ref),
+    // Awaited inside the object literal — an unawaited call here would serialize a
+    // promise into the response body as `{}`.
+    scope_label: await scopeLabel(ownerId, cal.scope_kind, cal.scope_ref),
     confidence: cal.confidence,
   };
 }
@@ -330,12 +350,12 @@ export interface ComboSuggestion {
  * required — a combo of two silent tags has nothing to diverge from). Computed
  * on demand (regenerable), persisted only when the user confirms the pin.
  */
-export function detectComboSuggestions(ownerId: string): ComboSuggestion[] {
-  const samples = gatherSamples(ownerId);
+export async function detectComboSuggestions(ownerId: string): Promise<ComboSuggestion[]> {
+  const samples = await gatherSamples(ownerId);
   const pinned = new Set(
-    (sqlite.prepare(`SELECT scope_ref FROM calibration_combo_pins WHERE owner_id = ?`).all(ownerId) as {
-      scope_ref: string;
-    }[]).map((r) => r.scope_ref),
+    (await store()
+      .prepare(`SELECT scope_ref FROM calibration_combo_pins WHERE owner_id = ?`)
+      .all<{ scope_ref: string }>(ownerId)).map((r) => r.scope_ref),
   );
 
   const byTag = new Map<string, number[]>();

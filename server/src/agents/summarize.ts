@@ -513,14 +513,19 @@ export async function gatherEvening(date: string): Promise<EveningPayload> {
     .all<{ task_id: string; title: string; status: string }>(owner, dayStart, dayEnd);
 
   // Label the scope refs so the modal never shows raw ids (shared with the Z6 chip).
-  const calibration = (await store()
+  const calibrationRows = await store()
     .prepare(
       `SELECT scope_kind, scope_ref, bias_ratio, sample_count FROM estimate_calibration
         WHERE owner_id = ? AND sample_count >= ?
         ORDER BY sample_count DESC, scope_kind, scope_ref LIMIT 5`,
     )
-    .all<{ scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }>(owner, CONFIDENCE_FLOOR))
-    .map((r) => ({ ...r, label: scopeLabel(owner, r.scope_kind as ScopeKind, r.scope_ref) }));
+    .all<{ scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }>(owner, CONFIDENCE_FLOOR);
+  // An explicit loop rather than `.map`: scopeLabel is async now, so mapping would put
+  // a Promise in `label` where the payload type promises a string. Bounded at 5 rows.
+  const calibration: (typeof calibrationRows[number] & { label: string })[] = [];
+  for (const r of calibrationRows) {
+    calibration.push({ ...r, label: await scopeLabel(owner, r.scope_kind as ScopeKind, r.scope_ref) });
+  }
 
   return {
     date,
@@ -530,7 +535,7 @@ export async function gatherEvening(date: string): Promise<EveningPayload> {
     estimate_deltas,
     carry_forward,
     calibration,
-    combo_suggestions: detectComboSuggestions(owner),
+    combo_suggestions: await detectComboSuggestions(owner),
   };
 }
 
