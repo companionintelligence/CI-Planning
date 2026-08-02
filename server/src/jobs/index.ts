@@ -218,7 +218,7 @@ async function execute(kind: string): Promise<JobOutcome> {
         duplicates: dedupeAuto.duplicates + dedupeReview.duplicates,
         available: dedupeAuto.available && dedupeReview.available,
       };
-      const overdue = surfaceOverdue(owner);
+      const overdue = await surfaceOverdue(owner);
       const promote = await promotePossibles(owner, { claimLegacy: owner === SYSTEM_OWNER });
       const blocked = autoBlockAfterPromote();
       return {

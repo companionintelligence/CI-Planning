@@ -1,4 +1,5 @@
 import { sqlite, vecAvailable } from '../db/index.js';
+import { store } from '../db/store.js';
 import { embed } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -47,13 +48,13 @@ export async function promotePossibles(
   // Review-gated sources (email) are excluded HERE, not at the producer: this sweeper
   // runs unconditionally from nightly_grooming and promote_possibles, so an email
   // suggestion merely left `pending` by ingest would still be promoted at 02:00.
-  const pending = sqlite
+  const pending = await store()
     .prepare(
       `SELECT id, proposed_owner_id FROM possible_tasks
         WHERE status = 'pending' AND (proposed_owner_id = ?${opts.claimLegacy ? ' OR proposed_owner_id IS NULL' : ''})
           AND ${EXCLUDE_REVIEWED_SQL}`,
     )
-    .all(owner, ...REVIEW_SOURCE_PARAMS) as { id: string; proposed_owner_id: string | null }[];
+    .all<{ id: string; proposed_owner_id: string | null }>(owner, ...REVIEW_SOURCE_PARAMS);
 
   let promoted = 0;
   let failed = 0;
@@ -62,7 +63,7 @@ export async function promotePossibles(
     // Legacy row (only ever selected under claimLegacy — see docstring): promotePossible
     // is owner-scoped (matches by proposed_owner_id), so backfill to this run's owner first.
     if (!p.proposed_owner_id) {
-      sqlite.prepare(`UPDATE possible_tasks SET proposed_owner_id = ? WHERE id = ?`).run(owner, p.id);
+      await store().prepare(`UPDATE possible_tasks SET proposed_owner_id = ? WHERE id = ?`).run(owner, p.id);
     }
     try {
       const res = await promotePossible(owner, p.id);
@@ -106,6 +107,13 @@ export function _setVecForTest(v: boolean | null): void { vecOverride = v; }
  * `cosine()`, so results are identical to the fallback. Throws on any vec error (the
  * caller then falls back to cosine); always drops its temp table.
  */
+// DELIBERATELY still on the raw `sqlite` handle, and the only place left in this file
+// that is. This path is sqlite-vec specific — a `vec0` virtual table and a `MATCH` KNN
+// query — and Postgres has no counterpart short of pgvector. Handoff §6 deletes
+// sqlite-vec at cutover, and the cosine fallback below already makes IDENTICAL keep/drop
+// decisions, so the whole function is slated for deletion rather than translation.
+// Routing it through the facade would be churn on dead code AND would imply it is
+// backend-agnostic when it can only ever run on SQLite.
 function dedupeIdsViaVec(vectors: { id: string; vec: number[] }[], threshold: number): { dupIds: string[]; compared: number } {
   const D = vectors[0].vec.length;
   sqlite.exec(`DROP TABLE IF EXISTS vec_dedupe_tmp`);
@@ -173,17 +181,17 @@ export async function dedupePossibles(
   const scopeSql =
     opts.scope === 'auto' ? ` AND ${EXCLUDE_REVIEWED_SQL}` : opts.scope === 'review' ? ` AND ${ONLY_REVIEWED_SQL}` : '';
   const scopeParams = opts.scope ? REVIEW_SOURCE_PARAMS : [];
-  const pending = (
+  const pending = await (
     opts.owner
-      ? sqlite
+      ? store()
           .prepare(
             `SELECT id, raw_title FROM possible_tasks WHERE status = 'pending' AND proposed_owner_id = ?${scopeSql} ORDER BY id ASC`,
           )
-          .all(opts.owner, ...scopeParams)
-      : sqlite
+          .all<{ id: string; raw_title: string }>(opts.owner, ...scopeParams)
+      : store()
           .prepare(`SELECT id, raw_title FROM possible_tasks WHERE status = 'pending'${scopeSql} ORDER BY id ASC`)
-          .all(...scopeParams)
-  ) as { id: string; raw_title: string }[];
+          .all<{ id: string; raw_title: string }>(...scopeParams)
+  );
 
   if (pending.length < 2) return { compared: 0, duplicates: 0, available: true };
 
@@ -196,14 +204,14 @@ export async function dedupePossibles(
     return { compared: 0, duplicates: 0, available: false };
   }
 
-  const markDup = sqlite.prepare("UPDATE possible_tasks SET status = 'duplicate' WHERE id = ?");
+  const markDup = store().prepare("UPDATE possible_tasks SET status = 'duplicate' WHERE id = ?");
 
   // C3: fast path — vec0 KNN when the extension is loaded. Identical decisions to the
   // cosine loop (the keep/drop still uses cosine()); any vec error falls through below.
   if ((vecOverride ?? vecAvailable) && vectors.length >= 2) {
     try {
       const { dupIds, compared } = dedupeIdsViaVec(vectors, threshold);
-      for (const id of dupIds) markDup.run(id);
+      for (const id of dupIds) await markDup.run(id);
       logger.info('dedupePossibles done (vec0 KNN)', { compared, duplicates: dupIds.length });
       return { compared, duplicates: dupIds.length, available: true };
     } catch (err) {
@@ -221,7 +229,7 @@ export async function dedupePossibles(
       compared++;
       const other = vectors.find((x) => x.id === k)!;
       if (cosine(v.vec, other.vec) >= threshold) {
-        markDup.run(v.id);
+        await markDup.run(v.id);
         duplicates++;
         isDup = true;
         break;
@@ -237,8 +245,8 @@ export async function dedupePossibles(
 /** Bump priority of `owner`'s overdue open tasks so they surface. Returns count updated.
  *  AF-CU1: owner-scoped — nightly_grooming fans out per owner, so an unscoped UPDATE
  *  would let the first owner's run bump (and count) every owner's tasks. */
-export function surfaceOverdue(owner: string = currentOwnerId(), asOf = new Date().toISOString()): number {
-  const res = sqlite
+export async function surfaceOverdue(owner: string = currentOwnerId(), asOf = new Date().toISOString()): Promise<number> {
+  const res = await store()
     .prepare(
       `UPDATE tasks SET priority = MAX(1, priority - 1)
        WHERE owner_id = ? AND status = 'open' AND due_at IS NOT NULL AND due_at < ? AND priority > 1`
