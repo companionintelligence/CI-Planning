@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { resetDb, startTestServer, api, type TestServer } from './helpers.js';
@@ -64,6 +65,7 @@ describe('POST /api/planner/clear — dry run', () => {
     expect(r.body.backup).toBeUndefined(); // no snapshot on dry-run
     expect(blockCount()).toBe(before); // nothing written
     expect((sqlite.prepare(`SELECT recurrence_rule FROM time_blocks WHERE id = ?`).get(tpl.id) as { recurrence_rule: string }).recurrence_rule).toBe('FREQ=DAILY');
+    await flushAudits();
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE action = 'clear-range'`).get() as { n: number }).n).toBe(0); // no audit on dry-run
   });
 });
@@ -78,6 +80,7 @@ describe('POST /api/planner/clear — apply', () => {
     expect(r.body.backup).toMatch(/companion-preclear-.*\.db$/);
     expect((sqlite.prepare(`SELECT recurrence_rule FROM time_blocks WHERE id = ?`).get(tpl.id) as { recurrence_rule: string }).recurrence_rule).toContain('UNTIL=');
     expect((await getInstances(tpl.id)).map((b) => b.occurrence_date).sort()).toEqual([T0, T1]); // no regen
+    await flushAudits();
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE action = 'clear-range'`).get() as { n: number }).n).toBe(1);
   });
 

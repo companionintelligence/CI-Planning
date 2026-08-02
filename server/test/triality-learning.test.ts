@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import {
@@ -518,7 +519,8 @@ describe('stale-row hygiene', () => {
 });
 
 describe('WHO rule (owner ruling 2026-07-16 — a cron/agent write must not stamp)', () => {
-  it('calibrateTriality writes NO audit_log row, even when it replaces weights', () => {
+  it('calibrateTriality writes NO audit_log row, even when it replaces weights', async () => {
+    await flushAudits();
     const audits = () => (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c;
     seedCovaryingLog();
     const before = audits();

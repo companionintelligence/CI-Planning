@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { startTestServer, api, resetDb, type TestServer } from './helpers.js';
 import { sqlite } from '../src/db/index.js';
 
@@ -96,8 +97,10 @@ describe('POST /api/import', () => {
 
   it('writes an audit row', async () => {
     const exp = await (await fetch(`${srv.url}/api/export`)).json();
+    await flushAudits();
     const before = (sqlite.prepare('SELECT count(*) as n FROM audit_log').get() as { n: number }).n;
     await api(srv.url, '/api/import', { method: 'POST', json: exp });
+    await flushAudits();
     const after = (sqlite.prepare('SELECT count(*) as n FROM audit_log').get() as { n: number }).n;
     expect(after).toBe(before + 1);
   });

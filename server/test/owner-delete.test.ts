@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { startTestServer, resetDb, type TestServer } from './helpers.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER_ID } from '../src/lib/ids.js';

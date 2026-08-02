@@ -182,11 +182,22 @@ So the shape is: **port file-by-file in ONE branch, cut over in ONE release.**
    **Pass A findings so far** (each one is a decision the mechanical edit would have
    got wrong):
 
-   - `writeAudit` is documented fire-and-forget and called **125 times**. It cannot stay
-     fire-and-forget: **29 assertions read `audit_log` immediately after the mutation that
-     writes it**, and under Postgres that is a real round trip, so an unawaited write is a
-     race. It must be awaited at all 125 sites — the single largest cascade in the port,
-     worth doing as its own commit.
+   - `writeAudit` **stays** fire-and-forget, with an explicit `flushAudits()` for readers.
+     Awaiting it at all 125 sites was tried and reverted: it turns 125 edits into ~59
+     service functions becoming async, cascading to ~300 caller sites — the whole service
+     and resolver layer async-ified in one unreviewable commit. It is not justified,
+     because `audit_log` is **write-only in production** (the only readers are the backup
+     export, owner deletion, and tests). The 29 assertions that read it right after the
+     mutation call `await flushAudits()` first, which restores the ordering the
+     synchronous SQLite write used to give for free. 29 test edits instead of ~300.
+   - The facade's SQLite backend is installed by `src/db/index.ts` on import, NOT only by
+     boot.ts or the test harness. Many test files import a service directly and load
+     neither, and would otherwise hit "store not initialised" — a module-ordering trap
+     rather than a real error.
+   - **Scripted async-ification is not safe at this scale.** Automated edits produced
+     `async if (…)`, `const x = async (expr)`, and a `flushAudits()` inserted inside a
+     multi-line `return (…)`. TypeScript caught those three, but the class of mistake is
+     one that can also typecheck — prefer per-file edits verified by the suite.
    - `better-sqlite3`'s `.get()`/`.all()`/`.run()` need an explicit `unknown[]` binding
      generic to accept a variadic spread; the default overload infers a fixed-arity tuple
      and rejects the zero-parameter case.

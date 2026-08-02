@@ -10,6 +10,7 @@
  * 'small' = generate/revise (index permutation).
  */
 import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 
 const llmOrder = vi.fn<() => number[]>(() => [2, 0, 1]); // C, A, B — a non-deterministic permutation
 const rationaleResp = vi.fn<() => Record<string, string>>(() => ({ '0': 'Reason zero', '1': 'Reason one', '2': 'Reason two' }));
@@ -76,6 +77,7 @@ beforeEach(() => {
   rationaleResp.mockReturnValue({ '0': 'Reason zero', '1': 'Reason one', '2': 'Reason two' });
 });
 
+await flushAudits();
 const auditCount = (action: string) =>
   (sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE owner_id = ? AND action = ?`).get(OWNER, action) as { n: number }).n;
 
