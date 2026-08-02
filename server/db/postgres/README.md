@@ -1,0 +1,149 @@
+# Postgres port (`planning` schema)
+
+CI-Planning's store is moving from SQLite (better-sqlite3 + Drizzle) to Postgres with
+the stack CI-Server uses: **TypeORM entities + dbmate raw-SQL migrations + pgvector**.
+Koa stays; this is a database refactor, not an application rewrite.
+
+**This is the foundation, not the finished migration.** The schema, the connection
+layer and the ORM are in place and verified; the ~46k LOC of call sites still run on
+SQLite. See [What remains](#what-remains).
+
+## Layout
+
+| Path | What |
+|---|---|
+| `db/postgres/migrations/` | dbmate migrations (`-- migrate:up` / `-- migrate:down`), CI-Server's format |
+| `src/db/pg.ts` | Postgres access layer shaped like the better-sqlite3 handle it replaces |
+| `src/db/datasource.ts` | TypeORM DataSource (`synchronize: false` — dbmate owns DDL) |
+| `src/db/entities/` | 56 generated entities, one per table |
+
+## Where the data lives
+
+`planning` is a **schema**, not a database, so it sits beside CI-Server's `ci.*` in one
+database. Cross-schema reads and FKs into `ci.*` are therefore available later without
+another migration — but `owners` stays CI-Planning's own tenant table, still linked to
+CI-Portal by `external_subject`. Identity is deliberately **not** merged into `ci.users`;
+that would re-key every tenant-scoped table and change what the `SYSTEM_OWNER` sentinel
+and OIDC auto-provisioning mean. Each repo keeps its own migration history.
+
+## Running it
+
+```bash
+docker compose up -d postgres
+```
+
+Then apply the migrations with [dbmate](https://github.com/amacneil/dbmate), the same
+runner CI-Server uses:
+
+```bash
+dbmate --migrations-dir server/db/postgres/migrations --url "$DATABASE_URL" up
+```
+
+`DATABASE_URL` unset ⇒ the app still uses SQLite. The two backends coexist on purpose so
+call sites can move file by file rather than in one cutover.
+
+## Schema decisions
+
+The baseline collapses all 147 SQLite migrations into one file. This database is new —
+there is no history here to replay, and 147 incremental steps would be 147 chances to
+diverge. The SQLite migrations stay as the historical record for the old store.
+
+**Types are ported conservatively, and that is deliberate:**
+
+| SQLite | Postgres | Why not the "better" type |
+|---|---|---|
+| `TEXT` | `TEXT` | The app compares ISO timestamps **as strings** throughout (`completed_at > ?`, `start < from`) and `JSON.parse`s its own TEXT blobs. `timestamptz`/`jsonb` would return `Date` and object values and break ~46k LOC that treats them as strings. |
+| `INTEGER` | `INTEGER` | 0/1 flags are written `x ? 1 : 0` and read `!!row.x`. `BOOLEAN` rejects the integer literal on write at every one of those sites. |
+| `REAL` | `DOUBLE PRECISION` | — |
+
+Retyping to `timestamptz`/`jsonb`/`boolean` is a worthwhile follow-up, but it is a
+behavioural change to thousands of call sites and belongs in its own PR with its own
+tests — not smuggled into a store swap.
+
+Defaults reproduce SQLite's **exact byte format**, not merely its meaning:
+`CURRENT_TIMESTAMP` yields `YYYY-MM-DD HH:MM:SS` (UTC, no zone marker), which
+`lib/tz.ts`'s `sqliteUtcToISO` parses by shape. Both spellings were verified
+byte-identical against SQLite.
+
+`uuid7()` is a **database function** (`20260802000300`) because 386 call sites say
+`VALUES (uuid7(), …)`. Time-ordering is load-bearing — dedupe and the flight plan rely on
+`ORDER BY id` being chronological. It matches the JS `newId()` exactly, including that
+neither is strictly monotonic *within* a millisecond (both use a random tail).
+
+pgvector replaces sqlite-vec. No column stores a vector: dedupe builds a **transient**
+KNN index per run, so the extension must exist but the schema carries no `vector` type.
+
+## Verified
+
+Against a real Postgres 17 + pgvector:
+
+- All four migrations apply cleanly from scratch.
+- Structural parity with the SQLite source: **56 tables, 505 columns, 81 foreign keys,
+  3 CHECK constraints, 135 indexes** (65 explicit + 14 unique + 56 primary keys).
+- `get`/`all`/`run` keep better-sqlite3 semantics, including `.get()` → `undefined` on a
+  miss and `{ changes }` on write.
+- Transactions commit, roll back, and nest via SAVEPOINT (an inner failure does not
+  poison the outer transaction).
+- Foreign keys, CHECK constraints and partial unique indexes all enforce.
+- All 56 entities map to tables and columns that exist (checked against
+  `information_schema`, not just compiled).
+
+```bash
+docker run -d --name cip-pg -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=planning \
+  -p 55432:5432 pgvector/pgvector:pg17
+PG_TEST_URL=postgres://postgres:pw@localhost:55432/planning pnpm --filter server test
+```
+
+The Postgres tests **skip** when `PG_TEST_URL` is unset, so the suite stays green
+without a database — CI should set it.
+
+## What remains
+
+The schema was the small half. The application still talks to SQLite, and the dominant
+cost is that **better-sqlite3 is synchronous and `pg` is not**: every call site becomes
+`await`, every enclosing function becomes `async`, and that ripples through callers.
+
+Measured across `server/src` (excluding the superseded SQLite migrations):
+
+| Work | Count |
+|---|---|
+| `sqlite.prepare` call sites | **386** across **74 files** |
+| `sqlite.transaction` blocks | 43 |
+| `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING` | 43 |
+| `INSERT OR REPLACE` → `ON CONFLICT … DO UPDATE` | 3 |
+| `strftime(` → `to_char`/`date_trunc` | 20 |
+| `julianday` / `datetime(` → interval arithmetic | 4 |
+| `lastInsertRowid` → `RETURNING id` | 2 |
+| Test suite touching the DB | ~46k LOC, 2604 tests |
+
+`RETURNING` (52 sites) and `ON CONFLICT` (27) already work in Postgres unchanged.
+
+`src/db/pg.ts` exists to make that port mechanical rather than a redesign:
+
+- **`?` placeholders are rewritten to `$1..$n`** (literal- and comment-aware), so SQL
+  text does not change.
+- **Transactions use AsyncLocalStorage**, so `pg.prepare` inside a transaction callback —
+  even several calls deep — automatically uses that transaction's client. The 43 existing
+  transaction bodies keep their contents; only `sqlite.transaction(fn)()` →
+  `await pg.transaction(fn)` changes.
+
+A call site therefore ports as:
+
+```ts
+// before
+const row = sqlite.prepare(`SELECT … WHERE owner_id = ?`).get(owner);
+// after
+const row = await pg.prepare(`SELECT … WHERE owner_id = ?`).get(owner);
+```
+
+Suggested order, each independently shippable and testable:
+
+1. Boot + migrations (`src/db/index.ts`, `boot.ts`) — run dbmate at startup, expose `pg`.
+2. Leaf services with the fewest callers (`app_config`, `audit_log`, `job_runs`).
+3. The dialect rewrites above, mechanically, with tests per file.
+4. Tenant-scoped services (`tasks`, `time_blocks`, `patterns`) — the bulk.
+5. The agents and engine, which are already async and so absorb the cascade cheaply.
+6. Delete `better-sqlite3`, `sqlite-vec`, Drizzle and the 147 SQLite migrations.
+7. **Then** consider the type-tightening pass (`timestamptz`, `jsonb`, `boolean`).
+
+Data migration for existing installs is a separate task and is not covered here.
