@@ -24,7 +24,7 @@
  *   • No past-due / equal-priority misordering (a past-due task should appear
  *     before a future-due same-priority task).
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { generateJson, isAvailable } from '../mcp/ollama.js';
 import { entityTagLevels } from '../services/tags.js';
 import { runLoop, type Defect, type JudgeScore } from './loop.js';
@@ -75,10 +75,10 @@ interface PlanningPrefs {
 
 // ─── DB helpers ─────────────────────────────────────────────────────────────
 
-function loadPlanningPrefs(owner: string): PlanningPrefs {
-  const row = sqlite
+async function loadPlanningPrefs(owner: string): Promise<PlanningPrefs> {
+  const row = await store()
     .prepare(`SELECT planning_mode, trust_mode, workday_start, workday_end, day_theme, fill_order FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(owner) as (PlanningPrefs & { trust_mode: string | null; day_theme: string | null; fill_order: string | null }) | undefined;
+    .get<PlanningPrefs & { trust_mode: string | null; day_theme: string | null; fill_order: string | null }>(owner);
   if (!row) return { planning_mode: 'basic', workday_start: '09:00', workday_end: '18:00', fill_order: 'overdue' };
   let day_theme: Record<string, string> | null = null;
   if (row.day_theme) {
@@ -95,15 +95,15 @@ function loadPlanningPrefs(owner: string): PlanningPrefs {
   };
 }
 
-function dailyPlanAuthored(owner: string, date: string): boolean {
-  return !!(sqlite.prepare(`SELECT 1 FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`).get(owner, date));
+async function dailyPlanAuthored(owner: string, date: string): Promise<boolean> {
+  return !!(await store().prepare(`SELECT 1 FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`).get(owner, date));
 }
 
 /** §A4 — the day's persisted NL hints (from `/api/plan/instruct`). Empty when none. */
-export function loadPlanHints(owner: string, date: string): PlanHint[] {
-  const rows = sqlite
+export async function loadPlanHints(owner: string, date: string): Promise<PlanHint[]> {
+  const rows = await store()
     .prepare(`SELECT kind, tag, time FROM plan_hints WHERE owner_id = ? AND date = ?`)
-    .all(owner, date) as { kind: string; tag: string; time: string | null }[];
+    .all<{ kind: string; tag: string; time: string | null }>(owner, date);
   return rows.map((r) => ({ kind: r.kind as PlanHint['kind'], tag: r.tag, time: r.time ?? undefined }));
 }
 
@@ -182,10 +182,10 @@ export function newTodayTasks(tasks: PlanTask[], tz: string, todayISO: string): 
   return fresh;
 }
 
-function memoryPullEnabled(owner: string): boolean {
-  const row = sqlite.prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
-    | { memory_pull_enabled?: number }
-    | undefined;
+async function memoryPullEnabled(owner: string): Promise<boolean> {
+  const row = await store()
+    .prepare(`SELECT memory_pull_enabled FROM scheduling_prefs WHERE owner_id = ?`)
+    .get<{ memory_pull_enabled?: number }>(owner);
   return !!row?.memory_pull_enabled;
 }
 
@@ -201,8 +201,8 @@ export async function loadMemoryRelated(
   tasks: PlanTask[],
   deps: { graphData: typeof graphData } = { graphData },
 ): Promise<Set<string>> {
-  if (!memoryPullEnabled(owner) || !memoryConnectorAvailable(owner)) return new Set();
-  const { start, end } = utcDayBounds(date, ownerTimezone(owner));
+  if (!(await memoryPullEnabled(owner)) || !memoryConnectorAvailable(owner)) return new Set();
+  const { start, end } = utcDayBounds(date, await ownerTimezone(owner));
   try {
     const graph = await deps.graphData(owner, { from: start, to: end });
     return memoryRelatedTasks(tasks, memoryTerms(graph));
@@ -226,15 +226,15 @@ function memoryOrderLine(tasks: PlanTask[], related: Set<string>): string {
   return `\nToday's memory context: tasks at indices ${idxs.join(', ')} relate to today's commitments — order them earliest (after any theme), ahead of the deadline and priority weighing above.`;
 }
 
-function getStagedTasks(owner: string): PlanTask[] {
-  const rows = sqlite
+async function getStagedTasks(owner: string): Promise<PlanTask[]> {
+  const rows = await store()
     .prepare(
       `SELECT fp.task_id, t.title, t.estimated_minutes, t.priority, t.due_at, t.created_at
          FROM flight_plan fp JOIN tasks t ON t.id = fp.task_id
         WHERE fp.owner_id = ? AND fp.selected = 1
         ORDER BY fp.position, t.priority, fp.task_id`
     )
-    .all(owner) as Omit<PlanTask, 'tags'>[];
+    .all<Omit<PlanTask, 'tags'>>(owner);
   // AF-11: tags = L1 ∪ L2 (entityTagLevels orders level-then-name, so L1 leads);
   // primary_tags = L1 only. See the PlanTask doc for which consumers read which.
   return rows.map((r) => {
@@ -261,17 +261,17 @@ function persistOrder(
   indices: number[],
   source: 'llm' | 'deterministic',
   rationales?: Map<string, string>,
-): void {
-  const ins = sqlite.prepare(
+): Promise<void> {
+  const ins = store().prepare(
     `INSERT OR IGNORE INTO daily_plan (owner_id, date, task_id, position, rationale, source)
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
-  sqlite.transaction(() => {
+  return store().transaction(async () => {
     for (let pos = 0; pos < indices.length; pos++) {
       const taskId = tasks[indices[pos]].task_id;
-      ins.run(owner, date, taskId, pos, rationales?.get(taskId) ?? null, source);
+      await ins.run(owner, date, taskId, pos, rationales?.get(taskId) ?? null, source);
     }
-  })();
+  });
 }
 
 // ─── §C2 — day_theme helpers ─────────────────────────────────────────────────
@@ -672,21 +672,21 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // `deterministic`: force the deterministic sort even in smart mode — used by the
   // Schedule-mode N-day horizon (T-SCHED-2) for future days so a multi-day plan
   // doesn't fire one LLM call per day (day 0 still authors normally).
-  if (opts.force) sqlite.prepare(`DELETE FROM daily_plan WHERE owner_id = ? AND date = ?`).run(owner, date);
-  if (dailyPlanAuthored(owner, date)) {
+  if (opts.force) await store().prepare(`DELETE FROM daily_plan WHERE owner_id = ? AND date = ?`).run(owner, date);
+  if (await dailyPlanAuthored(owner, date)) {
     // T9 — a no-op re-call (no `force`) must still report truthfully what the day was
     // ACTUALLY authored as, not just resolve void; every row for a day shares one source.
-    const row = sqlite.prepare(`SELECT source FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`).get(owner, date) as
-      | { source?: string }
-      | undefined;
+    const row = await store()
+      .prepare(`SELECT source FROM daily_plan WHERE owner_id = ? AND date = ? LIMIT 1`)
+      .get<{ source?: string }>(owner, date);
     return (row?.source as PlanOrderSource) ?? 'deterministic';
   }
 
-  const prefs = loadPlanningPrefs(owner);
-  const staged = getStagedTasks(owner);
+  const prefs = await loadPlanningPrefs(owner);
+  const staged = await getStagedTasks(owner);
 
   if (staged.length < 2) {
-    if (staged.length === 1) persistOrder(owner, date, staged, [0], 'deterministic');
+    if (staged.length === 1) await persistOrder(owner, date, staged, [0], 'deterministic');
     return 'deterministic';
   }
 
@@ -701,32 +701,33 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
   // Keyed on the owner's today rather than `date` for the same reason placement is —
   // authoring tomorrow must still let today's arrivals lead, and nothing is ever created
   // on a future date. Any other fill_order passes an empty set, so the band is inert.
-  const newToday =
-    fillOrder === 'new_today'
-      ? newTodayTasks(staged, ownerTimezone(owner), todayInTZ(ownerTimezone(owner)))
-      : new Set<string>();
+  let newToday = new Set<string>();
+  if (fillOrder === 'new_today') {
+    const tz = await ownerTimezone(owner);
+    newToday = newTodayTasks(staged, tz, todayInTZ(tz));
+  }
 
   // Deterministic authoring — basic mode, AI off, Ollama unreachable at the pre-flight
   // check, OR (via the catch below) an LLM call that fails MID-loop. Centralised here so
   // the "never throws / always lands a valid order" invariant holds for every caller.
-  const persistDeterministic = () => {
+  const persistDeterministic = async () => {
     const detIndices = deterministicIndices(staged, themeTag, fillOrder, memoryRelated, newToday);
     const postPassed = tagGroupPostPass(detIndices, staged);
     const defects = checkOrder(postPassed, staged, date, themeTag, memoryRelated);
     const final = defects.length === 0 ? postPassed : detIndices;
-    persistOrder(owner, date, staged, final, 'deterministic');
+    await persistOrder(owner, date, staged, final, 'deterministic');
   };
 
   const aiEnabled = !opts.deterministic && prefs.planning_mode === 'smart';
   if (!aiEnabled || !(await isAvailable())) {
-    persistDeterministic();
+    await persistDeterministic();
     return 'deterministic';
   }
 
   const lines = staged.map(taskLine);
   const capacityMin = workdayMinutes(prefs.workday_start, prefs.workday_end);
   // §A4: fold any persisted NL hints into a soft constraint line for the generator.
-  const constraint = constraintLine(loadPlanHints(owner, date));
+  const constraint = constraintLine(await loadPlanHints(owner, date));
   // AA3a: the memory-context nudge (empty string when nothing is related).
   const memoryLine = memoryOrderLine(staged, memoryRelated);
 
@@ -809,7 +810,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
     // fallback (source='deterministic') leaves them null, like the basic-mode path.
     const source = result.passed ? 'llm' : 'deterministic';
     const rationales = source === 'llm' ? await generateRationales(staged, finalIndices, themeTag) : undefined;
-    persistOrder(owner, date, staged, finalIndices, source, rationales);
+    await persistOrder(owner, date, staged, finalIndices, source, rationales);
 
     // §A0 clause 6 (docs/M-ai-scheduler.md:71,76): a STALLED loop must not silently revert.
     // The day still lands a valid deterministic order (above), AND we raise a "plan needs
@@ -824,7 +825,7 @@ export async function authorPlanOrder(owner: string, date: string, opts: { force
       date,
       err: String(err),
     });
-    persistDeterministic();
+    await persistDeterministic();
     return 'deterministic';
   }
 }
@@ -861,12 +862,12 @@ export class InstructError extends Error {
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HINT_KINDS = new Set(['tag_before', 'tag_after', 'batch']);
 
-function ownerTimezone(owner: string): string {
-  const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { timezone: string | null } | undefined;
+async function ownerTimezone(owner: string): Promise<string> {
+  const row = await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get<{ timezone: string | null }>(owner);
   return row?.timezone || serverTimezone();
 }
-function allTagNames(owner: string): Set<string> {
-  return new Set((sqlite.prepare(`SELECT name FROM tags WHERE owner_id = ?`).all(owner) as { name: string }[]).map((r) => r.name));
+async function allTagNames(owner: string): Promise<Set<string>> {
+  return new Set((await store().prepare(`SELECT name FROM tags WHERE owner_id = ?`).all<{ name: string }>(owner)).map((r) => r.name));
 }
 
 function instructSystem(): string {
@@ -936,9 +937,9 @@ export function validateInstruction(raw: unknown, date: string, tz: string, tagS
  */
 export async function parseInstruction(owner: string, date: string, text: string): Promise<InstructResult> {
   if (!(await isAvailable())) throw new InstructError('unavailable', 'AI is unavailable');
-  const prefs = loadPlanningPrefs(owner);
-  const tz = ownerTimezone(owner);
-  const tagSet = allTagNames(owner);
+  const prefs = await loadPlanningPrefs(owner);
+  const tz = await ownerTimezone(owner);
+  const tagSet = await allTagNames(owner);
   let raw: unknown;
   try {
     raw = await generateJson(instructPrompt(text, date, prefs.workday_start, prefs.workday_end, [...tagSet]), {
