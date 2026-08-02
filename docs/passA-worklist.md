@@ -1,8 +1,8 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 22 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 25 commits)
 >
-> **DONE — waves 0–3 complete, wave 4 in progress. ~459 of 906 portable
+> **DONE — waves 0–3 complete, wave 4 nearly done. ~485 of 906 portable
 > statements ported. Suite verified at 2633 passed after every commit.**
 >
 > - Wave 0 ✓ (scripts; both verified end-to-end on a scratch DB)
@@ -21,13 +21,15 @@
 >   update is now CLOSED, see the trap below), **engine/review**,
 >   **engine/clear-range**, **engine/auto-defense** (`requestReplan` kept its
 >   synchronous fire-and-forget signature — see the rule below),
->   **agents/ingest**, **agents/sync**. The agents files turned out NOT to be
->   interdependent — they went in as separate commits, not the single one this
->   list predicted.
->   REMAINING (6 files, ~100 stmts): **next slice = agents/plan** (11 stmts;
->   `loadPlanHints` is the only currently-sync export, and `authorPlanOrder` /
->   `parseInstruction` are already async, so the cascade should be small); then
->   services/tasks, recurrence-ops, deps, task-promotion, patterns.
+>   **agents/ingest**, **agents/sync**, **agents/plan**. The agents files turned
+>   out NOT to be interdependent — they went in as separate commits, not the
+>   single one this list predicted. **engine/recurrence-ops** (its EXDATE lost
+>   update is now CLOSED too, same compare-and-swap as blocks-recur — extracted
+>   as `appendTemplateExdate`), **engine/deps**.
+>   REMAINING (3 files, ~42 stmts): **next slice = services/task-promotion**
+>   (5 stmts, 2 importers), then services/patterns (22), then **services/tasks
+>   last** (15 stmts, 11 importers — and parts 15–16 have already awaited its
+>   recurrence + dependency call sites, so only its own statements are left).
 >   `recurrence-ops.skipInstance` carries the SAME EXDATE read-modify-write as
 >   blocks-recur — reuse the compare-and-swap below rather than porting it
 >   straight.
@@ -43,6 +45,17 @@
 > (need `await` on the wrapper AND `async` inside), Promises passed inline as
 > JSON-body/object arguments, and adjacent same-shaped lines (grep the symbol
 > again after editing — one of four `learnedF(…)` calls escaped a hand pass).
+> **`expect(() => f()).toThrow()` fails OPEN when `f` becomes async** — the call
+> returns a rejected promise instead of throwing, `toThrow` sees no throw, and the
+> assertion passes while testing nothing. The deps slice had two guarding the
+> cycle detector. Rewrite as `await expect(f()).rejects.toThrow(…)`, and
+> `.not.toThrow()` as `await expect(f()).resolves…`. Grep each ported file's
+> symbols for `toThrow` before trusting a green suite. Swept the suite for others:
+> every remaining sync `toThrow` targets a still-sync callee (migrations, raw
+> better-sqlite3 statements, `parseJsonLoose`, `currentOwnerId`,
+> `mergeRefreshToken`). The ones that WILL need this treatment are
+> `crypto.test.ts`'s `loadKek()` / `rotateKek()` / `open()` — `crypto/index` is
+> wave 7 — so fix them in that slice, not before.
 > Also: **`vi.advanceTimersByTime` stops working the moment the timer's callback
 > becomes async** — it fires the callback but returns before any await settles,
 > so assertions right after it see the pre-reflow world. Use
