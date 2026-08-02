@@ -1,8 +1,8 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 25 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 27 commits)
 >
-> **DONE — waves 0–3 complete, wave 4 nearly done. ~485 of 906 portable
+> **DONE — waves 0–3 complete, wave 4 all but 2 files. ~490 of 906 portable
 > statements ported. Suite verified at 2633 passed after every commit.**
 >
 > - Wave 0 ✓ (scripts; both verified end-to-end on a scratch DB)
@@ -25,11 +25,17 @@
 >   out NOT to be interdependent — they went in as separate commits, not the
 >   single one this list predicted. **engine/recurrence-ops** (its EXDATE lost
 >   update is now CLOSED too, same compare-and-swap as blocks-recur — extracted
->   as `appendTemplateExdate`), **engine/deps**.
->   REMAINING (3 files, ~42 stmts): **next slice = services/task-promotion**
->   (5 stmts, 2 importers), then services/patterns (22), then **services/tasks
->   last** (15 stmts, 11 importers — and parts 15–16 have already awaited its
->   recurrence + dependency call sites, so only its own statements are left).
+>   as `appendTemplateExdate`), **engine/deps**, **services/task-promotion**.
+>   REMAINING (2 files, ~37 stmts): **next slice = services/patterns** (22 stmts,
+>   5 importers; `ensureHabitPattern` is called from services/tasks, so patterns
+>   must land first), then **services/tasks last** (15 stmts, 11 importers — but
+>   parts 15–17 have already awaited its recurrence, dependency and promotion
+>   call sites, so only its own statements remain).
+>
+> Once those two land, wave 4 is closed and wave 5 (the connector/agent cluster,
+> 17 files / 153 stmts) begins. `services/tasks.ts` and `services/patterns.ts`
+> both carry "better-sqlite3 is synchronous; these are plain sync functions"
+> headers — re-read the implicit-atomicity section below before starting either.
 >   `recurrence-ops.skipInstance` carries the SAME EXDATE read-modify-write as
 >   blocks-recur — reuse the compare-and-swap below rather than porting it
 >   straight.
