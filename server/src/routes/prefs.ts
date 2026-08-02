@@ -60,7 +60,8 @@ export function prefsRouter() {
     // experiment arm and seed the haptic/color channels to match it. Re-read so the
     // response reflects the arm-derived channels (the update above didn't touch them).
     if (res.timeSenseNewlyEnabledUnassigned) {
-      assignExperimentArmIfNeeded(owner);
+      // MUST be awaited: the re-read below races the arm write otherwise.
+      await assignExperimentArmIfNeeded(owner);
       [prefs] = await db.select().from(schedulingPrefs).where(eq(schedulingPrefs.ownerId, owner));
     }
 

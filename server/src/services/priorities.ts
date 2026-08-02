@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { currentOwnerId } from '../lib/context.js';
 
@@ -29,21 +29,18 @@ export interface PriorityInput {
   target_hours_per_week?: number;
 }
 
-const listStmt = sqlite.prepare(
-  `SELECT * FROM life_priorities WHERE owner_id = ? ORDER BY category`,
-);
-const getStmt = sqlite.prepare(
-  `SELECT * FROM life_priorities WHERE owner_id = ? AND category = ?`,
-);
-const upsertStmt = sqlite.prepare(
+// SQL at module level, prepared inside the functions — a module-level store() call
+// would throw when this module loads before db/index installs the backend (§5.5).
+const LIST_SQL = `SELECT * FROM life_priorities WHERE owner_id = ? ORDER BY category`;
+const GET_SQL = `SELECT * FROM life_priorities WHERE owner_id = ? AND category = ?`;
+const UPSERT_SQL =
   `INSERT INTO life_priorities (id, owner_id, category, satisfaction, importance, target_hours_per_week)
    VALUES (@id, @owner_id, @category, @satisfaction, @importance, @target_hours_per_week)
    ON CONFLICT(owner_id, category) DO UPDATE SET
      satisfaction          = excluded.satisfaction,
      importance            = excluded.importance,
      target_hours_per_week = excluded.target_hours_per_week,
-     updated_at            = CURRENT_TIMESTAMP`,
-);
+     updated_at            = CURRENT_TIMESTAMP`;
 
 const clampScore = (v: unknown, fallback: number): number => {
   const n = Math.round(Number(v));
@@ -57,8 +54,8 @@ const clampHours = (v: unknown, fallback: number): number => {
 };
 
 /** All of the current owner's life priorities, category-ordered. */
-export function listPriorities(): LifePriorityRow[] {
-  return listStmt.all(currentOwnerId()) as LifePriorityRow[];
+export async function listPriorities(): Promise<LifePriorityRow[]> {
+  return store().prepare(LIST_SQL).all<LifePriorityRow>(currentOwnerId());
 }
 
 /**
@@ -67,19 +64,19 @@ export function listPriorities(): LifePriorityRow[] {
  * keep the existing row's value (or the column default on insert). Returns the full
  * current list so the client can replace its store in one shot.
  */
-export function upsertPriorities(items: unknown[]): LifePriorityRow[] {
+export async function upsertPriorities(items: unknown[]): Promise<LifePriorityRow[]> {
   const owner = currentOwnerId();
   const rows = Array.isArray(items) ? items : [];
-  const tx = sqlite.transaction((list: unknown[]) => {
-    for (const raw of list) {
+  await store().transaction(async () => {
+    for (const raw of rows) {
       // Defend against malformed elements (null / non-object) so a bad payload skips
       // the row rather than throwing a 500.
       if (raw == null || typeof raw !== 'object') continue;
       const p = raw as PriorityInput;
       const category = typeof p.category === 'string' ? p.category.trim() : '';
       if (!category) continue;
-      const existing = getStmt.get(owner, category) as LifePriorityRow | undefined;
-      upsertStmt.run({
+      const existing = await store().prepare(GET_SQL).get<LifePriorityRow>(owner, category);
+      await store().prepare(UPSERT_SQL).run({
         id: existing?.id ?? newId(),
         owner_id: owner,
         category,
@@ -89,6 +86,5 @@ export function upsertPriorities(items: unknown[]): LifePriorityRow[] {
       });
     }
   });
-  tx(rows);
   return listPriorities();
 }

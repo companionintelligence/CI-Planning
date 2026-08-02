@@ -64,16 +64,16 @@ describe('weeklyReview', () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone = 'UTC' WHERE owner_id = ?`).run(SYSTEM_OWNER);
   });
 
-  it('returns correct week_key and seven days Mon→Sun', () => {
-    const r = weeklyReview(ANCHOR);
+  it('returns correct week_key and seven days Mon→Sun', async () => {
+    const r = await weeklyReview(ANCHOR);
     expect(r.week_key).toBe(WEEK_KEY);
     expect(r.days).toHaveLength(7);
     expect(r.days[0]).toBe(MON);
     expect(r.days[6]).toBe(SUN);
   });
 
-  it('empty week returns all zeros and no weekly_goals', () => {
-    const r = weeklyReview(ANCHOR);
+  it('empty week returns all zeros and no weekly_goals', async () => {
+    const r = await weeklyReview(ANCHOR);
     expect(r.tasks_completed).toBe(0);
     expect(r.tasks_overdue).toBe(0);
     expect(r.blocks_count).toBe(0);
@@ -81,7 +81,7 @@ describe('weeklyReview', () => {
     expect(r.objectives_rotting).toBe(0);
   });
 
-  it('counts tasks completed within the week', () => {
+  it('counts tasks completed within the week', async () => {
     // Completed Mon in the week
     insertTask('A', { status: 'done', completedAt: `${MON}T10:00:00.000Z` });
     // Completed Wed in the week
@@ -91,11 +91,11 @@ describe('weeklyReview', () => {
     // Completed after the week (should not count)
     insertTask('D', { status: 'done', completedAt: '2026-06-22T09:00:00.000Z' });
 
-    const r = weeklyReview(ANCHOR);
+    const r = await weeklyReview(ANCHOR);
     expect(r.tasks_completed).toBe(2);
   });
 
-  it('counts tasks with due_at in the week that remain open', () => {
+  it('counts tasks with due_at in the week that remain open', async () => {
     // Due in week, still open
     insertTask('Overdue A', { dueAt: `${MON}T12:00:00.000Z`, status: 'open' });
     insertTask('Overdue B', { dueAt: `${SUN}T12:00:00.000Z`, status: 'open' });
@@ -104,25 +104,25 @@ describe('weeklyReview', () => {
     // Due outside week
     insertTask('Future D', { dueAt: '2026-06-25T12:00:00.000Z', status: 'open' });
 
-    const r = weeklyReview(ANCHOR);
+    const r = await weeklyReview(ANCHOR);
     expect(r.tasks_overdue).toBe(2);
   });
 
-  it('counts time blocks whose start falls within the week', () => {
+  it('counts time blocks whose start falls within the week', async () => {
     insertBlock(`${MON}T09:00:00.000Z`, `${MON}T10:00:00.000Z`);   // Mon, in week
     insertBlock(`${SUN}T14:00:00.000Z`, `${SUN}T15:00:00.000Z`);   // Sun, in week
     insertBlock('2026-06-14T09:00:00.000Z', '2026-06-14T10:00:00.000Z'); // Sun before, out
     insertBlock('2026-06-22T09:00:00.000Z', '2026-06-22T10:00:00.000Z'); // Mon after, out
 
-    const r = weeklyReview(ANCHOR);
+    const r = await weeklyReview(ANCHOR);
     expect(r.blocks_count).toBe(2);
   });
 
-  it('returns weekly_goals for the week with done_at preserved', () => {
+  it('returns weekly_goals for the week with done_at preserved', async () => {
     insertWeeklyGoal(0, 'Finish the N1 spec', null);
     insertWeeklyGoal(1, 'Ship the PR', '2026-06-16T10:00:00.000Z');
 
-    const r = weeklyReview(ANCHOR);
+    const r = await weeklyReview(ANCHOR);
     expect(r.weekly_goals).toHaveLength(2);
     expect(r.weekly_goals[0].position).toBe(0);
     expect(r.weekly_goals[0].body).toBe('Finish the N1 spec');
@@ -130,7 +130,7 @@ describe('weeklyReview', () => {
     expect(r.weekly_goals[1].done_at).not.toBeNull();
   });
 
-  it('ignores weekly_goals from other weeks', () => {
+  it('ignores weekly_goals from other weeks', async () => {
     insertWeeklyGoal(0, 'This week goal', null);
     const otherNow = new Date().toISOString();
     sqlite
@@ -140,22 +140,22 @@ describe('weeklyReview', () => {
       )
       .run(SYSTEM_OWNER, otherNow, otherNow);
 
-    const r = weeklyReview(ANCHOR);
+    const r = await weeklyReview(ANCHOR);
     expect(r.weekly_goals).toHaveLength(1);
     expect(r.weekly_goals[0].body).toBe('This week goal');
   });
 
-  it('counts rotting objectives (progress_cache IS NULL)', () => {
+  it('counts rotting objectives (progress_cache IS NULL)', async () => {
     insertObjective(null);   // rotting
     insertObjective(null);   // rotting
     insertObjective(0.4);    // not rotting
     insertObjective(1.0);    // not rotting
 
-    const r = weeklyReview(ANCHOR);
+    const r = await weeklyReview(ANCHOR);
     expect(r.objectives_rotting).toBe(2);
   });
 
-  it('only counts active objectives as rotting', () => {
+  it('only counts active objectives as rotting', async () => {
     insertObjective(null);   // rotting (active by default)
     const now = new Date().toISOString();
     sqlite
@@ -165,19 +165,19 @@ describe('weeklyReview', () => {
       )
       .run(SYSTEM_OWNER, now, now);
 
-    const r = weeklyReview(ANCHOR);
+    const r = await weeklyReview(ANCHOR);
     expect(r.objectives_rotting).toBe(1); // done objective with null progress is NOT rotting
   });
 
-  it('works when anchor is a Monday', () => {
-    const r = weeklyReview(MON);
+  it('works when anchor is a Monday', async () => {
+    const r = await weeklyReview(MON);
     expect(r.days[0]).toBe(MON);
     expect(r.days[6]).toBe(SUN);
     expect(r.week_key).toBe(WEEK_KEY);
   });
 
-  it('works when anchor is a Sunday', () => {
-    const r = weeklyReview(SUN);
+  it('works when anchor is a Sunday', async () => {
+    const r = await weeklyReview(SUN);
     expect(r.days[0]).toBe(MON);
     expect(r.days[6]).toBe(SUN);
     expect(r.week_key).toBe(WEEK_KEY);

@@ -72,9 +72,9 @@ export function defaultAnchorForOwner(owner: string = currentOwnerId()): string 
  * `weeklyReview` self-scopes to the current owner; `listDayStars`/`noteDates` take an
  * explicit owner, so the two conventions are bridged here rather than in the route.
  */
-export function planWeekReview(anchor: string): PlanWeekReview {
+export async function planWeekReview(anchor: string): Promise<PlanWeekReview> {
   const owner = currentOwnerId();
-  const week = weeklyReview(anchor);
+  const week = await weeklyReview(anchor);
   const from = week.days[0];
   const to = week.days[week.days.length - 1];
 
@@ -87,7 +87,7 @@ export function planWeekReview(anchor: string): PlanWeekReview {
   // previous one) — and would disagree with the stars/note_dates in this very payload,
   // which are keyed by owner-local day.
   const tz = ownerTimezone(owner);
-  const sessions = listSessions().filter((s) => {
+  const sessions = (await listSessions()).filter((s) => {
     const day = localDateInTZ(s.started_at, tz);
     return day >= from && day <= to;
   });
@@ -95,7 +95,7 @@ export function planWeekReview(anchor: string): PlanWeekReview {
   return {
     anchor,
     week,
-    calibration: globalCalibrationReadout(owner),
+    calibration: await globalCalibrationReadout(owner),
     stars: listDayStars(owner, from, to),
     note_dates: noteDates(owner, from, to),
     sessions,

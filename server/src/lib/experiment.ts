@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 
 /**
  * Phase Z · Z5 (Time-Sense) — A/B experiment arm assignment (spec §5.2).
@@ -29,10 +29,10 @@ const ARMS = Object.keys(ARM_CHANNELS) as ExperimentArm[];
  * later per-channel overrides the owner made. No-op when an arm already exists.
  * Returns the owner's arm (existing or freshly assigned), or null if the row is missing.
  */
-export function assignExperimentArmIfNeeded(ownerId: string): ExperimentArm | null {
-  const row = sqlite
+export async function assignExperimentArmIfNeeded(ownerId: string): Promise<ExperimentArm | null> {
+  const row = await store()
     .prepare(`SELECT z_experiment_arm AS arm FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(ownerId) as { arm: string | null } | undefined;
+    .get<{ arm: string | null }>(ownerId);
   if (!row) return null;
   if (row.arm) return row.arm as ExperimentArm;
 
@@ -43,15 +43,15 @@ export function assignExperimentArmIfNeeded(ownerId: string): ExperimentArm | nu
   // the fixed between-subjects invariant. First writer wins; a loser's UPDATE hits 0
   // rows and leaves the winning arm + its seeded channels intact. Read back the actual
   // stored arm rather than the one we tried to set.
-  sqlite
+  await store()
     .prepare(
       `UPDATE scheduling_prefs
           SET z_experiment_arm = ?, haptic_cues_enabled = ?, ambient_color_enabled = ?
         WHERE owner_id = ? AND z_experiment_arm IS NULL`,
     )
     .run(arm, haptic ? 1 : 0, color ? 1 : 0, ownerId);
-  const final = sqlite
+  const final = await store()
     .prepare(`SELECT z_experiment_arm AS arm FROM scheduling_prefs WHERE owner_id = ?`)
-    .get(ownerId) as { arm: string | null } | undefined;
+    .get<{ arm: string | null }>(ownerId);
   return (final?.arm as ExperimentArm | null) ?? null;
 }

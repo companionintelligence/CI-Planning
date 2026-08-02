@@ -30,9 +30,9 @@ function insertBlock(taskId: string, startAt: string, endAt: string): string {
     .get(taskId, startAt, endAt, OWNER) as { id: string }).id;
 }
 /** Start a timer on (task, block) and backdate its start so the session lasts `sessionMin`. */
-function startBackdated(task: string, block: string | undefined, sessionMin: number): void {
-  runWithOwner(OWNER, ALL_SCOPES, () => {
-    const { entry } = startTimer(task, block as unknown as number);
+async function startBackdated(task: string, block: string | undefined, sessionMin: number): Promise<void> {
+  await runWithOwner(OWNER, ALL_SCOPES, async () => {
+    const { entry } = await startTimer(task, block as unknown as number);
     const startedAt = new Date(Date.now() - sessionMin * 60_000).toISOString();
     sqlite.prepare(`UPDATE time_entries SET started_at = ? WHERE id = ?`).run(startedAt, entry.id);
   });
@@ -46,7 +46,7 @@ describe('overrun → requestReplan (C1)', () => {
   it("fires requestReplan('overrun') when a session overruns its block", async () => {
     const task = insertTask();
     const block = insertBlock(task, '2026-06-15T09:00:00.000Z', '2026-06-15T09:30:00.000Z'); // 30m span
-    startBackdated(task, block, 45); // 45m session > 30m + tolerance → overrun
+    await startBackdated(task, block, 45); // 45m session > 30m + tolerance → overrun
 
     const res = await api(srv.url, `/api/tasks/${task}/timer/stop`, { method: 'POST', json: {} });
     expect(res.status).toBe(200);
@@ -58,7 +58,7 @@ describe('overrun → requestReplan (C1)', () => {
   it('does NOT fire a reflow on a normal (within-span) stop', async () => {
     const task = insertTask();
     const block = insertBlock(task, '2026-06-15T09:00:00.000Z', '2026-06-15T09:30:00.000Z');
-    startBackdated(task, block, 10); // well under the span → no overrun
+    await startBackdated(task, block, 10); // well under the span → no overrun
 
     const res = await api(srv.url, `/api/tasks/${task}/timer/stop`, { method: 'POST', json: {} });
     expect(res.status).toBe(200);

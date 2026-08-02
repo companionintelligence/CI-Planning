@@ -486,9 +486,9 @@ describe('owner-path writes — stamping', () => {
     expect(getBlock('b-pr-1')['block_type']).toBe('scheduled');
   });
 
-  it('extendBlock: a stale queued op cannot un-extend the anchor', () => {
+  it('extendBlock: a stale queued op cannot un-extend the anchor', async () => {
     insertBlock('b-ex-1');
-    extendBlock('b-ex-1', 30, { commit: true }, SYSTEM_OWNER);
+    await extendBlock('b-ex-1', 30, { commit: true }, SYSTEM_OWNER);
     const extended = getBlock('b-ex-1')['end_at'] as string;
     expect(extended).toBe('2026-06-01T10:30:00.000Z');
 

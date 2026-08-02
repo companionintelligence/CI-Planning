@@ -23,13 +23,13 @@ export function googleConfigRouter() {
   const router = new Router();
 
   // GET /api/google-config — the redacted admin state (also the client's "am I admin?" probe).
-  router.get('/api/google-config', (ctx) => {
+  router.get('/api/google-config', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    ctx.body = googleConfigState();
+    ctx.body = await googleConfigState();
   });
 
   // PUT /api/google-config — { client_id?, client_secret? (string | null), enabled, mode? }
-  router.put('/api/google-config', (ctx) => {
+  router.put('/api/google-config', async (ctx) => {
     if (!requireAdmin(ctx)) return;
     const body = (ctx.request.body ?? {}) as {
       client_id?: unknown;
@@ -59,7 +59,7 @@ export function googleConfigRouter() {
       return;
     }
 
-    const res = saveGoogleConfig({
+    const res = await saveGoogleConfig({
       clientId: body.client_id as string | undefined,
       clientSecret: body.client_secret as string | null | undefined,
       enabled: body.enabled,

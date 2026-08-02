@@ -210,7 +210,7 @@ export function blocksRouter() {
 
     let plan;
     try {
-      plan = extendBlock(ctx.params.id, minutes, { commit: false }, owner);
+      plan = await extendBlock(ctx.params.id, minutes, { commit: false }, owner);
     } catch (err) {
       ctx.status = 404; ctx.body = { error: (err as Error).message }; return;
     }
@@ -221,7 +221,7 @@ export function blocksRouter() {
     if (plan.movedSet.length > 0 && !body.confirm) { ctx.body = { ...plan, committed: false }; return; }
 
     // Silent fit, or a confirmed move → apply.
-    const applied = extendBlock(ctx.params.id, minutes, { commit: true }, owner);
+    const applied = await extendBlock(ctx.params.id, minutes, { commit: true }, owner);
     broadcast(owner, 'block:updated', { id: ctx.params.id, extended: minutes, moved: applied.movedSet.length });
     // Mirror the new times back onto every affected task — the extended block AND
     // each cascade-moved block — so task_time/scheduled_for and armed reminders

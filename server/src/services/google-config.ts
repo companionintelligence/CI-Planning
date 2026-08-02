@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { seal, open, loadKek } from '../lib/crypto/index.js';
 import { logger } from '../lib/logger.js';
@@ -43,15 +43,13 @@ interface SealedSecretBlob {
   key_version: number;
 }
 
-function readValue(key: string): string | null {
-  const row = sqlite.prepare(`SELECT value FROM app_config WHERE key = ?`).get(key) as
-    | { value: string }
-    | undefined;
+async function readValue(key: string): Promise<string | null> {
+  const row = await store().prepare(`SELECT value FROM app_config WHERE key = ?`).get<{ value: string }>(key);
   return row?.value ?? null;
 }
 
-function writeValue(key: string, value: string): void {
-  sqlite
+async function writeValue(key: string, value: string): Promise<void> {
+  await store()
     .prepare(
       `INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
@@ -59,8 +57,8 @@ function writeValue(key: string, value: string): void {
     .run(key, value);
 }
 
-function deleteValue(key: string): void {
-  sqlite.prepare(`DELETE FROM app_config WHERE key = ?`).run(key);
+async function deleteValue(key: string): Promise<void> {
+  await store().prepare(`DELETE FROM app_config WHERE key = ?`).run(key);
 }
 
 /**
@@ -91,8 +89,8 @@ export function kekAvailable(): boolean {
 }
 
 /** Decrypt the stored client secret, or null (absent / KEK missing / rotated away). */
-function openStoredSecret(): string | null {
-  const raw = readValue(KEY_CLIENT_SECRET);
+async function openStoredSecret(): Promise<string | null> {
+  const raw = await readValue(KEY_CLIENT_SECRET);
   if (!raw) return null;
   try {
     const blob = JSON.parse(raw) as SealedSecretBlob;
@@ -116,12 +114,12 @@ export interface AppGoogleConfig {
   mode: 'fixture' | null;
 }
 
-export function readAppGoogleConfig(): AppGoogleConfig {
+export async function readAppGoogleConfig(): Promise<AppGoogleConfig> {
   return {
-    enabled: readValue(KEY_ENABLED) === '1',
-    clientId: readValue(KEY_CLIENT_ID),
-    hasClientSecret: readValue(KEY_CLIENT_SECRET) !== null,
-    mode: readValue(KEY_MODE) === 'fixture' ? 'fixture' : null,
+    enabled: (await readValue(KEY_ENABLED)) === '1',
+    clientId: await readValue(KEY_CLIENT_ID),
+    hasClientSecret: (await readValue(KEY_CLIENT_SECRET)) !== null,
+    mode: (await readValue(KEY_MODE)) === 'fixture' ? 'fixture' : null,
   };
 }
 
@@ -141,49 +139,49 @@ export type SaveGoogleConfigResult =
  * per-owner) — without this check, an operator's own "Try with sample data" onboarding
  * click could flip a live production deployment into demo mode with no confirmation.
  */
-export function saveGoogleConfig(input: {
+export async function saveGoogleConfig(input: {
   clientId?: string;
   clientSecret?: string | null;
   enabled: boolean;
   mode?: 'live' | 'fixture';
-}): SaveGoogleConfigResult {
+}): Promise<SaveGoogleConfigResult> {
   if (config.google.envPinned) return { ok: false, error: 'env_pinned' };
 
   if (input.enabled && input.mode === 'fixture') {
     if (fixtureForbiddenInProduction()) {
       return { ok: false, error: 'fixture_forbidden_in_production' };
     }
-    sqlite.transaction(() => {
-      writeValue(KEY_ENABLED, '1');
-      writeValue(KEY_MODE, 'fixture');
-    })();
-    hydrateGoogleConfig();
-    return { ok: true, state: googleConfigState() };
+    await store().transaction(async () => {
+      await writeValue(KEY_ENABLED, '1');
+      await writeValue(KEY_MODE, 'fixture');
+    });
+    await hydrateGoogleConfig();
+    return { ok: true, state: await googleConfigState() };
   }
 
-  const clientId = (input.clientId ?? readAppGoogleConfig().clientId ?? '').trim();
+  const clientId = (input.clientId ?? (await readAppGoogleConfig()).clientId ?? '').trim();
   if (input.enabled && !clientId) return { ok: false, error: 'client_id_required' };
   // KEK gates ENABLING (token storage needs it) and any secret write (sealing needs it).
   if ((input.enabled || typeof input.clientSecret === 'string') && !kekAvailable()) {
     return { ok: false, error: 'kek_required' };
   }
 
-  sqlite.transaction(() => {
-    writeValue(KEY_ENABLED, input.enabled ? '1' : '0');
-    deleteValue(KEY_MODE); // leaving (or never entering) fixture mode
-    if (clientId) writeValue(KEY_CLIENT_ID, clientId);
-    else deleteValue(KEY_CLIENT_ID);
+  await store().transaction(async () => {
+    await writeValue(KEY_ENABLED, input.enabled ? '1' : '0');
+    await deleteValue(KEY_MODE); // leaving (or never entering) fixture mode
+    if (clientId) await writeValue(KEY_CLIENT_ID, clientId);
+    else await deleteValue(KEY_CLIENT_ID);
     if (typeof input.clientSecret === 'string' && input.clientSecret.trim()) {
       const sealed = seal(input.clientSecret.trim(), loadKek());
       const blob: SealedSecretBlob = { ...sealed, key_version: config.kek.currentVersion };
-      writeValue(KEY_CLIENT_SECRET, JSON.stringify(blob));
+      await writeValue(KEY_CLIENT_SECRET, JSON.stringify(blob));
     } else if (input.clientSecret === null) {
-      deleteValue(KEY_CLIENT_SECRET);
+      await deleteValue(KEY_CLIENT_SECRET);
     }
-  })();
+  });
 
-  hydrateGoogleConfig();
-  return { ok: true, state: googleConfigState() };
+  await hydrateGoogleConfig();
+  return { ok: true, state: await googleConfigState() };
 }
 
 /**
@@ -198,9 +196,9 @@ export function saveGoogleConfig(input: {
  * is left untouched (not auto-deleted) so a legitimate demo-appliance boot that's
  * merely missing `CP_ALLOW_FIXTURE` this one time isn't destructively "healed."
  */
-export function hydrateGoogleConfig(): void {
+export async function hydrateGoogleConfig(): Promise<void> {
   if (config.google.envPinned) return;
-  const app = readAppGoogleConfig();
+  const app = await readAppGoogleConfig();
   const wantsFixture = app.enabled && app.mode === 'fixture';
   const fixtureAllowed = wantsFixture && !fixtureForbiddenInProduction();
   if (wantsFixture && !fixtureAllowed) {
@@ -215,7 +213,7 @@ export function hydrateGoogleConfig(): void {
     logger.info('google-config: in-app fixture mode active (mode=fixture)');
   } else if (app.enabled && app.clientId) {
     config.google.clientId = app.clientId;
-    config.google.clientSecret = openStoredSecret() ?? undefined;
+    config.google.clientSecret = (await openStoredSecret()) ?? undefined;
     config.google.mode = 'live';
     logger.info('google-config: in-app Google client active (mode=live)', {
       clientId: app.clientId.slice(0, 12) + '…',
@@ -242,8 +240,8 @@ export interface GoogleConfigState {
 }
 
 /** The admin GET shape — never includes the secret value. */
-export function googleConfigState(): GoogleConfigState {
-  const app = readAppGoogleConfig();
+export async function googleConfigState(): Promise<GoogleConfigState> {
+  const app = await readAppGoogleConfig();
   return {
     // Derived from the ALREADY-HYDRATED config.google.mode, not re-derived from the raw
     // app_config row — so a fixture row that hydrateGoogleConfig refused to honor (a

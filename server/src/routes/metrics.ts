@@ -18,9 +18,10 @@ export function metricsRouter() {
 
   // GET /api/metrics/tasks?days=30 — the two-axis rollup. `days` is clamped inside the
   // service (1..365), so a hostile or fat-fingered value can't turn this into a full scan.
-  router.get('/api/metrics/tasks', (ctx) => {
+  router.get('/api/metrics/tasks', async (ctx) => {
     const days = Number((ctx.query.days as string) ?? '30');
-    ctx.body = taskMetrics(currentOwnerId(), days);
+    // Koa does NOT await a Promise assigned to ctx.body — it would serialize as {}.
+    ctx.body = await taskMetrics(currentOwnerId(), days);
   });
 
   // GET /api/metrics/calibration?scope_kind=global&scope_ref=&limit=90 — the dated
@@ -54,7 +55,7 @@ export function metricsRouter() {
   // uptake trend, deficit response ("moved with", never "because"), and learned
   // weights (null until the learning wave writes them). 404 while the flag is
   // off — same posture as every other Triality surface.
-  router.get('/api/metrics/triality', (ctx) => {
+  router.get('/api/metrics/triality', async (ctx) => {
     const owner = currentOwnerId();
     if (!trialityEnabled(owner)) {
       ctx.status = 404;
@@ -62,7 +63,8 @@ export function metricsRouter() {
       return;
     }
     const days = Number((ctx.query.days as string) ?? '30');
-    ctx.body = trialityMetrics(owner, new Date(), days);
+    // Koa does NOT await a Promise assigned to ctx.body — it would serialize as {}.
+    ctx.body = await trialityMetrics(owner, new Date(), days);
   });
 
   return router;

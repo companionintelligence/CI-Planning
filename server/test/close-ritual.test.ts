@@ -132,7 +132,7 @@ describe('taskMetrics', () => {
     const b = insertTask('done work'); tagTask(b, work); closeTask(OWNER, b, { mood: 'happy', actualMinutes: 50 });
     const c = insertTask('open home'); tagTask(c, home);
 
-    const m = taskMetrics(OWNER, 30);
+    const m = await taskMetrics(OWNER, 30);
     const w = m.directions.find((d) => d.name === 'work')!;
     expect(w).toMatchObject({ open: 1, completed: 1, actualMinutes: 50, moodSamples: 1 });
     expect(w.mood.happy).toBe(1);
@@ -147,7 +147,7 @@ describe('taskMetrics', () => {
     const t = insertTask('spans two areas');
     catTask(t, health); catTask(t, career);
 
-    const m = taskMetrics(OWNER, 30);
+    const m = await taskMetrics(OWNER, 30);
     expect(m.categories.reduce((s, c) => s + c.open, 0)).toBe(2); // counted per axis…
     expect(m.totals.open).toBe(1);                                 // …but once overall
   });
@@ -159,19 +159,19 @@ describe('taskMetrics', () => {
       tagTask(id, work);
       closeTask(OWNER, id, { actualMinutes: 60 });
     }
-    expect(taskMetrics(OWNER, 30).directions[0].estimateBias).toBeNull();
+    expect((await taskMetrics(OWNER, 30)).directions[0].estimateBias).toBeNull();
 
     const id = insertTask('t3', { estimated: 30 });
     tagTask(id, work);
     closeTask(OWNER, id, { actualMinutes: 60 });
-    expect(taskMetrics(OWNER, 30).directions[0].estimateBias).toBe(2); // 60/30 median
+    expect((await taskMetrics(OWNER, 30)).directions[0].estimateBias).toBe(2); // 60/30 median
   });
 
   it('excludes completions older than the window', async () => {
     const work = seedTag('work', 'direction');
     const old = insertTask('ancient', { status: 'done', completedAt: '2020-01-01T00:00:00.000Z' });
     tagTask(old, work);
-    expect(taskMetrics(OWNER, 30).directions.length).toBe(0);
+    expect((await taskMetrics(OWNER, 30)).directions.length).toBe(0);
   });
 
   it('GET /api/metrics/tasks answers the axis shape', async () => {

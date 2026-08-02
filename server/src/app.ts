@@ -19,11 +19,11 @@ export async function buildApp(): Promise<Koa> {
   // Apply the operator-saved in-app Google client (app_config) to the config
   // singleton. Runs after migrations (the db module migrated on import above) and is
   // a no-op when GOOGLE_MODE is env-pinned.
-  hydrateGoogleConfig();
+  await hydrateGoogleConfig();
 
   // Provision the Web Push VAPID keypair (generate + persist to app_config on first boot,
   // reuse thereafter). A no-op when an env keypair pins the config. Runs after migrations.
-  hydrateVapidConfig();
+  await hydrateVapidConfig();
 
   // Behind a trusted TLS-terminating proxy (CI-Hub tunnel): honor X-Forwarded-Proto
   // (⇒ ctx.protocol='https' ⇒ Secure session cookie) and X-Forwarded-For (⇒ ctx.ip is

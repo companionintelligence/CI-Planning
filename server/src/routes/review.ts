@@ -19,9 +19,9 @@ export function reviewRouter() {
   // GET /api/review/week?anchor=YYYY-MM-DD
   // Returns the weekly review stats for the ISO week containing `anchor`.
   // Defaults to today's week when anchor is omitted.
-  router.get('/api/review/week', (ctx) => {
+  router.get('/api/review/week', async (ctx) => {
     const anchor = (ctx.query.anchor as string | undefined) ?? localISODate();
-    ctx.body = weeklyReview(anchor);
+    ctx.body = await weeklyReview(anchor);
   });
 
   // GET /api/calibration
@@ -29,8 +29,8 @@ export function reviewRouter() {
   // `calibrated: false` when no timed tasks have been measured yet.
   // The readout itself now lives in services/weekly-review.ts so T5's weekly aggregation
   // reads the same source of truth. This handler's response is unchanged.
-  router.get('/api/calibration', (ctx) => {
-    ctx.body = globalCalibrationReadout(currentOwnerId());
+  router.get('/api/calibration', async (ctx) => {
+    ctx.body = await globalCalibrationReadout(currentOwnerId());
   });
 
   return router;

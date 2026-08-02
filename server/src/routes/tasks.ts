@@ -591,7 +591,7 @@ export function tasksRouter() {
   router.post('/api/tasks/:id/timer/start', async (ctx) => {
     const taskId = ctx.params.id;
     const blockId = (ctx.request.body as { block_id?: number } | undefined)?.block_id;
-    const { entry, stopped } = startTimer(taskId, blockId);
+    const { entry, stopped } = await startTimer(taskId, blockId);
     const owner = currentOwnerId();
     if (stopped) {
       broadcast(owner, 'timer:stopped', stopped.entry); // the superseded one
@@ -632,7 +632,7 @@ export function tasksRouter() {
   // none is running (deterministic, safe for a double-click). :id is ignored —
   // there is only ever one running entry per owner.
   router.post('/api/tasks/:id/timer/stop', async (ctx) => {
-    const res = stopTimer();
+    const res = await stopTimer();
     if (!res) {
       ctx.status = 409;
       ctx.body = { error: 'no running timer' };
@@ -654,7 +654,7 @@ export function tasksRouter() {
 
   // GET /api/timer — the current running entry (for reload/restart recovery), or null.
   router.get('/api/timer', async (ctx) => {
-    ctx.body = { entry: getRunning(currentOwnerId()) ?? null };
+    ctx.body = { entry: (await getRunning(currentOwnerId())) ?? null };
   });
 
   return router;

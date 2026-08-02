@@ -44,23 +44,23 @@ afterAll(async () => { await srv.close(); });
 beforeEach(() => { resetDb(); });
 
 describe('extendBlock engine (§1.1a)', () => {
-  it('silent fit when a gap absorbs the overflow', () => {
+  it('silent fit when a gap absorbs the overflow', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     makeBlock({ start: '12:00', end: '12:30' }); // plenty of room
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(true);
     expect(r.movedSet).toHaveLength(0);
     expect(r.committed).toBe(true);
     expect(endOf(b)).toBe(at('11:30'));
   });
 
-  it('pushes only the residual and stops at the first absorbing gap', () => {
+  it('pushes only the residual and stops at the first absorbing gap', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     const b1 = makeBlock({ start: '11:15', end: '11:45', title: 'B1' }); // 15m gap before it
     const b2 = makeBlock({ start: '12:00', end: '12:30', title: 'B2' });
     // +30 → new end 11:30. B1 starts 11:15 (< 11:30) → collides, pushed by the
     // residual 15m to 11:30–12:00. Frontier 12:00; B2 starts 12:00 → absorbed, untouched.
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(true);
     expect(r.movedSet.map((m) => m.block_id)).toEqual([b1]);
     expect(startOf(b1)).toBe(at('11:30'));
@@ -68,20 +68,20 @@ describe('extendBlock engine (§1.1a)', () => {
     expect(startOf(b2)).toBe(at('12:00')); // untouched — the gap absorbed the shift
   });
 
-  it('chains a multi-block cascade when each collides in turn', () => {
+  it('chains a multi-block cascade when each collides in turn', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     const b1 = makeBlock({ start: '11:00', end: '11:30', title: 'B1' });
     const b2 = makeBlock({ start: '11:30', end: '12:00', title: 'B2' });
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER); // new end 11:30
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER); // new end 11:30
     expect(r.movedSet.map((m) => m.block_id)).toEqual([b1, b2]);
     expect(startOf(b1)).toBe(at('11:30'));
     expect(startOf(b2)).toBe(at('12:00'));
   });
 
-  it('escalates to blockedBy and writes nothing when a meeting blocks it', () => {
+  it('escalates to blockedBy and writes nothing when a meeting blocks it', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     const m = makeBlock({ start: '11:00', end: '11:30', kind: 'meeting', title: 'Lunch with Dana' });
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(false);
     expect(r.committed).toBe(false);
     expect(r.blockedBy?.block_id).toBe(m);
@@ -90,21 +90,21 @@ describe('extendBlock engine (§1.1a)', () => {
     expect(endOf(b)).toBe(at('11:00')); // unchanged
   });
 
-  it('treats locked and in-progress blocks as fixed', () => {
+  it('treats locked and in-progress blocks as fixed', async () => {
     const b1 = makeBlock({ start: '10:00', end: '11:00' });
     makeBlock({ start: '11:00', end: '11:30', locked: true });
-    expect(extendBlock(b1, 30, {}, SYSTEM_OWNER).fits).toBe(false);
+    expect((await extendBlock(b1, 30, {}, SYSTEM_OWNER)).fits).toBe(false);
 
     resetDb();
     const b2 = makeBlock({ start: '10:00', end: '11:00' });
     makeBlock({ start: '11:00', end: '11:30', status: 'in_progress' });
-    expect(extendBlock(b2, 30, {}, SYSTEM_OWNER).fits).toBe(false);
+    expect((await extendBlock(b2, 30, {}, SYSTEM_OWNER)).fits).toBe(false);
   });
 
-  it('treats a following focus block as fixed (never silently pushed) — #392 edge', () => {
+  it('treats a following focus block as fixed (never silently pushed) — #392 edge', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     const f = makeBlock({ start: '11:00', end: '11:45', kind: 'focus', title: 'Deep work' });
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(false);
     expect(r.committed).toBe(false);
     expect(r.blockedBy?.block_id).toBe(f);
@@ -114,40 +114,40 @@ describe('extendBlock engine (§1.1a)', () => {
     expect(startOf(f)).toBe(at('11:00'));  // focus session not moved
   });
 
-  it('treats a following habit block as fixed — #392 edge', () => {
+  it('treats a following habit block as fixed — #392 edge', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     const h = makeBlock({ start: '11:00', end: '11:30', kind: 'habit', title: 'Meditation' });
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(false);
     expect(r.blockedBy?.block_id).toBe(h);
     expect(r.movedSet).toHaveLength(0);
     expect(startOf(h)).toBe(at('11:00'));  // habit not moved
   });
 
-  it('does NOT treat break/buffer padding as an obstacle (stays loose → silent fit)', () => {
+  it('does NOT treat break/buffer padding as an obstacle (stays loose → silent fit)', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     // A break block overlapping the window: it is not in the obstacle query, so it is
     // neither surfaced nor moved — the extension fits silently straight over it.
     makeBlock({ start: '11:00', end: '11:15', kind: 'break', title: 'Break' });
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(true);
     expect(r.movedSet).toHaveLength(0);
     expect(endOf(b)).toBe(at('11:30'));
   });
 
-  it('ignores completed/skipped following blocks (not obstacles)', () => {
+  it('ignores completed/skipped following blocks (not obstacles)', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     makeBlock({ start: '11:00', end: '11:30', status: 'completed' });
-    const r = extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(true);
     expect(r.movedSet).toHaveLength(0);
     expect(endOf(b)).toBe(at('11:30'));
   });
 
-  it('commit:false is a pure dry run — no writes', () => {
+  it('commit:false is a pure dry run — no writes', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
     const b1 = makeBlock({ start: '11:00', end: '11:30' });
-    const r = extendBlock(b, 30, { commit: false }, SYSTEM_OWNER);
+    const r = await extendBlock(b, 30, { commit: false }, SYSTEM_OWNER);
     expect(r.fits).toBe(true);
     expect(r.committed).toBe(false);
     expect(r.movedSet).toHaveLength(1);
@@ -155,10 +155,10 @@ describe('extendBlock engine (§1.1a)', () => {
     expect(startOf(b1)).toBe(at('11:00')); // unchanged
   });
 
-  it('rejects non-positive minutes and unknown blocks', () => {
+  it('rejects non-positive minutes and unknown blocks', async () => {
     const b = makeBlock({ start: '10:00', end: '11:00' });
-    expect(() => extendBlock(b, 0, {}, SYSTEM_OWNER)).toThrow();
-    expect(() => extendBlock('nope', 10, {}, SYSTEM_OWNER)).toThrow();
+    await expect(extendBlock(b, 0, {}, SYSTEM_OWNER)).rejects.toThrow();
+    await expect(extendBlock('nope', 10, {}, SYSTEM_OWNER)).rejects.toThrow();
   });
 });
 
@@ -278,13 +278,13 @@ describe('POST /api/blocks/:id/reschedule ("Schedule again", §1.1b)', () => {
 // ── Review-fix regressions (adversarial review, 2026-07-03) ──────────────────────
 
 describe('extend — Plan container / child-block correctness', () => {
-  it('treats a scheduled Plan container as fixed and never shears its children', () => {
+  it('treats a scheduled Plan container as fixed and never shears its children', async () => {
     const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
     const c = makeBlock({ start: '11:00', end: '12:00', kind: 'timeblock', type: 'scheduled', title: 'Plan' });
     const ch = makeBlock({ start: '11:00', end: '11:30', kind: 'task', parent: c, title: 'child' });
     // +30 → newEnd 11:30. The container is the only top-level obstacle (the child is
     // excluded by parent_block_id IS NULL); a container is fixed → blockedBy, no write.
-    const r = extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(false);
     expect(r.blockedBy?.block_id).toBe(c);
     expect(r.movedSet).toHaveLength(0);
@@ -293,7 +293,7 @@ describe('extend — Plan container / child-block correctness', () => {
     expect(startOf(ch)).toBe(at('11:00')); // child not sheared out
   });
 
-  it('treats an actively-timed following block as fixed (running time_entry, not block status)', () => {
+  it('treats an actively-timed following block as fixed (running time_entry, not block status)', async () => {
     const t = (sqlite
       .prepare(`INSERT INTO tasks (id, title, owner_id, status) VALUES (uuid7(), 'T', ?, 'scheduled') RETURNING id`)
       .get(SYSTEM_OWNER) as { id: string }).id;
@@ -303,18 +303,18 @@ describe('extend — Plan container / child-block correctness', () => {
     sqlite
       .prepare(`INSERT INTO time_entries (id, owner_id, task_id, block_id, started_at, source) VALUES (uuid7(), ?, ?, ?, ?, 'timer')`)
       .run(SYSTEM_OWNER, t, b1, at('11:00'));
-    const r = extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(false);          // must not silently push a block being timed
     expect(r.blockedBy?.block_id).toBe(b1);
     expect(endOf(a)).toBe(at('11:00'));   // unchanged
     expect(startOf(b1)).toBe(at('11:00')); // unchanged
   });
 
-  it('a someday Plan (block_type=someday) is not a timeline obstacle', () => {
+  it('a someday Plan (block_type=someday) is not a timeline obstacle', async () => {
     const a = makeBlock({ start: '10:00', end: '11:00', title: 'A' });
     // Someday container overlapping the window but not a scheduled timeline block.
     makeBlock({ start: '11:00', end: '12:00', kind: 'timeblock', type: 'someday', title: 'Someday' });
-    const r = extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
+    const r = await extendBlock(a, 30, { commit: true }, SYSTEM_OWNER);
     expect(r.fits).toBe(true);
     expect(r.movedSet).toHaveLength(0); // someday ignored → silent fit
     expect(endOf(a)).toBe(at('11:30'));
