@@ -153,7 +153,7 @@ describe('reward map (§6b)', () => {
         logRow({ outcome: 'opened', scores: { F: 0, H: 0.5, Q: 0.5 }, ageDays: 3 + i });
       }
       await calibrateTriality(OWNER, NOW);
-      return getWeights(OWNER, 'habitual').F;
+      return (await getWeights(OWNER, 'habitual')).F;
     };
     const staged = await learnedF('staged');
     const opened = await learnedF('opened');
@@ -272,7 +272,7 @@ describe('collapseImpressions (§6b — UI remounts are not evidence)', () => {
     expect(r.slotsWritten).toBe(0);
     expect(r.slotsFloored).toBe(3);
     expect(storedRow('habitual')).toBeNull();
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 
   it('the SAME suggestion on 20 different days is 20 votes', async () => {
@@ -376,7 +376,7 @@ describe('clamps + renormalization (the §6b contract)', () => {
     }
     const r = await calibrateTriality(OWNER, NOW);
     expect(r.slotsWritten).toBe(1);
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     for (const k of COMPONENTS) expect(w[k]).toBeCloseTo(DEFAULT_WEIGHTS.habitual[k], 12);
   });
 
@@ -393,7 +393,7 @@ describe('clamps + renormalization (the §6b contract)', () => {
     // The rows are still DECIDED outcomes — they count toward the floor, they just
     // vote on nothing. (Q is in range but constant ⇒ zero covariance either way.)
     expect(storedRow('habitual')!.sample_count).toBe(OUTCOME_FLOOR);
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     for (const k of COMPONENTS) expect(w[k]).toBeCloseTo(DEFAULT_WEIGHTS.habitual[k], 12);
     expect(sumOf(w)).toBeCloseTo(sumOf(DEFAULT_WEIGHTS.habitual), 12);
     for (const k of COMPONENTS) {
@@ -411,7 +411,7 @@ describe('clamps + renormalization (the §6b contract)', () => {
       logRow({ outcome: 'dismissed', scores: { F: 0, H: 1, Q: 0.5 }, ageDays: 3 + i });
     }
     await calibrateTriality(OWNER, NOW);
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     expect(w.F).toBeCloseTo(0.5, 12);  // 0.40 · (1 + 0.5·+0.5), sum already 1.0
     expect(w.H).toBeCloseTo(0.3, 12);  // 0.40 · (1 + 0.5·−0.5)
     expect(w.F).toBeGreaterThan(DEFAULT_WEIGHTS.habitual.F);
@@ -463,13 +463,13 @@ describe('zero-default invariance (a slot cannot change its character)', () => {
       logRow({ outcome: 'dismissed', scores: { F: 0.5, H: 0.5, Q: 0.5, N: 0, C: 1 }, ageDays: 3 + i });
     }
     await calibrateTriality(OWNER, NOW);
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     expect(w.N).toBe(0);
     expect(w.C).toBe(0);
     // Same argument, contextual's unused axes.
     seedCovaryingLog({ slot: 'contextual', component: 'C' });
     await calibrateTriality(OWNER, NOW);
-    const ctx = getWeights(OWNER, 'contextual');
+    const ctx = await getWeights(OWNER, 'contextual');
     expect(ctx.Q).toBe(0);
     expect(ctx.C).toBe(0);
     // A 0 default is 0 at the rule level too, whatever delta arrives.
@@ -486,7 +486,7 @@ describe('floor (§6b — learning never runs on noise)', () => {
     const floored = await calibrateTriality(OWNER, NOW);
     expect(floored).toEqual({ outcomeRows: 19, slotsWritten: 0, slotsFloored: 3, floor: OUTCOME_FLOOR });
     expect(storedRow('habitual')).toBeNull();
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual); // absence == defaults
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual); // absence == defaults
 
     logRow({ outcome: 'dismissed', scores: { F: 1, H: 0.5, Q: 0.5 }, ageDays: 25 });
     const written = await calibrateTriality(OWNER, NOW);
@@ -514,7 +514,7 @@ describe('stale-row hygiene', () => {
     expect(after.slotsWritten).toBe(0);
     expect(after.slotsFloored).toBe(3);
     expect(storedRow('habitual')).toBeNull(); // a shrinking sample must not keep old weights alive
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 });
 
@@ -547,12 +547,12 @@ describe('per-owner isolation', () => {
 
     const b = await calibrateTriality(SECOND_OWNER_ID, NOW);
     expect(b.outcomeRows).toBe(OUTCOME_FLOOR);
-    const wA = getWeights(OWNER, 'habitual');
-    const wB = getWeights(SECOND_OWNER_ID, 'habitual');
+    const wA = await getWeights(OWNER, 'habitual');
+    const wB = await getWeights(SECOND_OWNER_ID, 'habitual');
     expect(wA.F).toBeGreaterThan(DEFAULT_WEIGHTS.habitual.F);
     expect(wB.F).toBeLessThan(DEFAULT_WEIGHTS.habitual.F);
     // B's run must not have disturbed A's row.
-    expect(getWeights(OWNER, 'habitual')).toEqual(wA);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(wA);
   });
 
   it("one owner's floored slot does not delete another owner's row", async () => {
@@ -581,7 +581,7 @@ describe('malformed evidence', () => {
     await calibrateTriality(OWNER, NOW);
     const row = storedRow('habitual')!;
     expect(row.sample_count).toBe(22); // a corrupt row is still a decided outcome
-    const w = getWeights(OWNER, 'habitual');
+    const w = await getWeights(OWNER, 'habitual');
     expect(w.H).toBeGreaterThan(DEFAULT_WEIGHTS.habitual.H);
     // F got no usable variance, so its share relative to Q is untouched (both moved
     // only by the shared renormalization factor).
@@ -592,7 +592,7 @@ describe('malformed evidence', () => {
     logRows(OUTCOME_FLOOR, { outcome: 'staged', scores: '{oops' });
     await calibrateTriality(OWNER, NOW);
     expect(componentDeltas([{ reward: 1, scores: {} }])).toEqual({ F: 0, H: 0, Q: 0, N: 0, C: 0 });
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 });
 
@@ -680,11 +680,11 @@ describe('end-to-end adaptation (the test that justifies the feature)', () => {
     const res = await calibrateTriality(OWNER, NOW);
     expect(res).toEqual({ outcomeRows: 20, slotsWritten: 1, slotsFloored: 2, floor: OUTCOME_FLOOR });
 
-    const learned = getWeights(OWNER, 'habitual');
+    const learned = await getWeights(OWNER, 'habitual');
     expect(learned.H).toBeCloseTo(0.5, 6);  // 0.40 · (1 + 0.5·0.5)
     expect(learned.F).toBeCloseTo(0.3, 6);  // 0.40 · (1 − 0.5·0.5)
     expect(learned.Q).toBeCloseTo(0.2, 6);  // no variance in Q ⇒ untouched
-    expect(getWeights(OWNER, 'contextual')).toEqual(DEFAULT_WEIGHTS.contextual); // floored slots stand
+    expect(await getWeights(OWNER, 'contextual')).toEqual(DEFAULT_WEIGHTS.contextual); // floored slots stand
 
     const after = await trialityNext(OWNER, NOW, { embedFn: null });
     if (after.refused) throw new Error('unexpected refusal');

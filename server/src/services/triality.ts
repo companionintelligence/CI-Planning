@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { ollama } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
 import { localDateInTZ } from '../lib/tz.js';
@@ -53,15 +53,14 @@ const COMPONENTS = ['F', 'H', 'Q', 'N', 'C'] as const;
  * a corrupt derived row must never take the suggestion surface down, and the
  * evidence to recompute it still sits in triality_log.
  */
-const selectWeights = sqlite.prepare(
-  `SELECT weights FROM triality_weights WHERE owner_id = ? AND slot = ?`,
-);
+// SQL at module scope, prepare at the use site (§5.5).
+const SQL_WEIGHTS = `SELECT weights FROM triality_weights WHERE owner_id = ? AND slot = ?`;
 
-export function getWeights(ownerId: string, slot: Slot): SlotWeights {
+export async function getWeights(ownerId: string, slot: Slot): Promise<SlotWeights> {
   // Every fallback returns a COPY: DEFAULT_WEIGHTS is exported, and handing out a
   // reference to it makes a future caller's in-place tweak a global default change.
   const defaults = () => ({ ...DEFAULT_WEIGHTS[slot] });
-  const row = selectWeights.get(ownerId, slot) as { weights: string } | undefined;
+  const row = await store().prepare(SQL_WEIGHTS).get<{ weights: string }>(ownerId, slot);
   if (!row) return defaults();
   try {
     const parsed = JSON.parse(row.weights) as Record<string, unknown>;
@@ -99,7 +98,9 @@ export function getWeights(ownerId: string, slot: Slot): SlotWeights {
     return defaults();
   }
 }
-export type GetWeightsFn = typeof getWeights;
+// Returns SlotWeights or a promise of them: getWeights is async now, but the test
+// injections hand back a plain object, and `await` accepts either.
+export type GetWeightsFn = (ownerId: string, slot: Slot) => SlotWeights | Promise<SlotWeights>;
 
 // ── Tunables (documented bounds, not silent caps — §"no silent caps") ─────────
 
@@ -184,51 +185,51 @@ export interface TrialityOpts {
 
 /** Ritual- or timer-confirmed completions in the window — ranking noise dressed
  *  as insight is exactly what this feature refuses to ship. */
-export function confirmedCompletionCount(ownerId: string, now: Date): number {
+export async function confirmedCompletionCount(ownerId: string, now: Date): Promise<number> {
   const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString();
   return (
-    sqlite
+    (await store()
       .prepare(
         `SELECT COUNT(*) AS c FROM tasks t
           WHERE t.owner_id = ? AND t.status = 'done' AND t.completed_at >= ?
             AND (t.completion_mood IS NOT NULL OR t.reaction_at IS NOT NULL
                  OR EXISTS (SELECT 1 FROM time_entries e WHERE e.task_id = t.id AND e.ended_at IS NOT NULL))`,
       )
-      .get(ownerId, since) as { c: number }
+      .get<{ c: number }>(ownerId, since))!
   ).c;
 }
 
 // ── Candidate collection (§4) ─────────────────────────────────────────────────
 
-function taskDirection(taskId: string, ownerId: string): string | null {
-  const row = sqlite
+async function taskDirection(taskId: string, ownerId: string): Promise<string | null> {
+  const row = await store()
     .prepare(
       `SELECT tg.name AS name FROM entity_tags et
          JOIN tags tg ON tg.id = et.tag_id AND tg.kind = 'direction' AND tg.owner_id = ?
         WHERE et.entity_kind = 'task' AND et.entity_id = ? AND et.level = 1
         LIMIT 1`,
     )
-    .get(ownerId, taskId) as { name: string } | undefined;
+    .get<{ name: string }>(ownerId, taskId);
   return row ? row.name.toLowerCase() : null;
 }
 
 /** A direction-kind tag name → lowercased, or null (patterns/templates store a
  *  free-text `tag` that is only a direction when it names one). */
-function directionIfDirectionTag(name: string | null, ownerId: string): string | null {
+async function directionIfDirectionTag(name: string | null, ownerId: string): Promise<string | null> {
   if (!name) return null;
-  const row = sqlite
+  const row = await store()
     .prepare(`SELECT 1 FROM tags WHERE owner_id = ? AND kind = 'direction' AND LOWER(name) = LOWER(?)`)
     .get(ownerId, name);
   return row ? name.toLowerCase() : null;
 }
 
-function collectCandidates(ownerId: string, now: Date): Candidate[] {
+async function collectCandidates(ownerId: string, now: Date): Promise<Candidate[]> {
   const out: Candidate[] = [];
 
   const staged = new Set(
-    (sqlite.prepare(`SELECT task_id FROM flight_plan WHERE owner_id = ? AND selected = 1`).all(ownerId) as {
-      task_id: string;
-    }[]).map((r) => r.task_id),
+    (await store()
+      .prepare(`SELECT task_id FROM flight_plan WHERE owner_id = ? AND selected = 1`)
+      .all<{ task_id: string }>(ownerId)).map((r) => r.task_id),
   );
 
   // Open tasks — dependency-blocked ones excluded (a blocked pick is not an
@@ -238,7 +239,7 @@ function collectCandidates(ownerId: string, now: Date): Candidate[] {
   // hiding the task from the today-set; surfacing it as a *suggestion* would
   // contradict an instruction they gave, which is worse than merely listing it.
   // Priority-ordered, bounded: POOL_CAP is a documented bound, logged when hit.
-  const taskRows = sqlite
+  const taskRows = await store()
     .prepare(
       `SELECT t.id, t.title, t.estimated_minutes, t.motivation FROM tasks t
         WHERE t.owner_id = ? AND t.status IN ('open', 'scheduled') AND t.parent_id IS NULL
@@ -250,7 +251,7 @@ function collectCandidates(ownerId: string, now: Date): Candidate[] {
         ORDER BY t.priority ASC, t.id ASC
         LIMIT ${POOL_CAP + 1}`,
     )
-    .all(ownerId, now.toISOString()) as { id: string; title: string; estimated_minutes: number | null; motivation: Candidate['motivation'] }[];
+    .all<{ id: string; title: string; estimated_minutes: number | null; motivation: Candidate['motivation'] }>(ownerId, now.toISOString());
   if (taskRows.length > POOL_CAP) {
     logger.info('triality: open-task pool capped', { ownerId, cap: POOL_CAP });
     taskRows.length = POOL_CAP;
@@ -261,7 +262,7 @@ function collectCandidates(ownerId: string, now: Date): Candidate[] {
       ref: t.id,
       title: t.title,
       estimateMin: t.estimated_minutes,
-      direction: taskDirection(t.id, ownerId),
+      direction: await taskDirection(t.id, ownerId),
       categories: entityCategoryNames('task', t.id).map((c) => c.toLowerCase()),
       motivation: t.motivation,
     });
@@ -271,7 +272,7 @@ function collectCandidates(ownerId: string, now: Date): Candidate[] {
   // offered as one unit; estimate = sum of open members (15m fallback per member,
   // the quick-task default). Patterns carry no entity_categories/motivation —
   // those template dims stay honestly empty.
-  const routines = sqlite
+  const routines = await store()
     .prepare(
       `SELECT p.id, p.name, p.tag,
               SUM(COALESCE(t.estimated_minutes, 15)) AS est
@@ -282,14 +283,14 @@ function collectCandidates(ownerId: string, now: Date): Candidate[] {
         WHERE p.owner_id = ?
         GROUP BY p.id, p.name, p.tag`,
     )
-    .all(ownerId) as { id: string; name: string; tag: string | null; est: number }[];
+    .all<{ id: string; name: string; tag: string | null; est: number }>(ownerId);
   for (const r of routines) {
     out.push({
       kind: 'routine',
       ref: r.id,
       title: r.name,
       estimateMin: r.est,
-      direction: directionIfDirectionTag(r.tag, ownerId),
+      direction: await directionIfDirectionTag(r.tag, ownerId),
       categories: [],
       motivation: null,
     });
@@ -297,16 +298,16 @@ function collectCandidates(ownerId: string, now: Date): Candidate[] {
 
   // Saved block templates: a known, reusable shape of time — the classic Novel
   // candidate (no completion trail → H = 0, honestly).
-  const templates = sqlite
+  const templates = await store()
     .prepare(`SELECT id, name, tag, default_minutes FROM block_templates WHERE owner_id = ?`)
-    .all(ownerId) as { id: string; name: string; tag: string | null; default_minutes: number | null }[];
+    .all<{ id: string; name: string; tag: string | null; default_minutes: number | null }>(ownerId);
   for (const b of templates) {
     out.push({
       kind: 'template',
       ref: b.id,
       title: b.name,
       estimateMin: b.default_minutes ?? 60,
-      direction: directionIfDirectionTag(b.tag, ownerId),
+      direction: await directionIfDirectionTag(b.tag, ownerId),
       categories: [],
       motivation: null,
     });
@@ -321,16 +322,16 @@ function collectCandidates(ownerId: string, now: Date): Candidate[] {
 // hard filter needs numbers, not signs. null = no calendar signal (filter can't
 // honestly drop anything; the C term goes neutral).
 
-export function rawFreeGapMinutes(ownerId: string, now: Date): number | null {
+export async function rawFreeGapMinutes(ownerId: string, now: Date): Promise<number | null> {
   const tz = ownerTimezone(ownerId);
   const today = localDateInTZ(now.toISOString(), tz);
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT start_at FROM time_blocks
         WHERE owner_id = ? AND start_at > ? AND (is_locked = 1 OR block_kind = 'meeting')
         ORDER BY start_at ASC LIMIT 8`,
     )
-    .all(ownerId, now.toISOString()) as { start_at: string }[];
+    .all<{ start_at: string }>(ownerId, now.toISOString());
   const next = rows.find((r) => localDateInTZ(r.start_at, tz) === today);
   if (!next) return null;
   return Math.max(0, Math.round((Date.parse(next.start_at) - now.getTime()) / 60_000));
@@ -364,28 +365,32 @@ export function historyMatches(c: Candidate, h: CompletionRow): boolean {
 
 /** The owner's completion history in the window, each with its signature —
  *  one scan feeds H, Q, and the routine special case. */
-function completionHistory(ownerId: string, now: Date): CompletionRow[] {
+async function completionHistory(ownerId: string, now: Date): Promise<CompletionRow[]> {
   const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString();
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT id, completed_at FROM tasks
         WHERE owner_id = ? AND status = 'done' AND completed_at >= ? AND completed_at <= ?
         ORDER BY completed_at ASC`,
     )
-    .all(ownerId, since, now.toISOString()) as { id: string; completed_at: string }[];
-  return rows.map((r) => {
-    const dir = taskDirection(r.id, ownerId);
+    .all<{ id: string; completed_at: string }>(ownerId, since, now.toISOString());
+  // for-of, not .map: the body awaits, and an async map callback would return an
+  // array of promises that every downstream scorer would then read as objects.
+  const out: CompletionRow[] = [];
+  for (const r of rows) {
+    const dir = await taskDirection(r.id, ownerId);
     const cats = entityCategoryNames('task', r.id).map((c) => c.toLowerCase());
     const patterns = (
-      sqlite.prepare(`SELECT pattern_id FROM pattern_tasks WHERE task_id = ?`).all(r.id) as { pattern_id: string }[]
+      await store().prepare(`SELECT pattern_id FROM pattern_tasks WHERE task_id = ?`).all<{ pattern_id: string }>(r.id)
     ).map((p) => p.pattern_id);
-    return {
+    out.push({
       id: r.id,
       completed_at: r.completed_at,
       sig: signature({ kind: 'task', direction: dir, categories: cats }),
       pattern_ids: patterns,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /** Recency weight: 2^(-ageDays / half-life). */
@@ -476,12 +481,12 @@ async function noveltyScores(
 
   try {
     const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString();
-    const recent = sqlite
+    const recent = await store()
       .prepare(
         `SELECT title FROM tasks WHERE owner_id = ? AND status = 'done' AND completed_at >= ?
           ORDER BY completed_at DESC LIMIT 25`,
       )
-      .all(ownerId, since) as { title: string }[];
+      .all<{ title: string }>(ownerId, since);
     if (recent.length < 5) return categorical; // too little signal for a meaningful centroid
 
     // A pool bigger than the cap is not embedded AT ALL, rather than partially:
@@ -622,7 +627,7 @@ function ternarize(values: number[]): number[] {
 
 // ── Log helpers (T4/T5 wire these; nothing calls them inside the engine) ──────
 
-export function logShown(
+export async function logShown(
   ownerId: string,
   now: Date,
   picks: (ScoredPick | null)[],
@@ -640,16 +645,19 @@ export function logShown(
    * them.
    */
   confidenceJson: readonly (string | null)[],
-): (string | null)[] {
+): Promise<(string | null)[]> {
   const tz = ownerTimezone(ownerId);
   const localDate = localDateInTZ(now.toISOString(), tz);
-  const insert = sqlite.prepare(
+  const insert = store().prepare(
     `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence)
      VALUES (uuid7(), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
   );
-  return picks.map((p, i) => {
-    if (!p) return null;
-    const row = insert.get(
+  // for-of, not .map: an async callback would hand every caller a promise where it
+  // expects a log id, and the ids are what stampOutcome is later keyed on.
+  const ids: (string | null)[] = [];
+  for (const [i, p] of picks.entries()) {
+    if (!p) { ids.push(null); continue; }
+    const row = (await insert.get<{ id: string }>(
       ownerId,
       now.toISOString(),
       localDate,
@@ -658,9 +666,10 @@ export function logShown(
       p.ref,
       JSON.stringify({ ...p.scores, ternary: p.ternary }),
       confidenceJson[i] ?? null,
-    ) as { id: string };
-    return row.id;
-  });
+    ))!;
+    ids.push(row.id);
+  }
+  return ids;
 }
 
 export type Outcome = 'opened' | 'staged' | 'dismissed';
@@ -671,8 +680,8 @@ export function isOutcome(v: unknown): v is Outcome {
 
 /** Append-only discipline: a row's outcome is stamped AT MOST once — the guarded
  *  UPDATE makes a second stamp (or a foreign log id) a `changed:false` no-op. */
-export function stampOutcome(ownerId: string, logId: string, outcome: Outcome, now: Date): { changed: boolean } {
-  const res = sqlite
+export async function stampOutcome(ownerId: string, logId: string, outcome: Outcome, now: Date): Promise<{ changed: boolean }> {
+  const res = await store()
     .prepare(
       `UPDATE triality_log SET outcome = ?, outcome_at = ?
         WHERE id = ? AND owner_id = ? AND outcome = 'shown'`,
@@ -684,15 +693,15 @@ export function stampOutcome(ownerId: string, logId: string, outcome: Outcome, n
 // ── The pipeline ──────────────────────────────────────────────────────────────
 
 export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpts = {}): Promise<TrialityResult> {
-  const have = confirmedCompletionCount(ownerId, now);
+  const have = await confirmedCompletionCount(ownerId, now);
   if (have < REFUSAL_FLOOR) return { refused: 'sparse_history', have, need: REFUSAL_FLOOR };
 
   const vector = await buildSituationVector(ownerId, now);
-  const gapMin = rawFreeGapMinutes(ownerId, now);
+  const gapMin = await rawFreeGapMinutes(ownerId, now);
 
   // Stage 1 — hard capacity filter (§1: pipeline order is normative). Only a
   // KNOWN misfit drops: unknown gap or unknown estimate cannot honestly exclude.
-  const all = collectCandidates(ownerId, now);
+  const all = await collectCandidates(ownerId, now);
   const cands = all.filter(
     (c) => !(gapMin != null && c.estimateMin != null && c.estimateMin > gapMin - GAP_MARGIN_MIN),
   );
@@ -709,7 +718,7 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
   }
 
   // Stage 2 — component scores.
-  const history = completionHistory(ownerId, now);
+  const history = await completionHistory(ownerId, now);
   const { strengths: H, counts: histCounts } = habitStrengths(cands, history, now);
   const Q = sequenceFits(cands, history);
   const N = await noveltyScores(cands, H, ownerId, now, opts.embedFn);
@@ -726,7 +735,9 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
   // rather than one per candidate, and the whole run sees a single consistent
   // weight set even if the job happened to land between two candidates.
   const weightsFor = opts.getWeightsFn ?? getWeights;
-  const resolvedWeights = Object.fromEntries(SLOTS.map((s) => [s, weightsFor(ownerId, s)])) as Record<Slot, SlotWeights>;
+  const resolvedWeights = Object.fromEntries(
+    await Promise.all(SLOTS.map(async (s) => [s, await weightsFor(ownerId, s)] as const)),
+  ) as Record<Slot, SlotWeights>;
   const slotScore = (slot: Slot, i: number): number => {
     const w = resolvedWeights[slot];
     return w.F * F[i] + w.H * H[i] + w.Q * Q[i] + w.N * N[i] + w.C * C[i];

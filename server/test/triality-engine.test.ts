@@ -109,7 +109,7 @@ describe('refusal floor (§4)', () => {
   it('refuses below 10 confirmed completions; the 10th flips it', async () => {
     seedConfirmedHistory(9);
     insertTask('unconfirmed', { status: 'done', completedAt: daysAgo(2) }); // no mood/reaction/timer — doesn't count
-    expect(confirmedCompletionCount(OWNER, NOW)).toBe(9);
+    expect(await confirmedCompletionCount(OWNER, NOW)).toBe(9);
     const refused = await trialityNext(OWNER, NOW, { embedFn: null });
     expect(refused.refused).toBe('sparse_history');
     if (refused.refused) { expect(refused.have).toBe(9); expect(refused.need).toBe(10); }
@@ -143,7 +143,7 @@ describe('capacity filter (§1 pipeline order)', () => {
          VALUES (uuid7(), ?, 'standup', 'meeting', ?, ?, 1)`,
       )
       .run(OWNER, iso(40), iso(70));
-    expect(rawFreeGapMinutes(OWNER, NOW)).toBe(40);
+    expect(await rawFreeGapMinutes(OWNER, NOW)).toBe(40);
 
     insertTask('quick email', { estimate: 15 });
     const bigId = insertTask('deep work session', { estimate: 120 });
@@ -419,7 +419,7 @@ describe('getWeights seam (T8 plug point)', () => {
     if (res.refused) throw new Error('unexpected refusal');
     for (const p of res.picks) if (p) expect(p.scores.total).toBe(p.scores.H);
     // And the default seam returns the §5 constants.
-    expect(getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
+    expect(await getWeights(OWNER, 'habitual')).toEqual(DEFAULT_WEIGHTS.habitual);
   });
 });
 
@@ -431,7 +431,7 @@ describe('log helpers (append-only, once-only)', () => {
     if (res.refused) throw new Error('unexpected refusal');
     // The 4th argument mirrors both production call sites: confidence is serialized by
     // the CALLER and handed over opaque, so this module never learns what is in it.
-    const ids = logShown(OWNER, NOW, res.picks, attachConfidence(res.picks, res.vector).map(serializeConfidence));
+    const ids = await logShown(OWNER, NOW, res.picks, attachConfidence(res.picks, res.vector).map(serializeConfidence));
     const firstId = ids.find((x): x is string => !!x)!;
     const row = sqlite.prepare(`SELECT slot, outcome, scores FROM triality_log WHERE id = ?`).get(firstId) as {
       slot: string; outcome: string; scores: string;
@@ -440,9 +440,9 @@ describe('log helpers (append-only, once-only)', () => {
     const scores = JSON.parse(row.scores);
     for (const k of ['F', 'H', 'Q', 'N', 'C', 'total', 'ternary']) expect(k in scores).toBe(true);
 
-    expect(stampOutcome(OWNER, firstId, 'staged', NOW).changed).toBe(true);
-    expect(stampOutcome(OWNER, firstId, 'dismissed', NOW).changed).toBe(false); // once-only
-    expect(stampOutcome('someone-else', firstId, 'opened', NOW).changed).toBe(false); // cross-tenant no-op
+    expect((await stampOutcome(OWNER, firstId, 'staged', NOW)).changed).toBe(true);
+    expect((await stampOutcome(OWNER, firstId, 'dismissed', NOW)).changed).toBe(false); // once-only
+    expect((await stampOutcome('someone-else', firstId, 'opened', NOW)).changed).toBe(false); // cross-tenant no-op
     const after = sqlite.prepare(`SELECT outcome FROM triality_log WHERE id = ?`).get(firstId) as { outcome: string };
     expect(after.outcome).toBe('staged');
   });
@@ -982,7 +982,7 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
     const res = await trialityNext(OWNER, NOW, { embedFn: null });
     if (res.refused) throw new Error('unexpected refusal');
     const confidences = attachConfidence(res.picks, res.vector);
-    logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence));
+    await logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence));
 
     const rows = sqlite
       .prepare(`SELECT slot, confidence FROM triality_log WHERE owner_id = ? ORDER BY id ASC`)
@@ -1026,7 +1026,7 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
 
     const confidences = attachConfidence(res.picks, res.vector);
     expect(confidences).toEqual([null, null, null]);
-    expect(logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence))).toEqual([null, null, null]);
+    expect(await logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence))).toEqual([null, null, null]);
     expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM triality_log`).get() as { c: number }).c).toBe(0);
   });
 });

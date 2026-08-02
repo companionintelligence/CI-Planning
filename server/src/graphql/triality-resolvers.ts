@@ -77,7 +77,7 @@ export const trialityResolvers = {
       // Same three-call ordering as routes/triality.ts — confidence is stamped at show
       // time, so it is computed before the insert.
       const confidences = attachConfidence(res.picks, res.vector);
-      const logIds = logShown(owner, now, res.picks, confidences.map(serializeConfidence));
+      const logIds = await logShown(owner, now, res.picks, confidences.map(serializeConfidence));
       const rationales = await attachRationales(res.picks, res.vector);
       return {
         refused: null,
@@ -102,7 +102,7 @@ export const trialityResolvers = {
         .get(args.logId, owner);
       if (!mine) throw new GraphQLError('Not found', { extensions: { code: 'NOT_FOUND' } });
 
-      const res = stampOutcome(owner, args.logId, outcome, new Date());
+      const res = await stampOutcome(owner, args.logId, outcome, new Date());
       if (res.changed) {
         writeAudit({ ownerId: owner, actor: 'owner', action: 'feedback', entity: `triality:${args.logId}` });
       }

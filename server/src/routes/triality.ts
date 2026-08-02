@@ -90,7 +90,7 @@ export function trialityRouter() {
     // situation vector is never persisted, and a later reader could only reconstruct
     // today's — a fabricated reading on an old row.
     const confidences = attachConfidence(res.picks, res.vector);
-    const logIds = logShown(owner, now, res.picks, confidences.map(serializeConfidence));
+    const logIds = await logShown(owner, now, res.picks, confidences.map(serializeConfidence));
     const rationales = await attachRationales(res.picks, res.vector);
     ctx.body = {
       picks: res.picks.map((p, i) => (p ? pickToApi(p, logIds[i], rationales[i]!, confidences[i]!) : null)),
@@ -121,7 +121,7 @@ export function trialityRouter() {
       ctx.body = { error: 'Not found' };
       return;
     }
-    const res = stampOutcome(owner, body.log_id, body.outcome, new Date());
+    const res = await stampOutcome(owner, body.log_id, body.outcome, new Date());
     // Audit only the stamp that actually landed — a repeat is a no-op, not a mutation.
     if (res.changed) {
       writeAudit({ ownerId: owner, actor: 'owner', action: 'feedback', entity: `triality:${body.log_id}` });
