@@ -105,7 +105,7 @@ export function requireAuth(): Koa.Middleware {
         // cookie — CI-Portal SSO (U1) via the OAuth callback, local username/password
         // (U2, DISABLE_OIDC) via /api/auth/login — so the request-time check is the
         // same for both: trust only the verified session.
-        const session = verifySession(ctx);
+        const session = await verifySession(ctx);
         if (!session) {
           ctx.status = 401;
           ctx.body = { error: 'unauthenticated' };
@@ -119,7 +119,7 @@ export function requireAuth(): Koa.Middleware {
           ctx.body = { error: 'unauthenticated' };
           return;
         }
-        claims = verifyApiKey(apiKey); // standalone: hashed x-api-key
+        claims = await verifyApiKey(apiKey); // standalone: hashed x-api-key
       }
     } catch (e) {
       ctx.status = (e as { status?: number }).status ?? 401;

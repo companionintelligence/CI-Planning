@@ -1,5 +1,5 @@
 import type Koa from 'koa';
-import { sqlite } from '../../db/index.js';
+import { store } from '../../db/store.js';
 import { SYSTEM_OWNER_ID } from '../ids.js';
 import type { VerifiedClaims } from './types.js';
 import { roleToScopes } from './scopes.js';
@@ -42,23 +42,23 @@ function cookieOpts(ctx: Koa.Context, maxAge?: number) {
 // rejects any cookie whose epoch ≠ the owner's current `owners.session_epoch`. A password
 // reset bumps that column (bumpSessionEpoch), instantly invalidating every outstanding
 // cookie for the owner — the stateless model's equivalent of "revoke all sessions".
-function ownerEpoch(ownerId: string): number {
-  const row = sqlite.prepare(`SELECT session_epoch FROM owners WHERE id = ?`).get(ownerId) as
-    | { session_epoch: number }
-    | undefined;
+async function ownerEpoch(ownerId: string): Promise<number> {
+  const row = await store()
+    .prepare(`SELECT session_epoch FROM owners WHERE id = ?`)
+    .get<{ session_epoch: number }>(ownerId);
   return row?.session_epoch ?? 0;
 }
 
 /** Issue a session for a freshly-authenticated local owner, stamped with the owner's
  * current auth epoch so a later reset (epoch bump) invalidates it. */
-export function setSession(ctx: Koa.Context, ownerId: string): void {
-  ctx.cookies.set(SESSION_COOKIE, `${ownerId}.${ownerEpoch(ownerId)}`, cookieOpts(ctx, MAX_AGE_MS));
+export async function setSession(ctx: Koa.Context, ownerId: string): Promise<void> {
+  ctx.cookies.set(SESSION_COOKIE, `${ownerId}.${await ownerEpoch(ownerId)}`, cookieOpts(ctx, MAX_AGE_MS));
 }
 
 /** Advance an owner's auth epoch → every existing session cookie for them stops
  * validating (V, password reset "invalidate all sessions"). */
-export function bumpSessionEpoch(ownerId: string): void {
-  sqlite.prepare(`UPDATE owners SET session_epoch = session_epoch + 1 WHERE id = ?`).run(ownerId);
+export async function bumpSessionEpoch(ownerId: string): Promise<void> {
+  await store().prepare(`UPDATE owners SET session_epoch = session_epoch + 1 WHERE id = ?`).run(ownerId);
 }
 
 /** Clear the session cookie (logout). Passing null deletes both it and its `.sig`. */
@@ -98,7 +98,7 @@ export function consumeLoginState(ctx: Koa.Context): string | null {
  * dangling identity. A role change bumps the target's session epoch, so live
  * sessions re-derive on their next request.
  */
-export function verifySession(ctx: Koa.Context): VerifiedClaims | null {
+export async function verifySession(ctx: Koa.Context): Promise<VerifiedClaims | null> {
   const raw = ctx.cookies.get(SESSION_COOKIE, { signed: true });
   if (!raw) return null;
   // The value is `${ownerId}.${epoch}`. A legacy cookie minted before V is the bare
@@ -108,9 +108,9 @@ export function verifySession(ctx: Koa.Context): VerifiedClaims | null {
   const dot = raw.lastIndexOf('.');
   const ownerId = dot === -1 ? raw : raw.slice(0, dot);
   const epoch = dot === -1 ? 0 : Number(raw.slice(dot + 1));
-  const row = sqlite
+  const row = await store()
     .prepare(`SELECT session_epoch, role FROM owners WHERE id = ? AND id <> ? LIMIT 1`)
-    .get(ownerId, SYSTEM_OWNER_ID) as { session_epoch: number; role: string } | undefined;
+    .get<{ session_epoch: number; role: string }>(ownerId, SYSTEM_OWNER_ID);
   if (!row) return null;
   // Reject a cookie whose epoch doesn't match the owner's current one — a password reset
   // bumped it, so every pre-reset cookie is now invalid. Fail closed on a malformed epoch.
