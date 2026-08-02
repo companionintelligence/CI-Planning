@@ -1,9 +1,37 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 27 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 29 commits)
 >
-> **DONE — waves 0–3 complete, wave 4 all but 2 files. ~490 of 906 portable
-> statements ported. Suite verified at 2633 passed after every commit.**
+> **DONE — waves 0–4 COMPLETE. Suite verified at 2633 passed after every one of
+> the 19 slices.**
+>
+> **Remaining work is smaller than this document originally predicted.** A fresh
+> count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **175
+> references in 26 files**, three of which are the seam itself (`db/index.ts`,
+> `db/pg.ts`, `db/store.ts`) — so **23 files actually remain**. Several files the
+> wave lists below name (render-copy, connectors/index, calibration, flags,
+> mcp/client, connectors/base, scheduler, models) hold NO raw statements and are
+> already done or never needed porting. Re-run the count rather than trusting the
+> per-wave file lists:
+>
+> ```
+> grep -rn "sqlite\.\(prepare\|exec\|transaction\)" server/src --include=*.ts | wc -l
+> ```
+>
+> Actual remaining, by wave:
+> - **Wave 5 (11 files)** — groom, connectors/memory, services/memory, motivation,
+>   objectives, possibles, series-scope, task-close, triality, triality-vector,
+>   patterns-place.
+> - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
+>   block-task-sync, sync/apply, recurrence-generate, reminders.
+> - **Wave 7 (4 files)** — autoplan, crypto/index, tags, category-prefs.
+> - **Wave 8 (1 file)** — routes/sse (the event-bus design decision).
+>
+> **`sync/apply.ts` (wave 6) is the one that pays a debt**: every remaining raw
+> `sqlite` import in already-ported files exists ONLY to pass the handle to
+> `stampRow`/`applyOp`. Porting it removes the last raw-handle argument from
+> routes/sync, routes/blocks, engine/extend-block, engine/review, services/blocks,
+> services/tasks and services/task-promotion in one go.
 >
 > - Wave 0 ✓ (scripts; both verified end-to-end on a scratch DB)
 > - Wave 1 ✓ (all 16 routes; raw `sqlite` survives ONLY as the handle argument
@@ -25,17 +53,20 @@
 >   out NOT to be interdependent — they went in as separate commits, not the
 >   single one this list predicted. **engine/recurrence-ops** (its EXDATE lost
 >   update is now CLOSED too, same compare-and-swap as blocks-recur — extracted
->   as `appendTemplateExdate`), **engine/deps**, **services/task-promotion**.
->   REMAINING (2 files, ~37 stmts): **next slice = services/patterns** (22 stmts,
->   5 importers; `ensureHabitPattern` is called from services/tasks, so patterns
->   must land first), then **services/tasks last** (15 stmts, 11 importers — but
->   parts 15–17 have already awaited its recurrence, dependency and promotion
->   call sites, so only its own statements remain).
+>   as `appendTemplateExdate`), **engine/deps**, **services/task-promotion**,
+>   **services/patterns** (three implicit-atomicity sequences made explicit
+>   transactions; `deletePatternType`'s in-use check became a guarded DELETE; one
+>   residual race documented in place — see below), **services/tasks**.
+>   **Wave 4 is CLOSED — 26 files.**
 >
-> Once those two land, wave 4 is closed and wave 5 (the connector/agent cluster,
-> 17 files / 153 stmts) begins. `services/tasks.ts` and `services/patterns.ts`
-> both carry "better-sqlite3 is synchronous; these are plain sync functions"
-> headers — re-read the implicit-atomicity section below before starting either.
+> **Known residual race, deliberately left open.** `patterns.ensureHabitPattern`
+> probes "is this task already in a Habit pattern?" by looking for a membership
+> row it has not written yet, so two concurrent calls can both pass and create
+> two Habit patterns for one task. No single-statement guard fixes a predicate
+> that depends on the writer's own later row — it needs a unique index on the
+> (task_id, habit-type) pair, i.e. a schema change, which a pure refactor pass
+> should not smuggle in. Consequence is a duplicate habit pattern under a
+> double-submit, not data loss. Fix alongside the other post-cutover items.
 >   `recurrence-ops.skipInstance` carries the SAME EXDATE read-modify-write as
 >   blocks-recur — reuse the compare-and-swap below rather than porting it
 >   straight.
