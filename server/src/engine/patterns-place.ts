@@ -202,9 +202,9 @@ export async function placePatternOnDay(
     // scheduling-intent fields (so its calendar icon has a date) and flip open →
     // scheduled. syncTaskFromBlock self-guards to the earliest placement, so calling
     // it per-session is correct; applyTaskPlacementStatus is idempotent after the flip.
-    const syncPlacedMember = (blockId: string, taskId: string) => {
-      syncTaskFromBlock(blockId, owner);
-      applyTaskPlacementStatus(taskId, owner);
+    const syncPlacedMember = async (blockId: string, taskId: string) => {
+      await syncTaskFromBlock(blockId, owner);
+      await applyTaskPlacementStatus(taskId, owner);
     };
     let blocksCreated = 0;
     let placed = 0;
@@ -222,7 +222,7 @@ export async function placePatternOnDay(
           const startMs = pick.gap.cursor;
           const endMs = startMs + pick.len;
           const { id: bid } = (await ins.get<{ id: string }>(t.task_id, owner, t.title, new Date(startMs).toISOString(), new Date(endMs).toISOString(), String(patternId), parentBlockId))!;
-          syncPlacedMember(bid, t.task_id);
+          await syncPlacedMember(bid, t.task_id);
           pick.gap.cursor = endMs + breakMs;
           blocksCreated++;
           placedSessions++;
@@ -282,7 +282,7 @@ export async function placePatternOnDay(
           const placedTaskIds = new Set<string>();
           for (const l of layout) {
             const { id: bid } = (await ins.get<{ id: string }>(l.task.task_id, owner, l.task.title, new Date(l.startMs).toISOString(), new Date(l.endMs).toISOString(), String(patternId), containerId))!;
-            syncPlacedMember(bid, l.task.task_id);
+            await syncPlacedMember(bid, l.task.task_id);
             blocksCreated++;
             placedTaskIds.add(l.task.task_id);
           }

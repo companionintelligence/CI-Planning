@@ -7,12 +7,19 @@
  * BLOCK is the source of truth for placement; the TASK carries the user-facing intent.
  *
  * All cross-entity writes funnel through here (the single service the codebase was
- * missing), modelled on `services/timer.ts` which likewise writes both entities. Uses
- * raw `sqlite` (synchronous) so a write can't be interrupted mid-flight, and converts
- * instants through the owner's timezone — never the server zone — so a near-midnight
- * placement lands on the correct calendar day (DST included).
+ * missing), modelled on `services/timer.ts` which likewise writes both entities. It
+ * converts instants through the owner's timezone — never the server zone — so a
+ * near-midnight placement lands on the correct calendar day (DST included).
+ *
+ * These go through the store facade, so they are async. The old header claimed raw
+ * `sqlite` being synchronous meant "a write can't be interrupted mid-flight"; that is
+ * no longer true, so the two status guards whose check was separated from their write
+ * by an await are now folded INTO the write —
+ * [[applyTaskPlacementStatus]] and [[revertTaskPlacementStatus]]. See
+ * docs/passA-worklist.md, "implicit atomicity".
  */
 import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { localDateInTZ, utcToZonedWallTime, zonedWallTimeToUTC } from '../lib/tz.js';
 import { syncTaskReminders } from '../engine/reminders.js';
@@ -45,8 +52,8 @@ interface BlockRow {
   status: string;
 }
 
-function blockRow(id: string, ownerId: string): BlockRow | undefined {
-  return sqlite
+async function blockRow(id: string, ownerId: string): Promise<BlockRow | undefined> {
+  return await store()
     .prepare(`SELECT id, task_id, block_kind, start_at, end_at, all_day, is_locked, status FROM time_blocks WHERE id = ? AND owner_id = ?`)
     .get(id, ownerId) as BlockRow | undefined;
 }
@@ -60,12 +67,12 @@ function blockRow(id: string, ownerId: string): BlockRow | undefined {
  * task (or its reminders, which key off `scheduled_for`+`task_time`). An all-day block
  * clears `task_time` (it has no clock time). Returns the synced task id, or null.
  */
-export function syncTaskFromBlock(blockId: string, ownerId: string): string | null {
-  const block = blockRow(blockId, ownerId);
+export async function syncTaskFromBlock(blockId: string, ownerId: string): Promise<string | null> {
+  const block = await blockRow(blockId, ownerId);
   if (!block || !block.task_id || block.block_kind !== 'task') return null;
 
   // Only the earliest placement of the task owns its scheduling fields.
-  const earliest = sqlite
+  const earliest = await store()
     .prepare(`SELECT MIN(start_at) AS s FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'`)
     .get(block.task_id, ownerId) as { s: string | null } | undefined;
   if (earliest?.s && block.start_at > earliest.s) return null;
@@ -78,7 +85,7 @@ export function syncTaskFromBlock(blockId: string, ownerId: string): string | nu
   // the new day too — otherwise reminders (which anchor on scheduled_for) and the
   // recurrence/streak logic (which keys on occurrence_date) would disagree and the
   // instance would be half-moved.
-  const info = sqlite
+  const info = await store()
     .prepare(
       `UPDATE tasks SET scheduled_for = ?, task_time = ?,
          occurrence_date = CASE WHEN occurrence_date IS NOT NULL THEN ? ELSE occurrence_date END
@@ -103,11 +110,11 @@ export function syncTaskFromBlock(blockId: string, ownerId: string): string | nu
  * non-atomic dual write). No-op unless the block is a task placement. Returns the
  * task id when a mirror was applied.
  */
-export function mirrorBlockStatusToTask(blockId: string, ownerId: string): string | null {
-  const block = blockRow(blockId, ownerId);
+export async function mirrorBlockStatusToTask(blockId: string, ownerId: string): Promise<string | null> {
+  const block = await blockRow(blockId, ownerId);
   if (!block || !block.task_id || block.block_kind !== 'task') return null;
   if (block.status === 'completed') {
-    sqlite
+    await store()
       .prepare(`UPDATE tasks SET status = 'done', completed_at = ? WHERE id = ? AND owner_id = ?`)
       .run(new Date().toISOString(), block.task_id, ownerId);
     stampRow(sqlite, 'task', block.task_id, ['status', 'completedAt']);
@@ -120,7 +127,7 @@ export function mirrorBlockStatusToTask(blockId: string, ownerId: string): strin
   if (block.status === 'planned') {
     // Un-completing a still-placed task returns it to `scheduled` (it still owns a
     // block), not all the way back to the open backlog.
-    sqlite
+    await store()
       .prepare(`UPDATE tasks SET status = 'scheduled', completed_at = NULL WHERE id = ? AND owner_id = ?`)
       .run(block.task_id, ownerId);
     stampRow(sqlite, 'task', block.task_id, ['status', 'completedAt']);
@@ -131,7 +138,7 @@ export function mirrorBlockStatusToTask(blockId: string, ownerId: string): strin
     // Skipping a session settles the BLOCK but not the task's work. If that was the
     // task's last active placement, return the task to the open backlog instead of
     // leaving it 'scheduled' forever with nothing on the Planner.
-    return revertTaskPlacementStatus(block.task_id, ownerId);
+    return await revertTaskPlacementStatus(block.task_id, ownerId);
   }
   return null;
 }
@@ -152,8 +159,8 @@ export function mirrorBlockStatusToTask(blockId: string, ownerId: string): strin
  * broadcast `block:updated`. Never touches other statuses (`skipped`/`cancelled`/
  * `missed` stay settled history).
  */
-export function mirrorTaskStatusToBlocks(taskId: string, ownerId: string): string[] {
-  const task = sqlite
+export async function mirrorTaskStatusToBlocks(taskId: string, ownerId: string): Promise<string[]> {
+  const task = await store()
     .prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`)
     .get(taskId, ownerId) as { status: string } | undefined;
   if (!task) return [];
@@ -161,14 +168,14 @@ export function mirrorTaskStatusToBlocks(taskId: string, ownerId: string): strin
     task.status === 'done'
       ? [`'planned','overrun','in_progress'`, 'completed']
       : [`'completed'`, 'planned'];
-  const rows = sqlite
+  const rows = await store()
     .prepare(
       `SELECT id FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN (${fromList})`,
     )
     .all(taskId, ownerId) as { id: string }[];
   if (rows.length === 0) return [];
-  const update = sqlite.prepare(`UPDATE time_blocks SET status = ? WHERE id = ? AND owner_id = ?`);
+  const update = await store().prepare(`UPDATE time_blocks SET status = ? WHERE id = ? AND owner_id = ?`);
   for (const { id } of rows) {
     update.run(to, id, ownerId);
     stampRow(sqlite, 'block', id, ['status']);
@@ -187,8 +194,8 @@ export function mirrorTaskStatusToBlocks(taskId: string, ownerId: string): strin
  * reflow cycle would freeze the whole day solid. `scheduled_for` is safe to mirror
  * (the pin pass keys on `task_time` alone).
  */
-export function mirrorEnginePlacement(taskId: string, ownerId: string): string | null {
-  const earliest = sqlite
+export async function mirrorEnginePlacement(taskId: string, ownerId: string): Promise<string | null> {
+  const earliest = await store()
     .prepare(
       `SELECT MIN(start_at) AS s FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
@@ -198,14 +205,14 @@ export function mirrorEnginePlacement(taskId: string, ownerId: string): string |
   if (!earliest?.s) return null;
   const day = localDateInTZ(earliest.s, ownerTimezone(ownerId));
   // Keep occurrence_date aligned for a recurring instance, mirroring syncTaskFromBlock.
-  sqlite
+  await store()
     .prepare(
       `UPDATE tasks SET scheduled_for = ?,
          occurrence_date = CASE WHEN occurrence_date IS NOT NULL THEN ? ELSE occurrence_date END
        WHERE id = ? AND owner_id = ? AND (scheduled_for IS NULL OR scheduled_for <> ?)`,
     )
     .run(day, day, taskId, ownerId, day);
-  applyTaskPlacementStatus(taskId, ownerId);
+  await applyTaskPlacementStatus(taskId, ownerId);
   syncTaskReminders(ownerId, taskId);
   return taskId;
 }
@@ -217,12 +224,17 @@ export function mirrorEnginePlacement(taskId: string, ownerId: string): string |
  * a placement never overrides done/cancelled/in_progress/deferred/etc. Returns the
  * task id when the status actually changed, else null.
  */
-export function applyTaskPlacementStatus(taskId: string, ownerId: string): string | null {
-  const task = sqlite
-    .prepare(`SELECT status, subtype FROM tasks WHERE id = ? AND owner_id = ?`)
-    .get(taskId, ownerId) as { status: string; subtype: string | null } | undefined;
-  if (!task || task.subtype === 'habit' || task.status !== 'open') return null;
-  sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ? AND owner_id = ?`).run(taskId, ownerId);
+export async function applyTaskPlacementStatus(taskId: string, ownerId: string): Promise<string | null> {
+  // The whole predicate rides ON the UPDATE. Read-then-write would now be separated by
+  // an await, and losing that race is not benign: a caller that read 'open' just before
+  // a concurrent completion would write 'scheduled' back over the finished task.
+  const info = await store()
+    .prepare(
+      `UPDATE tasks SET status = 'scheduled'
+        WHERE id = ? AND owner_id = ? AND status = 'open' AND COALESCE(subtype, '') <> 'habit'`,
+    )
+    .run(taskId, ownerId);
+  if (info.changes === 0) return null;
   stampRow(sqlite, 'task', taskId, ['status']);
   return taskId;
 }
@@ -235,19 +247,21 @@ export function applyTaskPlacementStatus(taskId: string, ownerId: string): strin
  * cancelled, routine-derived, etc. are left alone. Returns the task id when the
  * status actually changed, else null.
  */
-export function revertTaskPlacementStatus(taskId: string, ownerId: string): string | null {
-  const task = sqlite
-    .prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`)
-    .get(taskId, ownerId) as { status: string } | undefined;
-  if (!task || task.status !== 'scheduled') return null;
-  const active = sqlite
+export async function revertTaskPlacementStatus(taskId: string, ownerId: string): Promise<string | null> {
+  // Both guards fold into the write: the status check AND the "no active placement"
+  // probe. Separated by awaits, a placement landing between the probe and the UPDATE
+  // would send a task that DOES have a block back to the open backlog.
+  const info = await store()
     .prepare(
-      `SELECT 1 FROM time_blocks
-        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('planned','overrun','in_progress') LIMIT 1`,
+      `UPDATE tasks SET status = 'open'
+        WHERE id = ? AND owner_id = ? AND status = 'scheduled'
+          AND NOT EXISTS (
+            SELECT 1 FROM time_blocks
+             WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
+               AND status IN ('planned','overrun','in_progress'))`,
     )
-    .get(taskId, ownerId);
-  if (active) return null;
-  sqlite.prepare(`UPDATE tasks SET status = 'open' WHERE id = ? AND owner_id = ?`).run(taskId, ownerId);
+    .run(taskId, ownerId, taskId, ownerId);
+  if (info.changes === 0) return null;
   stampRow(sqlite, 'task', taskId, ['status']);
   syncTaskReminders(ownerId, taskId);
   return taskId;
@@ -263,15 +277,15 @@ export function revertTaskPlacementStatus(taskId: string, ownerId: string): stri
  * (`is_auto=0`) so a subsequent Auto replan won't reclaim/relocate it. Returns the
  * moved block id, or null when there's nothing to move / no change.
  */
-export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resizeToEstimate?: boolean } = {}): string | null {
-  const task = sqlite
+export async function syncBlockFromTask(taskId: string, ownerId: string, opts: { resizeToEstimate?: boolean } = {}): Promise<string | null> {
+  const task = await store()
     .prepare(`SELECT id, scheduled_for, task_time, estimated_minutes FROM tasks WHERE id = ? AND owner_id = ?`)
     .get(taskId, ownerId) as
     | { id: string; scheduled_for: string | null; task_time: string | null; estimated_minutes: number | null }
     | undefined;
   if (!task) return null;
 
-  const block = sqlite
+  const block = await store()
     .prepare(
       `SELECT id, start_at, end_at, all_day, is_locked FROM time_blocks
        WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status = 'planned'
@@ -295,7 +309,7 @@ export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resiz
   const newEnd = new Date(Date.parse(newStart) + durMs).toISOString();
 
   if (newStart === block.start_at && newEnd === block.end_at) return null; // no change
-  const info = sqlite
+  const info = await store()
     .prepare(`UPDATE time_blocks SET start_at = ?, end_at = ?, is_auto = 0 WHERE id = ? AND owner_id = ?`)
     .run(newStart, newEnd, block.id, ownerId);
   // The task side of this mirror is stamped by updateTask, but the block side was not:
@@ -316,8 +330,8 @@ export function syncBlockFromTask(taskId: string, ownerId: string, opts: { resiz
  * review-surface evidence. Locked pins included (settling never deletes or moves).
  * Returns the affected block ids so callers can broadcast `block:updated`.
  */
-export function cancelBlocksForTask(taskId: string, ownerId: string): string[] {
-  const rows = sqlite
+export async function cancelBlocksForTask(taskId: string, ownerId: string): Promise<string[]> {
+  const rows = await store()
     .prepare(
       `SELECT id FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task'
@@ -325,7 +339,7 @@ export function cancelBlocksForTask(taskId: string, ownerId: string): string[] {
     )
     .all(taskId, ownerId) as { id: string }[];
   if (rows.length === 0) return [];
-  const update = sqlite.prepare(`UPDATE time_blocks SET status = 'cancelled' WHERE id = ? AND owner_id = ?`);
+  const update = await store().prepare(`UPDATE time_blocks SET status = 'cancelled' WHERE id = ? AND owner_id = ?`);
   for (const { id } of rows) {
     update.run(id, ownerId);
     // Owner action (delete/cancel came from the owner), so the block status write is
@@ -342,11 +356,11 @@ export function cancelBlocksForTask(taskId: string, ownerId: string): string[] {
  * the Planner. Locked blocks are preserved (an explicit user pin outranks the clear).
  * Returns the number of blocks removed (0 = nothing was placed / all locked).
  */
-export function clearTaskPlacement(taskId: string, ownerId: string): number {
-  return sqlite
+export async function clearTaskPlacement(taskId: string, ownerId: string): Promise<number> {
+  return (await store()
     .prepare(
       `DELETE FROM time_blocks
         WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND is_locked = 0`,
     )
-    .run(taskId, ownerId).changes;
+    .run(taskId, ownerId)).changes;
 }

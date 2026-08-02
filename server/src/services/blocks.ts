@@ -385,8 +385,8 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
   // placement onto the task's scheduling-intent fields and flip open → scheduled.
   let syncedTaskId: string | null = null;
   if (block.blockKind === 'task' && block.taskId) {
-    syncTaskFromBlock(block.id, ownerId);
-    applyTaskPlacementStatus(block.taskId, ownerId);
+    await syncTaskFromBlock(block.id, ownerId);
+    await applyTaskPlacementStatus(block.taskId, ownerId);
     syncedTaskId = block.taskId;
   }
 
@@ -568,8 +568,8 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // fields (and its done-state) in lockstep with the block. A time change mirrors
   // start → scheduled_for/task_time; a status change mirrors done ⇄ open.
   let syncedTaskId: string | null = null;
-  if (input.start_at !== undefined || input.end_at !== undefined) syncedTaskId = syncTaskFromBlock(id, ownerId);
-  if (input.status !== undefined) syncedTaskId = mirrorBlockStatusToTask(id, ownerId) ?? syncedTaskId;
+  if (input.start_at !== undefined || input.end_at !== undefined) syncedTaskId = await syncTaskFromBlock(id, ownerId);
+  if (input.status !== undefined) syncedTaskId = await mirrorBlockStatusToTask(id, ownerId) ?? syncedTaskId;
 
   // Phase L: stamp version/field_ts for sync versioning (W3.3 — moved IN from the
   // route so a GraphQL updateBlock mutation, which calls the service directly, versions
@@ -626,7 +626,7 @@ export async function moveBlockGroup(ownerId: string, id: string, deltaMinutes: 
   // REQ2: mirror each moved task member's new placement onto its task (non-task
   // members — focus/break/meeting/the container — are skipped by the helper).
   const movedTasks = new Set<string>();
-  for (const m of members) { const t = syncTaskFromBlock(m.id, ownerId); if (t) movedTasks.add(t); }
+  for (const m of members) { const t = await syncTaskFromBlock(m.id, ownerId); if (t) movedTasks.add(t); }
 
   writeAudit({ ownerId, actor: 'owner', action: 'update', entity: `block:${parentId}` });
   return { ok: true, blocks: toApiList(rows), parentId, movedTaskIds: [...movedTasks] };
@@ -660,7 +660,7 @@ export async function promoteBlockToScheduled(ownerId: string, id: string, input
   stampRow(sqlite, 'block', id, ['blockType', 'allDay', 'startAt', 'endAt', 'goalStartDate']);
   const out = toApi(block);
   // REQ2: a promoted concept linked to a task gets concrete times — mirror them.
-  const syncedTaskId = syncTaskFromBlock(id, ownerId);
+  const syncedTaskId = await syncTaskFromBlock(id, ownerId);
   writeAudit({ ownerId, actor: 'owner', action: 'promote', entity: `block:${id}` });
   return { ok: true, block, api: out, syncedTaskId };
 }
@@ -761,7 +761,7 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
   // REQ2: a task with no remaining active placement returns to the open backlog.
   const revertedTaskIds: string[] = [];
   for (const taskId of affectedTaskIds) {
-    if (revertTaskPlacementStatus(taskId, ownerId)) revertedTaskIds.push(taskId);
+    if (await revertTaskPlacementStatus(taskId, ownerId)) revertedTaskIds.push(taskId);
   }
   writeAudit({ ownerId, actor: 'owner', action: 'delete', entity: `block:${id}` });
   return { ok: true, block, affectedTaskIds: [...affectedTaskIds], revertedTaskIds };
@@ -805,7 +805,7 @@ export async function clearDayAutoBlocks(ownerId: string, date: string): Promise
   // backlog — otherwise it's stranded at status='scheduled' with no block.
   const revertedTaskIds: string[] = [];
   for (const taskId of new Set(removed.map((r) => r.task_id).filter((t): t is string => !!t))) {
-    if (revertTaskPlacementStatus(taskId, ownerId)) revertedTaskIds.push(taskId);
+    if (await revertTaskPlacementStatus(taskId, ownerId)) revertedTaskIds.push(taskId);
   }
   writeAudit({ ownerId, actor: 'owner', action: 'clear-day', entity: `day:${date}` });
   return { removedCount: removed.length, revertedTaskIds };

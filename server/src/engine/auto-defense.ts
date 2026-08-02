@@ -439,7 +439,7 @@ export async function sweepMissedBlocks(
       // R2 parity: skipping a task's only active placement returns it to the open
       // backlog (scheduled ⇒ open) — MUST run before the open-check below, or a
       // placement-scheduled task would never re-queue.
-      revertTaskPlacementStatus(blk.task_id, owner);
+      await revertTaskPlacementStatus(blk.task_id, owner);
       // Only re-queue tasks that are still open (a completed task's stale block isn't work).
       const open = await store().prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'open'`).get(blk.task_id);
       if (open && (await restage.run(owner, blk.task_id, pos)).changes > 0) { pos++; requeued++; }

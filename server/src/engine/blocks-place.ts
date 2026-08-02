@@ -117,8 +117,8 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
         // A placed task IS scheduled: mirror the placement onto its scheduling-intent
         // fields (so its calendar label has a date/time even out of the loaded blocks
         // range) and flip open → scheduled — matching the other placement paths.
-        if (firstBlockId) syncTaskFromBlock(firstBlockId, owner);
-        applyTaskPlacementStatus(t.id, owner);
+        if (firstBlockId) await syncTaskFromBlock(firstBlockId, owner);
+        await applyTaskPlacementStatus(t.id, owner);
       } else unplaced++;
     }
     if (blocksCreated > 0) broadcast(owner, 'block:created', { parentBlockId: blockId, count: blocksCreated });

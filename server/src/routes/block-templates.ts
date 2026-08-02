@@ -142,11 +142,11 @@ export function blockTemplatesRouter() {
         removeEntityTags('time_block', c.id);
       }
       await store().prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(block.id, owner);
-      for (const taskId of touched) revertTaskPlacementStatus(taskId, owner);
+      for (const taskId of touched) await revertTaskPlacementStatus(taskId, owner);
 
       // 2. Repopulate from the template, parented to the block + flipped to scheduled.
       const created = await materializeTemplateTasks(owner, Date.parse(block.start_at), parseTasks(t.tasks), block.id);
-      for (const id of created) { applyTaskPlacementStatus(id, owner); touched.add(id); }
+      for (const id of created) { await applyTaskPlacementStatus(id, owner); touched.add(id); }
     });
 
     broadcast(owner, 'block:updated', { id: block.id });

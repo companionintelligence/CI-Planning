@@ -228,7 +228,7 @@ export function blocksRouter() {
     // don't drift from the block that actually moved (as move-group does).
     const affectedTasks = new Set<string>();
     for (const bid of [ctx.params.id, ...applied.movedSet.map((m) => m.block_id)]) {
-      const t = syncTaskFromBlock(bid, owner);
+      const t = await syncTaskFromBlock(bid, owner);
       if (t) affectedTasks.add(t);
     }
     for (const t of affectedTasks) broadcast(owner, 'task:updated', { id: t });
@@ -338,7 +338,7 @@ export function blocksRouter() {
 
     // Flip the task back to open (it was 'scheduled' while it held the block) so Auto
     // re-places it; broadcast so the board drops the skipped block and shows the stage.
-    if (revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
+    if (await revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
     broadcast(owner, 'block:updated', { id, rescheduled: block.task_id });
     broadcast(owner, 'flight_plan:updated', { added: staged ? 1 : 0 });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `block:${id}` });

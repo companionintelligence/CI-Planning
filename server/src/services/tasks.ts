@@ -504,15 +504,15 @@ export async function updateTask(
   let syncedBlockId: string | null = null;
   let unscheduled = false;
   if (scope === 'instance' && clearingStart) {
-    unscheduled = clearTaskPlacement(targetId, ownerId) > 0;
+    unscheduled = await clearTaskPlacement(targetId, ownerId) > 0;
     // Removing the last active placement must not strand the task at status='scheduled'
     // with no block — return it to the open backlog (no-op if a locked block remains).
-    if (revertTaskPlacementStatus(targetId, ownerId)) task.status = 'open';
+    if (await revertTaskPlacementStatus(targetId, ownerId)) task.status = 'open';
   } else if (
     scope === 'instance' &&
     (input.scheduled_for !== undefined || input.task_time !== undefined || estimateChanged)
   ) {
-    syncedBlockId = syncBlockFromTask(targetId, ownerId, { resizeToEstimate: estimateChanged });
+    syncedBlockId = await syncBlockFromTask(targetId, ownerId, { resizeToEstimate: estimateChanged });
   }
 
   // A series edit that changes the recurrence pattern or per-instance time drops
@@ -561,10 +561,10 @@ export async function updateTask(
   let mirroredBlockIds: string[] = [];
   if (wasDone !== undefined && wasDone !== (task.status === 'done')) {
     if (scope === 'instance' && (task.status === 'done' || ['open', 'scheduled', 'in_progress'].includes(task.status ?? ''))) {
-      mirroredBlockIds = mirrorTaskStatusToBlocks(targetId, ownerId);
+      mirroredBlockIds = await mirrorTaskStatusToBlocks(targetId, ownerId);
       // Reviving a placement re-schedules an open task (same parity rule every other
       // placement path follows).
-      if (task.status === 'open' && mirroredBlockIds.length > 0 && applyTaskPlacementStatus(targetId, ownerId)) {
+      if (task.status === 'open' && mirroredBlockIds.length > 0 && await applyTaskPlacementStatus(targetId, ownerId)) {
         task.status = 'scheduled';
       }
     }
@@ -612,7 +612,7 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
   // A cancelled task's placements settle with it — a manual block is invisible to
   // reflow's agent-only GC and would otherwise stay on the board looking live.
-  const cancelledBlockIds = cancelBlocksForTask(id, ownerId);
+  const cancelledBlockIds = await cancelBlocksForTask(id, ownerId);
   await dropSourceObjective(id, ownerId);
   if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
   await recomputeObjectivesForTask(id);

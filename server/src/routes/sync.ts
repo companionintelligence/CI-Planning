@@ -66,7 +66,7 @@ export function syncRouter() {
             (statusBefore === 'done') !== (statusAfter === 'done') &&
             (statusAfter === 'done' || ['open', 'scheduled', 'in_progress'].includes(statusAfter))
           ) {
-            for (const blockId of mirrorTaskStatusToBlocks(op.entityId, ownerId)) {
+            for (const blockId of await mirrorTaskStatusToBlocks(op.entityId, ownerId)) {
               const blockPayload = { id: blockId };
               const blockSeq = logSyncEvent(ownerId, 'block:updated', blockPayload);
               toEmit.push({ seq: blockSeq, event: 'block:updated', payload: blockPayload });

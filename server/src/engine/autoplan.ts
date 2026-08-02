@@ -446,7 +446,7 @@ async function placeIntoWindow(
       // R2 parity: placed = scheduled on EVERY path — flip open → scheduled and mirror
       // the placement day (never task_time; see mirrorEnginePlacement) like the
       // wizard/container/routine placement paths already do.
-      mirrorEnginePlacement(t.task_id, owner);
+      await mirrorEnginePlacement(t.task_id, owner);
     }
   }
   return { blocksCreated, placedTaskIds };
@@ -528,7 +528,7 @@ async function pinTaskAt(
   const existing = await reconcilePriorPlacement(owner, t.task_id, dayStartISO, dayEndISO);
   if (existing) {
     await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
-    applyTaskPlacementStatus(t.task_id, owner); // R2 parity: the existing block IS the placement
+    await applyTaskPlacementStatus(t.task_id, owner); // R2 parity: the existing block IS the placement
     return true;
   }
 
@@ -539,7 +539,7 @@ async function pinTaskAt(
     const endAt = new Date(startMs + durMs).toISOString();
     await insAnchoredBlock().get(t.task_id, owner, t.title, startAt, endAt);
     await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, t.task_id);
-    mirrorEnginePlacement(t.task_id, owner); // R2 parity: scheduled_for = this day, open → scheduled
+    await mirrorEnginePlacement(t.task_id, owner); // R2 parity: scheduled_for = this day, open → scheduled
     return true;
   };
 
@@ -745,7 +745,7 @@ export async function placeFlightPlan(
     const r = await placeIntoWindow(owner, ordered, Date.parse(block.start_at), Date.parse(block.end_at), prefs, { parentBlockId: opts.blockId, runId, notBeforeMs });
     await recordRun(owner, runId, r.blocksCreated);
     // A candidate whose block was cleared but found no room is back off the board.
-    for (const t of cands) if (!r.placedTaskIds.has(t.task_id)) revertTaskPlacementStatus(t.task_id, owner);
+    for (const t of cands) if (!r.placedTaskIds.has(t.task_id)) await revertTaskPlacementStatus(t.task_id, owner);
     if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: r.blocksCreated, placed: r.placedTaskIds.size, unplaced: cands.length - r.placedTaskIds.size });
     if (r.placedTaskIds.size > 0) {
       const del = store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`);
@@ -923,7 +923,7 @@ export async function placeFlightPlan(
 
   // R2: a staged task whose prior block was cleared but that found no room is off the
   // board again — return it to the open backlog (scheduled ⇒ open; no-op otherwise).
-  for (const t of staged) if (!placedIds.has(t.task_id)) revertTaskPlacementStatus(t.task_id, owner);
+  for (const t of staged) if (!placedIds.has(t.task_id)) await revertTaskPlacementStatus(t.task_id, owner);
 
   // Link block_id in daily_plan for every placed task (Phase M §0 / A3: the block
   // detail view joins daily_plan on block_id to display the per-task rationale).
@@ -1204,7 +1204,7 @@ export async function placeStartAnchoredTask(
   const existing = await reconcilePriorPlacement(owner, taskId, dayStartISO, dayEndISO);
   if (existing) {
     await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, taskId);
-    applyTaskPlacementStatus(taskId, owner); // R2 parity: the existing block IS the placement
+    await applyTaskPlacementStatus(taskId, owner); // R2 parity: the existing block IS the placement
     return { placed: true, blockId: existing.id, startAt: existing.start_at, endAt: existing.end_at };
   }
 
@@ -1223,7 +1223,7 @@ export async function placeStartAnchoredTask(
     const { id: blockId } = await insAnchoredBlock().get(task.id, owner, task.title, startAt, endAt) as { id: string };
     // A staged copy of this task must not be auto-placed AGAIN by the next Auto run.
     await store().prepare(`DELETE FROM flight_plan WHERE owner_id = ? AND task_id = ?`).run(owner, task.id);
-    applyTaskPlacementStatus(task.id, owner); // R2 parity: placed = scheduled
+    await applyTaskPlacementStatus(task.id, owner); // R2 parity: placed = scheduled
     if (!opts.silent) broadcast(owner, 'auto:placed', { blocksCreated: 1, placed: 1, unplaced: 0 });
     return { placed: true, blockId, startAt, endAt };
   };
