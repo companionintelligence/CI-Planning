@@ -92,9 +92,26 @@ same rules:
   → `[Filtered]`, at any depth. Note `api[-_ ]?key` rather than a bare `api_key`: the
   header this app authenticates with is `x-api-key`, which the hyphen-less spelling
   misses entirely
+- Object keys naming a **person** —
+  `(?:^|[-_])user$|(?:^|[-_])owner$|username|email|forwarded|^remote-` → `[Filtered]`.
+  These carry no credential, so no *value* pattern would ever match them: the key is the
+  only signal there is. It matters here because the app runs behind the CI-Hub Traefik
+  proxy and the SDK captures the headers that **arrived**, not the ones application code
+  reads — a proxy-injected `x-ci-hub-user` reaches the event even though nothing in this
+  repo looks at it. The anchoring is deliberate: `user-agent` and opaque row ids
+  (`owner_id`, `user_id`) survive, being diagnostic signal rather than identity
 - Strings over 8 KB truncated, so a stray blob can't smuggle plan contents out inside
   an exception message
 - Recursion is depth-guarded at 8, so a cyclic payload can't stall the reporting path
+
+> **Every walker consults the key.** All three entry points that iterate a key/value map
+> — `scrubValue`, `scrubHeaders`, `scrubBreadcrumbData` — run the key check themselves.
+> This is not incidental: the CI-Hermes port found a bug in CI-Server's browser copy
+> where the breadcrumb walker passed each *value* to the value-scrubber individually, so
+> the key check never ran and a crumb carrying `data.token = "abc123456"` shipped intact.
+> A bare secret matches no pattern; only the key gives it away. `keyFilteringCases()` in
+> the shared fixtures pins all three walkers in both packages, against a value chosen to
+> match nothing, so the assertion can only pass via the key check.
 
 **Fields**
 

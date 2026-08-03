@@ -36,8 +36,23 @@ const HOME_PATH_PATTERNS = [
   /[A-Za-z]:\/Users\/[^/\s]+/g, // Windows (forward-slash)
 ];
 
-const SENSITIVE_KEY_PATTERN =
+const SECRET_KEY_PATTERN =
   /password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key/i;
+
+/**
+ * Keys that identify a PERSON rather than carrying a credential. A bare identity value
+ * matches no secret pattern, so the KEY is the only signal there is — see the server
+ * twin for the full reasoning and the CI-Hub proxy header this exists for.
+ *
+ * Anchoring is deliberate: `(?:^|[-_])user$` keeps `user-agent`, which is real
+ * diagnostic signal, and opaque row ids (`owner_id`, `user_id`) survive too.
+ */
+const IDENTITY_KEY_PATTERN = /(?:^|[-_])user$|(?:^|[-_])owner$|username|email|forwarded|^remote-/i;
+
+/** A key whose value must be redacted wholesale: a credential, or a person's identity. */
+function isSensitiveKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key) || IDENTITY_KEY_PATTERN.test(key);
+}
 
 const URL_HEADER_PATTERN = /^refer(?:er|rer)$/i;
 
@@ -75,7 +90,7 @@ export function scrubValue(value: unknown, depth = 0): unknown {
   if (value && typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
-      result[key] = SENSITIVE_KEY_PATTERN.test(key) ? '[Filtered]' : scrubValue(nested, depth + 1);
+      result[key] = isSensitiveKey(key) ? '[Filtered]' : scrubValue(nested, depth + 1);
     }
     return result;
   }
@@ -87,7 +102,7 @@ export function scrubHeaders(headers: Record<string, unknown>): Record<string, s
   const result: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(headers)) {
-    if (SENSITIVE_KEY_PATTERN.test(key)) {
+    if (isSensitiveKey(key)) {
       result[key] = '[Filtered]';
     } else if (typeof value === 'string') {
       result[key] = URL_HEADER_PATTERN.test(key) ? scrubUrl(value) : scrubString(value);
@@ -103,7 +118,7 @@ export function scrubBreadcrumbData(data: Record<string, unknown>): Record<strin
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(data)) {
-    if (SENSITIVE_KEY_PATTERN.test(key)) {
+    if (isSensitiveKey(key)) {
       result[key] = '[Filtered]';
     } else if (URL_DATA_KEYS.has(key) && typeof value === 'string') {
       result[key] = scrubUrl(value);

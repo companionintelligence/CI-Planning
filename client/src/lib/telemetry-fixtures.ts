@@ -59,8 +59,19 @@ export const URL_CASES: ScrubCase[] = [
   { name: 'unparseable input does not throw', input: '::not a url::?q=secret', expected: '::not a url::' },
 ];
 
-/** Object keys that must be redacted wholesale, whatever their value. */
+/**
+ * Object keys that must be redacted WHOLESALE, whatever their value.
+ *
+ * These matter because for them the key is the only signal there is: a bare
+ * `"abc123456"` under `token` matches no secret pattern, so any walker that inspects
+ * only values ships it intact. That is exactly the bug the CI-Hermes port found in
+ * CI-Server's browser copy — its breadcrumb walker passed each VALUE to the
+ * value-scrubber individually, so the key check never ran. Every entry point that walks
+ * a key/value map must consult the key; `keyFilteringCases()` pins all of them at once,
+ * in both packages.
+ */
 export const SENSITIVE_KEYS = [
+  // Credentials
   'password',
   'secret',
   'token',
@@ -75,9 +86,52 @@ export const SENSITIVE_KEYS = [
   'pepper',
   'private_key',
   'private-key',
+  // Person identifiers. Not credentials, but the same class of data as the hostname we
+  // drop from `server_name`. `x-ci-hub-user` arrives from the CI-Hub proxy even though
+  // nothing in this repo reads it; `x-test-owner` the app does read.
+  'x-ci-hub-user',
+  'x-forwarded-user',
+  'x-ci-owner',
+  'x-test-owner',
+  'remote-user',
+  'username',
+  'email',
 ];
 
-/** Keys that look adjacent but carry no secret — redacting them would lose real signal. */
-export const INNOCUOUS_KEYS = ['path', 'method', 'status_code', 'count', 'keyboard', 'monkey'];
+/**
+ * Keys that look adjacent but carry no secret — redacting them would lose real signal.
+ * `user-agent` and the opaque row ids are the ones that actually constrain the pattern:
+ * a naive `/user|owner/` would swallow all three.
+ */
+export const INNOCUOUS_KEYS = [
+  'path',
+  'method',
+  'status_code',
+  'count',
+  'keyboard',
+  'monkey',
+  'user-agent',
+  'user_id',
+  'owner_id',
+];
+
+/** The entry points that walk a key/value map and must therefore consult the key. */
+export type KeyWalkerName = 'scrubValue' | 'scrubHeaders' | 'scrubBreadcrumbData';
+
+export const KEY_WALKER_NAMES: KeyWalkerName[] = ['scrubValue', 'scrubHeaders', 'scrubBreadcrumbData'];
+
+/**
+ * Deliberately matches NO secret pattern, no home path and no URL: if a key-filtering
+ * assertion passes, it passed because the KEY was consulted and for no other reason.
+ */
+export const BARE_VALUE = 'abc123456';
+
+/** Every (walker, key) pair both packages must agree on. */
+export function keyFilteringCases(): { walker: KeyWalkerName; key: string; filtered: boolean }[] {
+  return KEY_WALKER_NAMES.flatMap((walker) => [
+    ...SENSITIVE_KEYS.map((key) => ({ walker, key, filtered: true })),
+    ...INNOCUOUS_KEYS.map((key) => ({ walker, key, filtered: false })),
+  ]);
+}
 
 export const MAX_STRING_LENGTH = 8000;
