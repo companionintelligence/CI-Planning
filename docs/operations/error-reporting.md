@@ -303,13 +303,13 @@ well-intentioned:
 
 ## Not wired up yet
 
-- **No DSN reaches a published image yet.** `docker-publish.yml` passes neither
-  `VITE_SENTRY_DSN` nor a server `SENTRY_DSN`, and runs no `sentry sourcemaps upload`
-  — so today's published image initialises nothing and any browser stack trace it did
-  produce would be minified. Until that workflow supplies a DSN, the opt-out default
-  documented above has nothing to act on: the image is *unconfigured*, not opted out.
-  Wiring the DSN (and source maps — CI-Hub's `desktop-release.yml` has the pattern) is
-  what turns the documented posture into the shipped one.
+- **No source maps are uploaded.** `docker-publish.yml` now supplies both DSNs from the
+  repository `SENTRY_DSN` secret — the server's as a runtime `ENV`, the client's as a
+  `VITE_SENTRY_DSN` build arg — so a published image reports and the opt-out default
+  documented above finally has something to act on. It still runs no
+  `sentry sourcemaps upload`, so browser stack traces arrive minified and are hard to
+  read. CI-Hub's `desktop-release.yml` has the pattern; it needs a `SENTRY_AUTH_TOKEN`
+  secret, which this repo does not have yet.
 - **In-app consent UI.** Reporting is an operator-level switch. The CI-Marketplace
   "Share crash reports" toggle drives `CI_TELEMETRY` and now reaches both halves, but
   there is no per-user control inside the app itself — the same gap tracked for CI-Hub
