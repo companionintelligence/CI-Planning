@@ -83,7 +83,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
 
     // Obstacles = the container's existing children + other fixed blocks overlapping the
     // window (the container itself is excluded; default !includePlans drops it anyway).
-    const fixed = dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: blockId });
+    const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: blockId });
     const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
     const ins = store().prepare(
@@ -97,7 +97,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
       // AD2: inherit the container's direction as the task's level-1 primary (unless the
       // task already has one). The child block's `tag` mirrors the container direction
       // regardless (it's a child of that container), stamped in the INSERT below.
-      inheritContainerDirection(t.id, block.tag, owner);
+      await inheritContainerDirection(t.id, block.tag, owner);
       const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
       let placedSessions = 0;
       let firstBlockId: string | undefined;
@@ -117,8 +117,8 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
         // A placed task IS scheduled: mirror the placement onto its scheduling-intent
         // fields (so its calendar label has a date/time even out of the loaded blocks
         // range) and flip open → scheduled — matching the other placement paths.
-        if (firstBlockId) syncTaskFromBlock(firstBlockId, owner);
-        applyTaskPlacementStatus(t.id, owner);
+        if (firstBlockId) await syncTaskFromBlock(firstBlockId, owner);
+        await applyTaskPlacementStatus(t.id, owner);
       } else unplaced++;
     }
     if (blocksCreated > 0) broadcast(owner, 'block:created', { parentBlockId: blockId, count: blocksCreated });

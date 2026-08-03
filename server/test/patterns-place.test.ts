@@ -63,7 +63,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     const t2 = insertTask('Deep focus', 60);
     const pid = insertPattern('Routine', 'Morning Routine', [t1, t2]);
 
-    const r = placePatternOnDay(OWNER, pid, { date: DAY });
+    const r = await placePatternOnDay(OWNER, pid, { date: DAY });
     expect(r).toMatchObject({ patternId: pid, date: DAY, placed: 2, unplaced: 0, blocksCreated: 2, skippedAlreadyPlaced: false });
     const blocks = patternBlocks(pid);
     expect(blocks.map((b) => b.title)).toEqual(['Plan day', 'Deep focus']);
@@ -81,8 +81,8 @@ describe('placePatternOnDay — gap math + member redirection', () => {
   it('idempotency: a 2nd call same day returns skippedAlreadyPlaced and inserts no rows', async () => {
     const t = insertTask('Plan day', 30);
     const pid = insertPattern('Routine', 'X', [t]);
-    placePatternOnDay(OWNER, pid, { date: DAY });
-    const r2 = placePatternOnDay(OWNER, pid, { date: DAY });
+    await placePatternOnDay(OWNER, pid, { date: DAY });
+    const r2 = await placePatternOnDay(OWNER, pid, { date: DAY });
     expect(r2.skippedAlreadyPlaced).toBe(true);
     expect(r2.blocksCreated).toBe(0);
     expect(patternBlocks(pid).length).toBe(1);
@@ -91,9 +91,9 @@ describe('placePatternOnDay — gap math + member redirection', () => {
   it('self-heal: delete the placed blocks, re-run → succeeds (marker is read from time_blocks, not stored)', async () => {
     const t = insertTask('Plan day', 30);
     const pid = insertPattern('Routine', 'X', [t]);
-    placePatternOnDay(OWNER, pid, { date: DAY });
+    await placePatternOnDay(OWNER, pid, { date: DAY });
     sqlite.exec(`DELETE FROM time_blocks WHERE source_kind = 'pattern'`);
-    const r = placePatternOnDay(OWNER, pid, { date: DAY });
+    const r = await placePatternOnDay(OWNER, pid, { date: DAY });
     expect(r.skippedAlreadyPlaced).toBe(false);
     expect(r.blocksCreated).toBe(1);
   });
@@ -109,7 +109,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
       json: { title: 'Errands', block_kind: 'timeblock', tag: 'errands', start_at: `${DAY}T14:00:00.000Z`, end_at: `${DAY}T17:00:00.000Z` },
     })).body.block;
 
-    placePatternOnDay(OWNER, pid, { date: DAY, blockId: plan.id });
+    await placePatternOnDay(OWNER, pid, { date: DAY, blockId: plan.id });
     const blocks = patternBlocks(pid);
     // The work-tagged task is filtered out by the Plan's tag scope.
     expect(blocks.map((b) => b.title)).toEqual(['Errand A']);
@@ -128,7 +128,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
       .get(OWNER, template, DAY) as { id: string }).id;
     const pid = insertPattern('Habit', 'Hydration', [template]);
 
-    placePatternOnDay(OWNER, pid, { date: DAY });
+    await placePatternOnDay(OWNER, pid, { date: DAY });
     const blocks = patternBlocks(pid);
     expect(blocks.length).toBe(1);
     expect(blocks[0].task_id).toBe(instance); // not the template
@@ -150,7 +150,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     const t2 = insertTask('Home thing', 30); attachDirection(t2, 'home');
     const pid = insertPattern('Routine', 'Mixed directions', [t1, t2]);
 
-    placePatternOnDay(OWNER, pid, { date: DAY });
+    await placePatternOnDay(OWNER, pid, { date: DAY });
     const container = patternContainer(pid);
     expect(container).toBeTruthy();
     // Derived union is name-sorted → 'home' is first; the rest never comma-join.
@@ -164,7 +164,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
   it('AF-11: no derived direction → no stamp (container tag NULL, no entity_tags)', async () => {
     const t = insertTask('Untagged member', 30);
     const pid = insertPattern('Routine', 'Plain', [t]);
-    placePatternOnDay(OWNER, pid, { date: DAY });
+    await placePatternOnDay(OWNER, pid, { date: DAY });
     const container = patternContainer(pid);
     expect(container!.tag).toBeNull();
     expect(containerEntityTags(container!.id)).toEqual([]);
@@ -181,8 +181,8 @@ describe('placePatternOnDay — gap math + member redirection', () => {
     const legacy = insertPattern('Routine', 'Twin', [b1, b2]);
     sqlite.prepare(`UPDATE patterns SET tag = 'work,home' WHERE id = ?`).run(legacy);
 
-    const rClean = placePatternOnDay(OWNER, clean, { date: DAY });
-    const rLegacy = placePatternOnDay(OWNER, legacy, { date: '2026-06-23' });
+    const rClean = await placePatternOnDay(OWNER, clean, { date: DAY });
+    const rLegacy = await placePatternOnDay(OWNER, legacy, { date: '2026-06-23' });
     expect(rLegacy).toMatchObject({ placed: rClean.placed, unplaced: rClean.unplaced, blocksCreated: rClean.blocksCreated });
     expect(timesOf(legacy)).toEqual(timesOf(clean));
     // The legacy authored tag is NOT the stamp source — members are untagged → NULL.
@@ -198,7 +198,7 @@ describe('placePatternOnDay — gap math + member redirection', () => {
       .prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_locked, is_auto, status, owner_id) VALUES (uuid7(), 'Meeting', 'task', ?, ?, 1, 0, 'planned', ?)`)
       .run(`${DAY}T10:00:00.000Z`, `${DAY}T11:00:00.000Z`, OWNER);
 
-    placePatternOnDay(OWNER, pid, { date: DAY });
+    await placePatternOnDay(OWNER, pid, { date: DAY });
     expect(patternBlocks(pid).length).toBe(2);
   });
 });

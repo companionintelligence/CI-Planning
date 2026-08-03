@@ -247,7 +247,7 @@ describe('clearPlannerRange — recurring patterns', () => {
     expect((sqlite.prepare(`SELECT recurrence_rule FROM patterns WHERE id = ?`).get(pid) as { recurrence_rule: string }).recurrence_rule).toBe('FREQ=DAILY'); // NOT capped
 
     // The opted-out day is honored by the placer directly.
-    const placed = placePatternOnDay(OWNER, pid, { date: T1 });
+    const placed = await placePatternOnDay(OWNER, pid, { date: T1 });
     expect(placed.skippedAlreadyPlaced).toBe(true);
   });
 });

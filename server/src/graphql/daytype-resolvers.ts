@@ -29,19 +29,21 @@ type TagPrefNode = CategoryPref & { tag_id: string };
 
 export const dayTypeResolvers = {
   Query: {
-    dayTypes: () => listDayTypes(currentOwnerId()),
-    dayType: (_p: unknown, args: { id: string }) => getDayType(currentOwnerId(), args.id) ?? null,
-    resolveDayType: (_p: unknown, args: { date: string }) => {
+    dayTypes: async () => await listDayTypes(currentOwnerId()),
+    dayType: async (_p: unknown, args: { id: string }) => await getDayType(currentOwnerId(), args.id) ?? null,
+    resolveDayType: async (_p: unknown, args: { date: string }) => {
       if (!isISODate(args.date)) throw new GraphQLError('date must be YYYY-MM-DD', { extensions: { code: 'BAD_USER_INPUT' } });
-      return { date: args.date, ...resolveDayTypeWithSource(currentOwnerId(), args.date) };
+      // Parenthesised: spreading a PENDING promise yields `{}` — no own enumerable
+      // properties — so `key` and `source` would silently vanish from the payload.
+      return { date: args.date, ...(await resolveDayTypeWithSource(currentOwnerId(), args.date)) };
     },
-    tagPrefs: (): TagPrefNode[] =>
-      Object.entries(getCategoryPrefs(currentOwnerId())).map(([tagId, pref]) => ({ ...pref, tag_id: tagId })),
+    tagPrefs: async (): Promise<TagPrefNode[]> =>
+      Object.entries(await getCategoryPrefs(currentOwnerId())).map(([tagId, pref]) => ({ ...pref, tag_id: tagId })),
   },
 
   Mutation: {
-    createDayType: (_p: unknown, args: { input: { key: string; name: string } }) => {
-      const res = createDayTypeChecked(currentOwnerId(), args.input.key, args.input.name);
+    createDayType: async (_p: unknown, args: { input: { key: string; name: string } }) => {
+      const res = await createDayTypeChecked(currentOwnerId(), args.input.key, args.input.name);
       if (!res.ok) {
         if (res.error === 'bad_key') throw new GraphQLError('key must be a lowercase slug', { extensions: { code: 'BAD_USER_INPUT' } });
         if (res.error === 'name_required') throw new GraphQLError('name is required', { extensions: { code: 'BAD_USER_INPUT' } });
@@ -50,8 +52,8 @@ export const dayTypeResolvers = {
       return { dayType: res.dayType, success: true };
     },
 
-    renameDayType: (_p: unknown, args: { input: { id: string; name: string } }) => {
-      const res = renameDayTypeChecked(currentOwnerId(), args.input.id, args.input.name);
+    renameDayType: async (_p: unknown, args: { input: { id: string; name: string } }) => {
+      const res = await renameDayTypeChecked(currentOwnerId(), args.input.id, args.input.name);
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('Day type not found', { extensions: { code: 'NOT_FOUND' } });
         throw new GraphQLError('name is required', { extensions: { code: 'BAD_USER_INPUT' } });
@@ -59,8 +61,8 @@ export const dayTypeResolvers = {
       return { dayType: res.dayType, success: true };
     },
 
-    deleteDayType: (_p: unknown, args: { input: { id: string } }) => {
-      const res = deleteDayTypeChecked(currentOwnerId(), args.input.id);
+    deleteDayType: async (_p: unknown, args: { input: { id: string } }) => {
+      const res = await deleteDayTypeChecked(currentOwnerId(), args.input.id);
       if (!res.ok) {
         if (res.error === 'not_found') throw new GraphQLError('Day type not found', { extensions: { code: 'NOT_FOUND' } });
         throw new GraphQLError('Built-in day types cannot be deleted', { extensions: { code: 'BAD_USER_INPUT' } });
@@ -68,12 +70,12 @@ export const dayTypeResolvers = {
       return { deletedId: args.input.id, success: true };
     },
 
-    setTagPref: (_p: unknown, args: { input: { categoryTagId: string; colorToken?: string | null; defaultMinutes?: number | null } }) => {
+    setTagPref: async (_p: unknown, args: { input: { categoryTagId: string; colorToken?: string | null; defaultMinutes?: number | null } }) => {
       const i = args.input;
       const patch: Record<string, unknown> = {};
       if (i.colorToken != null) patch.color_token = i.colorToken;
       if (i.defaultMinutes != null) patch.default_minutes = i.defaultMinutes;
-      const res = setCategoryPrefChecked(currentOwnerId(), i.categoryTagId, patch);
+      const res = await setCategoryPrefChecked(currentOwnerId(), i.categoryTagId, patch);
       if (!res.ok) {
         if (res.error === 'tag_not_found') throw new GraphQLError('Tag not found', { extensions: { code: 'NOT_FOUND' } });
         const msg =
@@ -97,8 +99,8 @@ export const dayTypeResolvers = {
     defaultMinutes: (p: TagPrefNode) => p.default_minutes,
     // Non-null (TagType!): the category tag exists + is owner-scoped; throw rather than
     // null the non-null field if it somehow can't load.
-    category: (p: TagPrefNode) => {
-      const row = getOwnedTag(currentOwnerId(), p.tag_id);
+    category: async (p: TagPrefNode) => {
+      const row = await getOwnedTag(currentOwnerId(), p.tag_id);
       if (!row) throw new GraphQLError('category tag not found', { extensions: { code: 'NOT_FOUND' } });
       return toNode(row);
     },

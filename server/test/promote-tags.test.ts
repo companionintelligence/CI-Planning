@@ -36,9 +36,9 @@ describe('promote carries possible-task tags onto the task (linchpin)', () => {
     const taskId = res.body.task.id;
 
     // The direction tag is a level-1 task tag — exactly what the Auto engine reads.
-    expect(taskTagNames(taskId)).toContain('work');
+    expect(await taskTagNames(taskId)).toContain('work');
 
-    const levels = entityTagLevels('task', taskId);
+    const levels = await entityTagLevels('task', taskId);
     expect(levels.find((l) => l.name === 'work')?.level).toBe(1);
     expect(levels.find((l) => l.name === 'finance')?.level).toBe(2); // content kept as secondary
   });
@@ -54,6 +54,6 @@ describe('promote carries possible-task tags onto the task (linchpin)', () => {
     ).id;
     const res = await api(srv.url, `/api/possible-tasks/${pid}/promote`, { method: 'POST', json: {} });
     expect(res.status).toBe(201);
-    expect(taskTagNames(res.body.task.id)).toEqual([]);
+    expect(await taskTagNames(res.body.task.id)).toEqual([]);
   });
 });

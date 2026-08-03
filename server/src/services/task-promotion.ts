@@ -16,10 +16,9 @@
  *     but only while it's still *pristine* (top-level, no sub-objectives) — once the
  *     user organizes it under a project/goal it becomes theirs and is left alone.
  *
- * Reads/writes go through the store facade; the raw `sqlite` handle survives only as
- * the argument to `stampRow` (dies when sync/apply.ts ports).
+ * Reads/writes go through the store facade. The raw `sqlite` handle this file used to
+ * thread into `stampRow` is gone — sync/apply.ts ported.
  */
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { broadcast } from '../routes/sse.js';
@@ -74,7 +73,7 @@ export async function ensureTaskPromoted(parentTaskId: string, ownerId: string):
       )
       .run(objId, ownerId, parent.title, now, now, parentTaskId);
     // Sync: stamp the created objective's fields so an older queued op can't clobber them.
-    stampRow(sqlite, 'objective', objId, ['title', 'status', 'horizon', 'cadence', 'priority']);
+    await stampRow('objective', objId, ['title', 'status', 'horizon', 'cadence', 'priority']);
     created = true;
   }
 
@@ -82,9 +81,14 @@ export async function ensureTaskPromoted(parentTaskId: string, ownerId: string):
   // sync-versioned join row (0087). The objective stays a leaf, so this never
   // violates the "tasks only on leaves" containment rule.
   const linkedTaskIds = [parentTaskId, ...(await linkableSubtaskIds(parentTaskId, ownerId))];
-  const linkIds = linkedTaskIds.map((tid) => linkObjectiveTask(objId, tid));
+  // An explicit loop, not `.map`: linkObjectiveTask is async now, so `.map` would collect
+  // PROMISES and the broadcast below would publish `[object Promise]` as the link id —
+  // typecheck-clean, because the broadcast payload is unknown. Sequential also keeps each
+  // link's probe-then-write off the next one's.
+  const linkIds: string[] = [];
+  for (const tid of linkedTaskIds) linkIds.push(await linkObjectiveTask(objId, tid));
 
-  recomputeProgress(objId);
+  await recomputeProgress(objId);
   broadcast(ownerId, created ? 'objective:created' : 'objective:updated', { id: objId });
   for (const linkId of linkIds) broadcast(ownerId, 'objective_task:updated', { id: linkId });
   for (const tid of linkedTaskIds) broadcast(ownerId, 'task:updated', { id: tid });
@@ -151,7 +155,7 @@ export async function dropSourceObjective(taskId: string, ownerId: string): Prom
  * list does render progress_cache, so it isn't even wasted. */
 export async function recomputeObjectivesForTask(taskId: string): Promise<void> {
   const objs = await store().prepare(`SELECT objective_id FROM objective_tasks WHERE task_id = ? AND linked = 1`).all<{ objective_id: string }>(taskId);
-  for (const o of objs) recomputeProgress(o.objective_id);
+  for (const o of objs) await recomputeProgress(o.objective_id);
 }
 
 /**

@@ -25,7 +25,6 @@
  * construction: outcome stamps are write-once, deferrals consume their stale
  * blocks, and the revive pass only sees rows still stuck in 'missed'.
  */
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { localISODate } from '../lib/dates.js';
@@ -131,7 +130,7 @@ export async function reviewAndReschedule(opts: { owner?: string; nowISO?: strin
       await stampPlanOutcome.run(m.priority <= 2 ? 'missed' : 'deferred', m.owner_id, m.task_id);
       await bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
       // CON-3 cascade: dropped blocks are HARD-deleted — clear their tag rows.
-      for (const b of await dropBlocks.all<{ id: string }>(m.task_id, m.owner_id, nowISO)) removeEntityTags('time_block', b.id);
+      for (const b of await dropBlocks.all<{ id: string }>(m.task_id, m.owner_id, nowISO)) await removeEntityTags('time_block', b.id);
       deferred++;
       moved.push(m);
     }
@@ -139,7 +138,7 @@ export async function reviewAndReschedule(opts: { owner?: string; nowISO?: strin
       // Same backoff for the stuck rows; their plan outcome (if any) was already
       // stamped 'missed' when they were surfaced — the write-once guard holds.
       await bumpDefer.run(addDays(backoffDays(m.defer_count)), m.task_id);
-      for (const b of await dropBlocks.all<{ id: string }>(m.task_id, m.owner_id, nowISO)) removeEntityTags('time_block', b.id);
+      for (const b of await dropBlocks.all<{ id: string }>(m.task_id, m.owner_id, nowISO)) await removeEntityTags('time_block', b.id);
       revived++;
       moved.push(m);
     }
@@ -161,7 +160,7 @@ export async function reviewAndReschedule(opts: { owner?: string; nowISO?: strin
       }
       if (trust !== 'hands_off') continue;
       try {
-        const outcome: StartAnchoredOutcome = placeStartAnchoredTask(m.owner_id, m.task_id);
+        const outcome: StartAnchoredOutcome = await placeStartAnchoredTask(m.owner_id, m.task_id);
         if (outcome.placed) placed++;
       } catch (err) {
         logger.warn('review sweep: start-anchored placement failed', { owner: m.owner_id, taskId: m.task_id, err: (err as Error).message });
@@ -239,10 +238,10 @@ export async function rescheduleTask(taskId: string, days: number, owner: string
   const scheduledFor = addDays(Math.max(0, Math.round(days)));
   await store().transaction(async () => {
     const info = await store().prepare(`UPDATE tasks SET scheduled_for = ?, status = 'open', defer_count = defer_count + 1 WHERE id = ? AND owner_id = ?`).run(scheduledFor, taskId, owner);
-    if (info.changes > 0) stampRow(sqlite, 'task', taskId, ['scheduledFor', 'status']);
+    if (info.changes > 0) await stampRow('task', taskId, ['scheduledFor', 'status']);
     // CON-3 cascade: these blocks are HARD-deleted — clear their tag rows.
     for (const b of await store().prepare(`DELETE FROM time_blocks WHERE task_id = ? AND owner_id = ? AND block_kind = 'task' AND status IN ('missed','planned') AND is_locked = 0 RETURNING id`).all<{ id: string }>(taskId, owner)) {
-      removeEntityTags('time_block', b.id);
+      await removeEntityTags('time_block', b.id);
     }
   });
 
@@ -254,7 +253,7 @@ export async function rescheduleTask(taskId: string, days: number, owner: string
   const trust = (await store().prepare(`SELECT trust_mode FROM scheduling_prefs WHERE owner_id = ?`).get<{ trust_mode: string }>(owner))?.trust_mode;
   if (trust === 'hands_off') {
     try {
-      placement = placeStartAnchoredTask(owner, taskId);
+      placement = await placeStartAnchoredTask(owner, taskId);
     } catch (err) {
       logger.warn('rescheduleTask: start-anchored placement failed', { owner, taskId, err: (err as Error).message });
     }

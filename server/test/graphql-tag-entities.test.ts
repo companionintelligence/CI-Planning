@@ -38,8 +38,8 @@ async function gql(query: string, headers: Record<string, string> = {}) {
 }
 
 /** Create/resolve a tag for an owner; returns its id. */
-function tag(name: string, owner = OWNER): string {
-  const res = svcCreateTag(owner, { name, kind: 'intention' });
+async function tag(name: string, owner = OWNER): Promise<string> {
+  const res = await svcCreateTag(owner, { name, kind: 'intention' });
   if (!res.ok) throw new Error('tag seed failed');
   return res.tag.id;
 }
@@ -68,7 +68,7 @@ const ENTITIES = `
 
 describe('W4b — TagType.entities reverse edge', () => {
   it('returns both a Task and a TimeBlock tagged with the tag (union resolves each type)', async () => {
-    const focus = tag('focus');
+    const focus = await tag('focus');
     const taskId = await seedTask('Write report', ['focus']);
     const blockId = await seedBlock('Deep work', 'focus');
 
@@ -82,7 +82,7 @@ describe('W4b — TagType.entities reverse edge', () => {
   });
 
   it('kind filter narrows to one entity type', async () => {
-    const focus = tag('focus');
+    const focus = await tag('focus');
     const taskId = await seedTask('T', ['focus']);
     const blockId = await seedBlock('B', 'focus');
 
@@ -96,7 +96,7 @@ describe('W4b — TagType.entities reverse edge', () => {
   });
 
   it('paginates on the (kind, id) keyset', async () => {
-    const focus = tag('focus');
+    const focus = await tag('focus');
     // Two tasks + one block → 'task' rows sort before 'time_block'.
     await seedTask('T1', ['focus']);
     await seedTask('T2', ['focus']);
@@ -115,10 +115,10 @@ describe('W4b — TagType.entities reverse edge', () => {
   });
 
   it('dedups an entity tagged at multiple levels (UNION collapse)', async () => {
-    const focus = tag('focus');
+    const focus = await tag('focus');
     const taskId = await seedTask('T', []);
     // Same tag id applied at level 1 AND level 2 to the one task.
-    syncLeveledEntityTags('task', taskId, [{ level: 1, names: ['focus'] }, { level: 2, names: ['focus'] }], OWNER);
+    await syncLeveledEntityTags('task', taskId, [{ level: 1, names: ['focus'] }, { level: 2, names: ['focus'] }], OWNER);
 
     const r = await gql(`{ tag(id: "${focus}") { entities { totalCount edges { node { ... on TaskType { id } } } } } }`);
     expect(r.body.data.tag.entities.totalCount).toBe(1);
@@ -127,10 +127,10 @@ describe('W4b — TagType.entities reverse edge', () => {
   });
 
   it('excludes routine-kind associations (no RoutineType until W6)', async () => {
-    const focus = tag('focus');
+    const focus = await tag('focus');
     const taskId = await seedTask('T', ['focus']);
     // A routine-tagged row (entity_kind='routine') must never surface in this union.
-    setEntityTagIds('routine', 'routine-x', [focus]);
+    await setEntityTagIds('routine', 'routine-x', [focus]);
 
     const r = await gql(`{ tag(id: "${focus}") { entities { totalCount edges { node { ... on TaskType { id } } } } } }`);
     expect(r.body.data.tag.entities.totalCount).toBe(1);
@@ -138,7 +138,7 @@ describe('W4b — TagType.entities reverse edge', () => {
   });
 
   it('empty when the tag has no entities', async () => {
-    const lonely = tag('lonely');
+    const lonely = await tag('lonely');
     const r = await gql(`{ tag(id: "${lonely}") { entities { totalCount edges { cursor } pageInfo { hasNextPage endCursor } } } }`);
     expect(r.body.data.tag.entities).toEqual({ totalCount: 0, edges: [], pageInfo: { hasNextPage: false, endCursor: null } });
   });
@@ -147,7 +147,7 @@ describe('W4b — TagType.entities reverse edge', () => {
 describe('W4b — owner scoping', () => {
   it('does NOT surface another owner\'s entity even when an entity_tags row crosses the boundary', async () => {
     createOwner(OTHER);
-    const focus = tag('focus', OWNER);              // owner A's tag
+    const focus = await tag('focus', OWNER);              // owner A's tag
     const mine = await seedTask('Mine', ['focus'], OWNER);
     // Owner B's task, force-linked to owner A's tag id via a raw entity_tags row (the
     // leak the join must block — entity_tags.entity_id has no FK / no owner column).
@@ -161,7 +161,7 @@ describe('W4b — owner scoping', () => {
   });
 
   it('a cross-owner tag id is invisible (entities never reached — tag resolves null)', async () => {
-    const focus = tag('focus', OWNER);
+    const focus = await tag('focus', OWNER);
     await seedTask('Mine', ['focus'], OWNER);
     const r = await gql(`{ tag(id: "${focus}") { entities { totalCount } } }`, { 'x-test-owner': OTHER });
     expect(r.body.errors).toBeUndefined();

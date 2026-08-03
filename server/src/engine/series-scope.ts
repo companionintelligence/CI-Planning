@@ -83,7 +83,7 @@ export async function truncateSeriesFrom(
         RETURNING id`,
     )
     .all<{ id: string }>(owner, templateId, fromLocalDate);
-  for (const r of dropped) removeEntityTags(entityKind, r.id);
+  for (const r of dropped) await removeEntityTags(entityKind, r.id);
 
   // Does anything remain before the split? If the split is at//before the first
   // occurrence the bounded rule covers nothing, and a template that can never
@@ -103,7 +103,7 @@ export async function truncateSeriesFrom(
 
   if (survivors.n === 0 && startsAfterSplit) {
     await store().prepare(`DELETE FROM ${table} WHERE id = ? AND owner_id = ?`).run(templateId, owner);
-    removeEntityTags(entityKind, templateId);
+    await removeEntityTags(entityKind, templateId);
     return { ok: true, removed: dropped.length, templateRemoved: true };
   }
 

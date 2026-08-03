@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 
@@ -31,8 +31,8 @@ function rowToPref(r: PrefCols): CategoryPref {
  * All category-axis tag_prefs (kind='category') for an owner, keyed by tag id.
  * Missing rows are NOT included — callers fold in defaults via DEFAULT_PREF.
  */
-export function getCategoryPrefs(ownerId: string): Record<string, CategoryPref> {
-  const rows = sqlite
+export async function getCategoryPrefs(ownerId: string): Promise<Record<string, CategoryPref>> {
+  const rows = await store()
     .prepare(`SELECT tag_id, color_token, default_minutes FROM tag_prefs WHERE owner_id = ? AND kind = 'category'`)
     .all(ownerId) as (PrefCols & { tag_id: string })[];
   const result: Record<string, CategoryPref> = {};
@@ -44,12 +44,12 @@ export function getCategoryPrefs(ownerId: string): Record<string, CategoryPref> 
  * Upsert a single category-axis tag_prefs row (kind='category'). Merges `patch`
  * over any existing values (fetch-then-merge), then persists. Returns the final row.
  */
-export function setCategoryPref(
+export async function setCategoryPref(
   ownerId: string,
   categoryTagId: string,
   patch: Partial<CategoryPref>,
-): CategoryPref {
-  const existing = sqlite
+): Promise<CategoryPref> {
+  const existing = await store()
     .prepare(`SELECT color_token, default_minutes FROM tag_prefs WHERE owner_id = ? AND tag_id = ? AND kind = 'category'`)
     .get(ownerId, categoryTagId) as PrefCols | undefined;
 
@@ -60,7 +60,7 @@ export function setCategoryPref(
     default_minutes: patch.default_minutes !== undefined ? patch.default_minutes : current.default_minutes,
   };
 
-  sqlite
+  await store()
     .prepare(
       // On conflict, normalize the row to the category axis: rewrite kind and NULL
       // the pattern-only columns. Belt-and-suspenders — a tag's kind is immutable at
@@ -89,17 +89,17 @@ export type SetCategoryPrefResult =
  * tag/kind check + field constraints extracted from routes/category-prefs.ts so REST +
  * GraphQL share one implementation. `patch` carries raw (unknown-typed) values.
  */
-export function setCategoryPrefChecked(
+export async function setCategoryPrefChecked(
   ownerId: string,
   tagId: string,
   patch: { color_token?: unknown; default_minutes?: unknown },
-): SetCategoryPrefResult {
-  const tag = sqlite.prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(tagId, ownerId) as { kind: string } | undefined;
+): Promise<SetCategoryPrefResult> {
+  const tag = await store().prepare(`SELECT kind FROM tags WHERE id = ? AND owner_id = ?`).get(tagId, ownerId) as { kind: string } | undefined;
   if (!tag) return { ok: false, error: 'tag_not_found' };
   if (tag.kind !== 'category') return { ok: false, error: 'not_category' };
   if (patch.color_token !== undefined && (typeof patch.color_token !== 'string' || !patch.color_token)) return { ok: false, error: 'color_token_invalid' };
   if (patch.default_minutes !== undefined && !(Number.isInteger(patch.default_minutes) && (patch.default_minutes as number) > 0)) return { ok: false, error: 'default_minutes_invalid' };
-  const pref = setCategoryPref(ownerId, tagId, {
+  const pref = await setCategoryPref(ownerId, tagId, {
     color_token: patch.color_token as string | undefined,
     default_minutes: patch.default_minutes as number | undefined,
   });

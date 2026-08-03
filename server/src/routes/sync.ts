@@ -1,7 +1,4 @@
 import Router from '@koa/router';
-// `sqlite` remains ONLY as applyOp's handle argument — it dies when sync/apply.ts
-// ports to the facade. The route's own statements go through store().
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { currentOwnerId } from '../lib/context.js';
 import { applyOp, type Op, type ApplyResult } from '../sync/apply.js';
@@ -58,7 +55,7 @@ export function syncRouter() {
             op.entity === 'task' && op.fields && 'status' in op.fields
               ? (await store().prepare(`SELECT status FROM tasks WHERE id = ? AND owner_id = ?`).get<{ status: string }>(op.entityId, ownerId))?.status
               : undefined;
-          const result = applyOp(sqlite, op, ownerId);
+          const result = await applyOp(op, ownerId);
           const statusAfter = result.applied['status'] as string | undefined;
           if (
             statusBefore !== undefined &&
@@ -66,9 +63,9 @@ export function syncRouter() {
             (statusBefore === 'done') !== (statusAfter === 'done') &&
             (statusAfter === 'done' || ['open', 'scheduled', 'in_progress'].includes(statusAfter))
           ) {
-            for (const blockId of mirrorTaskStatusToBlocks(op.entityId, ownerId)) {
+            for (const blockId of await mirrorTaskStatusToBlocks(op.entityId, ownerId)) {
               const blockPayload = { id: blockId };
-              const blockSeq = logSyncEvent(ownerId, 'block:updated', blockPayload);
+              const blockSeq = await logSyncEvent(ownerId, 'block:updated', blockPayload);
               toEmit.push({ seq: blockSeq, event: 'block:updated', payload: blockPayload });
             }
           }
@@ -78,7 +75,11 @@ export function syncRouter() {
           // the live subtree the way archiveObjective does, or archiving offline silently
           // orphans every child (buildTree then re-roots them to top level).
           if (op.entity === 'objective') {
-            applySyncedObjectiveUpkeep(ownerId, op.entityId, result.applied);
+            // Awaited, not floated: the upkeep must land INSIDE this transaction, and
+            // before the sync event below announces the op as applied. Detached, the
+            // archive cascade would race the commit and the client could observe an
+            // archived root whose subtree is still live.
+            await applySyncedObjectiveUpkeep(ownerId, op.entityId, result.applied);
           }
           // An objective_task link change surfaces as an objective update (the
           // client re-derives the tree from the objective's links).
@@ -87,7 +88,7 @@ export function syncRouter() {
           const payload = { id: op.entityId, version: result.version, ...result.applied };
           // logSyncEvent is inside the transaction — it shares the same connection
           // and therefore the same tx; a rollback would also roll back the log row.
-          const seq = logSyncEvent(ownerId, eventName, payload);
+          const seq = await logSyncEvent(ownerId, eventName, payload);
           toEmit.push({ seq, event: eventName, payload });
           results.push(result);
         } catch (err: unknown) {

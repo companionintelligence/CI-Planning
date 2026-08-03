@@ -263,7 +263,7 @@ async function collectCandidates(ownerId: string, now: Date): Promise<Candidate[
       title: t.title,
       estimateMin: t.estimated_minutes,
       direction: await taskDirection(t.id, ownerId),
-      categories: entityCategoryNames('task', t.id).map((c) => c.toLowerCase()),
+      categories: (await entityCategoryNames('task', t.id)).map((c) => c.toLowerCase()),
       motivation: t.motivation,
     });
   }
@@ -323,7 +323,7 @@ async function collectCandidates(ownerId: string, now: Date): Promise<Candidate[
 // honestly drop anything; the C term goes neutral).
 
 export async function rawFreeGapMinutes(ownerId: string, now: Date): Promise<number | null> {
-  const tz = ownerTimezone(ownerId);
+  const tz = await ownerTimezone(ownerId);
   const today = localDateInTZ(now.toISOString(), tz);
   const rows = await store()
     .prepare(
@@ -379,7 +379,7 @@ async function completionHistory(ownerId: string, now: Date): Promise<Completion
   const out: CompletionRow[] = [];
   for (const r of rows) {
     const dir = await taskDirection(r.id, ownerId);
-    const cats = entityCategoryNames('task', r.id).map((c) => c.toLowerCase());
+    const cats = (await entityCategoryNames('task', r.id)).map((c) => c.toLowerCase());
     const patterns = (
       await store().prepare(`SELECT pattern_id FROM pattern_tasks WHERE task_id = ?`).all<{ pattern_id: string }>(r.id)
     ).map((p) => p.pattern_id);
@@ -646,7 +646,7 @@ export async function logShown(
    */
   confidenceJson: readonly (string | null)[],
 ): Promise<(string | null)[]> {
-  const tz = ownerTimezone(ownerId);
+  const tz = await ownerTimezone(ownerId);
   const localDate = localDateInTZ(now.toISOString(), tz);
   const insert = store().prepare(
     `INSERT INTO triality_log (id, owner_id, shown_at, local_date, slot, action_kind, action_ref, scores, confidence)

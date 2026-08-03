@@ -80,7 +80,7 @@ export function summaryRouter() {
     const summary = await summarizeDay(day, { refresh: refresh === '1' || refresh === 'true' });
     // Z2: fold last night's EOD Alignment into the morning Brief (flag-gated,
     // computed outside the cache so it's always fresh). Absent → field omitted.
-    const evening = timeSenseEnabled(currentOwnerId()) ? await morningCarryover(day) : undefined;
+    const evening = (await timeSenseEnabled(currentOwnerId())) ? await morningCarryover(day) : undefined;
     ctx.body = evening ? { ...summary, evening } : summary;
   });
 

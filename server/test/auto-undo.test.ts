@@ -37,52 +37,52 @@ beforeEach(() => {
 });
 
 describe('undoLastAuto', () => {
-  it('place then undo restores prior state and re-stages the task', () => {
+  it('place then undo restores prior state and re-stages the task', async () => {
     makePlan('work', at('09:00'), at('12:00'));
     const t = insertTask('Code', 60, 'work');
     stage(t);
 
-    const r = placeFlightPlan(OWNER, { date: DAY });
+    const r = await placeFlightPlan(OWNER, { date: DAY });
     expect(r.blocksCreated).toBeGreaterThanOrEqual(1);
     expect(agentTaskBlocks()).toContain('Code');
 
-    const u = undoLastAuto(OWNER);
+    const u = await undoLastAuto(OWNER);
     expect(u.removed).toBeGreaterThanOrEqual(1);
     expect(u.restaged).toBe(1);
     expect(agentTaskBlocks()).not.toContain('Code'); // run's blocks gone
     expect(fpRow(t)?.selected).toBe(1); // task re-staged, selected
   });
 
-  it('is single-step: a second undo is a no-op', () => {
+  it('is single-step: a second undo is a no-op', async () => {
     makePlan('work', at('09:00'), at('12:00'));
     stage(insertTask('Code', 60, 'work'));
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
 
-    expect(undoLastAuto(OWNER).removed).toBeGreaterThanOrEqual(1);
-    const second = undoLastAuto(OWNER);
+    expect((await undoLastAuto(OWNER)).removed).toBeGreaterThanOrEqual(1);
+    const second = await undoLastAuto(OWNER);
     expect(second).toEqual({ removed: 0, restaged: 0 });
   });
 
-  it('undo removes all blocks from the combined run (Plans + workday fill share one run_id)', () => {
+  it('undo removes all blocks from the combined run (Plans + workday fill share one run_id)', async () => {
     makePlan('work', at('09:00'), at('12:00'));
     stage(insertTask('Code', 60, 'work')); // tag-matched → Plan
     stage(insertTask('Loose', 30));         // untagged → workday fill
 
     // placeFlightPlan now covers Plans + workday fill in a single run.
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     expect(agentTaskBlocks().sort()).toEqual(['Code', 'Loose']);
 
-    undoLastAuto(OWNER); // removes all blocks from the combined run
+    await undoLastAuto(OWNER); // removes all blocks from the combined run
     expect(agentTaskBlocks()).toEqual([]); // both blocks gone — they share the same run_id
   });
 
-  it('never touches manual or meeting blocks', () => {
+  it('never touches manual or meeting blocks', async () => {
     sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Manual', 'task', ?, ?, 0, 'manual', 'planned', ?)`).run(at('09:00'), at('10:00'), OWNER);
     sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, start_at, end_at, is_auto, source_kind, source_ref, status, owner_id) VALUES (uuid7(), 'Mtg', 'meeting', ?, ?, 1, 'gcal', 'e1', 'planned', ?)`).run(at('11:00'), at('12:00'), OWNER);
     stage(insertTask('Loose', 30));
-    fillByPriority(OWNER, { date: DAY });
+    await fillByPriority(OWNER, { date: DAY });
 
-    undoLastAuto(OWNER);
+    await undoLastAuto(OWNER);
     const titles = (sqlite.prepare(`SELECT title FROM time_blocks`).all() as { title: string }[]).map((b) => b.title);
     expect(titles).toContain('Manual');
     expect(titles).toContain('Mtg');

@@ -236,8 +236,8 @@ const clampHorizon = (n: unknown): number => Math.max(1, Math.min(60, Math.floor
  * server-tz `localISODate()` would mis-window scheduled tasks around midnight for any
  * owner in a different zone.
  */
-function ownerToday(owner: string): string {
-  return todayInTZ(ownerTimezone(owner));
+async function ownerToday(owner: string): Promise<string> {
+  return todayInTZ(await ownerTimezone(owner));
 }
 
 /**
@@ -262,7 +262,7 @@ export async function planWeekCandidates(horizonRaw: unknown): Promise<PlanWeekC
   // different task set than the confirm it gates — listing tasks fill will not stage and
   // hiding ones it will. The run's own anchor (selectedDay) is passed straight to
   // /api/auto/run by the client and is a separate concern.
-  const start = ownerToday(owner);
+  const start = await ownerToday(owner);
 
   // Mirrors fillFlightPlanCandidates (autoplan.ts:600) — minus the write and the LIMIT.
   const ELIGIBLE = `
@@ -366,7 +366,7 @@ export async function consolidateSessions(ids: unknown): Promise<SessionResult<C
   }
   const sessions = rows.map(hydrate); // newest first (started_at DESC)
 
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   const dates = sessions.map((s) => localDateInTZ(s.started_at, tz)).sort();
   const dateRange = dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`;
 

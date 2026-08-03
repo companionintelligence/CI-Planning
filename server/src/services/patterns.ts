@@ -90,7 +90,7 @@ export async function taskIdsOf(patternId: string): Promise<string[]> {
  * for the whole list — see routineDerivedTagsByIds); single-row callers omit it.
  */
 export const serializePattern = async (p: PatternRow, derived?: DerivedRoutineTags) => {
-  const d = derived ?? routineDerivedTags(p.id);
+  const d = derived ?? await routineDerivedTags(p.id);
   return {
     id: p.id,
     owner_id: p.owner_id,
@@ -380,7 +380,7 @@ export async function deletePattern(owner: string, id: string): Promise<DeletePa
   const fastTasks = await store()
     .prepare(`SELECT id FROM tasks WHERE subtype = 'quick' AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`)
     .all<{ id: string }>(id);
-  for (const t of fastTasks) removeEntityTags('task', t.id);
+  for (const t of fastTasks) await removeEntityTags('task', t.id);
   // One transaction: the fast-task purge reads its ids from pattern_tasks, which the
   // pattern DELETE cascades away. Split across an await, a failure between them would
   // leave the ritual's fast tasks orphaned with no pattern left to identify them by.
@@ -388,7 +388,7 @@ export async function deletePattern(owner: string, id: string): Promise<DeletePa
     await store().prepare(`DELETE FROM tasks WHERE subtype = 'quick' AND id IN (SELECT task_id FROM pattern_tasks WHERE pattern_id = ?)`).run(id);
     await store().prepare(`DELETE FROM patterns WHERE id = ?`).run(id); // pattern_tasks cascade; shared tasks untouched
   });
-  removeEntityTags('routine', id);
+  await removeEntityTags('routine', id);
   writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `routine:${id}` });
   return { ok: true };
 }

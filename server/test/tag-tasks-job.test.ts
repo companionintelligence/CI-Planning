@@ -32,8 +32,8 @@ function seedTag(name: string, kind = 'intention'): string {
 }
 
 /** Level-keyed view of a task's tags — the AF-11 split this sweep must reproduce. */
-function levels(taskId: string): { l1: string[]; l2: string[] } {
-  const rows = entityTagLevels('task', taskId);
+async function levels(taskId: string): Promise<{ l1: string[]; l2: string[] }> {
+  const rows = await entityTagLevels('task', taskId);
   return {
     l1: rows.filter((r) => r.level === 1).map((r) => r.name),
     l2: rows.filter((r) => r.level === 2).map((r) => r.name),
@@ -108,7 +108,7 @@ describe('tagUntaggedTasks', () => {
     expect(result.total).toBe(1);
     expect(result.tagged).toBe(1);
     expect(result.taggedIds).toEqual([t]);
-    expect(levels(t).l2).toContain('email'); // an intention lands at level 2
+    expect((await levels(t)).l2).toContain('email'); // an intention lands at level 2
   });
 
   // AF-11 leveling — the split the Tasks Auto-tag button used to do client-side.
@@ -120,8 +120,8 @@ describe('tagUntaggedTasks', () => {
 
     await tagUntaggedTasks(OWNER);
 
-    expect(levels(t).l1).toEqual(['work']);
-    expect(levels(t).l2.sort()).toEqual(['email', 'finance']);
+    expect((await levels(t)).l1).toEqual(['work']);
+    expect((await levels(t)).l2.sort()).toEqual(['email', 'finance']);
   });
 
   it('keeps only the FIRST direction — a task has one primary direction', async () => {
@@ -131,8 +131,8 @@ describe('tagUntaggedTasks', () => {
 
     await tagUntaggedTasks(OWNER);
 
-    expect(levels(t).l1).toHaveLength(1);
-    expect(levels(t).l2).toEqual([]); // the dropped direction is NOT demoted to level 2
+    expect((await levels(t)).l1).toHaveLength(1);
+    expect((await levels(t)).l2).toEqual([]); // the dropped direction is NOT demoted to level 2
   });
 
   it('never attaches a category tag (categories live in entity_categories)', async () => {
@@ -142,7 +142,7 @@ describe('tagUntaggedTasks', () => {
     const result = await tagUntaggedTasks(OWNER);
 
     expect(result.tagged).toBe(0);
-    expect(entityTagLevels('task', t)).toEqual([]);
+    expect(await entityTagLevels('task', t)).toEqual([]);
   });
 
   it('ignores muted tags', async () => {
@@ -153,7 +153,7 @@ describe('tagUntaggedTasks', () => {
     const result = await tagUntaggedTasks(OWNER);
 
     expect(result.tagged).toBe(0);
-    expect(entityTagLevels('task', t)).toEqual([]);
+    expect(await entityTagLevels('task', t)).toEqual([]);
   });
 
   // The Auto-tag button passes the ids on screen so a filtered view tags only what the
@@ -166,8 +166,8 @@ describe('tagUntaggedTasks', () => {
     const result = await tagUntaggedTasks(OWNER, [inScope]);
 
     expect(result.total).toBe(1); // only the scoped task was even considered
-    expect(levels(inScope).l2).toContain('email');
-    expect(entityTagLevels('task', outOfScope)).toEqual([]);
+    expect((await levels(inScope)).l2).toContain('email');
+    expect(await entityTagLevels('task', outOfScope)).toEqual([]);
   });
 
   it('treats an empty scope as "nothing selected", not owner-wide', async () => {
@@ -177,7 +177,7 @@ describe('tagUntaggedTasks', () => {
     const result = await tagUntaggedTasks(OWNER, []);
 
     expect(result.total).toBe(0);
-    expect(entityTagLevels('task', t)).toEqual([]);
+    expect(await entityTagLevels('task', t)).toEqual([]);
   });
 
   it('skips tasks that already have tags — does not overwrite or remove them', async () => {
@@ -189,7 +189,7 @@ describe('tagUntaggedTasks', () => {
 
     // Already-tagged task is not in the untagged set
     expect(result.total).toBe(0);
-    expect(taskTagNames(tagged)).toEqual(['finance']); // unchanged
+    expect(await taskTagNames(tagged)).toEqual(['finance']); // unchanged
   });
 
   it('is idempotent: running twice does not duplicate tags', async () => {
@@ -197,12 +197,12 @@ describe('tagUntaggedTasks', () => {
     const t = insertTask('Email Rek about the invoice');
 
     await tagUntaggedTasks(OWNER);
-    expect(levels(t).l2).toEqual(['email']);
+    expect((await levels(t)).l2).toEqual(['email']);
 
     // Second run: task now has tags at SOME level → NOT EXISTS excludes it → no-op
     const second = await tagUntaggedTasks(OWNER);
     expect(second.total).toBe(0);
-    expect(levels(t).l2).toEqual(['email']); // still exactly one copy
+    expect((await levels(t)).l2).toEqual(['email']); // still exactly one copy
   });
 
   it('skips subtasks (parent_id set) and recurrence instances (recurrence_parent_id set)', async () => {
@@ -256,8 +256,8 @@ describe('POST /api/tasks/auto-tag', () => {
 
     expect(status).toBe(200);
     expect(body).toMatchObject({ tagged: 1, total: 1 });
-    expect(levels(scoped).l1).toEqual(['work']);
-    expect(entityTagLevels('task', other)).toEqual([]);
+    expect((await levels(scoped)).l1).toEqual(['work']);
+    expect(await entityTagLevels('task', other)).toEqual([]);
   });
 
   it('sweeps the whole owner when task_ids is omitted (the cron\'s scope)', async () => {
@@ -268,8 +268,8 @@ describe('POST /api/tasks/auto-tag', () => {
     const { body } = await api(srv.url, '/api/tasks/auto-tag', { method: 'POST', json: {} });
 
     expect(body.tagged).toBe(2);
-    expect(levels(a).l1).toEqual(['work']);
-    expect(levels(b).l1).toEqual(['work']);
+    expect((await levels(a)).l1).toEqual(['work']);
+    expect((await levels(b)).l1).toEqual(['work']);
   });
 
   it('ignores a non-array task_ids rather than 500ing', async () => {
@@ -283,7 +283,7 @@ describe('POST /api/tasks/auto-tag', () => {
 
     expect(status).toBe(200);
     expect(body.tagged).toBe(1); // fell back to owner-wide
-    expect(levels(t).l1).toEqual(['work']);
+    expect((await levels(t)).l1).toEqual(['work']);
   });
 });
 

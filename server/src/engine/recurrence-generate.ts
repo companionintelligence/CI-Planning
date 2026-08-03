@@ -25,7 +25,7 @@
  *     so future-window instances don't flood today. A timed instance also carries
  *     `task_time` + a same-day `due_at`, which the scheduler pins as an appointment.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { broadcast } from '../routes/sse.js';
 import { logger } from '../lib/logger.js';
 import { localISODate } from '../lib/dates.js';
@@ -69,8 +69,8 @@ function addDaysISO(date: string, n: number): string {
 }
 
 /** Owner's planning timezone, falling back to the server zone. */
-export function ownerTimezone(owner: string): string {
-  const row = sqlite.prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
+export async function ownerTimezone(owner: string): Promise<string> {
+  const row = await store().prepare(`SELECT timezone FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as
     | { timezone: string | null }
     | undefined;
   return row?.timezone || serverTimezone();
@@ -93,14 +93,14 @@ function parseExdates(raw: string | null): string[] {
  * broken-streak marker the client surfaces (Phase H later turns it into a
  * notification). Returns the count flagged. Idempotent (only touches `open` rows).
  */
-export function flagMissedHabits(templateId: string, today: string): number {
-  return sqlite
+export async function flagMissedHabits(templateId: string, today: string): Promise<number> {
+  return (await store()
     .prepare(
       `UPDATE tasks SET status = 'missed'
         WHERE recurrence_parent_id = ? AND subtype = 'habit' AND status = 'open'
           AND occurrence_date IS NOT NULL AND occurrence_date < ?`
     )
-    .run(templateId, today).changes;
+    .run(templateId, today)).changes;
 }
 
 /**
@@ -110,9 +110,9 @@ export function flagMissedHabits(templateId: string, today: string): number {
  * @param opts.today      Local YYYY-MM-DD anchor (defaults to the local date now).
  * @param opts.horizonDays Window size in days (defaults to {@link HORIZON_DAYS}).
  */
-export function generateRecurrences(opts: { today?: string; horizonDays?: number } = {}): GenerateResult {
+export async function generateRecurrences(opts: { today?: string; horizonDays?: number } = {}): Promise<GenerateResult> {
   const owner = currentOwnerId();
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   // Owner's today, NOT the server's. `tz` already drives every day WINDOW below
   // (utcDayBounds, instanceStartUTC) — anchoring the window on a server-tz date while
   // the windows are owner-tz is what marked an owner's CURRENT-day habits as missed:
@@ -124,7 +124,7 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
   const today = opts.today ?? todayInTZ(tz);
   const horizon = addDaysISO(today, opts.horizonDays ?? HORIZON_DAYS);
 
-  const templates = sqlite
+  const templates = await store()
     .prepare(
       `SELECT id, title, task_time, estimated_minutes, priority, status, owner_id, subtype,
               recurrence_rule, recurrence_dtstart, recurrence_exdates
@@ -135,9 +135,9 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
     .all(owner) as TemplateRow[];
 
   // Keep templates out of the scheduler's today-set (it filters status='open').
-  const markRecurring = sqlite.prepare(`UPDATE tasks SET status = 'recurring' WHERE id = ? AND status = 'open'`);
+  const markRecurring = await store().prepare(`UPDATE tasks SET status = 'recurring' WHERE id = ? AND status = 'open'`);
 
-  const ins = sqlite.prepare(
+  const ins = await store().prepare(
     `INSERT OR IGNORE INTO tasks
        (id, title, scheduled_for, defer_until, task_time, due_at, estimated_minutes, priority,
         status, owner_id, recurrence_parent_id, occurrence_date, subtype, source_kind)
@@ -172,7 +172,7 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
     }
 
     for (const day of days) {
-      const row = ins.get({
+      const row = await ins.get({
         title: t.title,
         sched: day, // intent to work it that day
         defer: utcDayBounds(day, tz).start, // gates the instance to its occurrence day
@@ -190,11 +190,11 @@ export function generateRecurrences(opts: { today?: string; horizonDays?: number
       // Reminder Defaults (Phase H b) — anchored on its occurrence start (task_time).
       if (row) {
         created++;
-        syncTaskReminders(t.owner_id, row.id);
+        await syncTaskReminders(t.owner_id, row.id);
       }
     }
 
-    if (t.subtype === 'habit') missed += flagMissedHabits(t.id, today);
+    if (t.subtype === 'habit') missed += await flagMissedHabits(t.id, today);
   }
 
   broadcast(owner, 'recurrence:generated', { created, missed, templates: templates.length });

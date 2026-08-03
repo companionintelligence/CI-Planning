@@ -1,5 +1,5 @@
 import { and, eq, gt, asc } from 'drizzle-orm';
-import { db, sqlite } from '../db/index.js';
+import { db } from '../db/index.js';
 import { store } from '../db/store.js';
 import { tasks, taskDependencies } from '../db/schema.js';
 import { setDependencies, DependencyCycleError } from '../engine/deps.js';
@@ -41,8 +41,8 @@ import { truncateSeriesFrom } from '../engine/series-scope.js';
  *
  * The insert/update statements keep their drizzle form (identical SQL + camelCase
  * row shape for `taskToApi`), so the writers are async. Everything else goes through
- * the store facade; the raw `sqlite` handle survives only as `stampRow`'s argument
- * (dies when sync/apply.ts ports).
+ * the store facade. The raw `sqlite` handle that used to be threaded into `stampRow`
+ * is gone — sync/apply.ts ported.
  */
 
 /** A full drizzle `tasks` row (camelCase) — the shape `taskToApi` serializes. */
@@ -81,19 +81,19 @@ function subtypeWrite(body: { subtype?: Subtype; is_habit?: boolean }): { subtyp
  * are resolve-or-created + normalized by syncLeveledEntityTags. Mirrors
  * applyBlockTagLevels in routes/blocks.ts so tasks + blocks behave identically.
  */
-export function applyTaskTagLevels(ownerId: string, taskId: string, opts: { tags?: string[]; secondary?: string[] }): void {
-  const existing = entityTagLevels('task', taskId);
+export async function applyTaskTagLevels(ownerId: string, taskId: string, opts: { tags?: string[]; secondary?: string[] }): Promise<void> {
+  const existing = await entityTagLevels('task', taskId);
   const top = opts.tags !== undefined ? opts.tags : existing.filter((t) => t.level === 1).map((t) => t.name);
   const secondary = opts.secondary !== undefined ? opts.secondary : existing.filter((t) => t.level > 1).map((t) => t.name);
-  syncLeveledEntityTags('task', taskId, [
+  await syncLeveledEntityTags('task', taskId, [
     { level: 1, names: top },
     { level: 2, names: secondary },
   ], ownerId);
 }
 
 /** A task's secondary (level>1) tag names — the read surface (mirrors blocks). */
-export function taskSecondaryTags(taskId: string): string[] {
-  return entityTagLevels('task', taskId).filter((t) => t.level > 1).map((t) => t.name);
+export async function taskSecondaryTags(taskId: string): Promise<string[]> {
+  return (await entityTagLevels('task', taskId)).filter((t) => t.level > 1).map((t) => t.name);
 }
 
 /**
@@ -106,7 +106,7 @@ export function taskSecondaryTags(taskId: string): string[] {
  */
 export async function stampTaskCompletionReflection(ownerId: string, taskId: string, completedAt: string): Promise<void> {
   const now = new Date().toISOString();
-  const periodKey = localDateInTZ(completedAt, ownerTimezone(ownerId));
+  const periodKey = localDateInTZ(completedAt, await ownerTimezone(ownerId));
   await store()
     .prepare(
       `UPDATE reflections SET done_at = COALESCE(done_at, ?), updated_at = ?
@@ -211,11 +211,11 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
     .returning();
 
   if (input.tags !== undefined || input.secondary_tags !== undefined)
-    applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
   // Phase B: category axis (kept OUT of entity_tags). Names resolve owner-scoped;
   // unknown names drop silently (mirrors tag behavior).
   if (input.categories !== undefined)
-    setEntityCategories('task', task.id, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', task.id, await categoryIdsForOwner(input.categories, ownerId));
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
@@ -225,7 +225,7 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
       throw err;
     }
   }
-  syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
+  await syncTaskReminders(ownerId, task.id); // Phase H (b): derive reminders from due_at + Reminder Defaults
   // §H: creating a subtask promotes its parent to an objective (task list star).
   if (parentId) await ensureTaskPromoted(parentId, ownerId);
 
@@ -252,7 +252,7 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
 
   const sw = subtypeWrite(input);
   const owner = ownerId; // W3.1b: always the authenticated caller — never a client body owner_id.
-  const tz = ownerTimezone(owner);
+  const tz = await ownerTimezone(owner);
   const [template] = await db
     .insert(tasks)
     .values({
@@ -269,15 +269,15 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
     })
     .returning();
   if (input.tags !== undefined || input.secondary_tags !== undefined)
-    applyTaskTagLevels(ownerId, template.id, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, template.id, { tags: input.tags, secondary: input.secondary_tags });
   // Phase B: category axis on the template. Instances carry NO category rows —
   // exactly like entity_tags (generateRecurrences copies neither); the series'
   // categories live on the template only.
   if (input.categories !== undefined)
-    setEntityCategories('task', template.id, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', template.id, await categoryIdsForOwner(input.categories, ownerId));
   // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
   if (sw?.subtype === 'habit') await ensureHabitPattern(template.id, owner, template.title);
-  const generated = generateRecurrences();
+  const generated = await generateRecurrences();
 
   writeAudit({ ownerId, actor: 'owner', action: 'create', entity: `task:${template.id}` });
   return { ok: true, template, generated };
@@ -463,12 +463,12 @@ export async function updateTask(
 
   if (Array.isArray(input.tags) || Array.isArray(input.secondary_tags)) {
     // Partial: an omitted level is preserved (mirrors the block PATCH semantics).
-    applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
   }
 
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
   if (Array.isArray(input.categories)) {
-    setEntityCategories('task', targetId, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', targetId, await categoryIdsForOwner(input.categories, ownerId));
   }
 
   if (Array.isArray(input.depends_on)) {
@@ -481,13 +481,13 @@ export async function updateTask(
         // rejected, so stamp version/field_ts here (moved in from routes/tasks.ts at
         // W3.3b) exactly as the route did on this 409 path — same target, same fields,
         // same guard — so REST stays byte-equivalent and a GraphQL update stamps too.
-        if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
+        if (updatedFields.length > 0) await stampRow('task', targetId, updatedFields);
         return { ok: false, error: 'dependency_cycle', detail: err.message, targetId, updatedFields };
       }
       throw err;
     }
   }
-  syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
+  await syncTaskReminders(ownerId, targetId); // Phase H (b): re-derive if due_at changed
   // §H: re-parenting a task UNDER another promotes that parent to an objective; moving
   // it AWAY may leave the old parent empty → GC that parent's pristine auto-objective.
   if (newParentId) await ensureTaskPromoted(newParentId, ownerId);
@@ -504,15 +504,15 @@ export async function updateTask(
   let syncedBlockId: string | null = null;
   let unscheduled = false;
   if (scope === 'instance' && clearingStart) {
-    unscheduled = clearTaskPlacement(targetId, ownerId) > 0;
+    unscheduled = await clearTaskPlacement(targetId, ownerId) > 0;
     // Removing the last active placement must not strand the task at status='scheduled'
     // with no block — return it to the open backlog (no-op if a locked block remains).
-    if (revertTaskPlacementStatus(targetId, ownerId)) task.status = 'open';
+    if (await revertTaskPlacementStatus(targetId, ownerId)) task.status = 'open';
   } else if (
     scope === 'instance' &&
     (input.scheduled_for !== undefined || input.task_time !== undefined || estimateChanged)
   ) {
-    syncedBlockId = syncBlockFromTask(targetId, ownerId, { resizeToEstimate: estimateChanged });
+    syncedBlockId = await syncBlockFromTask(targetId, ownerId, { resizeToEstimate: estimateChanged });
   }
 
   // A series edit that changes the recurrence pattern or per-instance time drops
@@ -525,7 +525,7 @@ export async function updateTask(
     (input.recurrence_rule !== undefined || input.recurrence_dtstart !== undefined || input.task_time !== undefined)
   ) {
     await deleteFutureOpenInstances(targetId);
-    generated = generateRecurrences();
+    generated = await generateRecurrences();
   }
 
   // Phase O · O0 — completing a task lights up the today-intention linked to it.
@@ -561,10 +561,10 @@ export async function updateTask(
   let mirroredBlockIds: string[] = [];
   if (wasDone !== undefined && wasDone !== (task.status === 'done')) {
     if (scope === 'instance' && (task.status === 'done' || ['open', 'scheduled', 'in_progress'].includes(task.status ?? ''))) {
-      mirroredBlockIds = mirrorTaskStatusToBlocks(targetId, ownerId);
+      mirroredBlockIds = await mirrorTaskStatusToBlocks(targetId, ownerId);
       // Reviving a placement re-schedules an open task (same parity rule every other
       // placement path follows).
-      if (task.status === 'open' && mirroredBlockIds.length > 0 && applyTaskPlacementStatus(targetId, ownerId)) {
+      if (task.status === 'open' && mirroredBlockIds.length > 0 && await applyTaskPlacementStatus(targetId, ownerId)) {
         task.status = 'scheduled';
       }
     }
@@ -577,7 +577,7 @@ export async function updateTask(
   // updateTask mutation both version their column writes — same target, same fields,
   // same guard (`updatedFields.length > 0`) the route used, so REST stays byte-equivalent
   // (the route stamped after the service returned; audit already fired inside the service).
-  if (updatedFields.length > 0) stampRow(sqlite, 'task', targetId, updatedFields);
+  if (updatedFields.length > 0) await stampRow('task', targetId, updatedFields);
 
   return { ok: true, task, targetId, updatedFields, syncedBlockId, unscheduled, mirroredBlockIds, generated };
 }
@@ -608,11 +608,11 @@ export async function deleteTask(ownerId: string, id: string, scope: DeleteTaskS
   // would make cancelling irreversible through sync. So the server clock is the only
   // thing stopping a queued op with an older clientTs from setting status back to
   // 'open' and resurrecting this task — same guard the archive fields rely on.
-  stampRow(sqlite, 'task', id, ['status']);
-  syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
+  await stampRow('task', id, ['status']);
+  await syncTaskReminders(ownerId, id); // Phase H (b): a cancelled task drops its auto reminders
   // A cancelled task's placements settle with it — a manual block is invisible to
   // reflow's agent-only GC and would otherwise stay on the board looking live.
-  const cancelledBlockIds = cancelBlocksForTask(id, ownerId);
+  const cancelledBlockIds = await cancelBlocksForTask(id, ownerId);
   await dropSourceObjective(id, ownerId);
   if (task.parentId) await unpromoteIfEmpty(task.parentId, ownerId);
   await recomputeObjectivesForTask(id);
@@ -644,7 +644,7 @@ export async function promoteToHabit(ownerId: string, id: string): Promise<Promo
   // `subtype` is mergeable and unpinned, so without the server clock a queued op
   // carrying the old subtype would win LWW and silently demote the habit — same
   // hole as the soft-delete's status write above.
-  stampRow(sqlite, 'task', id, ['subtype']);
+  await stampRow('task', id, ['subtype']);
   await ensureHabitPattern(id, task.ownerId ?? ownerId, task.title);
   writeAudit({ ownerId, actor: 'owner', action: 'promote', entity: `task:${id}` });
   return { ok: true, task };
@@ -725,7 +725,7 @@ export async function skipRecurringInstance(ownerId: string, id: string): Promis
   // by id alone with no owner to gate on, while the check above has already proven the row
   // is ours. (The template's EXDATE write needs no stamp — recurrence_exdates isn't in the
   // sync allowlist, so no op can race it.)
-  stampRow(sqlite, 'task', id, ['status']);
+  await stampRow('task', id, ['status']);
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   writeAudit({ ownerId, actor: 'owner', action: 'skip', entity: `task:${id}` });
   return { ok: true, task, skipped: res.date };

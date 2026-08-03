@@ -115,14 +115,14 @@ describe('0100 tags.owner_id — backfill', () => {
 describe('resolveTagId owner namespacing', () => {
   beforeEach(() => { resetDb(); createOwner(); });
 
-  it('resolves the same name to a DIFFERENT tag per owner', () => {
-    const idA = resolveTagId('errands', SYSTEM_OWNER);
-    const idB = resolveTagId('errands', SECOND_OWNER_ID);
+  it('resolves the same name to a DIFFERENT tag per owner', async () => {
+    const idA = await resolveTagId('errands', SYSTEM_OWNER);
+    const idB = await resolveTagId('errands', SECOND_OWNER_ID);
     expect(idA).not.toBe(idB);
     expect((sqlite.prepare(`SELECT owner_id FROM tags WHERE id = ?`).get(idA) as { owner_id: string }).owner_id).toBe(SYSTEM_OWNER);
     expect((sqlite.prepare(`SELECT owner_id FROM tags WHERE id = ?`).get(idB) as { owner_id: string }).owner_id).toBe(SECOND_OWNER_ID);
     // Re-resolving is stable (find, not re-create).
-    expect(resolveTagId('errands', SECOND_OWNER_ID)).toBe(idB);
+    expect(await resolveTagId('errands', SECOND_OWNER_ID)).toBe(idB);
   });
 });
 
@@ -178,7 +178,7 @@ describe('backup restore isolation (tag axis)', () => {
 
   it("importing owner A's export leaves owner B's tags AND entity_tags intact", async () => {
     // Owner B: a tag + a task + the entity_tag linking them.
-    const bTag = resolveTagId('bkeep', SECOND_OWNER_ID);
+    const bTag = await resolveTagId('bkeep', SECOND_OWNER_ID);
     sqlite
       .prepare(`INSERT INTO tasks (id, title, owner_id, status, priority, version) VALUES ('b-task', 'B task', ?, 'open', 3, 1)`)
       .run(SECOND_OWNER_ID);

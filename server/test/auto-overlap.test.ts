@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 describe('no-overlap guarantee', () => {
-  it('a placement run never overlaps a locked block, meeting, or active task block', () => {
+  it('a placement run never overlaps a locked block, meeting, or active task block', async () => {
     const locked = insertObstacle('Locked', 'task', at('09:00'), at('10:00'), 1);
     const meeting = insertObstacle('Meeting', 'meeting', at('11:00'), at('12:00'), 0, 'gcal');
     const activeTask = insertObstacle('Active', 'task', at('14:00'), at('15:00'));
@@ -50,8 +50,8 @@ describe('no-overlap guarantee', () => {
 
     // Stage enough work to span the day; place via both the tag-matched + priority paths.
     for (let i = 0; i < 4; i++) stage(insertTask(`Task ${i}`, 90));
-    placeFlightPlan(OWNER, { date: DAY });
-    fillByPriority(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
+    await fillByPriority(OWNER, { date: DAY });
 
     const placed = agentBlocks();
     expect(placed.length).toBeGreaterThan(0);
@@ -62,12 +62,12 @@ describe('no-overlap guarantee', () => {
     }
   });
 
-  it('re-running placement is idempotent (no duplication, still no overlap)', () => {
+  it('re-running placement is idempotent (no duplication, still no overlap)', async () => {
     const plan = (sqlite.prepare(`INSERT INTO time_blocks (id, title, block_kind, block_type, tag, start_at, end_at, is_auto, source_kind, status, owner_id) VALUES (uuid7(), 'Plan', 'timeblock', 'scheduled', 'work', ?, ?, 0, 'manual', 'planned', ?) RETURNING id`).get(at('09:00'), at('17:00'), OWNER) as { id: string }).id;
     const locked = insertObstacle('Locked', 'task', at('09:00'), at('10:00'), 1);
     for (let i = 0; i < 3; i++) stage(insertTask(`Work ${i}`, 60, 'work'));
 
-    placeFlightPlan(OWNER, { date: DAY }); // first run: places blocks, removes tasks from flight plan (item 5)
+    await placeFlightPlan(OWNER, { date: DAY }); // first run: places blocks, removes tasks from flight plan (item 5)
     const first = agentBlocks();
     expect(first.length).toBeGreaterThan(0);
     for (const b of first) expect(overlaps(b, locked), `${b.title} overlaps locked block`).toBe(false);
@@ -75,7 +75,7 @@ describe('no-overlap guarantee', () => {
     // Second run: nothing staged → the scoped clear touches NOTHING (clear set ==
     // re-place set). The first run's placements survive untouched — a re-run is
     // additive, never a wipe (AE reflow-correctness) — and still nothing duplicates.
-    placeFlightPlan(OWNER, { date: DAY });
+    await placeFlightPlan(OWNER, { date: DAY });
     const second = agentBlocks();
     expect(second.map((b) => `${b.title}@${b.start_at}`).sort()).toEqual(
       first.map((b) => `${b.title}@${b.start_at}`).sort(),

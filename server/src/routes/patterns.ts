@@ -70,7 +70,7 @@ export function patternsRouter() {
     // AF-11: derived tags are batched across the whole list (one union query),
     // then handed to serializePattern per row — no per-routine N+1.
     const rows = await listPatternRows(currentOwnerId());
-    const derived = routineDerivedTagsByIds(rows.map((r) => r.id));
+    const derived = await routineDerivedTagsByIds(rows.map((r) => r.id));
     // serializePattern is async now (task_ids is a read), so the map yields promises —
     // without the Promise.all every entry would serialize as `{}`.
     ctx.body = { patterns: await Promise.all(rows.map((p) => serializePattern(p, derived.get(p.id)))) };
@@ -187,7 +187,7 @@ export function patternsRouter() {
     const isFast = await store().prepare(`SELECT id FROM tasks WHERE id = ? AND owner_id = ? AND subtype = 'quick'`).get(taskId, owner);
     if (isFast) {
       // CON-3 cascade: the fast task is HARD-deleted — drop its tag rows.
-      removeEntityTags('task', taskId);
+      await removeEntityTags('task', taskId);
       await store().prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId);
     }
     else await store().prepare(`DELETE FROM pattern_tasks WHERE pattern_id = ? AND task_id = ?`).run(patternId, taskId);
@@ -290,7 +290,7 @@ export function patternsRouter() {
     const pattern = await store().prepare(`SELECT id FROM patterns WHERE id = ? AND owner_id = ?`).get(id, owner);
     if (!pattern) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const body = (ctx.request.body ?? {}) as { date?: string; block_id?: string | null };
-    const result = placePatternOnDay(owner, id, { date: body.date, blockId: body.block_id ?? null });
+    const result = await placePatternOnDay(owner, id, { date: body.date, blockId: body.block_id ?? null });
 
     // Return the freshly placed (or already-on-the-day pattern-marked) blocks
     // so the client can patch its block store without waiting on SSE.

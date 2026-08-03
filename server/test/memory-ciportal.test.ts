@@ -70,15 +70,15 @@ describe('connector OIDC refresh (resolveLiveMemoryCreds)', () => {
   beforeEach(() => resetDb());
   afterEach(() => vi.unstubAllGlobals());
 
-  it('memoryCreds exposes the stored access token as the bearer with authKind=oidc (no network)', () => {
-    storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'stored-tok', expiresAt: future() });
-    expect(memoryCreds(OWNER)).toEqual({ url: CI_SERVER, bearer: 'stored-tok', source: 'settings', authKind: 'oidc' });
+  it('memoryCreds exposes the stored access token as the bearer with authKind=oidc (no network)', async () => {
+    await storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'stored-tok', expiresAt: future() });
+    expect(await memoryCreds(OWNER)).toEqual({ url: CI_SERVER, bearer: 'stored-tok', source: 'settings', authKind: 'oidc' });
   });
 
   it('returns the stored token WITHOUT refreshing while it is still fresh', async () => {
     const spy = vi.fn();
     vi.stubGlobal('fetch', spy);
-    storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'fresh-tok', expiresAt: future() });
+    await storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'fresh-tok', expiresAt: future() });
     const creds = await resolveLiveMemoryCreds(OWNER);
     expect(creds).toEqual({ url: CI_SERVER, bearer: 'fresh-tok' });
     expect(spy).not.toHaveBeenCalled();
@@ -90,11 +90,11 @@ describe('connector OIDC refresh (resolveLiveMemoryCreds)', () => {
         status: 200, headers: { 'Content-Type': 'application/json' },
       }),
     ));
-    storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old-tok', expiresAt: past() });
+    await storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old-tok', expiresAt: past() });
     const creds = await resolveLiveMemoryCreds(OWNER);
     expect(creds).toEqual({ url: CI_SERVER, bearer: 'new-tok' });
     // The new access token + rotated refresh token are persisted and now-fresh.
-    expect(memoryCreds(OWNER)?.bearer).toBe('new-tok');
+    expect((await memoryCreds(OWNER))?.bearer).toBe('new-tok');
     const next = await resolveLiveMemoryCreds(OWNER); // no refresh — the new expiry is future
     expect(next?.bearer).toBe('new-tok');
   });
@@ -105,7 +105,7 @@ describe('connector OIDC refresh (resolveLiveMemoryCreds)', () => {
       new Response(JSON.stringify({ access_token: 'rot-tok', expires_in: 3600 }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
     );
     vi.stubGlobal('fetch', fetchSpy);
-    storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old', expiresAt: past() });
+    await storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old', expiresAt: past() });
 
     const creds = await resolveLiveMemoryCreds(OWNER);
     expect(creds?.bearer).toBe('rot-tok');
@@ -115,7 +115,7 @@ describe('connector OIDC refresh (resolveLiveMemoryCreds)', () => {
     const row = sqlite
       .prepare(`SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ?`)
       .get(OWNER, MEMORY_PROVIDER) as { iv: string; auth_tag: string; ciphertext: string };
-    const blob = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, loadKek()));
+    const blob = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, await loadKek()));
     expect(blob.refreshToken).toBe('refresh-1');
     expect(blob.accessToken).toBe('rot-tok');
   });
@@ -125,7 +125,7 @@ describe('connector OIDC refresh (resolveLiveMemoryCreds)', () => {
       new Response(JSON.stringify({ access_token: 'sf-tok', expires_in: 3600 }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
     );
     vi.stubGlobal('fetch', fetchSpy);
-    storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old', expiresAt: past() });
+    await storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old', expiresAt: past() });
     const [a, b, c] = await Promise.all([resolveLiveMemoryCreds(OWNER), resolveLiveMemoryCreds(OWNER), resolveLiveMemoryCreds(OWNER)]);
     expect([a?.bearer, b?.bearer, c?.bearer]).toEqual(['sf-tok', 'sf-tok', 'sf-tok']);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -133,7 +133,7 @@ describe('connector OIDC refresh (resolveLiveMemoryCreds)', () => {
 
   it('surfaces MemoryUnavailable when the refresh token is dead (HTTP 401)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 401 })));
-    storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old', expiresAt: past() });
+    await storeMemoryOidcConnection(OWNER, { ...base, accessToken: 'old', expiresAt: past() });
     await expect(resolveLiveMemoryCreds(OWNER)).rejects.toBeInstanceOf(MemoryUnavailable);
   });
 });
@@ -252,7 +252,7 @@ describe('AA0b routes', () => {
     expect(res.location).toBe('/settings?memory=connected');
 
     // Stored as an oidc connection whose live bearer is the access token.
-    expect(memoryCreds(owner)).toEqual({ url: CI_SERVER, bearer: 'AT', source: 'settings', authKind: 'oidc' });
+    expect(await memoryCreds(owner)).toEqual({ url: CI_SERVER, bearer: 'AT', source: 'settings', authKind: 'oidc' });
     const acct = sqlite.prepare(`SELECT memory_account FROM scheduling_prefs WHERE owner_id = ?`).get(owner) as { memory_account: string };
     expect(acct.memory_account).toBe('memory.ci.test');
     // The state row is single-use (consumed).
@@ -269,7 +269,7 @@ describe('AA0b routes', () => {
     const res = await rawGet(srv, `/api/memory/ciportal/callback?state=${state}&code=CODE`);
     expect(res.status).toBe(302);
     expect(res.location).toBe('/settings?memory=error&reason=no_refresh_token');
-    expect(memoryCreds(owner)).toBeNull();
+    expect(await memoryCreds(owner)).toBeNull();
   });
 
   it('rejects an id_token whose subject is not the connecting owner (subject binding)', async () => {
@@ -282,7 +282,7 @@ describe('AA0b routes', () => {
     const res = await rawGet(srv, `/api/memory/ciportal/callback?state=${state}&code=CODE`);
     expect(res.status).toBe(302);
     expect(res.location).toBe('/settings?memory=error&reason=subject_mismatch');
-    expect(memoryCreds(owner)).toBeNull();
+    expect(await memoryCreds(owner)).toBeNull();
   });
 
   it('400s an unknown/consumed state', async () => {
@@ -308,35 +308,35 @@ describe('AA0b routes', () => {
     const owner = await provisionOwner({ name: 'Local only' }); // externalSubject deliberately unset
     const res = await connectAs(owner, 'whichever-portal-account');
     expect(res.location).toBe('/settings?memory=connected');
-    expect(memoryOidcSubject(owner)).toBe('whichever-portal-account'); // now pinned
+    expect(await memoryOidcSubject(owner)).toBe('whichever-portal-account'); // now pinned
   });
 
   it('reconnecting the SAME subject still works (refresh / re-consent)', async () => {
     const owner = await provisionOwner({ name: 'Local only' });
     expect((await connectAs(owner, 'sub-a')).location).toBe('/settings?memory=connected');
     expect((await connectAs(owner, 'sub-a')).location).toBe('/settings?memory=connected');
-    expect(memoryOidcSubject(owner)).toBe('sub-a');
+    expect(await memoryOidcSubject(owner)).toBe('sub-a');
   });
 
   it('refuses a SILENT re-bind to a different portal identity once connected', async () => {
     const owner = await provisionOwner({ name: 'Local only' });
     await connectAs(owner, 'sub-a');
-    const before = memoryCreds(owner);
+    const before = await memoryCreds(owner);
 
     const res = await connectAs(owner, 'sub-b');
     expect(res.location).toBe('/settings?memory=error&reason=already_bound_disconnect_first');
     // The original connection is intact — a refused rebind must not damage what works.
-    expect(memoryOidcSubject(owner)).toBe('sub-a');
-    expect(memoryCreds(owner)).toEqual(before);
+    expect(await memoryOidcSubject(owner)).toBe('sub-a');
+    expect(await memoryCreds(owner)).toEqual(before);
   });
 
   it('disconnecting releases the binding so a different account can be connected', async () => {
     const owner = await provisionOwner({ name: 'Local only' });
     await connectAs(owner, 'sub-a');
-    deleteMemoryConnection(owner);
-    expect(memoryOidcSubject(owner)).toBeNull();
+    await deleteMemoryConnection(owner);
+    expect(await memoryOidcSubject(owner)).toBeNull();
 
     expect((await connectAs(owner, 'sub-b')).location).toBe('/settings?memory=connected');
-    expect(memoryOidcSubject(owner)).toBe('sub-b');
+    expect(await memoryOidcSubject(owner)).toBe('sub-b');
   });
 });

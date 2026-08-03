@@ -21,7 +21,7 @@ async function gql(query: string, headers: Record<string, string> = {}) {
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify({ query }),
   });
-  const body = (await res.json().catch(() => ({}))) as { data?: any; errors?: any[] };
+  const body = await res.json().catch(() => ({})) as { data?: any; errors?: any[] };
   return { status: res.status, body };
 }
 

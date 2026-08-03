@@ -1,7 +1,4 @@
 import Router from '@koa/router';
-// `sqlite` remains ONLY as stampRow's handle argument — it dies when sync/apply.ts
-// ports to the facade. The route's own statements go through store().
-import { sqlite } from '../db/index.js';
 import { store } from '../db/store.js';
 import { broadcast } from './sse.js';
 import { currentOwnerId } from '../lib/context.js';
@@ -201,7 +198,7 @@ export function blocksRouter() {
   // never writes.
   router.post('/api/blocks/:id/extend', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const body = (ctx.request.body ?? {}) as { minutes?: number; confirm?: boolean };
     const minutes = Math.round(Number(body.minutes ?? 10));
     if (!Number.isFinite(minutes) || minutes <= 0) {
@@ -228,7 +225,7 @@ export function blocksRouter() {
     // don't drift from the block that actually moved (as move-group does).
     const affectedTasks = new Set<string>();
     for (const bid of [ctx.params.id, ...applied.movedSet.map((m) => m.block_id)]) {
-      const t = syncTaskFromBlock(bid, owner);
+      const t = await syncTaskFromBlock(bid, owner);
       if (t) affectedTasks.add(t);
     }
     for (const t of affectedTasks) broadcast(owner, 'task:updated', { id: t });
@@ -242,17 +239,17 @@ export function blocksRouter() {
   // DELETE clears them (ritual dismissed / block finished in-tab).
   router.post('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const exists = await store().prepare(`SELECT 1 FROM time_blocks WHERE id = ? AND owner_id = ?`).get(ctx.params.id, owner);
     if (!exists) { ctx.status = 404; ctx.body = { error: 'block not found' }; return; }
-    const armed = syncBlockFocusReminders(owner, ctx.params.id);
+    const armed = await syncBlockFocusReminders(owner, ctx.params.id);
     ctx.body = { ok: true, armed };
   });
 
   router.delete('/api/blocks/:id/focus-reminders', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
-    clearBlockFocusReminders(ctx.params.id);
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    await clearBlockFocusReminders(ctx.params.id);
     ctx.body = { ok: true };
   });
 
@@ -263,7 +260,7 @@ export function blocksRouter() {
   // non-repeating line per block-end. Flag-gated (404 off).
   router.get('/api/blocks/:id/whats-next', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const block = await store()
       .prepare(`SELECT id, end_at FROM time_blocks WHERE id = ? AND owner_id = ?`)
       .get<{ id: string; end_at: string }>(ctx.params.id, owner);
@@ -294,7 +291,7 @@ export function blocksRouter() {
   // — Auto lands it later, inheriting the task's own defaults (no clone). Flag-gated.
   router.post('/api/blocks/:id/reschedule', async (ctx) => {
     const owner = currentOwnerId();
-    if (!timeSenseEnabled(owner)) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
+    if (!(await timeSenseEnabled(owner))) { ctx.status = 404; ctx.body = { error: 'Not found' }; return; }
     const id = ctx.params.id;
 
     const block = await store()
@@ -328,17 +325,17 @@ export function blocksRouter() {
       // still calling this block 'planned' would win LWW and resurrect the abandoned
       // attempt. (revertTaskPlacementStatus stamps the task side itself.)
       const info = await store().prepare(`UPDATE time_blocks SET status = 'skipped' WHERE id = ? AND owner_id = ?`).run(id, owner);
-      if (info.changes > 0) stampRow(sqlite, 'block', id, ['status']);
+      if (info.changes > 0) await stampRow('block', id, ['status']);
       staged = (await store()
         .prepare(`INSERT OR IGNORE INTO flight_plan (owner_id, task_id, source_kind, source_ref, selected, position) VALUES (?, ?, 'reschedule', NULL, 1, ?)`)
         .run(owner, block.task_id, nextPos)).changes > 0;
       // Z4: a skipped attempt's focus cues must not fire for the abandoned block.
-      clearBlockFocusReminders(id);
+      await clearBlockFocusReminders(id);
     });
 
     // Flip the task back to open (it was 'scheduled' while it held the block) so Auto
     // re-places it; broadcast so the board drops the skipped block and shows the stage.
-    if (revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
+    if (await revertTaskPlacementStatus(block.task_id, owner)) broadcast(owner, 'task:updated', { id: block.task_id });
     broadcast(owner, 'block:updated', { id, rescheduled: block.task_id });
     broadcast(owner, 'flight_plan:updated', { added: staged ? 1 : 0 });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `block:${id}` });

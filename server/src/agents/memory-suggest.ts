@@ -265,10 +265,12 @@ export async function suggestFromMemory(
 ): Promise<MemorySuggestResult> {
   const owner = currentOwnerId();
   if (!(await pullEnabled(owner))) return skipped('flag_off');
-  if (!memoryConnectorAvailable(owner)) return skipped('unavailable');
+  // Awaited: `!somePromise` is ALWAYS false, so an unawaited gate stops firing and the
+  // agent runs on against creds that do not resolve.
+  if (!(await memoryConnectorAvailable(owner))) return skipped('unavailable');
 
   const from = new Date().toISOString();
-  const to = new Date(Date.now() + memoryWindowMs(owner)).toISOString();
+  const to = new Date(Date.now() + (await memoryWindowMs(owner))).toISOString();
   let graph: MemoryGraph;
   try {
     graph = await graphData(owner, { from, to });

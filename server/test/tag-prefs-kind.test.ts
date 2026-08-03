@@ -21,7 +21,7 @@ describe('tag_prefs kind normalization on upsert', () => {
   const row = (tagId: string) =>
     sqlite.prepare(`SELECT * FROM tag_prefs WHERE owner_id=? AND tag_id=?`).get(SYSTEM_OWNER, tagId) as any;
 
-  it('setCategoryPref rewrites a stale direction-kind row to category and clears direction-only cols', () => {
+  it('setCategoryPref rewrites a stale direction-kind row to category and clears direction-only cols', async () => {
     const tag = newTag('category');
     // Simulate a stale direction-axis row for this tag (can't happen normally).
     sqlite.prepare(
@@ -29,7 +29,7 @@ describe('tag_prefs kind normalization on upsert', () => {
        VALUES (uuid7(), ?, ?, 'direction', 1, '[5,10]', 'square', 'chart-9', 30)`,
     ).run(SYSTEM_OWNER, tag);
 
-    setCategoryPref(SYSTEM_OWNER, tag, { color_token: 'chart-1', default_minutes: 90 });
+    await setCategoryPref(SYSTEM_OWNER, tag, { color_token: 'chart-1', default_minutes: 90 });
 
     const r = row(tag);
     expect(r.kind).toBe('category');
@@ -39,17 +39,17 @@ describe('tag_prefs kind normalization on upsert', () => {
     expect(r.color_token).toBe('chart-1');
     expect(r.default_minutes).toBe(90);
     // And it's now visible to the category reader.
-    expect(getCategoryPrefs(SYSTEM_OWNER)[tag]).toEqual({ color_token: 'chart-1', default_minutes: 90 });
+    expect((await getCategoryPrefs(SYSTEM_OWNER))[tag]).toEqual({ color_token: 'chart-1', default_minutes: 90 });
   });
 
-  it('setPatternPref normalizes kind to direction on conflict', () => {
+  it('setPatternPref normalizes kind to direction on conflict', async () => {
     const tag = newTag('direction');
     sqlite.prepare(
       `INSERT INTO tag_prefs (id, owner_id, tag_id, kind, color_token, default_minutes)
        VALUES (uuid7(), ?, ?, 'category', 'chart-3', 60)`,
     ).run(SYSTEM_OWNER, tag);
 
-    setPatternPref(SYSTEM_OWNER, tag, { auto_fill: false });
+    await setPatternPref(SYSTEM_OWNER, tag, { auto_fill: false });
 
     const r = row(tag);
     expect(r.kind).toBe('direction');

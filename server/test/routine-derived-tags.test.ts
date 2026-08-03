@@ -113,38 +113,38 @@ describe('AF-11 Slice 4 — derived union (D2)', () => {
     expect(r.body.pattern.intentions).toEqual(['prep']);
   });
 
-  it('routineDerivedTagsByIds returns an (empty) entry for every requested id', () => {
-    const m = routineDerivedTagsByIds(['nope-1', 'nope-2']);
+  it('routineDerivedTagsByIds returns an (empty) entry for every requested id', async () => {
+    const m = await routineDerivedTagsByIds(['nope-1', 'nope-2']);
     expect(m.get('nope-1')).toEqual({ directions: [], intentions: [] });
     expect(m.get('nope-2')).toEqual({ directions: [], intentions: [] });
   });
 });
 
 describe('AF-11 Slice 5 — inheritContainerDirection multi-direction guard', () => {
-  it('a two-direction container inherits BOTH: first known direction at level 1 (returned), the rest at level 2', () => {
+  it('a two-direction container inherits BOTH: first known direction at level 1 (returned), the rest at level 2', async () => {
     tagId('work', 'direction'); tagId('home', 'direction');
     const t = insertTask('Inherit me');
-    const applied = inheritContainerDirection(t, 'work,home', OWNER);
+    const applied = await inheritContainerDirection(t, 'work,home', OWNER);
     expect(applied).toBe('work'); // container-string order, not alphabetical
-    expect(entityTagLevels('task', t)).toEqual([
+    expect(await entityTagLevels('task', t)).toEqual([
       { name: 'work', level: 1 },
       { name: 'home', level: 2 },
     ]);
   });
 
-  it('unknown names are skipped; a lone unknown still inherits the known one', () => {
+  it('unknown names are skipped; a lone unknown still inherits the known one', async () => {
     tagId('home', 'direction');
     const t = insertTask('Partial');
-    expect(inheritContainerDirection(t, 'not-a-direction,home', OWNER)).toBe('home');
-    expect(entityTagLevels('task', t)).toEqual([{ name: 'home', level: 1 }]);
+    expect(await inheritContainerDirection(t, 'not-a-direction,home', OWNER)).toBe('home');
+    expect(await entityTagLevels('task', t)).toEqual([{ name: 'home', level: 1 }]);
   });
 
-  it('never overrides an existing level-1 direction', () => {
+  it('never overrides an existing level-1 direction', async () => {
     tagId('work', 'direction'); tagId('home', 'direction');
     const t = insertTask('Already set');
     attach(t, 'work', 'direction', 1);
-    expect(inheritContainerDirection(t, 'home,work', OWNER)).toBeNull();
-    expect(entityTagLevels('task', t)).toEqual([{ name: 'work', level: 1 }]);
+    expect(await inheritContainerDirection(t, 'home,work', OWNER)).toBeNull();
+    expect(await entityTagLevels('task', t)).toEqual([{ name: 'work', level: 1 }]);
   });
 });
 
@@ -154,7 +154,7 @@ describe('AF-11 Slice 6 — legacy cleanup migration 0120 (D3)', () => {
     const p = (await api(srv.url, '/api/patterns', { method: 'POST', json: { name: 'Legacy', task_ids: [t] } })).body.pattern;
     // Seed the LEGACY authored state raw (the API no longer writes it).
     sqlite.prepare(`UPDATE patterns SET tag = 'old,stale' WHERE id = ?`).run(p.id);
-    syncEntityTags('routine', p.id, ['old', 'stale'], OWNER);
+    await syncEntityTags('routine', p.id, ['old', 'stale'], OWNER);
     expect(routineEntityTagRows(p.id)).toBe(2);
 
     legacyCleanupUp(sqlite);
@@ -163,12 +163,12 @@ describe('AF-11 Slice 6 — legacy cleanup migration 0120 (D3)', () => {
     expect((sqlite.prepare(`SELECT tag FROM patterns WHERE id = ?`).get(p.id) as { tag: string | null }).tag).toBeNull();
     expect(routineEntityTagRows(p.id)).toBe(0);
     // Task rows are untouched...
-    expect(entityTagLevels('task', t).map((r) => r.name).sort()).toEqual(['deep', 'work']);
+    expect((await entityTagLevels('task', t)).map((r) => r.name).sort()).toEqual(['deep', 'work']);
     // ...so the routine still shows the correct union — the display never read the nulled column.
     const got = (await api(srv.url, `/api/patterns/${p.id}`)).body.pattern;
     expect(got.tag).toBeNull();
     expect(got.directions).toEqual(['work']);
     expect(got.intentions).toEqual(['deep']);
-    expect(routineDerivedTags(p.id)).toEqual({ directions: ['work'], intentions: ['deep'] });
+    expect(await routineDerivedTags(p.id)).toEqual({ directions: ['work'], intentions: ['deep'] });
   });
 });

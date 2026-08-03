@@ -23,7 +23,7 @@ export function flightPlanRouter() {
   // state — so a refresh hid the button while the run stayed fully undoable server-side.
   router.get('/api/flight-plan', async (ctx) => {
     const owner = currentOwnerId();
-    ctx.body = { flight_plan: await listFlightPlan(owner), can_undo: canUndoLastAuto(owner) };
+    ctx.body = { flight_plan: await listFlightPlan(owner), can_undo: await canUndoLastAuto(owner) };
   });
 
   // Add a task, or a whole pattern's member tasks (tagged with their source pattern).
@@ -74,7 +74,7 @@ export function flightPlanRouter() {
   router.post('/api/auto/fill', async (ctx) => {
     const owner = currentOwnerId();
     const body = (ctx.request.body ?? {}) as { date?: string };
-    const added = fillFlightPlanCandidates(owner, { date: body.date });
+    const added = await fillFlightPlanCandidates(owner, { date: body.date });
     broadcast(owner, 'flight_plan:filled', { added });
     writeAudit({ ownerId: owner, actor: 'owner', action: 'fill', entity: 'flight-plan:fill' });
     ctx.body = { result: { step: 'fill', candidatesAdded: added }, flight_plan: await listFlightPlan(owner) };
@@ -110,7 +110,7 @@ export function flightPlanRouter() {
   // highest-priority still-unplaced tasks. Never silent — always an explicit tap.
   router.post('/api/auto/priority', async (ctx) => {
     const body = (ctx.request.body ?? {}) as { date?: string };
-    const result = fillByPriority(currentOwnerId(), { date: body.date });
+    const result = await fillByPriority(currentOwnerId(), { date: body.date });
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'run', entity: 'flight-plan:priority' });
     ctx.body = { result, flight_plan: await listFlightPlan(currentOwnerId()) };
   });
@@ -118,7 +118,7 @@ export function flightPlanRouter() {
   // Undo the last placement run (req 2, D2): delete that run's blocks, re-stage its
   // tasks. One click, no confirmation; a second undo is a no-op.
   router.post('/api/auto/undo', async (ctx) => {
-    const result = undoLastAuto(currentOwnerId());
+    const result = await undoLastAuto(currentOwnerId());
     writeAudit({ ownerId: currentOwnerId(), actor: 'owner', action: 'undo', entity: 'flight-plan:undo' });
     ctx.body = { result, flight_plan: await listFlightPlan(currentOwnerId()) };
   });

@@ -66,7 +66,7 @@
  * exactly as it did before this file changed — which is also what keeps the test suite
  * deterministic on machines that do or do not happen to have Ollama running.
  */
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { currentOwnerId } from './context.js';
 import { config } from './config.js';
 
@@ -76,8 +76,8 @@ interface ModelPrefs {
   embed_model: string | null;
 }
 
-function modelPrefs(owner: string): ModelPrefs | undefined {
-  return sqlite
+async function modelPrefs(owner: string): Promise<ModelPrefs | undefined> {
+  return await store()
     .prepare(`SELECT fast_model, quality_model, embed_model FROM scheduling_prefs WHERE owner_id = ?`)
     .get(owner) as ModelPrefs | undefined;
 }
@@ -258,14 +258,15 @@ export function resolveEmbedModelDefault(): string {
 }
 
 /** Model for a tier — see the resolution order in the file header. */
-export function resolveModel(tier: 'small' | 'medium', owner: string = currentOwnerId()): string {
-  const override = (tier === 'medium' ? modelPrefs(owner)?.quality_model : modelPrefs(owner)?.fast_model)?.trim();
+export async function resolveModel(tier: 'small' | 'medium', owner: string = currentOwnerId()): Promise<string> {
+  const prefs = await modelPrefs(owner);
+  const override = (tier === 'medium' ? prefs?.quality_model : prefs?.fast_model)?.trim();
   return override || resolveModelDefault(tier);
 }
 
 /** Embedding model — same order as resolveModel. */
-export function resolveEmbedModel(owner: string = currentOwnerId()): string {
-  return modelPrefs(owner)?.embed_model?.trim() || resolveEmbedModelDefault();
+export async function resolveEmbedModel(owner: string = currentOwnerId()): Promise<string> {
+  return (await modelPrefs(owner))?.embed_model?.trim() || resolveEmbedModelDefault();
 }
 
 /** `resolveModel` plus the reason, without the per-owner override. */
@@ -281,14 +282,15 @@ export function explainEmbedModelDefault(): ResolvedModel {
 }
 
 /** As `explainModelDefault`, but a per-owner Settings override wins and reports as such. */
-export function explainModel(tier: 'small' | 'medium', owner: string = currentOwnerId()): ResolvedModel {
-  const override = (tier === 'medium' ? modelPrefs(owner)?.quality_model : modelPrefs(owner)?.fast_model)?.trim();
+export async function explainModel(tier: 'small' | 'medium', owner: string = currentOwnerId()): Promise<ResolvedModel> {
+  const prefs = await modelPrefs(owner);
+  const override = (tier === 'medium' ? prefs?.quality_model : prefs?.fast_model)?.trim();
   return override ? { name: override, source: 'override' } : explainModelDefault(tier);
 }
 
 /** Embedding equivalent of explainModel. */
-export function explainEmbedModel(owner: string = currentOwnerId()): ResolvedModel {
-  const override = modelPrefs(owner)?.embed_model?.trim();
+export async function explainEmbedModel(owner: string = currentOwnerId()): Promise<ResolvedModel> {
+  const override = (await modelPrefs(owner))?.embed_model?.trim();
   return override ? { name: override, source: 'override' } : explainEmbedModelDefault();
 }
 

@@ -89,7 +89,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     const t2 = insertTask('Other A');
     const t3 = insertTask('Other B');
     [t1, t2, t3].forEach((t, i) => { insertDailyPlan(t, i); stage(t, i); });
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(taskBlocks(t2)).toHaveLength(1);
 
     // The user edits t1's start time in the task modal → PATCH → updateTask (moves the
@@ -110,7 +110,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     const t3 = insertTask('Staged after authoring'); // no daily_plan row — the author-once guard skipped it
     insertDailyPlan(t1, 0); insertDailyPlan(t2, 1);
     [t1, t2, t3].forEach((t, i) => stage(t, i));
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(taskBlocks(t3)).toHaveLength(1);
 
     await updateTask(OWNER, t1, { scheduled_for: DATE, task_time: '14:00' });
@@ -125,7 +125,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     const t2 = insertTask('Flipped to scheduled');
     insertDailyPlan(t1, 0); insertDailyPlan(t2, 1);
     stage(t1, 0); stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     // Parity now flips placed tasks itself, but assert the flow even for a task some
     // other path (wizard/add-tasks/routine) flipped.
     sqlite.prepare(`UPDATE tasks SET status = 'scheduled' WHERE id = ?`).run(t2);
@@ -141,7 +141,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     const t2 = insertTask('Other A');
     const t3 = insertTask('Other B');
     [t1, t2, t3].forEach((t, i) => stage(t, i)); // NO daily_plan rows anywhere
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     await updateTask(OWNER, t1, { scheduled_for: DATE, task_time: '14:00' });
     await reflow(OWNER, DATE);
@@ -158,7 +158,7 @@ describe('reflow after a task-time edit keeps every other placement', () => {
     const t1 = insertTask('Ingested A');
     const t2 = insertTask('Ingested B');
     stage(t1, 0); stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(taskBlocks(t1)).toHaveLength(1);
 
     const diff = await reflow(OWNER, DATE, 'calendar');
@@ -172,17 +172,17 @@ describe('reflow after a task-time edit keeps every other placement', () => {
 // ─── The explicit path's twin: a second Auto run is additive ───────────────────
 
 describe('explicit Auto runs', () => {
-  it('a second run places new work WITHOUT deleting the first run’s placements', () => {
+  it('a second run places new work WITHOUT deleting the first run’s placements', async () => {
     const t1 = insertTask('First run A');
     const t2 = insertTask('First run B');
     stage(t1, 0); stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(taskBlocks(t1)).toHaveLength(1);
     const t1Start = taskBlocks(t1)[0].start_at;
 
     const t3 = insertTask('Second run');
     stage(t3, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     expect(taskBlocks(t1), 'first run’s block must survive the second run').toHaveLength(1);
     expect(taskBlocks(t1)[0].start_at, 'and must not move').toBe(t1Start);
@@ -190,12 +190,12 @@ describe('explicit Auto runs', () => {
     expect(taskBlocks(t3), 'new work placed around the existing blocks').toHaveLength(1);
   });
 
-  it('re-staging an already-placed task re-places it once (no duplicate)', () => {
+  it('re-staging an already-placed task re-places it once (no duplicate)', async () => {
     const t1 = insertTask('Re-staged');
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     stage(t1, 0); // user stages it again
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(taskBlocks(t1)).toHaveLength(1);
   });
 });
@@ -206,7 +206,7 @@ describe('reflow hygiene', () => {
   it('never writes to the user’s flight_plan staging area', async () => {
     const t1 = insertTask('Placed');
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(OWNER)).toEqual({ n: 0 });
 
     await reflow(OWNER, DATE);
@@ -221,7 +221,7 @@ describe('reflow hygiene', () => {
     const t1 = insertTask('Done under its block');
     const t2 = insertTask('Still live');
     stage(t1, 0); stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     sqlite.prepare(`UPDATE tasks SET status = 'done' WHERE id = ?`).run(t1);
 
     await reflow(OWNER, DATE);
@@ -240,7 +240,7 @@ describe('reflow hygiene', () => {
       .run(t1, OWNER, `${DATE}T09:00:00.000Z`, `${DATE}T09:30:00.000Z`);
     const t2 = insertTask('Live');
     stage(t2, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     await reflow(OWNER, DATE);
 
@@ -248,7 +248,7 @@ describe('reflow hygiene', () => {
     expect(taskBlocks(t1)[0].status).toBe('missed');
   });
 
-  it("clearPriorAuto never deletes a re-placed task's own cancelled/missed blocks", () => {
+  it("clearPriorAuto never deletes a re-placed task's own cancelled/missed blocks", async () => {
     // Sharper than the reflow case above: here the terminal blocks belong to the very
     // task being re-placed, so they sit squarely inside clearPriorAuto's task-id scope —
     // only the terminal-status filter keeps them alive.
@@ -261,7 +261,7 @@ describe('reflow hygiene', () => {
     insEvidence.run(t1, OWNER, `${DATE}T10:00:00.000Z`, `${DATE}T10:30:00.000Z`, 'missed');
     stage(t1, 0);
 
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const statuses = taskBlocks(t1).map((b) => b.status).sort();
     expect(statuses, 'terminal evidence survives alongside the new placement').toContain('cancelled');
@@ -273,10 +273,10 @@ describe('reflow hygiene', () => {
 // ─── R2 status parity ───────────────────────────────────────────────────────────
 
 describe('placement status parity', () => {
-  it('placing flips open → scheduled and mirrors scheduled_for, but NEVER task_time', () => {
+  it('placing flips open → scheduled and mirrors scheduled_for, but NEVER task_time', async () => {
     const t1 = insertTask('Placed');
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
 
     const row = taskRow(t1);
     expect(row.status).toBe('scheduled');
@@ -289,7 +289,7 @@ describe('placement status parity', () => {
   it('a reflow that cannot re-place a task reverts it to the open backlog', async () => {
     const t1 = insertTask('Squeezed out');
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(taskRow(t1).status).toBe('scheduled');
 
     // A full-day meeting lands; reflow can no longer fit t1.
@@ -309,7 +309,7 @@ describe('placement status parity', () => {
   it('sweepMissedBlocks reverts a placement-scheduled task so it re-queues', async () => {
     const t1 = insertTask('Missed placement');
     stage(t1, 0);
-    placeFlightPlan(OWNER, { date: DATE });
+    await placeFlightPlan(OWNER, { date: DATE });
     expect(taskRow(t1).status).toBe('scheduled');
 
     // Sweep "now" = end of that day: the block's end is in the past.
@@ -335,7 +335,7 @@ describe('owner-timezone dates and the not-before-now clamp', () => {
     const t1 = insertTask('LA task A');
     const t2 = insertTask('LA task B');
     stage(t1, 0); stage(t2, 1);
-    placeFlightPlan(OWNER, { date: laDay, nowMs });
+    await placeFlightPlan(OWNER, { date: laDay, nowMs });
     expect(taskBlocks(t1)).toHaveLength(1);
 
     const diff = await reflow(OWNER, undefined, 'task:updated', { nowMs });
@@ -345,12 +345,12 @@ describe('owner-timezone dates and the not-before-now clamp', () => {
     expect(diff.removed).toHaveLength(0);
   });
 
-  it('engine-chosen slots on the current day start no earlier than now', () => {
+  it('engine-chosen slots on the current day start no earlier than now', async () => {
     const nowMs = Date.parse(`${DATE}T14:07:00.000Z`); // mid-afternoon "now" on the placement day
     const t1 = insertTask('Afternoon A');
     const t2 = insertTask('Afternoon B');
     stage(t1, 0); stage(t2, 1);
-    placeFlightPlan(OWNER, { date: DATE, nowMs });
+    await placeFlightPlan(OWNER, { date: DATE, nowMs });
 
     for (const t of [t1, t2]) {
       const [b] = taskBlocks(t);
@@ -363,7 +363,7 @@ describe('owner-timezone dates and the not-before-now clamp', () => {
     const t1 = insertTask('Morning-placed');
     stage(t1, 0);
     // Placed in the morning (now = 08:00 → block lands at workday start 09:00).
-    placeFlightPlan(OWNER, { date: DATE, nowMs: Date.parse(`${DATE}T08:00:00.000Z`) });
+    await placeFlightPlan(OWNER, { date: DATE, nowMs: Date.parse(`${DATE}T08:00:00.000Z`) });
     expect(taskBlocks(t1)[0].start_at).toBe(`${DATE}T09:00:00.000Z`);
 
     // 15:00: a disruption triggers a reflow. The 09:00 slot is in the past now.
@@ -375,12 +375,12 @@ describe('owner-timezone dates and the not-before-now clamp', () => {
     expect(Date.parse(b.start_at), 'never moved into an already-past slot').toBeGreaterThanOrEqual(nowMs);
   });
 
-  it('an exact user task_time is honored even when it has already passed (stated intent)', () => {
+  it('an exact user task_time is honored even when it has already passed (stated intent)', async () => {
     const t1 = insertTask('Stated 09:30');
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ?, task_time = '09:30' WHERE id = ?`).run(DATE, t1);
     stage(t1, 0);
     const nowMs = Date.parse(`${DATE}T15:00:00.000Z`); // 09:30 is long past
-    placeFlightPlan(OWNER, { date: DATE, nowMs });
+    await placeFlightPlan(OWNER, { date: DATE, nowMs });
 
     const [b] = taskBlocks(t1);
     expect(b).toBeTruthy();

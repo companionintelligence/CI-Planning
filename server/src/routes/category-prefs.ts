@@ -12,14 +12,14 @@ export function categoryPrefsRouter() {
   const router = new Router();
 
   // GET /api/category-prefs → { prefs: Record<categoryTagId, { color_token, default_minutes }> }
-  router.get('/api/category-prefs', (ctx) => {
-    ctx.body = { prefs: getCategoryPrefs(currentOwnerId()) };
+  router.get('/api/category-prefs', async (ctx) => {
+    ctx.body = { prefs: await getCategoryPrefs(currentOwnerId()) };
   });
 
   // PUT /api/category-prefs/:categoryTagId  body: { color_token?: string, default_minutes?: number }
   // Validation + upsert live in services/category-prefs.ts (shared with GraphQL).
-  router.put('/api/category-prefs/:categoryTagId', (ctx) => {
-    const res = setCategoryPrefChecked(currentOwnerId(), ctx.params.categoryTagId, (ctx.request.body ?? {}) as Record<string, unknown>);
+  router.put('/api/category-prefs/:categoryTagId', async (ctx) => {
+    const res = await setCategoryPrefChecked(currentOwnerId(), ctx.params.categoryTagId, (ctx.request.body ?? {}) as Record<string, unknown>);
     if (!res.ok) {
       switch (res.error) {
         case 'tag_not_found': ctx.status = 404; ctx.body = { error: 'Tag not found' }; return;

@@ -65,9 +65,9 @@ export function tasksRouter() {
     // Attach tags + dependency info, serialize to snake_case
     const blocked = await blockedTaskIds();
     const ids = result.map((t) => t.id);
-    const tagsById = taskTagNamesByIds(ids);
-    const secondaryById = taskSecondaryTagNamesByIds(ids);
-    const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
+    const tagsById = await taskTagNamesByIds(ids);
+    const secondaryById = await taskSecondaryTagNamesByIds(ids);
+    const categoriesById = await entityCategoryNamesByIds('task', ids); // Phase B: 1–3, position order
     const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // AF-10: ALL links (created_at,id order)
     // Resolved up front so the map below can stay synchronous — an async .map callback
     // would put a Promise in every depends_on field, and ctx.body would serialize `{}`.
@@ -118,7 +118,7 @@ export function tasksRouter() {
         if (res.error === 'title_required') { ctx.status = 400; ctx.body = { error: 'title is required' }; return; }
         ctx.status = 422; ctx.body = { error: res.message }; return;
       }
-      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: taskSecondaryTags(res.template.id), categories: entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false };
+      const out = { ...taskToApi(res.template), tags: body.tags ?? [], secondary_tags: await taskSecondaryTags(res.template.id), categories: await entityCategoryNames('task', res.template.id), depends_on: [] as string[], blocked: false };
       broadcast(owner, 'task:created', out);
       broadcast(owner, 'recurrence:generated', res.generated);
       ctx.status = 201;
@@ -141,7 +141,7 @@ export function tasksRouter() {
     let placement: StartAnchoredOutcome | undefined;
     if (body.auto_place === true && task.scheduledFor) {
       try {
-        placement = placeStartAnchoredTask(owner, task.id);
+        placement = await placeStartAnchoredTask(owner, task.id);
         if (placement.placed) [task] = await db.select().from(tasks).where(and(eq(tasks.id, task.id), eq(tasks.ownerId, owner)));
       } catch (err) {
         logger.warn('auto_place: start-anchored placement failed', { owner, taskId: task.id, err: (err as Error).message });
@@ -151,8 +151,8 @@ export function tasksRouter() {
     const out = {
       ...taskToApi(task),
       tags: body.tags ?? [],
-      secondary_tags: taskSecondaryTags(task.id),
-      categories: entityCategoryNames('task', task.id),
+      secondary_tags: await taskSecondaryTags(task.id),
+      categories: await entityCategoryNames('task', task.id),
       depends_on: await getDependencies(task.id),
       blocked: (await blockedTaskIds()).has(task.id),
     };
@@ -185,7 +185,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -207,7 +207,7 @@ export function tasksRouter() {
     let enriched = parsed;
     let llm = false;
     try {
-      enriched = await enrichQuick(text, parsed, suggestibleVocabulary(currentOwnerId())); // additive overlay
+      enriched = await enrichQuick(text, parsed, await suggestibleVocabulary(currentOwnerId())); // additive overlay
       llm = true;
     } catch {
       /* OllamaUnavailable / bad JSON → keep the deterministic parse */
@@ -218,7 +218,7 @@ export function tasksRouter() {
     // brand-new names, created with the default kind='intention') at level 2. The
     // split stays at the route (it's quick-add's parse shape, not a create rule);
     // the leveled write itself rides createTask's tags/secondary_tags.
-    const { directions, others } = splitNamesByDirection(currentOwnerId(), enriched.tags);
+    const { directions, others } = await splitNamesByDirection(currentOwnerId(), enriched.tags);
 
     // Shared create path (services/tasks.ts) — the same service POST /api/tasks uses,
     // so tag-level sync, reminders, dependency handling, parent promotion, and the
@@ -255,7 +255,7 @@ export function tasksRouter() {
     // the quick-add itself (the task is already created).
     if (task.scheduledFor) {
       try {
-        const placed = placeStartAnchoredTask(currentOwnerId(), task.id);
+        const placed = await placeStartAnchoredTask(currentOwnerId(), task.id);
         // Placement flips status open → scheduled (R2 parity) — re-read so the
         // response/broadcast carry the post-placement row. Owner-scoped (defense in
         // depth; matches the other owner-scoped reads in this router).
@@ -267,7 +267,7 @@ export function tasksRouter() {
 
     // `tags` reflects the LEVELED result (L1 = directions), not the flat parse — so the
     // response matches what a follow-up GET returns; intentions ride in secondary_tags.
-    const out = { ...taskToApi(task), tags: taskTagNames(task.id), secondary_tags: taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
+    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as number[], blocked: false, llm };
     broadcast(currentOwnerId(), 'task:created', out);
     // No writeAudit here — createTask already wrote the 'create' audit row.
     ctx.status = 201;
@@ -285,10 +285,10 @@ export function tasksRouter() {
       .where(and(eq(tasks.parentId, parentId), eq(tasks.ownerId, currentOwnerId())))
       .orderBy(asc(tasks.priority));
     const ids = result.map((t) => t.id);
-    const tagsById = taskTagNamesByIds(ids);
-    const secondaryById = taskSecondaryTagNamesByIds(ids);
+    const tagsById = await taskTagNamesByIds(ids);
+    const secondaryById = await taskSecondaryTagNamesByIds(ids);
     const objectivesById = await objectiveIdsByTaskIds(currentOwnerId(), ids); // §I: subtasks of a promoted parent are linked too — show their star
-    const categoriesById = entityCategoryNamesByIds('task', ids); // Phase B
+    const categoriesById = await entityCategoryNamesByIds('task', ids); // Phase B
     const withTags = result.map((t) => ({
       ...taskToApi(t),
       tags: tagsById.get(t.id) ?? [],
@@ -345,7 +345,7 @@ export function tasksRouter() {
     const owner = currentOwnerId();
     const res = await promoteToHabit(owner, id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
-    const out = { ...taskToApi(res.task), tags: taskTagNames(id), depends_on: await getDependencies(id) };
+    const out = { ...taskToApi(res.task), tags: await taskTagNames(id), depends_on: await getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     broadcast(owner, 'pattern:updated', { id });
     ctx.body = { task: out };
@@ -387,7 +387,7 @@ export function tasksRouter() {
     // offered list — a category lives in entity_categories, never entity_tags, so a
     // category pick here could only ever be discarded (same rule as the bulk sweep).
     // `directions` rides along separately so the prompt can name and define the axis.
-    const vocab = suggestibleVocabulary(currentOwnerId());
+    const vocab = await suggestibleVocabulary(currentOwnerId());
     const tags = await suggestTags(
       title ?? '',
       [...vocab.directions, ...vocab.others],
@@ -412,9 +412,9 @@ export function tasksRouter() {
       if (task) {
         broadcast(owner, 'task:updated', {
           ...taskToApi(task),
-          tags: taskTagNames(id),
-          secondary_tags: taskSecondaryTags(id),
-          categories: entityCategoryNames('task', id),
+          tags: await taskTagNames(id),
+          secondary_tags: await taskSecondaryTags(id),
+          categories: await entityCategoryNames('task', id),
           depends_on: await getDependencies(id),
           blocked: (await blockedTaskIds()).has(id),
         });
@@ -459,9 +459,9 @@ export function tasksRouter() {
       if (!task) continue;
       broadcast(owner, 'task:updated', {
         ...taskToApi(task),
-        tags: taskTagNames(id),
-        secondary_tags: taskSecondaryTags(id),
-        categories: entityCategoryNames('task', id),
+        tags: await taskTagNames(id),
+        secondary_tags: await taskSecondaryTags(id),
+        categories: await entityCategoryNames('task', id),
         depends_on: await getDependencies(id),
         blocked: blocked.has(id),
       });
@@ -483,7 +483,7 @@ export function tasksRouter() {
     const res = await recallTask(owner, ctx.params.id);
     if (!res.ok) { ctx.status = 404; ctx.body = { error: 'not found' }; return; }
     const task = res.task;
-    const out = { ...taskToApi(task), tags: taskTagNames(task.id), secondary_tags: taskSecondaryTags(task.id), depends_on: [] as string[], blocked: false };
+    const out = { ...taskToApi(task), tags: await taskTagNames(task.id), secondary_tags: await taskSecondaryTags(task.id), depends_on: [] as string[], blocked: false };
     broadcast(owner, 'task:created', out);
     ctx.status = 201;
     ctx.body = { task: out };
@@ -509,7 +509,7 @@ export function tasksRouter() {
     }
     const { scheduled_for, placement } = await rescheduleTask(id, body.days, owner);
     const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
-    const out = { ...taskToApi(task), tags: taskTagNames(id), depends_on: await getDependencies(id) };
+    const out = { ...taskToApi(task), tags: await taskTagNames(id), depends_on: await getDependencies(id) };
     broadcast(owner, 'task:updated', out);
     writeAudit({ ownerId: owner, actor: 'owner', action: 'reschedule', entity: `task:${id}` });
     broadcast(owner, 'block:updated', { rescheduled: id });
@@ -560,9 +560,9 @@ export function tasksRouter() {
 
     const out = {
       ...taskToApi(res.task),
-      tags: taskTagNames(res.targetId),
-      secondary_tags: taskSecondaryTags(res.targetId),
-      categories: entityCategoryNames('task', res.targetId),
+      tags: await taskTagNames(res.targetId),
+      secondary_tags: await taskSecondaryTags(res.targetId),
+      categories: await entityCategoryNames('task', res.targetId),
       depends_on: await getDependencies(res.targetId),
       blocked: (await blockedTaskIds()).has(res.targetId),
     };
@@ -622,9 +622,9 @@ export function tasksRouter() {
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), eq(tasks.ownerId, owner)));
     const out = {
       ...taskToApi(task),
-      tags: taskTagNames(id),
-      secondary_tags: taskSecondaryTags(id),
-      categories: entityCategoryNames('task', id),
+      tags: await taskTagNames(id),
+      secondary_tags: await taskSecondaryTags(id),
+      categories: await entityCategoryNames('task', id),
       depends_on: await getDependencies(id),
       blocked: (await blockedTaskIds()).has(id),
     };

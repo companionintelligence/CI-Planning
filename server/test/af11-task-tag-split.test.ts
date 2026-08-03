@@ -113,7 +113,7 @@ describe('autoplan Pass 1 — a tagged Plan still receives its intention-matched
     const t = insertTask('Inbox zero', { direction: 'home', intentionsL2: ['email'] });
     stage(t);
     const plan = await makePlan(srv, 'email', at('09:00'), at('11:00'));
-    placeFlightPlan(OWNER, { date: DAY, silent: true });
+    await placeFlightPlan(OWNER, { date: DAY, silent: true });
     expect(childOf(plan.id).map((b) => b.title)).toEqual(['Inbox zero']);
   });
 
@@ -121,7 +121,7 @@ describe('autoplan Pass 1 — a tagged Plan still receives its intention-matched
     const t = insertTask('Deep work', { direction: 'work' });
     stage(t);
     const plan = await makePlan(srv, 'email', at('09:00'), at('11:00'));
-    placeFlightPlan(OWNER, { date: DAY, silent: true });
+    await placeFlightPlan(OWNER, { date: DAY, silent: true });
     expect(childOf(plan.id)).toEqual([]);
     expect(taskBlocks(t)).toEqual([]); // auto_fill_workday=0 → nowhere else to land
   });
@@ -134,7 +134,7 @@ describe('NL hint windows — placeHintWindows sees level-2 intentions (D1)', ()
     sqlite
       .prepare(`INSERT INTO plan_hints (id, owner_id, date, kind, tag, time) VALUES (uuid7(), ?, ?, 'tag_after', 'email', '14:00')`)
       .run(OWNER, DAY);
-    placeFlightPlan(OWNER, { date: DAY, silent: true });
+    await placeFlightPlan(OWNER, { date: DAY, silent: true });
     const blocks = taskBlocks(t);
     expect(blocks.length).toBe(1);
     expect(Date.parse(blocks[0].start_at)).toBeGreaterThanOrEqual(Date.parse(at('14:00')));
@@ -152,7 +152,7 @@ describe('direction-only passes stay level-1 / kind=direction', () => {
     const intentionOnly = insertTask('Intention only', { intentionsL2: ['deep'] });
     stage(directed, 0);
     stage(intentionOnly, 1);
-    placeFlightPlan(OWNER, { date: DAY, silent: true });
+    await placeFlightPlan(OWNER, { date: DAY, silent: true });
 
     const dBlocks = taskBlocks(directed);
     expect(dBlocks.length).toBe(1);
@@ -161,7 +161,7 @@ describe('direction-only passes stay level-1 / kind=direction', () => {
     expect(taskBlocks(intentionOnly)).toEqual([]);
   });
 
-  it('placeStartAnchoredTask reads only the level-1 direction (L2 intentions add no windows)', () => {
+  it('placeStartAnchoredTask reads only the level-1 direction (L2 intentions add no windows)', async () => {
     const dirId = tagId('work', 'direction');
     sqlite
       .prepare(`INSERT INTO pattern_blocks (id, owner_id, direction_tag_id, day_type, start_time, end_time) VALUES (uuid7(), ?, ?, 'workday', '10:00', '12:00')`)
@@ -169,14 +169,14 @@ describe('direction-only passes stay level-1 / kind=direction', () => {
 
     const anchored = insertTask('Anchored', { direction: 'work', intentionsL2: ['email'], est: 60 });
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ? WHERE id = ?`).run(DAY, anchored);
-    const placed = placeStartAnchoredTask(OWNER, anchored, { silent: true });
+    const placed = await placeStartAnchoredTask(OWNER, anchored, { silent: true });
     expect(placed.placed).toBe(true);
     expect((placed as { startAt?: string }).startAt).toBe(at('10:00')); // the direction window
 
     // Same setup but only an L2 intention → falls through to the workday gap, not a window.
     const loose = insertTask('Loose', { intentionsL2: ['email'], est: 60 });
     sqlite.prepare(`UPDATE tasks SET scheduled_for = ? WHERE id = ?`).run(DAY, loose);
-    const placed2 = placeStartAnchoredTask(OWNER, loose, { silent: true });
+    const placed2 = await placeStartAnchoredTask(OWNER, loose, { silent: true });
     expect(placed2.placed).toBe(true);
     expect((placed2 as { startAt?: string }).startAt).toBe(at('09:00')); // workday start fallback
   });
@@ -328,7 +328,7 @@ describe('migration 0121 — task intentions move L1→L2', () => {
     expect(levelRows('task', legacy)).toEqual([{ name: 'work', level: 1 }, { name: 'email', level: 2 }]);
     expect(levelRows('time_block', block.id)).toEqual([{ name: 'email', level: 1 }]);
     // The L1 read (taskTagNames) now returns exactly the direction.
-    expect(taskTagNames(legacy)).toEqual(['work']);
+    expect(await taskTagNames(legacy)).toEqual(['work']);
 
     // Idempotent: a second run changes nothing.
     const before = levelRows('task', legacy);
@@ -350,13 +350,13 @@ describe('migration 0121 — task intentions move L1→L2', () => {
       json: { title: 'Category plan', block_kind: 'timeblock', block_type: 'scheduled', category_id: catId, start_at: at('14:00'), end_at: at('16:00') },
     })).body.block;
 
-    placeFlightPlan(OWNER, { date: DAY, silent: true });
+    await placeFlightPlan(OWNER, { date: DAY, silent: true });
     expect(childOf(plan.id)).toEqual([]); // the latent bug: L1 intention never matched
 
     sqlite.prepare(`DELETE FROM time_blocks WHERE parent_block_id = ?`).run(plan.id);
     migrate0121(sqlite);
     stage(t); // placement above may have consumed the staging row
-    placeFlightPlan(OWNER, { date: DAY, silent: true });
+    await placeFlightPlan(OWNER, { date: DAY, silent: true });
     expect(childOf(plan.id).map((b) => b.title)).toEqual(['Plan birthday']); // now it matches
   });
 });

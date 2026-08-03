@@ -129,7 +129,7 @@ describe('behavior baseline — read API serialization', () => {
 });
 
 describe('behavior baseline — Auto placement engine', () => {
-  it('places Plans-first (tap 2), then the explicit priority fill, deterministically', () => {
+  it('places Plans-first (tap 2), then the explicit priority fill, deterministically', async () => {
     sqlite.prepare(`UPDATE scheduling_prefs SET timezone='UTC', workday_start='09:00', workday_end='18:00', auto_fill_workday=1 WHERE owner_id=?`).run(OWNER);
 
     const plan = insert('time_blocks', { owner_id: OWNER, title: 'work plan', block_kind: 'timeblock', block_type: 'scheduled', tag: 'work', start_at: at('09:00'), end_at: at('12:00'), is_auto: 0, source_kind: 'manual', status: 'planned' });
@@ -140,9 +140,9 @@ describe('behavior baseline — Auto placement engine', () => {
     insertNoId('entity_tags', { entity_kind: 'task', entity_id: code, tag_id: work, level: 1 }); // 'work' → routed into the Plan
     for (const t of [code, milk, loose]) insertNoId('flight_plan', { owner_id: OWNER, task_id: t, selected: 1, position: 0 });
 
-    const result = placeFlightPlan(OWNER, { date: DAY }); // tag-matched: 'Write code' → the Plan
+    const result = await placeFlightPlan(OWNER, { date: DAY }); // tag-matched: 'Write code' → the Plan
     expect(snap(result)).toMatchSnapshot('placeFlightPlan result');
-    fillByPriority(OWNER, { date: DAY }); // explicit priority tap (D5): the untagged tasks fill the workday
+    await fillByPriority(OWNER, { date: DAY }); // explicit priority tap (D5): the untagged tasks fill the workday
 
     const agent = sqlite
       .prepare(`SELECT title, start_at, end_at, block_kind, parent_block_id, is_auto, source_kind, status FROM time_blocks WHERE source_kind='agent' ORDER BY start_at, title`)

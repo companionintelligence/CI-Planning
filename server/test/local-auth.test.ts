@@ -232,8 +232,8 @@ describe('G-BASETAG — provisionOwner seeds default availability windows', () =
     expect(counts).toEqual({ workday: 5, weekend: 3 });
 
     // Auto's direction-window pass reads these; both day types must be non-empty.
-    const workday = getPatternBlocks(ownerId, 'workday');
-    const weekend = getPatternBlocks(ownerId, 'weekend');
+    const workday = await getPatternBlocks(ownerId, 'workday');
+    const weekend = await getPatternBlocks(ownerId, 'weekend');
     expect(Object.keys(workday).length).toBeGreaterThan(0);
     expect(Object.keys(weekend).length).toBeGreaterThan(0);
 

@@ -1,55 +1,179 @@
 # Pass A work list — sequenced by transitive importers
 
-> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 37 commits)
+> ## State as of 2026-08-02 (branch `feat/postgres-cutover`, 38 commits)
 >
-> **DONE — waves 0–4 COMPLETE, wave 5 at 7 of 11. Suite verified at 2633 passed
-> after every one of the 24 slices.**
+> **PASS A IS COMPLETE — waves 0–8, all 101 files. Zero raw `sqlite` statements remain
+outside the seam. Suite verified after every one
+> of the 25 slices; the baseline is now 2634 SQLite-only / 2667 with
+> `PG_TEST_URL` (was 2633 / 2665 — the objectives slice added one conformance
+> test, which runs once per backend).**
 >
-> **Remaining work is smaller than this document originally predicted.** A fresh
-> count of `sqlite.(prepare|exec|transaction)` across `server/src` gives **151
-> references in 20 files**, three of which are the seam itself (`db/index.ts`,
-> `db/pg.ts`, `db/store.ts`) — so **17 files actually remain**. Several files the
-> wave lists below name (render-copy, connectors/index, calibration, flags,
-> mcp/client, connectors/base, scheduler, models) hold NO raw statements and are
-> already done or never needed porting. Re-run the count rather than trusting the
-> per-wave file lists:
+> ### ⚠ The "remaining work is smaller" claim was WRONG — it under-counted by 46%
+>
+> Earlier revisions of this box said 151 (then 136) references in 20 (then 19)
+> files, and cleared eight files as "hold NO raw statements, never needed
+> porting". **All of that came from a single-line grep**, the exact mistake the
+> foundation handoff's §4.1 documented and told us not to repeat: `grep
+> 'sqlite\.prepare'` cannot see
+>
+> ```ts
+> const rows = sqlite
+>   .prepare(`…`)
+> ```
+>
+> which is the dominant formatting in this codebase. The figure at the time of that
+> correction was **261 statements across 27 files** — three are the seam (`db/index.ts`, `db/pg.ts`,
+> `db/store.ts`) and one is `agents/groom.ts`'s sqlite-vec residue (below), so
+> **23 real files remained**, not 15. (Now **6 real files / 74 statements** — waves 5
+> and 6 are both closed.)
+>
+> **The corrected accounting is now CONFIRMED.** With wave 5 empty, the remaining
+> per-wave totals are 73 / 117 / 4 — matching the original wave table's numbers
+> exactly, arrived at independently. That table was right all along; the
+> single-line grep was the only thing that was ever wrong.
+>
+> **The ORIGINAL wave table at the bottom of this document was right all along.**
+> Its wave 6 / 7 / 8 totals (73 / 117 / 4 statements) match a correct count
+> exactly, because it was built with a multi-line-aware script. The later "fresh
+> count" is what corrupted the picture — and it corrupted it in the direction that
+> makes the work look done. **Trust the wave table; distrust any hand grep.**
+>
+> Those eight wrongly-cleared files are all real work: **calibration (14),
+> connectors/base (3), render-copy (3), connectors/index (2), mcp/client (2),
+> flags (2)** — all wave 5 — plus **scheduler (1)** and **models (1)** in wave 7.
+> `engine/scheduler.ts` matters most of the eight despite its single statement:
+> `dayObstacles` is called by autoplan, patterns-place and the flight plan, so it
+> is a hub, and it was invisible because its one statement is multi-line.
+>
+> Re-derive with a multi-line-aware count. Never the bare grep:
 >
 > ```
-> grep -rn "sqlite\.\(prepare\|exec\|transaction\)" server/src --include=*.ts | wc -l
+> python3 -c "
+> import re,subprocess,pathlib
+> fs=subprocess.run(['bash','-c','grep -rl sqlite --include=\"*.ts\" server/src --exclude-dir=migrations'],capture_output=True,text=True).stdout.split()
+> print(sum(len(re.findall(r'sqlite\s*\.\s*(?:prepare|exec|transaction)', pathlib.Path(f).read_text())) for f in fs))"
 > ```
 >
-> Actual remaining, by wave:
-> - **Wave 5 (4 files left of 11)** — ✓ motivation, ✓ series-scope,
+> **`agents/groom.ts`'s 5 remaining refs are NOT pass-A work** and will not fall to
+> the facade. They are sqlite-vec virtual-table calls (`vec0`, `MATCH`, the
+> `vec_dedupe_tmp` scratch table) — a SQLite-extension code path that pgvector
+> replaces at cutover, not a statement to route through `store()`. Groom is done;
+> the grep just cannot tell. Subtract it before sizing what is left. The reasoning
+> is `HANDOFF-2026-08-02-pass-a-waves-0-5.md` §4 ("groom's sqlite-vec KNN path
+> stays on the raw handle"); it is repeated here because this is the file you
+> actually count from.
+>
+> Actual remaining, by wave (multi-line-aware; statements in brackets):
+>
+> | Wave | Files left | Stmts | Which |
+> |---|---|---|---|
+> | 5 | 0 | 0 | **CLOSED** |
+> | 6 | 0 | 0 | **CLOSED** |
+> | 7 | 0 | 0 | **CLOSED** |
+> | 8 | 0 | 0 | **CLOSED** |
+> | — | 0 | **0** | only 8 seam + 5 groom remain, both by design |
+>
+> - **Wave 5 — CLOSED, 17 of 17.** ✓ motivation, ✓ series-scope,
 >   ✓ triality-vector, ✓ triality, ✓ groom + possibles (the circular pair, one
->   commit as required), ✓ task-close. Remaining: **objectives** (15 stmts, 9
->   importers — the big one; note task-promotion already calls its
->   recomputeProgress/linkObjectiveTask synchronously, so that cascade lands
->   here), connectors/memory, services/memory, patterns-place.
->   `patterns-place.ensurePatternsForRange` is still called UNAWAITED from
->   services/blocks.blockRowsForQuery — the one call site left deliberately sync
->   in part 8. Add the await when it ports.
+>   commit as required), ✓ task-close, ✓ **objectives**, ✓ **patterns-place**,
+>   ✓ **calibration**, ✓ **the memory pair** (connectors/memory + services/memory,
+>   one commit — services/memory is the only importer of the connector's DB-backed
+>   exports, so splitting them would have left an intermediate broken state).
+>   ✓ **flags** (part 29), ✓ **render-copy + connectors/base + connectors/index +
+>   mcp/client** (part 30). **Wave 6 is next**; `sync/apply.ts` is the one that pays
+>   the stampRow-handle debt across seven already-ported files.
 >
->   **START HERE — `services/objectives.ts`, surveyed but NOT started.** 905 lines,
->   ~50 raw `sqlite` references (the "15" above counted single-line matches only —
->   trust the grep, not that number), 25+ exported functions, 9 importers. Largest
->   single slice left in wave 5; give it its own commit. What the survey found, so
->   it need not be redone:
->   - **Recursive / looping helpers that all go async and are called from inside
->     loops**: `heightBelow` (a `WITH RECURSIVE` query), `restampLevels` (walks UP
->     the parent chain calling `heightBelow` per node), `wouldCycle`,
->     `liveDescendantIds`, and `recomputeProgress` (rolls up through children).
->     Await inside those loops — do NOT reach for `.map`.
->   - **Two existing transactions** to carry over: `archiveObjective` and
->     `restoreObjective` (its subtree walk). The comment near line 748 — cascade as
->     a unit "has to be atomic" — is the reason; keep it true.
->   - **`stampRow(sqlite, …)` appears ~8 times** and keeps the raw handle, as
->     everywhere else, until sync/apply.ts ports in wave 6.
->   - Header line 17 still claims "better-sqlite3 is synchronous; these are plain
->     sync functions" — correct it the way patterns.ts's was.
->   - No module-level prepares in this file.
-> - **Wave 6 (7 files)** — pattern-prefs, pattern-blocks, day-types,
+>   **Two shapes worth carrying forward from the wave's last two slices.**
+>   `lib/flags` proved a feature gate is the highest-consequence async break found
+>   so far: `if (!timeSenseEnabled(o)) { 404 }` stops 404-ing AND
+>   `if (timeSenseEnabled(o)) {…}` always takes the ON branch — both polarities fail
+>   toward "the dark-shipped feature is live". Grep `if (!` and `? … :` over a
+>   ported file's exports before trusting a green suite. And in `routes/oauth.ts` an
+>   unawaited `BaseOAuth2Client.storeToken` let the following
+>   `UPDATE … SET status='active'` run before the row it activates existed: the
+>   connection would be stored but never activated, and both `getConnectors()` and
+>   `googleAccounts()` filter on `status='active'`, so that account would silently
+>   never sync again.
+>
+>   **The memory pair's hazard was boolean gates.** `memoryConnectorAvailable`,
+>   `pushConnectorAvailable` and the `memoryCreds`-derived probes are all consumed as
+>   `if (!f(owner)) return <degraded>`. `!somePromise` is ALWAYS false, so every one
+>   of those guards silently STOPS FIRING — the suggest agent, the brief and the push
+>   job would each run on against creds that do not resolve, and tsc says nothing
+>   because `!x` is legal for any `x`. Four sites (memory-suggest, plan, summarize,
+>   syncToMemory). Grep for `if (!` against a ported file's exports before trusting
+>   a green suite.
+>
+>   **`engine/patterns-place.ts` is DONE** (part 26). 13 statements, not the 5 the
+>   single-line grep showed. The debt from part 8 is PAID: `ensurePatternsForRange`
+>   is now awaited in `services/blocks.blockRowsForQuery`, and the await had to go
+>   *before* the select on the next lines — that call materializes the very rows the
+>   select reads, so a floated promise would have returned the day view without the
+>   routines it had just placed, surfacing them only on a later refetch. tsc could
+>   not see it (void return). `placePatternOnDay`'s `sqlite.transaction(fn)()`
+>   became `await store().transaction(async () => …)`; its reused `ins` statement
+>   stays a plain `store().prepare` because `prepare` is synchronous on the facade.
+>   The container INSERT … RETURNING was the `await f(…).id` trap in the wild —
+>   parenthesised. `tagsOf`, `localDaysInRange` and `validatePatternRule` stayed
+>   sync (their callees are wave 6/7 files that have not ported yet).
+>
+>   **`services/objectives.ts` is DONE** (part 25). 905 lines, ~50 raw refs, 25
+>   exported functions; cascade was routes/objectives (12 sites),
+>   graphql/objective-resolvers (11), services/task-promotion (3),
+>   graphql/task-resolvers (1), routes/sync (1), and 7 sites in
+>   sync-apply.test.ts. What the port had to decide, so it is not re-litigated:
+>   - **Two check-then-write guards were re-asserted as part of the write**, per
+>     the "implicit atomicity" rule below. `createObjective`'s live-parent check
+>     became an `INSERT … SELECT … WHERE EXISTS (…)` (the unguarded `VALUES` form
+>     is kept for the parentless case — `id = NULL` matches nothing, so an EXISTS
+>     guard there would refuse every root objective), and `archiveObjective`'s
+>     root UPDATE is now guarded on `archived_at IS NULL` with the audit gated on
+>     `changes > 0`, matching the idempotent early return.
+>   - **Two races were deliberately LEFT OPEN and documented at their site**,
+>     because closing them needs a schema change rather than a refactor:
+>     `linkObjectiveTask` can insert a duplicate join row under a double-submit
+>     (`objective_tasks` has no unique index on (objective_id, task_id) — only on
+>     the surrogate `id`; same shape and same disposition as
+>     patterns.ensureHabitPattern), and `updateObjective`'s re-parent guards can
+>     both pass under concurrency, of which the `cycle` one matters: A→B and B→A
+>     both commit and the resulting parent loop does not terminate the `UNION ALL`
+>     recursive CTEs in `heightBelow`/`wouldCycle`. That one cannot be folded into
+>     a WHERE clause — it needs the two writers serialized. Fix both with the
+>     other post-cutover items.
+>   - `stampRow(sqlite, …)` still keeps the raw handle at 8 sites; the `sqlite`
+>     import survives for that alone and dies when sync/apply.ts ports in wave 6.
+>   - Both transactions carried over as `await store().transaction(async () => …)`
+>     — note the facade RUNS the callback, so the trailing `()` of
+>     `sqlite.transaction(fn)()` goes away.
+> ### Wave 6 could not START without a wave-7 file — read before sequencing
+>
+> Every one of wave 6's seven files reaches `engine/autoplan.ts`, which is wave 7:
+> day-types, pattern-blocks, pattern-prefs and block-task-sync are imported by it
+> DIRECTLY, and reminders, recurrence-generate and sync/apply reach it through
+> block-task-sync (whose ten exports were all synchronous). Autoplan's 29 internal
+> helpers were synchronous too, so porting ANY wave-6 file forced autoplan async and
+> dragged the other six in with it — a single ~120-statement commit. That is exactly
+> the §5.2 trap ("porting them pulled in engine/autoplan.ts … and was still growing
+> when I stopped"), and the wave boundary as drawn walks straight into it.
+>
+> **The seam is to port autoplan FIRST**, out of wave order. It is legal because the
+> cascade climbs to IMPORTERS, and all ten of autoplan's importers were already
+> ported — and because a still-synchronous callee is always safe to call from an
+> async function, so autoplan's calls into the unported wave-6 files needed no
+> change at all. Done as part 31. Each wave-6 file can now port on its own, with
+> autoplan simply gaining an `await` at those twelve call sites.
+>
+> **The general rule this exposes**: a wave is only independently portable if no
+> file OUTSIDE it imports one of its members while still being synchronous itself.
+> Check that before starting a wave, not after.
+>
+> - **Wave 6 (7 files, 73 stmts)** — pattern-prefs, pattern-blocks, day-types,
 >   block-task-sync, sync/apply, recurrence-generate, reminders.
-> - **Wave 7 (4 files)** — autoplan, crypto/index, tags, category-prefs.
+> - **Wave 7 (6 files, 117 stmts)** — autoplan, crypto/index, tags,
+>   category-prefs, **scheduler** and **models** (the last two restored: they hold
+>   one multi-line statement each and had been wrongly cleared).
+>   `engine/scheduler.ts` is a hub despite its single statement — `dayObstacles`
+>   is called from autoplan, patterns-place and the flight plan.
 >   **`services/tags.ts` is the single heaviest file left on the module-level-prepare
 >   axis: 44 of them.** That is more than three times the whole of wave 5, and every
 >   one has to become a module-scope SQL string plus an in-function
@@ -58,7 +182,16 @@
 >   another file.
 > - **Wave 8 (1 file)** — routes/sse (the event-bus design decision).
 >
-> **`sync/apply.ts` (wave 6) is the one that pays a debt**: every remaining raw
+> **`sync/apply.ts` PAID ITS DEBT (part 35).** `applyOp`, `stampRow` and
+`applyMonotonic` no longer take a raw `Database` handle — that parameter existed only
+so they could run inside a synchronous `sqlite.transaction()` callback, and
+`store().transaction()` takes an async one. 81 call sites lost the argument and the
+raw `sqlite` import is now gone from routes/sync, routes/blocks, engine/extend-block,
+engine/review, services/blocks, services/tasks, services/task-promotion,
+services/objectives and services/block-task-sync. Outside the seam and `boot.ts`, the
+only files still importing it are the ones genuinely left to port.
+
+**`sync/apply.ts` (wave 6) is the one that pays a debt**: every remaining raw
 > `sqlite` import in already-ported files exists ONLY to pass the handle to
 > `stampRow`/`applyOp`. Porting it removes the last raw-handle argument from
 > routes/sync, routes/blocks, engine/extend-block, engine/review, services/blocks,
@@ -155,7 +288,12 @@
 > had 15 errors across 5 files. Pipe tsc through `grep "error TS"`, never a
 > head/tail window.
 
-> Companion to `docs/HANDOFF-2026-08-02-oidc-and-postgres-port.md` §4–§5 and
+> **Narrative companion: `docs/HANDOFF-2026-08-02-pass-a-complete.md`** — pass A is
+> finished; that document carries the state, the two corrections to this plan, and the
+> ordered cutover steps. `HANDOFF-2026-08-02-pass-a-waves-0-5.md` is the earlier
+> session and is superseded for planning.
+>
+> Also companion to `docs/HANDOFF-2026-08-02-oidc-and-postgres-port.md` §4–§5 and
 > `server/db/postgres/README.md`. This is the ordered plan for the remaining
 > call-site migration, built from an import-graph analysis of `server/src`
 > (script: multi-line-aware `sqlite.(prepare|exec|transaction)` count + BFS over
@@ -281,6 +419,88 @@ of which 906 are portable work).
   `changes === 0`, throw after 5 losses rather than silently skip the write.
   A plain transaction does NOT fix this under Postgres READ COMMITTED. Grep a
   file for `JSON.stringify` next to an UPDATE before porting it.
+- **Dropping an `as T` cast for `.get<T>()` can make an inference cycle (TS7022).**
+  Not a silent break — it fails the typecheck — but the error names the variable,
+  not the cause, so it reads as a mystery. A type ASSERTION fixes an expression's
+  type regardless of its arguments; the generic does not, so a loop of the shape
+  `let cur: string | null = …; while (cur) { const row = await …get<T>(cur); cur =
+  row.parent_id }` becomes circular: narrowing `cur` needs every assignment to it,
+  which needs `row`, which needs the narrowed `cur`. `recomputeProgress` hit this.
+  Annotate the local (`const row: T | undefined = await …`) rather than reaching
+  back for a cast.
+- **`x ?? null` on a now-async call is a no-op that happens to survive GraphQL.**
+  `??` sees a pending promise, which is never nullish, so it returns the promise
+  and the `?? null` does nothing; graphql-js then awaits it and gets `undefined`,
+  which it coerces to null for a nullable field. So it works — by luck, through two
+  layers — and reads as correct. Four sites in the objectives resolvers. Await
+  inside the parens (`(await f(…)) ?? null`) so the intent survives a future
+  refactor that consumes the value somewhere less forgiving than a field resolver.
+
+**A raw NUL byte in a source file hides it from EVERY grep.**
+`services/calibration.ts` built a composite Map key by joining two fields with a
+literal U+0000, which made `file` report it as `data` rather than text. The two
+greps in this environment then disagreed, both unhelpfully: GNU grep (what
+`bash -c` scripts get) suppresses LINE output for binary files, so the prescribed
+`grep -rn` returned nothing for it while `-l`/`-c` still named it; ugrep (what the
+interactive shell's `grep` function resolves to) dropped the file entirely, even
+for `-l`. That is how a 14-statement file — the second largest left in wave 5 —
+came to be catalogued as holding none. It has been converted to the escape form,
+which is the same string at runtime. **Before trusting any grep-derived
+inventory, check for others:**
+
+```
+python3 -c "
+import pathlib
+print([str(p) for p in pathlib.Path('server').rglob('*.ts') if b'\x00' in p.read_bytes()])"
+```
+
+At this commit that list is empty. Prefer a python `rglob` walk over `grep -rl`
+for file selection generally — it has no binary heuristic to be wrong about.
+
+**Spreading a promise yields `{}`** — silently, with no error anywhere. `{ date,
+...resolveDayTypeWithSource(owner, date) }` drops every field the spread was meant to
+contribute the moment that call goes async: a pending promise has no own enumerable
+properties. Two sites (the REST resolve route and its GraphQL twin). Neither tsc nor a
+paren-aware await inserter catches it — the call is preceded by `...` and followed by
+`)`, so it looks like a bare statement — and the REST one would have shipped a 200 with
+`{ date }` and nothing else. Grep `\.\.\.\s*fn(` for every symbol a slice makes async.
+
+**Do not let an await inserter touch GraphQL document strings.** Test files embed
+`gql('mutation { setPatternBlockRanges(input: …) }')`, and a symbol-name inserter happily
+rewrote the FIELD NAME inside the document to `await setPatternBlockRanges`, producing
+`Cannot query field "await" on type "Mutation"`. It fails loudly, but across ten tests at
+once and a long way from the cause. Exclude anything inside a `gql(` template — including
+the shorthand `gql('{ field(…) }')` form with no `query` keyword.
+
+**PASS A IS DONE — what is left, and the one port defect it surfaced.**
+
+`routes/sse.ts` (wave 8) resolved the design decision the plan deferred. `broadcast`
+STAYS synchronous and fire-and-forget at all 192 call sites — async-ifying it would make
+every mutating route, service and resolver await a result none of them consume. What
+could not simply be floated is the `seq`, which becomes the SSE frame's `id:` line and
+powers Last-Event-ID catch-up: the emit moved INSIDE the promise chain, so the frame still
+carries the right seq one microtask later. `flushBroadcasts()` is the `flushAudits()` twin
+for anything reading `sync_events` straight after a mutation.
+
+That port also retired one of the two `lastInsertRowid` deltas: `logSyncEvent` now uses
+`INSERT … RETURNING seq`, which both backends support, because the facade's `run()`
+deliberately reports only `{ changes }`.
+
+**PORT DEFECT, found on the way and NOT yet fixed.** `sync_events.seq` is
+`INTEGER PRIMARY KEY` in the Postgres baseline. In SQLite that is a rowid alias and
+auto-assigns; in Postgres it is a plain non-defaulted column, so **every sync_events
+INSERT will fail NOT NULL at cutover**. It needs `GENERATED BY DEFAULT AS IDENTITY` (or a
+sequence) in the schema migration. The dual-backend suite does not catch it because
+nothing in pg-integration writes sync_events. Fix before flipping STORE_BACKEND.
+
+**New dialect-portability coverage.** The guarded `INSERT … SELECT … WHERE EXISTS`
+that `createObjective` now uses is pinned in `test/store-conformance.test.ts`, so it
+is asserted on BOTH backends rather than only the one pass A runs on. It verifies
+that a full parameter list binds in the SELECT list (Postgres infers those types
+from the INSERT's target columns) and that a failed guard reports `changes = 0`
+rather than raising. Add a conformance case whenever a slice introduces a SQL shape
+the existing statements do not already cover — that is cheaper than discovering it
+at the `STORE_BACKEND=postgres` flip.
 
 ## Known N+1s the port preserves (do not fix during pass A)
 

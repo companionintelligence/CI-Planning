@@ -60,9 +60,9 @@ async function writeValue(key: string, value: string): Promise<void> {
 }
 
 /** Whether a KEK is configured (and decodes) — decides seal-vs-plaintext at rest. */
-export function kekAvailable(): boolean {
+export async function kekAvailable(): Promise<boolean> {
   try {
-    loadKek();
+    await loadKek();
     return true;
   } catch {
     return false;
@@ -120,7 +120,7 @@ async function readStoredPrivate(): Promise<ReadPrivateResult> {
     try {
       const key = open(
         { iv: env.iv, authTag: env.authTag, ciphertext: env.ciphertext },
-        loadKek(env.key_version),
+        await loadKek(env.key_version),
       );
       return { status: 'ok', key, sealed: true };
     } catch (err) {
@@ -140,9 +140,9 @@ async function readStoredPrivate(): Promise<ReadPrivateResult> {
 /** Generate a fresh keypair and persist it (private sealed when a KEK is available). */
 async function generateAndStore(): Promise<{ publicKey: string; privateKey: string; sealed: boolean }> {
   const { publicKey, privateKey } = webpush.generateVAPIDKeys();
-  const sealed = kekAvailable();
+  const sealed = await kekAvailable();
   const envelope: StoredPrivate = sealed
-    ? { sealed: true, ...seal(privateKey, loadKek()), key_version: config.kek.currentVersion }
+    ? { sealed: true, ...seal(privateKey, await loadKek()), key_version: config.kek.currentVersion }
     : { sealed: false, key: privateKey };
   await store().transaction(async () => {
     await writeValue(KEY_PUBLIC, publicKey);
@@ -249,7 +249,7 @@ export async function vapidConfigState(): Promise<VapidConfigState> {
     subject: config.vapidSubject,
     hasStoredPair: (await readValue(KEY_PUBLIC)) !== null && priv.status !== 'absent',
     sealed: priv.status === 'ok' ? priv.sealed : false,
-    kekAvailable: kekAvailable(),
+    kekAvailable: await kekAvailable(),
     envPinned: config.vapidEnvPinned,
   };
 }

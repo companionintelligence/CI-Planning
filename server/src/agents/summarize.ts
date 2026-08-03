@@ -225,7 +225,7 @@ function eventLine(node: MemoryNode, startISO: string, people: string[], tz: str
  * back to a trimmed graphContext when there are no dated nodes. Never throws.
  */
 export async function memoryBriefExcerpt(owner: string, date: string): Promise<string> {
-  if (!(await pullEnabled(owner)) || !memoryConnectorAvailable(owner)) return '';
+  if (!(await pullEnabled(owner)) || !(await memoryConnectorAvailable(owner))) return '';
   try {
     const tzRow = await store()
       .prepare('SELECT timezone FROM scheduling_prefs WHERE owner_id = ?')
@@ -239,7 +239,7 @@ export async function memoryBriefExcerpt(owner: string, date: string): Promise<s
     // this used to hardcode), so a late-evening event that rolls just over the local-
     // midnight boundary is still caught for the day's brief. Shares the setting with the
     // suggest agent — one knob moves every memory pull surface together.
-    const to = new Date(Date.parse(start) + memoryWindowMs(owner)).toISOString();
+    const to = new Date(Date.parse(start) + (await memoryWindowMs(owner))).toISOString();
     const graph = await graphData(owner, { from: start, to });
 
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -377,7 +377,7 @@ export async function summarizeDay(date: string, opts: { refresh?: boolean } = {
 
   let prose: string;
   let llm: boolean;
-  if (timeSenseEnabled(currentOwnerId())) {
+  if (await timeSenseEnabled(currentOwnerId())) {
     // Phase Z · Z7 — route the brief through the Voice loop so it's voice-gated and
     // never repeats a recent day's phrasing. Only on a cache MISS (here): a cache hit
     // returns the stored prose above without re-rendering, so copy_history records
@@ -513,14 +513,19 @@ export async function gatherEvening(date: string): Promise<EveningPayload> {
     .all<{ task_id: string; title: string; status: string }>(owner, dayStart, dayEnd);
 
   // Label the scope refs so the modal never shows raw ids (shared with the Z6 chip).
-  const calibration = (await store()
+  const calibrationRows = await store()
     .prepare(
       `SELECT scope_kind, scope_ref, bias_ratio, sample_count FROM estimate_calibration
         WHERE owner_id = ? AND sample_count >= ?
         ORDER BY sample_count DESC, scope_kind, scope_ref LIMIT 5`,
     )
-    .all<{ scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }>(owner, CONFIDENCE_FLOOR))
-    .map((r) => ({ ...r, label: scopeLabel(owner, r.scope_kind as ScopeKind, r.scope_ref) }));
+    .all<{ scope_kind: string; scope_ref: string; bias_ratio: number | null; sample_count: number }>(owner, CONFIDENCE_FLOOR);
+  // An explicit loop rather than `.map`: scopeLabel is async now, so mapping would put
+  // a Promise in `label` where the payload type promises a string. Bounded at 5 rows.
+  const calibration: (typeof calibrationRows[number] & { label: string })[] = [];
+  for (const r of calibrationRows) {
+    calibration.push({ ...r, label: await scopeLabel(owner, r.scope_kind as ScopeKind, r.scope_ref) });
+  }
 
   return {
     date,
@@ -530,7 +535,7 @@ export async function gatherEvening(date: string): Promise<EveningPayload> {
     estimate_deltas,
     carry_forward,
     calibration,
-    combo_suggestions: detectComboSuggestions(owner),
+    combo_suggestions: await detectComboSuggestions(owner),
   };
 }
 

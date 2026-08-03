@@ -256,7 +256,7 @@ export async function reflow(
   //    placeFlightPlan (never the user's flight_plan staging); `protectIds` keeps the
   //    protected blocks out of the DELETE (in memory — never written to is_locked),
   //    and dayObstacles already routes placement around them.
-  placeFlightPlan(owner, { date: d, replaceTaskIds, protectIds: protectedIds, nowMs });
+  await placeFlightPlan(owner, { date: d, replaceTaskIds, protectIds: protectedIds, nowMs });
 
   // 5. Snapshot after and compute the diff. A task whose block the pin pass converted
   //    to a stated-time is_auto=0 block leaves the agent snapshot but is still placed —
@@ -439,7 +439,7 @@ export async function sweepMissedBlocks(
       // R2 parity: skipping a task's only active placement returns it to the open
       // backlog (scheduled ⇒ open) — MUST run before the open-check below, or a
       // placement-scheduled task would never re-queue.
-      revertTaskPlacementStatus(blk.task_id, owner);
+      await revertTaskPlacementStatus(blk.task_id, owner);
       // Only re-queue tasks that are still open (a completed task's stale block isn't work).
       const open = await store().prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'open'`).get(blk.task_id);
       if (open && (await restage.run(owner, blk.task_id, pos)).changes > 0) { pos++; requeued++; }
@@ -502,7 +502,7 @@ async function maybeSuggestReauthor(owner: string, date: string, diff: ReflowDif
 /** Best-effort Web Push for the nudge — mirrors reminders.deliver; never throws. */
 async function pushReplanNudge(owner: string, summary: string): Promise<void> {
   try {
-    for (const s of subsFor(owner)) {
+    for (const s of await subsFor(owner)) {
       const res = await sendPush(s.sub, { title: 'Re-plan your day?', body: summary, tag: 'replan:suggested', url: '/' });
       if (res === 'gone') await store().prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(s.id);
     }

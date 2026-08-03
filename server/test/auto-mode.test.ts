@@ -46,27 +46,27 @@ beforeEach(() => {
 });
 
 describe('autoScheduleOnIngest (trust dial)', () => {
-  it('hands-off mode places tag-matched work in one pass', () => {
+  it('hands-off mode places tag-matched work in one pass', async () => {
     setTrust('hands_off');
-    expect(resolveTrustPolicy(OWNER).mode).toBe('hands_off');
-    expect(resolveTrustPolicy(OWNER).autoBlock).toBe(true);
+    expect((await resolveTrustPolicy(OWNER)).mode).toBe('hands_off');
+    expect((await resolveTrustPolicy(OWNER)).autoBlock).toBe(true);
     const plan = makePlan('errands', `${DATE}T16:00:00.000Z`, `${DATE}T18:00:00.000Z`);
     makeTask('Post office', 'errands');
 
-    const result = autoScheduleOnIngest(OWNER, { date: DATE });
+    const result = await autoScheduleOnIngest(OWNER, { date: DATE });
     expect(result?.step).toBe('place');
     expect(taskBlocks()).toBeGreaterThanOrEqual(1);
     const placed = sqlite.prepare(`SELECT parent_block_id FROM time_blocks WHERE title = 'Post office'`).get() as { parent_block_id: string | null };
     expect(placed.parent_block_id).toBe(plan); // routed into the matching Plan
   });
 
-  it('balanced mode is a no-op on ingest (no staging, no placement)', () => {
+  it('balanced mode is a no-op on ingest (no staging, no placement)', async () => {
     setTrust('balanced');
-    expect(resolveTrustPolicy(OWNER).autoBlock).toBe(false);
+    expect((await resolveTrustPolicy(OWNER)).autoBlock).toBe(false);
     makePlan('errands', `${DATE}T16:00:00.000Z`, `${DATE}T18:00:00.000Z`);
     makeTask('Post office', 'errands');
 
-    const result = autoScheduleOnIngest(OWNER, { date: DATE });
+    const result = await autoScheduleOnIngest(OWNER, { date: DATE });
     expect(result).toBeNull();
     expect(taskBlocks()).toBe(0);
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM flight_plan WHERE owner_id = ?`).get(OWNER) as { n: number }).n).toBe(0);

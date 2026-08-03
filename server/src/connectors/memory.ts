@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { config } from '../lib/config.js';
 import { seal, open, loadKek } from '../lib/crypto/index.js';
 import { newId } from '../lib/ids.js';
@@ -147,24 +147,24 @@ export function memoryMode(): 'live' | 'fixture' | 'off' {
 export type ResolvedMemoryCreds = MemoryCreds & { source: MemoryCredsSource; authKind: MemoryAuthKind | null };
 
 /** Decrypt the owner's active ci_memory blob, or null (missing row / decrypt failure). */
-function readMemoryBlob(owner: string): MemoryBlob | null {
-  const row = sqlite
+async function readMemoryBlob(owner: string): Promise<MemoryBlob | null> {
+  const row = await store()
     .prepare(
       `SELECT iv, auth_tag, ciphertext FROM connection_tokens
         WHERE owner_id = ? AND provider = ? AND status = 'active'`,
     )
-    .get(owner, MEMORY_PROVIDER) as { iv: string; auth_tag: string; ciphertext: string } | undefined;
+    .get<{ iv: string; auth_tag: string; ciphertext: string }>(owner, MEMORY_PROVIDER);
   if (!row) return null;
-  const parsed = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, loadKek())) as MemoryBlob;
+  const parsed = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, await loadKek())) as MemoryBlob;
   return parsed.url ? parsed : null;
 }
 
-export function memoryCreds(owner: string): ResolvedMemoryCreds | null {
+export async function memoryCreds(owner: string): Promise<ResolvedMemoryCreds | null> {
   // MEMORY_MODE unset ⇒ the memory layer is off: report unavailable so every consumer
   // (suggest agent, brief, push job) degrades to its clean "not connected" no-op.
   if (memoryMode() === 'off') return null;
   try {
-    const blob = readMemoryBlob(owner);
+    const blob = await readMemoryBlob(owner);
     if (blob) {
       // OIDC: the STORED access token is returned as the bearer WITHOUT a network
       // refresh — this is the sync availability/status probe. A live request path
@@ -196,18 +196,21 @@ export function memoryCreds(owner: string): ResolvedMemoryCreds | null {
  * can't strand a stale row under a different `account`. Returns the account label
  * (the URL host) for display.
  */
-export function storeMemoryConnection(owner: string, creds: MemoryCreds): string {
+export async function storeMemoryConnection(owner: string, creds: MemoryCreds): Promise<string> {
   const account = new URL(creds.url).host;
-  const sealed = seal(JSON.stringify({ url: creds.url, apiKey: creds.apiKey, bearer: creds.bearer }), loadKek());
-  sqlite.transaction(() => {
-    sqlite.prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ?`).run(owner, MEMORY_PROVIDER);
-    sqlite
+  const sealed = seal(JSON.stringify({ url: creds.url, apiKey: creds.apiKey, bearer: creds.bearer }), await loadKek());
+  // The delete+insert stays one transaction: "one logical connection per owner" is only
+  // true if a reader can never observe the window between them, and with an await
+  // separating the two statements that window is now real.
+  await store().transaction(async () => {
+    await store().prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ?`).run(owner, MEMORY_PROVIDER);
+    await store()
       .prepare(
         `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(newId(), owner, MEMORY_PROVIDER, account, sealed.iv, sealed.authTag, sealed.ciphertext);
-  })();
+  });
   return account;
 }
 
@@ -246,35 +249,37 @@ export interface MemoryOidcConnection {
  * Never throws — a decrypt failure reads as "unbound", matching how `memoryCreds`
  * degrades rather than breaking the availability probe.
  */
-export function memoryOidcSubject(owner: string): string | null {
+export async function memoryOidcSubject(owner: string): Promise<string | null> {
   try {
-    const blob = readMemoryBlob(owner);
+    const blob = await readMemoryBlob(owner);
     return blob?.kind === 'oidc' ? blob.subject ?? null : null;
   } catch {
     return null;
   }
 }
-export function storeMemoryOidcConnection(owner: string, conn: MemoryOidcConnection): string {
+export async function storeMemoryOidcConnection(owner: string, conn: MemoryOidcConnection): Promise<string> {
   const account = new URL(conn.url).host;
   const blob: OidcBlob = { kind: 'oidc', ...conn };
-  const sealed = seal(JSON.stringify(blob), loadKek());
-  sqlite.transaction(() => {
-    sqlite.prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ?`).run(owner, MEMORY_PROVIDER);
-    sqlite
+  const sealed = seal(JSON.stringify(blob), await loadKek());
+  // Same reason as storeMemoryConnection: replace-as-a-unit needs the transaction now
+  // that the two statements are separated by an await.
+  await store().transaction(async () => {
+    await store().prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ?`).run(owner, MEMORY_PROVIDER);
+    await store()
       .prepare(
         `INSERT INTO connection_tokens (id, owner_id, provider, account, iv, auth_tag, ciphertext)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(newId(), owner, MEMORY_PROVIDER, account, sealed.iv, sealed.authTag, sealed.ciphertext);
-  })();
+  });
   return account;
 }
 
 /** Delete the owner's stored CI-Server connection. Returns rows removed. */
-export function deleteMemoryConnection(owner: string): number {
-  return sqlite
+export async function deleteMemoryConnection(owner: string): Promise<number> {
+  return (await store()
     .prepare(`DELETE FROM connection_tokens WHERE owner_id = ? AND provider = ?`)
-    .run(owner, MEMORY_PROVIDER).changes;
+    .run(owner, MEMORY_PROVIDER)).changes;
 }
 
 /** Auth headers, CI-Import-Tools style: x-api-key and Bearer COEXIST when both are set. */
@@ -339,8 +344,8 @@ async function refreshOidcBlob(owner: string, blob: OidcBlob): Promise<string> {
     refreshToken: tok.refresh_token || blob.refreshToken,
     expiresAt: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString(),
   };
-  const sealed = seal(JSON.stringify(next), loadKek());
-  sqlite
+  const sealed = seal(JSON.stringify(next), await loadKek());
+  await store()
     .prepare(
       `UPDATE connection_tokens
          SET iv = ?, auth_tag = ?, ciphertext = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -359,7 +364,7 @@ async function refreshOidcBlob(owner: string, blob: OidcBlob): Promise<string> {
 export async function resolveLiveMemoryCreds(owner: string): Promise<MemoryCreds | null> {
   let blob: MemoryBlob | null = null;
   try {
-    blob = readMemoryBlob(owner);
+    blob = await readMemoryBlob(owner);
   } catch (err) {
     logger.warn('resolveLiveMemoryCreds: failed to open ci_memory token', { owner, err: (err as Error).message });
   }
@@ -375,8 +380,10 @@ export async function resolveLiveMemoryCreds(owner: string): Promise<MemoryCreds
     const bearer = await inflight;
     return { url: blob.url, bearer };
   }
-  // Manual settings row or env fallback — synchronous resolution is authoritative.
-  const creds = memoryCreds(owner);
+  // Manual settings row or env fallback — memoryCreds is authoritative for those.
+  // (It reads through the store facade now, so it is async; it still performs no
+  // network refresh, which is what "authoritative without a live call" meant here.)
+  const creds = await memoryCreds(owner);
   return creds ? { url: creds.url, apiKey: creds.apiKey, bearer: creds.bearer } : null;
 }
 
