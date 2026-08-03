@@ -625,9 +625,32 @@ function addCategory(taskId: string, name: string): void {
     .run(taskId, tagId);
 }
 
+/**
+ * How far back of 14:00 every seeded completion is nudged, so that it lands in the
+ * MORNING band on the owner's clock (09:00 for an integer age).
+ *
+ * This fixture is about LEARNED WEIGHTS, and it can only be about them if nothing else
+ * in the ranking moves underneath it. Ages alone do not say that: v2.3 reads the modal
+ * TIME BAND of each signature class out of these very rows, and `daysAgo(n)` for whole n
+ * puts every completion at 14:00 — the same afternoon as NOW — so a class with three or
+ * more completions would claim "this is an afternoon habit", match, and collect a
+ * contextFit pairing that has nothing to do with what the owner accepted.
+ *
+ * The morning is the band that says nothing: `OPPOSITE_BAND` pairs only morning⇄evening,
+ * so a morning rhythm read at 14:00 is neither a match nor an opposition and drops out of
+ * the dot product entirely. The weekday half needs no device — 2/3/4 days before a
+ * Wednesday are a Monday, a Sunday and a Saturday, and the weekday pairing has no −1 arm,
+ * so a non-matching weekday is inactive rather than negative.
+ */
+const MORNING_SHIFT_DAYS = 6 / 24;
+
 /** A completed, ritual-confirmed task of one category class at a chosen age. */
 function completedIn(category: string, ageDays: number): string {
-  const id = insertTask(`done-${category}-${ageDays}`, { status: 'done', completedAt: daysAgo(ageDays), mood: 'flat' });
+  const id = insertTask(`done-${category}-${ageDays}`, {
+    status: 'done',
+    completedAt: daysAgo(ageDays + MORNING_SHIFT_DAYS),
+    mood: 'flat',
+  });
   addCategory(id, category);
   return id;
 }

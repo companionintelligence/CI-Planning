@@ -1,6 +1,6 @@
 # Triality v2 — sensing what v1 can't, and knowing what it doesn't know
 
-> ## ⚠️ Status: DESIGN (2026-07-30). Waves v2.1 and v2.2 are SHIPPED; everything else is unbuilt.
+> ## ⚠️ Status: DESIGN (2026-07-30). Waves v2.1, v2.2 and v2.3 (time half only) are SHIPPED; everything else is unbuilt.
 >
 > **v2.1 landed on main the same day this was drafted** (`5625329`, merged with the
 > wave-5 stack via #438): `collectCandidates` now honors `defer_until` (§3.1) and the
@@ -23,19 +23,40 @@
 > negative in the ordinary case rather than an exotic one. §4 below is narrowed to the
 > four-branch form that shipped and keeps the superseded line on the record with its
 > counter-example. Two `coverage` claims and one `evidence` claim are narrowed there too.
-> Waves v2.3+ remain design only.
+>
+> **v2.3 shipped its TIME half (§3.2 · §3.3) and reverted its H half (§3.4).** All of it
+> lives inside `services/triality.ts` — no migration, no new table, no new flag.
+> Completions now carry an owner-tz band and weekday (`localBand` / `localDow`), and each
+> candidate carries the recency-weighted modal band/weekday of its own class
+> (`modalTiming`, floored at `MODAL_MIN_SAMPLE`).
+>
+> Four divergences from what §3.2–§3.4 propose, all from the close-out review, all
+> recorded in their sections — **the code wins on every one**:
+> 1. the time signals landed as `contextFit` **pairings**, not situation dims (the vector
+>    and `DIM_REGISTRY` are untouched, so `coverage` is unmoved by construction);
+> 2. both pairings weigh **½**, because at unit weight two always-firing terms dominated
+>    `F` and inverted the ranking on weekends;
+> 3. §3.3's weekday pairing has **no `−1` arm** — a day-character mismatch is an absence
+>    of support, not opposition;
+> 4. **§3.4 was reverted entirely** — its per-level normalization made `H` non-monotone in
+>    completion count. §1's direction-frequency gap therefore stays **open**.
+>
+> **§3.2's stated-band half did NOT ship** either — see §3.2. Waves v2.4+ remain design
+> only.
 >
 > v1 is built and shipping dark behind `triality_enabled` (waves 1–5, PRs #433–#436
 > plus `feat/triality-wave-5`, all merged via #438). This document extends
 > [triality-design.md](triality-design.md);
 > where the two disagree about v1 behavior, **v1's doc wins**. Every section still
-> describes what is *proposed* except the two marked ✅ SHIPPED (§3.1 and §4), which
-> now describe what was built — and where those two disagree with the code, **the code
-> wins and this doc is wrong**.
+> describes what is *proposed* except the four marked ✅ SHIPPED (§3.1, §3.2, §3.3 and
+> §4), which now describe what was built. §3.4 is marked ❌ REVERTED and records an
+> attempt, not a feature. Where any of them disagrees with the code, **the code wins and
+> this doc is wrong**.
 >
 > Migration numbers are written as `next-free` — check
 > `server/src/db/migrations/index.ts` first, always. The v1 head at drafting was
-> `0143_calibrate_triality_job`; v2.2 moved it to `0144_triality_confidence`. That
+> `0143_calibrate_triality_job`; v2.2 moved it to `0144_triality_confidence`, and v2.3
+> added none — it is pure computation over columns that already existed. That
 > sentence is the only copy of the number in this file, and `index.ts` outranks it.
 >
 > **Doctrines that do NOT change in v2** are listed in §9 and are not up for
@@ -50,7 +71,7 @@ v2 is built on what is actually missing rather than on what feels missing.
 | Signal | v1 status | Where it lives / why not |
 |---|---|---|
 | **Action frequency** | ✅ **Yes** | `H` — recency-weighted completion frequency (14-day half-life, 90-day window), normalized by the pool max. Routines match by membership; block templates have no completion trail so `H = 0`, honestly. |
-| **Direction-type frequency** | ⚠️ **Only indirectly** | Direction is one field of the H/Q *signature* `(kind, direction, category-set)`. So a **rare combination scores `H = 0` even when its direction is the owner's most frequent** — there is no standalone direction-frequency signal, and no back-off. §3.4 fixes this. |
+| **Direction-type frequency** *(⚠️ still open — §3.4's fix was reverted, see there)* | ⚠️ **Only indirectly** | Direction is one field of the H/Q *signature* `(kind, direction, category-set)`. So a **rare combination scores `H = 0` even when its direction is the owner's most frequent** — there is no standalone direction-frequency signal, and no back-off. §3.4 fixes this. |
 | **Recent action sequences** | ⚠️ **First-order, one step** | `Q` — transition frequency from the signature of the single most recent completion. No second-order chains, no time-conditioned transitions. §6. |
 | **Time** | ⚠️ **Coarse only** | `in_work_hours`, `day_type`, `free_gap`, `momentum`. **No time-of-day band and no day-of-week** — and the app already *collects* a band (`ParsedQuick.timeOfDay`, used by the wizard's slot proposal) which the engine ignores entirely. §3.2/§3.3. |
 | **Location** | ❌ **No** | Deliberately rejected in v1 §3 as an admitted blanket hole: no local source, and local-first rules out a location API. §5 opens the only honest route — the memory graph's own place facts. |
@@ -96,7 +117,7 @@ more loudly than listing it would. Add `AND (defer_until IS NULL OR defer_until
 <= :now)` to the candidate query. No schema change, no flag — this is a v1 bug
 with a two-line fix and a test.
 
-### 3.2 Time-of-day band as a paired dim
+### 3.2 Time-of-day band as a paired dim — ✅ SHIPPED in v2.3 (histogram half only)
 
 The situation gains `time_band` ∈ {morning, afternoon, evening} derived from the
 owner's clock and work hours, ternarized *per candidate* rather than globally:
@@ -110,7 +131,36 @@ This also finally consumes `ParsedQuick.timeOfDay`: a task whose band the owner
 *stated* at capture uses the stated band and skips the histogram entirely (user
 testimony beats inference — the same precedence rule as the motivation axis).
 
-### 3.3 Day-of-week
+**As built, three things differ from the two paragraphs above.**
+
+- **It is a `contextFit` pairing, not a situation dim.** The situation does *not* gain
+  `time_band`; the vector and `DIM_REGISTRY` are byte-identical to v2.2. A ternary dim
+  meaning "we know what time it is" would read `+1` for every owner on every call and
+  inflate §4's `coverage` without one byte of new sensing — confidence would read higher
+  while we knew exactly as much. So the situation side of the pair is a constant `+1`
+  (the clock is always known, which is precisely what makes it a poor dim and a good
+  pairing) and the candidate side carries the signal. `coverage` is unmoved by this wave.
+- **Band boundaries are reused, not invented, and the mapping is total.** `bandOfLocalHour`
+  takes the client's existing `BAND_WINDOWS` (`client/src/lib/propose-slot.ts`:
+  morning 05–12, afternoon 12–17, evening 17–22), so a histogram-derived "evening" names
+  the same stretch of clock quick-add already shows. One extension: `BAND_WINDOWS` leaves
+  22:00–05:00 unnamed because nothing is *proposed* at 03:00, but a histogram over real
+  completions must be **total**, so late night folds into `evening`. Both the modal band
+  and `now` are read on the **owner's** clock (`localBand` → `utcToZonedWallTime`), never
+  the server's — the documented Docker shape is a UTC container with a non-UTC owner.
+  The pairing is `+1` on a match, `−1` only on morning⇄evening (afternoon touches both
+  ends and is nobody's opposite), `0` when the class has no modal band.
+- **The STATED band did NOT ship.** `ParsedQuick.timeOfDay` (`engine/quickadd.ts`) is
+  **preview-only** — it is shown in the quick-add confirm step and then dropped; there is
+  no column on `tasks`, and neither the quick-add merge nor the wizard persists it. So
+  there is nowhere to read a stated band *from*, and v2.3 uses the histogram
+  unconditionally. Closing the gap is persistence plumbing, not arithmetic: a migration
+  adding the column, both write paths (quick-add merge and `ElementWizard`), and a
+  wizard control so an owner can state or clear it — after which `modalTiming` gains a
+  stated override and the precedence rule above becomes real. A `TODO(triality v2.4)` on
+  `modalTiming` carries this note in the code.
+
+### 3.3 Day-of-week — ✅ SHIPPED in v2.3
 
 `day_kind` ∈ {weekday, weekend} exists implicitly via `day_type`, but the useful
 signal is finer: "Sunday-ish" behavior is not "Saturday-ish". Add a
@@ -119,7 +169,63 @@ day-of-week from its completion history vs. today, with a sample floor and an
 honest absent state. Deliberately *not* a seven-way categorical dim: ternary is
 the whole vector's contract, so this is match / mismatch / unknown.
 
-### 3.4 Hierarchical H — back-off, so a rare signature isn't evidence-free
+**As built:** a second `contextFit` pairing sharing §3.2's shape and floor, at the same
+`TEMPORAL_PAIR_WEIGHT = 0.5` situation side. `localDow` reads the weekday off the owner's
+local *date* and then a noon-UTC pivot (`lib/tz.ts`'s `isoWeekKey` idiom), so it is
+DST-safe and never the server's day. Both this and §3.2 derive from the same single
+history scan the H/Q pass already makes, so the wave adds no query.
+
+**Two divergences from the proposal above, both from the close-out review:**
+
+*There is no `−1` arm at all.* The proposal fired `−1` across the weekday/weekend line.
+Review killed it on two grounds. Semantically, "she usually does this on a Wednesday and
+today is Saturday" is an **absence of support, not evidence against** — unlike §3.2's
+band, where morning-vs-evening is a real opposition, so the band keeps both arms and this
+one does not. Mechanically, the arm hardcoded Sat/Sun as the weekend while `day_type` —
+eight lines earlier in the same dot product — honours the owner's editable
+`day_of_week_map`, so one `contextFit` call held two contradictory definitions of "day
+character". A weekday-shaped owner opening the app on a Saturday had *both* temporal arms
+firing `−1`, pushing `F` below the neutral `0.5` that a candidate with **no history at
+all** keeps: the engine systematically preferred things the owner had never done, and
+`decisionMargin` reported a full-confidence `dot` basis while doing it.
+
+*Both pairings weigh ½, not 1.* Every other pair in `contextFit` is gated by a situation
+dim that reads `0` most of the time; these two fire on nearly every call, so at unit
+weight they were the loudest terms in `F` by construction rather than by evidence — enough
+to outvote the §6 category-deficit pull that makes Triality a Balance feature. A test now
+pins that a candidate matching *both* band and weekday still loses to one live deficit.
+
+### 3.4 Hierarchical H — back-off, so a rare signature isn't evidence-free — ❌ ATTEMPTED IN v2.3, REVERTED
+
+> **Built, reviewed, and taken back out before merge.** The proposal below is kept as the
+> record of the intent; what follows is why implementing it exactly as written does not
+> work, so the next attempt starts from the real obstacle rather than from here.
+>
+> **1. The coarse levels are tautological under pool-max normalization.** Every task
+> completion matches the level-1 class `(kind = task)`, so a pool-max-normalized level-1
+> strength is identically `1.0` for *everybody*. A never-before-seen task takes the whole
+> residual mass (λ₃ = λ₂ = 0 ⇒ H = 1) and scores as the owner's single strongest habit —
+> the exact inversion the back-off exists to remove. The same holds at level 2 whenever
+> the direction is `null`, which is most owners.
+>
+> **2. Per-level normalization makes the blend non-monotone.** `h₂` sits near `1.0` for
+> anyone in the busiest direction while `h₃` is far below it, so shifting mass *toward
+> the specific level* shifts it toward the *smaller* number. An adversarial search over
+> 200k pools found `H` strictly **decreasing** in completion count for ~7% of
+> same-direction pairs — a candidate losing habit strength by being done more often —
+> with a worst observed gap of 0.428. On one worked pool a never-completed candidate
+> outranked one completed three times inside the window, and the ternary veto then barred
+> the *completed* one from Habitual.
+>
+> Both are properties of the **normalization**, not of the code that implemented them, so
+> the redesign question is "in what units are these levels commensurable?" — blending raw
+> recency masses and normalizing **once** is the obvious candidate, and would also make
+> §1's direction-frequency row honest at last. Until then that gap stands open.
+>
+> A third finding is worth carrying too: the axis that vetoes Novel-slot eligibility reads
+> the *blended* H, so back-off silently inverted eligibility for exactly the
+> novel-signature candidates §3.4 was written to reward. Any future version must decide
+> explicitly whether `normality` ternarizes the blended or the class-level value.
 
 Today's signature is specific enough that a genuinely frequent activity can
 score `H = 0` because its exact `(kind, direction, category-set)` triple is
@@ -137,6 +243,61 @@ sample count grows* (a Jelinek–Mercer-style interpolation, all deterministic
 arithmetic). Two consequences worth stating: direction-type frequency becomes a
 first-class signal, and `N = 1 − H_class` inherits the improvement, so novelty
 stops mistaking "unusual combination" for "unfamiliar activity".
+
+#### What was BUILT and then removed — kept as the record of the attempt
+
+> ⚠️ Everything from here to the end of §3.4 describes code that **no longer exists**.
+> `BACKOFF_K`, `h₂` and the λ arithmetic are gone from `services/triality.ts`; `H` is
+> single-level again. It is preserved because the two "places the block above is wrong"
+> below are real findings the redesign still has to answer, and because the reasons the
+> whole thing came out are only legible next to what went in.
+
+The interpolation was `λ₃ = n₃/(n₃ + K)`, `λ₂ = (1 − λ₃)·n₂/(n₂ + K)` with `BACKOFF_K = 3`
+(at `n = K` the specific level takes exactly half the mass). Both level values are
+recency-weighted on v1's 14-day half-life. `λ₃ + λ₂ ≤ 1` over values in `[0,1]`, so
+`H ∈ [0,1]` by construction — load-bearing, because `triality-learning.ts`'s
+`parseScores` rejects an out-of-range component as corrupt and would silently delete `H`
+from the learning corpus rather than fail loudly.
+
+**1. There is no level-1 term, and the residual mass goes to an honest zero.** On the
+task path `(kind)` is **tautological**: every completion in the window *is* a task, so
+every task candidate matches all of them and a pool-max-normalized level-1 strength is
+identically `1.0` for everybody. Blending it in would hand a never-before-seen task the
+entire residual mass against a value of 1 (`λ₃ = λ₂ = 0 ⇒ H = 1`) and score it as the
+owner's single strongest habit — the exact inversion the back-off exists to fix, and no
+normalizer repairs it, since any whole-history denominator makes the coarsest class 1 by
+definition. The same argument retires the **level-2** term for a candidate with a
+**null direction**: `task|∅` matches every null-direction completion, so an owner with
+no direction tags would read every novel candidate as maximal habit. An unknown coarse
+class is unsensed, not confirmed, so it contributes nothing — the rule `contextFit`
+already applies to a null direction.
+
+**2. `N` does NOT inherit the blend, and that last sentence above is wrong.** Novelty
+asks "is this exact kind of thing unfamiliar", and the back-off deliberately *borrows*
+strength from the candidate's direction; feeding the blend into `N` would let a
+genuinely new combination look familiar merely because its direction is common — the one
+thing the Novel slot exists to catch. `noveltyScores` therefore takes the pure level-3
+`classStrengths`, which the engine carries separately from `H` for exactly this reason.
+Back-off informs the **score**, not the novelty. *(The `normality` ternary is a third
+consumer of this distinction and is called out in the v2.3 close-out review.)*
+
+Two more consequences, stated because they are real semantic changes:
+
+- **Routines are smoothed but borrow from nothing.** A routine has no coarser class, so
+  it gets `λ₃·h₃` and no level-2 term — but it is *still* shrunk, because exempting it
+  would let a routine with two completions outrank a task class with two completions by
+  `1/λ₃` purely by exemption. Templates have no completion trail (`n₃ = 0 ⇒ λ₃ = 0`), so
+  they stay exactly `0` and their v2.2 contract is untouched.
+- **`H` is no longer pinned at `1.0` for the pool's top class.** That is smoothing
+  working — three completions should not look like thirty — but it *is* a change to a
+  number the Balance → Metrics tiles and the learning corpus both read.
+
+`evidenceRows` (§4) is deliberately **unchanged**: it still counts the level-3 rows
+`historyMatches` matched. Evidence answers "how much do we know about *this* class", and
+a borrowed level-2 row adds no knowledge about it. The visible consequence is that a
+candidate can now legitimately carry `H > 0` with `evidenceRows = 0` — which under the
+weakest link bands every newly-promoted pick a `guess`. Whether borrowed rows should be
+priced into evidence at a discount is a live v2.5 question, not something v2.3 settled.
 
 ## 4. Track B — confidence scoring — ✅ SHIPPED in v2.2 (report only, no gating)
 
@@ -510,7 +671,7 @@ must be redesigned instead:
 |---|---|---|
 | **v2.1** ✅ SHIPPED (`5625329`) | §3.1 `defer_until` · §1's `memory_context` truthfulness fix | Two small correctness fixes with no new concepts; §3.1 is arguably a v1 backport and the truthfulness fix is a §4 prerequisite. Landed with the wave-5 stack merge (#438). |
 | **v2.2** ✅ SHIPPED | §4 confidence (derive + report only, no gating) | Reporting first, gating second: the calibration tile must show the model is right before it is allowed to suppress a slot. Built as `services/triality-confidence.ts` + migration `0144`, carried on both `/next` surfaces and on the metrics payload as `calibration`. **A `guess` still fills its slot** — nothing was suppressed, reordered or filtered. |
-| **v2.3** | §3.2/§3.3 time dims · §3.4 back-off H | The cheapest real sensing gains; both feed §4's coverage and evidence immediately. |
+| **v2.3** ⚠️ PARTIAL — §3.2/§3.3 shipped, §3.4 reverted | §3.2/§3.3 time dims · ~~§3.4 back-off H~~ | The cheapest real sensing gains. Built entirely in `services/triality.ts` — **no migration, no table, no flag**. The time signals landed as `contextFit` **pairings**, not situation dims, so they feed neither `coverage` nor `evidence` and the premise of this row's original "both feed §4 immediately" is retracted: coverage is unmoved by construction (§3.2), and `evidenceRows` is unchanged by choice (§3.4). §3.2's **stated-band** half did not ship — `ParsedQuick.timeOfDay` is preview-only and there is no column to read. |
 | **v2.4** | §5 memory dims + the snapshot cache | The biggest gain and the biggest risk; lands after the confidence machinery can report what the new dims did to coverage. |
 | **v2.5** | §7 targeted feedback · §4 gating switched on | Attribution needs the reason column and a trustworthy confidence model. |
 | **later** | §6 sequence depth · §8 synthesis | Sparsest data and highest complexity; genuinely optional. |

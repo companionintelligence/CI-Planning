@@ -1,7 +1,7 @@
 import { sqlite } from '../db/index.js';
 import { ollama } from '../mcp/ollama.js';
 import { logger } from '../lib/logger.js';
-import { localDateInTZ } from '../lib/tz.js';
+import { localDateInTZ, utcToZonedWallTime } from '../lib/tz.js';
 import { ownerTimezone } from '../engine/recurrence-generate.js';
 import { entityCategoryNames } from './tags.js';
 import { buildSituationVector, type SituationVector } from './triality-vector.js';
@@ -116,6 +116,84 @@ const EMBED_CANDIDATE_CAP = 40;   // pool size past which embedding is skipped e
 const EMBED_TIMEOUT_MS = 3_000;   // per-call ceiling (ollama.embed's own default is 30s)
 const NOVELTY_BUDGET_MS = 4_000;  // whole-stage deadline, centroid + candidates together
 
+// ── Time of day + day of week (v2.3, design §3.2/§3.3) ────────────────────────
+
+/**
+ * The app already has ONE time-of-day vocabulary: quick-add's `timeOfDay`
+ * (agents/rubric.ts TIME_OF_DAY_RUBRIC / TIME_OF_DAY_VALUES) with the concrete hour
+ * boundaries the client's gap-finder narrows to (client/src/lib/propose-slot.ts
+ * BAND_WINDOWS: 05–12 / 12–17 / 17–22). Reused verbatim rather than invented, so a
+ * histogram-derived "evening" here means the same stretch of clock the owner already
+ * sees when quick-add says "evening".
+ */
+export type TimeBand = 'morning' | 'afternoon' | 'evening';
+
+const BAND_MORNING_FROM_HOUR = 5;
+const BAND_AFTERNOON_FROM_HOUR = 12;
+const BAND_EVENING_FROM_HOUR = 17;
+
+/**
+ * BAND_WINDOWS leaves 22:00–05:00 unnamed (nothing is *proposed* at 03:00), but a
+ * histogram over real completions must be TOTAL — an owner who closes tasks at
+ * midnight has to land somewhere. Late night is the tail of the evening, not the head
+ * of the morning, so it folds into `evening`; that also keeps the mapping monotone in
+ * local wall time within a waking day.
+ */
+export function bandOfLocalHour(hour: number): TimeBand {
+  if (hour < BAND_MORNING_FROM_HOUR) return 'evening';
+  if (hour < BAND_AFTERNOON_FROM_HOUR) return 'morning';
+  if (hour < BAND_EVENING_FROM_HOUR) return 'afternoon';
+  return 'evening';
+}
+
+/** Afternoon is adjacent to both ends and is therefore NEVER the opposite of anything —
+ *  only morning⇄evening is a genuine wrong-end-of-the-day mismatch. */
+const OPPOSITE_BAND: Record<TimeBand, TimeBand | null> = {
+  morning: 'evening',
+  afternoon: null,
+  evening: 'morning',
+};
+
+/** The band a UTC instant falls in, read on the OWNER's clock. A UTC hour is not the
+ *  owner's morning — the documented Docker shape is a UTC container with a non-UTC
+ *  owner, so that is the default configuration, not an exotic one. */
+export function localBand(utcISO: string, tz: string): TimeBand {
+  return bandOfLocalHour(Number(utcToZonedWallTime(utcISO, tz).slice(0, 2)));
+}
+
+/** Weekday 0–6 (Sun–Sat) of a UTC instant on the owner's calendar. Goes through the
+ *  owner-tz local DATE and then the noon-UTC pivot (lib/tz.ts isoWeekKey's idiom), so
+ *  it is DST-safe and never the server's day. */
+export function localDow(utcISO: string, tz: string): number {
+  return new Date(`${localDateInTZ(utcISO, tz)}T12:00:00Z`).getUTCDay();
+}
+
+// (No weekend predicate here on purpose. The weekday pairing has no −1 arm, and a
+// hardcoded Sat/Sun would have contradicted `day_type`, which honours the owner's
+// editable day_of_week_map — two definitions of "weekend" inside one dot product.)
+
+/**
+ * Same-class completions needed before a candidate claims a modal band or weekday.
+ *
+ * 3 is the smallest sample where "most often" can outvote a single stray observation
+ * (2–1); at 2 the mode is either a coincidence or a tie, and at 1 it is a single data
+ * point wearing the word "usually". Deliberately the same floor in both dimensions —
+ * a number the owner never sees but that decides whether we claim to know their
+ * rhythm should not mean two different things in two adjacent lines of code.
+ */
+const MODAL_MIN_SAMPLE = 3;
+
+/**
+ * How loudly the two temporal pairings (§3.2/§3.3) may speak inside `contextFit`.
+ *
+ * Half, not one. Every other pair there is gated by a situation dim that reads 0 most
+ * of the time; these fire on nearly every call, and there are two of them, so at full
+ * weight they dominated F by construction rather than by evidence. Half keeps a matched
+ * rhythm meaningful without letting "you usually do this on a Wednesday evening"
+ * outvote the category-deficit pull that makes Triality a Balance feature at all.
+ */
+const TEMPORAL_PAIR_WEIGHT = 0.5;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type ActionKind = 'task' | 'routine' | 'flight' | 'template';
@@ -128,6 +206,17 @@ export interface Candidate {
   direction: string | null;      // owner's direction-tag name (Work/Home/Community), lowercased
   categories: string[];          // Balance-dimension names, lowercased
   motivation: 'me' | 'us' | 'them' | null;
+  /**
+   * When the owner USUALLY does this class of action, derived from their own
+   * completions (v2.3 §3.2/§3.3) — not declared, not guessed.
+   *
+   * OPTIONAL because they are derived AFTER collection: `collectCandidates` runs before
+   * the history scan, so a freshly collected Candidate legitimately has neither. Absent
+   * and null mean the same thing to every reader — "no honest mode" — which becomes a
+   * candidate-side 0 in `contextFit` and therefore contributes nothing at all.
+   */
+  modalBand?: TimeBand | null;
+  modalDow?: number | null;      // 0–6, Sun–Sat, on the owner's calendar
 }
 
 /** Which level of the lexicographic key `[dot, S, ref]` separated the winner from the
@@ -345,7 +434,20 @@ export function signature(c: Pick<Candidate, 'kind' | 'direction' | 'categories'
 }
 
 /** Exported because evidence (v2.2 confidence) counts the very rows H sums. */
-export interface CompletionRow { id: string; completed_at: string; sig: string; pattern_ids: string[] }
+export interface CompletionRow {
+  id: string;
+  completed_at: string;
+  sig: string;
+  pattern_ids: string[];
+  /** The row's own direction — the level-2 back-off class (§3.4), kept beside `sig`
+   *  rather than re-parsed out of it (the delimiter is a display detail, not an API). */
+  direction: string | null;
+  /** When this happened on the OWNER's clock and calendar, resolved once here so the
+   *  per-candidate histograms are a pure count and the tz conversion happens |history|
+   *  times rather than |history| × |candidates| times. */
+  band: TimeBand;
+  dow: number;
+}
 
 /**
  * The ONE definition of "this history row is an instance of this candidate".
@@ -364,7 +466,7 @@ export function historyMatches(c: Candidate, h: CompletionRow): boolean {
 
 /** The owner's completion history in the window, each with its signature —
  *  one scan feeds H, Q, and the routine special case. */
-function completionHistory(ownerId: string, now: Date): CompletionRow[] {
+function completionHistory(ownerId: string, now: Date, tz: string): CompletionRow[] {
   const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString();
   const rows = sqlite
     .prepare(
@@ -384,8 +486,85 @@ function completionHistory(ownerId: string, now: Date): CompletionRow[] {
       completed_at: r.completed_at,
       sig: signature({ kind: 'task', direction: dir, categories: cats }),
       pattern_ids: patterns,
+      direction: dir,
+      band: localBand(r.completed_at, tz),
+      dow: localDow(r.completed_at, tz),
     };
   });
+}
+
+/**
+ * The MODE of a set of observations, or null when there is no honest one.
+ *
+ * Two ways to have none, and both matter: fewer than MODAL_MIN_SAMPLE observations
+ * (too little to call anything usual), or a top bucket that does not STRICTLY beat the
+ * runner-up. The strictness is what keeps this deterministic without a tie-break rule:
+ * three completions on three different weekdays describe no weekly rhythm, and picking
+ * the numerically smallest one would invent a pattern out of insertion order.
+ */
+function strictMode<T extends string | number>(values: readonly T[]): T | null {
+  if (values.length < MODAL_MIN_SAMPLE) return null;
+  const counts = new Map<T, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let top: T | null = null;
+  let topN = 0;
+  let secondN = 0;
+  for (const [v, n] of counts) {
+    if (n > topN) { secondN = topN; top = v; topN = n; }
+    else if (n > secondN) secondN = n;
+  }
+  return topN > secondN ? top : null;
+}
+
+/**
+ * TODO(triality v2.4): a STATED band should beat the histogram (§3.2) — if the owner
+ * said "evening", that outranks whatever their completions happen to show. It is not
+ * wired here because there is nowhere to read it from: `ParsedQuick.timeOfDay`
+ * (engine/quickadd.ts) is PREVIEW-ONLY — no column on tasks, nothing persisted by the
+ * quick-add merge or the wizard. Closing the gap is persistence plumbing (a migration
+ * plus both write paths plus the wizard), which is a different change from v2.3's pure
+ * computation; when it lands, `modalTiming` gains a stated override and this comment
+ * goes away with it.
+ */
+/** The candidate's modal band/weekday over its OWN signature-class completions —
+ *  `historyMatches` again, so "this class" means exactly what it means for H and for
+ *  evidence, and a routine's rhythm comes from its members' completions. */
+function modalTiming(
+  c: Candidate,
+  history: readonly CompletionRow[],
+  now: Date,
+): Pick<Candidate, 'modalBand' | 'modalDow'> {
+  // RECENCY-WEIGHTED, on the same half-life H uses. An unweighted histogram over 90 days
+  // lets an ABANDONED rhythm outvote the current one — and because morning⇄evening is an
+  // opposition, that stale mode does not merely fail to help, it fires −1 against what
+  // the owner actually does now. Someone who moved their run from morning to evening six
+  // weeks ago would have H saying "this is your habit" and F saying "wrong end of your
+  // day", from the same rows, because only one of the two respected recency.
+  const bands = new Map<TimeBand, number>();
+  const dows = new Map<number, number>();
+  let matches = 0;
+  for (const h of history) {
+    if (!historyMatches(c, h)) continue;
+    matches++;
+    const w = recencyWeight(h.completed_at, now);
+    bands.set(h.band, (bands.get(h.band) ?? 0) + w);
+    dows.set(h.dow, (dows.get(h.dow) ?? 0) + w);
+  }
+  if (matches < MODAL_MIN_SAMPLE) return { modalBand: null, modalDow: null };
+  return { modalBand: strictWeightedMode(bands), modalDow: strictWeightedMode(dows) };
+}
+
+/** The single heaviest bucket, or null on a tie — a tie is not a rhythm. Iteration is
+ *  over insertion order, which is history order, so the result is deterministic. */
+function strictWeightedMode<T>(weights: ReadonlyMap<T, number>): T | null {
+  let best: T | null = null;
+  let bestW = 0;
+  let tied = false;
+  for (const [k, w] of weights) {
+    if (w > bestW + 1e-9) { best = k; bestW = w; tied = false; }
+    else if (Math.abs(w - bestW) <= 1e-9) tied = true;
+  }
+  return tied ? null : best;
 }
 
 /** Recency weight: 2^(-ageDays / half-life). */
@@ -395,35 +574,74 @@ function recencyWeight(completedAt: string, now: Date): number {
 }
 
 /**
- * H per candidate: recency-weighted completion frequency of its signature class,
- * normalized by the pool max so the top habitual class sits at 1. Routines match
- * by MEMBERSHIP (completing any member task is doing the routine); templates
- * have no completion trail and stay 0 — honestly, not accidentally.
+ * H per candidate: the recency-weighted completion frequency of its signature class
+ * (half-life 14d), normalized by the pool max so H lands in [0,1].
  *
- * `counts` is the same match, unweighted and un-normalized. It rides along rather than
- * being recomputed because the two numbers MUST describe the same rows (v2.2 evidence
- * qualifies H), and because neither is recoverable from the other: pool-max
- * normalization pins the top candidate at 1.0 whether it has 200 completions or 1.
+ * v2.3 ATTEMPTED an interpolated back-off here (§3.4) — blending a (kind, direction)
+ * level in so a novel signature in a frequent direction would not score a flat 0. It
+ * was REVERTED, and the reason is worth keeping so nobody rebuilds it the same way:
+ *
+ *  - The coarse levels are TAUTOLOGICAL under pool-max normalization. Every task
+ *    completion matches (kind = task), so a level-1 strength is identically 1.0 for
+ *    everybody, and a never-before-seen task took the entire residual mass against
+ *    that 1 — scoring as the owner's strongest habit. The same holds at level 2
+ *    whenever the direction is null, which is most owners.
+ *  - Worse, normalizing each level by ITS OWN pool max makes the blend NON-MONOTONE.
+ *    h2 sits near 1.0 for anyone in the busiest direction while h3 is far below it, so
+ *    shifting mass toward the SPECIFIC level shifts it toward the SMALLER number. An
+ *    adversarial search found H strictly DECREASING in completion count across ~7% of
+ *    same-direction pairs: a candidate lost habit strength by being done more often.
+ *
+ * Both are properties of the NORMALIZATION, not of the code that implemented it, so a
+ * future back-off has to answer "in what units are these levels commensurable?" first
+ * — blending raw recency masses and normalizing once is the obvious candidate. Until
+ * then §1's direction-frequency gap stands open, which is the honest state.
+ *
+ * OLD NOTE, kept because it still explains why level 1 can never simply be added:
+ * honest ZERO instead. The design's third level is (kind) alone — but on the task path
+ * that class is TAUTOLOGICAL: every completion in the window is a task, so every task
+ * candidate matches all of them, and a pool-max-normalized level-1 strength is
+ * identically 1.0 for everybody. Blending that in would hand a never-before-seen task
+ * the ENTIRE residual mass against a value of 1 (λ3 = λ2 = 0 ⇒ H = 1) and score it as
+ * the owner's single strongest habit — the exact inversion the back-off exists to fix.
+ * The same argument retires the level-2 pairing for a candidate with NO direction: a
+ * null direction matches every null-direction completion, so "I know nothing about you"
+ * would again read as maximal habit. An unknown coarse class is unsensed, not
+ * confirmed, so it contributes nothing — the same rule contextFit already applies to a
+ * null direction and that Decision 1 applies to an unknown modal band.
+ *
+ * Routines match by MEMBERSHIP and templates have no completion trail at all, so a
+ * template scores exactly 0 — honestly, not accidentally.
+ *
+ * `classStrengths` is the same value under the name novelty uses for it (N = 1 − it),
+ * and `counts` is the unweighted match count, which is what v2.2's evidence term
+ * qualifies H with. The two must always describe the SAME rows.
  */
 function habitStrengths(
   cands: Candidate[],
   history: CompletionRow[],
   now: Date,
-): { strengths: number[]; counts: number[] } {
+): { strengths: number[]; classStrengths: number[]; counts: number[] } {
   const counts: number[] = [];
-  const raw = cands.map((c) => {
-    let sum = 0;
-    let n = 0;
+  const raw3: number[] = [];
+
+  for (const c of cands) {
+    let sum3 = 0, k3 = 0;
     for (const h of history) {
-      if (!historyMatches(c, h)) continue;
-      sum += recencyWeight(h.completed_at, now);
-      n++;
+      if (historyMatches(c, h)) { sum3 += recencyWeight(h.completed_at, now); k3++; }
     }
-    counts.push(n);
-    return sum;
-  });
-  const max = Math.max(...raw, 0);
-  return { strengths: raw.map((v) => (max > 0 ? v / max : 0)), counts };
+    counts.push(k3);
+    raw3.push(sum3);
+  }
+
+  const max3 = Math.max(...raw3, 0);
+  const classStrengths = raw3.map((v) => (max3 > 0 ? v / max3 : 0));
+
+  // H IS the level-3 class strength. `strengths` and `classStrengths` are the same
+  // numbers today; both are returned because callers mean different things by them
+  // (H ranks, classStrengths defines novelty) and the v2.3 attempt to make them
+  // diverge is what had to be reverted — see the header.
+  return { strengths: classStrengths, classStrengths, counts };
 }
 
 /** Q: first-order transition frequency — of all historical (prev → next)
@@ -460,15 +678,22 @@ function cosineDistance(a: number[], b: number[]): number {
  * N: categorical novelty (1 − H_class), blended 50/50 with embedding-centroid
  * distance when embeddings answer. Ollama down / no embedFn ⇒ categorical only —
  * never blocks, never throws past this frame.
+ *
+ * `classStrengths` — the LEVEL-3 value — not the blended H, and the parameter is named
+ * for it so the two can never be swapped by accident. Novelty asks "is this exact kind
+ * of thing unfamiliar", and the v2.3 back-off deliberately borrows strength from the
+ * candidate's DIRECTION: feeding the blend in here would let a genuinely new
+ * combination look familiar merely because its direction is common, which is the one
+ * thing the Novel slot exists to catch. Back-off informs the SCORE, never the novelty.
  */
 async function noveltyScores(
   cands: Candidate[],
-  H: number[],
+  classStrengths: number[],
   ownerId: string,
   now: Date,
   embedFn: TrialityOpts['embedFn'],
 ): Promise<number[]> {
-  const categorical = H.map((h) => 1 - h);
+  const categorical = classStrengths.map((h) => 1 - h);
   // Explicit short per-call timeout: inheriting ollama.embed's 30s default put a
   // 30-second-per-title ceiling on a request the banner is waiting for.
   const embed = embedFn === null ? null : embedFn ?? (async (t: string) => ollama.embed(t, EMBED_TIMEOUT_MS));
@@ -543,7 +768,7 @@ async function noveltyScores(
  * normalized over pairs where BOTH sides are non-zero, rescaled [−1,1] → [0,1].
  * No active pairs ⇒ 0.5 (neutral): an unsensed boundary argues neither way.
  */
-export function contextFit(vector: SituationVector, c: Candidate): number {
+export function contextFit(vector: SituationVector, c: Candidate, now: Date, tz: string): number {
   const d = vector.dims;
   const pairs: Array<[number, number]> = [];
 
@@ -568,6 +793,45 @@ export function contextFit(vector: SituationVector, c: Candidate): number {
   const workAlign = c.direction === 'work' ? 1 : c.direction ? -1 : 0;
   pairs.push([d.in_work_hours ?? 0, workAlign]);
   pairs.push([d.day_type ?? 0, workAlign]);
+
+  // ── Time of day and day of week (v2.3 §3.2/§3.3) ────────────────────────────
+  //
+  // WHY THESE ARE PAIRINGS AND NOT SITUATION DIMS — the next reader will wonder.
+  //
+  // The vector's contract is BALANCED TERNARY. "It is afternoon" is a 3-way fact and
+  // "it is Tuesday" a 7-way one; neither is ternary, and neither has an honest −1.
+  // Worse, a dim meaning "we know what time it is" would read +1 for every owner on
+  // every call, which would inflate v2.2's coverage (non-zero active dims ÷ active
+  // dims) without one byte of new SENSING — confidence would read higher while we knew
+  // exactly as much. So the vector is untouched and both signals enter here instead.
+  //
+  // Situation side is a constant +1: the clock and the calendar are ALWAYS known, which
+  // is precisely why they make a poor dim and a good pairing. The candidate side does
+  // all the work, and `active` below drops any pair whose candidate side is 0 — so a
+  // candidate with no rhythm of its own contributes nothing rather than a guessed zero.
+  const bandFit =
+    c.modalBand == null ? 0
+      : c.modalBand === localBand(now.toISOString(), tz) ? 1
+      : OPPOSITE_BAND[c.modalBand] === localBand(now.toISOString(), tz) ? -1
+      : 0;
+  // SUB-UNIT WEIGHT, deliberately. Every other pair here is gated by a sensed situation
+  // dim that is 0 most of the time; these two fire on almost every call, and there are
+  // two of them. At full weight they became the loudest terms in F by construction — a
+  // weekday-shaped owner opening the app on a Saturday got both arms firing −1 at once,
+  // which drove F below the neutral 0.5 that a candidate with NO history keeps, i.e. the
+  // engine systematically preferred things the owner had never done. They modulate; they
+  // do not decide.
+  pairs.push([TEMPORAL_PAIR_WEIGHT, bandFit]);
+
+  // Weekday: +1 on the same weekday, 0 otherwise. There is NO −1 arm, and that asymmetry
+  // is the point: "she usually does this on a Wednesday and today is Saturday" is an
+  // ABSENCE OF SUPPORT, not evidence against — unlike the band, where morning-vs-evening
+  // is a genuine opposition. A −1 here also silently re-hardcoded Sat/Sun as the weekend
+  // while `day_type`, eight lines above, honours the owner-editable week map; dropping
+  // the arm removes the contradiction rather than papering over it.
+  const nowDow = localDow(now.toISOString(), tz);
+  const dowFit = c.modalDow != null && c.modalDow === nowDow ? 1 : 0;
+  pairs.push([TEMPORAL_PAIR_WEIGHT, dowFit]);
 
   const active = pairs.filter(([s, a]) => s !== 0 && a !== 0);
   if (active.length === 0) return 0.5;
@@ -689,14 +953,15 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
 
   const vector = buildSituationVector(ownerId, now);
   const gapMin = rawFreeGapMinutes(ownerId, now);
+  const tz = ownerTimezone(ownerId);
 
   // Stage 1 — hard capacity filter (§1: pipeline order is normative). Only a
   // KNOWN misfit drops: unknown gap or unknown estimate cannot honestly exclude.
   const all = collectCandidates(ownerId, now);
-  const cands = all.filter(
+  const fitting = all.filter(
     (c) => !(gapMin != null && c.estimateMin != null && c.estimateMin > gapMin - GAP_MARGIN_MIN),
   );
-  if (cands.length === 0) {
+  if (fitting.length === 0) {
     return {
       picks: [null, null, null],
       emptyReasons: {
@@ -708,12 +973,16 @@ export async function trialityNext(ownerId: string, now: Date, opts: TrialityOpt
     };
   }
 
-  // Stage 2 — component scores.
-  const history = completionHistory(ownerId, now);
-  const { strengths: H, counts: histCounts } = habitStrengths(cands, history, now);
+  // Stage 2 — component scores. The history scan comes first because the candidates'
+  // modal band/weekday are DERIVED from it (§3.2/§3.3) — they are the owner's own
+  // rhythm for this class, never a declared preference.
+  const history = completionHistory(ownerId, now, tz);
+  const cands = fitting.map((c) => ({ ...c, ...modalTiming(c, history, now) }));
+  const { strengths: H, classStrengths, counts: histCounts } = habitStrengths(cands, history, now);
   const Q = sequenceFits(cands, history);
-  const N = await noveltyScores(cands, H, ownerId, now, opts.embedFn);
-  const F = cands.map((c) => contextFit(vector, c));
+  // N tracks the LEVEL-3 class, not the backed-off H — see `noveltyScores`.
+  const N = await noveltyScores(cands, classStrengths, ownerId, now, opts.embedFn);
+  const F = cands.map((c) => contextFit(vector, c, now, tz));
   const C = cands.map((c) => capacityScore(c, gapMin, vector.dims.day_energy ?? 0));
 
   // Stage 3 — ternary triple [normality, pragmatism, capacity] by pool thirds.
