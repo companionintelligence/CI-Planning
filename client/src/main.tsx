@@ -5,8 +5,9 @@ import { registerSW } from './sw/register.js';
 import { initTelemetry } from './lib/telemetry.js';
 import './index.css';
 
-// Error reporting — opt-in and off by default: inert unless VITE_SENTRY_DSN was baked
-// in at BUILD time *and* the server confirms reporting is permitted right now
+// Error reporting — opt-out, on by default once configured: reports when
+// VITE_SENTRY_DSN was baked in at BUILD time *and* the server confirms reporting has
+// not been switched off. Inert without either
 // (docs/operations/error-reporting.md). Started first so it races the initial mount
 // rather than following it, but deliberately NOT awaited: first paint must not wait on
 // a network round trip, and initTelemetry never rejects.

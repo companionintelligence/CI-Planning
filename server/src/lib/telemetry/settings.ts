@@ -1,11 +1,14 @@
 /**
- * Telemetry (Sentry) settings resolution — the opt-in gate.
+ * Telemetry (Sentry) settings resolution — the reporting gate.
  *
- * Error reporting is **opt-in and off by default**: with no `SENTRY_DSN` nothing is
- * initialised and the process makes no outbound connection at all. Two kill switches
- * disable reporting even when a DSN has been baked into an image (which is how a Hub
- * marketplace install would receive one), so an operator can always turn telemetry off
- * without rebuilding:
+ * Error reporting is **opt-out**: wherever a `SENTRY_DSN` is configured — which is how
+ * a Hub marketplace install receives one — reporting is on by default. With no
+ * `SENTRY_DSN` nothing is initialised and the process makes no outbound connection at
+ * all; that is the absence of configuration, not a privacy setting, and it is why
+ * `no-dsn` remains a disabled reason below.
+ *
+ * Two kill switches disable reporting even when a DSN has been baked into an image, so
+ * a user or operator can always turn telemetry off without rebuilding:
  *
  *   - `CI_TELEMETRY=off`   — explicit opt-out
  *   - `CI_LOCAL_ONLY=true` — local-only mode must mean zero phone-home

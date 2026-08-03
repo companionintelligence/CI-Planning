@@ -21,10 +21,12 @@ COPY client/package.json ./client/
 COPY server/package.json ./server/
 RUN pnpm install --frozen-lockfile
 
-# Browser error reporting — OPTIONAL and off by default. Vite INLINES import.meta.env.*
-# into the bundle, so the client DSN is a BUILD-time value: it has to be passed here,
-# not set in the container's runtime environment where it would do nothing. Unset (the
-# default) ⇒ the bundle initialises no Sentry and makes no outbound connection.
+# Browser error reporting — opt-OUT: a bundle built WITH this DSN reports by default,
+# subject to the server's runtime verdict at GET /api/config/telemetry. Vite INLINES
+# import.meta.env.* into the bundle, so the client DSN is a BUILD-time value: it has to
+# be passed here, not set in the container's runtime environment where it would do
+# nothing. Unset — as in an unconfigured build like this one — ⇒ the bundle initialises
+# no Sentry and makes no outbound connection.
 # The server half is plain runtime env (SENTRY_DSN) and deliberately is NOT an ARG —
 # baking a DSN into the image would take an operator a rebuild to undo. Posture and
 # kill switches: docs/operations/error-reporting.md.

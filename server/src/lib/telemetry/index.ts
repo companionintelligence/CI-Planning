@@ -6,9 +6,11 @@
  * ./boot.js. Instrumentation applied after the app modules are loaded misses whatever
  * they set up at import time.
  *
- * Reporting is opt-in: with no `SENTRY_DSN` this initialises nothing and the process
- * makes no outbound connection. See ./settings.ts for the two kill switches that beat
- * a configured DSN, and ./scrub.ts for what is stripped from every payload.
+ * Reporting is opt-out: with a `SENTRY_DSN` configured this initialises and reports by
+ * default. With no `SENTRY_DSN` it initialises nothing and the process makes no
+ * outbound connection — an unconfigured build rather than an opted-out one. See
+ * ./settings.ts for the two kill switches that beat a configured DSN, and ./scrub.ts
+ * for what is stripped from every payload.
  */
 
 import * as Sentry from '@sentry/node';

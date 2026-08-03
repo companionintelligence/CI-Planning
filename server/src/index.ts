@@ -8,9 +8,10 @@
 // every fail-closed guard reads cleanly. Keep this file import-free (no static imports)
 // so nothing — and no guard — evaluates before the try/catch is in place.
 
-// Sentry error reporting — OPT-IN and off by default (no SENTRY_DSN ⇒ nothing
-// initialises and the process opens no outbound connection; see lib/telemetry/settings.ts
-// for the CI_TELEMETRY / CI_LOCAL_ONLY kill switches). Loaded first so instrumentation
+// Sentry error reporting — OPT-OUT: on by default wherever a SENTRY_DSN is configured
+// (no SENTRY_DSN ⇒ nothing initialises and the process opens no outbound connection;
+// see lib/telemetry/settings.ts for the CI_TELEMETRY / CI_LOCAL_ONLY kill switches that
+// turn it off). Loaded first so instrumentation
 // is in place before any application module evaluates, and dynamically for the same
 // reason boot.ts is: nothing may evaluate outside a try/catch. Its own catch is
 // separate and non-fatal — a telemetry problem must never be why the app won't start.
