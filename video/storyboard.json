@@ -308,16 +308,16 @@
         { "label": "Store", "value": "SQLite on your disk" },
         { "label": "Account", "value": "None required" },
         { "label": "Agents", "value": "MCP-native" },
-        { "label": "Runs on", "value": "The Hub, or your laptop" }
+        { "label": "Runs on", "value": "Companion Hub, or your laptop" }
       ]
     },
     {
       "id": "close",
       "kind": "outro",
       "seconds": 5,
-      "cta": "Own your AI.",
+      "cta": "UnCloud your life.",
       "url": "ci.computer",
-      "narration": "Companion Planning, from Companion Intelligence. Own your AI."
+      "narration": "Companion Planning, from Companion Intelligence. UnCloud your life."
     }
   ]
 }
