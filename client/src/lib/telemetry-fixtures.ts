@@ -39,6 +39,15 @@ export const STRING_CASES: ScrubCase[] = [
   { name: 'macOS home', input: '/Users/liam/devel/ci/file.ts', expected: '~/devel/ci/file.ts' },
   { name: 'linux home', input: '/home/ci/data/companion.db', expected: '~/data/companion.db' },
   { name: 'windows home', input: 'C:\\Users\\liam\\app.log', expected: '~\\app.log' },
+  // The forward-slash Windows form. The BACKSLASH case above is unaffected by
+  // rule ORDER, so it cannot catch a longest-prefix regression — only this one
+  // can. With the macOS rule ordered first it consumes the `/Users/liam` inside
+  // `C:/Users/liam` and strands a `C:~` with the drive letter still attached.
+  {
+    name: 'windows home, forward-slash',
+    input: 'C:/Users/liam/planning/plan.db',
+    expected: '~/planning/plan.db',
+  },
   {
     name: 'ordinary text is left alone',
     input: 'Cannot read properties of undefined (reading "id")',
@@ -86,10 +95,22 @@ export const SENSITIVE_KEYS = [
   'pepper',
   'private_key',
   'private-key',
+  // Signatures. A request signature is a credential in its own right, and the fleet
+  // contract mandates the term. CI-Server's scrubber already carries it.
+  'signature',
+  'x-hub-signature',
   // Person identifiers. Not credentials, but the same class of data as the hostname we
   // drop from `server_name`. `x-ci-hub-user` arrives from the CI-Hub proxy even though
   // nothing in this repo reads it; `x-test-owner` the app does read.
   'x-ci-hub-user',
+  // The rest of CI-Hub's signed identity triple. Traefik is configured with
+  // `authResponseHeaders: X-CI-Hub-User,X-CI-Hub-User-Timestamp,X-CI-Hub-User-Signature`,
+  // so all three arrive on EVERY request and `@sentry/core` attaches
+  // `headers: headersToDict(headers)` unfiltered. `IDENTITY_KEY_PATTERN` is
+  // end-anchored (`(?:^|[-_])user$`) by design — it keeps `user-agent` — so it
+  // matches only the bare header and these two shipped in cleartext.
+  'x-ci-hub-user-timestamp',
+  'x-ci-hub-user-signature',
   'x-forwarded-user',
   'x-ci-owner',
   'x-test-owner',

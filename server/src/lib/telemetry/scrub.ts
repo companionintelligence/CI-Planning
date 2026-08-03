@@ -45,17 +45,31 @@ const SECRET_PATTERNS = [
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/gi,
 ];
 
+// Windows FIRST — longest prefix wins. The macOS rule also matches the
+// `/Users/<name>` inside `C:/Users/<name>`, so with macOS ahead of it the
+// forward-slash Windows rule is unreachable dead code and the replacement leaves a
+// stranded `C:~/…` with the drive letter still attached. The backslash form is
+// order-independent, which is why a suite covering only that form stays green.
 const HOME_PATH_PATTERNS = [
-  /\/Users\/[^/\s]+/g, // macOS
-  /\/home\/[^/\s]+/g, // Linux
   /[A-Za-z]:\\Users\\[^\\/\s]+/g, // Windows (backslash)
   /[A-Za-z]:\/Users\/[^/\s]+/g, // Windows (forward-slash)
+  /\/Users\/[^/\s]+/g, // macOS
+  /\/home\/[^/\s]+/g, // Linux
 ];
 
 // `api[-_ ]?key` rather than a bare `apikey|api_key`, so the hyphenated `x-api-key`
 // header this app actually authenticates with is caught.
+//
+// `signature` is fleet-mandated (CI-Server's scrubber carries it) and load-bearing
+// here: CI-Hub's Traefik forward-auth is configured with
+// `authResponseHeaders: X-CI-Hub-User,X-CI-Hub-User-Timestamp,X-CI-Hub-User-Signature`,
+// so all three arrive on EVERY request and `@sentry/core` attaches
+// `headers: headersToDict(headers)` unfiltered. `IDENTITY_KEY_PATTERN` below is
+// end-anchored on purpose — that is what keeps `user-agent` — so it caught only the
+// bare `x-ci-hub-user` and let the timestamp and the signature ship in cleartext.
+// `hub[-_]user` (unanchored) closes the rest of the triple.
 const SECRET_KEY_PATTERN =
-  /password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key/i;
+  /password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key|signature|hub[-_]user/i;
 
 /**
  * Keys that identify a PERSON rather than carrying a credential — the same class of

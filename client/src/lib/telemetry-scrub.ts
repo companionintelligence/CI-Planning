@@ -29,15 +29,23 @@ const SECRET_PATTERNS = [
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/gi,
 ];
 
+// Windows FIRST — longest prefix wins; see the server twin. The macOS rule also
+// matches the `/Users/<name>` inside `C:/Users/<name>`, so ordering it first makes
+// the forward-slash Windows rule dead code and strands a `C:~` with the drive
+// letter still attached.
 const HOME_PATH_PATTERNS = [
-  /\/Users\/[^/\s]+/g, // macOS
-  /\/home\/[^/\s]+/g, // Linux
   /[A-Za-z]:\\Users\\[^\\/\s]+/g, // Windows (backslash)
   /[A-Za-z]:\/Users\/[^/\s]+/g, // Windows (forward-slash)
+  /\/Users\/[^/\s]+/g, // macOS
+  /\/home\/[^/\s]+/g, // Linux
 ];
 
+// `signature` and `hub[-_]user` cover the rest of CI-Hub's signed identity triple:
+// `IDENTITY_KEY_PATTERN` below is end-anchored (which is what keeps `user-agent`),
+// so it caught only the bare `x-ci-hub-user` and let `-timestamp` and `-signature`
+// through. See the server twin for the full reasoning.
 const SECRET_KEY_PATTERN =
-  /password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key/i;
+  /password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key|signature|hub[-_]user/i;
 
 /**
  * Keys that identify a PERSON rather than carrying a credential. A bare identity value
