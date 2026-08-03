@@ -4,15 +4,10 @@ import { buildApp } from '../src/app.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { status } from '../src/mcp/ollama.js';
-import { setStore, createSqliteStore } from '../src/db/store.js';
-
-// Tests never run boot.ts, so the data facade has to be installed here or any ported
-// call site would throw "store not initialised" the moment it is exercised. SQLite for
-// now: the call-site migration lands with this backend underneath precisely so the
-// suite stays green while it happens (see src/db/store.ts). When the cutover flips the
-// default, this becomes the Postgres store and the SAME assertions have to pass — which
-// is what test/store-conformance.test.ts already checks the two backends agree on.
-setStore(createSqliteStore(sqlite));
+// NOTE: the data facade's SQLite backend is installed by src/db/index.ts on import, so
+// it is live for every test — including the many that never import this harness. Doing
+// it here as well was not enough: a test that imports a service directly would still
+// have hit "store not initialised".
 
 export interface TestServer {
   url: string;

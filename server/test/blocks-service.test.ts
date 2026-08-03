@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import {
@@ -74,6 +75,7 @@ describe('createBlock', () => {
     // rationale is NOT attached on the create path (only fetchBlocksForRange attaches it).
     expect('rationale' in res.api).toBe(false);
 
+    await flushAudits();
     const audit = sqlite
       .prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE action = 'create' AND entity = ?`)
       .get(`block:${res.block.id}`) as { n: number };
@@ -253,6 +255,7 @@ describe('owner-scoping (W3.2) — a cross-owner id is rejected with no mutation
     const children = sqlite.prepare(`SELECT COUNT(*) AS n FROM time_blocks WHERE parent_block_id = ?`).get(foreignContainer) as { n: number };
     expect(children.n).toBe(0);
     // No audit entry either — addTasksToBlock only writes one when blocksCreated > 0.
+    await flushAudits();
     const audit = sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE action = 'add-tasks' AND entity = ?`).get(`block:${foreignContainer}`) as { n: number };
     expect(audit.n).toBe(0);
   });
