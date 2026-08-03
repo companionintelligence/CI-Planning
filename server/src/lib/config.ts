@@ -134,7 +134,7 @@ export interface SyncConfig {
 
 /** Key-encryption-key versioning (Wave 0) — drives crypto.loadKek/rotateKek. */
 export interface KekConfig {
-  /** The version a fresh seal() writes; loadKek() with no arg returns this key. */
+  /** The version a fresh seal() writes; await loadKek() with no arg returns this key. */
   currentVersion: number;
 }
 

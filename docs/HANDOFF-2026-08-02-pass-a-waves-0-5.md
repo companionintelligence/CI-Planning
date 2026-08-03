@@ -5,10 +5,10 @@
 > - **Branch `feat/postgres-cutover` is clean and green.** Nothing is half-done.
 >   Suite: **2634 passed / 21 skipped** (2667 with `PG_TEST_URL`), verified after
 >   every one of the 25 slices — never once red.
-> - **Waves 0–6 are COMPLETE.** Wave 5 closed at 17 of 17 (not the 11 earlier
->   revisions claimed), and wave 6 closed at 7 of 7. The call-site migration went
+> - **Every wave is COMPLETE (0–8).** The corrected inventory was 101 files; all
+>   of them are ported. The call-site migration went
 >   from ~355 to ~800 statements ported.
-> - **6 real files remain** — NOT the 15/16 earlier revisions of this box claimed.
+> - **PASS A IS COMPLETE.** Zero raw `sqlite` statements outside the seam.
 >   That figure came from a single-line grep that cannot see `sqlite\n  .prepare(`,
 >   the dominant formatting here. Real total: **261 statements across 27 files**.
 >   §7 has the corrected breakdown and the count that is actually safe to run.
@@ -20,10 +20,11 @@
 > - **Parts 25–30 are DONE**: objectives, patterns-place, calibration, the memory
 >   pair, flags, and the four connector/copy files that closed wave 5. Do not redo
 >   them. §6 records what those ports decided.
->   **Start here: WAVE 7 — and `services/tags.ts` is the whole game.** 60 statements
->   and 44 module-level prepares, more than everything else left combined. Do not
->   bundle it. The other four are trivial by comparison: category-prefs (4),
->   crypto/index (4), scheduler (1), models (1). Then wave 8 is routes/sse alone.
+>   **Start here: the CUTOVER.** Flip `test/helpers.ts` `resetDb` to Postgres, then
+>   `STORE_BACKEND=postgres`, and fix the dialect deltas the suite reports (§8).
+>   **Fix `sync_events.seq` FIRST** — it is `INTEGER PRIMARY KEY` in the Postgres
+>   baseline, which auto-assigns on SQLite but is a plain non-defaulted column on
+>   Postgres, so every sync_events insert will fail NOT NULL. See passA-worklist.md.
 > - **The trap catalogue lives in `docs/passA-worklist.md`, not here.** Read it
 >   before your first edit. This document is the narrative; that one is the
 >   checklist you work from.

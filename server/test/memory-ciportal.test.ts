@@ -115,7 +115,7 @@ describe('connector OIDC refresh (resolveLiveMemoryCreds)', () => {
     const row = sqlite
       .prepare(`SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ?`)
       .get(OWNER, MEMORY_PROVIDER) as { iv: string; auth_tag: string; ciphertext: string };
-    const blob = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, loadKek()));
+    const blob = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, await loadKek()));
     expect(blob.refreshToken).toBe('refresh-1');
     expect(blob.accessToken).toBe('rot-tok');
   });

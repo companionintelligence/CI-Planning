@@ -130,7 +130,7 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
 
   protected async getAccessToken(): Promise<string> {
     const ownerId = currentOwnerId();
-    const kek = loadKek();
+    const kek = await loadKek();
     const row = await store()
       .prepare(
         'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
@@ -158,7 +158,7 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
 
   private async _refreshAndStore(rt: string): Promise<string> {
     const { accessToken, expiresAt } = await this.refreshToken(rt);
-    const kek = loadKek();
+    const kek = await loadKek();
     const sealed = seal(JSON.stringify({ accessToken, refreshToken: rt, expiresAt }), kek);
     await store()
       .prepare(
@@ -177,7 +177,7 @@ export abstract class BaseOAuth2Client implements CalendarConnector {
     account: string,
     tokens: { accessToken: string; refreshToken: string; expiresAt: string },
   ): Promise<void> {
-    const kek = loadKek();
+    const kek = await loadKek();
     const sealed = seal(JSON.stringify(tokens), kek);
     const ownerId = currentOwnerId();
     await store()

@@ -329,7 +329,7 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
     ? await categoryIdsForOwner(input.categories, ownerId)
     : hasCat ? [input.category_id!] : undefined;
   const colorToken = categoryIds?.length
-    ? (input.color_token ?? getCategoryPrefs(ownerId)[categoryIds[0]]?.color_token ?? 'primary')
+    ? (input.color_token ?? (await getCategoryPrefs(ownerId))[categoryIds[0]]?.color_token ?? 'primary')
     : undefined;
 
   // Attach-at-create (PR-C): validated BEFORE the insert, so a bad parent yields a clean
@@ -517,7 +517,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   if (categoryIds !== undefined) {
     update.categoryId = null; // retired column — cleared on touch (0135 backfilled it)
     update.colorToken = categoryIds.length
-      ? (getCategoryPrefs(ownerId)[categoryIds[0]]?.color_token ?? 'primary')
+      ? ((await getCategoryPrefs(ownerId))[categoryIds[0]]?.color_token ?? 'primary')
       : null;
   }
   if (input.texture_enabled !== undefined) update.textureEnabled = input.texture_enabled;

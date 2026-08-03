@@ -155,7 +155,7 @@ async function readMemoryBlob(owner: string): Promise<MemoryBlob | null> {
     )
     .get<{ iv: string; auth_tag: string; ciphertext: string }>(owner, MEMORY_PROVIDER);
   if (!row) return null;
-  const parsed = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, loadKek())) as MemoryBlob;
+  const parsed = JSON.parse(open({ iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext }, await loadKek())) as MemoryBlob;
   return parsed.url ? parsed : null;
 }
 
@@ -198,7 +198,7 @@ export async function memoryCreds(owner: string): Promise<ResolvedMemoryCreds | 
  */
 export async function storeMemoryConnection(owner: string, creds: MemoryCreds): Promise<string> {
   const account = new URL(creds.url).host;
-  const sealed = seal(JSON.stringify({ url: creds.url, apiKey: creds.apiKey, bearer: creds.bearer }), loadKek());
+  const sealed = seal(JSON.stringify({ url: creds.url, apiKey: creds.apiKey, bearer: creds.bearer }), await loadKek());
   // The delete+insert stays one transaction: "one logical connection per owner" is only
   // true if a reader can never observe the window between them, and with an await
   // separating the two statements that window is now real.
@@ -260,7 +260,7 @@ export async function memoryOidcSubject(owner: string): Promise<string | null> {
 export async function storeMemoryOidcConnection(owner: string, conn: MemoryOidcConnection): Promise<string> {
   const account = new URL(conn.url).host;
   const blob: OidcBlob = { kind: 'oidc', ...conn };
-  const sealed = seal(JSON.stringify(blob), loadKek());
+  const sealed = seal(JSON.stringify(blob), await loadKek());
   // Same reason as storeMemoryConnection: replace-as-a-unit needs the transaction now
   // that the two statements are separated by an await.
   await store().transaction(async () => {
@@ -344,7 +344,7 @@ async function refreshOidcBlob(owner: string, blob: OidcBlob): Promise<string> {
     refreshToken: tok.refresh_token || blob.refreshToken,
     expiresAt: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString(),
   };
-  const sealed = seal(JSON.stringify(next), loadKek());
+  const sealed = seal(JSON.stringify(next), await loadKek());
   await store()
     .prepare(
       `UPDATE connection_tokens

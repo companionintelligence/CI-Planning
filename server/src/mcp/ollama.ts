@@ -25,8 +25,8 @@ export class OllamaUnavailable extends Error {
 
 export type ModelTier = 'small' | 'medium';
 
-function modelFor(tier: ModelTier): string {
-  return resolveModel(tier); // per-owner Settings override, else env default
+async function modelFor(tier: ModelTier): Promise<string> {
+  return await resolveModel(tier); // per-owner Settings override, else env default
 }
 
 interface GenerateOpts {
@@ -81,7 +81,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 /** Low-level text generation. Returns the raw completion string. */
 export async function generate(prompt: string, opts: GenerateOpts = {}): Promise<string> {
-  const model = opts.model ?? modelFor(opts.tier ?? 'small');
+  const model = opts.model ?? (await modelFor(opts.tier ?? 'small'));
   const body = {
     model,
     prompt,
@@ -132,7 +132,7 @@ export function parseJsonLoose<T = unknown>(raw: string): T {
 
 /** Return an embedding vector for a single piece of text. */
 export async function embed(text: string, timeoutMs = 30_000): Promise<number[]> {
-  const model = resolveEmbedModel();
+  const model = await resolveEmbedModel();
   const res = await fetchWithTimeout(
     `${config.ollamaUrl}/api/embeddings`,
     {
@@ -192,16 +192,16 @@ export interface OllamaStatus {
  */
 export async function status(owner?: string): Promise<OllamaStatus> {
   /** Effective models — resolved AFTER the cache refresh so auto-selection is applied. */
-  const effective = () => {
+  const effective = async () => {
     // No owner context (boot health logging): drop only the per-owner override and still
     // apply env-pin → installed-default → auto-selection. Returning the raw configured
     // names here would report `qwen2.5:0.5b` as effective while every request actually
     // used the auto-selected model.
     let small, medium, embed;
     try {
-      small = explainModel('small', owner);
-      medium = explainModel('medium', owner);
-      embed = explainEmbedModel(owner);
+      small = await explainModel('small', owner);
+      medium = await explainModel('medium', owner);
+      embed = await explainEmbedModel(owner);
     } catch {
       small = explainModelDefault('small');
       medium = explainModelDefault('medium');
@@ -223,7 +223,7 @@ export async function status(owner?: string): Promise<OllamaStatus> {
     const res = await fetchWithTimeout(`${config.ollamaUrl}/api/tags`, {}, 5_000);
     if (!res.ok) {
       setInstalledModels(null); // unknown, not "none" — don't auto-select off a bad read
-      return { ...effective(), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: `HTTP ${res.status}` };
+      return { ...(await effective()), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: `HTTP ${res.status}` };
     }
     const data = (await res.json()) as {
       models?: { name: string; capabilities?: string[]; details?: { parameter_size?: string } }[];
@@ -242,7 +242,7 @@ export async function status(owner?: string): Promise<OllamaStatus> {
     // deterministic degrade path it was written against.
     if (process.env.NODE_ENV !== 'test') setInstalledModels(rows);
 
-    const eff = effective();
+    const eff = await effective();
     // The embed tier is only exercised by dedupe/memory, so a missing embedder is
     // reported but does not by itself make the app "not ready" for AI features.
     const missingModels = [eff.smallModel, eff.mediumModel, eff.embedModel].filter((m) => !isInstalled(m));
@@ -256,7 +256,7 @@ export async function status(owner?: string): Promise<OllamaStatus> {
     };
   } catch (err) {
     setInstalledModels(null);
-    return { ...effective(), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: (err as Error).message };
+    return { ...(await effective()), url: config.ollamaUrl, available: false, ready: false, models: [], missingModels: [], error: (err as Error).message };
   }
 }
 

@@ -79,9 +79,9 @@ function fixtureForbiddenInProduction(): boolean {
 }
 
 /** Whether a KEK is configured (and decodes) — the gate for enabling in-app setup. */
-export function kekAvailable(): boolean {
+export async function kekAvailable(): Promise<boolean> {
   try {
-    loadKek();
+    await loadKek();
     return true;
   } catch {
     return false;
@@ -96,7 +96,7 @@ async function openStoredSecret(): Promise<string | null> {
     const blob = JSON.parse(raw) as SealedSecretBlob;
     return open(
       { iv: blob.iv, authTag: blob.authTag, ciphertext: blob.ciphertext },
-      loadKek(blob.key_version),
+      await loadKek(blob.key_version),
     );
   } catch (err) {
     logger.warn('google-config: failed to open stored client secret', {
@@ -162,7 +162,7 @@ export async function saveGoogleConfig(input: {
   const clientId = (input.clientId ?? (await readAppGoogleConfig()).clientId ?? '').trim();
   if (input.enabled && !clientId) return { ok: false, error: 'client_id_required' };
   // KEK gates ENABLING (token storage needs it) and any secret write (sealing needs it).
-  if ((input.enabled || typeof input.clientSecret === 'string') && !kekAvailable()) {
+  if ((input.enabled || typeof input.clientSecret === 'string') && !await kekAvailable()) {
     return { ok: false, error: 'kek_required' };
   }
 
@@ -172,7 +172,7 @@ export async function saveGoogleConfig(input: {
     if (clientId) await writeValue(KEY_CLIENT_ID, clientId);
     else await deleteValue(KEY_CLIENT_ID);
     if (typeof input.clientSecret === 'string' && input.clientSecret.trim()) {
-      const sealed = seal(input.clientSecret.trim(), loadKek());
+      const sealed = seal(input.clientSecret.trim(), await loadKek());
       const blob: SealedSecretBlob = { ...sealed, key_version: config.kek.currentVersion };
       await writeValue(KEY_CLIENT_SECRET, JSON.stringify(blob));
     } else if (input.clientSecret === null) {
@@ -251,7 +251,7 @@ export async function googleConfigState(): Promise<GoogleConfigState> {
     source: config.google.envPinned ? 'env' : config.google.mode !== 'off' ? 'app' : 'off',
     mode: config.google.mode,
     envPinned: config.google.envPinned,
-    kekAvailable: kekAvailable(),
+    kekAvailable: await kekAvailable(),
     clientId: config.google.envPinned ? (config.google.clientId ?? null) : app.clientId,
     hasClientSecret: config.google.envPinned ? Boolean(config.google.clientSecret) : app.hasClientSecret,
     enabled: app.enabled,

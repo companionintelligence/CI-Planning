@@ -180,10 +180,10 @@ describe('selection reporting', () => {
     expect(warnings[0]).toContain('tool use');
   });
 
-  it('reports a per-owner Settings choice as an override, distinct from an env pin', () => {
+  it('reports a per-owner Settings choice as an override, distinct from an env pin', async () => {
     setInstalledModels(REALISTIC);
     setPrefs({ fast_model: 'hand-picked:1b' });
-    expect(explainModel('small', OWNER)).toEqual({ name: 'hand-picked:1b', source: 'override' });
+    expect(await explainModel('small', OWNER)).toEqual({ name: 'hand-picked:1b', source: 'override' });
   });
 
   it('stays silent for a deliberate choice, however bad — pins are never second-guessed', () => {
@@ -218,64 +218,64 @@ describe('isInstalled', () => {
 });
 
 describe('resolveModel precedence', () => {
-  it('falls back to the configured default while the installed set is unknown', () => {
+  it('falls back to the configured default while the installed set is unknown', async () => {
     // The pre-probe / Ollama-offline path — and what keeps this suite deterministic on
     // machines that do or do not happen to be running Ollama.
     setInstalledModels(null);
-    expect(resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
-    expect(resolveModel('medium', OWNER)).toBe(config.ollamaMediumModel);
-    expect(resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
+    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    expect(await resolveModel('medium', OWNER)).toBe(config.ollamaMediumModel);
+    expect(await resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
   });
 
-  it('keeps the configured default when it IS installed', () => {
+  it('keeps the configured default when it IS installed', async () => {
     setInstalledModels([{ name: config.ollamaSmallModel, capabilities: ['completion'], paramB: 0.5 }, LLAMA_31]);
-    expect(resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
   });
 
-  it('rescues an uninstalled default with a real installed model (the reported bug)', () => {
+  it('rescues an uninstalled default with a real installed model (the reported bug)', async () => {
     setInstalledModels(REALISTIC); // neither qwen2.5:0.5b nor gemma3n:e4b present
-    expect(resolveModel('small', OWNER)).toBe(LLAMA_32.name);
-    expect(resolveModel('medium', OWNER)).toBe(LLAMA_31.name);
+    expect(await resolveModel('small', OWNER)).toBe(LLAMA_32.name);
+    expect(await resolveModel('medium', OWNER)).toBe(LLAMA_31.name);
     // The embed default needs no rescue: the untagged `nomic-embed-text` matches the
     // installed `nomic-embed-text:latest`, so it is kept verbatim (Ollama resolves the
     // tag itself). Only a genuinely absent model is replaced — see the next case.
-    expect(resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
+    expect(await resolveEmbedModel(OWNER)).toBe(config.ollamaEmbedModel);
   });
 
-  it('rescues the embed tier when no matching embedder is installed', () => {
+  it('rescues the embed tier when no matching embedder is installed', async () => {
     setInstalledModels([LLAMA_32, { name: 'mxbai-embed-large:latest', capabilities: ['embedding'], paramB: 0.335 }]);
-    expect(resolveEmbedModel(OWNER)).toBe('mxbai-embed-large:latest');
+    expect(await resolveEmbedModel(OWNER)).toBe('mxbai-embed-large:latest');
   });
 
-  it('honors a per-owner Settings override even when it is not installed', () => {
+  it('honors a per-owner Settings override even when it is not installed', async () => {
     // An explicit user choice is never second-guessed; status() surfaces it as missing.
     setInstalledModels(REALISTIC);
     setPrefs({ fast_model: 'hand-picked:1b' });
-    expect(resolveModel('small', OWNER)).toBe('hand-picked:1b');
+    expect(await resolveModel('small', OWNER)).toBe('hand-picked:1b');
   });
 
-  it('ignores a blank override', () => {
+  it('ignores a blank override', async () => {
     setInstalledModels(REALISTIC);
     setPrefs({ fast_model: '   ' });
-    expect(resolveModel('small', OWNER)).toBe(LLAMA_32.name);
+    expect(await resolveModel('small', OWNER)).toBe(LLAMA_32.name);
   });
 
-  it('uses an env pin verbatim rather than auto-selecting', () => {
+  it('uses an env pin verbatim rather than auto-selecting', async () => {
     setInstalledModels(REALISTIC);
     const pinned = { ...config.ollamaPinned };
     const saved = config.ollamaSmallModel;
     try {
       (config as { ollamaSmallModel: string }).ollamaSmallModel = 'pinned-by-operator:9b';
       config.ollamaPinned.small = true;
-      expect(resolveModel('small', OWNER)).toBe('pinned-by-operator:9b');
+      expect(await resolveModel('small', OWNER)).toBe('pinned-by-operator:9b');
     } finally {
       (config as { ollamaSmallModel: string }).ollamaSmallModel = saved;
       Object.assign(config.ollamaPinned, pinned);
     }
   });
 
-  it('keeps the default (so the error names it) when nothing installed qualifies', () => {
+  it('keeps the default (so the error names it) when nothing installed qualifies', async () => {
     setInstalledModels([QWEN_THINK]);
-    expect(resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
+    expect(await resolveModel('small', OWNER)).toBe(config.ollamaSmallModel);
   });
 });

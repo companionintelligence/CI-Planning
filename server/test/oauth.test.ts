@@ -205,7 +205,7 @@ describe('GET /api/oauth/google/callback', () => {
     expect(tok.status).toBe('active');
 
     // Decrypt → the exact tokens we exchanged.
-    const decoded = JSON.parse(open({ iv: tok.iv, authTag: tok.auth_tag, ciphertext: tok.ciphertext }, loadKek()));
+    const decoded = JSON.parse(open({ iv: tok.iv, authTag: tok.auth_tag, ciphertext: tok.ciphertext }, await loadKek()));
     expect(decoded.accessToken).toBe('ACCESS-1');
     expect(decoded.refreshToken).toBe('REFRESH-1');
   });
@@ -315,7 +315,7 @@ describe('GET /api/oauth/google/callback', () => {
     // Pre-seed an existing connection with refreshToken='STORED'.
     const sealed = seal(
       JSON.stringify({ accessToken: 'OLD', refreshToken: 'STORED', expiresAt: '2000-01-01T00:00:00.000Z' }),
-      loadKek(),
+      await loadKek(),
     );
     sqlite
       .prepare(
@@ -339,7 +339,7 @@ describe('GET /api/oauth/google/callback', () => {
     const tok = sqlite
       .prepare("SELECT * FROM connection_tokens WHERE owner_id = ? AND account = ?")
       .get(SYSTEM_OWNER, account) as Record<string, string>;
-    const decoded = JSON.parse(open({ iv: tok.iv, authTag: tok.auth_tag, ciphertext: tok.ciphertext }, loadKek()));
+    const decoded = JSON.parse(open({ iv: tok.iv, authTag: tok.auth_tag, ciphertext: tok.ciphertext }, await loadKek()));
     expect(decoded.accessToken).toBe('NEW-ACCESS');
     expect(decoded.refreshToken).toBe('STORED'); // preserved, never emptied
   });
@@ -415,10 +415,10 @@ describe('GoogleCalendarConnector token endpoints', () => {
 
 // ── /accounts + disconnect + getConnectors filter ───────────────────────────────
 describe('accounts listing + disconnect', () => {
-  function seedToken(account: string, status = 'active') {
+  async function seedToken(account: string, status = 'active') {
     const sealed = seal(
       JSON.stringify({ accessToken: 'A', refreshToken: 'R', expiresAt: new Date(Date.now() + 3600_000).toISOString() }),
-      loadKek(),
+      await loadKek(),
     );
     sqlite
       .prepare(
@@ -434,7 +434,7 @@ describe('accounts listing + disconnect', () => {
   it('DELETE removes connection_tokens AND outbound_queue rows and calls revoke (I12)', async () => {
     config.auth.mode = 'standalone';
     const account = 'disc@example.com';
-    seedToken(account);
+    await seedToken(account);
     // A pending outbound_queue row for the same (owner, provider, account).
     // outbound_queue.block_id FKs time_blocks (FK pragma is ON), so seed a real block.
     const blockId = newId();
@@ -476,13 +476,13 @@ describe('accounts listing + disconnect', () => {
   });
 
   it('getConnectors() skips a status<>active row', async () => {
-    seedToken('revoked@example.com', 'revoked');
+    await seedToken('revoked@example.com', 'revoked');
     const connectors = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => getConnectors());
     expect(connectors).toHaveLength(0);
   });
 
   it('getConnectors() returns a connector for an active row', async () => {
-    seedToken('active@example.com', 'active');
+    await seedToken('active@example.com', 'active');
     const connectors = await runWithOwner(SYSTEM_OWNER, ALL_SCOPES, () => getConnectors());
     expect(connectors).toHaveLength(1);
     expect(connectors[0].account).toBe('active@example.com');

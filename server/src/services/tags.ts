@@ -626,7 +626,7 @@ export async function createTag(owner: string, input: CreateTagInput): Promise<C
   }
   // A new category gets a default category_prefs row so a block created against it always
   // has a colour-stamp source (forward-only never falls through).
-  if (tag.kind === 'category') setCategoryPref(owner, tag.id, {});
+  if (tag.kind === 'category') await setCategoryPref(owner, tag.id, {});
   if (tag.kind === 'intention' && Array.isArray(input.directions) && input.directions.length) {
     await setTagDirections(tag.id, await directionIds(input.directions, owner));
   }

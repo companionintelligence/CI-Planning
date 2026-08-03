@@ -255,7 +255,7 @@ export function oauthRouter() {
         .get<{ iv: string; auth_tag: string; ciphertext: string }>(row.owner_id, 'google', email);
       if (existing) {
         const decoded = JSON.parse(
-          open({ iv: existing.iv, authTag: existing.auth_tag, ciphertext: existing.ciphertext }, loadKek()),
+          open({ iv: existing.iv, authTag: existing.auth_tag, ciphertext: existing.ciphertext }, await loadKek()),
         ) as { refreshToken?: string };
         existingRefresh = decoded.refreshToken ?? null;
       }

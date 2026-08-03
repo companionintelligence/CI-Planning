@@ -65,7 +65,7 @@ export function syncRouter() {
           ) {
             for (const blockId of await mirrorTaskStatusToBlocks(op.entityId, ownerId)) {
               const blockPayload = { id: blockId };
-              const blockSeq = logSyncEvent(ownerId, 'block:updated', blockPayload);
+              const blockSeq = await logSyncEvent(ownerId, 'block:updated', blockPayload);
               toEmit.push({ seq: blockSeq, event: 'block:updated', payload: blockPayload });
             }
           }
@@ -88,7 +88,7 @@ export function syncRouter() {
           const payload = { id: op.entityId, version: result.version, ...result.applied };
           // logSyncEvent is inside the transaction — it shares the same connection
           // and therefore the same tx; a rollback would also roll back the log row.
-          const seq = logSyncEvent(ownerId, eventName, payload);
+          const seq = await logSyncEvent(ownerId, eventName, payload);
           toEmit.push({ seq, event: eventName, payload });
           results.push(result);
         } catch (err: unknown) {

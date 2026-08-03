@@ -83,7 +83,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
 
     // Obstacles = the container's existing children + other fixed blocks overlapping the
     // window (the container itself is excluded; default !includePlans drops it anyway).
-    const fixed = dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: blockId });
+    const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: blockId });
     const gaps = buildGaps(windowStartMs, windowEndMs, fixed, breakMs);
 
     const ins = store().prepare(

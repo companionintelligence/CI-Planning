@@ -37,8 +37,8 @@ export const dayTypeResolvers = {
       // properties — so `key` and `source` would silently vanish from the payload.
       return { date: args.date, ...(await resolveDayTypeWithSource(currentOwnerId(), args.date)) };
     },
-    tagPrefs: (): TagPrefNode[] =>
-      Object.entries(getCategoryPrefs(currentOwnerId())).map(([tagId, pref]) => ({ ...pref, tag_id: tagId })),
+    tagPrefs: async (): Promise<TagPrefNode[]> =>
+      Object.entries(await getCategoryPrefs(currentOwnerId())).map(([tagId, pref]) => ({ ...pref, tag_id: tagId })),
   },
 
   Mutation: {
@@ -70,12 +70,12 @@ export const dayTypeResolvers = {
       return { deletedId: args.input.id, success: true };
     },
 
-    setTagPref: (_p: unknown, args: { input: { categoryTagId: string; colorToken?: string | null; defaultMinutes?: number | null } }) => {
+    setTagPref: async (_p: unknown, args: { input: { categoryTagId: string; colorToken?: string | null; defaultMinutes?: number | null } }) => {
       const i = args.input;
       const patch: Record<string, unknown> = {};
       if (i.colorToken != null) patch.color_token = i.colorToken;
       if (i.defaultMinutes != null) patch.default_minutes = i.defaultMinutes;
-      const res = setCategoryPrefChecked(currentOwnerId(), i.categoryTagId, patch);
+      const res = await setCategoryPrefChecked(currentOwnerId(), i.categoryTagId, patch);
       if (!res.ok) {
         if (res.error === 'tag_not_found') throw new GraphQLError('Tag not found', { extensions: { code: 'NOT_FOUND' } });
         const msg =

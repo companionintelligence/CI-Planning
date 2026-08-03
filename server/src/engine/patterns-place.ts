@@ -192,7 +192,7 @@ export async function placePatternOnDay(
     // Shared obstacle set: locked + meetings + every non-completed task block,
     // so a pattern never stacks on existing work (manual or auto). When scoped
     // to a Plan we exclude that Plan from its own obstacle set (it's the target).
-    const fixed = dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
+    const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, { excludeBlockId: parentBlockId });
 
     const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
     const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);

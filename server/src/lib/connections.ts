@@ -73,7 +73,7 @@ export async function connectionHealth(ownerId: string): Promise<ConnectionHealt
       try {
         const plain = open(
           { iv: row.iv, authTag: row.auth_tag, ciphertext: row.ciphertext },
-          loadKek(),
+          await loadKek(),
         );
         const exp = extractExpiresAt(plain);
         expiresAt = exp;
@@ -233,7 +233,7 @@ export async function disconnectConnection(
     if (tokRow) {
       try {
         const decoded = JSON.parse(
-          open({ iv: tokRow.iv, authTag: tokRow.auth_tag, ciphertext: tokRow.ciphertext }, loadKek()),
+          open({ iv: tokRow.iv, authTag: tokRow.auth_tag, ciphertext: tokRow.ciphertext }, await loadKek()),
         ) as { refreshToken?: string; accessToken?: string };
         const token = decoded.refreshToken || decoded.accessToken;
         if (token) await revoke(token);

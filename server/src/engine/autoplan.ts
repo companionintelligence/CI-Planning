@@ -410,7 +410,7 @@ async function placeIntoWindow(
 
   const breakMs = (prefs?.min_break_minutes ?? 10) * MS_PER_MIN;
   const maxFocusMs = Math.max((prefs?.max_focus_block_minutes ?? 90) * MS_PER_MIN, MIN_SESSION_MS);
-  const fixed = dayObstacles(owner, windowStartMs, windowEndMs, {
+  const fixed = await dayObstacles(owner, windowStartMs, windowEndMs, {
     includePlans: opts.includePlans,
     excludeBlockId: opts.parentBlockId ?? null,
   });
@@ -546,14 +546,14 @@ async function pinTaskAt(
   // The stated (date, task_time) instant is honored EXACTLY even if it has already
   // passed (user intent, not an engine choice) — only the gap FALLBACK below clamps.
   const startMs = Date.parse(zonedWallTimeToUTC(date, t.task_time!, tz));
-  if (dayObstacles(owner, startMs, startMs + durMs).length === 0) return await create(startMs);
+  if ((await dayObstacles(owner, startMs, startMs + durMs)).length === 0) return await create(startMs);
 
   const bounds = utcDayBounds(date, tz);
   const dayStart = Math.max(Date.parse(bounds.start), notBeforeMs ?? Number.NEGATIVE_INFINITY);
   const dayEnd = Date.parse(bounds.end);
   let bestStart: number | null = null;
   let bestDist = Number.POSITIVE_INFINITY;
-  for (const g of buildGaps(dayStart, dayEnd, dayObstacles(owner, dayStart, dayEnd), breakMs)) {
+  for (const g of buildGaps(dayStart, dayEnd, await dayObstacles(owner, dayStart, dayEnd), breakMs)) {
     if (g.end - g.cursor < durMs) continue;
     const s = Math.min(Math.max(startMs, g.cursor), g.end - durMs);
     const dist = Math.abs(s - startMs);
@@ -1229,10 +1229,10 @@ export async function placeStartAnchoredTask(
   };
 
   /** Earliest gap fitting the full duration inside [winStart, winEnd], flowing around Plans. */
-  const earliestFit = (winStartMs: number, winEndMs: number): number | null => {
+  const earliestFit = async (winStartMs: number, winEndMs: number): Promise<number | null> => {
     if (notBeforeMs != null) winStartMs = Math.max(winStartMs, notBeforeMs);
     if (winEndMs - winStartMs < durMs) return null;
-    const fixed = dayObstacles(owner, winStartMs, winEndMs, { includePlans: true });
+    const fixed = await dayObstacles(owner, winStartMs, winEndMs, { includePlans: true });
     for (const g of buildGaps(winStartMs, winEndMs, fixed, breakMs)) {
       if (g.end - g.cursor >= durMs) return g.cursor;
     }
@@ -1244,14 +1244,14 @@ export async function placeStartAnchoredTask(
     // this time; a block inside a Plan's span is normal grouping, not double-booking.
     const startMs = Date.parse(zonedWallTimeToUTC(date, task.task_time, tz));
     const endMs = startMs + durMs;
-    if (dayObstacles(owner, startMs, endMs).length === 0) return await create(startMs, endMs);
+    if ((await dayObstacles(owner, startMs, endMs)).length === 0) return await create(startMs, endMs);
 
     // Occupied → the open gap NEAREST the requested time on the SAME local day
     // (engine-chosen, so the R3 clamp applies).
     const bounds = utcDayBounds(date, tz);
     const dayStart = Math.max(Date.parse(bounds.start), notBeforeMs ?? Number.NEGATIVE_INFINITY);
     const dayEnd = Date.parse(bounds.end);
-    const gaps = buildGaps(dayStart, dayEnd, dayObstacles(owner, dayStart, dayEnd), breakMs);
+    const gaps = buildGaps(dayStart, dayEnd, await dayObstacles(owner, dayStart, dayEnd), breakMs);
     let bestStart: number | null = null;
     let bestDist = Number.POSITIVE_INFINITY;
     for (const g of gaps) {
@@ -1286,7 +1286,7 @@ export async function placeStartAnchoredTask(
       .flatMap((dirId) => patWindows[dirId] ?? [])
       .sort((a, b) => a.start_time.localeCompare(b.start_time));
     for (const range of ranges) {
-      const s = earliestFit(
+      const s = await earliestFit(
         Date.parse(zonedWallTimeToUTC(date, range.start_time, tz)),
         Date.parse(zonedWallTimeToUTC(date, range.end_time, tz)),
       );
@@ -1295,7 +1295,7 @@ export async function placeStartAnchoredTask(
   }
 
   // Workday-gap fallback on that date.
-  const s = earliestFit(
+  const s = await earliestFit(
     Date.parse(zonedWallTimeToUTC(date, prefs?.workday_start ?? '09:00', tz)),
     Date.parse(zonedWallTimeToUTC(date, prefs?.workday_end ?? '18:00', tz)),
   );

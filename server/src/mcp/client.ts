@@ -260,7 +260,7 @@ class TokenBearer extends BaseOAuth2Client {
    */
   async forceRefresh(): Promise<string> {
     const ownerId = currentOwnerId();
-    const kek = loadKek();
+    const kek = await loadKek();
     const row = await store()
       .prepare(
         'SELECT iv, auth_tag, ciphertext FROM connection_tokens WHERE owner_id = ? AND provider = ? AND account = ?',
