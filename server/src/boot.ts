@@ -17,9 +17,9 @@ import { setStore, store, createSqliteStore, createPostgresStore } from './db/st
 import { recoverStaleFreezeLocks } from './engine/auto-defense.js';
 import { ensureLocalAuthBootstrap } from './lib/auth/localBootstrap.js';
 import { writePidFile, removePidFile } from './lib/pidfile.js';
-// Already initialised by index.ts before this module was imported; this is just the
-// shutdown-side handle. Inert (and instant) when error reporting is off.
-import { flushTelemetry } from './lib/telemetry/index.js';
+// Already initialised by index.ts before this module was imported; these are just the
+// shutdown-side handles. Inert (and instant) when error reporting is off.
+import { flushTelemetry, isTelemetryEnabled } from './lib/telemetry/index.js';
 
 // Postgres (schema port). Opt-in via DATABASE_URL while the 386 SQLite call sites move
 // file by file — with it unset this is inert and the SQLite path above is unchanged.
@@ -130,15 +130,20 @@ function closeDb(): void {
 
 // Checkpoint the database, then let Sentry drain before the process dies. The Sentry
 // transport is asynchronous, so a bare `process.exit()` discards anything captured in
-// the seconds before the signal arrived. Bounded at 2s inside flushTelemetry() and an
-// immediate no-op when reporting is off (the default), so this cannot hold a
-// `docker stop` open. Guarded so a double signal — or the timeout below racing the
-// close callback — only runs the sequence once.
+// the seconds before the signal arrived. Guarded so a double signal — or the timeout
+// below racing the close callback — only runs the sequence once.
+//
+// With reporting OFF (the default) the exit stays synchronous: byte-for-byte the
+// shutdown this file had before telemetry existed. Deferring `process.exit` behind a
+// promise would change `docker stop` timing for every deployment, including the ones
+// that never send anything. Only a deployment that opted in pays the flush, which is
+// itself bounded at 2s against a real timer.
 let exiting = false;
 function shutdown(): void {
   if (exiting) return;
   exiting = true;
   closeDb();
+  if (!isTelemetryEnabled()) process.exit(0);
   void flushTelemetry().finally(() => process.exit(0));
 }
 

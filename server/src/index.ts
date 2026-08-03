@@ -16,10 +16,11 @@
 // separate and non-fatal — a telemetry problem must never be why the app won't start.
 let flushTelemetry = async (): Promise<void> => {};
 let captureException = (_err: unknown, _context?: Record<string, unknown>): void => {};
+let isTelemetryEnabled = (): boolean => false;
 try {
   const telemetry = await import('./lib/telemetry/index.js');
   telemetry.initTelemetry();
-  ({ flushTelemetry, captureException } = telemetry);
+  ({ flushTelemetry, captureException, isTelemetryEnabled } = telemetry);
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
   process.stderr.write(`warning: error reporting failed to load, continuing without it: ${message}\n`);
@@ -30,10 +31,19 @@ try {
 } catch (err) {
   // The guard messages already name the exact env var to set — surface just that line.
   const message = err instanceof Error ? err.message : String(err);
-  captureException(err, { phase: 'boot' });
   process.stderr.write(`\nFATAL: ${message}\n\n`);
-  // Bounded flush BEFORE exiting: Sentry's transport is async, so `process.exit()`
-  // straight after the capture above would drop the report. No-op when disabled.
-  await flushTelemetry();
+
+  // With reporting off — the default — exit exactly as this file did before telemetry
+  // existed: synchronously, on this turn. Awaiting even an already-resolved promise
+  // defers the exit by a turn, and crash timing must not shift just because the module
+  // is present. Only the reporting path pays for reporting.
+  if (isTelemetryEnabled()) {
+    captureException(err, { phase: 'boot' });
+    // Sentry's transport is async, so exiting straight after the capture would drop the
+    // report. Bounded at 2s and raced against a real timer, so a wedged network turns a
+    // failed boot into a slightly slower failed boot rather than a hang.
+    await flushTelemetry();
+  }
+
   process.exit(1);
 }
