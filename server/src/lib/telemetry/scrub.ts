@@ -54,8 +54,36 @@ const HOME_PATH_PATTERNS = [
 
 // `api[-_ ]?key` rather than a bare `apikey|api_key`, so the hyphenated `x-api-key`
 // header this app actually authenticates with is caught.
-const SENSITIVE_KEY_PATTERN =
+const SECRET_KEY_PATTERN =
   /password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key/i;
+
+/**
+ * Keys that identify a PERSON rather than carrying a credential — the same class of
+ * data as the hostname we drop from `server_name` and the account name we collapse
+ * `/Users/<name>` to `~` for. It just arrives as a key/value pair, so no secret pattern
+ * would ever match it.
+ *
+ * This matters here specifically: the app runs behind the CI-Hub Traefik proxy
+ * (`TRUST_PROXY`, `X-Forwarded-*`), and the SDK captures the headers that ARRIVED, not
+ * the ones application code reads — so a proxy-injected `x-ci-hub-user` reaches
+ * `event.request.headers` even though nothing in this repo looks at it. `x-test-owner`
+ * the app does read.
+ *
+ * Sentry's own denylist covers part of this for headers (`PII_HEADER_SNIPPETS` denies
+ * `-user`, `forwarded`, `-ip`, `remote-`, `via`) but NOT for breadcrumb data, and
+ * `x-ci-owner` matches none of it. Leaning on that denylist is precisely the mistake
+ * this scrubber exists to correct, so we re-cover the ground ourselves.
+ *
+ * Anchoring is deliberate. `(?:^|[-_])user$` keeps `user-agent`, which is real
+ * diagnostic signal; opaque internal row ids (`owner_id`, `user_id`) also survive,
+ * being pseudonymous and the thing that makes a multi-tenant bug debuggable.
+ */
+const IDENTITY_KEY_PATTERN = /(?:^|[-_])user$|(?:^|[-_])owner$|username|email|forwarded|^remote-/i;
+
+/** A key whose value must be redacted wholesale: a credential, or a person's identity. */
+function isSensitiveKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key) || IDENTITY_KEY_PATTERN.test(key);
+}
 
 /** Header names whose value is a URL, and therefore carries a query string. */
 const URL_HEADER_PATTERN = /^refer(?:er|rer)$/i;
@@ -96,7 +124,7 @@ export function scrubValue(value: unknown, depth = 0): unknown {
   if (value && typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
-      result[key] = SENSITIVE_KEY_PATTERN.test(key) ? '[Filtered]' : scrubValue(nested, depth + 1);
+      result[key] = isSensitiveKey(key) ? '[Filtered]' : scrubValue(nested, depth + 1);
     }
     return result;
   }
@@ -112,7 +140,7 @@ export function scrubHeaders(headers: Record<string, unknown>): Record<string, s
   const result: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(headers)) {
-    if (SENSITIVE_KEY_PATTERN.test(key)) {
+    if (isSensitiveKey(key)) {
       result[key] = '[Filtered]';
     } else if (typeof value === 'string') {
       result[key] = URL_HEADER_PATTERN.test(key) ? scrubUrl(value) : scrubString(value);
@@ -129,7 +157,7 @@ export function scrubBreadcrumbData(data: Record<string, unknown>): Record<strin
   const result: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(data)) {
-    if (SENSITIVE_KEY_PATTERN.test(key)) {
+    if (isSensitiveKey(key)) {
       result[key] = '[Filtered]';
     } else if (URL_DATA_KEYS.has(key) && typeof value === 'string') {
       result[key] = scrubUrl(value);
