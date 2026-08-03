@@ -1,7 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { ErrorEvent } from '@sentry/node';
-import { resolveTelemetrySettings, isLocalOnly, isTelemetryOptedOut } from '../src/lib/telemetry/settings.js';
-import { scrubEvent, scrubString } from '../src/lib/telemetry/scrub.js';
+import {
+  resolveTelemetrySettings,
+  isLocalOnly,
+  isTelemetryOptedOut,
+  telemetryPermission,
+} from '../src/lib/telemetry/settings.js';
+import { scrubEvent, scrubString, scrubUrl } from '../src/lib/telemetry/scrub.js';
+import { withTimeout } from '../src/lib/telemetry/timeout.js';
+import { startTestServer, api, type TestServer } from './helpers.js';
 
 /**
  * Error reporting (Sentry) — the opt-in gate and the payload scrubber.
@@ -248,5 +255,242 @@ describe('scrubEvent', () => {
 
   it('passes through an event with nothing to scrub', () => {
     expect(scrubEvent({ message: 'plain failure' } as ErrorEvent)).toEqual({ message: 'plain failure' });
+  });
+});
+
+/**
+ * Regression tests for the leaks an adversarial review found in the first cut of this
+ * module. Each one is a field the SDK populates REGARDLESS of `sendDefaultPii: false`
+ * (verified against @sentry/core 10.69.0), so none of them is hypothetical.
+ */
+describe('scrubEvent — fields sendDefaultPii:false does NOT protect', () => {
+  it('strips the query string from request.url, where the search terms actually are', () => {
+    // The load-bearing one: requestDataIntegration always includes `url`, and on Node
+    // it is path+query — so filtering `query_string` alone redacted nothing.
+    const event = {
+      request: {
+        url: 'https://plan.example.com/api/tasks?q=therapy+appointment&api_key=sk-live-1',
+        query_string: 'q=therapy+appointment',
+      },
+    } as unknown as ErrorEvent;
+
+    const scrubbed = scrubEvent(event)!;
+
+    expect(scrubbed.request!.url).toBe('https://plan.example.com/api/tasks');
+    expect(scrubbed.request!.url).not.toContain('therapy');
+    expect(scrubbed.request!.url).not.toContain('sk-live-1');
+    expect(scrubbed.request!.query_string).toBe('[Filtered]');
+  });
+
+  it('strips query and hash from the referer header', () => {
+    const event = {
+      request: {
+        headers: {
+          referer: 'https://plan.example.com/tasks?q=divorce+lawyer#t-9',
+          Referrer: 'https://plan.example.com/calendar?d=2026-08-02',
+        },
+      },
+    } as unknown as ErrorEvent;
+
+    const headers = scrubEvent(event)!.request!.headers!;
+
+    expect(headers.referer).toBe('https://plan.example.com/tasks');
+    expect(headers.Referrer).toBe('https://plan.example.com/calendar');
+  });
+
+  it('filters the hyphenated x-api-key header (this app authenticates with it)', () => {
+    // The SDK denies only ["forwarded","-ip","remote-","via","-user"] when PII is off,
+    // so `x-api-key` would otherwise upload in cleartext — and it does not match a
+    // bare `apikey|api_key` pattern.
+    const event = {
+      request: {
+        headers: { 'x-api-key': 'cp_live_abcdef123456', 'X-Api-Key': 'cp_live_abcdef123456' },
+      },
+    } as unknown as ErrorEvent;
+
+    const headers = scrubEvent(event)!.request!.headers!;
+
+    expect(headers['x-api-key']).toBe('[Filtered]');
+    expect(headers['X-Api-Key']).toBe('[Filtered]');
+  });
+
+  it('removes server_name, which is the machine hostname', () => {
+    const event = { message: 'boom', server_name: 'liam-macbook.local' } as unknown as ErrorEvent;
+
+    expect(scrubEvent(event)!.server_name).toBeUndefined();
+  });
+
+  it('scrubs stack frames: absolute paths, captured locals and context lines', () => {
+    // `stackFrameVariables` stays true with PII off, so `vars` really is populated.
+    const event = {
+      exception: {
+        values: [
+          {
+            value: 'boom',
+            stacktrace: {
+              frames: [
+                {
+                  filename: '/Users/liam/devel/ci/server/src/app.ts',
+                  abs_path: '/Users/liam/devel/ci/server/src/app.ts',
+                  module: '/home/ci/app',
+                  context_line: '  const key = "api_key=sk-live-9";',
+                  pre_context: ['// /Users/liam/notes.md'],
+                  post_context: ['  logger.info(token)'],
+                  vars: { sessionToken: 'abc123', path: '/Users/liam/plan.db', count: 3 },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    } as unknown as ErrorEvent;
+
+    const frame = scrubEvent(event)!.exception!.values![0]!.stacktrace!.frames![0]!;
+
+    expect(frame.filename).toBe('~/devel/ci/server/src/app.ts');
+    expect(frame.abs_path).toBe('~/devel/ci/server/src/app.ts');
+    expect(frame.module).toBe('~/app');
+    expect(frame.context_line).not.toContain('sk-live-9');
+    expect(frame.pre_context![0]).toBe('// ~/notes.md');
+    expect((frame.vars as Record<string, unknown>).sessionToken).toBe('[Filtered]');
+    expect((frame.vars as Record<string, unknown>).path).toBe('~/plan.db');
+    expect((frame.vars as Record<string, unknown>).count).toBe(3);
+  });
+
+  it('strips the query string from fetch/xhr breadcrumb urls, not just navigation', () => {
+    const event = {
+      breadcrumbs: [
+        { category: 'http', data: { url: 'https://plan.example.com/api/tasks?q=secret+plan', status_code: 500 } },
+        { category: 'navigation', data: { from: '/tasks?q=x', to: '/calendar#2026-08-02' } },
+        { category: 'console', message: 'token: abc123def', data: { arguments: ['password: hunter2'] } },
+      ],
+    } as unknown as ErrorEvent;
+
+    const [http, navigation, console] = scrubEvent(event)!.breadcrumbs!;
+
+    expect(http!.data!.url).toBe('https://plan.example.com/api/tasks');
+    expect(http!.data!.status_code).toBe(500);
+    expect(navigation!.data).toEqual({ from: '/tasks', to: '/calendar' });
+    expect(console!.message).not.toContain('abc123def');
+    expect(JSON.stringify(console!.data!.arguments)).not.toContain('hunter2');
+  });
+});
+
+describe('scrubUrl', () => {
+  it('drops the query string and the hash', () => {
+    expect(scrubUrl('https://plan.example.com/tasks?q=a#b')).toBe('https://plan.example.com/tasks');
+  });
+
+  it('still applies the string rules to what is left', () => {
+    expect(scrubUrl('file:///Users/liam/plan.db?x=1')).toBe('file://~/plan.db');
+    expect(scrubUrl('postgres://ci:pw@db:5432/planning?sslmode=require')).toContain('[Filtered]');
+  });
+
+  it('cannot throw on unparseable input', () => {
+    expect(scrubUrl('::not a url::?q=secret')).toBe('::not a url::');
+  });
+});
+
+describe('withTimeout', () => {
+  it('resolves as soon as the promise settles', async () => {
+    await expect(withTimeout(Promise.resolve('done'), 5_000)).resolves.toBeUndefined();
+  });
+
+  it('resolves on rejection rather than propagating it', async () => {
+    await expect(withTimeout(Promise.reject(new Error('transport died')), 5_000)).resolves.toBeUndefined();
+  });
+
+  it('gives up at the deadline when the promise never settles', async () => {
+    // The real bug this guards: Sentry.close(ms) bounds only the transport wait, so a
+    // never-settling flush would hold an exit path open indefinitely.
+    const started = Date.now();
+
+    await withTimeout(new Promise(() => {}), 50);
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe('telemetryPermission', () => {
+  it('permits reporting by default — the DSN decides from there', () => {
+    expect(telemetryPermission({})).toEqual({ permitted: true, disabledReason: null });
+  });
+
+  it('is independent of SENTRY_DSN (it answers "allowed?", not "configured?")', () => {
+    expect(telemetryPermission({ SENTRY_DSN: DSN }).permitted).toBe(true);
+  });
+
+  it.each(['off', 'false', '0', 'no', 'disabled'])('CI_TELEMETRY=%s withholds permission', (value) => {
+    expect(telemetryPermission({ CI_TELEMETRY: value })).toEqual({
+      permitted: false,
+      disabledReason: 'opt-out',
+    });
+  });
+
+  it.each(['true', '1', 'yes', 'on'])('CI_LOCAL_ONLY=%s withholds permission', (value) => {
+    expect(telemetryPermission({ CI_LOCAL_ONLY: value })).toEqual({
+      permitted: false,
+      disabledReason: 'local-only',
+    });
+  });
+
+  it('reports local-only ahead of opt-out', () => {
+    expect(telemetryPermission({ CI_LOCAL_ONLY: 'true', CI_TELEMETRY: 'off' }).disabledReason).toBe('local-only');
+  });
+});
+
+describe('GET /api/config/telemetry', () => {
+  let server: TestServer;
+
+  beforeAll(async () => {
+    server = await startTestServer();
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it('answers without a credential and reports the runtime verdict', async () => {
+    // The browser needs this before it has a session — and before Sentry.init, which
+    // is the whole point: its DSN is baked in at build time and cannot see
+    // CI_TELEMETRY.
+    const res = await api(server.url, '/api/config/telemetry');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true, disabledReason: null });
+  });
+
+  it('reflects CI_TELEMETRY=off, so the marketplace toggle reaches the browser', async () => {
+    process.env.CI_TELEMETRY = 'off';
+    try {
+      const res = await api(server.url, '/api/config/telemetry');
+
+      expect(res.body).toEqual({ enabled: false, disabledReason: 'opt-out' });
+    } finally {
+      delete process.env.CI_TELEMETRY;
+    }
+  });
+
+  it('reflects CI_LOCAL_ONLY=true', async () => {
+    process.env.CI_LOCAL_ONLY = 'true';
+    try {
+      const res = await api(server.url, '/api/config/telemetry');
+
+      expect(res.body).toEqual({ enabled: false, disabledReason: 'local-only' });
+    } finally {
+      delete process.env.CI_LOCAL_ONLY;
+    }
+  });
+
+  it('never echoes the DSN or any other configuration', async () => {
+    process.env.SENTRY_DSN = DSN;
+    try {
+      const res = await api(server.url, '/api/config/telemetry');
+
+      expect(Object.keys(res.body as object).sort()).toEqual(['disabledReason', 'enabled']);
+      expect(JSON.stringify(res.body)).not.toContain('ingest');
+    } finally {
+      delete process.env.SENTRY_DSN;
+    }
   });
 });

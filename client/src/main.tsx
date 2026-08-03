@@ -5,10 +5,12 @@ import { registerSW } from './sw/register.js';
 import { initTelemetry } from './lib/telemetry.js';
 import './index.css';
 
-// Error reporting — opt-in and off by default: a no-op unless VITE_SENTRY_DSN was set
-// when this bundle was BUILT (see docs/operations/error-reporting.md). First, so a
-// throw during the initial mount below is still reported.
-initTelemetry();
+// Error reporting — opt-in and off by default: inert unless VITE_SENTRY_DSN was baked
+// in at BUILD time *and* the server confirms reporting is permitted right now
+// (docs/operations/error-reporting.md). Started first so it races the initial mount
+// rather than following it, but deliberately NOT awaited: first paint must not wait on
+// a network round trip, and initTelemetry never rejects.
+void initTelemetry();
 
 // Keep <html> in sync with the persisted theme. The inline script in index.html
 // sets the initial class pre-render (no flash); this reconciles the signal state.

@@ -38,6 +38,10 @@ const ALL_TEST_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN];
 // Everything else under /api is gated.
 const PUBLIC_PREFIXES = [
   '/api/health',
+  // Whether crash reporting is permitted for this deployment (routes/telemetry-config.ts).
+  // The browser has to ask before it initialises Sentry, which is before it has a
+  // session; the answer is a deployment-wide policy flag, never user data.
+  '/api/config/telemetry',
   '/api/auth/config',
   '/api/auth/login',
   '/api/auth/logout',

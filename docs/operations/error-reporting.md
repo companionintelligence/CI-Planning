@@ -20,12 +20,23 @@ reporting is deliberately narrower than a default Sentry install:
 | `tracesSampleRate` | `0` | Errors only. Traces would ship request shapes we have no consent to collect. |
 | Session replay | not installed | Would record the user's own calendar and reflections on screen. |
 | Profiling | not installed | Same reason, plus it buys nothing for an errors-only posture. |
-| `beforeSend` | scrubber | Redacts credentials and home paths, drops cookies/body/query string. |
+| `includeServerName` | `false` | Otherwise every event carries `os.hostname()`. |
+| `beforeSend` | scrubber | Redacts credentials, home paths and URLs; drops cookies/body/query string. |
 
 `sendDefaultPii: false` is a deliberate divergence from CI-Hub's current
 `sendDefaultPii: true`, which is tracked as gap #7 in CI-Engineering's
 [security-trust-and-ops](https://github.com/companionintelligence/CI-Engineering/blob/main/architecture/subsystems/security-trust-and-ops.md).
 We do not repeat it.
+
+> **`sendDefaultPii: false` gates much less than its name suggests.** In
+> `@sentry/core` 10.69.0 the flag maps (via `defaultPiiToCollectionOptions`) to a
+> **denylist**, not to "off". With PII disabled the SDK still attaches request headers
+> — only `["forwarded", "-ip", "remote-", "via", "-user"]` are denied, so
+> `authorization` and `x-api-key` are not — still attaches `request.url` (its own
+> source comments *"URL is always included"*), still captures stack-frame locals
+> (`stackFrameVariables: true`), and still stamps the machine hostname into
+> `server_name`. **The scrubber, not the flag, is what actually closes those.** If you
+> are reviewing this posture, review `scrub.ts`.
 
 Two kill switches disable reporting even when a DSN is baked into an image, so an
 operator can turn it off without a rebuild:
@@ -41,28 +52,72 @@ DSN. The losing reasons are still resolved and exposed as `disabledReason`
 at boot — so an operator can see *which* switch is holding reporting off rather than
 guessing.
 
+### Both switches reach the browser too
+
+The browser's DSN is inlined by Vite at **build** time, so a shipped bundle cannot see
+`CI_TELEMETRY` or `CI_LOCAL_ONLY` — they are runtime env on the container. Left at
+that, the CI-Marketplace **"Share crash reports"** toggle (which sets `CI_TELEMETRY`)
+would switch off the server half and leave the browser reporting.
+
+So the browser asks. Before `Sentry.init` it calls
+**`GET /api/config/telemetry`** — unauthenticated, `no-store`, and returning exactly
+`{ enabled: boolean, disabledReason: 'local-only' | 'opt-out' | null }`, never the DSN
+or any other configuration. The check **fails closed**: an error, a non-2xx, a
+malformed body or a timeout (3 s) all leave reporting off, because "cannot confirm
+permission" is not permission.
+
+Two consequences worth knowing:
+
+- A build-time DSN alone is never sufficient to start reporting. The server has to
+  agree, on every page load.
+- There is a short window at startup — first paint until the verdict lands — in which a
+  thrown error is not reported. Reporting something we have not been given permission
+  to send is the worse failure, so the window stays.
+
 ## What gets scrubbed
 
-`server/src/lib/telemetry/scrub.ts` runs as `beforeSend` on every event:
+`server/src/lib/telemetry/scrub.ts` and its browser twin
+`client/src/lib/telemetry-scrub.ts` run as `beforeSend` on every event and apply the
+same rules:
 
-- Bearer tokens, `api_key=` / `password:` / `token:` style pairs, Tailscale
+**Content**
+
+- Bearer tokens, `api_key=` / `api-key:` / `password:` / `token:` style pairs, Tailscale
   `tskey-…`, and credentials in connection URLs (`postgres://user:pw@host`) →
   `[Filtered]`
 - Home directories (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>`) → `~`, since
   they leak the account name
 - Object keys matching
-  `password|secret|token|authorization|cookie|jwt|apikey|api_key|dsn|pepper|private_key`
-  → `[Filtered]`, at any depth
-- Request cookies and bodies dropped; query strings filtered; headers scrubbed
+  `password|secret|token|authorization|cookie|jwt|api[-_ ]?key|dsn|pepper|private[-_ ]?key`
+  → `[Filtered]`, at any depth. Note `api[-_ ]?key` rather than a bare `api_key`: the
+  header this app authenticates with is `x-api-key`, which the hyphen-less spelling
+  misses entirely
 - Strings over 8 KB truncated, so a stray blob can't smuggle plan contents out inside
   an exception message
 - Recursion is depth-guarded at 8, so a cyclic payload can't stall the reporting path
 
-The browser bundle (`client/src/lib/telemetry.ts`) additionally strips the query
-string **and the hash** from every reported URL and from navigation breadcrumb
-`from`/`to` — on this app those carry task text, search terms and the date the user is
-looking at — and drops chunk-load and `ResizeObserver` noise, which says nothing about
-a real defect.
+**Fields**
+
+| Field | Treatment | Why it needs treatment |
+|---|---|---|
+| `request.url` | query + hash stripped | Attached unconditionally, and on Node it is path **+ query** — this is where the search terms actually are. Filtering `query_string` alone redacts nothing. |
+| `request.query_string` | `[Filtered]` | — |
+| `request.cookies`, `request.data` | deleted | Session cookie; task/plan text the user wrote. |
+| `request.headers` | key filter, plus URL treatment for `Referer`/`Referrer` | Headers still ship with PII off. `Referer` is the full previous URL — in the browser, `document.referrer` under the default policy. |
+| `server_name` | deleted (and `includeServerName: false`) | The machine hostname. |
+| `exception…stacktrace.frames[]` | `filename`, `abs_path`, `module`, `context_line`, `pre_context`, `post_context` scrubbed; `vars` walked | Absolute paths and captured locals — `stackFrameVariables` stays on with PII off. |
+| `breadcrumbs[].message` / `.data` | scrubbed; `url`/`from`/`to` get URL treatment | Not just navigation: fetch/xhr crumbs carry `data.url` **with** the query string, console crumbs carry raw `data.arguments`. |
+| `extra` | walked | — |
+
+The browser additionally drops chunk-load and `ResizeObserver` noise, which says
+nothing about a real defect.
+
+**On the twin files.** The two scrubbers are duplicates, not a shared module: they live
+in separate pnpm packages with different bundlers, and a third workspace package for
+~100 lines was not worth it. The cost of that choice is drift, so both suites run one
+shared fixture set (`client/src/lib/telemetry-fixtures.ts`) through their own copy —
+see `server/test/telemetry-parity.test.ts`. A rule tightened on one side and forgotten
+on the other fails CI. Same arrangement CI-Server uses for its Python twins.
 
 This is separate from, and not a replacement for, `server/src/lib/logger.ts`'s own
 redaction of log `meta`. The two have different payload shapes; they are not meant to
@@ -104,7 +159,8 @@ docker build \
   -t ci-planning .
 ```
 
-Turning it off again, without rebuilding:
+Turning it off again, without rebuilding — this covers **both** halves, because the
+browser consults `/api/config/telemetry` before it initialises:
 
 ```bash
 CI_TELEMETRY=off docker compose up -d
@@ -134,11 +190,26 @@ check that nothing reaches `ingest.sentry.io`. The boot log stays silent in that
 (the default needs no explanation); with `CI_TELEMETRY=off` or `CI_LOCAL_ONLY=true` it
 logs one line naming the reason.
 
-The gate and the scrubber are unit-tested end to end:
+Check the browser gate directly:
 
 ```bash
-pnpm --filter server test telemetry    # 43 assertions: gate matrix + scrubber
-pnpm --filter client test telemetry    # 16 assertions: URL/hash stripping + noise filter
+curl -s localhost:3848/api/config/telemetry
+# {"enabled":true,"disabledReason":null}      — reporting permitted
+# {"enabled":false,"disabledReason":"opt-out"} — CI_TELEMETRY=off is set
+```
+
+Confirm the DSN-less bundle really is inert — the SDK should not merely be idle, it
+should be **absent**:
+
+```bash
+pnpm build && grep -c sentry server/public/assets/*.js   # expect 0
+```
+
+The gate and the scrubbers are unit-tested end to end:
+
+```bash
+pnpm --filter server test telemetry    # gate matrix, scrubber, flush bound, /api/config/telemetry
+pnpm --filter client test telemetry    # browser scrubber + shared-fixture parity
 ```
 
 Once a DSN is configured:
@@ -151,22 +222,37 @@ sentry issue list companion-intelligence/ci-planning --query "is:unresolved"
 
 | Path | Role |
 |---|---|
-| `server/src/lib/telemetry/settings.ts` | Resolves the opt-in gate from env (pure, env-injected) |
+| `server/src/lib/telemetry/settings.ts` | Resolves the opt-in gate from env (pure, env-injected), plus `telemetryPermission()` for the browser gate |
 | `server/src/lib/telemetry/scrub.ts` | The `beforeSend` payload scrubber |
+| `server/src/lib/telemetry/timeout.ts` | `withTimeout` — the real wall-clock bound on the flush |
 | `server/src/lib/telemetry/index.ts` | `Sentry.init`, `captureException`, bounded `flushTelemetry` |
+| `server/src/routes/telemetry-config.ts` | `GET /api/config/telemetry` — the browser's runtime gate |
 | `server/src/index.ts` | Initialises telemetry **before** `./boot.js`; captures + flushes a fatal boot failure before `process.exit(1)` |
 | `server/src/boot.ts` | SIGTERM/SIGINT shutdown flushes before `process.exit(0)` |
 | `server/src/app.ts` | Koa error middleware captures 5xx only (a thrown 4xx is the API working as designed) |
-| `client/src/lib/telemetry.ts` | Browser init + scrubber |
-| `client/src/main.tsx` | Calls `initTelemetry()` before the root render |
+| `client/src/lib/telemetry.ts` | Browser gate + init |
+| `client/src/lib/telemetry-scrub.ts` | Browser scrubber (twin of the server's) |
+| `client/src/lib/telemetry-fixtures.ts` | The shared fixture set both parity suites run |
+| `client/src/main.tsx` | Starts `initTelemetry()` before the root render |
 | `client/src/App.tsx` | Root `ErrorBoundary` captures — a caught error never reaches `window.onerror` |
 
 Uncaught exceptions and unhandled rejections are left to the SDK's own
 `OnUncaughtException` / `OnUnhandledRejection` integrations: this app registers no
 crash handlers of its own, and the SDK's capture *and flush* before the process dies.
-Every place the app itself calls `process.exit` on an error or shutdown path awaits
-`flushTelemetry()` first — the transport is asynchronous, so exiting straight after a
-capture would drop the report.
+
+**Exit paths.** Where the app itself calls `process.exit` on an error or shutdown path,
+it awaits `flushTelemetry()` first — the transport is asynchronous, so exiting straight
+after a capture drops the report. Two details make that safe rather than merely
+well-intentioned:
+
+- **The bound is real.** `Sentry.close(ms)` is not a wall-clock timeout — it only limits
+  how long the transport waits, and still resolves on a later event-loop turn, so a
+  handler behind queued synchronous work can overrun by an arbitrary amount. The flush
+  is raced against an actual (`unref`'d) timer in `timeout.ts`.
+- **Reporting-off costs nothing.** When telemetry is disabled — the default — those
+  paths exit **synchronously**, exactly as they did before this feature existed.
+  Awaiting even an already-resolved promise defers the exit by a turn, and crash and
+  `docker stop` timing must not change for deployments that never send anything.
 
 ## Not wired up yet
 
@@ -174,10 +260,15 @@ capture would drop the report.
   `VITE_SENTRY_RELEASE` or run `sentry sourcemaps upload`, so browser stack traces
   from a published image would be minified. CI-Hub's `desktop-release.yml` has the
   pattern to copy.
-- **Consent UI.** Reporting is an operator-level switch, not a user-facing one — the
-  same gap tracked for CI-Hub in
+- **In-app consent UI.** Reporting is an operator-level switch. The CI-Marketplace
+  "Share crash reports" toggle drives `CI_TELEMETRY` and now reaches both halves, but
+  there is no per-user control inside the app itself — the same gap tracked for CI-Hub
+  in
   [security-trust-and-ops](https://github.com/companionintelligence/CI-Engineering/blob/main/architecture/subsystems/security-trust-and-ops.md)
   (P2).
+- **Startup window in the browser.** Errors thrown between first paint and the
+  `/api/config/telemetry` verdict are not reported. Buffering them would mean holding
+  events we may turn out not to have permission to send, so this is deliberate.
 - **Release health.** The Node SDK's default `ProcessSession` integration sends a
   session envelope per process when a DSN *is* configured. It carries release,
   environment and status — no PII — and matches CI-Server's behaviour, so it is left

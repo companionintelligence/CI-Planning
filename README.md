@@ -1639,11 +1639,11 @@ runs fine and simply hides the AI features. This file is for the self-host path 
 | `GRAPHQL_SANDBOX` | (unset) | `1` serves the self-hosted GraphiQL IDE at `GET /api/graphql/sandbox`. On by default outside production; in production it is **opt-in** via this flag. |
 | `CIPORTAL_MEMORY_REDIRECT_URI` | `${PUBLIC_BASE_URL}/api/memory/ciportal/callback` | The memory connector's own OAuth callback (AA0b) — distinct from the login callback. |
 | `SENTRY_DSN` | (unset) | **Opt-in error reporting.** Unset ⇒ no Sentry code initialises and the process makes no outbound connection. Errors only: no tracing, no session replay, no PII (`sendDefaultPii: false`), and every payload is scrubbed of credentials and home paths first. See [docs/operations/error-reporting.md](docs/operations/error-reporting.md). |
-| `CI_TELEMETRY` | (unset) | `off` / `false` / `0` / `no` / `disabled` turns reporting off **even with a DSN configured** — so an operator can disable a DSN baked into an image without rebuilding it. |
-| `CI_LOCAL_ONLY` | (unset) | `true` / `1` / `yes` / `on` ⇒ zero phone-home. Beats both `CI_TELEMETRY` and the DSN. |
+| `CI_TELEMETRY` | (unset) | `off` / `false` / `0` / `no` / `disabled` turns reporting off **even with a DSN configured** — so an operator can disable a DSN baked into an image without rebuilding it. Reaches the browser too: the bundle asks `GET /api/config/telemetry` before it initialises. |
+| `CI_LOCAL_ONLY` | (unset) | `true` / `1` / `yes` / `on` ⇒ zero phone-home. Beats both `CI_TELEMETRY` and the DSN, on both halves. |
 | `SENTRY_ENV` / `CI_PLANNING_ENVIRONMENT` | (unset) | Sentry `environment`. Resolution order: `SENTRY_ENV` → `CI_PLANNING_ENVIRONMENT` → `NODE_ENV` → `development`. |
 | `SENTRY_RELEASE` / `CI_PLANNING_VERSION` | (unset) | Sentry `release`. Explicit `SENTRY_RELEASE` wins; otherwise it is derived as `ci-planning-server@${CI_PLANNING_VERSION}`. |
-| `VITE_SENTRY_DSN` / `VITE_SENTRY_RELEASE` / `VITE_CI_PLANNING_ENVIRONMENT` | (unset) | The browser half of the above. **Build-time only** — Vite inlines them into the bundle, so in Docker they are `--build-arg`s, not runtime variables. |
+| `VITE_SENTRY_DSN` / `VITE_SENTRY_RELEASE` / `VITE_CI_PLANNING_ENVIRONMENT` | (unset) | The browser half of the above. **Build-time only** — Vite inlines them into the bundle, so in Docker they are `--build-arg`s, not runtime variables. A build-time DSN is not sufficient on its own: the bundle must also be told at runtime that reporting is permitted. |
 
 **Persistence**: everything lives in the single SQLite file at `DB_PATH`. Mount a
 volume at `/data` (as above) and your tasks survive container recreation.

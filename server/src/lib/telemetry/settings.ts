@@ -52,6 +52,28 @@ export function isLocalOnly(env: NodeJS.ProcessEnv): boolean {
   return value != null && TRUTHY.has(value);
 }
 
+/**
+ * Is reporting PERMITTED, ignoring whether this process happens to hold a DSN?
+ *
+ * Both kill switches are runtime env on the container, but the browser bundle's DSN is
+ * baked in at BUILD time — so a bundle that shipped with a DSN has no way to learn that
+ * an operator (or the CI-Marketplace "Share crash reports" toggle, which sets
+ * `CI_TELEMETRY` on the container) turned reporting off. `GET /api/config/telemetry`
+ * publishes this verdict so the browser can ask before it initialises.
+ *
+ * Deliberately independent of `SENTRY_DSN`: the question is whether reporting is
+ * ALLOWED, not whether this process is configured for it — and the DSN itself must
+ * never cross that endpoint.
+ */
+export function telemetryPermission(env: NodeJS.ProcessEnv): {
+  permitted: boolean;
+  disabledReason: 'local-only' | 'opt-out' | null;
+} {
+  if (isLocalOnly(env)) return { permitted: false, disabledReason: 'local-only' };
+  if (isTelemetryOptedOut(env)) return { permitted: false, disabledReason: 'opt-out' };
+  return { permitted: true, disabledReason: null };
+}
+
 export function resolveTelemetrySettings(env: NodeJS.ProcessEnv, component: string): TelemetrySettings {
   const dsn = read(env, 'SENTRY_DSN');
   const deploymentVersion = read(env, 'CI_PLANNING_VERSION');
