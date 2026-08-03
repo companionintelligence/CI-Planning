@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { parseQuick, type ParsedQuick } from '../src/engine/quickadd.js';
 import { mergeEnrichment } from '../src/agents/quickadd.js';
@@ -174,6 +175,7 @@ describe('POST /api/tasks/quick/parse — T14 parse-only preview twin', () => {
       expect(typeof res.body.llm).toBe('boolean'); // truthful: true only when Ollama enriched
       // ZERO writes — the wizard previews client-side; only its Add creates.
       const tasks = sqlite.prepare(`SELECT COUNT(*) AS n FROM tasks`).get() as { n: number };
+      await flushAudits();
       const audits = sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log`).get() as { n: number };
       expect(tasks.n).toBe(0);
       expect(audits.n).toBe(0);
@@ -230,6 +232,7 @@ describe('POST /api/tasks/quick', () => {
         { method: 'POST', json: { text: 'Audit me #ops' } },
       );
       expect(res.status).toBe(201);
+      await flushAudits();
       const rows = sqlite
         .prepare(`SELECT action FROM audit_log WHERE entity = ?`)
         .all(`task:${res.body.task.id}`) as { action: string }[];

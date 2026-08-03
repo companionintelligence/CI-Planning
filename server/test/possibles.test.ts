@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { startTestServer, resetDb, createOwner, SECOND_OWNER_ID, api, type TestServer } from './helpers.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
@@ -246,6 +247,7 @@ describe('promoteAllPending (AF-3)', () => {
     ]);
     expect(possibleStatus(pid)).toBe('promoted');
     // The per-item audit row still fires (inside promotePossible).
+    await flushAudits();
     const audits = (sqlite
       .prepare(`SELECT COUNT(*) c FROM audit_log WHERE action = 'promote' AND entity = ?`)
       .get(`possible:${pid}`) as { c: number }).c;

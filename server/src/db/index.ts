@@ -6,6 +6,7 @@ import { openDb } from './open.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
 import { newId } from '../lib/ids.js';
+import { setStore, createSqliteStore } from './store.js';
 
 const sqlite = openDb(config.dbPath); // FK enforcement ON + busy_timeout; the runner sets WAL
 // uuid7() for raw-SQL inserts (CON-1). SQLite can't DEFAULT a dashed UUIDv7
@@ -34,6 +35,15 @@ export const vecAvailable: boolean = (() => {
 
 const { applied } = runMigrations(sqlite);
 logger.info('Schema ready', { migrationsApplied: applied.length });
+
+// Install the SQLite backend of the data facade (db/store.ts) as soon as the handle
+// exists. It lives HERE rather than only in boot.ts because importing the database is
+// what every consumer already does — including scripts, the CLI, and the many test files
+// that never load boot.ts or the test harness. Without it, any ported call site reached
+// from one of those throws "store not initialised", which is a module-ordering trap
+// rather than a real error. boot.ts still calls setStore afterwards, and that is what
+// swaps in Postgres when STORE_BACKEND says so.
+setStore(createSqliteStore(sqlite));
 
 export const db = drizzle(sqlite, { schema });
 export { sqlite };

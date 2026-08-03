@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { flushAudits } from '../src/lib/audit.js';
 import { sqlite } from '../src/db/index.js';
 import { SYSTEM_OWNER } from '../src/lib/context.js';
 import { bandFor, parseConfidence, CONFIDENCE_MODEL_VERSION } from '../src/services/triality-confidence.js';
@@ -58,6 +59,7 @@ function seedWeights(owner = OWNER, slots: string[] = ['habitual', 'contextual']
   for (const slot of slots) stmt.run(owner, slot);
 }
 
+await flushAudits();
 const resetAudits = (owner = OWNER) =>
   (
     sqlite
@@ -128,17 +130,20 @@ describe('DELETE /api/triality/weights (reset learning, §6b)', () => {
   it('audits exactly the reset that cleared something — a no-op delete writes no row', async () => {
     enableTriality();
     seedWeights(OWNER, ['habitual']);
+    await flushAudits();
     const before = (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c;
 
     const first = await api(srv.url, '/api/triality/weights', { method: 'DELETE' });
     expect(first.body.cleared).toBe(1);
     expect(resetAudits()).toBe(1);
+    await flushAudits();
     expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c).toBe(before + 1);
 
     const repeat = await api(srv.url, '/api/triality/weights', { method: 'DELETE' });
     expect(repeat.status).toBe(200);              // idempotent, not an error
     expect(repeat.body).toEqual({ ok: true, cleared: 0 });
     expect(resetAudits()).toBe(1);                // a no-op is not a mutation worth a row
+    await flushAudits();
     expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c).toBe(before + 1);
   });
 });
@@ -174,8 +179,10 @@ describe('GET /api/triality/next', () => {
     enableTriality();
     seedConfirmed(12);
     seedOpen('quiet');
+    await flushAudits();
     const before = (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c;
     await api(srv.url, '/api/triality/next');
+    await flushAudits();
     const after = (sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log`).get() as { c: number }).c;
     expect(after).toBe(before);
   });
@@ -309,6 +316,7 @@ describe('POST /api/triality/feedback', () => {
     const row = sqlite.prepare(`SELECT outcome FROM triality_log WHERE id = ?`).get(id) as { outcome: string };
     expect(row.outcome).toBe('staged');
 
+    await flushAudits();
     const audits = (
       sqlite.prepare(`SELECT COUNT(*) AS c FROM audit_log WHERE entity = ?`).get(`triality:${id}`) as { c: number }
     ).c;

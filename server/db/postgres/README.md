@@ -65,7 +65,7 @@ Defaults reproduce SQLite's **exact byte format**, not merely its meaning:
 `lib/tz.ts`'s `sqliteUtcToISO` parses by shape. Both spellings were verified
 byte-identical against SQLite.
 
-`uuid7()` is a **database function** (`20260802000300`) because 386 call sites say
+`uuid7()` is a **database function** (`20260802000300`) because ~786 call sites say
 `VALUES (uuid7(), …)`. Time-ordering is load-bearing — dedupe and the flight plan rely on
 `ORDER BY id` being chronological. It matches the JS `newId()` exactly, including that
 neither is strictly monotonic *within* a millisecond (both use a random tail).
@@ -107,7 +107,7 @@ Measured across `server/src` (excluding the superseded SQLite migrations):
 
 | Work | Count |
 |---|---|
-| `sqlite.prepare` call sites | **386** across **74 files** |
+| `sqlite.*` statements | **786** across **73 files** |
 | `sqlite.transaction` blocks | 43 |
 | `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING` | 43 |
 | `INSERT OR REPLACE` → `ON CONFLICT … DO UPDATE` | 3 |
@@ -163,8 +163,8 @@ So the shape is: **port file-by-file in ONE branch, cut over in ONE release.**
 
    Instead `src/db/store.ts` splits the work in two, so neither half is done blind:
 
-   **Pass A — async migration, SQLite underneath.** Move all ~1,536 call sites (386 in
-   src, 1,150 in tests) to `await store.prepare(…)`. The store has not changed, so the
+   **Pass A — async migration, SQLite underneath.** Move all ~1,936 call sites (786 in
+   src, ~1,150 in tests) to `await store.prepare(…)`. The store has not changed, so the
    suite stays GREEN at every commit and each file is independently reviewable.
 
    **Pass B — the cutover.** Set `STORE_BACKEND=postgres`. One change, and 2,600 tests
@@ -182,11 +182,39 @@ So the shape is: **port file-by-file in ONE branch, cut over in ONE release.**
    **Pass A findings so far** (each one is a decision the mechanical edit would have
    got wrong):
 
-   - `writeAudit` is documented fire-and-forget and called **125 times**. It cannot stay
-     fire-and-forget: **29 assertions read `audit_log` immediately after the mutation that
-     writes it**, and under Postgres that is a real round trip, so an unawaited write is a
-     race. It must be awaited at all 125 sites — the single largest cascade in the port,
-     worth doing as its own commit.
+   - `writeAudit` **stays** fire-and-forget, with an explicit `flushAudits()` for readers.
+     Awaiting it at all 125 sites was tried and reverted: it turns 125 edits into ~59
+     service functions becoming async, cascading to ~300 caller sites — the whole service
+     and resolver layer async-ified in one unreviewable commit. It is not justified,
+     because `audit_log` is **write-only in production** (the only readers are the backup
+     export, owner deletion, and tests). The 29 assertions that read it right after the
+     mutation call `await flushAudits()` first, which restores the ordering the
+     synchronous SQLite write used to give for free. 29 test edits instead of ~300.
+   - The facade's SQLite backend is installed by `src/db/index.ts` on import, NOT only by
+     boot.ts or the test harness. Many test files import a service directly and load
+     neither, and would otherwise hit "store not initialised" — a module-ordering trap
+     rather than a real error.
+   - **The statement count was undercounted at first.** `grep 'sqlite\.prepare'` misses
+     the very common `sqlite\n  .prepare(` split across lines. The real figure is **786
+     src statements, not 386** — a multi-line-aware count is the only trustworthy one.
+   - **There are almost no leaves.** Picking files by statement count is the wrong
+     heuristic. `services/category-prefs.ts` and `services/pattern-prefs.ts` look like
+     leaves (3 exports, one visible statement each) but `getCategoryPrefs` /
+     `getPatternPrefs` are read by the **autoplan engine**, so porting them drags in
+     `engine/autoplan.ts`, `engine/review.ts`, `services/blocks.ts`, `jobs/index.ts` and
+     four GraphQL resolver files. Sequence by TRANSITIVE CALLERS, not by file size, and
+     expect the engine to be a hub that forces one large commit whenever it is reached.
+   - **Scripted async-ification is not safe at this scale.** Automated edits produced
+     `async if (…)`, `const x = async (expr)`, and a `flushAudits()` inserted inside a
+     multi-line `return (…)`. Worse, an "await precedence" fixer rewrote
+     `await this.session().listEvents(…)` into `(await this.session()).listEvents(…)` in
+     `connectors/google.ts` — a file the batch never intended to touch, and a real
+     semantic change (`session()` is synchronous; the promise comes from `listEvents`).
+     TypeScript happened to catch each of these, but that is luck, not a guarantee.
+
+     **Conclusion: do not script this.** Port per file, by hand, reading each call site,
+     with the suite run after each file. The batch that produced the failures above was
+     reverted wholesale rather than repaired.
    - `better-sqlite3`'s `.get()`/`.all()`/`.run()` need an explicit `unknown[]` binding
      generic to accept a variadic spread; the default overload infers a fixed-arity tuple
      and rejects the zero-parameter case.
