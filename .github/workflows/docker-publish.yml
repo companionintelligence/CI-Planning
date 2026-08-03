@@ -55,12 +55,36 @@ jobs:
           fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
+      # Advisory only — a missing secret must never fail the publish. Without it
+      # the build args below expand to empty, the Dockerfile ARG defaults win,
+      # and we ship the same DSN-less image we always did.
+      - name: Check Sentry DSN availability
+        shell: bash
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          if [ -z "${SENTRY_DSN}" ]; then
+            echo "::notice::SENTRY_DSN secret is not set — publishing an image with no DSN compiled in. Error reporting stays inert (disabledReason: no-dsn)."
+          else
+            echo "SENTRY_DSN is set — baking it into the published image (server env + client bundle)."
+          fi
+
+      # Built WITH the DSN so the screenshot gate exercises the bundle that
+      # actually ships: a configured build keeps @sentry/browser in the client
+      # bundle and takes the Sentry.init path, neither of which a DSN-less build
+      # has (the DSN check in client/src/lib/telemetry.ts makes the rest of the
+      # module statically unreachable, so the SDK is dropped entirely).
       - name: Build image (load for testing)
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
           tags: ${{ steps.meta.outputs.sha_tag }}
+          build-args: |
+            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+            SENTRY_RELEASE=ci-planning-server@${{ github.sha }}
+            VITE_SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+            VITE_SENTRY_RELEASE=ci-planning-client@${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -70,7 +94,13 @@ jobs:
         # production mode: `/` and `/sw.js` are static (ungated) so the SPA shell still
         # renders for the screenshot; background /api calls 401 without a key, which the
         # app-agnostic screenshot gate does not depend on.
-        run: docker run -d --name app -e AUTH_MODE=standalone -p 8080:${INTERNAL_PORT} ${{ steps.meta.outputs.sha_tag }}
+        #
+        # CI_TELEMETRY=off because the image now has a real DSN baked in and this is a
+        # throwaway CI container: without it every screenshot run would file its errors
+        # into the production Sentry project. The switch stops both halves — the server
+        # skips Sentry.init, and the client's /api/config/telemetry probe returns
+        # {"enabled":false,"disabledReason":"opt-out"} so it does not init either.
+        run: docker run -d --name app -e AUTH_MODE=standalone -e CI_TELEMETRY=off -p 8080:${INTERNAL_PORT} ${{ steps.meta.outputs.sha_tag }}
 
       - name: Wait for HTTP
         run: |
@@ -122,5 +152,14 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
+          # SENTRY_DSN becomes a runtime ENV the Koa server reads at start-up.
+          # VITE_SENTRY_DSN is consumed during `pnpm --filter client build` — Vite
+          # inlines import.meta.env.* into the bundle, so the browser half has no
+          # runtime knob and must be baked here or it can never report.
+          build-args: |
+            SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+            SENTRY_RELEASE=ci-planning-server@${{ github.sha }}
+            VITE_SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+            VITE_SENTRY_RELEASE=ci-planning-client@${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
