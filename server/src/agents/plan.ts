@@ -237,8 +237,8 @@ async function getStagedTasks(owner: string): Promise<PlanTask[]> {
     .all<Omit<PlanTask, 'tags'>>(owner);
   // AF-11: tags = L1 ∪ L2 (entityTagLevels orders level-then-name, so L1 leads);
   // primary_tags = L1 only. See the PlanTask doc for which consumers read which.
-  return rows.map((r) => {
-    const levels = entityTagLevels('task', r.task_id);
+  return await Promise.all(rows.map(async (r) => {
+    const levels = await entityTagLevels('task', r.task_id);
     const primary = levels.filter((t) => t.level === 1).map((t) => t.name);
     return {
       ...r,
@@ -251,7 +251,7 @@ async function getStagedTasks(owner: string): Promise<PlanTask[]> {
       // direction-less task into one '' group.
       ...(primary.length ? { primary_tags: primary } : {}),
     };
-  });
+  }));
 }
 
 function persistOrder(

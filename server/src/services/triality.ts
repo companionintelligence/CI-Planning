@@ -263,7 +263,7 @@ async function collectCandidates(ownerId: string, now: Date): Promise<Candidate[
       title: t.title,
       estimateMin: t.estimated_minutes,
       direction: await taskDirection(t.id, ownerId),
-      categories: entityCategoryNames('task', t.id).map((c) => c.toLowerCase()),
+      categories: (await entityCategoryNames('task', t.id)).map((c) => c.toLowerCase()),
       motivation: t.motivation,
     });
   }
@@ -379,7 +379,7 @@ async function completionHistory(ownerId: string, now: Date): Promise<Completion
   const out: CompletionRow[] = [];
   for (const r of rows) {
     const dir = await taskDirection(r.id, ownerId);
-    const cats = entityCategoryNames('task', r.id).map((c) => c.toLowerCase());
+    const cats = (await entityCategoryNames('task', r.id)).map((c) => c.toLowerCase());
     const patterns = (
       await store().prepare(`SELECT pattern_id FROM pattern_tasks WHERE task_id = ?`).all<{ pattern_id: string }>(r.id)
     ).map((p) => p.pattern_id);

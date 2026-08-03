@@ -228,21 +228,21 @@ export const blockResolvers = {
     parentBlock: async (b: BlockRow) => (b.parentBlockId ? (await getBlock(currentOwnerId(), b.parentBlockId)) ?? null : null),
     // Phase B: first EFFECTIVE category — own entity_categories rows, else the task's,
     // else the legacy category_id column (pre-0135 rows the write path hasn't touched).
-    category: (b: BlockRow) => {
-      const id = entityCategoryIds('time_block', b.id)[0]
-        ?? (b.taskId ? entityCategoryIds('task', b.taskId)[0] : undefined)
+    category: async (b: BlockRow) => {
+      const id = (await entityCategoryIds('time_block', b.id))[0]
+        ?? (b.taskId ? (await entityCategoryIds('task', b.taskId))[0] : undefined)
         ?? b.categoryId;
       if (!id) return null;
-      const row = getOwnedTag(currentOwnerId(), id);
+      const row = await getOwnedTag(currentOwnerId(), id);
       return row ? toNode(row) : null;
     },
     // Phase B: effective category names (same derive rule as REST's `categories`).
-    categories: (b: BlockRow) => blockCategoryNames(b.id, b.taskId),
+    categories: async (b: BlockRow) => await blockCategoryNames(b.id, b.taskId),
     textureEnabled: (b: BlockRow) => b.textureEnabled ?? true,
     // W4a Taggable forward edge. Owner-safe: this resolver only runs on an
     // already-owner-scoped block (timeBlock/timeBlocks/parentBlock all go through
     // getBlock/listBlockPage), so its entity_tags are the owner's. id/label/taggedAt map
     // to EntityTagType's fields via default resolvers — no EntityTagType resolver needed.
-    tags: (b: BlockRow) => entityTagsFull('time_block', b.id).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
+    tags: async (b: BlockRow) => (await entityTagsFull('time_block', b.id)).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
   },
 };

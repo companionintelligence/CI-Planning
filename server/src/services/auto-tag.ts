@@ -113,7 +113,7 @@ export interface AutoTagResult {
  *   replaces existing user-applied tags.
  */
 export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Promise<AutoTagResult> {
-  const vocab = suggestibleVocabulary(ownerId);
+  const vocab = await suggestibleVocabulary(ownerId);
   // `directions` doubles as the prompt's semantic grounding (see agents/tags.ts) and as
   // the level-1 key below; `others` are the intentions that land at level 2.
   const directions = vocab.directions;
@@ -146,8 +146,8 @@ export async function tagUntaggedTasks(ownerId: string, taskIds?: string[]): Pro
       kindOf,
     );
     if (!primary && intentions.length === 0) continue;
-    if (primary) await store().prepare(INSERT_ENTITY_TAG).run(task.id, resolveTagId(primary, ownerId), 1);
-    for (const name of intentions) await store().prepare(INSERT_ENTITY_TAG).run(task.id, resolveTagId(name, ownerId), 2);
+    if (primary) await store().prepare(INSERT_ENTITY_TAG).run(task.id, await resolveTagId(primary, ownerId), 1);
+    for (const name of intentions) await store().prepare(INSERT_ENTITY_TAG).run(task.id, await resolveTagId(name, ownerId), 2);
     taggedIds.push(task.id);
   }
 

@@ -92,8 +92,8 @@ interface PlanRow {
  * (A tag exists at exactly ONE level — the entity_tags PK excludes level — so the
  * union has no duplicates.)
  */
-function tagsOf(taskId: string): string[] {
-  return entityTagLevels('task', taskId).map((t) => t.name);
+async function tagsOf(taskId: string): Promise<string[]> {
+  return (await entityTagLevels('task', taskId)).map((t) => t.name);
 }
 
 /**
@@ -116,7 +116,7 @@ async function selectedStaged(owner: string, date: string): Promise<StagedTask[]
                  t.priority, fp.task_id`
     )
     .all(date, owner) as Omit<StagedTask, 'tags'>[];
-  return rows.map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
+  return await Promise.all(rows.map(async (r) => ({ ...r, priority: r.priority ?? 3, tags: await tagsOf(r.task_id) })));
 }
 
 /**
@@ -135,10 +135,10 @@ async function stagedFromTaskIds(owner: string, ids: readonly string[]): Promise
     )
     .all(owner, ...ids) as Omit<StagedTask, 'tags'>[];
   const byId = new Map(rows.map((r) => [r.task_id, r]));
-  return ids
+  const found = ids
     .map((id) => byId.get(id))
-    .filter((r): r is Omit<StagedTask, 'tags'> => r !== undefined)
-    .map((r) => ({ ...r, priority: r.priority ?? 3, tags: tagsOf(r.task_id) }));
+    .filter((r): r is Omit<StagedTask, 'tags'> => r !== undefined);
+  return await Promise.all(found.map(async (r) => ({ ...r, priority: r.priority ?? 3, tags: await tagsOf(r.task_id) })));
 }
 
 /** How many tasks are staged in the flight-plan (selected or not). */
@@ -270,8 +270,8 @@ async function categoryCandidates(staged: StagedTask[], categoryId: string, owne
  * immune). Falls back to the `tag` mirror as top-level when the normalized store
  * has no rows for this Plan (e.g. a row predating the backfill).
  */
-function planTagWeights(planId: string, fallbackTag: string | null): Map<string, number> {
-  const levels = entityTagLevels('time_block', planId);
+async function planTagWeights(planId: string, fallbackTag: string | null): Promise<Map<string, number>> {
+  const levels = await entityTagLevels('time_block', planId);
   const w = new Map<string, number>();
   if (levels.length === 0) {
     for (const name of splitTagString(fallbackTag)) w.set(name, 1);
@@ -428,7 +428,7 @@ async function placeIntoWindow(
     : null;
 
   for (const t of tasks) {
-    if (opts.parentBlockId) inheritContainerDirection(t.task_id, containerTag, owner);
+    if (opts.parentBlockId) await inheritContainerDirection(t.task_id, containerTag, owner);
     const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
     let placedAny = false;
     for (const want of sessions) {
@@ -500,7 +500,7 @@ async function reconcilePriorPlacement(owner: string, taskId: string, dayStartIS
         RETURNING id`,
     )
     .all(taskId, owner) as { id: string }[];
-  for (const b of stale) removeEntityTags('time_block', b.id);
+  for (const b of stale) await removeEntityTags('time_block', b.id);
   return null;
 }
 
@@ -714,7 +714,7 @@ export async function placeFlightPlan(
     if (!block) return { step: 'place', blocksCreated: 0, placed: 0, unplaced: staged.length };
     // Phase B (0135): the fill axis is the Plan's position-0 entity_categories row (the
     // retired category_id column is no longer consulted — 0135 backfilled it).
-    const blockCategoryId = entityCategoryIds('time_block', opts.blockId)[0];
+    const blockCategoryId = (await entityCategoryIds('time_block', opts.blockId))[0];
     let cands: StagedTask[];
     let ordered: StagedTask[];
     if (blockCategoryId) {
@@ -732,7 +732,7 @@ export async function placeFlightPlan(
         ordered = [...staged].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
       } else {
         // Phase 5: match on ANY of the Plan's tags; dilute secondaries in ordering.
-        const weights = planTagWeights(opts.blockId, block.tag);
+        const weights = await planTagWeights(opts.blockId, block.tag);
         const planTags = [...weights.keys()];
         cands = planTags.length ? staged.filter((t) => planTags.some((name) => t.tags.includes(name))) : staged;
         ordered = orderForPlan(cands, weights);
@@ -811,7 +811,7 @@ export async function placeFlightPlan(
       cands = staged.filter((t) => !placedIds.has(t.task_id));
       ordered = [...cands].sort((a, b) => a.priority - b.priority || a.task_id.localeCompare(b.task_id));
     } else {
-      const weights = planTagWeights(plan.id, plan.tag);
+      const weights = await planTagWeights(plan.id, plan.tag);
       const planTags = [...weights.keys()];
       cands = staged.filter((t) => !placedIds.has(t.task_id) && planTags.some((name) => t.tags.includes(name)));
       ordered = orderForPlan(cands, weights);

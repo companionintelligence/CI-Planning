@@ -150,11 +150,11 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   // Categories count as "needed" only when the owner actually HAS a category vocabulary:
   // with none, an empty entity_categories set is not a blank to fill, and treating it as
   // one would make every task permanently enrichable.
-  const vocab = suggestibleVocabulary(owner);
+  const vocab = await suggestibleVocabulary(owner);
   const categories = vocab.categories;
   const needsDescription = !task.notes?.trim();
-  const needsDirection = !taskHasLevel1Direction(taskId, owner);
-  const needsCategories = categories.length > 0 && entityCategoryIds('task', taskId).length === 0;
+  const needsDirection = !await taskHasLevel1Direction(taskId, owner);
+  const needsCategories = categories.length > 0 && (await entityCategoryIds('task', taskId)).length === 0;
   // Motivation (0141, §3b): a blank to fill only while unlabeled — a user OR earlier
   // machine label stands (the never-re-tag contract; applyMachineMotivation re-guards
   // in SQL against a concurrent write).
@@ -219,8 +219,8 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
   if (needsDirection && typeof out.direction === 'string') {
     const canonical = directions.find((d) => d.toLowerCase() === out.direction!.toString().trim().toLowerCase());
     // Re-check the guard: a concurrent edit may have given the task a direction since.
-    if (canonical && !taskHasLevel1Direction(taskId, owner)) {
-      await store().prepare(INSERT_DIRECTION).run(taskId, resolveTagId(canonical, owner));
+    if (canonical && !await taskHasLevel1Direction(taskId, owner)) {
+      await store().prepare(INSERT_DIRECTION).run(taskId, await resolveTagId(canonical, owner));
       result.direction = canonical;
       result.enriched = true;
     }
@@ -233,8 +233,8 @@ export async function enrichTaskFromMemory(owner: string, taskId: string): Promi
     // Names → the owner's category-tag ids; then re-check the guard — a concurrent edit
     // may have given the task categories since the read above, and setEntityCategories
     // REPLACES the set, so writing over a user's picks would be destructive, not additive.
-    if (picked.length > 0 && entityCategoryIds('task', taskId).length === 0) {
-      setEntityCategories('task', taskId, categoryIdsForOwner(picked, owner));
+    if (picked.length > 0 && (await entityCategoryIds('task', taskId)).length === 0) {
+      await setEntityCategories('task', taskId, await categoryIdsForOwner(picked, owner));
       result.categories = picked;
       result.enriched = true;
     }

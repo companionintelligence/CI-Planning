@@ -165,6 +165,6 @@ export async function deleteFutureOpenInstances(templateId: string, today: strin
         RETURNING id`
     )
     .all<{ id: string }>(templateId, today);
-  for (const t of dropped) removeEntityTags('task', t.id);
+  for (const t of dropped) await removeEntityTags('task', t.id);
   return dropped.length;
 }

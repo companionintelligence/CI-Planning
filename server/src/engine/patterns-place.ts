@@ -49,8 +49,8 @@ interface MemberTask {
   estimated_minutes: number | null;
 }
 
-function tagsOf(taskId: string): string[] {
-  return taskTagNames(taskId);
+async function tagsOf(taskId: string): Promise<string[]> {
+  return await taskTagNames(taskId);
 }
 
 /**
@@ -178,7 +178,13 @@ export async function placePatternOnDay(
 
     // Members → placeable tasks.
     let toPlace = await resolveMembers(owner, patternId, date);
-    if (blockTag) toPlace = toPlace.filter((t) => tagsOf(t.task_id).includes(blockTag!));
+    if (blockTag) {
+      // An explicit loop, not `.filter`: tagsOf is async now, and a promise predicate is
+      // always truthy — every member would pass and the block's tag would stop filtering.
+      const kept: MemberTask[] = [];
+      for (const t of toPlace) if ((await tagsOf(t.task_id)).includes(blockTag)) kept.push(t);
+      toPlace = kept;
+    }
     if (toPlace.length === 0) {
       return { patternId, date, blocksCreated: 0, placed: 0, unplaced: 0, skippedAlreadyPlaced: false };
     }
@@ -243,7 +249,7 @@ export async function placePatternOnDay(
       // derived direction lands in the `tag` column (+ entity_tags level 1, matching
       // API-created blocks) and the REST become level-2 secondary tags — same shape
       // applyBlockTagLevels writes. No derived direction → no stamp.
-      const derivedDirs = routineDerivedTags(patternId).directions;
+      const derivedDirs = (await routineDerivedTags(patternId)).directions;
       const containerTag = derivedDirs[0] ?? null;
       const seq: { task: MemberTask; lenMs: number }[] = [];
       for (const t of toPlace) {
@@ -274,7 +280,7 @@ export async function placePatternOnDay(
             )
             .get<{ id: string }>(owner, meta?.name ?? 'Routine', containerTag, new Date(pick.gap.cursor).toISOString(), new Date(containerEndMs).toISOString(), String(patternId)))!.id;
           if (derivedDirs.length > 0) {
-            syncLeveledEntityTags('time_block', containerId, [
+            await syncLeveledEntityTags('time_block', containerId, [
               { level: 1, names: [derivedDirs[0]] },
               { level: 2, names: derivedDirs.slice(1) },
             ], owner);

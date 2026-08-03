@@ -81,19 +81,19 @@ function subtypeWrite(body: { subtype?: Subtype; is_habit?: boolean }): { subtyp
  * are resolve-or-created + normalized by syncLeveledEntityTags. Mirrors
  * applyBlockTagLevels in routes/blocks.ts so tasks + blocks behave identically.
  */
-export function applyTaskTagLevels(ownerId: string, taskId: string, opts: { tags?: string[]; secondary?: string[] }): void {
-  const existing = entityTagLevels('task', taskId);
+export async function applyTaskTagLevels(ownerId: string, taskId: string, opts: { tags?: string[]; secondary?: string[] }): Promise<void> {
+  const existing = await entityTagLevels('task', taskId);
   const top = opts.tags !== undefined ? opts.tags : existing.filter((t) => t.level === 1).map((t) => t.name);
   const secondary = opts.secondary !== undefined ? opts.secondary : existing.filter((t) => t.level > 1).map((t) => t.name);
-  syncLeveledEntityTags('task', taskId, [
+  await syncLeveledEntityTags('task', taskId, [
     { level: 1, names: top },
     { level: 2, names: secondary },
   ], ownerId);
 }
 
 /** A task's secondary (level>1) tag names — the read surface (mirrors blocks). */
-export function taskSecondaryTags(taskId: string): string[] {
-  return entityTagLevels('task', taskId).filter((t) => t.level > 1).map((t) => t.name);
+export async function taskSecondaryTags(taskId: string): Promise<string[]> {
+  return (await entityTagLevels('task', taskId)).filter((t) => t.level > 1).map((t) => t.name);
 }
 
 /**
@@ -211,11 +211,11 @@ export async function createTask(ownerId: string, input: CreateTaskInput): Promi
     .returning();
 
   if (input.tags !== undefined || input.secondary_tags !== undefined)
-    applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, task.id, { tags: input.tags, secondary: input.secondary_tags });
   // Phase B: category axis (kept OUT of entity_tags). Names resolve owner-scoped;
   // unknown names drop silently (mirrors tag behavior).
   if (input.categories !== undefined)
-    setEntityCategories('task', task.id, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', task.id, await categoryIdsForOwner(input.categories, ownerId));
   if (Array.isArray(input.depends_on)) {
     try {
       // W3.1b: scope blockers to the caller's own tasks — a cross-owner id is dropped.
@@ -269,12 +269,12 @@ export async function createRecurringTask(ownerId: string, input: CreateTaskInpu
     })
     .returning();
   if (input.tags !== undefined || input.secondary_tags !== undefined)
-    applyTaskTagLevels(ownerId, template.id, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, template.id, { tags: input.tags, secondary: input.secondary_tags });
   // Phase B: category axis on the template. Instances carry NO category rows —
   // exactly like entity_tags (generateRecurrences copies neither); the series'
   // categories live on the template only.
   if (input.categories !== undefined)
-    setEntityCategories('task', template.id, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', template.id, await categoryIdsForOwner(input.categories, ownerId));
   // Bridge: a habit task is also represented as a Habit-type Pattern (G2/E′).
   if (sw?.subtype === 'habit') await ensureHabitPattern(template.id, owner, template.title);
   const generated = await generateRecurrences();
@@ -463,12 +463,12 @@ export async function updateTask(
 
   if (Array.isArray(input.tags) || Array.isArray(input.secondary_tags)) {
     // Partial: an omitted level is preserved (mirrors the block PATCH semantics).
-    applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
+    await applyTaskTagLevels(ownerId, targetId, { tags: input.tags, secondary: input.secondary_tags });
   }
 
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
   if (Array.isArray(input.categories)) {
-    setEntityCategories('task', targetId, categoryIdsForOwner(input.categories, ownerId));
+    await setEntityCategories('task', targetId, await categoryIdsForOwner(input.categories, ownerId));
   }
 
   if (Array.isArray(input.depends_on)) {

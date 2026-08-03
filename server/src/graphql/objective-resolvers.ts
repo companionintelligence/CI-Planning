@@ -138,9 +138,9 @@ export const objectiveResolvers = {
       const rows = await Promise.all((await objectiveTaskIds(o.id)).map((id) => getTask(owner, id)));
       return rows.filter((t): t is NonNullable<typeof t> => !!t);
     },
-    category: (o: ObjectiveRow) => {
+    category: async (o: ObjectiveRow) => {
       if (!o.category_id) return null;
-      const row = getOwnedTag(currentOwnerId(), o.category_id);
+      const row = await getOwnedTag(currentOwnerId(), o.category_id);
       return row ? toNode(row) : null;
     },
     // id, title, description, level, horizon, status, cadence, priority map by name.

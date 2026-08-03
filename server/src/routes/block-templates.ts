@@ -139,7 +139,7 @@ export function blockTemplatesRouter() {
         .all<{ id: string; task_id: string | null; block_kind: string }>(block.id, owner);
       for (const c of children) {
         if (c.task_id && c.block_kind === 'task') touched.add(c.task_id);
-        removeEntityTags('time_block', c.id);
+        await removeEntityTags('time_block', c.id);
       }
       await store().prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(block.id, owner);
       for (const taskId of touched) await revertTaskPlacementStatus(taskId, owner);

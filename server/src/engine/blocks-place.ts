@@ -97,7 +97,7 @@ export function placeTasksInBlock(owner: string, blockId: string, taskIds: strin
       // AD2: inherit the container's direction as the task's level-1 primary (unless the
       // task already has one). The child block's `tag` mirrors the container direction
       // regardless (it's a child of that container), stamped in the INSERT below.
-      inheritContainerDirection(t.id, block.tag, owner);
+      await inheritContainerDirection(t.id, block.tag, owner);
       const sessions = splitIntoSessions((t.estimated_minutes ?? DEFAULT_EST_MIN) * MS_PER_MIN, maxFocusMs);
       let placedSessions = 0;
       let firstBlockId: string | undefined;

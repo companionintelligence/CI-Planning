@@ -1,4 +1,4 @@
-import { sqlite } from '../db/index.js';
+import { store } from '../db/store.js';
 import { newId } from '../lib/ids.js';
 import { writeAudit } from '../lib/audit.js';
 import { setCategoryPref } from './category-prefs.js';
@@ -15,7 +15,11 @@ import { setCategoryPref } from './category-prefs.js';
  * dropped in migration 0041) and the task read path (`taskTagNames`). `time_blocks.tag`
  * / `patterns.tag` remain as denormalized top-level mirrors for blocks / routines.
  *
- * better-sqlite3 is synchronous; these are plain sync functions.
+ * Reads/writes go through the store facade, so these are async. The 44 statements that
+ * used to be prepared at MODULE level are now module-scope SQL strings prepared inside
+ * their functions: a module-level `store().prepare` throws "store not initialised" for
+ * any module that loads before db/index installs the backend, and whether it does is a
+ * function of test import order — so it fails intermittently rather than honestly.
  */
 
 export type EntityKind = 'task' | 'time_block' | 'routine';
@@ -38,33 +42,34 @@ export function splitTagString(raw: string | null | undefined): string[] {
     .filter((n) => n.length > 0);
 }
 
-const findTag = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ?`);
-const makeTag = sqlite.prepare(`INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id`);
+const findTag_SQL =
+  `SELECT id FROM tags WHERE owner_id = ? AND name = ?`;
+const makeTag_SQL =
+  `INSERT INTO tags (id, owner_id, name) VALUES (uuid7(), ?, ?) RETURNING id`;
 // W4a: entity_tags.created_at carries a DB-level `NOT NULL DEFAULT CURRENT_TIMESTAMP`
 // (migration 0110), so this — and every OTHER insert path (auto-tag, blocks-recur,
 // possibles, recall clone, groom) — gets a value automatically without stamping it here.
 // That structural default is what guarantees GraphQL's EntityTagType.taggedAt (DateTime!)
 // is never null; deliberately NO per-call-site stamp (a partial one is the trap 0110 fixes).
-const insertAssoc = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES (?, ?, ?, ?)`,
-);
-const deleteEntity = sqlite.prepare(`DELETE FROM entity_tags WHERE entity_kind = ? AND entity_id = ?`);
-const selectNames = sqlite.prepare(
+const insertAssoc_SQL =
+  `INSERT OR IGNORE INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES (?, ?, ?, ?)`;
+const deleteEntity_SQL =
+  `DELETE FROM entity_tags WHERE entity_kind = ? AND entity_id = ?`;
+const selectNames_SQL =
   `SELECT tags.name FROM tags
      JOIN entity_tags ON tags.id = entity_tags.tag_id
     WHERE entity_tags.entity_kind = ? AND entity_tags.entity_id = ?
-    ORDER BY entity_tags.level, tags.name`,
-);
+    ORDER BY entity_tags.level, tags.name`;
 
 /**
  * Resolve a tag id by (normalized) name within an owner's namespace, creating the
  * tag for that owner if absent. Owner-scoped since T2: `name` is unique PER-OWNER
  * (UNIQUE(owner_id, name)), so the same name resolves to a DIFFERENT tag per owner.
  */
-export function resolveTagId(name: string, owner: string): string {
+export async function resolveTagId(name: string, owner: string): Promise<string> {
   const norm = normalizeTagName(name);
-  const existing = findTag.get(owner, norm) as { id: string } | undefined;
-  return existing ? existing.id : (makeTag.get(owner, norm) as { id: string }).id;
+  const existing = await store().prepare(findTag_SQL).get(owner, norm) as { id: string } | undefined;
+  return existing ? existing.id : (await store().prepare(makeTag_SQL).get(owner, norm) as { id: string }).id;
 }
 
 /**
@@ -72,9 +77,9 @@ export function resolveTagId(name: string, owner: string): string {
  * primitive; callers that already hold resolved ids (e.g. the task path, which
  * mirrors `task_tags`) use this to guarantee identical ids across both stores.
  */
-export function setEntityTagIds(kind: EntityKind, entityId: string, tagIds: string[], level = 1): void {
-  deleteEntity.run(kind, entityId);
-  for (const tagId of tagIds) insertAssoc.run(kind, entityId, tagId, level);
+export async function setEntityTagIds(kind: EntityKind, entityId: string, tagIds: string[], level = 1): Promise<void> {
+  await store().prepare(deleteEntity_SQL).run(kind, entityId);
+  for (const tagId of tagIds) await store().prepare(insertAssoc_SQL).run(kind, entityId, tagId, level);
 }
 
 /**
@@ -82,27 +87,30 @@ export function setEntityTagIds(kind: EntityKind, entityId: string, tagIds: stri
  * each, then replace). Used by the time-block / routine write paths, whose tags
  * arrive as a denormalized string.
  */
-export function syncEntityTags(kind: EntityKind, entityId: string, names: string[], owner: string, level = 1): void {
-  setEntityTagIds(kind, entityId, names.map((n) => resolveTagId(n, owner)), level);
+export async function syncEntityTags(kind: EntityKind, entityId: string, names: string[], owner: string, level = 1): Promise<void> {
+  // Promise.all, not a bare `.map`: resolveTagId is async, so the map yields promises and
+  // setEntityTagIds would receive Promise<string>[] where it expects tag ids.
+  await setEntityTagIds(kind, entityId, await Promise.all(names.map((n) => resolveTagId(n, owner))), level);
 }
 
 /**
  * Remove all of an entity's tag associations — the cascade primitive every HARD
  * delete path must call (soft deletes leave the entity row, so they don't).
  */
-const delEntityCatsCleanup = sqlite.prepare(`DELETE FROM entity_categories WHERE entity_kind = ? AND entity_id = ?`);
-export function removeEntityTags(kind: EntityKind, entityId: string): void {
-  deleteEntity.run(kind, entityId);
+const delEntityCatsCleanup_SQL =
+  `DELETE FROM entity_categories WHERE entity_kind = ? AND entity_id = ?`;
+export async function removeEntityTags(kind: EntityKind, entityId: string): Promise<void> {
+  await store().prepare(deleteEntity_SQL).run(kind, entityId);
   // Phase B (0134): entity_categories is the same spans-tables shape as entity_tags,
   // so the hard-delete doctrine above covers BOTH stores through this ONE seam —
   // no delete site can clean tags but orphan categories. (Matches nothing for kinds
   // that never carry categories, e.g. 'routine'.)
-  delEntityCatsCleanup.run(kind, entityId);
+  await store().prepare(delEntityCatsCleanup_SQL).run(kind, entityId);
 }
 
 /** An entity's associated tag names (level-then-name ordered). */
-export function entityTagNames(kind: EntityKind, entityId: string): string[] {
-  return (selectNames.all(kind, entityId) as { name: string }[]).map((r) => r.name);
+export async function entityTagNames(kind: EntityKind, entityId: string): Promise<string[]> {
+  return (await store().prepare(selectNames_SQL).all(kind, entityId) as { name: string }[]).map((r) => r.name);
 }
 
 // ── Task tag read-path (CON-3 finish, Wave 1) ────────────────────────────────
@@ -113,15 +121,14 @@ export function entityTagNames(kind: EntityKind, entityId: string): string[] {
 // the `task_tags` PRIMARY KEY (task_id, tag_id), so it returned tags in tag_id order.
 // Preserving it keeps `tags[0]` (the client's "primary" tag — persisted onto dropped
 // blocks / saved templates) stable across the read-flip. Do NOT order by name.
-const selectTaskNames = sqlite.prepare(
+const selectTaskNames_SQL =
   `SELECT tags.name FROM tags
      JOIN entity_tags ON tags.id = entity_tags.tag_id
     WHERE entity_tags.entity_kind = 'task' AND entity_tags.entity_id = ? AND entity_tags.level = 1
-    ORDER BY entity_tags.tag_id`,
-);
+    ORDER BY entity_tags.tag_id`;
 /** A task's top-level tag names — the read replacing the `task_tags` JOIN. */
-export function taskTagNames(id: string): string[] {
-  return (selectTaskNames.all(id) as { name: string }[]).map((r) => r.name);
+export async function taskTagNames(id: string): Promise<string[]> {
+  return (await store().prepare(selectTaskNames_SQL).all(id) as { name: string }[]).map((r) => r.name);
 }
 
 /** Bound-parameter chunk size — kept well under SQLITE_MAX_VARIABLE_NUMBER (even the legacy 999). */
@@ -133,14 +140,14 @@ const TASK_TAG_CHUNK = 500;
  * unbounded task list can't blow SQLite's bound-parameter limit. Per-task tag order
  * matches `taskTagNames` (tag_id = old PK order).
  */
-export function taskTagNamesByIds(ids: string[]): Map<string, string[]> {
+export async function taskTagNamesByIds(ids: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   for (const id of ids) out.set(id, []);
   if (ids.length === 0) return out;
   for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
     const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
     const placeholders = chunk.map(() => '?').join(',');
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT entity_tags.entity_id AS id, tags.name AS name
            FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
@@ -159,14 +166,14 @@ export function taskTagNamesByIds(ids: string[]): Map<string, string[]> {
  * companion to `taskTagNamesByIds` (level 1). Same chunking + Map shape: every
  * requested id is present (empty array if none). Ordered level-then-name.
  */
-export function taskSecondaryTagNamesByIds(ids: string[]): Map<string, string[]> {
+export async function taskSecondaryTagNamesByIds(ids: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   for (const id of ids) out.set(id, []);
   if (ids.length === 0) return out;
   for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
     const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
     const placeholders = chunk.map(() => '?').join(',');
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT entity_tags.entity_id AS id, tags.name AS name
            FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
@@ -180,16 +187,15 @@ export function taskSecondaryTagNamesByIds(ids: string[]): Map<string, string[]>
   return out;
 }
 
-const selectLevels = sqlite.prepare(
+const selectLevels_SQL =
   `SELECT tags.name AS name, entity_tags.level AS level FROM tags
      JOIN entity_tags ON tags.id = entity_tags.tag_id
     WHERE entity_tags.entity_kind = ? AND entity_tags.entity_id = ?
-    ORDER BY entity_tags.level, tags.name`,
-);
+    ORDER BY entity_tags.level, tags.name`;
 
 /** An entity's tags with their levels (cockpit-v2 Phase 5: top=1, secondary>1). */
-export function entityTagLevels(kind: EntityKind, entityId: string): { name: string; level: number }[] {
-  return selectLevels.all(kind, entityId) as { name: string; level: number }[];
+export async function entityTagLevels(kind: EntityKind, entityId: string): Promise<{ name: string; level: number }[]> {
+  return await store().prepare(selectLevels_SQL).all(kind, entityId) as { name: string; level: number }[];
 }
 
 // ── AF-11 (D2) — routine tags DERIVED from member tasks ──────────────────────
@@ -212,14 +218,14 @@ export interface DerivedRoutineTags {
  * never appear in entity_tags (guarded at every write path), so only direction/
  * intention rows can surface; anything else is dropped defensively.
  */
-export function routineDerivedTagsByIds(ids: string[]): Map<string, DerivedRoutineTags> {
+export async function routineDerivedTagsByIds(ids: string[]): Promise<Map<string, DerivedRoutineTags>> {
   const out = new Map<string, DerivedRoutineTags>();
   for (const id of ids) out.set(id, { directions: [], intentions: [] });
   if (ids.length === 0) return out;
   for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
     const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
     const placeholders = chunk.map(() => '?').join(',');
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT DISTINCT pt.pattern_id AS id, tg.name AS name, tg.kind AS kind
            FROM pattern_tasks pt
@@ -242,23 +248,21 @@ export function routineDerivedTagsByIds(ids: string[]): Map<string, DerivedRouti
 }
 
 /** Single-routine variant (single reads / mutation responses / SSE payloads). */
-export function routineDerivedTags(patternId: string): DerivedRoutineTags {
-  return routineDerivedTagsByIds([patternId]).get(patternId)!;
+export async function routineDerivedTags(patternId: string): Promise<DerivedRoutineTags> {
+  return (await routineDerivedTagsByIds([patternId])).get(patternId)!;
 }
 
 // ── AD2 — container → task direction inheritance ─────────────────────────────
-const taskLevel1DirectionStmt = sqlite.prepare(
+const taskLevel1DirectionStmt_SQL =
   `SELECT 1 FROM entity_tags et JOIN tags tg ON tg.id = et.tag_id
     WHERE et.entity_kind = 'task' AND et.entity_id = ? AND et.level = 1
-      AND tg.kind = 'direction' AND tg.owner_id = ? LIMIT 1`,
-);
-const findDirectionByNameStmt = sqlite.prepare(
-  `SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`,
-);
+      AND tg.kind = 'direction' AND tg.owner_id = ? LIMIT 1`;
+const findDirectionByNameStmt_SQL =
+  `SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`;
 
 /** True if the task already carries a level-1 direction tag (a user-set primary direction). */
-export function taskHasLevel1Direction(taskId: string, owner: string): boolean {
-  return !!taskLevel1DirectionStmt.get(taskId, owner);
+export async function taskHasLevel1Direction(taskId: string, owner: string): Promise<boolean> {
+  return !!await store().prepare(taskLevel1DirectionStmt_SQL).get(taskId, owner);
 }
 
 /**
@@ -278,23 +282,23 @@ export function taskHasLevel1Direction(taskId: string, owner: string): boolean {
  * task model keeps ONE primary direction), and every subsequent known direction is
  * inherited at level 2 so no direction is dropped.
  */
-export function inheritContainerDirection(
+export async function inheritContainerDirection(
   taskId: string,
   containerTag: string | null | undefined,
   owner: string,
-): string | null {
+): Promise<string | null> {
   const names = splitTagString(containerTag);
   if (names.length === 0) return null;
-  if (taskHasLevel1Direction(taskId, owner)) return null;
+  if (await taskHasLevel1Direction(taskId, owner)) return null;
   let primary: string | null = null;
   for (const name of names) {
-    const dir = findDirectionByNameStmt.get(owner, name) as { id: string } | undefined;
+    const dir = await store().prepare(findDirectionByNameStmt_SQL).get(owner, name) as { id: string } | undefined;
     if (!dir) continue;
     if (primary == null) {
-      insertAssoc.run('task', taskId, dir.id, 1);
+      await store().prepare(insertAssoc_SQL).run('task', taskId, dir.id, 1);
       primary = name;
     } else {
-      insertAssoc.run('task', taskId, dir.id, 2);
+      await store().prepare(insertAssoc_SQL).run('task', taskId, dir.id, 2);
     }
   }
   return primary;
@@ -308,13 +312,13 @@ export function inheritContainerDirection(
  * → level 2. Mirrors carryPossibleTags' kind-keyed leveling (services/possibles.ts).
  * Names are matched normalized but returned as given (the sync path normalizes again).
  */
-export function splitNamesByDirection(owner: string, names: string[]): { directions: string[]; others: string[] } {
+export async function splitNamesByDirection(owner: string, names: string[]): Promise<{ directions: string[]; others: string[] }> {
   const directions: string[] = [];
   const others: string[] = [];
   for (const raw of names) {
     const norm = normalizeTagName(raw);
     if (!norm) continue;
-    (findDirectionByNameStmt.get(owner, norm) ? directions : others).push(raw);
+    (await store().prepare(findDirectionByNameStmt_SQL).get(owner, norm) ? directions : others).push(raw);
   }
   return { directions, others };
 }
@@ -331,9 +335,8 @@ export interface TagVocabulary {
   others: string[];
 }
 
-const selectSuggestibleTags = sqlite.prepare(
-  `SELECT name, kind FROM tags WHERE owner_id = ? AND muted = 0 ORDER BY name`,
-);
+const selectSuggestibleTags_SQL =
+  `SELECT name, kind FROM tags WHERE owner_id = ? AND muted = 0 ORDER BY name`;
 
 /**
  * The tag vocabulary any SUGGESTER may draw from — the quick-add classifier, the
@@ -350,8 +353,8 @@ const selectSuggestibleTags = sqlite.prepare(
  * still resolves, and the taxonomy pickers still list muted tags. This governs only what
  * the app volunteers on its own.
  */
-export function suggestibleVocabulary(owner: string): TagVocabulary {
-  const rows = selectSuggestibleTags.all(owner) as { name: string; kind: string }[];
+export async function suggestibleVocabulary(owner: string): Promise<TagVocabulary> {
+  const rows = await store().prepare(selectSuggestibleTags_SQL).all(owner) as { name: string; kind: string }[];
   return {
     directions: rows.filter((r) => r.kind === 'direction').map((r) => r.name),
     categories: rows.filter((r) => r.kind === 'category').map((r) => r.name),
@@ -368,18 +371,17 @@ export function suggestibleVocabulary(owner: string): TagVocabulary {
 // tags are that owner's. `created_at` is non-null by construction — migration 0110 gave the
 // column a DB-level `NOT NULL DEFAULT CURRENT_TIMESTAMP`, so every insert path fills it; no
 // COALESCE and no app-side stamp are needed here.
-const selectEntityTagsFull = sqlite.prepare(
+const selectEntityTagsFull_SQL =
   `SELECT tags.id AS tagId, tags.name AS name, entity_tags.created_at AS createdAt
      FROM tags JOIN entity_tags ON tags.id = entity_tags.tag_id
     WHERE entity_tags.entity_kind = ? AND entity_tags.entity_id = ?
-    ORDER BY entity_tags.level, tags.name`,
-);
+    ORDER BY entity_tags.level, tags.name`;
 /** Full tag rows for a single entity (GraphQL Taggable). tagId + name + createdAt. */
-export function entityTagsFull(
+export async function entityTagsFull(
   kind: EntityKind,
   entityId: string,
-): { tagId: string; name: string; createdAt: string }[] {
-  return selectEntityTagsFull.all(kind, entityId) as { tagId: string; name: string; createdAt: string }[];
+): Promise<{ tagId: string; name: string; createdAt: string }[]> {
+  return await store().prepare(selectEntityTagsFull_SQL).all(kind, entityId) as { tagId: string; name: string; createdAt: string }[];
 }
 
 /**
@@ -388,91 +390,91 @@ export function entityTagsFull(
  * levels keeps its first (highest) level, since the PK makes the later INSERT a
  * no-op. Empty `names` at a level contributes nothing.
  */
-export function syncLeveledEntityTags(
+export async function syncLeveledEntityTags(
   kind: EntityKind,
   entityId: string,
   groups: { level: number; names: string[] }[],
   owner: string,
-): void {
-  deleteEntity.run(kind, entityId);
+): Promise<void> {
+  await store().prepare(deleteEntity_SQL).run(kind, entityId);
   for (const g of groups) {
     for (const name of g.names) {
       const norm = normalizeTagName(name);
-      if (norm) insertAssoc.run(kind, entityId, resolveTagId(norm, owner), g.level);
+      if (norm) await store().prepare(insertAssoc_SQL).run(kind, entityId, await resolveTagId(norm, owner), g.level);
     }
   }
 }
 
 // ── Tag taxonomy (0036/0043): direction ▸ intention ───────────────────────
 
-const usedStmt = sqlite.prepare(`SELECT 1 FROM entity_tags WHERE tag_id = ? LIMIT 1`);
+const usedStmt_SQL =
+  `SELECT 1 FROM entity_tags WHERE tag_id = ? LIMIT 1`;
 /** Has this tag ever been applied to an entity? Used tags can't be deleted. */
-export function tagIsUsed(tagId: string): boolean {
-  return !!usedStmt.get(tagId);
+export async function tagIsUsed(tagId: string): Promise<boolean> {
+  return !!await store().prepare(usedStmt_SQL).get(tagId);
 }
 
-const delDirs = sqlite.prepare(`DELETE FROM tag_directions WHERE intention_tag_id = ?`);
-const insDir = sqlite.prepare(
-  `INSERT OR IGNORE INTO tag_directions (intention_tag_id, direction_tag_id) VALUES (?, ?)`,
-);
+const delDirs_SQL =
+  `DELETE FROM tag_directions WHERE intention_tag_id = ?`;
+const insDir_SQL =
+  `INSERT OR IGNORE INTO tag_directions (intention_tag_id, direction_tag_id) VALUES (?, ?)`;
 /** Replace an intention tag's direction membership (drag-move = a single target). */
-export function setTagDirections(intentionTagId: string, directionTagIds: string[]): void {
-  delDirs.run(intentionTagId);
-  for (const d of directionTagIds) insDir.run(intentionTagId, d);
+export async function setTagDirections(intentionTagId: string, directionTagIds: string[]): Promise<void> {
+  await store().prepare(delDirs_SQL).run(intentionTagId);
+  for (const d of directionTagIds) await store().prepare(insDir_SQL).run(intentionTagId, d);
 }
 
-const dirsOfStmt = sqlite.prepare(
+const dirsOfStmt_SQL =
   `SELECT d.name AS name FROM tag_directions tp
      JOIN tags d ON d.id = tp.direction_tag_id
-    WHERE tp.intention_tag_id = ? ORDER BY d.name`,
-);
+    WHERE tp.intention_tag_id = ? ORDER BY d.name`;
 /** The direction names an intention tag belongs to (empty = Unsorted). */
-export function directionsOf(intentionTagId: string): string[] {
-  return (dirsOfStmt.all(intentionTagId) as { name: string }[]).map((r) => r.name);
+export async function directionsOf(intentionTagId: string): Promise<string[]> {
+  return (await store().prepare(dirsOfStmt_SQL).all(intentionTagId) as { name: string }[]).map((r) => r.name);
 }
 
 // ── Tag taxonomy (0069): intention ▸ category (a SECOND grouping axis) ───────
 // Mirror of the tag_directions membership trio above, on tag_categories.
 
-const delCats = sqlite.prepare(`DELETE FROM tag_categories WHERE intention_tag_id = ?`);
-const insCat = sqlite.prepare(
-  `INSERT OR IGNORE INTO tag_categories (intention_tag_id, category_tag_id) VALUES (?, ?)`,
-);
+const delCats_SQL =
+  `DELETE FROM tag_categories WHERE intention_tag_id = ?`;
+const insCat_SQL =
+  `INSERT OR IGNORE INTO tag_categories (intention_tag_id, category_tag_id) VALUES (?, ?)`;
 /** Replace an intention tag's category membership (drag-move = a single target). */
-export function setCategoryMemberships(intentionTagId: string, categoryTagIds: string[]): void {
-  delCats.run(intentionTagId);
-  for (const c of categoryTagIds) insCat.run(intentionTagId, c);
+export async function setCategoryMemberships(intentionTagId: string, categoryTagIds: string[]): Promise<void> {
+  await store().prepare(delCats_SQL).run(intentionTagId);
+  for (const c of categoryTagIds) await store().prepare(insCat_SQL).run(intentionTagId, c);
 }
 
-const catsOfStmt = sqlite.prepare(
+const catsOfStmt_SQL =
   `SELECT c.name AS name FROM tag_categories tc
      JOIN tags c ON c.id = tc.category_tag_id
-    WHERE tc.intention_tag_id = ? ORDER BY c.name`,
-);
+    WHERE tc.intention_tag_id = ? ORDER BY c.name`;
 /** The category names an intention tag belongs to (empty = Unsorted on the Category tab). */
-export function categoriesOf(intentionTagId: string): string[] {
-  return (catsOfStmt.all(intentionTagId) as { name: string }[]).map((r) => r.name);
+export async function categoriesOf(intentionTagId: string): Promise<string[]> {
+  return (await store().prepare(catsOfStmt_SQL).all(intentionTagId) as { name: string }[]).map((r) => r.name);
 }
 
 // ── Category ▸ direction SCOPE (0069), opt-out polarity ──────────────────────
 // A row = this pattern (direction) tag is OFF for this category; empty = all on.
 
-const delOptOut = sqlite.prepare(`DELETE FROM category_direction_optouts WHERE category_tag_id = ? AND direction_tag_id = ?`);
-const insOptOut = sqlite.prepare(`INSERT OR IGNORE INTO category_direction_optouts (category_tag_id, direction_tag_id) VALUES (?, ?)`);
+const delOptOut_SQL =
+  `DELETE FROM category_direction_optouts WHERE category_tag_id = ? AND direction_tag_id = ?`;
+const insOptOut_SQL =
+  `INSERT OR IGNORE INTO category_direction_optouts (category_tag_id, direction_tag_id) VALUES (?, ?)`;
 /** Toggle a direction on/off for a category (delete the opt-out row to enable, insert to disable). */
-export function setDirectionEnabled(categoryTagId: string, directionTagId: string, enabled: boolean): void {
-  if (enabled) delOptOut.run(categoryTagId, directionTagId);
-  else insOptOut.run(categoryTagId, directionTagId);
+export async function setDirectionEnabled(categoryTagId: string, directionTagId: string, enabled: boolean): Promise<void> {
+  if (enabled) await store().prepare(delOptOut_SQL).run(categoryTagId, directionTagId);
+  else await store().prepare(insOptOut_SQL).run(categoryTagId, directionTagId);
 }
 
-const optOutsOfStmt = sqlite.prepare(
+const optOutsOfStmt_SQL =
   `SELECT p.name AS name FROM category_direction_optouts cdo
      JOIN tags p ON p.id = cdo.direction_tag_id
-    WHERE cdo.category_tag_id = ? ORDER BY p.name`,
-);
+    WHERE cdo.category_tag_id = ? ORDER BY p.name`;
 /** The direction names turned OFF for a category (empty = all directions enabled). */
-export function directionOptoutsOf(categoryTagId: string): string[] {
-  return (optOutsOfStmt.all(categoryTagId) as { name: string }[]).map((r) => r.name);
+export async function directionOptoutsOf(categoryTagId: string): Promise<string[]> {
+  return (await store().prepare(optOutsOfStmt_SQL).all(categoryTagId) as { name: string }[]).map((r) => r.name);
 }
 
 // A category's references live in time_blocks.category_id + tag_categories — NEITHER of
@@ -480,12 +482,15 @@ export function directionOptoutsOf(categoryTagId: string): string[] {
 // Owner-correct since T2: a category tag id is owner-unique (UNIQUE(owner_id, name)) and
 // block category-validation is owner-scoped, so only its own owner's blocks can reference
 // it — callers pass an owner-validated category id (routes/tags.ts 404s a foreign one).
-const catRefByBlock = sqlite.prepare(`SELECT 1 FROM time_blocks WHERE category_id = ? LIMIT 1`);
-const catRefByMember = sqlite.prepare(`SELECT 1 FROM tag_categories WHERE category_tag_id = ? LIMIT 1`);
-const catRefByEntity = sqlite.prepare(`SELECT 1 FROM entity_categories WHERE category_tag_id = ? LIMIT 1`);
+const catRefByBlock_SQL =
+  `SELECT 1 FROM time_blocks WHERE category_id = ? LIMIT 1`;
+const catRefByMember_SQL =
+  `SELECT 1 FROM tag_categories WHERE category_tag_id = ? LIMIT 1`;
+const catRefByEntity_SQL =
+  `SELECT 1 FROM entity_categories WHERE category_tag_id = ? LIMIT 1`;
 /** True if a category tag is assigned to any time block/task or has any member intention. */
-export function categoryIsReferenced(categoryTagId: string): boolean {
-  return !!catRefByBlock.get(categoryTagId) || !!catRefByMember.get(categoryTagId) || !!catRefByEntity.get(categoryTagId);
+export async function categoryIsReferenced(categoryTagId: string): Promise<boolean> {
+  return !!await store().prepare(catRefByBlock_SQL).get(categoryTagId) || !!await store().prepare(catRefByMember_SQL).get(categoryTagId) || !!await store().prepare(catRefByEntity_SQL).get(categoryTagId);
 }
 
 // ── entity_categories (0134): 1–3 categories per task/time_block, position-ordered ──
@@ -494,39 +499,37 @@ export function categoryIsReferenced(categoryTagId: string): boolean {
 // texture order. Owner-scoping rides on the caller: it passes category ids already
 // validated against the current owner (a foreign id simply never matches on read).
 
-const delEntityCats = sqlite.prepare(`DELETE FROM entity_categories WHERE entity_kind = ? AND entity_id = ?`);
-const insEntityCat = sqlite.prepare(
-  `INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) VALUES (?, ?, ?, ?)`,
-);
+const delEntityCats_SQL =
+  `DELETE FROM entity_categories WHERE entity_kind = ? AND entity_id = ?`;
+const insEntityCat_SQL =
+  `INSERT OR IGNORE INTO entity_categories (entity_kind, entity_id, category_tag_id, position) VALUES (?, ?, ?, ?)`;
 /** Replace an entity's category set (max 3, order preserved). Empty array clears it. */
-export function setEntityCategories(entityKind: 'task' | 'time_block', entityId: string, categoryTagIds: string[]): void {
-  delEntityCats.run(entityKind, entityId);
+export async function setEntityCategories(entityKind: 'task' | 'time_block', entityId: string, categoryTagIds: string[]): Promise<void> {
+  await store().prepare(delEntityCats_SQL).run(entityKind, entityId);
   const seen = new Set<string>();
   let pos = 0;
   for (const id of categoryTagIds) {
     if (pos >= 3 || seen.has(id)) continue;
     seen.add(id);
-    insEntityCat.run(entityKind, entityId, id, pos++);
+    await store().prepare(insEntityCat_SQL).run(entityKind, entityId, id, pos++);
   }
 }
 
-const entityCatNamesStmt = sqlite.prepare(
+const entityCatNamesStmt_SQL =
   `SELECT c.name AS name FROM entity_categories ec
      JOIN tags c ON c.id = ec.category_tag_id
-    WHERE ec.entity_kind = ? AND ec.entity_id = ? ORDER BY ec.position, c.name`,
-);
+    WHERE ec.entity_kind = ? AND ec.entity_id = ? ORDER BY ec.position, c.name`;
 /** An entity's category names, in position order (empty = none). */
-export function entityCategoryNames(entityKind: 'task' | 'time_block', entityId: string): string[] {
-  return (entityCatNamesStmt.all(entityKind, entityId) as { name: string }[]).map((r) => r.name);
+export async function entityCategoryNames(entityKind: 'task' | 'time_block', entityId: string): Promise<string[]> {
+  return (await store().prepare(entityCatNamesStmt_SQL).all(entityKind, entityId) as { name: string }[]).map((r) => r.name);
 }
 
-const entityCatIdsStmt = sqlite.prepare(
+const entityCatIdsStmt_SQL =
   `SELECT category_tag_id AS id FROM entity_categories
-    WHERE entity_kind = ? AND entity_id = ? ORDER BY position`,
-);
+    WHERE entity_kind = ? AND entity_id = ? ORDER BY position`;
 /** An entity's category tag IDS, in position order (the names twin above). */
-export function entityCategoryIds(entityKind: 'task' | 'time_block', entityId: string): string[] {
-  return (entityCatIdsStmt.all(entityKind, entityId) as { id: string }[]).map((r) => r.id);
+export async function entityCategoryIds(entityKind: 'task' | 'time_block', entityId: string): Promise<string[]> {
+  return (await store().prepare(entityCatIdsStmt_SQL).all(entityKind, entityId) as { id: string }[]).map((r) => r.id);
 }
 
 /**
@@ -534,14 +537,14 @@ export function entityCategoryIds(entityKind: 'task' | 'time_block', entityId: s
  * `taskTagNamesByIds`: every requested id is present (empty array = no categories).
  * Names come back in `position` order (the stripe order).
  */
-export function entityCategoryNamesByIds(entityKind: 'task' | 'time_block', ids: string[]): Map<string, string[]> {
+export async function entityCategoryNamesByIds(entityKind: 'task' | 'time_block', ids: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   for (const id of ids) out.set(id, []);
   if (ids.length === 0) return out;
   for (let i = 0; i < ids.length; i += TASK_TAG_CHUNK) {
     const chunk = ids.slice(i, i + TASK_TAG_CHUNK);
     const placeholders = chunk.map(() => '?').join(',');
-    const rows = sqlite
+    const rows = await store()
       .prepare(
         `SELECT ec.entity_id AS id, c.name AS name
            FROM entity_categories ec JOIN tags c ON c.id = ec.category_tag_id
@@ -555,30 +558,30 @@ export function entityCategoryNamesByIds(entityKind: 'task' | 'time_block', ids:
 }
 
 /** Resolve category NAMES to the owner's category-tag ids (skips unknown / other owners'). */
-export function categoryIdsForOwner(names: string[], owner: string): string[] {
-  return categoryIds(names, owner);
+export async function categoryIdsForOwner(names: string[], owner: string): Promise<string[]> {
+  return await categoryIds(names, owner);
 }
 
 // ── Tag CRUD orchestration (extracted from routes/tags.ts so REST + GraphQL share ONE
 //    implementation — no duplicated business logic or owner-scoping; Phase W Decision 3) ──
 
 /** Resolve direction (direction) NAMES to the OWNER's direction ids (skips unknown / non-direction / other owners'). */
-function directionIds(names: string[], owner: string): string[] {
+async function directionIds(names: string[], owner: string): Promise<string[]> {
   const out: string[] = [];
-  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`);
+  const find = store().prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'direction'`);
   for (const n of names) {
-    const row = find.get(owner, normalizeTagName(n)) as { id: string } | undefined;
+    const row = await find.get<{ id: string }>(owner, normalizeTagName(n));
     if (row) out.push(row.id);
   }
   return out;
 }
 
 /** Resolve category NAMES to the OWNER's category-tag ids (skips unknown / non-category / other owners'). */
-function categoryIds(names: string[], owner: string): string[] {
+async function categoryIds(names: string[], owner: string): Promise<string[]> {
   const out: string[] = [];
-  const find = sqlite.prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'category'`);
+  const find = store().prepare(`SELECT id FROM tags WHERE owner_id = ? AND name = ? AND kind = 'category'`);
   for (const n of names) {
-    const row = find.get(owner, normalizeTagName(n)) as { id: string } | undefined;
+    const row = await find.get<{ id: string }>(owner, normalizeTagName(n));
     if (row) out.push(row.id);
   }
   return out;
@@ -594,10 +597,11 @@ export interface FullTagRow {
   is_base: number;
 }
 
-const ownedTagStmt = sqlite.prepare(`SELECT * FROM tags WHERE id = ? AND owner_id = ?`);
+const ownedTagStmt_SQL =
+  `SELECT * FROM tags WHERE id = ? AND owner_id = ?`;
 /** Fetch one of the owner's tags (never another owner's), or undefined. */
-export function getOwnedTag(owner: string, id: string): FullTagRow | undefined {
-  return ownedTagStmt.get(id, owner) as FullTagRow | undefined;
+export async function getOwnedTag(owner: string, id: string): Promise<FullTagRow | undefined> {
+  return await store().prepare(ownedTagStmt_SQL).get(id, owner) as FullTagRow | undefined;
 }
 
 export type CreateTagInput = { name?: string; kind?: string; directions?: string[]; categories?: string[] };
@@ -608,15 +612,15 @@ export type CreateTagResult = { ok: true; tag: FullTagRow } | { ok: false; error
  * membership. Identical to the old POST /api/tags body — extracted verbatim so the REST
  * route and the GraphQL createTag mutation cannot drift.
  */
-export function createTag(owner: string, input: CreateTagInput): CreateTagResult {
+export async function createTag(owner: string, input: CreateTagInput): Promise<CreateTagResult> {
   if (!input.name?.trim()) return { ok: false, error: 'name_required' };
   const name = normalizeTagName(input.name);
   if (!name) return { ok: false, error: 'name_required' };
   const kind = input.kind === 'direction' || input.kind === 'pattern' ? 'direction' : input.kind === 'category' ? 'category' : 'intention';
 
-  let tag = sqlite.prepare(`SELECT * FROM tags WHERE owner_id = ? AND name = ?`).get(owner, name) as FullTagRow | undefined;
+  let tag = await store().prepare(`SELECT * FROM tags WHERE owner_id = ? AND name = ?`).get(owner, name) as FullTagRow | undefined;
   if (!tag) {
-    tag = sqlite
+    tag = await store()
       .prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (?, ?, ?, ?) RETURNING *`)
       .get(newId(), owner, name, kind) as FullTagRow;
   }
@@ -624,10 +628,10 @@ export function createTag(owner: string, input: CreateTagInput): CreateTagResult
   // has a colour-stamp source (forward-only never falls through).
   if (tag.kind === 'category') setCategoryPref(owner, tag.id, {});
   if (tag.kind === 'intention' && Array.isArray(input.directions) && input.directions.length) {
-    setTagDirections(tag.id, directionIds(input.directions, owner));
+    await setTagDirections(tag.id, await directionIds(input.directions, owner));
   }
   if (tag.kind === 'intention' && Array.isArray(input.categories) && input.categories.length) {
-    setCategoryMemberships(tag.id, categoryIds(input.categories, owner));
+    await setCategoryMemberships(tag.id, await categoryIds(input.categories, owner));
   }
   writeAudit({ ownerId: owner, actor: 'owner', action: 'create', entity: `tag:${tag.id}` });
   return { ok: true, tag };
@@ -646,17 +650,17 @@ export type UpdateTagResult =
 
 /** Update a tag (rename / mute / membership / category-direction toggle). Extracted from
  *  PATCH /api/tags/:id so REST + GraphQL share it. Owner-scoped throughout. */
-export function updateTag(owner: string, id: string, patch: UpdateTagInput): UpdateTagResult {
-  const tag = sqlite.prepare(`SELECT id, kind FROM tags WHERE id = ? AND owner_id = ?`).get(id, owner) as
+export async function updateTag(owner: string, id: string, patch: UpdateTagInput): Promise<UpdateTagResult> {
+  const tag = await store().prepare(`SELECT id, kind FROM tags WHERE id = ? AND owner_id = ?`).get(id, owner) as
     | { id: string; kind: string }
     | undefined;
   if (!tag) return { ok: false, error: 'not_found' };
 
   if (Array.isArray(patch.directions) && tag.kind === 'intention') {
-    setTagDirections(id, directionIds(patch.directions, owner));
+    await setTagDirections(id, await directionIds(patch.directions, owner));
   }
   if (Array.isArray(patch.categories) && tag.kind === 'intention') {
-    setCategoryMemberships(id, categoryIds(patch.categories, owner));
+    await setCategoryMemberships(id, await categoryIds(patch.categories, owner));
   }
   if (
     patch.direction_toggle &&
@@ -664,22 +668,22 @@ export function updateTag(owner: string, id: string, patch: UpdateTagInput): Upd
     typeof patch.direction_toggle.directionTagId === 'string' &&
     typeof patch.direction_toggle.enabled === 'boolean' &&
     // The toggled pattern tag is a RAW id — verify it's THIS owner's before linking.
-    sqlite.prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ?`).get(patch.direction_toggle.directionTagId, owner)
+    await store().prepare(`SELECT 1 FROM tags WHERE id = ? AND owner_id = ?`).get(patch.direction_toggle.directionTagId, owner)
   ) {
-    setDirectionEnabled(id, patch.direction_toggle.directionTagId, patch.direction_toggle.enabled);
+    await setDirectionEnabled(id, patch.direction_toggle.directionTagId, patch.direction_toggle.enabled);
   }
   if (typeof patch.name === 'string' && patch.name.trim()) {
     const newName = normalizeTagName(patch.name);
     if (newName) {
-      const clash = sqlite.prepare(`SELECT 1 FROM tags WHERE owner_id = ? AND name = ? AND id != ?`).get(owner, newName, id);
+      const clash = await store().prepare(`SELECT 1 FROM tags WHERE owner_id = ? AND name = ? AND id != ?`).get(owner, newName, id);
       if (clash) return { ok: false, error: 'name_conflict' };
-      sqlite.prepare(`UPDATE tags SET name = ? WHERE id = ? AND owner_id = ?`).run(newName, id, owner);
+      await store().prepare(`UPDATE tags SET name = ? WHERE id = ? AND owner_id = ?`).run(newName, id, owner);
     }
   }
   if (typeof patch.muted === 'boolean') {
-    sqlite.prepare(`UPDATE tags SET muted = ? WHERE id = ? AND owner_id = ?`).run(patch.muted ? 1 : 0, id, owner);
+    await store().prepare(`UPDATE tags SET muted = ? WHERE id = ? AND owner_id = ?`).run(patch.muted ? 1 : 0, id, owner);
   }
-  const out = sqlite
+  const out = await store()
     .prepare(`SELECT id, name, kind, is_base AS isBase, muted FROM tags WHERE id = ? AND owner_id = ?`)
     .get(id, owner) as { id: string; name: string; kind: string; isBase: number; muted: number };
   writeAudit({ ownerId: owner, actor: 'owner', action: 'update', entity: `tag:${id}` });
@@ -691,18 +695,18 @@ export function updateTag(owner: string, id: string, patch: UpdateTagInput): Upd
 export type DeleteTagResult = { ok: true } | { ok: false; error: 'not_found' | 'base' | 'in_use' | 'category_in_use' };
 
 /** Delete a tag (guarding base + in-use). Extracted from DELETE /api/tags/:id. Owner-scoped. */
-export function deleteTag(owner: string, id: string): DeleteTagResult {
-  const tag = sqlite.prepare(`SELECT id, kind, is_base AS isBase FROM tags WHERE id = ? AND owner_id = ?`).get(id, owner) as
+export async function deleteTag(owner: string, id: string): Promise<DeleteTagResult> {
+  const tag = await store().prepare(`SELECT id, kind, is_base AS isBase FROM tags WHERE id = ? AND owner_id = ?`).get(id, owner) as
     | { id: string; kind: string; isBase: number }
     | undefined;
   if (!tag) return { ok: false, error: 'not_found' };
   if (tag.isBase) return { ok: false, error: 'base' };
   if (tag.kind === 'category') {
-    if (categoryIsReferenced(id)) return { ok: false, error: 'category_in_use' };
-  } else if (tagIsUsed(id)) {
+    if (await categoryIsReferenced(id)) return { ok: false, error: 'category_in_use' };
+  } else if (await tagIsUsed(id)) {
     return { ok: false, error: 'in_use' };
   }
-  sqlite.prepare(`DELETE FROM tags WHERE id = ? AND owner_id = ?`).run(id, owner); // tag_directions/categories/optouts cascade via FK
+  await store().prepare(`DELETE FROM tags WHERE id = ? AND owner_id = ?`).run(id, owner); // tag_directions/categories/optouts cascade via FK
   writeAudit({ ownerId: owner, actor: 'owner', action: 'delete', entity: `tag:${id}` });
   return { ok: true };
 }
@@ -725,84 +729,76 @@ const KEYSET_COLS = `t.id, t.name, t.kind, t.muted, t.is_base AS isBase`;
 const KEYSET_TAIL = `AND (t.name > ? OR (t.name = ? AND t.id > ?)) ORDER BY t.name, t.id LIMIT ?`;
 
 // intention → its parent directions (the direction axis)
-const pageParentDirectionsStmt = sqlite.prepare(
+const pageParentDirectionsStmt_SQL =
   `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_directions tp ON t.id = tp.direction_tag_id
-    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'direction' ${KEYSET_TAIL}`,
-);
-const countParentDirectionsStmt = sqlite.prepare(
+    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'direction' ${KEYSET_TAIL}`;
+const countParentDirectionsStmt_SQL =
   `SELECT COUNT(*) AS n FROM tags t JOIN tag_directions tp ON t.id = tp.direction_tag_id
-    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'direction'`,
-);
+    WHERE tp.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'direction'`;
 // intention → its parent category-tags
-const pageParentCategoriesStmt = sqlite.prepare(
+const pageParentCategoriesStmt_SQL =
   `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_categories tc ON t.id = tc.category_tag_id
-    WHERE tc.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'category' ${KEYSET_TAIL}`,
-);
-const countParentCategoriesStmt = sqlite.prepare(
+    WHERE tc.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'category' ${KEYSET_TAIL}`;
+const countParentCategoriesStmt_SQL =
   `SELECT COUNT(*) AS n FROM tags t JOIN tag_categories tc ON t.id = tc.category_tag_id
-    WHERE tc.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'category'`,
-);
+    WHERE tc.intention_tag_id = ? AND t.owner_id = ? AND t.kind = 'category'`;
 // direction → its child intentions
-const pageDirectionChildrenStmt = sqlite.prepare(
+const pageDirectionChildrenStmt_SQL =
   `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_directions tp ON t.id = tp.intention_tag_id
-    WHERE tp.direction_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`,
-);
-const countDirectionChildrenStmt = sqlite.prepare(
+    WHERE tp.direction_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`;
+const countDirectionChildrenStmt_SQL =
   `SELECT COUNT(*) AS n FROM tags t JOIN tag_directions tp ON t.id = tp.intention_tag_id
-    WHERE tp.direction_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`,
-);
+    WHERE tp.direction_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`;
 // category-tag → its child intentions
-const pageCategoryChildrenStmt = sqlite.prepare(
+const pageCategoryChildrenStmt_SQL =
   `SELECT ${KEYSET_COLS} FROM tags t JOIN tag_categories tc ON t.id = tc.intention_tag_id
-    WHERE tc.category_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`,
-);
-const countCategoryChildrenStmt = sqlite.prepare(
+    WHERE tc.category_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention' ${KEYSET_TAIL}`;
+const countCategoryChildrenStmt_SQL =
   `SELECT COUNT(*) AS n FROM tags t JOIN tag_categories tc ON t.id = tc.intention_tag_id
-    WHERE tc.category_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`,
-);
+    WHERE tc.category_tag_id = ? AND t.owner_id = ? AND t.kind = 'intention'`;
 // owner's tags (optionally kind-filtered) — the top-level `tags` connection
-const pageOwnerTagsStmt = sqlite.prepare(
-  `SELECT ${KEYSET_COLS} FROM tags t WHERE t.owner_id = ? ${KEYSET_TAIL}`,
-);
-const pageOwnerTagsByKindStmt = sqlite.prepare(
-  `SELECT ${KEYSET_COLS} FROM tags t WHERE t.owner_id = ? AND t.kind = ? ${KEYSET_TAIL}`,
-);
-const countOwnerTagsStmt = sqlite.prepare(`SELECT COUNT(*) AS n FROM tags WHERE owner_id = ?`);
-const countOwnerTagsByKindStmt = sqlite.prepare(`SELECT COUNT(*) AS n FROM tags WHERE owner_id = ? AND kind = ?`);
+const pageOwnerTagsStmt_SQL =
+  `SELECT ${KEYSET_COLS} FROM tags t WHERE t.owner_id = ? ${KEYSET_TAIL}`;
+const pageOwnerTagsByKindStmt_SQL =
+  `SELECT ${KEYSET_COLS} FROM tags t WHERE t.owner_id = ? AND t.kind = ? ${KEYSET_TAIL}`;
+const countOwnerTagsStmt_SQL =
+  `SELECT COUNT(*) AS n FROM tags WHERE owner_id = ?`;
+const countOwnerTagsByKindStmt_SQL =
+  `SELECT COUNT(*) AS n FROM tags WHERE owner_id = ? AND kind = ?`;
 
 const n = (row: unknown) => (row as { n: number }).n;
 
-export function pageParentDirections(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
-  return pageParentDirectionsStmt.all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
+export async function pageParentDirections(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): Promise<TagRow[]> {
+  return await store().prepare(pageParentDirectionsStmt_SQL).all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
 }
-export function countParentDirections(intentionId: string, owner: string): number {
-  return n(countParentDirectionsStmt.get(intentionId, owner));
+export async function countParentDirections(intentionId: string, owner: string): Promise<number> {
+  return n(await store().prepare(countParentDirectionsStmt_SQL).get(intentionId, owner));
 }
-export function pageParentCategories(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
-  return pageParentCategoriesStmt.all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
+export async function pageParentCategories(intentionId: string, owner: string, afterName: string, afterId: string, limit: number): Promise<TagRow[]> {
+  return await store().prepare(pageParentCategoriesStmt_SQL).all(intentionId, owner, afterName, afterName, afterId, limit) as TagRow[];
 }
-export function countParentCategories(intentionId: string, owner: string): number {
-  return n(countParentCategoriesStmt.get(intentionId, owner));
+export async function countParentCategories(intentionId: string, owner: string): Promise<number> {
+  return n(await store().prepare(countParentCategoriesStmt_SQL).get(intentionId, owner));
 }
-export function pageDirectionChildren(directionId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
-  return pageDirectionChildrenStmt.all(directionId, owner, afterName, afterName, afterId, limit) as TagRow[];
+export async function pageDirectionChildren(directionId: string, owner: string, afterName: string, afterId: string, limit: number): Promise<TagRow[]> {
+  return await store().prepare(pageDirectionChildrenStmt_SQL).all(directionId, owner, afterName, afterName, afterId, limit) as TagRow[];
 }
-export function countDirectionChildren(directionId: string, owner: string): number {
-  return n(countDirectionChildrenStmt.get(directionId, owner));
+export async function countDirectionChildren(directionId: string, owner: string): Promise<number> {
+  return n(await store().prepare(countDirectionChildrenStmt_SQL).get(directionId, owner));
 }
-export function pageCategoryChildren(categoryId: string, owner: string, afterName: string, afterId: string, limit: number): TagRow[] {
-  return pageCategoryChildrenStmt.all(categoryId, owner, afterName, afterName, afterId, limit) as TagRow[];
+export async function pageCategoryChildren(categoryId: string, owner: string, afterName: string, afterId: string, limit: number): Promise<TagRow[]> {
+  return await store().prepare(pageCategoryChildrenStmt_SQL).all(categoryId, owner, afterName, afterName, afterId, limit) as TagRow[];
 }
-export function countCategoryChildren(categoryId: string, owner: string): number {
-  return n(countCategoryChildrenStmt.get(categoryId, owner));
+export async function countCategoryChildren(categoryId: string, owner: string): Promise<number> {
+  return n(await store().prepare(countCategoryChildrenStmt_SQL).get(categoryId, owner));
 }
-export function pageOwnerTags(owner: string, kind: string | undefined, afterName: string, afterId: string, limit: number): TagRow[] {
+export async function pageOwnerTags(owner: string, kind: string | undefined, afterName: string, afterId: string, limit: number): Promise<TagRow[]> {
   return kind
-    ? (pageOwnerTagsByKindStmt.all(owner, kind, afterName, afterName, afterId, limit) as TagRow[])
-    : (pageOwnerTagsStmt.all(owner, afterName, afterName, afterId, limit) as TagRow[]);
+    ? (await store().prepare(pageOwnerTagsByKindStmt_SQL).all(owner, kind, afterName, afterName, afterId, limit) as TagRow[])
+    : (await store().prepare(pageOwnerTagsStmt_SQL).all(owner, afterName, afterName, afterId, limit) as TagRow[]);
 }
-export function countOwnerTags(owner: string, kind: string | undefined): number {
-  return kind ? n(countOwnerTagsByKindStmt.get(owner, kind)) : n(countOwnerTagsStmt.get(owner));
+export async function countOwnerTags(owner: string, kind: string | undefined): Promise<number> {
+  return kind ? n(await store().prepare(countOwnerTagsByKindStmt_SQL).get(owner, kind)) : n(await store().prepare(countOwnerTagsStmt_SQL).get(owner));
 }
 
 // ── GraphQL reverse tagging edge (Phase W · W4b): TagType.entities ────────────
@@ -837,25 +833,25 @@ const ENTITIES_UNION = `
    WHERE et.tag_id = ? AND et.entity_kind = 'time_block' AND b.owner_id = ? AND (? = '' OR ? = 'time_block')
 `;
 
-const pageEntitiesStmt = sqlite.prepare(
+const pageEntitiesStmt_SQL =
   `SELECT entityKind, entityId FROM (${ENTITIES_UNION})
     WHERE (entityKind > ? OR (entityKind = ? AND entityId > ?))
-    ORDER BY entityKind, entityId LIMIT ?`,
-);
-const countEntitiesStmt = sqlite.prepare(`SELECT COUNT(*) AS n FROM (${ENTITIES_UNION})`);
+    ORDER BY entityKind, entityId LIMIT ?`;
+const countEntitiesStmt_SQL =
+  `SELECT COUNT(*) AS n FROM (${ENTITIES_UNION})`;
 
 /** One keyset page of the (owner-scoped) entities a tag is applied to. `kind` is the DB
  *  entity_kind ('task' | 'time_block') or '' for both. `after*` is the last-seen
  *  (entity_kind, entity_id); fetch `limit + 1` to detect a next page. */
-export function pageEntitiesForTag(
+export async function pageEntitiesForTag(
   tagId: string,
   owner: string,
   kind: string,
   afterKind: string,
   afterId: string,
   limit: number,
-): EntityRef[] {
-  return pageEntitiesStmt.all(
+): Promise<EntityRef[]> {
+  return await store().prepare(pageEntitiesStmt_SQL).all(
     tagId, owner, kind, kind, // task branch
     tagId, owner, kind, kind, // time_block branch
     afterKind, afterKind, afterId, limit,
@@ -863,6 +859,6 @@ export function pageEntitiesForTag(
 }
 
 /** Total (owner-scoped, deduped) entities a tag is applied to, kind-filtered as above. */
-export function countEntitiesForTag(tagId: string, owner: string, kind: string): number {
-  return n(countEntitiesStmt.get(tagId, owner, kind, kind, tagId, owner, kind, kind));
+export async function countEntitiesForTag(tagId: string, owner: string, kind: string): Promise<number> {
+  return n(await store().prepare(countEntitiesStmt_SQL).get(tagId, owner, kind, kind, tagId, owner, kind, kind));
 }

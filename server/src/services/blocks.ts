@@ -46,23 +46,23 @@ export type BlockRow = typeof timeBlocks.$inferSelect;
  * top-level mirror; secondary tags live only in entity_tags at level 2. A field
  * left `undefined` (a partial PATCH) preserves that level's existing tags.
  */
-export function applyBlockTagLevels(
+export async function applyBlockTagLevels(
   ownerId: string,
   blockId: string,
   opts: { tag?: string | null; secondary?: string[] },
-): void {
-  const existing = entityTagLevels('time_block', blockId);
+): Promise<void> {
+  const existing = await entityTagLevels('time_block', blockId);
   const top = opts.tag !== undefined ? splitTagString(opts.tag) : existing.filter((t) => t.level === 1).map((t) => t.name);
   const secondary = opts.secondary !== undefined ? opts.secondary : existing.filter((t) => t.level > 1).map((t) => t.name);
-  syncLeveledEntityTags('time_block', blockId, [
+  await syncLeveledEntityTags('time_block', blockId, [
     { level: 1, names: top },
     { level: 2, names: secondary },
   ], ownerId);
 }
 
 /** A block's secondary (level>1) tag names, for the read surface. */
-export function secondaryTagsOf(blockId: string): string[] {
-  return entityTagLevels('time_block', blockId).filter((t) => t.level > 1).map((t) => t.name);
+export async function secondaryTagsOf(blockId: string): Promise<string[]> {
+  return (await entityTagLevels('time_block', blockId)).filter((t) => t.level > 1).map((t) => t.name);
 }
 
 /** §A3: the "why now" rationale for a placed block, joined from daily_plan via block_id (null when none). */
@@ -121,10 +121,10 @@ async function blockRowsForQuery(ownerId: string, query: ListBlocksQuery): Promi
 /** A block's effective categories: its OWN entity_categories rows, else (task-backed,
  *  none of its own) its task's — the single-row twin of enrichApi's batched derive.
  *  Exported for the GraphQL TimeBlockType.categories resolver (same rule, one home). */
-export function blockCategoryNames(blockId: string, taskId: string | null): string[] {
-  const own = entityCategoryNames('time_block', blockId);
+export async function blockCategoryNames(blockId: string, taskId: string | null): Promise<string[]> {
+  const own = await entityCategoryNames('time_block', blockId);
   if (own.length || !taskId) return own;
-  return entityCategoryNames('task', taskId);
+  return await entityCategoryNames('task', taskId);
 }
 
 /** Serialize + enrich raw block rows into the snake_case API dicts (secondary tags +
@@ -134,8 +134,8 @@ async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
   // entity_categories rows win; a task-backed block with none inherits its task's LIVE
   // categories. Auto-placed blocks therefore never copy category rows — they derive,
   // so re-categorizing a task re-stripes its blocks with zero engine writes.
-  const ownCats = entityCategoryNamesByIds('time_block', rows.map((r) => r.id));
-  const taskCats = entityCategoryNamesByIds('task', [...new Set(rows.map((r) => r.taskId).filter((t): t is string => t != null))]);
+  const ownCats = await entityCategoryNamesByIds('time_block', rows.map((r) => r.id));
+  const taskCats = await entityCategoryNamesByIds('task', [...new Set(rows.map((r) => r.taskId).filter((t): t is string => t != null))]);
   const source = await externalSourceByBlockId(rows.map((r) => r.id));
   // `rationale` is still a per-row read, so the body has to await. An async `.map`
   // callback would assign a Promise to every field and serialize `{}` — explicit loop.
@@ -145,7 +145,7 @@ async function enrichApi(rows: BlockRow[]): Promise<Record<string, unknown>[]> {
     const src = source.get(b.id as string);
     out.push({
       ...b,
-      secondary_tags: secondaryTagsOf(b.id as string),
+      secondary_tags: await secondaryTagsOf(b.id as string),
       rationale: await rationaleOf(b.id as string),
       categories: (own?.length ? own : taskCats.get(b.task_id as string)) ?? [],
       // Which connection mirrored this block in, so the client can colour/texture it
@@ -326,7 +326,7 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
     if (!ok) return { ok: false, error: 'invalid_category' };
   }
   const categoryIds = input.categories !== undefined
-    ? categoryIdsForOwner(input.categories, ownerId)
+    ? await categoryIdsForOwner(input.categories, ownerId)
     : hasCat ? [input.category_id!] : undefined;
   const colorToken = categoryIds?.length
     ? (input.color_token ?? getCategoryPrefs(ownerId)[categoryIds[0]]?.color_token ?? 'primary')
@@ -372,14 +372,14 @@ export async function createBlock(ownerId: string, input: CreateBlockInput): Pro
   // CON-3 + Phase 5: mirror the top-level tag string and any secondary tags
   // into the normalized store.
   if (input.tag !== undefined || input.secondary_tags !== undefined) {
-    applyBlockTagLevels(ownerId, block.id, { tag: input.tag, secondary: input.secondary_tags });
+    await applyBlockTagLevels(ownerId, block.id, { tag: input.tag, secondary: input.secondary_tags });
   }
 
   // Phase B: category axis (entity_categories, position-ordered).
-  if (categoryIds !== undefined) setEntityCategories('time_block', block.id, categoryIds);
+  if (categoryIds !== undefined) await setEntityCategories('time_block', block.id, categoryIds);
 
-  const out = toBlockApi(block, secondaryTagsOf(block.id));
-  out.categories = blockCategoryNames(block.id, block.taskId);
+  const out = toBlockApi(block, await secondaryTagsOf(block.id));
+  out.categories = await blockCategoryNames(block.id, block.taskId);
 
   // REQ2: a placed task IS scheduled — on create (not just PATCH), mirror the
   // placement onto the task's scheduling-intent fields and flip open → scheduled.
@@ -510,7 +510,7 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // category (an explicit category edit is a deliberate re-assignment — the 0069
   // freeze still protects blocks from category re-colours, not from their own edits).
   const categoryIds = input.categories !== undefined
-    ? categoryIdsForOwner(input.categories, ownerId)
+    ? await categoryIdsForOwner(input.categories, ownerId)
     : input.category_id !== undefined
       ? (input.category_id != null && input.category_id !== '' ? [input.category_id] : [])
       : undefined;
@@ -543,11 +543,11 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
   // CON-3 + Phase 5: keep the normalized store in sync. A partial PATCH that
   // omits `tag` or `secondary_tags` preserves that level (null/'' clears top).
   if (input.tag !== undefined || input.secondary_tags !== undefined) {
-    applyBlockTagLevels(ownerId, id, { tag: input.tag, secondary: input.secondary_tags });
+    await applyBlockTagLevels(ownerId, id, { tag: input.tag, secondary: input.secondary_tags });
   }
 
   // Phase B: category axis — `undefined` preserves, `[]` clears (mirrors tags).
-  if (categoryIds !== undefined) setEntityCategories('time_block', id, categoryIds);
+  if (categoryIds !== undefined) await setEntityCategories('time_block', id, categoryIds);
 
   // CON-4 series edit: a rule (or anchor) change drops future-or-today instances
   // of this template + their tag rows; GET re-materializes under the new rule.
@@ -557,12 +557,12 @@ export async function updateBlock(ownerId: string, id: string, input: UpdateBloc
       .prepare(`DELETE FROM time_blocks WHERE recurrence_parent_id = ? AND occurrence_date >= ? AND owner_id = ? RETURNING id`)
       .all<{ id: string }>(id, today, ownerId);
     for (const inst of dropped) {
-      removeEntityTags('time_block', inst.id); // also purges entity_categories (Phase B)
+      await removeEntityTags('time_block', inst.id); // also purges entity_categories (Phase B)
     }
   }
 
-  const out = toBlockApi(block, secondaryTagsOf(id));
-  out.categories = blockCategoryNames(id, block.taskId);
+  const out = toBlockApi(block, await secondaryTagsOf(id));
+  out.categories = await blockCategoryNames(id, block.taskId);
 
   // REQ2: a placed task IS scheduled — keep the linked task's scheduling-intent
   // fields (and its done-state) in lockstep with the block. A time change mirrors
@@ -715,7 +715,7 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
     const members = await store()
       .prepare(`SELECT id FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`)
       .all<{ id: string }>(id, ownerId);
-    for (const m of members) { await collectTaskId(m.id); removeEntityTags('time_block', m.id); }
+    for (const m of members) { await collectTaskId(m.id); await removeEntityTags('time_block', m.id); }
     await store().prepare(`DELETE FROM time_blocks WHERE parent_block_id = ? AND owner_id = ?`).run(id, ownerId);
   }
   // CON-4: deleting a recurring template also removes its materialized instances
@@ -725,12 +725,12 @@ export async function deleteBlock(ownerId: string, id: string, opts: DeleteBlock
     .all<{ id: string; task_id: string | null; block_kind: string }>(id, ownerId);
   for (const inst of droppedInstances) {
     if (inst.task_id && inst.block_kind === 'task') affectedTaskIds.add(inst.task_id);
-    removeEntityTags('time_block', inst.id);
+    await removeEntityTags('time_block', inst.id);
   }
   const [block] = await db.delete(timeBlocks).where(and(eq(timeBlocks.id, id), eq(timeBlocks.ownerId, ownerId))).returning();
   if (!block) return { ok: false, error: 'not_found' };
   // CON-3 cascade: the block itself is HARD-deleted — drop its tag rows.
-  removeEntityTags('time_block', id);
+  await removeEntityTags('time_block', id);
   // 0074: deleting a lazily-placed recurring-pattern CONTAINER opts that
   // (pattern, local-day) out, so the next GET /api/blocks read won't regenerate
   // it. Without this the marker-based idempotency re-places it immediately and
@@ -800,7 +800,7 @@ export async function clearDayAutoBlocks(ownerId: string, date: string): Promise
         RETURNING id, task_id`,
     )
     .all<{ id: string; task_id: string | null }>(ownerId, dayEndISO, dayStartISO);
-  for (const r of removed) removeEntityTags('time_block', r.id);
+  for (const r of removed) await removeEntityTags('time_block', r.id);
   // REQ2: a task whose last active placement was just cleared returns to the open
   // backlog — otherwise it's stranded at status='scheduled' with no block.
   const revertedTaskIds: string[] = [];

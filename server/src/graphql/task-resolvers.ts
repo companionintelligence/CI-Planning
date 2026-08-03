@@ -196,9 +196,9 @@ export const taskResolvers = {
     // already-owner-scoped task (task/tasks/parent/subtasks all go through getTask/
     // listTasks), so its entity_tags are the owner's. id/label/taggedAt map to
     // EntityTagType's fields via default resolvers — no EntityTagType resolver needed.
-    tags: (t: TaskRow) => entityTagsFull('task', t.id).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
+    tags: async (t: TaskRow) => (await entityTagsFull('task', t.id)).map((e) => ({ id: e.tagId, label: e.name, taggedAt: e.createdAt })),
     // Phase B: 1–3 category names, position order; texture default coerced like subtype.
-    categories: (t: TaskRow) => entityCategoryNames('task', t.id),
+    categories: async (t: TaskRow) => await entityCategoryNames('task', t.id),
     textureEnabled: (t: TaskRow) => t.textureEnabled ?? true,
     // W8a follow-up: the first objective this task is linked to (owner-scoped in the
     // service). The returned raw ObjectiveRow is shaped by ObjectiveType's field resolvers.

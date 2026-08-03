@@ -125,9 +125,9 @@ export const reflectionResolvers = {
     createdAt: (r: ReflectionRow) => r.created_at,
     updatedAt: (r: ReflectionRow) => r.updated_at,
     colorToken: (r: ReflectionRow) => categoryColorToken(currentOwnerId(), r.category_id),
-    category: (r: ReflectionRow) => {
+    category: async (r: ReflectionRow) => {
       if (!r.category_id) return null;
-      const row = getOwnedTag(currentOwnerId(), r.category_id);
+      const row = await getOwnedTag(currentOwnerId(), r.category_id);
       return row ? toNode(row) : null;
     },
     // kind, position, body map by name via the default resolver.

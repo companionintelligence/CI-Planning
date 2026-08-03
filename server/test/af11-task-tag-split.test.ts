@@ -328,7 +328,7 @@ describe('migration 0121 — task intentions move L1→L2', () => {
     expect(levelRows('task', legacy)).toEqual([{ name: 'work', level: 1 }, { name: 'email', level: 2 }]);
     expect(levelRows('time_block', block.id)).toEqual([{ name: 'email', level: 1 }]);
     // The L1 read (taskTagNames) now returns exactly the direction.
-    expect(taskTagNames(legacy)).toEqual(['work']);
+    expect(await taskTagNames(legacy)).toEqual(['work']);
 
     // Idempotent: a second run changes nothing.
     const before = levelRows('task', legacy);

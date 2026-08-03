@@ -99,8 +99,8 @@ export const dayTypeResolvers = {
     defaultMinutes: (p: TagPrefNode) => p.default_minutes,
     // Non-null (TagType!): the category tag exists + is owner-scoped; throw rather than
     // null the non-null field if it somehow can't load.
-    category: (p: TagPrefNode) => {
-      const row = getOwnedTag(currentOwnerId(), p.tag_id);
+    category: async (p: TagPrefNode) => {
+      const row = await getOwnedTag(currentOwnerId(), p.tag_id);
       if (!row) throw new GraphQLError('category tag not found', { extensions: { code: 'NOT_FOUND' } });
       return toNode(row);
     },

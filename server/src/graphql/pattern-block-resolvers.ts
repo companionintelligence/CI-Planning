@@ -92,8 +92,8 @@ export const patternBlockResolvers = {
     endTime: (b: BlockRow) => b.end_time,
     // Non-null (TagType!): the direction FK + owner-scoping guarantee it resolves; throw
     // rather than return null into the non-null field if it somehow can't.
-    direction: (b: BlockRow) => {
-      const row = getOwnedTag(currentOwnerId(), b.direction_tag_id);
+    direction: async (b: BlockRow) => {
+      const row = await getOwnedTag(currentOwnerId(), b.direction_tag_id);
       if (!row) throw new GraphQLError('direction tag not found', { extensions: { code: 'NOT_FOUND' } });
       return toNode(row);
     },
@@ -107,8 +107,8 @@ export const patternBlockResolvers = {
     iconShape: (p: PrefNode) => p.icon_shape,
     colorToken: (p: PrefNode) => p.color_token,
     defaultMinutes: (p: PrefNode) => p.default_minutes,
-    direction: (p: PrefNode) => {
-      const row = getOwnedTag(currentOwnerId(), p.tag_id);
+    direction: async (p: PrefNode) => {
+      const row = await getOwnedTag(currentOwnerId(), p.tag_id);
       if (!row) throw new GraphQLError('direction tag not found', { extensions: { code: 'NOT_FOUND' } });
       return toNode(row);
     },

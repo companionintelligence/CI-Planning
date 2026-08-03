@@ -41,31 +41,31 @@ const dbKind = (k?: string | null): string | undefined => (k ? String(k).toLower
 
 export const tagResolvers = {
   Query: {
-    tag: (_p: unknown, args: { id: string }) => {
-      const row = getOwnedTag(currentOwnerId(), args.id);
+    tag: async (_p: unknown, args: { id: string }) => {
+      const row = await getOwnedTag(currentOwnerId(), args.id);
       return row ? toNode(row) : null;
     },
-    tags: (_p: unknown, args: ConnArgs & { kind?: string | null }) => {
+    tags: async (_p: unknown, args: ConnArgs & { kind?: string | null }) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const { afterName, afterId } = decodeAfter(args.after);
       const kind = dbKind(args.kind);
-      const rows = pageOwnerTags(owner, kind, afterName, afterId, limit + 1);
-      return buildTagConnection(rows, limit, countOwnerTags(owner, kind));
+      const rows = await pageOwnerTags(owner, kind, afterName, afterId, limit + 1);
+      return buildTagConnection(rows, limit, await countOwnerTags(owner, kind));
     },
   },
 
   Mutation: {
-    createTag: (_p: unknown, args: { input: { label: string; kind?: string | null } }) => {
-      const res = createTagService(currentOwnerId(), { name: args.input.label, kind: dbKind(args.input.kind) });
+    createTag: async (_p: unknown, args: { input: { label: string; kind?: string | null } }) => {
+      const res = await createTagService(currentOwnerId(), { name: args.input.label, kind: dbKind(args.input.kind) });
       if (!res.ok) throw new GraphQLError('name is required', { extensions: { code: 'BAD_USER_INPUT' } });
       return { tag: toNode(res.tag), success: true };
     },
-    updateTag: (_p: unknown, args: { input: { id: string; label?: string | null; muted?: boolean | null } }) => {
+    updateTag: async (_p: unknown, args: { input: { id: string; label?: string | null; muted?: boolean | null } }) => {
       const patch: { name?: string; muted?: boolean } = {};
       if (args.input.label != null) patch.name = args.input.label;
       if (args.input.muted != null) patch.muted = args.input.muted;
-      const res = updateTagService(currentOwnerId(), args.input.id, patch);
+      const res = await updateTagService(currentOwnerId(), args.input.id, patch);
       if (!res.ok) {
         throw new GraphQLError(res.error === 'not_found' ? 'tag not found' : 'a tag with that name already exists', {
           extensions: { code: res.error === 'not_found' ? 'NOT_FOUND' : 'CONFLICT' },
@@ -73,8 +73,8 @@ export const tagResolvers = {
       }
       return { tag: toNode(res.tag), success: true };
     },
-    deleteTag: (_p: unknown, args: { input: { id: string } }) => {
-      const res = deleteTagService(currentOwnerId(), args.input.id);
+    deleteTag: async (_p: unknown, args: { input: { id: string } }) => {
+      const res = await deleteTagService(currentOwnerId(), args.input.id);
       if (!res.ok) {
         const msg =
           res.error === 'not_found' ? 'tag not found'
@@ -95,32 +95,32 @@ export const tagResolvers = {
     isBase: (r: TagRow) => !!r.isBase,
     // Which edges populate depends on kind; a wrong-kind lookup naturally returns empty
     // (e.g. a direction tag has no rows on the intention side of tag_directions).
-    parentDirections: (r: TagRow, args: ConnArgs) => {
+    parentDirections: async (r: TagRow, args: ConnArgs) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const { afterName, afterId } = decodeAfter(args.after);
-      const rows = pageParentDirections(r.id, owner, afterName, afterId, limit + 1);
-      return buildTagConnection(rows, limit, countParentDirections(r.id, owner));
+      const rows = await pageParentDirections(r.id, owner, afterName, afterId, limit + 1);
+      return buildTagConnection(rows, limit, await countParentDirections(r.id, owner));
     },
-    parentCategories: (r: TagRow, args: ConnArgs) => {
+    parentCategories: async (r: TagRow, args: ConnArgs) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const { afterName, afterId } = decodeAfter(args.after);
-      const rows = pageParentCategories(r.id, owner, afterName, afterId, limit + 1);
-      return buildTagConnection(rows, limit, countParentCategories(r.id, owner));
+      const rows = await pageParentCategories(r.id, owner, afterName, afterId, limit + 1);
+      return buildTagConnection(rows, limit, await countParentCategories(r.id, owner));
     },
-    childIntentions: (r: TagRow, args: ConnArgs) => {
+    childIntentions: async (r: TagRow, args: ConnArgs) => {
       const owner = currentOwnerId();
       const limit = clampFirst(args.first);
       const { afterName, afterId } = decodeAfter(args.after);
       let rows: TagRow[] = [];
       let total = 0;
       if (r.kind === 'direction') {
-        rows = pageDirectionChildren(r.id, owner, afterName, afterId, limit + 1);
-        total = countDirectionChildren(r.id, owner);
+        rows = await pageDirectionChildren(r.id, owner, afterName, afterId, limit + 1);
+        total = await countDirectionChildren(r.id, owner);
       } else if (r.kind === 'category') {
-        rows = pageCategoryChildren(r.id, owner, afterName, afterId, limit + 1);
-        total = countCategoryChildren(r.id, owner);
+        rows = await pageCategoryChildren(r.id, owner, afterName, afterId, limit + 1);
+        total = await countCategoryChildren(r.id, owner);
       }
       return buildTagConnection(rows, limit, total);
     },
@@ -135,7 +135,7 @@ export const tagResolvers = {
       const limit = clampFirst(args.first);
       const { afterName: afterKind, afterId } = decodeAfter(args.after);
       const kind = dbEntityKind(args.kind);
-      const refsPlusOne = pageEntitiesForTag(r.id, owner, kind, afterKind, afterId, limit + 1);
+      const refsPlusOne = await pageEntitiesForTag(r.id, owner, kind, afterKind, afterId, limit + 1);
       const hasNextPage = refsPlusOne.length > limit;
       const refs = hasNextPage ? refsPlusOne.slice(0, limit) : refsPlusOne;
       const nodes = await Promise.all(
@@ -161,7 +161,7 @@ export const tagResolvers = {
           // fetches the same dropped row forever.
           endCursor: refs.length ? encodeCursor(refs[refs.length - 1].entityKind, refs[refs.length - 1].entityId) : null,
         },
-        totalCount: countEntitiesForTag(r.id, owner, kind),
+        totalCount: await countEntitiesForTag(r.id, owner, kind),
       };
     },
   },
