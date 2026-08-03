@@ -11,12 +11,13 @@ import { withTimeout } from '../src/lib/telemetry/timeout.js';
 import { startTestServer, api, type TestServer } from './helpers.js';
 
 /**
- * Error reporting (Sentry) — the opt-in gate and the payload scrubber.
+ * Error reporting (Sentry) — the reporting gate and the payload scrubber.
  *
  * Both modules are pure and env-injected precisely so this suite can assert the whole
  * matrix without touching the SDK or the network. The properties under test are the
- * privacy contract itself, shared with CI-Server and CI-Import-Tools: off unless a DSN
- * is present, off regardless of the DSN when an operator says so, and nothing
+ * privacy contract itself, shared with CI-Server and CI-Import-Tools: on by default
+ * once a DSN is present, off when there is no DSN to report to, off regardless of the
+ * DSN when a user or operator says so, and nothing
  * credential- or path-shaped ever leaves the process.
  */
 
