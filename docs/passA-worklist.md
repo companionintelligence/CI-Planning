@@ -288,7 +288,12 @@ only files still importing it are the ones genuinely left to port.
 > had 15 errors across 5 files. Pipe tsc through `grep "error TS"`, never a
 > head/tail window.
 
-> Companion to `docs/HANDOFF-2026-08-02-oidc-and-postgres-port.md` §4–§5 and
+> **Narrative companion: `docs/HANDOFF-2026-08-02-pass-a-complete.md`** — pass A is
+> finished; that document carries the state, the two corrections to this plan, and the
+> ordered cutover steps. `HANDOFF-2026-08-02-pass-a-waves-0-5.md` is the earlier
+> session and is superseded for planning.
+>
+> Also companion to `docs/HANDOFF-2026-08-02-oidc-and-postgres-port.md` §4–§5 and
 > `server/db/postgres/README.md`. This is the ordered plan for the remaining
 > call-site migration, built from an import-graph analysis of `server/src`
 > (script: multi-line-aware `sqlite.(prepare|exec|transaction)` count + BFS over

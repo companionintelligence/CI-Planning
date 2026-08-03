@@ -1,33 +1,26 @@
 # Handoff — 2026-08-02 · Pass A, waves 0–4 complete + wave 5 in flight
 
-> ## Read this box first
+> ## ⚠ SUPERSEDED — read `HANDOFF-2026-08-02-pass-a-complete.md` first
 >
-> - **Branch `feat/postgres-cutover` is clean and green.** Nothing is half-done.
->   Suite: **2634 passed / 21 skipped** (2667 with `PG_TEST_URL`), verified after
->   every one of the 25 slices — never once red.
-> - **Every wave is COMPLETE (0–8).** The corrected inventory was 101 files; all
->   of them are ported. The call-site migration went
->   from ~355 to ~800 statements ported.
-> - **PASS A IS COMPLETE.** Zero raw `sqlite` statements outside the seam.
->   That figure came from a single-line grep that cannot see `sqlite\n  .prepare(`,
->   the dominant formatting here. Real total: **261 statements across 27 files**.
->   §7 has the corrected breakdown and the count that is actually safe to run.
-> - **Three real concurrency bugs were found and fixed** — two EXDATE lost updates
->   and an inverted advance-after-commit invariant (§3). None were pre-existing;
->   all three were defects the port itself would have introduced.
-> - **The app still runs on SQLite.** Nothing about the running system changed.
->   `STORE_BACKEND` is still opt-in and inert.
-> - **Parts 25–30 are DONE**: objectives, patterns-place, calibration, the memory
->   pair, flags, and the four connector/copy files that closed wave 5. Do not redo
->   them. §6 records what those ports decided.
->   **Start here: the CUTOVER.** Flip `test/helpers.ts` `resetDb` to Postgres, then
->   `STORE_BACKEND=postgres`, and fix the dialect deltas the suite reports (§8).
->   **Fix `sync_events.seq` FIRST** — it is `INTEGER PRIMARY KEY` in the Postgres
->   baseline, which auto-assigns on SQLite but is a plain non-defaulted column on
->   Postgres, so every sync_events insert will fail NOT NULL. See passA-worklist.md.
-> - **The trap catalogue lives in `docs/passA-worklist.md`, not here.** Read it
->   before your first edit. This document is the narrative; that one is the
->   checklist you work from.
+> This documents the session that took pass A from part 8 to **part 24**. Pass A has
+> since been FINISHED (parts 25–37): zero raw `sqlite` statements remain outside the
+> seam, and the next step is the cutover, not more porting.
+>
+> **Do not plan from this document.** Two of its claims were later found to be
+> wrong, both in the direction that makes the work look smaller than it is:
+>
+> - Its remaining-work counts came from a **single-line grep** and were 46% low; it
+>   also cleared eight files as "never needed porting" that were all real work.
+> - Its wave ordering cannot be executed as written — wave 6 could not be started
+>   without first porting a wave-7 file.
+>
+> Both corrections are in `HANDOFF-2026-08-02-pass-a-complete.md` §3, and
+> `docs/passA-worklist.md` now carries a count command that is actually safe to run.
+>
+> **What is still worth reading here** is this session's own record, which the
+> successor document does not repeat: §3 (the three concurrency bugs the port would
+> have introduced), §4 (the decisions it made deliberately) and §5 (the method and
+> the two test shapes that fail open).
 
 Companion to `docs/HANDOFF-2026-08-02-oidc-and-postgres-port.md` (the foundation)
 and `docs/passA-worklist.md` (the live tracker).
@@ -168,7 +161,7 @@ shapes (`.filter`/`.every` with async predicates, `.map` returning promises,
 
 ---
 
-## 6. `services/objectives.ts` — DONE (part 25)
+## 6. `services/objectives.ts` — done (part 25, next session)
 
 The survey that used to live here has been spent. 905 lines, ~50 raw references, 25
 exported functions. Cascade: routes/objectives (12 sites),
@@ -221,7 +214,7 @@ deliberately sync back in part 8. Add the await when it ports.
 
 ---
 
-## 7. What remains, and how to count it
+## 7. What remains — SUPERSEDED, see the successor handoff §3 and §8
 
 Do not trust the per-wave file lists. Re-derive:
 
