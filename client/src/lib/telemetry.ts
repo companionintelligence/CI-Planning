@@ -1,7 +1,7 @@
 /**
  * Browser error reporting.
  *
- * Opt-in and off by default, behind TWO gates that both have to open:
+ * Opt-out — on by default once configured — behind TWO gates that both have to open:
  *
  *   1. `VITE_SENTRY_DSN` must have been baked in at BUILD time. Without it nothing
  *      below runs and the SDK is dead-code-eliminated out of the bundle entirely.

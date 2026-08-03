@@ -1,13 +1,47 @@
 # Error reporting (Sentry)
 
-Companion Planning can report crashes to [Sentry](https://sentry.io). It is **opt-in
-and off by default**: with no DSN configured, no Sentry code initialises and neither
-the server nor the browser bundle makes an outbound connection.
+Companion Planning reports crashes to [Sentry](https://sentry.io). It is
+**opt-out**: on any build configured with a DSN, reporting is **on by default**, and
+the user turns it off with the **Share crash reports** toggle in the app store (or
+`CI_TELEMETRY=off` directly).
+
+Two statements are both true here and easy to conflate:
+
+- **Configured with a DSN → reporting is on** unless the user turns it off. That is
+  the shipped appliance: release images carry a DSN.
+- **No DSN → nothing initialises**, and neither the server nor the browser bundle
+  makes an outbound connection. That is a source checkout, a local `pnpm dev`, or any
+  build made without `SENTRY_DSN` / `VITE_SENTRY_DSN`. It is the absence of
+  configuration, not a privacy setting.
+
+So "opt-out" describes what a user of the appliance experiences. It does not mean a
+DSN-less build quietly reports — it cannot.
 
 The env contract and the scrubbing rules are shared with the rest of the first-party
 fleet — CI-Server is the reference implementation
 (`docs/operations/error-reporting.md` there), and CI-Import-Tools follows the same
 one. If you change the posture here, change it there too.
+
+## Turning it off
+
+Three controls, in precedence order — the first that applies wins:
+
+| # | Control | Effect |
+|---|---|---|
+| 1 | `CI_LOCAL_ONLY=true` | Local-only mode means zero phone-home. Beats everything, including a baked-in DSN. |
+| 2 | **Share crash reports** toggle in the app store, or `CI_TELEMETRY=off` | The marketplace toggle sets exactly `CI_TELEMETRY` on the container. Also `false`, `0`, `no`, `disabled`. |
+| 3 | Run/build with no DSN | Not a user-facing setting — with no DSN there is nothing initialised to disable. |
+
+```bash
+CI_TELEMETRY=off docker compose up -d
+# or, on an appliance in local-only mode:
+CI_LOCAL_ONLY=true docker compose up -d
+```
+
+Neither 1 nor 2 needs a rebuild, and both cover **both halves** of the app: the
+browser asks `GET /api/config/telemetry` before it initialises, so a switch set on the
+container reaches the bundle too. An unset `CI_TELEMETRY` means "the DSN decides", not
+"off".
 
 ## Privacy posture
 
@@ -176,14 +210,9 @@ docker build \
   -t ci-planning .
 ```
 
-Turning it off again, without rebuilding — this covers **both** halves, because the
-browser consults `/api/config/telemetry` before it initialises:
-
-```bash
-CI_TELEMETRY=off docker compose up -d
-# or, on an appliance in local-only mode:
-CI_LOCAL_ONLY=true docker compose up -d
-```
+Once a DSN is configured, reporting is on without any further step. See
+[Turning it off](#turning-it-off) for how a user or operator switches it back off —
+no rebuild required, and it covers both halves.
 
 ## Environment variables
 
@@ -239,7 +268,7 @@ sentry issue list companion-intelligence/ci-planning --query "is:unresolved"
 
 | Path | Role |
 |---|---|
-| `server/src/lib/telemetry/settings.ts` | Resolves the opt-in gate from env (pure, env-injected), plus `telemetryPermission()` for the browser gate |
+| `server/src/lib/telemetry/settings.ts` | Resolves the reporting gate from env — DSN + kill switches (pure, env-injected), plus `telemetryPermission()` for the browser gate |
 | `server/src/lib/telemetry/scrub.ts` | The `beforeSend` payload scrubber |
 | `server/src/lib/telemetry/timeout.ts` | `withTimeout` — the real wall-clock bound on the flush |
 | `server/src/lib/telemetry/index.ts` | `Sentry.init`, `captureException`, bounded `flushTelemetry` |
@@ -266,17 +295,21 @@ well-intentioned:
   how long the transport waits, and still resolves on a later event-loop turn, so a
   handler behind queued synchronous work can overrun by an arbitrary amount. The flush
   is raced against an actual (`unref`'d) timer in `timeout.ts`.
-- **Reporting-off costs nothing.** When telemetry is disabled — the default — those
-  paths exit **synchronously**, exactly as they did before this feature existed.
+- **Reporting-off costs nothing.** When telemetry is disabled — whether switched off
+  or simply never configured with a DSN — those paths exit **synchronously**, exactly
+  as they did before this feature existed.
   Awaiting even an already-resolved promise defers the exit by a turn, and crash and
   `docker stop` timing must not change for deployments that never send anything.
 
 ## Not wired up yet
 
-- **Source map upload in CI.** `docker-publish.yml` does not pass `VITE_SENTRY_DSN` /
-  `VITE_SENTRY_RELEASE` or run `sentry sourcemaps upload`, so browser stack traces
-  from a published image would be minified. CI-Hub's `desktop-release.yml` has the
-  pattern to copy.
+- **No DSN reaches a published image yet.** `docker-publish.yml` passes neither
+  `VITE_SENTRY_DSN` nor a server `SENTRY_DSN`, and runs no `sentry sourcemaps upload`
+  — so today's published image initialises nothing and any browser stack trace it did
+  produce would be minified. Until that workflow supplies a DSN, the opt-out default
+  documented above has nothing to act on: the image is *unconfigured*, not opted out.
+  Wiring the DSN (and source maps — CI-Hub's `desktop-release.yml` has the pattern) is
+  what turns the documented posture into the shipped one.
 - **In-app consent UI.** Reporting is an operator-level switch. The CI-Marketplace
   "Share crash reports" toggle drives `CI_TELEMETRY` and now reaches both halves, but
   there is no per-user control inside the app itself — the same gap tracked for CI-Hub
