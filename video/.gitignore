@@ -1,0 +1,12 @@
+# rendered videos — regenerate with `ci-video render`
+out/
+
+# generated compositions — regenerate with `ci-video build`. Derived entirely
+# from storyboard.json, so committing it would just be a second copy that drifts.
+# (Not in the video-kit scaffold's own .gitignore — worth upstreaming.)
+build/
+
+# playwright auth state
+.auth/
+
+node_modules/
