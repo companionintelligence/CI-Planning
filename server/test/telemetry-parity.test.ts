@@ -1,7 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { scrubString, scrubUrl, scrubValue } from '../src/lib/telemetry/scrub.js';
 import {
+  scrubBreadcrumbData,
+  scrubHeaders,
+  scrubString,
+  scrubUrl,
+  scrubValue,
+} from '../src/lib/telemetry/scrub.js';
+import {
+  BARE_VALUE,
   INNOCUOUS_KEYS,
+  keyFilteringCases,
   SENSITIVE_KEYS,
   STRING_CASES,
   URL_CASES,
@@ -42,5 +50,32 @@ describe('scrubValue (server twin) matches the shared contract', () => {
 
   it.each(INNOCUOUS_KEYS)('keeps the %s key, which carries real signal', (key) => {
     expect((scrubValue({ [key]: 'plain' }) as Record<string, unknown>)[key]).toBe('plain');
+  });
+});
+
+/**
+ * EVERY key/value walker consults the key.
+ *
+ * This is the regression pin for the bug the CI-Hermes port found in CI-Server's
+ * browser scrubber: its `scrubBreadcrumbData` passed each VALUE to `scrubValue`
+ * individually, so the key check never ran and a breadcrumb carrying
+ * `data.token = "abc123456"` shipped intact. The Node copy was fine only because it
+ * happened to hand over the whole object.
+ *
+ * `BARE_VALUE` matches no secret pattern, no home path and no URL, so a passing
+ * assertion here can only be the key check doing the work — nothing else could redact
+ * it. Adding a key to the fixture list covers all three walkers in both packages.
+ */
+describe('key filtering (server twin) — every walker consults the key', () => {
+  const walkers: Record<string, (input: Record<string, unknown>) => Record<string, unknown>> = {
+    scrubValue: (input) => scrubValue(input) as Record<string, unknown>,
+    scrubHeaders: (input) => scrubHeaders(input),
+    scrubBreadcrumbData: (input) => scrubBreadcrumbData(input),
+  };
+
+  it.each(keyFilteringCases())('$walker: $key → filtered=$filtered', ({ walker, key, filtered }) => {
+    const result = walkers[walker]!({ [key]: BARE_VALUE })[key];
+
+    expect(result).toBe(filtered ? '[Filtered]' : BARE_VALUE);
   });
 });
