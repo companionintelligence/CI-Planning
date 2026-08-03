@@ -1,0 +1,126 @@
+# Product video — capture the real UI, then render both cuts.
+#
+# Deliberately NO `push` trigger. CI-Local-CICD's policy gates always-on
+# workflows (its README: "CI-Marketplace was fully gated and billing again
+# within a day"), so this runs on demand and once a week.
+name: Product video
+
+on:
+  workflow_dispatch:
+    inputs:
+      render:
+        description: Also render the MP4s (slower)
+        type: boolean
+        default: true
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+concurrency:
+  group: video-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # `scope` is load-bearing next to `registry-url`: without it setup-node writes a
+      # bare `registry=https://npm.pkg.github.com/` into ~/.npmrc, which routes EVERY
+      # package there and 404s public deps like playwright. With it, only
+      # @companionintelligence/* resolves to GitHub Packages.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@companionintelligence"
+
+      - name: Install video project
+        working-directory: video
+        run: npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Chromium
+        working-directory: video
+        run: npx playwright install --with-deps chromium
+
+      # Boot the capture stage from SOURCE, not from the published image:
+      # Dockerfile:47 sets NODE_ENV=production and server/src/lib/config.ts:403
+      # refuses to boot with AUTH_MODE=test there, while docker-compose.yml pins
+      # AUTH_MODE=sso — either way a login wall lands in front of every shot.
+      #
+      # There is no Playwright `webServer` to reuse: tests/container/playwright.
+      # config.ts deliberately has none ("Targets an already-running container"),
+      # so `pnpm dev` — the repo's own root script — is the stage.
+      #
+      #   client  vite  :5173  (proxies /api -> :3848, client/vite.config.ts)
+      #   server  tsx   :3848  (Koa + SQLite; no other backing service)
+      #
+      # `seed --no-llm` takes the deterministic fallback path instead of mining
+      # the fixtures with Ollama, which is not installed here anyway. `--reset`
+      # is destructive but DB_PATH points at a throwaway file in the runner.
+      - name: Start app
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter server migrate
+          pnpm --filter server seed -- --no-llm --reset
+          pnpm dev &
+          npx --yes wait-on http://localhost:5173 http://localhost:3848/api/health --timeout 180000
+        env:
+          NODE_ENV: development
+          AUTH_MODE: test
+          DB_PATH: ${{ runner.temp }}/ci-planning-video.db
+          GOOGLE_MODE: fixture
+          PORT: 3848
+          VITE_PORT: 5173
+
+      - name: Capture
+        working-directory: video
+        run: npm run capture
+
+      # Shots are byte-stable, so a diff here means the UI genuinely changed.
+      # Surface it as a PR rather than silently committing to the branch.
+      - name: Detect UI drift
+        id: drift
+        working-directory: video
+        run: |
+          if [ -n "$(git status --porcelain assets/shots)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --porcelain assets/shots
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and check
+        working-directory: video
+        run: npm run build && npm run check
+
+      - name: Render
+        if: ${{ github.event_name == 'schedule' || inputs.render }}
+        working-directory: video
+        run: npm run render
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-planning-video
+          path: |
+            video/out/*.mp4
+            video/assets/shots/*.png
+          if-no-files-found: warn
+
+      - name: Open a PR when the UI drifted
+        if: steps.drift.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/video-shot-refresh
+          title: "chore(video): refresh Companion Planning product-video captures"
+          body: |
+            The scheduled capture produced different screenshots, which means the UI changed.
+
+            Review the image diff, update `video/storyboard.json` captions if a screen's meaning
+            changed, then merge to re-render the product video from the current UI.
+          add-paths: video/assets/shots
+          commit-message: "chore(video): refresh product-video captures"
