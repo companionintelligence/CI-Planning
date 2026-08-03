@@ -1,8 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import type { ErrorEvent } from '@sentry/browser';
 import { scrubBrowserEvent, scrubUrl, shouldDropEvent, isTelemetryEnabled } from './telemetry.js';
-import { scrubHeaders, scrubString, scrubValue } from './telemetry-scrub.js';
-import { INNOCUOUS_KEYS, SENSITIVE_KEYS, STRING_CASES, URL_CASES } from './telemetry-fixtures.js';
+import { scrubBreadcrumbData, scrubHeaders, scrubString, scrubValue } from './telemetry-scrub.js';
+import {
+  BARE_VALUE,
+  INNOCUOUS_KEYS,
+  keyFilteringCases,
+  SENSITIVE_KEYS,
+  STRING_CASES,
+  URL_CASES,
+} from './telemetry-fixtures.js';
 
 /**
  * Browser error reporting — the pure halves of lib/telemetry.ts and its scrubber.
@@ -219,6 +226,50 @@ describe('scrubHeaders', () => {
     expect(scrubHeaders({ 'x-api-key': 'cp_live_abc' })['x-api-key']).toBe('[Filtered]');
     expect(scrubHeaders({ 'X-Api-Key': 'cp_live_abc' })['X-Api-Key']).toBe('[Filtered]');
     expect(scrubHeaders({ apikey: 'cp_live_abc' }).apikey).toBe('[Filtered]');
+  });
+});
+
+/**
+ * EVERY key/value walker consults the key.
+ *
+ * Regression pin for the bug the CI-Hermes port found in CI-Server's browser scrubber:
+ * its breadcrumb walker passed each VALUE to `scrubValue` individually, so the key
+ * check never ran and a crumb carrying `data.token = "abc123456"` shipped intact.
+ *
+ * `BARE_VALUE` matches no secret pattern, no home path and no URL — so a passing
+ * assertion here can only be the key check doing the work.
+ */
+describe('key filtering — every walker consults the key', () => {
+  const walkers: Record<string, (input: Record<string, unknown>) => Record<string, unknown>> = {
+    scrubValue: (input) => scrubValue(input) as Record<string, unknown>,
+    scrubHeaders: (input) => scrubHeaders(input),
+    scrubBreadcrumbData: (input) => scrubBreadcrumbData(input),
+  };
+
+  it.each(keyFilteringCases())('$walker: $key → filtered=$filtered', ({ walker, key, filtered }) => {
+    const result = walkers[walker]!({ [key]: BARE_VALUE })[key];
+
+    expect(result).toBe(filtered ? '[Filtered]' : BARE_VALUE);
+  });
+
+  it('filters a sensitive crumb key end to end, through scrubBrowserEvent', () => {
+    // The full path, not just the helper: a console crumb carrying bare credential and
+    // identity values under their own keys, alongside one that must survive.
+    const data = scrubBrowserEvent(
+      event({
+        message: 'boom',
+        breadcrumbs: [
+          {
+            category: 'console',
+            data: { token: BARE_VALUE, 'x-ci-hub-user': 'liam', 'user-agent': 'Mozilla/5.0' },
+          },
+        ],
+      }),
+    )!.breadcrumbs![0]!.data!;
+
+    expect(data.token).toBe('[Filtered]');
+    expect(data['x-ci-hub-user']).toBe('[Filtered]');
+    expect(data['user-agent']).toBe('Mozilla/5.0');
   });
 });
 
