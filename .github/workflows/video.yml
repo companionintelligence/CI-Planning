@@ -26,10 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `scope` is load-bearing next to `registry-url`: without it setup-node writes a
+      # bare `registry=https://npm.pkg.github.com/` into ~/.npmrc, which routes EVERY
+      # package there and 404s public deps like playwright. With it, only
+      # @companionintelligence/* resolves to GitHub Packages.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://npm.pkg.github.com
+          scope: "@companionintelligence"
 
       - name: Install video project
         working-directory: video
