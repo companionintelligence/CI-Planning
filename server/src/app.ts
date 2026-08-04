@@ -10,6 +10,7 @@ import { mountRoutes } from './routes/index.js';
 import { mountGraphql } from './graphql/index.js';
 import { hydrateGoogleConfig } from './services/google-config.js';
 import { hydrateVapidConfig } from './services/vapid-config.js';
+import { captureException } from './lib/telemetry/index.js';
 
 /** Build the Koa app (routes + middleware) without listening or starting cron.
  * Async because the GraphQL (Apollo) server must `start()` before it can be mounted. */
@@ -43,6 +44,11 @@ export async function buildApp(): Promise<Koa> {
       ctx.status = err.status ?? 500;
       ctx.body = { error: err.message ?? 'internal server error' };
       logger.error('request error', { method: ctx.method, path: ctx.path, status: ctx.status, err: err.message });
+      // Report only genuine server faults. A thrown 4xx is the API working as designed
+      // (bad input, 401, 404) and would bury the real defects in noise. No-op unless
+      // error reporting is switched on; the URL is deliberately reduced to method+path,
+      // since a query string here carries the user's own search terms.
+      if (ctx.status >= 500) captureException(err, { method: ctx.method, path: ctx.path });
     }
   });
 

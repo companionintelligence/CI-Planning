@@ -5,7 +5,8 @@ import { SYSTEM_OWNER } from '../src/lib/context.js';
 import {
   trialityNext, signature, logShown, stampOutcome, getWeights,
   confirmedCompletionCount, rawFreeGapMinutes, contextFit,
-  DEFAULT_WEIGHTS, type Candidate, type ScoredPick, type SlotWeights,
+  bandOfLocalHour, localBand,
+  DEFAULT_WEIGHTS, type Candidate, type ScoredPick, type SlotWeights, type TimeBand,
 } from '../src/services/triality.js';
 import {
   attachConfidence, serializeConfidence, bandFor,
@@ -218,8 +219,15 @@ describe('H — habit strength recency (§5)', () => {
     if (res.refused) throw new Error('unexpected refusal');
     const habitual = res.picks[0];
     expect(habitual?.ref).toBe(recentClass);
-    const recentPick = res.picks.filter((p): p is ScoredPick => !!p).find((p) => p.ref === recentClass);
-    expect(recentPick && recentPick.scores.H).toBeGreaterThan(0.5);
+    const picks = res.picks.filter((p): p is ScoredPick => !!p);
+    const recentPick = picks.find((p) => p.ref === recentClass);
+    const stalePick = picks.find((p) => p.ref === staleClass);
+    // RELATIVE, not an absolute pin. v2.3's back-off smooths H by λ3 = n3/(n3+K), so
+    // three completions cap the class at 0.5 no matter how recent they are — an
+    // absolute floor here would be a pin on the smoothing constant wearing a recency
+    // test's name. The claim this test actually makes is the comparative one.
+    expect(recentPick!.scores.H).toBeGreaterThan(stalePick!.scores.H);
+    expect(stalePick!.scores.H).toBeGreaterThan(0); // the stale class is faint, not absent
   });
 });
 
@@ -467,9 +475,13 @@ describe('contextFit neutrality', () => {
       ),
       meta: { active: [] },
     } as never;
+    // No modal band and no modal weekday either: v2.3's two pairings carry a constant
+    // +1 on the SITUATION side (the clock is always known), so the candidate side is
+    // the only thing that can make them active — and a candidate with no history of
+    // its own contributes nothing rather than a guessed zero.
     const f = contextFit(vector, {
       kind: 'task', ref: 'x', title: 'x', estimateMin: null, direction: null, categories: [], motivation: null,
-    });
+    }, NOW, 'UTC');
     expect(f).toBe(0.5);
   });
 });
@@ -535,11 +547,37 @@ function seedSpreadPool(): Record<'ship' | 'run' | 'read' | 'inbox', string> {
 }
 
 /**
+ * An age offset that moves every seeded completion into the MORNING band (09:00 for an
+ * integer day offset, since NOW is 14:00), so that the two v2.3 pairings contribute
+ * nothing and `seedNormalityPool`'s stated invariant — "every contextFit pair inactive ⇒
+ * F = 0.5 for everyone" — actually holds. Seeding a class at a single hour of the day IS
+ * a rhythm, and v2.3 reads it as one, so the fixture has to choose which rhythm it seeds.
+ *
+ * MORNING, specifically, rather than "one completion per band". Scattering across bands
+ * used to work because an unweighted three-way split had no strict plurality — but
+ * `modalTiming` is RECENCY-WEIGHTED now, and three singleton buckets at three distinct
+ * ages carry three distinct weights, so the most recent one simply wins. There is no
+ * scatter that yields "no band" any more; there is only a band that says nothing. The
+ * morning is that band: `OPPOSITE_BAND` pairs only morning⇄evening, so a morning rhythm
+ * read at 14:00 is neither a match nor an opposition and drops out of the dot product.
+ *
+ * The weekday half needs no device: the day offsets below put every class's heaviest
+ * bucket on some day other than NOW's Wednesday, and the weekday pairing has no −1 arm,
+ * so a non-matching weekday is inactive rather than negative. Applied identically to
+ * every class, so the relative H ordering the cases below depend on is untouched.
+ */
+const MORNING_SHIFT_DAYS = 5 / 24;
+
+/**
  * A pool whose ONLY spread is on the normality axis: no fixed blocks (gap unknown ⇒
- * C = 0.5 for everyone), no directions, no priorities, no mood reading (every
- * contextFit pair inactive ⇒ F = 0.5 for everyone). Both of those ternarize to
- * all-zero, so `dot` IS the normality pole and the telemetry can be reasoned about
- * one axis at a time.
+ * C = 0.5 for everyone), no directions, no priorities, no mood reading, no live temporal
+ * pairing (every contextFit pair inactive ⇒ F = 0.5 for everyone). Both of those
+ * ternarize to all-zero, so `dot` IS the normality pole and the telemetry can be reasoned
+ * about one axis at a time.
+ *
+ * That F invariant is ASSERTED by the cases below, not merely asserted here: v2.3's two
+ * temporal pairings are the second thing to have quietly broken it, and a prose-only
+ * invariant is exactly what let the first breakage through.
  *
  * `classes` is ordered: entry 0 is inserted first, so uuid7 makes the candidate
  * order — and therefore the ref tie-break — the declaration order.
@@ -553,7 +591,14 @@ function seedNormalityPool(classes: { cat: string; doneDaysAgo: number[] }[]): R
   const refs: Record<string, string> = {};
   for (const c of classes) {
     for (const d of c.doneDaysAgo) {
-      addCategory(insertTask(`${c.cat}-done-${d}`, { status: 'done', completedAt: daysAgo(d), mood: 'flat' }), c.cat);
+      addCategory(
+        insertTask(`${c.cat}-done-${d}`, {
+          status: 'done',
+          completedAt: daysAgo(d + MORNING_SHIFT_DAYS),
+          mood: 'flat',
+        }),
+        c.cat,
+      );
     }
   }
   for (const c of classes) {
@@ -643,6 +688,22 @@ describe('E4–E8 — stage-4 telemetry describes the decision that was actually
     // what fixes the ref tie-break. Runner-up capture is a pure addition — the winner's
     // own update is the same expression it always was, now called `keyBetter` — and
     // these numbers are what says so.
+    //
+    // v2.3 CHANGED NOTHING HERE. Every number below is byte-identical to the pre-v2.3
+    // pin — the F column, the H column, all three totals and all three ternary triples —
+    // which is the real assertion this case makes about the wave: the two new contextFit
+    // pairings cost nothing when the candidate has no rhythm that bears on NOW.
+    //
+    // (An intermediate v2.3 draft did re-baseline the H column, for the interpolated
+    // §3.4 back-off. That back-off was reverted — see the engine's `habitStrengths`
+    // header — so the column is back to what it always was.)
+    //
+    // Why each pairing sleeps in this fixture: 'short run' has two health completions,
+    // below MODAL_MIN_SAMPLE, so it claims no rhythm at all. The career class fires at
+    // 02:00 local, which `bandOfLocalHour` folds into the evening — merely ADJACENT to
+    // this 14:00 afternoon, and afternoon is nobody's opposite. Its modal weekday is a
+    // Saturday (the recency-weighted heaviest of three distinct days), and NOW is a
+    // Wednesday, which the weekday pairing scores 0 rather than −1.
     const refs = seedSpreadPool();
     const res = await trialityNext(OWNER, NOW, { embedFn: null });
     if (res.refused) throw new Error('unexpected refusal');
@@ -674,6 +735,13 @@ describe('E4–E8 — stage-4 telemetry describes the decision that was actually
     if (res.refused) throw new Error('unexpected refusal');
     const [habitual, , novel] = res.picks;
 
+    // The fixture's one-axis invariant, CHECKED. Everything below reasons as if `dot` were
+    // the normality pole alone; a live temporal pairing would put spread on the pragmatism
+    // axis and quietly turn each case into a different experiment. (It did: v2.3's first
+    // draft lifted the three-completion classes to F = 0.75 and this case started picking
+    // `finance` for the Novel slot.)
+    for (const p of live(res.picks)) expect(p.scores.F, p.title).toBe(0.5);
+
     // S = N = 1 − H here, so the pool's top habit scores exactly 0 and the middle
     // candidate scores highest of the three eligible.
     expect(habitual!.ref).toBe(refs.health);
@@ -701,6 +769,9 @@ describe('E4–E8 — stage-4 telemetry describes the decision that was actually
     if (res.refused) throw new Error('unexpected refusal');
     const [habitual, contextual] = res.picks;
 
+    // The same one-axis invariant E5 checks, for the same reason.
+    for (const p of live(res.picks)) expect(p.scores.F, p.title).toBe(0.5);
+
     // THE VETO: habitual drops both bottom-pole candidates; contextual (`target[0] === 0`)
     // vetoes nobody and only loses the one candidate habitual took.
     expect(habitual!.decision.eligible).toBe(3);
@@ -711,6 +782,10 @@ describe('E4–E8 — stage-4 telemetry describes the decision that was actually
     // (exactly 1 — H is normalized by the pool max). Contextual's winner AND its
     // runner-up are both strictly below it, so the candidate habitual consumed appears
     // in neither of contextual's telemetry slots.
+    //
+    // (An intermediate v2.3 draft re-baselined this to 0.5, the top class's share under
+    // the interpolated §3.4 back-off. That back-off was reverted — see the engine's
+    // `habitStrengths` header — so the pool max is a flat 1.0 again.)
     expect(habitual!.ref).toBe(refs.career);
     expect(habitual!.decision.score).toBe(1);
     expect(contextual!.decision.score).toBeLessThan(habitual!.decision.score);
@@ -884,6 +959,12 @@ describe('E9–E11 — the honest-zero branches and the dims that are actually r
     // A probe that offers a NON-ZERO action side to every pairing contextFit can form:
     // 'me' polarity, all six categories, an estimate inside the small-task band, and a
     // direction. Without that, an unpaired dim and an unread dim would look identical.
+    //
+    // …with ONE deliberate exception: no modal band and no modal weekday. v2.3's two
+    // pairings are dim-INDEPENDENT (situation side is a constant +1, not a vector
+    // entry), so giving the probe a rhythm would make every single-dim probe active and
+    // turn this pin into a tautology. Leaving them unset is what keeps `fit !== 0.5`
+    // meaning "this DIM was read".
     const probe: Candidate = {
       kind: 'task', ref: 'probe', title: 'probe', estimateMin: 20,
       direction: 'work', categories: [...CAT_KEYS], motivation: 'me',
@@ -897,7 +978,7 @@ describe('E9–E11 — the honest-zero branches and the dims that are actually r
 
     for (const dim of DIM_REGISTRY) {
       for (const value of [1, -1] as Ternary[]) {
-        const fit = contextFit(only(dim.name, value), probe);
+        const fit = contextFit(only(dim.name, value), probe, NOW, 'UTC');
         const read = fit !== 0.5;
         expect(read, `${dim.name} at ${value}: contextFit = ${fit}`).toBe(CONSUMED.has(dim.name));
       }
@@ -1028,5 +1109,447 @@ describe('E12–E16 — the situation, the isolation, and what gets written', ()
     expect(confidences).toEqual([null, null, null]);
     expect(await logShown(OWNER, NOW, res.picks, confidences.map(serializeConfidence))).toEqual([null, null, null]);
     expect((sqlite.prepare(`SELECT COUNT(*) AS c FROM triality_log`).get() as { c: number }).c).toBe(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// v2.3 — WHEN the owner does a thing (time band, day of week).
+//
+// Nothing here adds a situation dim or a migration: band and weekday are contextFit
+// PAIRINGS (see the comment in the engine), and every number below is computed from
+// rows that already existed.
+//
+// Both pairings carry TEMPORAL_PAIR_WEIGHT = ½ on the situation side, which is why a
+// lone matching pairing reads 0.75 rather than 1: (½ · +1) / 1 pair = ½, rescaled to
+// [0,1]. That is deliberate — every other pair in contextFit is gated by a sensed
+// situation dim that reads 0 most of the time, while these two fire on nearly every
+// call, so at full weight they were the loudest terms in F by construction.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** All dims zero and none active — so contextFit's ONLY possible active pairs are the
+ *  two v2.3 ones, whose situation side is a constant +1. */
+const ZERO_VECTOR = {
+  dims: Object.fromEntries(DIM_REGISTRY.map((d) => [d.name, 0])),
+  meta: { active: [] },
+} as unknown as SituationVector;
+
+function bare(over: Partial<Candidate> = {}): Candidate {
+  return {
+    kind: 'task', ref: 'x', title: 'x', estimateMin: null,
+    direction: null, categories: [], motivation: null,
+    ...over,
+  };
+}
+
+/** A direction-kind tag on a task (level 1 — the axis `taskDirection` reads). */
+function addDirection(taskId: string, name: string, owner: string = OWNER): void {
+  const existing = sqlite
+    .prepare(`SELECT id FROM tags WHERE owner_id = ? AND kind = 'direction' AND LOWER(name) = LOWER(?)`)
+    .get(owner, name) as { id: string } | undefined;
+  const tagId =
+    existing?.id ??
+    (sqlite
+      .prepare(`INSERT INTO tags (id, owner_id, name, kind) VALUES (uuid7(), ?, ?, 'direction') RETURNING id`)
+      .get(owner, name) as { id: string }).id;
+  sqlite
+    .prepare(`INSERT INTO entity_tags (entity_kind, entity_id, tag_id, level) VALUES ('task', ?, ?, 1)`)
+    .run(taskId, tagId);
+}
+
+describe('v2.3 §3.2 — the time band is a pairing, and it reads the OWNER’s clock', () => {
+  it('the band boundaries are the app’s existing vocabulary, and the mapping is TOTAL', () => {
+    // Reused from client/src/lib/propose-slot.ts BAND_WINDOWS (05–12 / 12–17 / 17–22),
+    // which is what quick-add's `timeOfDay` band already narrows to — so a histogram
+    // "evening" here names the same stretch of clock the owner is already shown.
+    expect([5, 8, 11].map(bandOfLocalHour)).toEqual(['morning', 'morning', 'morning']);
+    expect([12, 14, 16].map(bandOfLocalHour)).toEqual(['afternoon', 'afternoon', 'afternoon']);
+    expect([17, 20, 21].map(bandOfLocalHour)).toEqual(['evening', 'evening', 'evening']);
+    // BAND_WINDOWS stops at 22:00, but a histogram over real completions has to be
+    // total — 22:00–05:00 folds into the evening it is the tail of, never the morning.
+    expect([22, 23, 0, 3, 4].map(bandOfLocalHour)).toEqual(
+      ['evening', 'evening', 'evening', 'evening', 'evening'],
+    );
+  });
+
+  it('match → +½, wrong end of the day → −½, adjacent → nothing, unknown → nothing', () => {
+    // 10:00 UTC on a UTC owner's clock is the morning, which HAS an opposite.
+    const morningNow = new Date('2026-07-29T10:00:00.000Z');
+    const f = (modalBand: TimeBand | null) => contextFit(ZERO_VECTOR, bare({ modalBand }), morningNow, 'UTC');
+
+    // The band KEEPS both arms — morning-vs-evening is a genuine opposition, not a
+    // silence — but each is worth TEMPORAL_PAIR_WEIGHT = ½, so the pair spans
+    // [0.25, 0.75] around neutral instead of the whole [0, 1].
+    expect(f('morning')).toBe(0.75);  // the one active pair is (½, +1)
+    expect(f('evening')).toBe(0.25);  // (½, −1) — the wrong end of the day
+    // Afternoon touches both ends, so it is nobody's opposite: no claim either way.
+    expect(f('afternoon')).toBe(0.5);
+    // …and from an AFTERNOON now, neither end is opposite — the relation is symmetric.
+    expect(contextFit(ZERO_VECTOR, bare({ modalBand: 'morning' }), NOW, 'UTC')).toBe(0.5);
+    expect(contextFit(ZERO_VECTOR, bare({ modalBand: 'evening' }), NOW, 'UTC')).toBe(0.5);
+
+    // UNKNOWN CONTRIBUTES NOTHING, and "nothing" means bit-identical to a candidate
+    // that never had the field — not a guessed zero that dilutes the other pairs.
+    expect(f(null)).toBe(0.5);
+    expect(f(null)).toBe(contextFit(ZERO_VECTOR, bare(), morningNow, 'UTC'));
+  });
+
+  it('the SAME UTC completions give two owners different modal bands — and different F', async () => {
+    // THE BUG THIS EXISTS TO STOP SHIPPING SILENTLY: a UTC hour is not the owner's
+    // morning. Both owners below get byte-identical completion timestamps; only
+    // scheduling_prefs.timezone differs.
+    const TZ_NOW = new Date('2026-07-29T10:00:00.000Z'); // 10:00 UTC = 19:00 in Tokyo
+    // 16:00 UTC is the AFTERNOON in London and 01:00 — a late evening — in Tokyo.
+    //
+    // All three land on the SAME weekday in each zone (Monday in UTC, Tuesday in Tokyo
+    // where 16:00Z is already the next day) and TZ_NOW is a Wednesday in both, so each
+    // owner has an unambiguous modal weekday that simply does not match — the weekday
+    // pairing is inactive for both, and the band pairing is the only thing left that can
+    // move F. Distinct weekdays would NOT do: `modalTiming` is recency-weighted, so three
+    // singleton buckets resolve to whichever is most recent rather than to "no rhythm".
+    const CLASS_DONE = ['2026-07-27T16:00:00.000Z', '2026-07-20T16:00:00.000Z', '2026-07-13T16:00:00.000Z'];
+    const tokyo = createOwner(SECOND_OWNER_ID, 'Owner B', 'Asia/Tokyo');
+
+    const seed = (owner: string): string => {
+      // The refusal floor, in a class no candidate carries (no categories).
+      for (let i = 0; i < 10; i++) {
+        insertTask(`noise-${i}`, {
+          status: 'done', mood: 'flat', owner,
+          completedAt: new Date(TZ_NOW.getTime() - (20 + i) * 86_400_000).toISOString(),
+        });
+      }
+      for (const at of CLASS_DONE) {
+        addCategory(insertTask(`ran-${at}`, { status: 'done', completedAt: at, mood: 'flat', owner }), 'health', owner);
+      }
+      // estimateMin null on purpose: it keeps the energy pairing inactive, so with no
+      // priorities, no direction and no motivation the band pair is the ONLY one left.
+      const c = insertTask('go for a run', { estimate: null, owner });
+      addCategory(c, 'health', owner);
+      return c;
+    };
+    const mine = seed(OWNER);
+    const theirs = seed(tokyo);
+
+    const a = await trialityNext(OWNER, TZ_NOW, { embedFn: null });
+    const b = await trialityNext(tokyo, TZ_NOW, { embedFn: null });
+    if (a.refused || b.refused) throw new Error('unexpected refusal');
+    const mineP = live(a.picks).find((p) => p.ref === mine)!;
+    const theirsP = live(b.picks).find((p) => p.ref === theirs)!;
+
+    // Same rows, same instant, same everything but the zone: the UTC owner's class is
+    // an AFTERNOON habit (16:00) that says nothing about a 10:00 morning, while the
+    // Tokyo owner's is an EVENING habit (01:00) matching their 19:00 evening. 0.75 is
+    // one matched half-weight pairing; 0.5 is the neutral no-active-pairs reading.
+    expect(mineP.scores.F).toBe(0.5);
+    expect(theirsP.scores.F).toBe(0.75);
+    expect(theirsP.scores.F).toBeGreaterThan(mineP.scores.F);
+    // …and the evidence behind them really is identical, so the difference is the zone.
+    expect(theirsP.evidenceRows).toBe(mineP.evidenceRows);
+    expect(localBand(CLASS_DONE[0], 'UTC')).toBe('afternoon');
+    expect(localBand(CLASS_DONE[0], 'Asia/Tokyo')).toBe('evening');
+  });
+
+  it('a modal band needs a real sample, and a claim it does make must still bear on NOW', async () => {
+    // MODAL_MIN_SAMPLE driven through inputs rather than pinned as a constant: two
+    // completions are too few to be anyone's rhythm, so `twice` reads exactly like no
+    // history at all.
+    //
+    // `scattered` is the other way to contribute nothing, and it is no longer the same
+    // way. Three completions across three bands used to have no strict plurality and so
+    // no modal band; under the RECENCY-WEIGHTED mode the three buckets carry three
+    // distinct weights and the most recent one (08:00 on the 27th — a morning) wins
+    // outright. What keeps it silent now is the band relation, not the sample: morning
+    // is merely ADJACENT to this 14:00 afternoon, and `OPPOSITE_BAND` pairs only
+    // morning⇄evening. Same observable, different reason — worth writing down, because
+    // the old reason is the one a reader would assume.
+    const at = (day: string, hour: string) => `2026-07-${day}T${hour}:00:00.000Z`;
+    seedConfirmedHistory(12);
+
+    const twice = insertTask('twice-only', { estimate: null });
+    addCategory(twice, 'health');
+    for (const t of [at('27', '14'), at('26', '14')]) {
+      addCategory(insertTask(`h-${t}`, { status: 'done', completedAt: t, mood: 'flat' }), 'health');
+    }
+
+    const scattered = insertTask('all over the place', { estimate: null });
+    addCategory(scattered, 'career');
+    for (const t of [at('27', '08'), at('26', '14'), at('25', '20')]) {
+      addCategory(insertTask(`c-${t}`, { status: 'done', completedAt: t, mood: 'flat' }), 'career');
+    }
+
+    const res = await trialityNext(OWNER, NOW, { embedFn: null });
+    if (res.refused) throw new Error('unexpected refusal');
+    expect(live(res.picks).map((p) => p.ref).sort()).toEqual([twice, scattered].sort());
+    for (const p of live(res.picks)) expect(p.scores.F).toBe(0.5);
+  });
+});
+
+describe('v2.3 §3.3 — the weekday pairing has a +arm and no −arm', () => {
+  const SATURDAY = new Date('2026-08-01T14:00:00.000Z');
+
+  it('same weekday → +½; EVERY other weekday → nothing, weekend or not', () => {
+    // NOW is a Wednesday (dow 3); SATURDAY is a Saturday (dow 6).
+    const onWed = (modalDow: number | null) => contextFit(ZERO_VECTOR, bare({ modalDow }), NOW, 'UTC');
+    const onSat = (modalDow: number | null) => contextFit(ZERO_VECTOR, bare({ modalDow }), SATURDAY, 'UTC');
+
+    expect(onWed(3)).toBe(0.75);
+    expect(onSat(6)).toBe(0.75);
+    // Tuesday-vs-Wednesday is not evidence against anything — same kind of day.
+    expect(onWed(2)).toBe(0.5);
+    expect(onSat(0)).toBe(0.5);
+
+    // THE ASYMMETRY, AND WHY IT IS THE POINT. An earlier v2.3 draft scored the
+    // weekday↔weekend crossing −1, and these two lines are what pin its removal:
+    //
+    //  - "she usually does this on a Wednesday and today is Saturday" is an ABSENCE OF
+    //    SUPPORT, not evidence against. The band pairing keeps its −arm because
+    //    morning⇄evening is a genuine opposition; there is no such opposition here.
+    //  - A −arm has to decide what a weekend IS, and the draft hardcoded Sat/Sun —
+    //    eight lines below `day_type`, which honours the owner's editable
+    //    day_of_week_map. Two contradictory definitions of "weekend" inside one dot
+    //    product is a worse bug than the one the arm was trying to fix.
+    expect(onWed(6)).toBe(0.5);
+    expect(onSat(3)).toBe(0.5);
+
+    // Unknown contributes nothing, identically to a candidate without the field.
+    expect(onWed(null)).toBe(0.5);
+    expect(onWed(null)).toBe(contextFit(ZERO_VECTOR, bare(), NOW, 'UTC'));
+  });
+
+  it('a weekly rhythm in the history reaches F end to end', async () => {
+    // Three completions, all on a Wednesday, all at 08:00 — a MORNING rhythm, which is
+    // merely adjacent to this 14:00 afternoon and so scores 0 in the band pairing. The
+    // weekday pair is therefore provably the only one doing any work, and 0.75 is one
+    // matched half-weight pairing.
+    //
+    // (Scattering the three across three bands would no longer achieve that: the modal
+    // band is recency-weighted, so a scattered class resolves to its most recent band
+    // rather than to none. A band that cannot bear on NOW is the only reliable silence.)
+    seedConfirmedHistory(12);
+    const cand = insertTask('the wednesday thing', { estimate: null });
+    addCategory(cand, 'growth');
+    for (const day of ['22', '15', '08']) {
+      addCategory(
+        insertTask(`wed-${day}`, { status: 'done', mood: 'flat', completedAt: `2026-07-${day}T08:00:00.000Z` }),
+        'growth',
+      );
+    }
+    const res = await trialityNext(OWNER, NOW, { embedFn: null }); // NOW is a Wednesday
+    if (res.refused) throw new Error('unexpected refusal');
+    expect(live(res.picks).find((p) => p.ref === cand)!.scores.F).toBe(0.75);
+  });
+});
+
+describe('v2.3 — the two temporal pairings modulate F; they do not decide it', () => {
+  it('a perfect rhythm on BOTH axes still loses to one live category deficit', async () => {
+    // THE REGRESSION THE SUB-UNIT WEIGHT EXISTS TO PREVENT. Every other pair in
+    // contextFit is gated by a situation dim that reads 0 most of the time; the band and
+    // weekday pairs carry a constant +1 on the situation side and fire on nearly every
+    // call, and there are two of them. At full weight a candidate matching both would
+    // reach dot = 1 — TYING a full, stated, measured Balance deficit — and a candidate
+    // matching neither would sit at −1 against it. "You usually do this on a Wednesday
+    // afternoon" would then outweigh the deficit pull that makes Triality a Balance
+    // feature at all. At ½ it modulates instead: 0.75 against the deficit's 1.
+    const deficit = {
+      dims: Object.fromEntries(DIM_REGISTRY.map((d) => [d.name, d.name === 'cat_deficit_health' ? 1 : 0])),
+      meta: { active: DIM_REGISTRY.map((d) => d.name) },
+    } as unknown as SituationVector;
+
+    // Carries the under-served category, and has no rhythm of its own to report.
+    const pull = contextFit(deficit, bare({ categories: ['health'] }), NOW, 'UTC');
+    // Carries no deficit category, but matches BOTH temporal axes: NOW is a Wednesday
+    // (dow 3) at 14:00 UTC (the afternoon).
+    const rhythm = contextFit(deficit, bare({ modalBand: 'afternoon', modalDow: 3 }), NOW, 'UTC');
+
+    expect(pull).toBe(1);       // one active pair, (+1, +1)
+    expect(rhythm).toBe(0.75);  // two active pairs, (½, +1) each ⇒ dot ½
+    expect(rhythm).toBeLessThan(pull);
+    // …and it is not merely below: it cannot even reach the ceiling. Two full-weight
+    // temporal pairs would land exactly on 1 and the comparison above would be a tie.
+    expect(rhythm).toBeLessThan(1);
+  });
+
+  it('an ABANDONED rhythm loses to the current one — the mode is recency-weighted', async () => {
+    // Six completions in the evening two months ago, three in the morning this week.
+    // A COUNT would call this an evening habit 6–3; the recency-weighted mode calls it
+    // a morning habit, because 2^(−60/14) ≈ 0.05 against 2^(−1/14) ≈ 0.95.
+    //
+    // This is not a preference for newer data for its own sake: morning⇄evening is an
+    // OPPOSITION, so a stale mode does not merely fail to help, it fires −1 against what
+    // the owner actually does now. H would be saying "this is your habit" while F said
+    // "wrong end of your day", from the very same rows.
+    const MORNING_NOW = new Date('2026-07-29T10:00:00.000Z'); // Wednesday, 10:00 = morning
+    seedConfirmedHistory(12);
+
+    // The abandoned class: an evening rhythm the owner left behind. None of these days
+    // is a Wednesday, so the weekday pairing stays out of it.
+    const stale = ['05-25', '05-26', '05-28', '05-29', '05-30', '05-31'];
+    // …and the class that only ever fired in the evening is the positive control: it
+    // proves these rows really do read as an evening and really do score −1.
+    const abandonedOnly = insertTask('the thing I gave up', { estimate: null });
+    addCategory(abandonedOnly, 'career');
+    for (const d of stale) {
+      addCategory(insertTask(`old-career-${d}`, { status: 'done', mood: 'flat', completedAt: `2026-${d}T20:00:00.000Z` }), 'career');
+    }
+
+    // The moved class: the same six-strong evening history, plus three recent mornings.
+    const moved = insertTask('the thing I moved', { estimate: null });
+    addCategory(moved, 'health');
+    for (const d of stale) {
+      addCategory(insertTask(`old-health-${d}`, { status: 'done', mood: 'flat', completedAt: `2026-${d}T20:00:00.000Z` }), 'health');
+    }
+    for (const d of ['07-28', '07-27', '07-26']) {
+      addCategory(insertTask(`new-health-${d}`, { status: 'done', mood: 'flat', completedAt: `2026-${d}T08:00:00.000Z` }), 'health');
+    }
+
+    const res = await trialityNext(OWNER, MORNING_NOW, { embedFn: null });
+    if (res.refused) throw new Error('unexpected refusal');
+    const by = new Map(live(res.picks).map((p) => [p.ref, p]));
+    expect(by.size).toBe(2); // nothing asserted vacuously
+
+    // The recent minority wins the mode: a matched morning, +½.
+    expect(by.get(moved)!.scores.F).toBe(0.75);
+    expect(by.get(moved)!.evidenceRows).toBe(9); // …on a class that is 6 evenings and 3 mornings
+    // The control: the same six evening rows, alone, read as an evening and fire −½.
+    expect(by.get(abandonedOnly)!.scores.F).toBe(0.25);
+    expect(by.get(abandonedOnly)!.evidenceRows).toBe(6);
+  });
+});
+
+/**
+ * A mixed direction/category pool: one direction ('work') carrying every classed
+ * completion, plus a candidate that is brand new in that direction and one that is
+ * foreign to it entirely. Completions sit in the MORNING (MORNING_SHIFT_DAYS' reason), so
+ * neither temporal pairing bears on this 14:00 NOW and F stays out of the H story.
+ */
+function seedDirectionPool(): { deep: string; fresh: string; foreign: string } {
+  for (let i = 0; i < 6; i++) {
+    insertTask(`noise-${i}`, { status: 'done', completedAt: daysAgo(20 + i), mood: 'flat' });
+  }
+  for (const d of [2, 3, 4, 5, 6, 7]) {
+    const id = insertTask(`work-done-${d}`, {
+      status: 'done', mood: 'flat',
+      completedAt: daysAgo(d + MORNING_SHIFT_DAYS),
+    });
+    addCategory(id, 'career');
+    addDirection(id, 'work');
+  }
+  // Same direction, same signature class as the history → its own deep evidence.
+  const deep = insertTask('another work thing', { estimate: null });
+  addCategory(deep, 'career');
+  addDirection(deep, 'work');
+  // Same direction, a category set the owner has NEVER completed.
+  const fresh = insertTask('a new kind of work thing', { estimate: null });
+  addCategory(fresh, 'growth');
+  addDirection(fresh, 'work');
+  // Novel in category AND direction.
+  const foreign = insertTask('something else entirely', { estimate: null });
+  addCategory(foreign, 'leisure');
+  addDirection(foreign, 'home');
+  return { deep, fresh, foreign };
+}
+
+describe('v2.3 — H stays a well-formed number, and the run stays deterministic', () => {
+  // ── §3.4 IS GONE, AND IT SHOULD NOT COME BACK IN THIS SHAPE ─────────────────────
+  //
+  // Three cases used to live here, pinning the interpolated (kind, direction) back-off:
+  // that a novel signature inside the owner's busiest direction scored H > 0, that N
+  // refused to follow the borrowed H, and that the λ3 = n3/(n3+K) blend shifted with
+  // sample size. The back-off was REVERTED, so all three have been deleted rather than
+  // weakened into something that still passes — they described a feature, and the
+  // feature is not there.
+  //
+  // Do not restore them alongside a re-implementation without reading the reason first:
+  // it is in the engine, in the `habitStrengths` header. In short, both defects were
+  // properties of the pool-max NORMALIZATION rather than of the code that implemented
+  // the blend — the coarse levels are tautological under it (every task matches
+  // `kind = task`, so a level-1 strength is identically 1.0 and a never-seen task took
+  // the residual mass against a 1), and normalizing each level by its OWN pool max made
+  // the blend non-monotone, with an adversarial search finding H strictly DECREASING in
+  // completion count on ~7% of same-direction pairs. A candidate lost habit strength by
+  // being done more often. A future back-off has to answer "in what units are these
+  // levels commensurable?" before it can have tests at all.
+  //
+  // `seedDirectionPool` (above) survives because the two cases below still want a pool
+  // with directions in it; it is no longer a back-off fixture.
+
+  it('H stays inside [0,1] for every candidate on an adversarial pool — the learning corpus depends on it', async () => {
+    // NOT stylistic. triality-learning.ts's parseScores REJECTS a persisted component
+    // outside [0,1] as corrupt, which is what caps |delta| at 0.5 and makes §6b's clamp
+    // self-enforcing — so an H that could exceed 1 would silently delete H from the
+    // learning corpus rather than fail anywhere visible.
+    //
+    // Pools are kept at three candidates so EVERY candidate reaches a slot and is
+    // therefore observed; `resetDb` between scenarios keeps them independent.
+    const scenarios: Array<[string, () => void]> = [
+      ['one enormous class', () => {
+        for (let i = 0; i < 60; i++) {
+          const id = insertTask(`bulk-${i}`, { status: 'done', completedAt: daysAgo(0.1 + i * 0.3), mood: 'flat' });
+          addCategory(id, 'career');
+          addDirection(id, 'work');
+        }
+        for (const [cat, dir] of [['career', 'work'], ['growth', 'work'], ['leisure', 'home']] as const) {
+          const c = insertTask(`cand-${cat}`, { estimate: null });
+          addCategory(c, cat);
+          addDirection(c, dir);
+        }
+      }],
+      ['every candidate in the one direction the owner ever uses', () => {
+        seedConfirmedHistory(12);
+        for (const cat of ['career', 'growth', 'health'] as const) {
+          const done = insertTask(`d-${cat}`, { status: 'done', completedAt: daysAgo(1), mood: 'flat' });
+          addCategory(done, cat);
+          addDirection(done, 'work');
+          const c = insertTask(`c-${cat}`, { estimate: null });
+          addCategory(c, cat);
+          addDirection(c, 'work');
+        }
+      }],
+      ['a routine and a template beside a task, on the thinnest possible history', () => {
+        seedConfirmedHistory(10);
+        const task = insertTask('a task', { estimate: null });
+        addCategory(task, 'health');
+        const routineType = (
+          sqlite.prepare(`SELECT id FROM pattern_types WHERE name = 'Routine' AND owner_id = ?`).get(OWNER) as { id: string }
+        ).id;
+        const routine = (
+          sqlite
+            .prepare(`INSERT INTO patterns (id, owner_id, type_id, name) VALUES (uuid7(), ?, ?, 'Wind down') RETURNING id`)
+            .get(OWNER, routineType) as { id: string }
+        ).id;
+        const addMember = sqlite.prepare(`INSERT INTO pattern_tasks (pattern_id, task_id, position) VALUES (?, ?, ?)`);
+        addMember.run(routine, insertTask('open member', { estimate: 10 }), 0);
+        addMember.run(routine, insertTask('member-done', { status: 'done', completedAt: daysAgo(1), mood: 'flat' }), 1);
+        sqlite
+          .prepare(`INSERT INTO block_templates (id, owner_id, name, default_minutes) VALUES (uuid7(), ?, 'Deep work', 60)`)
+          .run(OWNER);
+      }],
+    ];
+
+    for (const [name, seed] of scenarios) {
+      resetDb();
+      seed();
+      const res = await trialityNext(OWNER, NOW, { embedFn: null });
+      if (res.refused) throw new Error(`unexpected refusal in "${name}"`);
+      const picks = live(res.picks);
+      expect(picks.length, name).toBeGreaterThan(0);
+      for (const p of picks) {
+        expect(p.scores.H, `${name} / ${p.title}`).toBeGreaterThanOrEqual(0);
+        expect(p.scores.H, `${name} / ${p.title}`).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('determinism survives v2.3: same DB + same now twice → byte-identical picks and scores', async () => {
+    // The band and weekday pairings read the clock through the OWNER's zone and the
+    // injected `now` — never a wall clock — and the recency-weighted modal histograms
+    // resolve exact ties by refusing to, so there is nothing left for insertion order
+    // to decide.
+    seedDirectionPool();
+    const a = await trialityNext(OWNER, NOW, { embedFn: null });
+    const b = await trialityNext(OWNER, NOW, { embedFn: null });
+    if (a.refused || b.refused) throw new Error('unexpected refusal');
+    expect(JSON.stringify(b.picks)).toBe(JSON.stringify(a.picks));
+    expect(JSON.stringify(attachConfidence(b.picks, b.vector)))
+      .toBe(JSON.stringify(attachConfidence(a.picks, a.vector)));
   });
 });

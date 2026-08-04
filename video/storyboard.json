@@ -1,0 +1,529 @@
+{
+  "$schema": "https://raw.githubusercontent.com/companionintelligence/CI-Common/main/packages/video-kit/schema/storyboard.schema.json",
+  "app": {
+    "id": "ci-planning",
+    "name": "Companion Planning",
+    "repo": "companionintelligence/CI-Planning",
+    "marketplaceId": "ci-planning",
+    "website": "ci.computer"
+  },
+  "meta": {
+    "fps": 30,
+    "transitionSeconds": 0.5
+  },
+  "chapters": {
+    "setup": "First run",
+    "day": "Your day",
+    "plan": "The long game"
+  },
+  "media": {
+    "music": null,
+    "musicVolume": 0.14
+  },
+  "scenes": [
+    {
+      "id": "open",
+      "kind": "intro",
+      "seconds": 5,
+      "title": "Companion Planning",
+      "caption": "A planner that runs on your own machine.",
+      "narration": "Companion Planning. A planner that runs on your machine, not the cloud."
+    },
+    {
+      "id": "ftue-welcome",
+      "kind": "screen",
+      "chapter": "setup",
+      "seconds": 4.5,
+      "caption": "First run: five questions, all skippable.",
+      "narration": "First run: five short questions, all skippable.",
+      "shots": [
+        {
+          "id": "ftue-welcome",
+          "url": "planning.local",
+          "alt": "The first-run wizard, step one: name and email.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/?ftue=1",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h2:text-is(\"Welcome\")",
+            "settle": 600,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ftue-time-place",
+      "kind": "screen",
+      "chapter": "setup",
+      "seconds": 5,
+      "caption": "Wake and bed times fold the night off the grid.",
+      "narration": "Wake and bed times. The planner folds the hours outside them away.",
+      "shots": [
+        {
+          "id": "ftue-time-place",
+          "url": "planning.local",
+          "alt": "Step two: timezone, wake and bed times, workday bounds.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/?ftue=1",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h2:text-is(\"Welcome\")",
+            "before": [
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Time and place\")" }
+            ],
+            "settle": 600,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ftue-connect-source",
+      "kind": "screen",
+      "chapter": "setup",
+      "seconds": 5,
+      "caption": "Step three: point it at mail and calendar.",
+      "narration": "Point it at your mail and calendar; the pull happens on your own machine.",
+      "shots": [
+        {
+          "id": "ftue-connect-source",
+          "url": "planning.local",
+          "alt": "Step three: connect a mail and calendar source.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/?ftue=1",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h2:text-is(\"Welcome\")",
+            "before": [
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Time and place\")" },
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Connect a source\")" }
+            ],
+            "settle": 600,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ftue-trust-dial",
+      "kind": "screen",
+      "chapter": "setup",
+      "seconds": 5,
+      "caption": "Cautious, balanced, hands-off. You set the dial.",
+      "narration": "Then the trust dial — how much it may do unasked.",
+      "shots": [
+        {
+          "id": "ftue-trust-dial",
+          "url": "planning.local",
+          "alt": "Step four: the trust dial, three options.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/?ftue=1",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h2:text-is(\"Welcome\")",
+            "before": [
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Time and place\")" },
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Connect a source\")" },
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Trust dial\")" }
+            ],
+            "settle": 600,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ftue-first-sync",
+      "kind": "screen",
+      "chapter": "setup",
+      "seconds": 6,
+      "caption": "Step five: pull today in now, or wait for tonight.",
+      "narration": "Pull today's mail and meetings in now, rather than waiting for tonight's scheduled run.",
+      "shots": [
+        {
+          "id": "ftue-first-sync",
+          "url": "planning.local",
+          "alt": "Step five: run the first sync, or let the nightly job do it.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/?ftue=1",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h2:text-is(\"Welcome\")",
+            "before": [
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Time and place\")" },
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Connect a source\")" },
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Trust dial\")" },
+              { "click": "button:text-is(\"Next\")" },
+              { "waitFor": "h2:text-is(\"Run your first sync\")" }
+            ],
+            "settle": 600,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "today-cockpit",
+      "kind": "screen",
+      "chapter": "day",
+      "seconds": 6.5,
+      "caption": "Today: staged work on top, the placed day below.",
+      "narration": "Today is the cockpit. Staged work up top, the placed day underneath.",
+      "shots": [
+        {
+          "id": "today-cockpit",
+          "url": "planning.local",
+          "alt": "The Today screen: day stars, flight plan, and the planner grid.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "span:text-is(\"Planner\")",
+            "settle": 1200,
+            "mask": [
+              "div.h-11 span.font-mono",
+              "div.items-baseline:has(> h1)",
+              "div[title*=\"stars today\"]",
+              "span.bg-destructive",
+              ".bg-ring"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "add-anything",
+      "kind": "screen",
+      "chapter": "day",
+      "seconds": 5,
+      "caption": "Describe it in one line. Approve before it saves.",
+      "narration": "Add anything in one line. It parses into fields you approve.",
+      "shots": [
+        {
+          "id": "add-element",
+          "url": "planning.local",
+          "alt": "The add wizard, with a natural-language line typed into it.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "button.fab",
+            "before": [
+              { "click": "button.fab" },
+              { "waitFor": ".modal input[placeholder^=\"Describe it\"]" },
+              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #invoices ~20m"] }
+            ],
+            "settle": 600,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "add-anything-parsed",
+      "kind": "screen",
+      "chapter": "day",
+      "seconds": 6,
+      "caption": "Parsed into title, time and tag — nothing saved yet.",
+      "narration": "One typed line becomes a title, a time and a tag, waiting for your approval.",
+      "shots": [
+        {
+          "id": "add-element-parsed",
+          "url": "planning.local",
+          "alt": "The add wizard after parsing: title, time, duration and an intention tag, all still editable.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "button.fab",
+            "before": [
+              { "click": "button.fab" },
+              { "waitFor": ".modal input[placeholder^=\"Describe it\"]" },
+              { "fill": [".modal input[placeholder^=\"Describe it\"]", "pay invoice 3pm #invoices ~20m"] },
+              { "press": [".modal input[placeholder^=\"Describe it\"]", "Enter"] },
+              { "waitFor": ".modal span.rounded-full:has-text(\"invoices\")" }
+            ],
+            "settle": 800,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "focus-now",
+      "kind": "screen",
+      "chapter": "day",
+      "seconds": 4.5,
+      "caption": "Focus: one list, and the block you are in.",
+      "narration": "Focus strips it to one list and the block you're in.",
+      "shots": [
+        {
+          "id": "focus-now",
+          "url": "planning.local/focus",
+          "alt": "The Focus screen with the current block and its time-sense bar.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/focus",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:has-text(\"Focus\")",
+            "settle": 1000,
+            "mask": [
+              "div.h-11 span.font-mono",
+              "div.items-baseline > span.text-muted-foreground",
+              "div.h-1.rounded-full"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "calendar-week",
+      "kind": "screen",
+      "chapter": "day",
+      "seconds": 5,
+      "caption": "The same day, widened to a week and a month.",
+      "narration": "The calendar carries that day out to a week and a month.",
+      "shots": [
+        {
+          "id": "calendar-week",
+          "url": "planning.local/calendar",
+          "alt": "The calendar week grid with the star heatmap.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/calendar",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:text-is(\"Calendar\")",
+            "before": [
+              { "click": "button:text-is(\"week\")" },
+              { "wait": 500 }
+            ],
+            "settle": 1000,
+            "mask": [
+              "div.h-11 span.font-mono",
+              "span.text-slate-300"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "calendar-month",
+      "kind": "screen",
+      "chapter": "day",
+      "seconds": 5.5,
+      "caption": "The month view: where the hours actually went.",
+      "narration": "Step back a month and the shape of where your hours actually went appears.",
+      "shots": [
+        {
+          "id": "calendar-month",
+          "url": "planning.local/calendar",
+          "alt": "The calendar month grid: six weeks of cells, each with its event chips.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/calendar",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:text-is(\"Calendar\")",
+            "before": [
+              { "click": "button:text-is(\"month\")" },
+              { "waitFor": "div.grid-cols-7" },
+              { "wait": 500 }
+            ],
+            "settle": 1000,
+            "mask": [
+              "div.h-11 span.font-mono",
+              "span.text-sm.font-medium.text-slate-300"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "plan-my-week",
+      "kind": "screen",
+      "chapter": "plan",
+      "seconds": 5,
+      "caption": "Three ways to plan the week. None of them call a model.",
+      "narration": "Plan the week ahead in three moves; none of them call a model.",
+      "shots": [
+        {
+          "id": "plan-my-week",
+          "url": "planning.local/calendar",
+          "alt": "The weekly planning assistant: fill next week, schedule tasks, or review past data.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/calendar",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:text-is(\"Calendar\")",
+            "before": [
+              { "click": "button:has-text(\"Plan my week\")" },
+              { "waitFor": ".modal p:text-is(\"What would you like to do?\")" }
+            ],
+            "settle": 800,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tasks-backlog",
+      "kind": "screen",
+      "chapter": "plan",
+      "seconds": 4.5,
+      "caption": "The backlog, filtered by direction and priority.",
+      "narration": "Everything unplaced lives here, ranked by priority.",
+      "shots": [
+        {
+          "id": "tasks-backlog",
+          "url": "planning.local/tasks",
+          "alt": "The Tasks backlog with its tabs and priority chips.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/tasks",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:text-is(\"Tasks\")",
+            "settle": 1000,
+            "mask": [
+              "div.h-11 span.font-mono",
+              "p.text-slate-500",
+              "span.tabular-nums"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "priorities-hours",
+      "kind": "screen",
+      "chapter": "plan",
+      "seconds": 5.5,
+      "caption": "168 hours a week, minus sleep. You allocate the rest.",
+      "narration": "Name the hours each part of your life deserves, before the week claims them.",
+      "shots": [
+        {
+          "id": "priorities-hours",
+          "url": "planning.local/priorities",
+          "alt": "The priorities wizard, step three: sleep reserved, then weekly hours per category.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/priorities",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h2:text-is(\"Step 1: Current Satisfaction\")",
+            "before": [
+              { "click": "button:has-text(\"Next: Desired Focus\")" },
+              { "waitFor": "h2:text-is(\"Step 2: Desired Focus\")" },
+              { "click": "button:has-text(\"Next: Weekly Hours\")" },
+              { "waitFor": "h2:text-is(\"Step 3: Weekly Hours Target\")" }
+            ],
+            "settle": 900,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "balance-index",
+      "kind": "screen",
+      "chapter": "plan",
+      "seconds": 4.5,
+      "caption": "Balance Index — hours you wanted, against hours you gave.",
+      "narration": "Balance scores the hours you wanted against the hours you gave.",
+      "shots": [
+        {
+          "id": "balance-index",
+          "url": "planning.local/balance",
+          "alt": "Life Balance: index, weekly target, satisfaction, per category.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/balance",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:text-is(\"Life Balance\")",
+            "settle": 900,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tags-taxonomy",
+      "kind": "screen",
+      "chapter": "plan",
+      "seconds": 4,
+      "caption": "Two axes of tags: direction, and intention.",
+      "narration": "Two axes of tags: direction and intention.",
+      "shots": [
+        {
+          "id": "tags-taxonomy",
+          "url": "planning.local/tags",
+          "alt": "The Tags screen: direction and intention taxonomies.",
+          "motion": "push-in",
+          "capture": {
+            "path": "/tags",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:text-is(\"Tags\")",
+            "settle": 900,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "settings-schedule-patterns",
+      "kind": "screen",
+      "chapter": "plan",
+      "seconds": 7.5,
+      "caption": "Work, home and community each get their own hours.",
+      "narration": "Tell it which hours belong to work, home and community; placement obeys those windows.",
+      "shots": [
+        {
+          "id": "settings-schedule-patterns",
+          "url": "planning.local/settings",
+          "alt": "Settings, Preferences tab: day types and per-direction availability windows.",
+          "motion": "drift-down",
+          "capture": {
+            "path": "/settings",
+            "waitUntil": "domcontentloaded",
+            "waitFor": "h1:text-is(\"Settings\")",
+            "before": [
+              { "click": "button:text-is(\"Preferences\")" },
+              { "waitFor": "div.section-label:text-is(\"Schedule Patterns\")" }
+            ],
+            "settle": 900,
+            "mask": ["div.h-11 span.font-mono"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "recap",
+      "kind": "feature",
+      "seconds": 5.5,
+      "title": "Local by default",
+      "caption": "One SQLite file. No account. Nothing leaves the box.",
+      "narration": "All of it in one SQLite file on your disk. No account required.",
+      "items": [
+        { "label": "Store", "value": "SQLite on your disk" },
+        { "label": "Account", "value": "None required" },
+        { "label": "Agents", "value": "MCP-native" },
+        { "label": "Runs on", "value": "Companion Hub, or your laptop" }
+      ]
+    },
+    {
+      "id": "close",
+      "kind": "outro",
+      "seconds": 5,
+      "cta": "UnCloud your life.",
+      "url": "ci.computer",
+      "narration": "Companion Planning from Companion Intelligence. UnCloud your life."
+    }
+  ]
+}

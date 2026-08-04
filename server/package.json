@@ -25,6 +25,7 @@
     "@koa/router": "^15.6.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@node-rs/argon2": "^2.0.2",
+    "@sentry/node": "^10.69.0",
     "better-sqlite3": "^12.10.0",
     "chrono-node": "^2.9.1",
     "croner": "^10.0.1",

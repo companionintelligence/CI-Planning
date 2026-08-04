@@ -21,13 +21,50 @@ COPY client/package.json ./client/
 COPY server/package.json ./server/
 RUN pnpm install --frozen-lockfile
 
+# Browser error reporting — opt-OUT: a bundle built WITH this DSN reports by default,
+# subject to the server's runtime verdict at GET /api/config/telemetry. Vite INLINES
+# import.meta.env.* into the bundle, so the client DSN is a BUILD-time value: it has to
+# be passed here, not set in the container's runtime environment where it would do
+# nothing. Unset ⇒ the bundle initialises no Sentry and makes no outbound connection.
+# The server half is plain runtime env (SENTRY_DSN) — see the ARG further down. Posture
+# and kill switches: docs/operations/error-reporting.md.
+#
+# ARG (not ENV) on purpose: a build arg is already exported into the environment of the
+# RUN below — which is all Vite needs, since it picks up inline VITE_-prefixed vars from
+# process.env — and it does not linger in the published image's config the way an ENV
+# would.
+#   docker build --build-arg VITE_SENTRY_DSN=https://…ingest.us.sentry.io/… .
+ARG VITE_SENTRY_DSN=""
+ARG VITE_SENTRY_RELEASE=""
+ARG VITE_CI_PLANNING_ENVIRONMENT=""
+
 # Build the SolidJS client (vite outDir → server/public); the server runs via tsx.
 COPY . .
 RUN pnpm --filter client build
 
+# Server error reporting. The server reads SENTRY_DSN from its process env at start-up,
+# so unlike the client half this COULD be supplied purely at run time — but nothing
+# supplies it: the Hub runs this published image as-is and injects no DSN, which is why
+# the server half has reported nothing since telemetry landed. Released images are built
+# with `--build-arg SENTRY_DSN=…` so a marketplace install reports out of the box.
+#
+# Built without the arg (local `docker build`, PR CI) this is an empty string, which
+# `resolveTelemetrySettings` already treats as unset (`disabledReason: 'no-dsn'`) —
+# nothing initialises and no outbound connection is opened.
+#
+# An ENV here does mean /data/.env can no longer override SENTRY_DSN itself (Node's
+# --env-file-if-exists only fills in keys the process env does not already define). The
+# kill switches are unaffected and are the documented way to turn reporting off without
+# a rebuild: CI_TELEMETRY=off (what the marketplace "Share crash reports" toggle sets)
+# or CI_LOCAL_ONLY=true, either of which beats a baked-in DSN for BOTH halves.
+ARG SENTRY_DSN=""
+ARG SENTRY_RELEASE=""
+
 ENV NODE_ENV=production \
     PORT=3848 \
-    DB_PATH=/data/companion.db
+    DB_PATH=/data/companion.db \
+    SENTRY_DSN=${SENTRY_DSN} \
+    SENTRY_RELEASE=${SENTRY_RELEASE}
 RUN mkdir -p /data
 EXPOSE 3848
 

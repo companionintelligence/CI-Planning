@@ -36,6 +36,23 @@ services:
       # Postgres (schema port). Unset ⇒ the app still uses the SQLite store at /data —
       # the two backends coexist while the 386 call sites are migrated file by file.
       DATABASE_URL: postgres://${POSTGRES_USER:-planning}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-planning}
+      # Error reporting (Sentry) — opt-OUT: ON wherever a DSN is set. Each of these is
+      # empty unless set in .env, and an empty value is treated as unset: with no
+      # SENTRY_DSN the server initialises no Sentry and opens no outbound connection at
+      # all — an unconfigured stack, not an opted-out one. An empty CI_TELEMETRY means
+      # "the DSN decides", NOT "off".
+      # CI_TELEMETRY=off (which is what the app-store "Share crash reports" toggle sets)
+      # and CI_LOCAL_ONLY=true each disable reporting even when a DSN IS present, so a
+      # user or operator can switch it off without rebuilding the image.
+      # The browser DSN is baked in at image-BUILD time and is not settable here —
+      # see the Dockerfile's ARG VITE_SENTRY_DSN and docs/operations/error-reporting.md.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENV: ${SENTRY_ENV:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      CI_PLANNING_ENVIRONMENT: ${CI_PLANNING_ENVIRONMENT:-}
+      CI_PLANNING_VERSION: ${CI_PLANNING_VERSION:-}
+      CI_TELEMETRY: ${CI_TELEMETRY:-}
+      CI_LOCAL_ONLY: ${CI_LOCAL_ONLY:-}
     depends_on:
       ollama:
         condition: service_healthy

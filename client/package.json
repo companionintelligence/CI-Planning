@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sentry/browser": "^10.69.0",
     "@solidjs/router": "^0.16.1",
     "lucide-solid": "^1.17.0",
     "solid-js": "^1.9.13"
