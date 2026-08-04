@@ -35,7 +35,7 @@
       "chapter": "setup",
       "seconds": 4.5,
       "caption": "First run: five questions, all skippable.",
-      "narration": "First run asks five short questions. Every one is skippable.",
+      "narration": "First run: five short questions, all skippable.",
       "shots": [
         {
           "id": "ftue-welcome",
@@ -116,7 +116,7 @@
       "chapter": "day",
       "seconds": 6.5,
       "caption": "Today: staged work on top, the placed day below.",
-      "narration": "Today is the cockpit. Staged work up top, the placed day underneath, stars for what landed.",
+      "narration": "Today is the cockpit. Staged work up top, the placed day underneath.",
       "shots": [
         {
           "id": "today-cockpit",
@@ -230,7 +230,7 @@
       "chapter": "plan",
       "seconds": 4.5,
       "caption": "The backlog, filtered by direction and priority.",
-      "narration": "Everything unplaced lives here, filtered by tag, direction and priority.",
+      "narration": "Everything unplaced lives here, ranked by priority.",
       "shots": [
         {
           "id": "tasks-backlog",
@@ -280,7 +280,7 @@
       "chapter": "plan",
       "seconds": 4,
       "caption": "Two axes of tags: direction, and intention.",
-      "narration": "Two axes of tags: direction, and intention.",
+      "narration": "Two axes of tags: direction and intention.",
       "shots": [
         {
           "id": "tags-taxonomy",
@@ -303,7 +303,7 @@
       "seconds": 5.5,
       "title": "Local by default",
       "caption": "One SQLite file. No account. Nothing leaves the box.",
-      "narration": "All of it in one SQLite file on your own disk. No account required.",
+      "narration": "All of it in one SQLite file on your disk. No account required.",
       "items": [
         { "label": "Store", "value": "SQLite on your disk" },
         { "label": "Account", "value": "None required" },
@@ -317,7 +317,7 @@
       "seconds": 5,
       "cta": "UnCloud your life.",
       "url": "ci.computer",
-      "narration": "Companion Planning, from Companion Intelligence. UnCloud your life."
+      "narration": "Companion Planning from Companion Intelligence. UnCloud your life."
     }
   ]
 }
