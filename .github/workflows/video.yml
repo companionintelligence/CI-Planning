@@ -76,6 +76,58 @@ jobs:
           GOOGLE_MODE: fixture
           PORT: 3848
           VITE_PORT: 5173
+          # Point every LLM path at a closed port so it takes its deterministic
+          # fallback for the whole run (config.ts:263 reads OLLAMA_URL). Three
+          # things depend on this: /api/tasks/quick/parse keeps the deterministic
+          # `parseQuick` result instead of an Ollama-shaped overlay (so the
+          # add-element-parsed shot is reproducible), the subtask-suggestion chips
+          # stay empty, and `seed --no-llm` is hardened against a runner that
+          # somehow has Ollama installed.
+          OLLAMA_URL: http://127.0.0.1:1
+
+      # The seeder fills the BACKLOG and nothing else — no priorities, and tasks
+      # with no `scheduled_for`. Three shots wait on selectors that match in the
+      # empty state too (Today's "Planner" label, Focus's h1, Balance's h1), so
+      # without this step they capture green and film an empty product.
+      #
+      # Everything here is plain HTTP against the already-running server. No auth
+      # headers: requireAuth.ts:88-103 binds every /api call to SYSTEM_OWNER with
+      # all scopes in AUTH_MODE=test — the same owner the seeder writes as.
+      #
+      # The date is pinned to the same day video/capture.config.mjs freezes the
+      # clock to. It is in the PAST relative to the runner's real clock, which is
+      # what makes it place cleanly: autoplan.ts:705-706 only clamps slots to
+      # `now` when the target date IS the server's today.
+      - name: Stage the filmed day
+        run: |
+          set -euo pipefail
+          API=http://localhost:3848/api
+          JSON='content-type: application/json'
+          DAY='{"date":"2026-06-03"}'
+
+          # Balance.tsx:105-107 renders a "No priorities set yet" card until these
+          # exist. Keys and default hours are lifted from PrioritiesWizard.tsx:17-25;
+          # satisfaction and importance are deliberately unequal so the Balance Index
+          # is a real number rather than a flat 100.
+          curl -fsS -XPOST "$API/priorities" -H "$JSON" -d '{"priorities":[
+            {"category":"health","satisfaction":5,"importance":8,"target_hours_per_week":10},
+            {"category":"career","satisfaction":7,"importance":9,"target_hours_per_week":40},
+            {"category":"relationships","satisfaction":6,"importance":9,"target_hours_per_week":15},
+            {"category":"growth","satisfaction":4,"importance":7,"target_hours_per_week":10},
+            {"category":"leisure","satisfaction":3,"importance":6,"target_hours_per_week":15},
+            {"category":"finance","satisfaction":6,"importance":7,"target_hours_per_week":5}
+          ]}' > /dev/null
+
+          # fill -> run -> fill. The third call is not a typo: auto/run DRAINS the
+          # flight plan of everything it places, so without re-staging the Planner
+          # fills but Today's Flight-plan panel films empty. The flight plan itself
+          # is not date-scoped (flight-plan.ts:24-27), so the re-fill shows up on
+          # Today regardless of which day is selected.
+          curl -fsS -XPOST "$API/auto/fill" -H "$JSON" -d "$DAY" > /dev/null
+          curl -fsS -XPOST "$API/auto/run"  -H "$JSON" -d "$DAY" > /dev/null
+          curl -fsS -XPOST "$API/auto/fill" -H "$JSON" -d "$DAY" > /dev/null
+
+          echo "staged blocks/flight-plan for 2026-06-03"
 
       - name: Capture
         working-directory: video

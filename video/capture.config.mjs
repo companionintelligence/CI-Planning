@@ -73,18 +73,34 @@
  *     Today's due badge, the Tasks "N open" line and the per-tab counts all
  *     render whatever the database happens to hold. Masked per-shot.
  *
- *  6. The NL "Describe it" line calls the model.
- *     ElementWizard.tsx parses the typed line via the server on Enter, and the
- *     result varies with whichever Ollama tag is installed. The add-element shot
- *     therefore FILLS the line and deliberately does NOT press Enter — we film
- *     the input, not the parse.
+ *  6. The NL "Describe it" line calls the model — but only as an overlay.
+ *     server/src/routes/tasks.ts:179-187 is explicit: `parseQuick` is
+ *     "deterministic, always succeeds", and the `enrichQuick` overlay is wrapped
+ *     in a try/catch that falls back to the deterministic parse. So the parse is
+ *     reproducible IF the model is reliably absent — which is why video.yml pins
+ *     OLLAMA_URL to http://127.0.0.1:1 (config.ts:263) for the whole capture run.
+ *     That also suppresses the nondeterministic subtask-suggestion chips
+ *     (ElementWizard.tsx:549-555) and the "Parsed with AI enrichment" sparkle.
+ *     With that pin the add-element-parsed shot CAN press Enter and film the
+ *     result, which is what the caption has always claimed.
+ *     Two things the fill string must avoid, both learned the hard way:
+ *       - no relative day words ("fri"). Playwright's clock freezes the BROWSER;
+ *         chrono runs server-side against the runner's real clock, so "fri" would
+ *         print a date months away from the frozen today.
+ *       - no direction/category name as the tag ("#finance" is one of the six
+ *         fixed Balance categories, flags.ts:14). Use "#invoices", which is
+ *         neither a direction (home/work/community, migration 0036) nor a
+ *         category, so it lands in the intention chips — the proof selector.
  *
  *  7. Empty screens are a staging problem, not a capture bug.
  *     The seeder creates tasks with no `scheduled_for`, so Today's Planner and
  *     Flight-plan are EMPTY until something places them, and /balance renders a
- *     "No priorities set yet" card until the Priorities wizard has been run once.
- *     See video/README.md for the staging checklist. Nothing in this file can
- *     paper over it — the frames would just be honestly boring.
+ *     "No priorities set yet" card until priorities exist. Both `waitFor`s match
+ *     in the empty state too, so the shot goes green and films a lie.
+ *     -> the "Stage the filmed day" step in .github/workflows/video.yml now does
+ *        it over the API (auto/fill -> auto/run -> auto/fill, plus a priorities
+ *        POST) instead of leaving it to a human checklist. Nothing in THIS file
+ *        can paper over it — but see `fixedTime` below, which is the other half.
  *
  *  8. The published container cannot be the stage.
  *     Dockerfile:47 sets NODE_ENV=production, and server/src/lib/config.ts:403
@@ -99,20 +115,37 @@ const FTUE_MARK = "ftue=1";
 
 /** Frozen, arbitrary, and in the past relative to `fixedTime` — its only job is
  *  to be non-null so the wizard stays shut on non-FTUE shots. */
-const ONBOARDED_AT = "2026-06-15T08:12:00.000Z";
+const ONBOARDED_AT = "2026-06-01T08:12:00.000Z";
 
 export default {
   baseURL: process.env.APP_URL ?? "http://localhost:5173",
 
   // CI apps are dark-first. Pinned locale/timezone/clock keep captures stable.
-  // 2026-06-15T15:04Z is a Monday mid-afternoon: a planner has something to show.
+  //
+  // The clock MUST sit inside the seeded fixture window or Today, Focus and the
+  // week grid all film empty. The only time_blocks the stage ever creates are the
+  // 18 Google-fixture meeting mirrors (seed-test-data.ts:143-152), and
+  // server/test/fixtures/calendar.json spans 2026-05-30 .. 2026-06-06. The old
+  // 2026-06-15T15:04Z default was NINE DAYS past the end of that window, so
+  // stores/index.ts fetched an empty day range and Today rendered its "Nothing
+  // scheduled yet." branch under narration about a cockpit.
+  //
+  // 2026-06-03T18:20Z is a Wednesday chosen deliberately:
+  //   - that day holds Legal review 16:30-17:00, Platform team working session
+  //     18:00-19:00 and Lunch with mentor 19:30-20:30, all inside the visible
+  //     07:00-21:00 band (day-axis.ts:29-33) rather than the collapsed bars;
+  //   - 18:20 falls INSIDE the Platform team session, so Focus's "the block you're in"
+  //     is literally true at the shutter;
+  //   - weekDaysOf is Monday-start (client/src/lib/dates.ts:94-98), so the week
+  //     grid anchors Mon 1 - Sun 7 June and contains all 18 fixture events, with
+  //     "today" mid-week so the grid reads with days on both sides.
   // Override when the staged database is keyed to a different day — the client
   // derives "today" from this clock, so it must agree with whatever the server
-  // was seeded with or Today renders an empty grid (hazard 7).
+  // was seeded and staged with or Today renders an empty grid (hazard 7).
   colorScheme: "dark",
   locale: "en-US",
   timezoneId: "UTC",
-  fixedTime: process.env.CI_VIDEO_FIXED_TIME ?? "2026-06-15T15:04:00Z",
+  fixedTime: process.env.CI_VIDEO_FIXED_TIME ?? "2026-06-03T18:20:00Z",
 
   // Not needed in AUTH_MODE=test (the default) — kept as the hook an sso-mode
   // stage would use.
