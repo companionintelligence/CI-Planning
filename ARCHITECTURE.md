@@ -335,53 +335,379 @@ erDiagram
 
 ### 5.2 Key tables
 
-| Table | Purpose | Added |
-|---|---|---|
-| `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103) | 0001, 0101, 0103 |
-| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_mood`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137); `motivation` (`me`\|`us`\|`them`, NULL = unlabeled — and NULL is never read as `us`) + `motivation_source` (`user`\|`llm`; a user label is never re-tagged) (0141) | 0001, 0135, 0137, 0141 |
-| `task_dependencies` | Blocked-by edges between tasks | 0005 |
-| `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | 0007 |
-| `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099). `category_id`/`color_token` (0069) are legacy reads only — writes go through `entity_categories` (0134/§1.2); `texture_enabled`/`texture_color_token` (0135) per-element override | 0015, 0099, 0135 |
-| `block_templates` | Reusable Time-Block templates with saved task lists | 0022 |
-| `flight_plan` | Two-step Auto staging tray — task list ordered before scheduling; `owner_id` `TEXT NOT NULL` (0093) | 0016, 0093 |
-| `daily_plan` | AI-authored task order for a day (`outcome` stamp for plan tracking) | 0062, 0084 |
-| `replan_suggestions` | Pending "re-plan with AI?" nudges on big-disruption reflows | 0067 |
-| `possible_tasks` | Inbox — AI-proposed items pending promote / dismiss; owner-scoped `(proposed_owner_id, source_kind, source_ref)` uniqueness (0114) + `proposed_estimated_minutes` (0114) + `proposed_scheduled_for`/`proposed_task_time` START intent (0115) | 0001, 0114, 0115 |
-| `tags` | Cross-cutting labels; `kind`: `direction` or `intention` or `category`. `category` is re-seeded to the six Balance dimensions, `is_base=1` (§1.2); `owner_id` (0100) | 0001, 0100, 0134 |
-| `tag_directions` | Many-to-many: intention tags grouped under direction tags | 0043/0105 |
-| `entity_tags` | Polymorphic tag store for tasks, blocks, routines (CON-3); `created_at` NOT NULL DEFAULT CURRENT_TIMESTAMP (0110, table rebuilt) | 0033, 0110 |
-| `entity_categories` | Polymorphic **category** store for tasks/time_blocks (`entity_kind, entity_id, category_tag_id, position`), 1–3 per entity, `position` (0–2) = stripe order. A block's *effective* categories are its own rows, else its linked task's (§1.2) | 0134 |
-| `patterns` | Routines — typed, reusable task collections (Habit ◯ / Routine ▢) | 0013 |
-| `pattern_types` | Routine taxonomy — **load-bearing, do not rename** | 0019 |
-| `pattern_tasks` | Routine ↔ task many-to-many | 0013 |
-| `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | 0037 |
-| `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs`. `category` rows are the six Balance-dimension hues (0134) | 0039, 0069, 0097, 0134 |
-| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139), **UNRELEASED (§1.3, 0147):** the ingestion windows `memory_window_days` (1–30, default 2 — how far AHEAD the memory pull reads) and `email_lookback_days` (1–90, default 7 — how far BACK a Gmail ingest may reach) | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139, *0147* |
-| `scheduled_jobs` | Croner job registry (name, cron, enabled) | 0001 |
-| `job_runs` | Execution log per run (status, items created/updated, log text) | 0001 |
-| `reminders` | Scheduled reminders — fired exactly once by the 1-min dispatcher | 0044 |
-| `push_subscriptions` | Web Push endpoints per owner (VAPID) | 0044 |
-| `audit_log` | Append-only mutation log written by every mutating route | 0046 |
-| `api_keys` | Hashed `x-api-key` credentials for `AUTH_MODE=standalone` | 0049 |
-| `connection_tokens` | Encrypted OAuth tokens (AES-256-GCM, `CP_KEK_B64`); `provider` ∈ Google + `ci_memory` (per-owner CI-Server memory creds, AA0/AA0b) | 0050 |
-| `external_events` | Sync identity map — provider events ↔ local time_blocks | 0051 |
-| `outbound_queue` | Local blocks pending push to provider (when `CP_SYNC_WRITEBACK=true`) | 0057 |
-| `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at callback | 0058 |
-| `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` | 0060 |
-| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay; owner FK (0098) | 0077, 0098 |
-| `auth_states` | Pre-login OIDC PKCE state (issued at `/login`, consumed at the callback) | 0102 |
-| `password_reset_tokens` | Single-use local-owner password-reset tokens (Phase V) | 0104 |
-| `copy_history` | Time-Sense voice-loop anti-repetition log (NOT in owner export) | 0109 |
-| `app_config` | Server-owned singleton config rows set from inside the app rather than env — in-app Google connection setup + the auto-provisioned Web Push VAPID keypair (generated + persisted on first boot; env pins win) | 0124 |
-| `life_priorities` | Self-audit per `(owner, category)` — `satisfaction` 1–10, `importance` 1–10, `target_hours_per_week`. Backs `/priorities` (wizard) + `/balance` (dashboard); `UNIQUE(owner_id, category)`. `category` is a plain TEXT key (no FK) — shares its NAME vocabulary with `tags.kind='category'` (0134) but the two are linked only by string equality, per owner | 0127 |
-| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | 0080, 0088 |
-| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync. **Archive (0129):** `archived_at` (non-null ⇒ soft-deleted, absent from the live tree, `status` untouched), `archive_root_id` (the node whose archiving cascaded to this row; NULL on the root), `purge_after` (absolute reap deadline; server-owned — never client-authored) + `ix_objectives_purge_after`. See §1.1 | 0081, 0085, 0086, 0087, 0129 |
-| `objective_tasks` | Objective ↔ Task linkage for progress roll-up | 0081 |
-| `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107). Regenerable rollup — replaced wholesale each run | 0083, 0107 |
-| `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) from the same job; never recomputed or pruned | 0138 |
-| `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)` | 0140 |
-| `triality_weights` | Learned Triality weights per `(owner_id, slot)` PK — `weights` JSON, `sample_count`, `computed_date`. Regenerable rollup replaced wholesale by `calibrate_triality`; **absence means "the default weights"**, so deleting an owner's rows is the reset switch. Raw SQL only | 0142 |
-| `daily_recap` | One row per `(owner, date)`: the day-briefing cache (`prose`/`stats`/`focus`/`inputs_hash`) + the frozen five-star score (`star_*`/`total`/`frozen_at`); today lives, past days permanent once frozen. Merged `daily_summaries` + `day_stars` | 0089, 0094, 0096 |
+ORM = modeled in `server/src/db/schema.ts` (the Drizzle mirror, guarded by
+`schema-parity.test.ts`). Raw = raw-SQL only — invisible to Drizzle queries and to that
+parity test. 56 live tables total, grouped below by concern; superseded by the full UML
+class diagram in §5.3.
+
+#### Identity, auth & config
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `owners` | User identity — auth columns `external_subject`/`username`/`password_hash` (0101), reset columns `backup_email`/`session_epoch` (0103) | ✓ | 0001, 0101, 0103 |
+| `api_keys` | Hashed `x-api-key` credentials for `AUTH_MODE=standalone` | ✓ | 0049 |
+| `auth_states` | Pre-login OIDC PKCE state (issued at `/login`, consumed at the callback) | ✓ | 0102 |
+| `oauth_states` | Single-use OAuth 2.1 PKCE/state rows, consumed at callback | ✓ | 0058 |
+| `connection_tokens` | Encrypted OAuth tokens (AES-256-GCM, `CP_KEK_B64`); `provider` ∈ Google + `ci_memory` (per-owner CI-Server memory creds, AA0/AA0b) | ✓ | 0050 |
+| `password_reset_tokens` | Single-use local-owner password-reset tokens (Phase V) | ✓ | 0104 |
+| `app_config` | Server-owned singleton config rows set from inside the app rather than env — in-app Google connection setup + the auto-provisioned Web Push VAPID keypair (generated + persisted on first boot; env pins win) | raw | 0124 |
+
+#### Core work
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `tasks` | Core work atom — UUIDv7 PK, status, priority, subtype, recurrence. `texture_enabled`/`texture_color_token` (0135) — per-element striped-texture override (§1.2); `completion_mood`/`completion_note`/`reaction_at` close-ritual columns, all nullable (0137); `motivation` (`me`\|`us`\|`them`, NULL = unlabeled — and NULL is never read as `us`) + `motivation_source` (`user`\|`llm`; a user label is never re-tagged) (0141) | ✓ | 0001, 0135, 0137, 0141 |
+| `task_dependencies` | Blocked-by edges between tasks | ✓ | 0005 |
+| `time_entries` | Actual work logged per task; running timer = `ended_at IS NULL` | ✓ | 0007 |
+| `possible_tasks` | Inbox — AI-proposed items pending promote / dismiss; owner-scoped `(proposed_owner_id, source_kind, source_ref)` uniqueness (0114) + `proposed_estimated_minutes` (0114) + `proposed_scheduled_for`/`proposed_task_time` START intent (0115) | ✓ | 0001, 0114, 0115 |
+| `possible_task_tags` | Tags staged on an inbox item, carried over on promote | ✓ | 0001 |
+| `flight_plan` | Two-step Auto staging tray — task list ordered before scheduling; `owner_id` `TEXT NOT NULL` (0093) | ✓ | 0016, 0093 |
+
+#### Time blocks
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `time_blocks` | Named time spans — task · meeting · focus · break · buffer; `owner_id` NOT NULL (0099). `category_id`/`color_token` (0069) are legacy reads only — writes go through `entity_categories` (0134/§1.2); `texture_enabled`/`texture_color_token` (0135) per-element override | ✓ | 0015, 0099, 0135 |
+| `block_templates` | Reusable Time-Block templates with saved task lists | ✓ | 0022 |
+
+#### Tags & taxonomy
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `tags` | Cross-cutting labels; `kind`: `direction` or `intention` or `category`. `category` is re-seeded to the six Balance dimensions, `is_base=1` (§1.2); `owner_id` (0100) | ✓ | 0001, 0100, 0134 |
+| `tag_directions` | Many-to-many: intention tags grouped under direction tags | ✓ | 0043/0105 |
+| `tag_categories` | Many-to-many: intention tags grouped under category tags — verbatim mirror of `tag_directions` on the second (Balance) axis | ✓ | 0069 |
+| `category_direction_optouts` | Per-category direction SCOPE, opt-out polarity — a row means a direction is turned OFF for that category; empty = all directions on | ✓ | 0069 |
+| `entity_tags` | Polymorphic tag store for tasks, blocks, routines (CON-3); `created_at` NOT NULL DEFAULT CURRENT_TIMESTAMP (0110, table rebuilt); **no FK on `entity_id`** — integrity is app-enforced (`services/tags.ts`) | ✓ | 0033, 0110 |
+| `entity_categories` | Polymorphic **category** store for tasks/time_blocks (`entity_kind, entity_id, category_tag_id, position`), 1–3 per entity, `position` (0–2) = stripe order. A block's *effective* categories are its own rows, else its linked task's (§1.2); **no FK on `entity_id`**, same as `entity_tags` | ✓ | 0134 |
+| `tag_prefs` | Per-owner × per-tag config by `kind` (direction/category): shared color_token/default_minutes + direction-only auto_fill/reminder_offsets/icon_shape; merged `pattern_prefs` + `category_prefs`. `category` rows are the six Balance-dimension hues (0134) | ✓ | 0039, 0069, 0097, 0134 |
+
+#### Routines (patterns)
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `patterns` | Routines — typed, reusable task collections (Habit ◯ / Routine ▢) | ✓ | 0013 |
+| `pattern_types` | Routine taxonomy — **load-bearing, do not rename** | ✓ | 0019 |
+| `pattern_tasks` | Routine ↔ task many-to-many | ✓ | 0013 |
+| `pattern_blocks` | Direction-scoped scheduling windows (workday/weekend) | ✓ | 0037 |
+| `pattern_day_optouts` | "Skip this routine on this date" — one row per (owner, pattern, date) | raw | 0074 |
+
+#### Day shape & preferences
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `scheduling_prefs` | Work hours, focus/break bounds, model overrides, feature flags, `recurrence_horizon_days` (default 7), `time_sense_enabled` (0106) + per-cue focus prefs `focus_ritual_enabled`/`haptic_cues_enabled`/`ambient_color_enabled`/`calibration_loop_enabled`/`z_experiment_arm` (0108), `view_prefs` cross-device calendar view-state (0111), `memory_pull_enabled` master flag for the CI-Server memory layer (default 0, 0113), `sleep_hours_per_week` (0128, default 63 = 9h × 7 — reserved as unschedulable; the Priorities Wizard's pool is `168 −` this), `triality_enabled` master flag (default 0, 0139), **UNRELEASED (§1.3, 0147):** the ingestion windows `memory_window_days` (1–30, default 2 — how far AHEAD the memory pull reads) and `email_lookback_days` (1–90, default 7 — how far BACK a Gmail ingest may reach) | ✓ | 0001, 0091, 0106, 0108, 0111, 0113, 0128, 0139, *0147* |
+| `day_types` | Custom day types + per-date assignment (T-SCHED-3); `workday`/`weekend` builtins, rename-only | ✓ | 0068 |
+| `day_of_week_map` | Recurring weekly default: dow (0=Sun…6=Sat, UTC noon) → day-type key | ✓ | 0068 |
+| `day_assignments` | Per-date override: a specific `YYYY-MM-DD` → day-type key (beats the weekly map) | ✓ | 0068 |
+| `connection_prefs` | Per-calendar display prefs — `color_token`/`texture` by `(owner, provider, account)`, deliberately NOT FK'd to `connection_tokens.id` | raw | 0145 |
+
+#### Planning & AI loop
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `daily_plan` | AI-authored task order for a day (`outcome` stamp for plan tracking) | raw | 0062, 0084 |
+| `plan_hints` | NL scheduling hints fed to the planner, one row per (owner, date, kind, tag) | raw | 0071 |
+| `replan_suggestions` | Pending "re-plan with AI?" nudges on big-disruption reflows — one row per owner | raw | 0067 |
+| `planning_sessions` | The planning-session log — one row per "Plan my week" session; the whole conversation is the `transcript` JSON array, no per-turn events table | ✓ | 0131 |
+| `daily_recap` | One row per `(owner, date)`: the day-briefing cache (`prose`/`stats`/`focus`/`inputs_hash`) + the frozen five-star score (`star_*`/`total`/`frozen_at`); today lives, past days permanent once frozen. Merged `daily_summaries` + `day_stars` | raw | 0089, 0094, 0096 |
+
+#### Life layer
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `objectives` | Hierarchical life goals — Goal › Project › Objective by height; `source_task_id` marks auto-promoted nodes; `version`/`field_ts` for sync. **Archive (0129):** `archived_at` (non-null ⇒ soft-deleted, absent from the live tree, `status` untouched), `archive_root_id` (the node whose archiving cascaded to this row; NULL on the root), `purge_after` (absolute reap deadline; server-owned — never client-authored) + `ix_objectives_purge_after`. See §1.1 | raw | 0081, 0085, 0086, 0087, 0129 |
+| `objective_tasks` | Objective ↔ Task linkage for progress roll-up | raw | 0081 |
+| `reflections` | FOCUS card slots — today focus + up to 3 weekly goals per ISO week; optional source link to a Task/Objective (`source_kind`/`source_ref`); also the one-per-day `kind='day_note'` row | raw | 0080, 0088 |
+| `life_priorities` | Self-audit per `(owner, category)` — `satisfaction` 1–10, `importance` 1–10, `target_hours_per_week`. Backs `/priorities` (wizard) + `/balance` (dashboard); `UNIQUE(owner_id, category)`. `category` is a plain TEXT key (no FK) — shares its NAME vocabulary with `tags.kind='category'` (0134) but the two are linked only by string equality, per owner | ✓ | 0127 |
+
+#### Learning loops
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `estimate_calibration` | Per-owner bias stats (p25/p50/p75 of actual/estimated ratio); scope columns (0107). Regenerable rollup — replaced wholesale each run | raw | 0083, 0107 |
+| `calibration_history` | Append-only calibration trend — one row per (owner, scope, day) from the same job; never recomputed or pruned | raw | 0138 |
+| `calibration_combo_pins` | Pinned scope combos for the calibration UI, one row per (owner, scope_ref) | raw | 0107 |
+| `triality_log` | Append-only Triality outcome log — one row per suggestion shown (`slot`, `action_kind`/`action_ref`, the full `scores` JSON breakdown), stamped once more on `opened`/`staged`/`dismissed`. The learning corpus, not a cache: two requests log two sets of rows. Enums in code; raw SQL only (not in `schema.ts`); indexed on `(owner_id, local_date)` | raw | 0140 |
+| `triality_weights` | Learned Triality weights per `(owner_id, slot)` PK — `weights` JSON, `sample_count`, `computed_date`. Regenerable rollup replaced wholesale by `calibrate_triality`; **absence means "the default weights"**, so deleting an owner's rows is the reset switch. Raw SQL only | raw | 0142 |
+
+#### Sync & external calendars
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `external_events` | Sync identity map — provider events ↔ local time_blocks | ✓ | 0051 |
+| `outbound_queue` | Local blocks pending push to provider (when `CP_SYNC_WRITEBACK=true`) | ✓ | 0057 |
+| `sync_state` | Incremental-sync cursors per `(owner, provider, account, resource)` | ✓ | 0060 |
+| `sync_events` | Append-only SSE event log for `Last-Event-ID` catch-up replay; owner FK (0098) | ✓ | 0077, 0098 |
+
+#### Ops, notifications & audit
+
+| Table | Purpose | ORM | Added |
+|---|---|---|---|
+| `scheduled_jobs` | Croner job registry (name, cron, enabled) | ✓ | 0001 |
+| `job_runs` | Execution log per run (status, items created/updated, log text) | ✓ | 0001 |
+| `reminders` | Scheduled reminders — fired exactly once by the 1-min dispatcher | ✓ | 0044 |
+| `push_subscriptions` | Web Push endpoints per owner (VAPID) | ✓ | 0044 |
+| `audit_log` | Append-only mutation log written by every mutating route | ✓ | 0046 |
+| `copy_history` | Time-Sense voice-loop anti-repetition log (NOT in owner export) | raw | 0109 |
+
+Dropped along the way (superseded, not in the live shape above): `task_tags` (0041),
+`plan_outcomes` (0095), `pattern_prefs`/`category_prefs` (0097), `daily_summaries`/`day_stars` (0096).
+
+### 5.3 UML class diagram
+
+Full column-level shape of every live table, grouped by concern. `«PK»` marks the primary
+key (composite where multiple columns are listed); `⊗`/`⊘` on a relationship below mean
+`ON DELETE CASCADE` / `ON DELETE SET NULL`.
+
+```mermaid
+classDiagram
+direction LR
+
+class owners {
+  +TEXT id «PK uuidv7»
+  name, email, role
+  external_subject, username, password_hash
+  backup_email, session_epoch
+}
+class scheduling_prefs {
+  +TEXT id «PK»
+  owner_id «FK 1:1»
+  workday_start/_end, timezone
+  trust_mode, fill_order, planning_mode
+  planning/recurrence_horizon_days
+  feature flags, model overrides, view_prefs
+}
+class tasks {
+  +TEXT id «PK»
+  owner_id, parent_id «FK»
+  title, status, priority, subtype
+  due_at, scheduled_for, defer_until
+  estimated_minutes, actual_minutes
+  recurrence_rule/_parent_id/_exdates
+  motivation, completion_mood, reaction_at
+  version, field_ts
+}
+class time_blocks {
+  +TEXT id «PK»
+  owner_id «NOT NULL», task_id, parent_block_id, category_id «FK»
+  title, start_at, end_at, all_day
+  block_kind, block_type, status
+  is_locked, is_auto, color_token
+  recurrence_rule/_parent_id, auto_run_id
+  version, field_ts
+}
+class time_entries {
+  +TEXT id «PK»
+  task_id, owner_id, block_id «FK»
+  started_at, ended_at «NULL = running»
+}
+class task_dependencies {
+  +«PK» task_id, depends_on_id «FK»
+}
+class possible_tasks {
+  +TEXT id «PK»
+  proposed_owner_id, promoted_task_id «FK»
+  raw_title, confidence, status
+  proposed_* intent columns
+}
+class flight_plan {
+  +«PK» owner_id, task_id «FK»
+  selected, position
+}
+class tags {
+  +TEXT id «PK»
+  owner_id «FK»
+  name «uq per owner»
+  kind: direction|intention|category
+  muted, is_base
+}
+class entity_tags {
+  +«PK» entity_kind, entity_id, tag_id
+  level, created_at
+  «entity_id: NO FK — app-enforced»
+}
+class entity_categories {
+  +«PK» entity_kind, entity_id, category_tag_id
+  position 0..2 «stripe order»
+  «entity_id: NO FK — app-enforced»
+}
+class tag_prefs {
+  +TEXT id «PK» — uq(owner, tag)
+  kind, color_token, default_minutes
+  auto_fill, reminder_offsets, icon_shape
+}
+class tag_directions { +«PK» intention_tag_id, direction_tag_id }
+class tag_categories { +«PK» intention_tag_id, category_tag_id }
+class category_direction_optouts { +«PK» category_tag_id, direction_tag_id }
+class patterns {
+  +TEXT id «PK»
+  owner_id, type_id «FK»
+  name, tag, recurrence_rule, color_token
+}
+class pattern_types {
+  +TEXT id «PK»
+  name, icon_shape, is_builtin, catch_all
+}
+class pattern_tasks { +«PK» pattern_id, task_id : position }
+class pattern_blocks {
+  +TEXT id «PK»
+  owner_id, direction_tag_id «FK»
+  day_type, start_time, end_time
+}
+class pattern_day_optouts { +«PK» owner_id, pattern_id, date }
+class day_types { +TEXT id «PK» : key «uq per owner», name, is_builtin }
+class day_of_week_map { +«PK» owner_id, dow : day_type_key }
+class day_assignments { +«PK» owner_id, date : day_type_key }
+class block_templates { +TEXT id «PK» : name, tag, default_minutes, tasks JSON }
+class objectives {
+  +TEXT id «PK»
+  owner_id, parent_id, category_id, source_task_id
+  level, horizon, status, cadence
+  progress_cache, archived_at, purge_after
+}
+class objective_tasks { +«PK» objective_id, task_id : linked, version }
+class reflections {
+  +«PK» owner_id, kind, period_key, position
+  body, done_at, source_kind/_ref, category_id
+}
+class life_priorities {
+  +TEXT id «PK» — uq(owner, category)
+  satisfaction, importance, target_hours_per_week
+}
+class daily_plan { +«PK» owner_id, date, task_id : position, source, outcome, block_id }
+class daily_recap { +«PK» owner_id, date : prose, stats, star_*, total, frozen_at }
+class plan_hints { +TEXT id «PK» : date, kind, tag, time }
+class replan_suggestions { +owner_id «PK» : date, reason, at_risk }
+class planning_sessions { +TEXT id «PK» : entry_branch, status, llm_used, transcript }
+class estimate_calibration { +«PK» owner_id, scope_kind, scope_ref : bias_ratio, p25/p50/p75 }
+class calibration_history { +«PK» owner_id, scope_kind, scope_ref, computed_date }
+class calibration_combo_pins { +«PK» owner_id, scope_ref }
+class triality_log { +TEXT id «PK» : slot, action_kind/_ref, scores, outcome }
+class triality_weights { +«PK» owner_id, slot : weights, sample_count }
+class connection_tokens { +TEXT id «PK» : provider, account, ciphertext, status }
+class connection_prefs { +TEXT id «PK» : provider, account, color_token, texture }
+class external_events { +TEXT id «PK» : provider, account, external_id, etag, direction }
+class outbound_queue { +TEXT id «PK» : provider, account }
+class sync_state { +TEXT id «PK» : provider, account, resource, cursor }
+class sync_events { +INTEGER seq «PK AI» : entity, entity_id, version, event, payload }
+class reminders { +TEXT id «PK» : fire_at, status, source «task XOR block» }
+class push_subscriptions { +TEXT id «PK» : endpoint «uq», p256dh, auth }
+class audit_log { +TEXT id «PK» : actor, action, entity, at }
+class copy_history { +TEXT id «PK» : surface, signature }
+class scheduled_jobs { +TEXT id «PK» : name «uq», kind, cron, enabled }
+class job_runs { +TEXT id «PK» : status, items_created/_updated, log }
+class api_keys { +TEXT id «PK» : prefix, key_hash, scopes, revoked_at }
+class auth_states { +TEXT id «PK» : state «uq», code_verifier, nonce }
+class oauth_states { +TEXT id «PK» : state «uq», code_verifier }
+class password_reset_tokens { +TEXT id «PK» : token_hash, expires_at, used_at }
+class possible_task_tags { +possible_task_id, tag_id «FK» }
+class app_config { +key «PK» : value, updated_at }
+
+owners "1" -- "1" scheduling_prefs : configures
+owners "1" --o "0..*" tasks : owns
+owners "1" --o "0..*" time_blocks : owns
+owners "1" --o "0..*" tags : owns
+owners "1" --o "0..*" patterns : owns
+owners "1" --o "0..*" pattern_types
+owners "1" --o "0..*" pattern_blocks
+owners "1" --o "0..*" objectives : owns
+owners "1" --o "0..*" reflections
+owners "1" --o "0..*" life_priorities : audits
+owners "1" --o "0..*" possible_tasks : proposed_for
+owners "1" --o "0..*" reminders
+owners "1" --o "0..*" push_subscriptions
+owners "1" --o "0..*" api_keys
+owners "1" --o "0..*" password_reset_tokens
+owners "1" --o "0..*" connection_tokens
+owners "1" --o "0..*" connection_prefs
+owners "1" --o "0..*" oauth_states
+owners "1" --o "0..*" sync_state
+owners "1" --o "0..*" sync_events
+owners "1" --o "0..*" audit_log
+owners "1" --o "0..*" copy_history
+owners "1" --o "0..*" day_types
+owners "1" --o "0..*" day_of_week_map
+owners "1" --o "0..*" day_assignments
+owners "1" --o "0..*" block_templates
+owners "1" --o "0..*" planning_sessions
+owners "1" --o "0..*" plan_hints
+owners "1" --o "0..1" replan_suggestions
+owners "1" --o "0..*" daily_plan
+owners "1" --o "0..*" daily_recap
+owners "1" --o "0..*" estimate_calibration
+owners "1" --o "0..*" calibration_history
+owners "1" --o "0..*" calibration_combo_pins
+owners "1" --o "0..*" triality_log
+owners "1" --o "0..*" triality_weights
+owners "1" --o "0..*" flight_plan
+owners "1" --o "0..*" tag_prefs
+owners "1" --o "0..*" pattern_day_optouts
+owners "1" --o "0..*" outbound_queue
+owners "1" --o "0..*" external_events
+
+tasks "1" --o "0..*" tasks : subtask of
+tasks "1" --o "0..*" time_blocks : scheduled as
+tasks "1" --o "0..*" time_entries : worked in
+tasks "1" --o "0..*" task_dependencies : blocked by
+tasks "1" --o "0..*" daily_plan : ordered in
+tasks "1" --o "0..*" flight_plan : staged in
+tasks "1" --o "0..*" pattern_tasks
+tasks "1" --o "0..*" objective_tasks
+possible_tasks "0..1" ..> "1" tasks : promoted to
+possible_tasks "1" --o "0..*" possible_task_tags
+
+time_blocks "1" --o "0..*" time_blocks : Plan container
+time_blocks "1" --o "0..*" time_entries
+time_blocks "1" --o "0..*" external_events : mirrored by
+time_blocks "1" --o "0..*" outbound_queue : pending push
+time_blocks "1" --o "0..*" reminders
+time_blocks "0..*" --> "0..1" tags : category_id «frozen color»
+
+tags "1" --o "0..*" entity_tags : labels
+tags "1" --o "0..*" entity_categories : categorizes
+tags "1" --o "0..*" tag_prefs
+tags "1" --o "0..*" tag_directions
+tags "1" --o "0..*" tag_categories
+tags "1" --o "0..*" category_direction_optouts
+tags "1" --o "0..*" pattern_blocks : direction window
+tags "0..1" <-- "0..*" objectives : category_id
+tags "0..1" <-- "0..*" reflections : category_id
+tags "1" --o "0..*" possible_task_tags
+
+entity_tags ..> tasks : entity_kind='task' «no FK»
+entity_tags ..> time_blocks : entity_kind='time_block' «no FK»
+entity_tags ..> patterns : entity_kind='routine' «no FK»
+entity_categories ..> tasks : «no FK»
+entity_categories ..> time_blocks : «no FK»
+
+pattern_types "1" --o "0..*" patterns : typed by
+patterns "1" --o "0..*" pattern_tasks
+patterns "1" --o "0..*" pattern_day_optouts
+day_types ..> day_of_week_map : key
+day_types ..> day_assignments : key
+day_types ..> pattern_blocks : day_type
+
+objectives "1" --o "0..*" objectives : parent of «live tree»
+objectives "1" --o "0..*" objective_tasks : progressed by
+tasks "0..1" <.. "0..*" objectives : source_task_id
+daily_plan "0..*" --> "0..1" time_blocks : block_id
+
+scheduled_jobs "1" --o "0..*" job_runs : logged as
+```
+
+Three things worth flagging in the model:
+
+- **`entity_tags` / `entity_categories` are polymorphic with no FK on `entity_id`** — the
+  dotted edges above are app-enforced by `services/tags.ts`, not the DB. `time_blocks.tag`
+  and `patterns.tag` remain denormalized top-level mirrors.
+- **`owners` is the tenant root** — nearly every table hangs off it, but cascade behavior
+  is inconsistent (some `ON DELETE CASCADE`, some plain FK), so owner deletion isn't yet a
+  single safe operation.
+- **16 tables live only in raw SQL**, outside `schema.ts` (marked "raw" in §5.2) — the
+  whole life layer (`objectives`, `reflections`), the AI-loop tables, and the
+  calibration/triality rollups. They're invisible to Drizzle queries *and* to the
+  `schema-parity` test that guards drift.
 
 ---
 
