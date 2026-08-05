@@ -83,14 +83,30 @@
  *     (ElementWizard.tsx:549-555) and the "Parsed with AI enrichment" sparkle.
  *     With that pin the add-element-parsed shot CAN press Enter and film the
  *     result, which is what the caption has always claimed.
- *     Two things the fill string must avoid, both learned the hard way:
+ *     The fill string is "pay invoice 3pm #work #invoices ~20m", and every token
+ *     in it is load-bearing:
  *       - no relative day words ("fri"). Playwright's clock freezes the BROWSER;
  *         chrono runs server-side against the runner's real clock, so "fri" would
  *         print a date months away from the frozen today.
- *       - no direction/category name as the tag ("#finance" is one of the six
- *         fixed Balance categories, flags.ts:14). Use "#invoices", which is
- *         neither a direction (home/work/community, migration 0036) nor a
- *         category, so it lands in the intention chips — the proof selector.
+ *       - "#invoices" is neither a direction (home/work/community, migration 0036)
+ *         nor one of the six fixed Balance categories (PrioritiesWizard.tsx:17-24:
+ *         health/career/relationships/growth/leisure/finance), so it survives the
+ *         direction split (ElementWizard.tsx:480-486) as an INTENTION chip — the
+ *         shot's proof selector.
+ *       - "#work" IS a direction, and it has to be there. The intention chips are
+ *         rendered only by TagSection, which ElementWizard.tsx:1366 gates behind
+ *         `<Show when={tab() === 'task' ? !!primary() : true}>`; the FAB opens the
+ *         wizard with `kind: null`, i.e. the Task tab (App.tsx:202,
+ *         ElementWizard.tsx:96-97), and the closed→open effect resets `primary` to
+ *         '' (ElementWizard.tsx:335). `parseNl` only calls `setPrimary` when the
+ *         line carries a direction, so a direction-free line leaves TagSection
+ *         unmounted: the "#invoices" chip never enters the DOM, the shot's
+ *         `waitFor` burns its 20s and FAILS the whole capture step. The same empty
+ *         `primary` also makes `gateRight()` true (ElementWizard.tsx:817), which
+ *         renders the right-hand time/duration pane at `opacity-50` + `inert`
+ *         (ElementWizard.tsx:1647-1649) — i.e. the exact fields the caption
+ *         advertises, greyed out. "#work" fixes both: it lands on the primary axis
+ *         and "#invoices" lands in the chips.
  *
  *  7. Empty screens are a staging problem, not a capture bug.
  *     The seeder creates tasks with no `scheduled_for`, so Today's Planner and
@@ -137,8 +153,13 @@ export default {
   //   - 18:20 falls INSIDE the Platform team session, so Focus's "the block you're in"
   //     is literally true at the shutter;
   //   - weekDaysOf is Monday-start (client/src/lib/dates.ts:94-98), so the week
-  //     grid anchors Mon 1 - Sun 7 June and contains all 18 fixture events, with
-  //     "today" mid-week so the grid reads with days on both sides.
+  //     grid anchors Mon 1 - Sun 7 June and contains 17 of the 18 fixture events,
+  //     with "today" mid-week so the grid reads with days on both sides. The
+  //     eighteenth ("Dad's birthday dinner", 2026-05-30T02:00:00Z — Saturday
+  //     May 30) sits in the week BEFORE the anchor and is out of frame. Do not
+  //     round that up to "all 18": monthGridOf is Monday-start too and Jun 1 2026
+  //     IS a Monday (dates.ts:128-134), so the month grid runs Jun 1 .. Jul 12
+  //     with no leading May cells — May 30 is outside that grid as well.
   // Override when the staged database is keyed to a different day — the client
   // derives "today" from this clock, so it must agree with whatever the server
   // was seeded and staged with or Today renders an empty grid (hazard 7).
